@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "postio",
+  "project_id": "c704c821-85ad-4024-a65f-db80265696a6"
+}
