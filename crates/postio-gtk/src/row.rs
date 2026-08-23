@@ -239,6 +239,12 @@ struct Palette {
     unread_chip: gdk::RGBA,
     clip: Option<gtk::IconPaintable>,
     check: Option<gtk::IconPaintable>,
+    /// The hover actions, in [`RowAction::ALL`] order, with the flag glyph
+    /// in both of its states.
+    archive: Option<gtk::IconPaintable>,
+    flagged: Option<gtk::IconPaintable>,
+    unflagged: Option<gtk::IconPaintable>,
+    trash: Option<gtk::IconPaintable>,
 }
 
 impl Palette {
@@ -287,6 +293,10 @@ impl Palette {
             unread_chip: paint(&["postio-row-ground", "unread"]),
             clip: probe.display().pipe_icon("mail-attachment-symbolic"),
             check: probe.display().pipe_icon("object-select-symbolic"),
+            archive: probe.display().action_icon(RowAction::Archive.icon(false)),
+            flagged: probe.display().action_icon(RowAction::Flag.icon(true)),
+            unflagged: probe.display().action_icon(RowAction::Flag.icon(false)),
+            trash: probe.display().action_icon(RowAction::Delete.icon(false)),
         };
         probe.set_css_classes(&[]);
         palette
@@ -296,6 +306,9 @@ impl Palette {
 /// The attachment paperclip, from the icon theme.
 trait IconLookup {
     fn pipe_icon(&self, name: &str) -> Option<gtk::IconPaintable>;
+
+    /// A hover action's glyph, at the size one is drawn.
+    fn action_icon(&self, name: &str) -> Option<gtk::IconPaintable>;
 }
 
 impl IconLookup for gdk::Display {
@@ -309,10 +322,73 @@ impl IconLookup for gdk::Display {
             gtk::IconLookupFlags::empty(),
         ))
     }
+
+    fn action_icon(&self, name: &str) -> Option<gtk::IconPaintable> {
+        Some(gtk::IconTheme::for_display(self).lookup_icon(
+            name,
+            &[],
+            ACTION as i32,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        ))
+    }
 }
 
 /// The attachment glyph's box, square.
 const CLIP: i32 = 12;
+
+/// A hover action's glyph box, square.
+///
+/// Bigger than the paperclip because this one is a target, not a mark: 16px
+/// of glyph inside a row that is at least 40px tall gives a hit area a mouse
+/// finds without aiming.
+const ACTION: f32 = 16.0;
+
+/// Between one hover action and the next.
+const ACTION_GAP: f32 = 10.0;
+
+/// What the row offers under the pointer, in the order they are drawn.
+///
+/// The three verbs triage is made of, and the same three the bulk bar
+/// carries — one row or twenty, the mouse says the same thing. Each is a
+/// registry command, never a local implementation: `a`, `s` and `d` mean
+/// exactly this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    /// Archive this message — `a`.
+    Archive,
+    /// Flag or unflag it — `s`.
+    Flag,
+    /// Move it to the trash — `d`.
+    Delete,
+}
+
+impl RowAction {
+    /// Every action, left to right.
+    pub const ALL: [RowAction; 3] = [RowAction::Archive, RowAction::Flag, RowAction::Delete];
+
+    /// The icon that says what it does.
+    fn icon(self, flagged: bool) -> &'static str {
+        match self {
+            RowAction::Archive => "postio-archive-symbolic",
+            // The state, not the verb: a flagged message offers to unflag,
+            // and the glyph has to say which way it would go.
+            RowAction::Flag if flagged => "starred-symbolic",
+            RowAction::Flag => "non-starred-symbolic",
+            RowAction::Delete => "user-trash-symbolic",
+        }
+    }
+
+    /// What a screen reader would call it, for whoever offers it another way.
+    pub fn title(self) -> &'static str {
+        match self {
+            RowAction::Archive => "Archive",
+            RowAction::Flag => "Flag",
+            RowAction::Delete => "Delete",
+        }
+    }
+}
 
 /// Between the pieces on the sender line.
 const RUN: f32 = 8.0;
@@ -363,6 +439,9 @@ mod imp {
         pub(super) cursor: Cell<bool>,
         /// Where this row sits in the list, for turning a click into a range.
         pub(super) index: Cell<u32>,
+        /// Whether the row offers its actions under the pointer at all —
+        /// `[ui].show_hover_actions`.
+        pub(super) actions: Cell<bool>,
         pub(super) hovered: Cell<bool>,
         /// Whether the keyboard is on this row.
         ///
@@ -399,6 +478,7 @@ mod imp {
                 selected: Cell::new(false),
                 cursor: Cell::new(false),
                 index: Cell::new(0),
+                actions: Cell::new(true),
                 hovered: Cell::new(false),
                 focused: Cell::new(false),
                 probe: gtk::Label::new(None),
@@ -656,6 +736,56 @@ impl MessageRowView {
     /// Where this row sits in the list.
     pub fn index(&self) -> u32 {
         self.imp().index.get()
+    }
+
+    /// Whether the row offers its actions when the pointer is over it.
+    ///
+    /// `[ui].show_hover_actions`. Off means the timestamp keeps its place and
+    /// the mouse reaches the same verbs through the context menu — never
+    /// through nothing.
+    pub fn set_show_actions(&self, show: bool) {
+        if self.imp().actions.replace(show) != show {
+            self.queue_draw();
+        }
+    }
+
+    /// Whether the actions are being offered right now: the pointer is over
+    /// the row, the row has something in it, and the setting allows it.
+    pub fn offers_actions(&self) -> bool {
+        self.imp().actions.get() && self.imp().hovered.get() && self.imp().row.borrow().is_some()
+    }
+
+    /// Which action is under `(x, y)`, in this row's coordinates.
+    ///
+    /// `None` when the actions are not being offered, or when the point is
+    /// somewhere else on the row.
+    pub fn action_at(&self, x: f64, y: f64) -> Option<RowAction> {
+        if !self.offers_actions() {
+            return None;
+        }
+        let (x, y) = (x as f32, y as f32);
+        let metrics = Metrics::for_density(self.imp().density.get());
+        let line = metrics.pad_y + metrics.avatar / 2.0;
+        if !(line - ACTION..line + ACTION).contains(&y) {
+            return None;
+        }
+        RowAction::ALL
+            .into_iter()
+            .enumerate()
+            .find(|(slot, _)| {
+                let left = self.action_x(*slot as f32, metrics.inset);
+                (left..left + ACTION).contains(&x)
+            })
+            .map(|(_, action)| action)
+    }
+
+    /// Where the glyph in `slot` starts, counting from the row's right edge
+    /// so the set stays put as the row grows.
+    fn action_x(&self, slot: f32, inset: f32) -> f32 {
+        let right = self.width() as f32 - inset;
+        let total =
+            ACTION * RowAction::ALL.len() as f32 + ACTION_GAP * (RowAction::ALL.len() as f32 - 1.0);
+        right - total + slot * (ACTION + ACTION_GAP)
     }
 
     /// Whether `(x, y)`, in this row's coordinates, is inside the square the
@@ -1050,13 +1180,44 @@ impl MessageRowView {
         let baseline = |layout: &pango::Layout| layout.baseline() as f32 / pango::SCALE as f32;
         let on_line = |layout: &pango::Layout| top + laid.line1 - baseline(layout);
 
-        let time_w = laid.time.pixel_size().0 as f32;
-        text(
-            &laid.time,
-            &palette.time[laid.tone].color,
-            right - time_w,
-            on_line(&laid.time),
-        );
+        // The actions take the timestamp's place rather than crowding in
+        // beside it: a row is 404px wide at the canvas' proportions, and a
+        // subject that shortened every time the pointer crossed it would be
+        // the list rearranging itself under the mouse. The time is the one
+        // thing on the line that can be read again a moment later.
+        let offering_actions = self.offers_actions();
+        let time_w = if offering_actions {
+            for (slot, action) in RowAction::ALL.into_iter().enumerate() {
+                let glyph = match action {
+                    RowAction::Archive => &palette.archive,
+                    RowAction::Flag if row.flagged => &palette.flagged,
+                    RowAction::Flag => &palette.unflagged,
+                    RowAction::Delete => &palette.trash,
+                };
+                let Some(glyph) = glyph else { continue };
+                let x = self.action_x(slot as f32, metrics.inset);
+                let y = metrics.pad_y + (metrics.avatar - ACTION) / 2.0;
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(x, y));
+                glyph.snapshot_symbolic(
+                    snapshot,
+                    ACTION as f64,
+                    ACTION as f64,
+                    &[palette.hint.color],
+                );
+                snapshot.restore();
+            }
+            ACTION * RowAction::ALL.len() as f32 + ACTION_GAP * (RowAction::ALL.len() as f32 - 1.0)
+        } else {
+            let time_w = laid.time.pixel_size().0 as f32;
+            text(
+                &laid.time,
+                &palette.time[laid.tone].color,
+                right - time_w,
+                on_line(&laid.time),
+            );
+            time_w
+        };
         let mut cursor = right - time_w;
 
         if row.has_attachments

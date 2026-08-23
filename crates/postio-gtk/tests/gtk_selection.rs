@@ -65,7 +65,7 @@ fn pump() {
 }
 
 /// The row widget currently showing `position`, if it is realised.
-fn realised(pane: &MessageListView, position: u32) -> Option<MessageRowView> {
+fn realised_row(pane: &MessageListView, position: u32) -> Option<MessageRowView> {
     let found = RefCell::new(None);
     pane.each_row(|row| {
         if row.index() == position {
@@ -123,11 +123,11 @@ fn the_cursor_and_the_selection_are_two_different_things() {
     pump();
     assert!(pane.selection().contains(id(1)));
     assert_eq!(pane.cursor().selected(), 1, "toggling moved the keyboard");
-    if let Some(view) = realised(&pane, 1) {
+    if let Some(view) = realised_row(&pane, 1) {
         assert!(view.is_selected(), "the row shows it is in the selection");
         assert!(view.is_cursor(), "and that the keyboard is on it");
     }
-    if let Some(view) = realised(&pane, 0) {
+    if let Some(view) = realised_row(&pane, 0) {
         assert!(!view.is_selected());
         assert!(!view.is_cursor());
     }
@@ -164,9 +164,9 @@ fn the_cursor_and_the_selection_are_two_different_things() {
     // ── the bulk bar runs the registry's commands ────────────────────────
     // Not its own: a button that archived directly would be a second
     // implementation of a verb `a` already means.
-    let ran: Rc<RefCell<Vec<CommandId>>> = Rc::new(RefCell::new(Vec::new()));
+    let ran: Rc<RefCell<Vec<postio_core::Command>>> = Rc::new(RefCell::new(Vec::new()));
     let seen = ran.clone();
-    pane.connect_command(move |id| seen.borrow_mut().push(id));
+    pane.connect_command(move |command| seen.borrow_mut().push(command));
 
     pane.toggle_cursor_row();
     pump();
@@ -176,9 +176,26 @@ fn the_cursor_and_the_selection_are_two_different_things() {
         button.emit_clicked();
     }
     pump();
+    // The registry's own invocations, aimed at the selection — which is what
+    // makes a bulk archive one undo entry rather than twelve.
+    let ids: Vec<CommandId> = ran.borrow().iter().map(postio_core::Command::id).collect();
     assert_eq!(
-        *ran.borrow(),
-        vec![CommandId::Archive, CommandId::Delete, CommandId::Move],
+        ids,
+        vec![CommandId::Archive, CommandId::Delete, CommandId::Move]
+    );
+    assert!(
+        ran.borrow().iter().all(|command| matches!(
+            command,
+            postio_core::Command::Archive {
+                target: postio_core::MessageTarget::Selection
+            } | postio_core::Command::Delete {
+                target: postio_core::MessageTarget::Selection
+            } | postio_core::Command::Move {
+                target: postio_core::MessageTarget::Selection,
+                ..
+            }
+        )),
+        "the bar acts on the selection, not on a row it picked itself"
     );
 
     // ── and the count says what is about to be hit ───────────────────────
@@ -194,6 +211,54 @@ fn the_cursor_and_the_selection_are_two_different_things() {
         labels(&pane).iter().all(|text| !text.contains("selected")),
         "the bar goes away with the selection that put it there"
     );
+
+    // ── the rows are really there ────────────────────────────────────────
+    // Everything below reads a realised row, and a list that realised none
+    // would make those assertions vacuous rather than false.
+    let realised = std::cell::Cell::new(0);
+    pane.each_row(|_| realised.set(realised.get() + 1));
+    assert!(realised.get() > 0, "no rows were realised");
+    let view = realised_row(&pane, 0).expect("a realised first row");
+
+    // ── the mouse reaches the same verbs the keyboard does ───────────────
+    assert!(
+        !view.offers_actions(),
+        "a row nobody is pointing at offers nothing"
+    );
+    assert!(
+        view.action_at(300.0, 20.0).is_none(),
+        "and answers no hit test either"
+    );
+
+    view.set_hovered(true);
+    pump();
+    assert!(view.offers_actions());
+
+    // Every action is somewhere on the row, in order, and none of them
+    // overlaps another: three glyphs answering the same point would make
+    // which one you got a matter of luck.
+    let width = view.width().max(404);
+    let mut seen: Vec<postio_gtk::row::RowAction> = Vec::new();
+    for x in 0..width {
+        if let Some(action) = view.action_at(x as f64, 22.0)
+            && seen.last() != Some(&action)
+        {
+            seen.push(action);
+        }
+    }
+    assert_eq!(
+        seen,
+        postio_gtk::row::RowAction::ALL.to_vec(),
+        "the three actions, left to right, each in one place"
+    );
+
+    // `[ui].show_hover_actions = false` takes the offer off the row. The
+    // verbs stay reachable by key and through the context menu; what goes is
+    // the row's own invitation.
+    view.set_show_actions(false);
+    pump();
+    assert!(!view.offers_actions());
+    assert!(view.action_at(300.0, 22.0).is_none());
 
     window.close();
 }
@@ -231,31 +296,4 @@ fn walk(widget: gtk::Widget, visit: &mut impl FnMut(&gtk::Widget)) {
         walk(current.clone(), visit);
         child = current.next_sibling();
     }
-}
-
-/// Proof that the row assertions above are not skipped: if the list realises
-/// no rows, the checks that read them are dead code and the test is a lie.
-#[test]
-fn the_list_realises_its_rows() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("fonts");
-    style::install(&display);
-
-    let pane = MessageListView::new();
-    pane.model().set_source(Rc::new(Pages));
-    pane.model().deliver(0, (0..ROWS).map(row).collect());
-    let window = gtk::Window::new();
-    window.set_default_size(404, 600);
-    window.set_child(Some(&pane));
-    window.present();
-    pump();
-
-    let realised = std::cell::Cell::new(0);
-    pane.each_row(|_| realised.set(realised.get() + 1));
-    assert!(realised.get() > 0, "no rows were realised");
-    window.close();
 }
