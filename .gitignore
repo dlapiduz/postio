@@ -7,3 +7,5 @@
 /flatpak/build-dir/
 /flatpak/.flatpak-builder/
 /flatpak/cargo-sources.json
+
+.claude/hooks/guard.log
