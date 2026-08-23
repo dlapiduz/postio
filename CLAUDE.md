@@ -123,6 +123,36 @@ sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
 Verified working against: gtk4 4.22.4, libadwaita-1 1.9.3, webkitgtk-6.0 2.52.5,
 sqlite3 3.51.2, libsecret-1 0.21.7, glib-2.0 2.88.3.
 
+## Running the app
+
+The working tree is edited continuously by several sessions, so building from
+it gives you whatever half-finished state is on disk at that moment. To look at
+a real, running Postio:
+
+```bash
+scripts/run-isolated.sh                 # build and run HEAD
+scripts/run-isolated.sh <commit>        # a specific commit
+scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector
+scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
+scripts/run-isolated.sh --clean         # discard the worktree and its store
+```
+
+It builds from a **git worktree pinned to a commit**, with its own
+`CARGO_TARGET_DIR` and its own `XDG_DATA_HOME`/`XDG_CONFIG_HOME`. So the app is
+a known commit rather than a moving tree, the build cannot contend with or
+poison the shared `target/`, and the running app reads a throwaway store that
+cannot reach real mail.
+
+**Observability is thin until `postio-b9t.3` lands.** There is no tracing
+subscriber, so `RUST_LOG` does nothing; the script sets `RUST_BACKTRACE=1` and
+`G_MESSAGES_DEBUG=all`, and `--inspect` attaches the GTK Inspector, which is
+the most useful debugging tool available today — live widget tree, CSS, and
+property inspection.
+
+For a quick visual check of a widget without running the app,
+`cargo run -p postio-gtk --example shot` renders straight out of GSK and needs
+no display server.
+
 ## Development rules
 
 > **You are probably not alone in this repository.** Other Claude sessions work
