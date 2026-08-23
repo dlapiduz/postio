@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Postio
+GenericName=Email Client
+Comment=Local-first, keyboard-first email
+Exec=postio %U
+Icon=dev.postio.Postio
+Terminal=false
+Categories=Network;Email;GTK;
+Keywords=Email;E-mail;Mail;IMAP;SMTP;Inbox;
+MimeType=x-scheme-handler/mailto;
+StartupNotify=true
+StartupWMClass=dev.postio.Postio
