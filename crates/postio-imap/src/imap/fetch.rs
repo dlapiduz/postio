@@ -254,7 +254,7 @@ fn build_fetched_message(
     })
 }
 
-fn flag_from_wire(flag: FlagFetch<'static>) -> Flag {
+pub(super) fn flag_from_wire(flag: FlagFetch<'static>) -> Flag {
     match flag {
         FlagFetch::Flag(flag) => Flag::parse(flag.to_string()),
         FlagFetch::Recent => Flag::Recent,
