@@ -37,7 +37,7 @@ use postio_model::mailbox::{Mailbox, MailboxRole};
 type SelectionHandler = Box<dyn Fn(MailboxId)>;
 
 /// What to call when messages are dropped on a folder.
-type DropHandler = Box<dyn Fn(Vec<postio_model::ids::MessageId>, MailboxId)>;
+type DropHandler = Box<dyn Fn(crate::list_view::Dragged, MailboxId)>;
 
 /// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
 const PROTOCOL: &str = "imap";
@@ -386,7 +386,7 @@ impl Sidebar {
     /// `Move` command so a drag and the `m` key are the same action.
     pub fn connect_dropped(
         &self,
-        callback: impl Fn(Vec<postio_model::ids::MessageId>, MailboxId) + 'static,
+        callback: impl Fn(crate::list_view::Dragged, MailboxId) + 'static,
     ) {
         self.imp().dropped.borrow_mut().push(Box::new(callback));
     }
@@ -499,12 +499,27 @@ fn folder_row(mailbox: &Mailbox) -> gtk::ListBoxRow {
 fn accept_drops(row: &gtk::ListBoxRow, sidebar: &Sidebar) {
     let target = gtk::DropTarget::new(glib::types::Type::STRING, gtk::gdk::DragAction::MOVE);
 
-    target.connect_enter(|target, _, _| {
-        if let Some(row) = target.widget() {
+    target.connect_enter(glib::clone!(
+        #[weak]
+        sidebar,
+        #[upgrade_or]
+        gtk::gdk::DragAction::empty(),
+        move |target, _, _| {
+            let Some(row) = target.widget().and_downcast::<gtk::ListBoxRow>() else {
+                return gtk::gdk::DragAction::empty();
+            };
+            // SAFETY: the key is private to this module and always holds an i64.
+            let mailbox = MailboxId::new(unsafe { row_id(&row) });
+            // The folder the mail is already in says no rather than saying
+            // nothing: a target that highlights and then does nothing is
+            // worse than one that never lit up.
+            if sidebar.selected() == Some(mailbox) {
+                return gtk::gdk::DragAction::empty();
+            }
             row.add_css_class("postio-drop-into");
+            gtk::gdk::DragAction::MOVE
         }
-        gtk::gdk::DragAction::MOVE
-    });
+    ));
     target.connect_leave(|target| {
         if let Some(row) = target.widget() {
             row.remove_css_class("postio-drop-into");
@@ -525,14 +540,19 @@ fn accept_drops(row: &gtk::ListBoxRow, sidebar: &Sidebar) {
             let Ok(payload) = value.get::<String>() else {
                 return false;
             };
-            let messages = crate::list_view::dragged_messages(&payload);
-            if messages.is_empty() {
+            let Some(dragged) = crate::list_view::dragged_messages(&payload) else {
                 return false;
-            }
+            };
             // SAFETY: the key is private to this module and always holds an i64.
             let mailbox = MailboxId::new(unsafe { row_id(&row) });
+            // Dropping mail into the folder it is already in is not a move,
+            // and reporting it as one would put an undo entry on the stack
+            // for something that did not happen.
+            if sidebar.selected() == Some(mailbox) {
+                return false;
+            }
             for handler in sidebar.imp().dropped.borrow().iter() {
-                handler(messages.clone(), mailbox);
+                handler(dragged.clone(), mailbox);
             }
             true
         }
