@@ -459,13 +459,33 @@ button.postio-compose {
 
 /* `parsed in 2 ms · applied live · nothing to save` — the validity line
    that replaces OK/Cancel. */
-.postio-settings-footer {
+.postio-settings-footer-row {
   min-height: 38px;
   padding: 0 16px;
   box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+.postio-settings-footer {
   font-family: var(--postio-font-mono);
   font-size: 10.5px;
   color: var(--postio-faint);
+}
+
+/* The canvas' "Revert file": a quiet, bordered button, not the ghost style
+   the header's own controls use — Revert is a recovery action and reads as
+   one rather than blending into the row. */
+button.postio-settings-revert {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 11.5px;
+  padding: 5px 11px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  color: var(--postio-ink-secondary);
+}
+
+button.postio-settings-revert:hover {
+  background-color: var(--postio-hover-bg);
 }
 
 /* ── The composer (canvas 2a) ─────────────────────────────────────────
@@ -549,6 +569,10 @@ button.postio-compose-more {
 
 .postio-compose-body {
   padding: 18px 28px;
+  /* Barlow ligates `--` into a dash, and the signature separator is two
+     hyphens by RFC 3676. What the composer shows has to be what goes on the
+     wire. */
+  font-feature-settings: "liga" 0;
   font-size: 14.5px;
   background: none;
   color: var(--postio-ink);

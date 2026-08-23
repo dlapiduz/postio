@@ -103,6 +103,10 @@ fn show_composer(window: &Window) {
     let identity = |name: &str, address: &str, default| postio_model::Identity {
         display_name: name.to_owned(),
         is_default: default,
+        signature: Some(postio_model::Signature {
+            text: format!("{name} · postio.example.com"),
+            html: None,
+        }),
         ..postio_model::Identity::new(
             account,
             postio_model::EmailAddress::new(Some(name), address),
