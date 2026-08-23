@@ -57,6 +57,7 @@ pub mod mailbox;
 pub mod message;
 pub mod mime;
 pub mod operation;
+pub mod signature;
 pub mod subject;
 pub mod sync;
 #[cfg(feature = "test-corpus")]
