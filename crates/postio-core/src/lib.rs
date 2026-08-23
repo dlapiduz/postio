@@ -31,6 +31,12 @@
 //! );
 //! ```
 //!
+//! # One path from intent to change
+//!
+//! [`dispatch`] routes every command — from a key, the palette, a menu or the
+//! mouse — to the single handler registered for it, and turns every failure
+//! into an [`Event`] rather than a panic.
+//!
 //! # Commands go through the bridge
 //!
 //! [`bridge`] owns the tokio runtime and is the only place the asynchronous
@@ -49,11 +55,13 @@
 pub mod bridge;
 pub mod command;
 pub mod context;
+pub mod dispatch;
 pub mod event;
 pub mod registry;
 
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{Command, CommandId, MessageTarget, UnknownCommand};
 pub use context::{Context, ContextSet, UnknownContext};
+pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event};
 pub use registry::{CommandSpec, Recovery};
