@@ -37,6 +37,7 @@ mod mailboxes;
 mod pool;
 mod select;
 mod settings;
+mod skip_counter;
 mod transport;
 
 use std::fmt;
@@ -71,6 +72,10 @@ pub use self::pool::{
     PoolConfig, PoolStats, PooledSession, Priority,
 };
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
+pub use self::skip_counter::{
+    exclusive_measurement as skip_counter_exclusive_measurement, install as install_skip_counter,
+    skipped_untagged_responses,
+};
 pub use self::transport::{
     ConnectionLog, ImapConnector, ImapScript, ImapStream, RustlsConnector, ScriptedConnector,
     TransportError,

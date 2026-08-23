@@ -2323,6 +2323,7 @@ dependencies = [
  "io-imap",
  "io-pim-discovery",
  "io-sasl",
+ "log",
  "oo7",
  "pimalaya-stream",
  "postio-imap",
