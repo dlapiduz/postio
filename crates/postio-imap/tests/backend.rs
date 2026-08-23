@@ -672,6 +672,91 @@ async fn append_assigns_the_next_uid_and_keeps_the_flags() {
 }
 
 #[tokio::test]
+async fn an_appended_message_is_visible_to_a_changedsince_fetch() {
+    let backend = connected().await;
+    let cancel = CancelToken::new();
+
+    let before = backend.status("Archive").await.unwrap();
+    let floor = before.highest_mod_seq.expect("CONDSTORE is advertised");
+
+    backend
+        .append(
+            "Archive",
+            &AppendMessage::new(b"Subject: new mail\r\n\r\nbody\r\n".to_vec()),
+        )
+        .await
+        .unwrap();
+
+    // RFC 7162 §3.1.2.1: an appended message's MODSEQ must *exceed* the
+    // HIGHESTMODSEQ that preceded it, or the strictly-greater-than filter of
+    // CHANGEDSINCE never reports the arrival.
+    let changed = backend
+        .fetch_headers("Archive", &UidSet::all(), Some(floor), &cancel)
+        .await
+        .unwrap();
+
+    let returned: Vec<u32> = changed.iter().map(|message| message.uid.get()).collect();
+    assert_eq!(returned, [1]);
+    assert!(changed[0].mod_seq > Some(floor));
+    assert!(backend.status("Archive").await.unwrap().highest_mod_seq > Some(floor));
+}
+
+#[tokio::test]
+async fn a_moved_message_is_visible_to_a_changedsince_fetch() {
+    let backend = connected().await;
+    let cancel = CancelToken::new();
+
+    let floor = backend
+        .status("Archive")
+        .await
+        .unwrap()
+        .highest_mod_seq
+        .expect("CONDSTORE is advertised");
+
+    backend
+        .move_messages("INBOX", &uids([1]), "Archive")
+        .await
+        .unwrap();
+
+    let changed = backend
+        .fetch_headers("Archive", &UidSet::all(), Some(floor), &cancel)
+        .await
+        .unwrap();
+
+    assert_eq!(changed.len(), 1);
+    assert!(changed[0].mod_seq > Some(floor));
+}
+
+#[tokio::test]
+async fn a_copied_message_is_visible_to_a_changedsince_fetch() {
+    let backend = connected().await;
+    let cancel = CancelToken::new();
+
+    let floor = backend
+        .status("Archive")
+        .await
+        .unwrap()
+        .highest_mod_seq
+        .expect("CONDSTORE is advertised");
+
+    backend
+        .copy_messages("INBOX", &uids([1, 2]), "Archive")
+        .await
+        .unwrap();
+
+    let changed = backend
+        .fetch_headers("Archive", &UidSet::all(), Some(floor), &cancel)
+        .await
+        .unwrap();
+
+    // Each arrival carries its own modification sequence, as a server that
+    // assigns them one at a time would.
+    assert_eq!(changed.len(), 2);
+    assert!(changed[0].mod_seq < changed[1].mod_seq);
+    assert!(changed[0].mod_seq > Some(floor));
+}
+
+#[tokio::test]
 async fn append_reports_no_uid_when_the_server_lacks_uidplus() {
     let backend = MockBackend::builder()
         .capabilities(["IMAP4rev1"])
