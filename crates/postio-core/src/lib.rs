@@ -61,6 +61,7 @@ pub mod event;
 pub mod perf_budget;
 pub mod registry;
 pub mod state;
+pub mod store;
 pub mod undo;
 
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
