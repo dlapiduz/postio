@@ -389,7 +389,10 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Refresh,
         title: "Refresh",
         default_binding: "F5",
-        alternate_bindings: &[],
+        // The canvas' own retry key, for the empty and error states in
+        // `postio-gtk::list_state`: "retry now" and "check for new mail
+        // now" are the same command from the user's chair.
+        alternate_bindings: &["R"],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
