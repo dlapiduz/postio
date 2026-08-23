@@ -7,10 +7,21 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Test-only: exposes the `test_support` throwaway-database helpers. Off by
+# default; downstream crates enable it from their dev-dependencies so nothing
+# ships in a normal build.
+test-support = ["dep:tempfile"]
+
 [dependencies]
 postio-model = { version = "0.1.0", path = "../postio-model" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.20"
 
 [dev-dependencies]
+# Self dev-dependency so `cargo test -p postio-storage` gets the harness without
+# making `test-support` a default feature.
+postio-storage = { path = ".", features = ["test-support"] }
+tempfile = "3.27.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }

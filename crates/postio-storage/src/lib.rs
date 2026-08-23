@@ -15,30 +15,36 @@
 //!
 //! # Opening a database
 //!
-//! ```no_run
-//! use rusqlite::Connection;
+//! [`Database::open`] is the one call an application needs: it creates the file
+//! and its parent directory, configures every connection with Postio's pragmas
+//! (see [`db::PRAGMAS`]), migrates the schema to head, and hands back a pool.
 //!
+//! ```no_run
 //! # fn main() -> Result<(), postio_storage::Error> {
-//! let mut connection = Connection::open("postio.db")?;
-//! let report = postio_storage::migrate(&mut connection)?;
-//! if !report.is_no_op() {
-//!     eprintln!("migrated {} -> {}", report.from, report.to);
-//! }
+//! let database = postio_storage::Database::open("postio.db")?;
+//! let connection = database.connection()?;
+//! # let _ = connection;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! [`migrate`] is idempotent, so it belongs on every start rather than behind a
-//! version check of the caller's own. Connection pragmas and pooling are a
-//! separate concern and are not set up here.
+//! Migrating is idempotent, so it belongs on every start rather than behind a
+//! version check of the caller's own; [`migrate`] is the lower-level entry point
+//! for a connection opened some other way.
 //!
-//! See [`migrations`] for the rules a schema change has to follow.
+//! See [`migrations`] for the rules a schema change has to follow, and
+//! `test_support` (behind the `test-support` feature) for throwaway databases in
+//! tests.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod db;
 pub mod error;
 pub mod migrations;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
+pub use db::{Database, Pool, PooledConnection};
 pub use error::{Error, Result};
 pub use migrations::{Migration, MigrationReport, migrate, schema_version};

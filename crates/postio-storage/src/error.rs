@@ -11,6 +11,17 @@ pub enum Error {
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    /// The filesystem got in the way of opening the database — most often the
+    /// data directory could not be created.
+    #[error("{path}: {source}")]
+    Io {
+        /// What was being opened or created.
+        path: std::path::PathBuf,
+        /// What the operating system said.
+        #[source]
+        source: std::io::Error,
+    },
+
     /// A migration's SQL failed. That migration was rolled back whole and the
     /// database is still at the last version that committed.
     #[error("migration {version} ({name}) failed: {source}")]
