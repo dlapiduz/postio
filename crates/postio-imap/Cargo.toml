@@ -31,6 +31,14 @@ imap = [
 # self dev-dependency below turns it on for this crate's own test suite.
 test-corpus = ["postio-model/test-corpus"]
 
+# Test-only: the in-process IMAP server in `test_server`. Off by default so a
+# shipped build carries no listening socket at all. It implies `test-corpus`
+# because its mailboxes are seeded from the shared `.eml` fixtures rather than
+# from fixtures invented here, and it deliberately does *not* imply `imap`:
+# the server is written against the wire, not against `io-imap`, so a bug in
+# the protocol crate cannot hide inside the thing meant to catch it.
+test-server = ["test-corpus"]
+
 [dependencies]
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
@@ -51,7 +59,12 @@ url = "2.5.8"
 zeroize = "1.9.0"
 
 [dev-dependencies]
-postio-imap = { path = ".", features = ["test-corpus"] }
+# The protocol crate, for the handful of commands `postio-imap` does not wrap
+# yet — QRESYNC SELECT, ENABLE, STORE, COPY, APPEND — which `tests/imap_loopback.rs`
+# drives against the in-process server directly. Same exact pin as above, so
+# cargo resolves one copy and the types match.
+io-imap = { version = "=0.6.0", default-features = false, features = ["client"] }
+postio-imap = { path = ".", features = ["test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 serde-xml-rs = "0.8"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
