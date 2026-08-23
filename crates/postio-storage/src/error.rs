@@ -22,6 +22,33 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// A row holds a value in an enumerated column that this build does not
+    /// know. The schema's CHECK constraints keep the vocabulary closed, so this
+    /// means a newer Postio wrote the row, or something edited it by hand.
+    #[error("column `{column}` holds `{value}`, which this build does not recognise")]
+    UnknownEnum {
+        /// `table.column` the value came from.
+        column: &'static str,
+        /// What was there.
+        value: String,
+    },
+
+    /// A write was asked for against a value that has never been stored.
+    #[error("this {entity} has not been persisted yet; create it instead of updating it")]
+    NotPersisted {
+        /// What kind of thing it was.
+        entity: &'static str,
+    },
+
+    /// A write named a row that is not there.
+    #[error("no {entity} with id {id}")]
+    NotFound {
+        /// What kind of thing was being written.
+        entity: &'static str,
+        /// The id that matched nothing.
+        id: i64,
+    },
+
     /// A blob key is not a digest of the right shape. Nothing is looked up:
     /// an id from a corrupt row must not be able to name a path of its own
     /// choosing.

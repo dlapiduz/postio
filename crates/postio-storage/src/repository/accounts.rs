@@ -1,0 +1,449 @@
+//! Accounts and the identities that send from them.
+
+use postio_model::{
+    Account, AccountId, AuthMethod, EmailAddress, Identity, IdentityId, ServerConfig, Signature,
+    TransportSecurity,
+};
+use rusqlite::{Connection, Row, params};
+
+use super::{from_millis, require_persisted, to_millis, unknown_enum};
+use crate::error::{Error, Result};
+
+/// Reads and writes [`Account`] rows, together with their identities.
+///
+/// An account and its identities are one unit: [`AccountRepository::get`]
+/// returns the identities loaded, and [`AccountRepository::update`] makes the
+/// stored list match the one it is handed. Use [`IdentityRepository`] to change
+/// one identity without rewriting the account.
+#[derive(Debug)]
+pub struct AccountRepository<'a> {
+    connection: &'a Connection,
+}
+
+const ACCOUNT_COLUMNS: &str = "\
+id, display_name, address, address_name, incoming_host, incoming_port, incoming_security,
+incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
+auth_method, enabled, created_at";
+
+impl<'a> AccountRepository<'a> {
+    /// Borrows a connection.
+    pub fn new(connection: &'a Connection) -> Self {
+        Self { connection }
+    }
+
+    /// Inserts `account` and every identity on it, assigning their ids.
+    ///
+    /// The account row and its identities are written in one transaction: an
+    /// account whose identity list was half saved would show a "From" picker
+    /// missing the address the user just typed.
+    pub fn create(&self, account: &mut Account) -> Result<AccountId> {
+        let transaction = self.connection.unchecked_transaction()?;
+
+        transaction.execute(
+            "INSERT INTO accounts (display_name, address, address_name, incoming_host,
+                                   incoming_port, incoming_security, incoming_username,
+                                   outgoing_host, outgoing_port, outgoing_security,
+                                   outgoing_username, auth_method, enabled, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                account.display_name,
+                account.address.address,
+                account.address.name,
+                account.incoming.host,
+                account.incoming.port,
+                account.incoming.security.as_str(),
+                account.incoming.username,
+                account.outgoing.host,
+                account.outgoing.port,
+                account.outgoing.security.as_str(),
+                account.outgoing.username,
+                account.auth.as_str(),
+                account.enabled,
+                to_millis(account.created_at),
+            ],
+        )?;
+
+        let id = AccountId::new(transaction.last_insert_rowid());
+        account.id = id;
+        for (position, identity) in account.identities.iter_mut().enumerate() {
+            identity.account_id = id;
+            identity.id = IdentityId::new(insert_identity(&transaction, identity, position)?);
+        }
+
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Writes `account` back, making its identity list authoritative.
+    ///
+    /// Identities present in the value are inserted or updated; identities the
+    /// database still has and the value does not are deleted. An identity that
+    /// survives keeps its id, so a draft that points at it survives too. Takes
+    /// `&mut` for the same reason [`AccountRepository::create`] does: a newly
+    /// added identity gets its id written back.
+    ///
+    /// The account owns the list, so each identity's `account_id` is set from
+    /// the account rather than trusted — an identity built by the settings UI
+    /// has not been told which account it is about to belong to.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotPersisted`] if the account has no id yet — that is a
+    /// [`AccountRepository::create`], and silently doing nothing would lose the
+    /// user's edit.
+    pub fn update(&self, account: &mut Account) -> Result<()> {
+        let id = require_persisted(account.id.get(), "account")?;
+        let account_id = account.id;
+        let transaction = self.connection.unchecked_transaction()?;
+
+        let changed = transaction.execute(
+            "UPDATE accounts
+                SET display_name = ?2, address = ?3, address_name = ?4,
+                    incoming_host = ?5, incoming_port = ?6, incoming_security = ?7,
+                    incoming_username = ?8, outgoing_host = ?9, outgoing_port = ?10,
+                    outgoing_security = ?11, outgoing_username = ?12, auth_method = ?13,
+                    enabled = ?14, created_at = ?15
+              WHERE id = ?1",
+            params![
+                id,
+                account.display_name,
+                account.address.address,
+                account.address.name,
+                account.incoming.host,
+                account.incoming.port,
+                account.incoming.security.as_str(),
+                account.incoming.username,
+                account.outgoing.host,
+                account.outgoing.port,
+                account.outgoing.security.as_str(),
+                account.outgoing.username,
+                account.auth.as_str(),
+                account.enabled,
+                to_millis(account.created_at),
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "account",
+                id,
+            });
+        }
+
+        // Clear the default first: the schema allows only one per account, and
+        // moving it between two identities would otherwise collide mid-update.
+        transaction.execute(
+            "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
+            [id],
+        )?;
+
+        let mut kept: Vec<i64> = Vec::with_capacity(account.identities.len());
+        for (position, identity) in account.identities.iter_mut().enumerate() {
+            identity.account_id = account_id;
+            if identity.id.is_assigned() {
+                update_identity(&transaction, identity, position)?;
+            } else {
+                identity.id = IdentityId::new(insert_identity(&transaction, identity, position)?);
+            }
+            kept.push(identity.id.get());
+        }
+
+        let placeholders = placeholders(kept.len());
+        let mut statement = transaction.prepare(&format!(
+            "DELETE FROM identities WHERE account_id = ?1 AND id NOT IN ({placeholders})"
+        ))?;
+        let mut arguments: Vec<i64> = Vec::with_capacity(kept.len() + 1);
+        arguments.push(id);
+        arguments.extend(kept);
+        statement.execute(rusqlite::params_from_iter(arguments))?;
+        drop(statement);
+
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// One account, with its identities.
+    pub fn get(&self, id: AccountId) -> Result<Option<Account>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {ACCOUNT_COLUMNS} FROM accounts WHERE id = ?1"
+        ))?;
+        let mut rows = statement.query([id.get()])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let mut account = read_account(row)?;
+        drop(rows);
+        drop(statement);
+        account.identities = IdentityRepository::new(self.connection).list_for_account(id)?;
+        Ok(Some(account))
+    }
+
+    /// Every account, in creation order, with their identities.
+    pub fn list(&self) -> Result<Vec<Account>> {
+        self.list_where("")
+    }
+
+    /// Every account that participates in sync.
+    pub fn list_enabled(&self) -> Result<Vec<Account>> {
+        self.list_where("WHERE enabled = 1")
+    }
+
+    fn list_where(&self, filter: &str) -> Result<Vec<Account>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {ACCOUNT_COLUMNS} FROM accounts {filter} ORDER BY id"
+        ))?;
+        let rows = statement.query_map([], read_account)?;
+        let mut accounts: Vec<Account> = rows.collect::<Result<_, _>>()?;
+        drop(statement);
+
+        let identities = IdentityRepository::new(self.connection);
+        for account in &mut accounts {
+            account.identities = identities.list_for_account(account.id)?;
+        }
+        Ok(accounts)
+    }
+
+    /// Deletes an account and everything that hangs off it, returning whether
+    /// there was one.
+    ///
+    /// Mailboxes, messages, threads, labels, drafts and queued operations all
+    /// cascade in the schema; the blob store is swept separately by
+    /// [`BlobStore::collect_garbage`](crate::blob::BlobStore::collect_garbage).
+    pub fn delete(&self, id: AccountId) -> Result<bool> {
+        let deleted = self
+            .connection
+            .execute("DELETE FROM accounts WHERE id = ?1", [id.get()])?;
+        Ok(deleted > 0)
+    }
+}
+
+/// Reads and writes individual [`Identity`] rows.
+#[derive(Debug)]
+pub struct IdentityRepository<'a> {
+    connection: &'a Connection,
+}
+
+const IDENTITY_COLUMNS: &str = "\
+id, account_id, display_name, address, address_name, reply_to_address, reply_to_name,
+signature_text, signature_html, is_default";
+
+impl<'a> IdentityRepository<'a> {
+    /// Borrows a connection.
+    pub fn new(connection: &'a Connection) -> Self {
+        Self { connection }
+    }
+
+    /// Inserts an identity at the end of its account's list, assigning its id.
+    pub fn create(&self, identity: &mut Identity) -> Result<IdentityId> {
+        let account_id = require_persisted(identity.account_id.get(), "account")?;
+        let position: i64 = self.connection.query_row(
+            "SELECT coalesce(max(position) + 1, 0) FROM identities WHERE account_id = ?1",
+            [account_id],
+            |row| row.get(0),
+        )?;
+        let id = insert_identity(self.connection, identity, position as usize)?;
+        identity.id = IdentityId::new(id);
+        Ok(identity.id)
+    }
+
+    /// Writes an identity back, leaving its position alone.
+    pub fn update(&self, identity: &Identity) -> Result<()> {
+        let id = require_persisted(identity.id.get(), "identity")?;
+        let changed = self.connection.execute(
+            "UPDATE identities
+                SET display_name = ?2, address = ?3, address_name = ?4,
+                    reply_to_address = ?5, reply_to_name = ?6,
+                    signature_text = ?7, signature_html = ?8, is_default = ?9
+              WHERE id = ?1",
+            params![
+                id,
+                identity.display_name,
+                identity.address.address,
+                identity.address.name,
+                identity.reply_to.as_ref().map(|to| to.address.clone()),
+                identity.reply_to.as_ref().and_then(|to| to.name.clone()),
+                identity.signature.as_ref().map(|s| s.text.clone()),
+                identity.signature.as_ref().and_then(|s| s.html.clone()),
+                identity.is_default,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "identity",
+                id,
+            });
+        }
+        Ok(())
+    }
+
+    /// One identity.
+    pub fn get(&self, id: IdentityId) -> Result<Option<Identity>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {IDENTITY_COLUMNS} FROM identities WHERE id = ?1"
+        ))?;
+        let mut rows = statement.query([id.get()])?;
+        Ok(rows.next()?.map(read_identity).transpose()?)
+    }
+
+    /// An account's identities, in the order the picker shows them.
+    pub fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Identity>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {IDENTITY_COLUMNS} FROM identities WHERE account_id = ?1 ORDER BY position, id"
+        ))?;
+        let rows = statement.query_map([account_id.get()], read_identity)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Makes one identity the account's default, clearing any other.
+    pub fn set_default(&self, account_id: AccountId, id: IdentityId) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
+            [account_id.get()],
+        )?;
+        let changed = transaction.execute(
+            "UPDATE identities SET is_default = 1 WHERE id = ?1 AND account_id = ?2",
+            [id.get(), account_id.get()],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "identity",
+                id: id.get(),
+            });
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Deletes an identity, returning whether there was one.
+    pub fn delete(&self, id: IdentityId) -> Result<bool> {
+        let deleted = self
+            .connection
+            .execute("DELETE FROM identities WHERE id = ?1", [id.get()])?;
+        Ok(deleted > 0)
+    }
+}
+
+fn insert_identity(connection: &Connection, identity: &Identity, position: usize) -> Result<i64> {
+    connection.execute(
+        "INSERT INTO identities (account_id, display_name, address, address_name,
+                                 reply_to_address, reply_to_name, signature_text,
+                                 signature_html, is_default, position)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            identity.account_id.get(),
+            identity.display_name,
+            identity.address.address,
+            identity.address.name,
+            identity.reply_to.as_ref().map(|to| to.address.clone()),
+            identity.reply_to.as_ref().and_then(|to| to.name.clone()),
+            identity.signature.as_ref().map(|s| s.text.clone()),
+            identity.signature.as_ref().and_then(|s| s.html.clone()),
+            identity.is_default,
+            position as i64,
+        ],
+    )?;
+    Ok(connection.last_insert_rowid())
+}
+
+fn update_identity(connection: &Connection, identity: &Identity, position: usize) -> Result<()> {
+    connection.execute(
+        "UPDATE identities
+            SET account_id = ?2, display_name = ?3, address = ?4, address_name = ?5,
+                reply_to_address = ?6, reply_to_name = ?7, signature_text = ?8,
+                signature_html = ?9, is_default = ?10, position = ?11
+          WHERE id = ?1",
+        params![
+            identity.id.get(),
+            identity.account_id.get(),
+            identity.display_name,
+            identity.address.address,
+            identity.address.name,
+            identity.reply_to.as_ref().map(|to| to.address.clone()),
+            identity.reply_to.as_ref().and_then(|to| to.name.clone()),
+            identity.signature.as_ref().map(|s| s.text.clone()),
+            identity.signature.as_ref().and_then(|s| s.html.clone()),
+            identity.is_default,
+            position as i64,
+        ],
+    )?;
+    Ok(())
+}
+
+fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
+    let incoming_security: String = row.get(6)?;
+    let outgoing_security: String = row.get(10)?;
+    let auth: String = row.get(12)?;
+
+    Ok(Account {
+        id: AccountId::new(row.get(0)?),
+        display_name: row.get(1)?,
+        address: EmailAddress::new(row.get::<_, Option<String>>(3)?, row.get::<_, String>(2)?),
+        incoming: ServerConfig {
+            host: row.get(4)?,
+            port: row.get(5)?,
+            security: parse_security(&incoming_security, "accounts.incoming_security")?,
+            username: row.get(7)?,
+        },
+        outgoing: ServerConfig {
+            host: row.get(8)?,
+            port: row.get(9)?,
+            security: parse_security(&outgoing_security, "accounts.outgoing_security")?,
+            username: row.get(11)?,
+        },
+        auth: AuthMethod::from_name(&auth)
+            .ok_or_else(|| to_sqlite(unknown_enum("accounts.auth_method", auth)))?,
+        enabled: row.get(13)?,
+        identities: Vec::new(),
+        created_at: from_millis(row.get(14)?),
+    })
+}
+
+fn read_identity(row: &Row<'_>) -> rusqlite::Result<Identity> {
+    let reply_to_address: Option<String> = row.get(5)?;
+    let signature_text: Option<String> = row.get(7)?;
+
+    Ok(Identity {
+        id: IdentityId::new(row.get(0)?),
+        account_id: AccountId::new(row.get(1)?),
+        display_name: row.get(2)?,
+        address: EmailAddress::new(row.get::<_, Option<String>>(4)?, row.get::<_, String>(3)?),
+        reply_to: reply_to_address
+            .map(|address| {
+                Ok::<_, rusqlite::Error>(EmailAddress::new(
+                    row.get::<_, Option<String>>(6)?,
+                    address,
+                ))
+            })
+            .transpose()?,
+        signature: signature_text
+            .map(|text| {
+                Ok::<_, rusqlite::Error>(Signature {
+                    text,
+                    html: row.get(8)?,
+                })
+            })
+            .transpose()?,
+        is_default: row.get(9)?,
+    })
+}
+
+fn parse_security(value: &str, column: &'static str) -> rusqlite::Result<TransportSecurity> {
+    TransportSecurity::from_name(value).ok_or_else(|| to_sqlite(unknown_enum(column, value)))
+}
+
+/// Wraps one of our errors so it can travel back out of a rusqlite row mapper.
+///
+/// `query_map` insists on `rusqlite::Error`; `FromSqlConversionFailure` is the
+/// variant meant for "this column held something I cannot turn into the type
+/// asked for", which is exactly the case.
+fn to_sqlite(error: Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+}
+
+/// `?1, ?2, ...` for `count` parameters, offset by one for the leading id.
+fn placeholders(count: usize) -> String {
+    (0..count)
+        .map(|index| format!("?{}", index + 2))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
