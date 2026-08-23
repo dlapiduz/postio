@@ -11,7 +11,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_core::runtime::{Engine, EngineParts};
+use postio_core::runtime::{Engine, EngineParts, Link, NetworkState};
 use postio_imap::backend::{Fault, MockBackend};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
@@ -47,6 +47,7 @@ fn engine_with_backend() -> (
 
     let backend = Arc::new(MockBackend::new());
     let engine = Engine::spawn(EngineParts {
+        account: report.account.id,
         database: database.clone(),
         blobs,
         backend: backend.clone(),
@@ -57,6 +58,7 @@ fn engine_with_backend() -> (
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
+        reconnect: Default::default(),
     })
     .expect("the engine starts");
 
@@ -65,10 +67,10 @@ fn engine_with_backend() -> (
 
 #[tokio::test]
 async fn an_empty_queue_drains_to_nothing() {
-    let (engine, _database, report, _events) = engine();
+    let (engine, _database, _report, _events) = engine();
 
     let summary = engine
-        .drain(report.account.id)
+        .drain()
         .await
         .expect("draining an empty queue is not a failure");
 
@@ -94,7 +96,7 @@ async fn a_drain_settles_the_rows_it_finds() {
     let message = queue_a_flag_change(&database, &report, inbox.id);
     let _ = message;
 
-    let summary = engine.drain(report.account.id).await.expect("a drain pass");
+    let summary = engine.drain().await.expect("a drain pass");
 
     assert!(
         !summary.is_empty(),
@@ -144,13 +146,10 @@ async fn a_message_nobody_has_is_nothing_to_fetch() {
 async fn the_engine_answers_after_the_handle_is_cloned() {
     // Cloning gives another handle to the same thread; both have to work, or
     // the composition root cannot hand one to each surface that needs it.
-    let (engine, _database, report, _events) = engine();
+    let (engine, _database, _report, _events) = engine();
     let second = engine.clone();
 
-    let (first, second) = tokio::join!(
-        engine.drain(report.account.id),
-        second.drain(report.account.id)
-    );
+    let (first, second) = tokio::join!(engine.drain(), second.drain());
     first.expect("the first handle works");
     second.expect("and so does the clone");
 }
@@ -171,7 +170,7 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
     backend.inject_after(1, Fault::AuthFailed);
 
     let error = engine
-        .drain(report.account.id)
+        .drain()
         .await
         .expect_err("the credentials were refused");
     assert!(!error.message().is_empty());
@@ -196,6 +195,108 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
             }
         )),
         "the UI was not told the connection is the problem"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_password_blocks_and_a_new_one_unblocks() {
+    // A refused password does not get better on a timer, so nothing retries
+    // it until someone says the credentials have changed. That is the one
+    // thing `retry_now` is for.
+    let (engine, _database, _report, events, backend) = engine_with_backend();
+    backend.inject(Fault::AuthFailed);
+    backend.inject_after(1, Fault::AuthFailed);
+
+    engine
+        .drain()
+        .await
+        .expect_err("the credentials were refused");
+    let blocked = engine.link().await.expect("the engine answers");
+    assert!(
+        matches!(blocked, Link::Blocked(_)),
+        "a refused password should stop the link, not back it off: {blocked:?}"
+    );
+    assert!(
+        announced(&events).iter().any(|event| matches!(
+            event,
+            Event::ConnectionChanged {
+                state: postio_core::ConnectionState::Failing,
+                ..
+            }
+        )),
+        "the status line was not told"
+    );
+
+    // A new password, and the link is worth trying again.
+    let moved = engine.retry_now().await.expect("the engine answers");
+    assert!(
+        !matches!(moved, Link::Blocked(_)),
+        "a new password should clear the block: {moved:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_that_dies_mid_drain_parks_the_link_at_once() {
+    // The point of `observe`. A session that died part-way through has
+    // already cost the user one action; waiting for the next poll to admit it
+    // costs another. Whatever hit the broken connection tells the supervisor
+    // directly.
+    let (engine, database, report, _events, backend) = engine_with_backend();
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+    queue_a_flag_change(&database, &report, inbox.id);
+
+    // Connect, so the link is genuinely up first.
+    engine.drain().await.expect("a first pass connects");
+    assert!(
+        engine.link().await.expect("the engine answers").is_online(),
+        "the link should be up before this test means anything"
+    );
+
+    queue_a_flag_change(&database, &report, inbox.id);
+    backend.inject(Fault::Disconnect);
+    let error = engine.drain().await.expect_err("the session died");
+    assert!(!error.message().is_empty());
+
+    let link = engine.link().await.expect("the engine answers");
+    assert!(
+        matches!(link, Link::Waiting { .. }),
+        "the link should be backing off already, without a poll: {link:?}"
+    );
+}
+
+#[tokio::test]
+async fn no_network_is_not_a_backoff() {
+    // `Link::Offline` is deliberately not `Link::Waiting`: with no network
+    // there is nothing to retry against, so attempts are not spent and the
+    // status line says "offline" rather than counting down to a reconnection
+    // that cannot succeed.
+    let (engine, _database, _report, events, _backend) = engine_with_backend();
+
+    let link = engine
+        .set_network(NetworkState::Down)
+        .await
+        .expect("the engine answers");
+    assert_eq!(link, Link::Offline);
+    assert!(
+        announced(&events).iter().any(|event| matches!(
+            event,
+            Event::ConnectionChanged {
+                state: postio_core::ConnectionState::Offline,
+                ..
+            }
+        )),
+        "the status line was not told the machine is offline"
+    );
+
+    // And a drain while offline leaves the queue alone rather than failing it.
+    let error = engine
+        .drain()
+        .await
+        .expect_err("there is nothing to send over");
+    assert!(
+        error.message().contains("network"),
+        "the reason should name the network: {}",
+        error.message()
     );
 }
 

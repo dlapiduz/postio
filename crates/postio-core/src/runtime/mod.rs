@@ -24,12 +24,16 @@
 //!   expunges over IMAP, and sends over SMTP.
 //! * **Backfilling** message bodies: seeded per mailbox after a sync, and
 //!   jumped to the front when the reading pane opens something.
+//! * **Staying connected**: a `Supervisor` per engine, polled on a timer and
+//!   told directly by whatever hit a broken connection, so a dropped session
+//!   is noticed by the operation that found it rather than by the next tick.
 //!
 //! Both report back as [`Event`]s on the sink they were given, so the UI
 //! learns what happened the same way it learns everything else.
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
 use postio_imap::backend::MailBackend;
@@ -37,7 +41,21 @@ use postio_imap::secret::SecretStore;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::{BlobStore, Database, Pool};
-use postio_sync::{Backfill, BackfillPolicy, Drainer, RetryPolicy, SmtpContext, backfill};
+use postio_sync::status::StatusTracker;
+use postio_sync::{
+    Backfill, BackfillPolicy, Drainer, ReconnectPolicy, RetryPolicy, SmtpContext, Supervisor,
+    SyncError, SyncStatus, backfill,
+};
+
+/// What the connection is doing, and what the operating system says about the
+/// network.
+///
+/// Re-exported rather than mirrored: whoever holds an [`Engine`] is the
+/// composition root, which depends on `postio-sync` anyway, and a second
+/// enum saying the same thing is a second enum to keep in step. The *frontend*
+/// never sees these — this whole module is behind the `runtime` feature, which
+/// `postio-gtk` cannot enable.
+pub use postio_sync::{Blocker, Link, NetworkState};
 
 use crate::Event;
 use crate::bridge::EventSink;
@@ -106,6 +124,12 @@ impl std::error::Error for EngineError {}
 /// choosing a transport, a keyring and a blob directory is exactly the kind of
 /// decision a runtime should be handed rather than make.
 pub struct EngineParts {
+    /// The account this engine is for.
+    ///
+    /// One engine per account, because a second account is a second server,
+    /// a second password and a second link to keep up. Nothing here is shared
+    /// between them but the database.
+    pub account: AccountId,
     /// The local store.
     pub database: Database,
     /// Where attachment bytes are read from and the sent copy is written to.
@@ -123,13 +147,27 @@ pub struct EngineParts {
     pub retry: RetryPolicy,
     /// How eagerly to fetch bodies nobody has asked for yet.
     pub backfill: BackfillPolicy,
+    /// How long to wait before trying a dropped connection again.
+    pub reconnect: ReconnectPolicy,
 }
 
 /// One unit of work for the engine's thread.
 enum Job {
     Drain {
-        account: AccountId,
         reply: tokio::sync::oneshot::Sender<Result<DrainSummary, EngineError>>,
+    },
+    /// The user supplied a new password, so a blocked link is worth trying.
+    RetryNow {
+        reply: tokio::sync::oneshot::Sender<Link>,
+    },
+    /// The operating system changed its mind about the network.
+    SetNetwork {
+        state: NetworkState,
+        reply: tokio::sync::oneshot::Sender<Link>,
+    },
+    /// What the link is doing right now.
+    LinkState {
+        reply: tokio::sync::oneshot::Sender<Link>,
     },
     SeedBackfill {
         mailbox: MailboxId,
@@ -154,7 +192,10 @@ pub struct Engine {
 impl fmt::Debug for Job {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Job::Drain { account, .. } => write!(formatter, "Drain({account})"),
+            Job::Drain { .. } => formatter.write_str("Drain"),
+            Job::RetryNow { .. } => formatter.write_str("RetryNow"),
+            Job::SetNetwork { state, .. } => write!(formatter, "SetNetwork({state:?})"),
+            Job::LinkState { .. } => formatter.write_str("LinkState"),
             Job::SeedBackfill { mailbox, .. } => write!(formatter, "SeedBackfill({mailbox})"),
             Job::RequestBody { message, .. } => write!(formatter, "RequestBody({message})"),
         }
@@ -184,8 +225,32 @@ impl Engine {
     /// One pass. The caller decides when the next one runs — after a
     /// reconnect, after the shortest deferred backoff elapses, or when the
     /// user does something new.
-    pub async fn drain(&self, account: AccountId) -> Result<DrainSummary, EngineError> {
-        self.ask(|reply| Job::Drain { account, reply }).await
+    pub async fn drain(&self) -> Result<DrainSummary, EngineError> {
+        self.ask(|reply| Job::Drain { reply }).await
+    }
+
+    /// Try a blocked link again, because the user supplied a new password.
+    ///
+    /// The one thing that clears [`Link::Blocked`]: a refused password does
+    /// not get better on a timer, so nothing retries it until someone says
+    /// the credentials have changed.
+    pub async fn retry_now(&self) -> Result<Link, EngineError> {
+        self.tell(|reply| Job::RetryNow { reply }).await
+    }
+
+    /// Tell the engine what the operating system says about the network.
+    ///
+    /// [`Link::Offline`] is deliberately not [`Link::Waiting`]: with no
+    /// network there is nothing to retry against, so attempts are not spent
+    /// and the status line says "offline" rather than counting down to a
+    /// reconnection that cannot succeed.
+    pub async fn set_network(&self, state: NetworkState) -> Result<Link, EngineError> {
+        self.tell(|reply| Job::SetNetwork { state, reply }).await
+    }
+
+    /// What the link is doing right now.
+    pub async fn link(&self) -> Result<Link, EngineError> {
+        self.tell(|reply| Job::LinkState { reply }).await
     }
 
     /// Queue up to `limit` bodies worth having for `mailbox`.
@@ -214,6 +279,21 @@ impl Engine {
         self.ask(|reply| Job::RequestBody { message, reply }).await
     }
 
+    /// As [`ask`](Self::ask), for a job whose answer cannot fail.
+    async fn tell<T>(
+        &self,
+        job: impl FnOnce(tokio::sync::oneshot::Sender<T>) -> Job,
+    ) -> Result<T, EngineError> {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        self.jobs
+            .send(job(reply))
+            .await
+            .map_err(|_| EngineError::new("the sync engine has stopped"))?;
+        answer
+            .await
+            .map_err(|_| EngineError::new("the sync engine dropped the work"))
+    }
+
     async fn ask<T>(
         &self,
         job: impl FnOnce(tokio::sync::oneshot::Sender<Result<T, EngineError>>) -> Job,
@@ -228,6 +308,16 @@ impl Engine {
             .unwrap_or_else(|_| Err(EngineError::new("the sync engine dropped the work")))
     }
 }
+
+/// How often the link is polled when nothing else is happening.
+///
+/// The supervisor is a state machine rather than a task, so the cadence is
+/// the runtime's to choose. Five seconds is often enough that a dropped
+/// connection is noticed promptly and rare enough that an idle Postio is
+/// doing nothing most of the time — and it is only the *floor*: whatever hits
+/// a broken connection tells the supervisor directly through `observe`, so
+/// the common case does not wait for a tick at all.
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The engine's thread: a current-thread runtime and a connection of its own.
 fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
@@ -245,50 +335,106 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
     };
 
     runtime.block_on(async move {
-        let mut backfill = Backfill::new(parts.backfill);
-        while let Ok(job) = inbox.recv().await {
-            match job {
-                Job::Drain { account, reply } => {
-                    let outcome = drain(&parts, &pool, account).await;
-                    announce(&parts.events, &outcome);
-                    let _ = reply.send(outcome);
-                }
-                Job::SeedBackfill {
-                    mailbox,
-                    limit,
-                    reply,
-                } => {
-                    let outcome = with_connection(&pool, |connection| {
-                        backfill::seed(connection, &mut backfill, mailbox, limit)
-                            .map_err(|error| EngineError::new(error.to_string()))
-                    });
-                    let _ = reply.send(outcome);
-                }
-                Job::RequestBody { message, reply } => {
-                    let outcome = with_connection(&pool, |connection| {
-                        backfill::request_body(connection, &mut backfill, message)
-                            .map_err(|error| EngineError::new(error.to_string()))
-                    });
-                    let _ = reply.send(outcome);
+        let mut state = State {
+            backfill: Backfill::new(parts.backfill),
+            supervisor: Supervisor::new(parts.reconnect),
+            status: StatusTracker::new(),
+        };
+        let mut ticker = tokio::time::interval(POLL_INTERVAL);
+        // The first tick fires immediately; skipping it would leave the link
+        // unexamined until the first interval elapsed.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                job = inbox.recv() => match job {
+                    Ok(job) => serve(job, &parts, &pool, &mut state).await,
+                    // Every handle dropped: nothing more will be asked.
+                    Err(_) => break,
+                },
+                _ = ticker.tick() => {
+                    let moved = state
+                        .supervisor
+                        .poll(parts.backend.as_ref(), Utc::now(), entropy())
+                        .await;
+                    announce_link(&parts, &mut state, moved);
                 }
             }
         }
     });
 }
 
+/// What the engine's thread keeps between jobs.
+struct State {
+    backfill: Backfill,
+    supervisor: Supervisor,
+    status: StatusTracker,
+}
+
+async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
+    match job {
+        Job::Drain { reply } => {
+            let outcome = drain(parts, pool, state).await;
+            announce_drain(&parts.events, &outcome);
+            let _ = reply.send(outcome);
+        }
+        Job::SeedBackfill {
+            mailbox,
+            limit,
+            reply,
+        } => {
+            let outcome = with_connection(pool, |connection| {
+                backfill::seed(connection, &mut state.backfill, mailbox, limit)
+                    .map_err(|error| EngineError::new(error.to_string()))
+            });
+            let _ = reply.send(outcome);
+        }
+        Job::RequestBody { message, reply } => {
+            let outcome = with_connection(pool, |connection| {
+                backfill::request_body(connection, &mut state.backfill, message)
+                    .map_err(|error| EngineError::new(error.to_string()))
+            });
+            let _ = reply.send(outcome);
+        }
+        Job::RetryNow { reply } => {
+            let moved = state.supervisor.retry_now(Utc::now());
+            announce_link(parts, state, moved);
+            let _ = reply.send(state.supervisor.link().clone());
+        }
+        Job::SetNetwork {
+            state: network,
+            reply,
+        } => {
+            let moved = state.supervisor.set_network(network, Utc::now());
+            announce_link(parts, state, moved);
+            let _ = reply.send(state.supervisor.link().clone());
+        }
+        Job::LinkState { reply } => {
+            let _ = reply.send(state.supervisor.link().clone());
+        }
+    }
+}
+
 /// One drain pass, with SMTP wired in so `Operation::Send` can actually send.
 async fn drain(
     parts: &EngineParts,
     pool: &Pool,
-    account: AccountId,
+    state: &mut State,
 ) -> Result<DrainSummary, EngineError> {
     // A drain needs a session. Without one the queue is not *failed*, it is
     // simply not sent yet — which is the whole local-first promise: the write
     // already happened here, and reaching the server is a separate thing that
-    // can wait. So a connection that will not open leaves every row where it
-    // is and is reported as a connection problem, not as an operation that
-    // went wrong.
-    connect(parts, account).await?;
+    // can wait. So a link that is not up leaves every row where it is.
+    if !state.supervisor.link().is_online() {
+        let moved = state
+            .supervisor
+            .poll(parts.backend.as_ref(), Utc::now(), entropy())
+            .await;
+        announce_link(parts, state, moved);
+    }
+    if !state.supervisor.link().is_online() {
+        return Err(EngineError::new(offline_reason(state.supervisor.link())));
+    }
 
     let connection = pool
         .get()
@@ -301,10 +447,19 @@ async fn drain(
     };
     let drainer = Drainer::with_policy(parts.backend.as_ref(), parts.retry).with_smtp(smtp);
 
-    let report = drainer
-        .drain(&connection, account, Utc::now())
-        .await
-        .map_err(|error| EngineError::new(error.to_string()))?;
+    let report = match drainer.drain(&connection, parts.account, Utc::now()).await {
+        Ok(report) => report,
+        Err(error) => {
+            // Noticed by the operation that hit it rather than by the next
+            // tick: a session that died mid-drain has already cost the user
+            // one action, and waiting five seconds to admit it costs another.
+            if let SyncError::Backend(backend) = &error {
+                let moved = state.supervisor.observe(backend, Utc::now());
+                announce_link(parts, state, moved);
+            }
+            return Err(EngineError::new(error.to_string()));
+        }
+    };
 
     Ok(DrainSummary {
         applied: report.applied,
@@ -320,35 +475,48 @@ async fn drain(
     })
 }
 
-/// Make sure there is a session to drain over, opening one if there is not.
-///
-/// `capabilities` is the cheap question — it answers from the session that is
-/// already open — so the common case costs nothing. Only when there is no
-/// session does this dial.
-async fn connect(parts: &EngineParts, account: AccountId) -> Result<(), EngineError> {
-    if parts.backend.capabilities().await.is_ok() {
-        return Ok(());
+/// Why the link is not usable, phrased for the user.
+fn offline_reason(link: &Link) -> String {
+    match link {
+        Link::Blocked(blocker) => blocker.reason().to_string(),
+        Link::Offline => "there is no network".to_string(),
+        Link::Waiting { .. } => "not connected yet".to_string(),
+        Link::Online { .. } => "connected".to_string(),
     }
-    match parts.backend.connect().await {
-        Ok(_) => {
-            parts.events.emit(Event::ConnectionChanged {
-                account,
-                state: crate::ConnectionState::Online,
-            });
-            Ok(())
-        }
-        Err(error) => {
-            parts.events.emit(Event::ConnectionChanged {
-                account,
-                state: crate::ConnectionState::Failing,
-            });
-            Err(EngineError::new(error.to_string()))
-        }
+}
+
+/// Turn a link transition into what the status line shows.
+///
+/// `StatusTracker` already throttles and shapes these, so this is only the
+/// last hop: its `SyncStatus` onto core's own `ConnectionState`, which is the
+/// summary the frontend reads and which `postio-core` promised would not
+/// change when the sync engine's state machine does.
+fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
+    let Some(link) = moved else {
+        return;
+    };
+    let status = state.status.on_link(&link);
+    let connection = match &status {
+        SyncStatus::Offline => crate::ConnectionState::Offline,
+        SyncStatus::Connecting => crate::ConnectionState::Connecting,
+        SyncStatus::Idle { .. } | SyncStatus::Syncing { .. } => crate::ConnectionState::Online,
+        SyncStatus::Error { .. } => crate::ConnectionState::Failing,
+    };
+    parts.events.emit(Event::ConnectionChanged {
+        account: parts.account,
+        state: connection,
+    });
+    // `ConnectionState::Failing` carries no reason of its own, deliberately.
+    // The reason travels beside it, which is what the status line reads.
+    if let SyncStatus::Error { reason, .. } = &status {
+        parts.events.emit(Event::Error {
+            message: reason.clone(),
+        });
     }
 }
 
 /// Say what a drain did, so the UI hears it the way it hears everything else.
-fn announce(events: &EventSink, outcome: &Result<DrainSummary, EngineError>) {
+fn announce_drain(events: &EventSink, outcome: &Result<DrainSummary, EngineError>) {
     match outcome {
         Ok(summary) => {
             // A mailbox the server disagreed with has to be re-read, and the
@@ -370,6 +538,18 @@ fn announce(events: &EventSink, outcome: &Result<DrainSummary, EngineError>) {
             });
         }
     }
+}
+
+/// Jitter for the reconnect backoff.
+///
+/// The clock rather than a random number generator: this only has to stop a
+/// fleet of clients retrying in lockstep, and a dependency for that would be
+/// a dependency for nothing.
+fn entropy() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.subsec_nanos() as u64)
+        .unwrap_or(0)
 }
 
 /// Run `work` with a connection, turning a checkout failure into an error the
