@@ -168,7 +168,5 @@ pub trait MailStore: Send + Sync {
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>>;
 }
 
-#[cfg(feature = "runtime")]
 mod sqlite;
-#[cfg(feature = "runtime")]
 pub use sqlite::SqliteStore;

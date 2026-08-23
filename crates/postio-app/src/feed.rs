@@ -22,12 +22,12 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use postio_core::store::{ListScope, MailStore, PageRequest as StoreRequest};
 use postio_gtk::feed::{
     MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::list::Row;
 use postio_model::ids::AccountId;
+use postio_runtime::store::{ListScope, MailStore, PageRequest as StoreRequest};
 
 /// The frontend's two sources, over one store.
 pub struct Sources {
@@ -64,7 +64,7 @@ impl Sources {
 
 /// The shape `ask` takes: a `Send` future the runtime can poll.
 type SendRead<T> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<T, postio_core::store::StoreError>> + Send>,
+    Box<dyn std::future::Future<Output = Result<T, postio_runtime::store::StoreError>> + Send>,
 >;
 
 impl MessageSource for Sources {
@@ -108,7 +108,7 @@ impl MailboxSource for Sources {
 ///
 /// Field for field: the two types exist separately so that neither crate has
 /// to depend on the other's, not because they disagree about what a row is.
-fn row(summary: postio_core::store::MessageSummary) -> Row {
+fn row(summary: postio_runtime::store::MessageSummary) -> Row {
     Row {
         id: summary.id,
         thread: summary.thread,
