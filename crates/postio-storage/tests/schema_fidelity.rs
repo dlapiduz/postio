@@ -269,7 +269,7 @@ struct StoredMessage {
 #[test]
 fn a_fully_populated_message_round_trips_through_the_schema() {
     let connection = migrated();
-    let account = Account::new("iCloud", EmailAddress::new(None::<String>, "ada@example.com"));
+    let account = Account::new("Mail", EmailAddress::new(None::<String>, "ada@example.com"));
     let account_id = store_account(&connection, &account);
     let mailbox = Mailbox::new(account.id, "INBOX", Some('/'));
     let mailbox_id = store_mailbox(&connection, account_id, &mailbox);
