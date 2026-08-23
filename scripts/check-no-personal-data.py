@@ -10,15 +10,26 @@ end up committed. Two rules:
    .localhost TLDs. Hostnames such as imap.mail.me.com are not addresses and
    are unaffected.
 
-2. The identity configured in this checkout's git config must not appear in
-   any tracked file. Read at run time rather than hard-coded, so this file
-   never has to name a real person to protect them.
+2. A denylist of real names must not appear in any tracked file. Sources, in
+   order: the POSTIO_DENY_NAMES environment variable (comma separated), then
+   this checkout's git config. Never hard-coded, so this file does not have to
+   name a real person in order to protect them.
 
-Run: python3 scripts/check-no-personal-data.py
+Output is REDACTED by default: it reports the location and the rule, never
+the offending value. CI logs on a public repository are public, so a check
+that printed what it found would publish exactly what it exists to protect.
+Pass --reveal locally to see the values while fixing them.
+
+In CI, set POSTIO_DENY_NAMES from a repository secret; a runner's git config
+is the bot's, not a maintainer's, so the git fallback no-ops there. GitHub
+masks secret values in logs, which is a second layer under the redaction.
+
+Run: python3 scripts/check-no-personal-data.py [--reveal]
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -53,7 +64,16 @@ def tracked_files() -> list[str]:
     return [p for p in out.splitlines() if not p.startswith(SKIP_PATHS)]
 
 
-def git_identity() -> list[tuple[str, str]]:
+def denied_names() -> list[tuple[str, str]]:
+    """Real names that must not appear. Never printed, only matched."""
+    env = os.environ.get("POSTIO_DENY_NAMES", "")
+    if env.strip():
+        return [
+            ("POSTIO_DENY_NAMES", v.strip())
+            for v in env.split(",")
+            if v.strip()
+        ]
+
     ident = []
     for key in ("user.name", "user.email"):
         r = subprocess.run(
@@ -62,13 +82,14 @@ def git_identity() -> list[tuple[str, str]]:
         value = r.stdout.strip()
         # A noreply forwarding address is deliberate privacy, not a leak.
         if value and not value.endswith("users.noreply.github.com"):
-            ident.append((key, value))
+            ident.append((f"git {key}", value))
     return ident
 
 
 def main() -> int:
+    reveal = "--reveal" in sys.argv
     failures: list[str] = []
-    identity = git_identity()
+    identity = denied_names()
 
     for path in tracked_files():
         try:
@@ -80,15 +101,17 @@ def main() -> int:
             for address in ADDRESS.findall(line):
                 if address in ALLOW_EXACT or RESERVED.search(address):
                     continue
+                shown = f" {address!r}" if reveal else ""
                 failures.append(
-                    f"{path}:{num}: non-reserved email address {address!r}\n"
-                    f"    Use a reserved domain (example.com, .test, .invalid)."
+                    f"{path}:{num}: email address on a non-reserved "
+                    f"domain{shown}"
                 )
-            for key, value in identity:
+            for source, value in identity:
                 if value in line:
+                    # Never echo the value; naming the source is enough.
                     failures.append(
-                        f"{path}:{num}: contains this checkout's git {key}\n"
-                        f"    Fixtures must not use a real maintainer's identity."
+                        f"{path}:{num}: matches a denied real name "
+                        f"(source: {source})"
                     )
 
     if failures:
@@ -98,7 +121,11 @@ def main() -> int:
         print(f"\n{len(failures)} problem(s).")
         print(
             "\nPostio is open source and its fixtures describe mailboxes.\n"
-            "Invent the data: 'Ada Lovelace <ada@example.com>'."
+            "Use a reserved domain and invent the people:\n"
+            "    Ada Lovelace <ada@example.com>\n"
+            "\nValues are redacted: this output is public in CI. Run\n"
+            "    python3 scripts/check-no-personal-data.py --reveal\n"
+            "locally to see them."
         )
         return 1
 

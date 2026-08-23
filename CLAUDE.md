@@ -120,7 +120,14 @@ maintainer's own identity leaks in easily. Two rules, enforced by
   Hostnames such as `imap.example.com` are not addresses and are unaffected.
 - **Never use a real person's name or address in a fixture**, least of all the
   maintainer's. The check reads this checkout's git identity at run time and
-  fails if it appears in a tracked file.
+  fails if it appears in a tracked file. In CI that list comes from the
+  `POSTIO_DENY_NAMES` repository secret instead, since a runner's git config
+  is the bot's.
+
+The check's output is **redacted by default** — it prints the location and the
+rule, never the value — because CI logs on a public repository are public, and
+a check that printed what it found would publish exactly what it protects. Use
+`python3 scripts/check-no-personal-data.py --reveal` locally while fixing.
 
 Providers are **data, not code**. `spec.md` §3 requires provider configuration
 to be extensible rather than hard-coded, so server settings belong in a preset
