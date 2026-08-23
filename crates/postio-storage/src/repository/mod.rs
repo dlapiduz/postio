@@ -24,9 +24,15 @@
 mod accounts;
 mod mailboxes;
 mod messages;
+mod threads;
 
 pub use accounts::{AccountRepository, IdentityRepository};
 pub use mailboxes::MailboxRepository;
+pub use threads::{
+    DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadListQuery, ThreadListRow, ThreadOrder,
+    ThreadRepository,
+};
+
 pub use messages::{
     BodyBlobs, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope, MessageListRow,
     MessageRepository, UpsertReport,

@@ -202,7 +202,7 @@ raw_blob_id";
 /// The sender comes from a correlated lookup rather than a join so the plan
 /// stays "walk the list index, then one index seek per row shown" — bounded by
 /// the window, never by the mailbox.
-const LIST_COLUMNS: &str = "\
+pub(crate) const LIST_COLUMNS: &str = "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
 messages.seen, messages.flagged, messages.answered, messages.draft, messages.has_attachments,
 messages.size,
@@ -602,7 +602,7 @@ fn page_arguments(query: &ListQuery) -> Vec<i64> {
 }
 
 /// `?n, ?n+1, ...` for `count` parameters starting at `first`.
-fn placeholders(count: usize, first: usize) -> String {
+pub(crate) fn placeholders(count: usize, first: usize) -> String {
     (0..count)
         .map(|index| format!("?{}", index + first))
         .collect::<Vec<_>>()
@@ -894,7 +894,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
     })
 }
 
-fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
+pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
     let from_address: Option<String> = row.get(12)?;
     Ok(MessageListRow {
         id: MessageId::new(row.get(0)?),
