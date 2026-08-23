@@ -205,6 +205,48 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* ── The list pane's named states (canvas 3d) ────────────────────────
+   Inbox zero, offline and sync failure share one layout: an icon, a title,
+   a sentence that names the local store, and the keys that get you
+   somewhere. It replaces the list's rows entirely — there is nothing else
+   to show underneath an empty mailbox. No error red: the design system has
+   no such role, so severity comes from icon and weight, the same as the
+   sidebar's own `.postio-status.error` reaching for `--postio-accent-text`
+   rather than inventing a colour. */
+.postio-liststate-icon {
+  color: var(--postio-accent);
+}
+
+.postio-liststate-icon.offline {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-liststate-icon.failing {
+  color: var(--postio-accent-text);
+}
+
+.postio-liststate-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 17px;
+  color: var(--postio-ink);
+}
+
+.postio-liststate-detail {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-liststate-hint {
+  margin-top: 4px;
+}
+
+.postio-liststate-hint-label {
+  font-size: 12px;
+  color: var(--postio-ink-secondary);
+}
+
 /* ── The Ctrl+K palette ──────────────────────────────────────────────
    A plate floating over the workspace: the same hairline-and-surface
    vocabulary as the search field, sized so the list reads as one object
