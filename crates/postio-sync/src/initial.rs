@@ -131,6 +131,45 @@ pub async fn sync_mailbox_with_batch_size(
     mailbox: &Mailbox,
     batch_size: usize,
     cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Report> {
+    enumerate(
+        connection,
+        backend,
+        mailbox,
+        batch_size,
+        Coverage::Missing,
+        cancel,
+        on_progress,
+    )
+    .await
+}
+
+/// Which UIDs an enumeration asks the server about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Coverage {
+    /// Only the UIDs the mailbox does not already hold.
+    ///
+    /// What filling an empty mailbox needs, and what makes a sync that was
+    /// interrupted halfway cheap to resume.
+    Missing,
+    /// Every UID in the mailbox, the ones already stored included.
+    ///
+    /// For a pass that has to *refresh* rather than fill: when an incremental
+    /// pull could not be trusted, what it lost was most likely a flag on a
+    /// message that is already here, and skipping those would leave the very
+    /// thing that went missing missing.
+    Everything,
+}
+
+/// The body of an enumeration pass. See [`sync_mailbox_with_batch_size`].
+pub(crate) async fn enumerate(
+    connection: &Connection,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    batch_size: usize,
+    coverage: Coverage,
+    cancel: &CancelToken,
     mut on_progress: impl FnMut(Progress),
 ) -> Result<Report> {
     let batch_size = batch_size.max(1);
@@ -159,12 +198,17 @@ pub async fn sync_mailbox_with_batch_size(
         .map(Uid::get)
         .collect();
 
-    let mut missing: Vec<u32> = (1..=target).filter(|uid| !known.contains(uid)).collect();
+    let mut missing: Vec<u32> = (1..=target)
+        .filter(|uid| coverage == Coverage::Everything || !known.contains(uid))
+        .collect();
     // Descending: the newest UID in the mailbox is fetched, threaded and
     // visible before the oldest one is even asked for.
     missing.sort_unstable_by_key(|&uid| std::cmp::Reverse(uid));
 
-    let mut fetched_so_far = known.len() as u32;
+    let mut fetched_so_far = match coverage {
+        Coverage::Missing => known.len() as u32,
+        Coverage::Everything => 0,
+    };
 
     for chunk in missing.chunks(batch_size) {
         if cancel.is_cancelled() {

@@ -93,6 +93,20 @@ pub enum Outcome {
         /// What [`initial::sync_mailbox`] did while repopulating the mailbox.
         report: initial::Report,
     },
+    /// An incremental pull could not be trusted, so the mailbox was
+    /// re-enumerated instead.
+    ///
+    /// Distinct from [`Full`](Self::Full) because nothing was wrong with the
+    /// local state: the *wire* was. `io-imap` drops an untagged response it
+    /// cannot decode and completes the command `Ok` (ADR 0001), so a pull
+    /// that lost a line looks exactly like one that did not; the backend
+    /// counts the skips and refuses the result rather than reporting a
+    /// gap-free answer. There is no `FullResyncReason` for that, and
+    /// inventing one would put the blame in the wrong place.
+    Rebuilt {
+        /// What the re-enumeration did.
+        report: initial::Report,
+    },
     /// Only what changed since the last sync was fetched.
     Incremental {
         /// Messages that were new or had a flag change, per `CHANGEDSINCE`.
@@ -115,11 +129,32 @@ pub async fn resync_mailbox(
     cancel: &CancelToken,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
-    let selected = backend.select(&mailbox.path, SelectMode::ReadWrite).await?;
-    let reported = to_model_status(&selected);
-
     let sync_state = SyncStateRepository::new(connection);
     let previous = sync_state.require(mailbox.id)?;
+
+    let selected = match backend.select(&mailbox.path, SelectMode::ReadWrite).await {
+        Ok(selected) => selected,
+        // A backend that refuses to serve a generation nobody confirmed says
+        // so *instead of* handing back a status — see
+        // `BackendError::UidValidityChanged`. That refusal is the rebuild
+        // signal, not a failed pass: swallowing it here is the difference
+        // between re-enumerating a renumbered mailbox and never noticing it
+        // was renumbered. Branching on the predicate rather than the variant
+        // is what the error type asks of its callers.
+        Err(error) if error.requires_full_resync() => {
+            return rebuild(
+                connection,
+                backend,
+                mailbox,
+                previous.uid_validity,
+                cancel,
+                on_progress,
+            )
+            .await;
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let reported = to_model_status(&selected);
 
     match previous.plan(&reported) {
         ResyncPlan::Full(reason) => {
@@ -141,15 +176,104 @@ pub async fn resync_mailbox(
                 previous.uid_next,
                 cancel,
             )
-            .await?;
-            sync_state.observe(mailbox.id, &reported, Utc::now())?;
-            Ok(outcome)
+            .await;
+
+            match outcome {
+                Ok(outcome) => {
+                    sync_state.observe(mailbox.id, &reported, Utc::now())?;
+                    Ok(outcome)
+                }
+                // The pull cannot be trusted, and asking the same question
+                // again would lose the same answer — see [`Outcome::Rebuilt`].
+                // Note that `reported` is deliberately *not* recorded first:
+                // a state that says "synchronized up to here" would tell the
+                // next pass there was nothing to catch up on.
+                Err(SyncError::Backend(error)) if error.requires_full_resync() => {
+                    rebuild(
+                        connection,
+                        backend,
+                        mailbox,
+                        previous.uid_validity,
+                        cancel,
+                        on_progress,
+                    )
+                    .await
+                }
+                Err(other) => Err(other),
+            }
         }
         ResyncPlan::UpToDate => {
             sync_state.observe(mailbox.id, &reported, Utc::now())?;
             Ok(Outcome::UpToDate)
         }
     }
+}
+
+/// Re-enumerates a mailbox whose incremental basis the backend would not stand
+/// behind.
+///
+/// Asks the server what it is *now*, because the reason the last answer was
+/// refused may well be that the mailbox is not what it was. Two cases come out
+/// of that, and they want different things:
+///
+/// * **The generation moved.** Every local UID is meaningless, so the rows
+///   under it are wiped before the mailbox is read again — the
+///   [`UIDVALIDITY`](FullResyncReason::UidValidityChanged) rebuild, reported
+///   exactly as the planned path reports it, so a caller cannot tell whether
+///   the change was discovered by comparing statuses or by being refused one.
+/// * **The generation held.** The UIDs are still good and only the *pull* was
+///   untrustworthy, so nothing is thrown away: a full enumeration refreshes
+///   every flag and inserts every arrival, which is everything a dropped
+///   `CHANGEDSINCE` line could have carried. A message expunged during the
+///   lost window survives locally until the next pass, whose count check
+///   notices that the server holds fewer messages than we do and reconciles —
+///   which is a great deal cheaper than discarding rows that are still right.
+async fn rebuild(
+    connection: &Connection,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    known_generation: Option<UidValidity>,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
+    let selected = backend.select(&mailbox.path, SelectMode::ReadWrite).await?;
+    let reported = to_model_status(&selected);
+
+    let renumbered = known_generation.is_some_and(|known| known != selected.uid_validity);
+    if renumbered && let Some(stale) = known_generation {
+        wipe_mailbox(connection, mailbox.id, stale)?;
+    }
+
+    SyncStateRepository::new(connection).observe(mailbox.id, &reported, Utc::now())?;
+
+    // A wiped mailbox has nothing left to skip, so the cheaper pass covers
+    // it; an intact one has to be re-read rather than filled in, because the
+    // delta that went missing was most likely a flag on a message that is
+    // already stored.
+    let coverage = if renumbered {
+        initial::Coverage::Missing
+    } else {
+        initial::Coverage::Everything
+    };
+    let report = initial::enumerate(
+        connection,
+        backend,
+        mailbox,
+        initial::DEFAULT_BATCH_SIZE,
+        coverage,
+        cancel,
+        on_progress,
+    )
+    .await?;
+
+    Ok(if renumbered {
+        Outcome::Full {
+            reason: FullResyncReason::UidValidityChanged,
+            report,
+        }
+    } else {
+        Outcome::Rebuilt { report }
+    })
 }
 
 /// Fetches what changed since `since`, and reconciles what vanished.
