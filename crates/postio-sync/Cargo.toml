@@ -8,3 +8,20 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait = "0.1.92"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+# `default-features = false` drops `io-imap` and its TLS stack: all this crate
+# needs is the `MailBackend` seam and its mock. See ADR 0001 and the feature
+# comment in `postio-imap/Cargo.toml`.
+# Spelled as a path rather than inherited from the workspace: cargo will not
+# let an inherited dependency turn default features off, and turning them off
+# is the entire point here.
+postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
+postio-model.workspace = true
+postio-storage.workspace = true
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+postio-storage = { workspace = true, features = ["test-support"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
