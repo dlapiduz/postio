@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.postio.Postio</id>
+  <name>Postio</name>
+  <summary>Local-first, keyboard-first email</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="dev.postio">
+    <name>Postio</name>
+  </developer>
+  <description>
+    <p>
+      Postio is a local-first email client for IMAP and SMTP accounts. Mail
+      is stored on your machine, searched instantly offline, and read the
+      way a native GNOME application should feel: fast, keyboard-first, and
+      quiet about what it sends over the network.
+    </p>
+    <p>
+      Nothing leaves this machine that you did not ask for: remote images
+      and read receipts stay off until you allow them, and there is no
+      telemetry.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.postio.Postio.desktop</launchable>
+  <url type="homepage">https://example.com/postio</url>
+  <url type="bugtracker">https://example.com/postio/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-08-23">
+      <description>
+        <p>Initial development release.</p>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>Network</category>
+    <category>Email</category>
+  </categories>
+  <provides>
+    <binary>postio</binary>
+  </provides>
+</component>
