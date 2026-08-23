@@ -77,7 +77,7 @@ instructions:
 ```bash
 cargo test   -p <crate>                              # the inner loop
 cargo clippy -p <crate> --all-targets -- -D warnings # before committing
-cargo fmt    -p <crate>                              # ONCE, before committing
+rustfmt --edition 2024 <files you changed>           # ONCE, before committing
 ```
 
 Occasional, not per-edit:
@@ -106,8 +106,12 @@ remaining targets after the first failure, so one broken crate hides a thousand
 passing tests and the totals look catastrophic. This has already caused a false
 alarm.
 
-Never `cargo fmt --all` while others are working -- it rewrites files they are
-mid-edit in. `--check` is read-only and safe.
+**Format files, not crates.** `cargo fmt --all` and `cargo fmt -p <crate>` both
+*write*, and both reach beyond what you changed — `-p` reformats every file in
+the crate, including one another session has open and uncommitted. That has
+already put whitespace churn into somebody else's diff. Use
+`rustfmt --edition 2024 <files>`; `/land` derives the list from your own
+changes. The `--check` forms are read-only and safe.
 
 System dependencies (Fedora 40+; this box is Fedora 44 / GNOME 50 / Wayland):
 

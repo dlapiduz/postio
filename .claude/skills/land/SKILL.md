@@ -14,7 +14,7 @@ This is the **only** place the gates need to run. Formatting in particular is
 not verification: run it here, not after every edit.
 
 ```bash
-cargo fmt    -p <your-crate> \
+rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs') \
   && cargo clippy -p <your-crate> --all-targets -- -D warnings \
   && cargo test   -p <your-crate> \
   && python3 scripts/check-crate-boundaries.py \
@@ -36,7 +36,16 @@ Another session may also be mid-TDD in a crate you do not own, so a red
 workspace is usually their business, not yours. Verify your crate; let CI prove
 the workspace.
 
-Never format the whole workspace — it rewrites files others are mid-edit in.
+**Format the files you touched, not the crate.** `cargo fmt -p <crate>`
+reformats *every* file in that crate — including a file another session has
+open and uncommitted. That already happened once: a composer session ran
+`cargo fmt -p postio-gtk` and churned whitespace through the settings session's
+in-flight test file. Nothing was lost, but their diff got noise they did not
+write. `rustfmt --edition 2024 <files>` touches only what you name; the command
+above derives that list from your own changes.
+
+`cargo fmt --all --check` and `-p <crate> --check` are read-only and safe. It is
+only the writing forms that reach into other people's files.
 
 If your crate is not green, keep working. Do not reach for a stash to get a
 clean tree; that would take every session's changes with it.
