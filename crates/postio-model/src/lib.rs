@@ -52,6 +52,7 @@ pub mod ids;
 pub mod label;
 pub mod mailbox;
 pub mod message;
+pub mod mime;
 pub mod subject;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
@@ -71,5 +72,6 @@ pub use ids::{
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
+pub use mime::{ParsedMessage, ParsedPart};
 pub use subject::normalize_subject;
 pub use thread::Thread;
