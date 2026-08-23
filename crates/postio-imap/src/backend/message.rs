@@ -120,6 +120,27 @@ impl MailboxSummary {
         }
     }
 
+    /// The path of this folder's parent, when it has one.
+    ///
+    /// Text, not an id: resolving a hierarchy into local parent links needs
+    /// the whole listing and the ids it was written under, which is the
+    /// repository's job. This is the evidence it works from.
+    pub fn parent_path(&self) -> Option<String> {
+        let delimiter = self.delimiter?;
+        self.path
+            .rsplit_once(delimiter)
+            .map(|(parent, _)| parent.to_owned())
+            .filter(|parent| !parent.is_empty())
+    }
+
+    /// How deep the folder sits: `0` at the top level.
+    pub fn depth(&self) -> usize {
+        match self.delimiter {
+            Some(delimiter) => self.path.matches(delimiter).count(),
+            None => 0,
+        }
+    }
+
     /// Whether the server said this folder has children.
     pub fn has_children(&self) -> bool {
         self.attributes
