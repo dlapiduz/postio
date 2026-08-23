@@ -8,6 +8,7 @@
 //! that stops short — which is the other half of the job.
 
 use std::io;
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -19,11 +20,21 @@ use tokio::net::TcpStream;
 /// replaced by `\x01<index>\x01` and kept beside it.
 const MARK: char = '\u{1}';
 
+/// How many pieces a trickled response is broken into.
+///
+/// A count rather than a piece size, so the delay a
+/// [`Fault::Trickle`](super::Fault::Trickle) adds is the same whether the
+/// response is a tagged OK or a megabyte of attachment.
+const TRICKLE_PIECES: usize = 8;
+
 /// One connection's socket, with the leftovers of the last read.
 #[derive(Debug)]
 pub(super) struct Conn {
     stream: TcpStream,
     buffer: Vec<u8>,
+    /// When set, responses go out in pieces with this long between them —
+    /// a server that is slow rather than stuck.
+    trickle: Option<Duration>,
 }
 
 /// A command line, with its literals lifted out.
@@ -76,7 +87,13 @@ impl Conn {
         Self {
             stream,
             buffer: Vec::new(),
+            trickle: None,
         }
+    }
+
+    /// Sends everything from now on in pieces, `gap` apart.
+    pub(super) fn set_trickle(&mut self, gap: Option<Duration>) {
+        self.trickle = gap;
     }
 
     /// Reads one CRLF-terminated line, without the CRLF.
@@ -119,7 +136,18 @@ impl Conn {
     }
 
     pub(super) async fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.stream.write_all(bytes).await
+        let Some(gap) = self.trickle else {
+            return self.stream.write_all(bytes).await;
+        };
+
+        let piece = bytes.len().div_ceil(TRICKLE_PIECES).max(1);
+        for (index, slice) in bytes.chunks(piece).enumerate() {
+            if index > 0 {
+                tokio::time::sleep(gap).await;
+            }
+            self.stream.write_all(slice).await?;
+        }
+        Ok(())
     }
 
     pub(super) async fn write_line(&mut self, text: &str) -> io::Result<()> {

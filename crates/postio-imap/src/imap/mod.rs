@@ -71,11 +71,11 @@ pub use self::dispatch::{
 };
 pub use self::fetch::fetch_headers;
 pub use self::mailboxes::list_mailboxes;
-pub use self::pool::DEFAULT_SELECTION_MAX_AGE;
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
 };
+pub use self::pool::{DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE};
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
 pub use self::skip_counter::{
     exclusive_measurement as skip_counter_exclusive_measurement, install as install_skip_counter,
@@ -120,6 +120,14 @@ pub struct ImapSession {
     /// confirming it again. See [`select`] for why a cached generation is the
     /// dangerous half of that cache.
     selection_max_age: std::time::Duration,
+    /// How long a command may go without a byte from the server before it is
+    /// given up on. Silence, not duration: see
+    /// [`ImapStream::read_within`].
+    command_timeout: std::time::Duration,
+    /// Set when one of this session's reads hit that bound, so the I/O error
+    /// `io-imap` reports back can be turned into the reason it happened.
+    /// Taken by [`command_error`](Self::command_error).
+    timed_out: Option<BackendError>,
 }
 
 impl fmt::Debug for ImapSession {
@@ -209,7 +217,13 @@ impl ImapSession {
                 }
                 ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsRead) => {
                     let stream = stream.as_mut().ok_or_else(no_stream)?;
-                    let read = stream.read(&mut buffer).await?;
+                    // The socket connected and TLS finished, so
+                    // `connect_timeout` has already been satisfied — but the
+                    // exchange after it can still hang, and an opening that
+                    // never completes holds a pool slot forever.
+                    let read = stream
+                        .read_within(&mut buffer, settings.connect_timeout, "the IMAP handshake")
+                        .await?;
                     resume = Some(&buffer[..read]);
                 }
                 ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsWrite(bytes)) => {
@@ -234,6 +248,8 @@ impl ImapSession {
             // pool replaces both of these when it opens one.
             generations: std::sync::Arc::new(select::Generations::new()),
             selection_max_age: DEFAULT_SELECTION_MAX_AGE,
+            command_timeout: DEFAULT_COMMAND_TIMEOUT,
+            timed_out: None,
         })
     }
 
@@ -270,20 +286,45 @@ impl ImapSession {
     /// session. Not needed after authentication: [`open`](Self::open) already
     /// did it.
     pub async fn refresh_capabilities(&mut self) -> BackendResult<&Capabilities> {
-        let advertised = self
-            .run(ImapCapabilityGet::new())
-            .await
-            .map_err(|error| map_client_error("CAPABILITY", &self.account, error))?;
+        let advertised = self.run(ImapCapabilityGet::new()).await;
+        let advertised = advertised.map_err(|error| self.command_error("CAPABILITY", error))?;
 
         self.capabilities = post_auth_capabilities(&self.endpoint, &advertised)?;
         Ok(&self.capabilities)
     }
 
+    /// How long this session waits on a silent server.
+    pub(super) fn command_timeout(&self) -> std::time::Duration {
+        self.command_timeout
+    }
+
+    /// Sets how long a command may go without a byte from the server.
+    pub(super) fn set_command_timeout(&mut self, timeout: std::time::Duration) {
+        self.command_timeout = timeout;
+    }
+
+    /// Maps a command failure, recovering a deadline this session imposed.
+    ///
+    /// `io-imap` reports our own timeout back as a plain I/O error, which
+    /// would surface as `BackendError::Io` — transient, so it would still be
+    /// retried, but indistinguishable in a log from a socket that broke. The
+    /// distinction is worth keeping: "the server stopped answering" is a
+    /// different thing to explain than "the connection dropped".
+    pub(crate) fn command_error(&mut self, command: &str, error: ImapClientError) -> BackendError {
+        match self.timed_out.take() {
+            Some(BackendError::TimedOut { after, .. }) => BackendError::TimedOut {
+                context: format!("{command} on {}", self.endpoint),
+                after,
+            },
+            Some(other) => other,
+            None => map_client_error(command, &self.account, error),
+        }
+    }
+
     /// Ends the session politely.
     pub async fn logout(mut self) -> BackendResult<()> {
-        self.run(ImapLogout::new())
-            .await
-            .map_err(|error| map_client_error("LOGOUT", &self.account, error))
+        let result = self.run(ImapLogout::new()).await;
+        result.map_err(|error| self.command_error("LOGOUT", error))
     }
 }
 
@@ -306,13 +347,30 @@ impl ImapClientAsync for ImapSession {
         async move {
             let mut buffer = [0u8; READ_BUFFER];
             let mut resume: Option<&[u8]> = None;
+            self.timed_out = None;
 
             loop {
                 match coroutine.resume(&mut self.fragmentizer, resume.take()) {
                     ImapCoroutineState::Complete(Ok(value)) => return Ok(value),
                     ImapCoroutineState::Complete(Err(error)) => return Err(error.into()),
                     ImapCoroutineState::Yielded(ImapYield::WantsRead) => {
-                        let read = self.stream.read(&mut buffer).await.map_err(as_io)?;
+                        let timeout = self.command_timeout;
+                        let read = match self
+                            .stream
+                            .read_within(&mut buffer, timeout, "a command")
+                            .await
+                        {
+                            Ok(read) => read,
+                            Err(error) => {
+                                // `io-imap` can only carry this back as an I/O
+                                // error, so the reason is kept here and
+                                // recovered by `command_error`.
+                                let error: BackendError = error.into();
+                                let carried = std::io::Error::other(error.to_string());
+                                self.timed_out = Some(error);
+                                return Err(ImapClientError::Io(carried));
+                            }
+                        };
                         resume = Some(&buffer[..read]);
                     }
                     ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {

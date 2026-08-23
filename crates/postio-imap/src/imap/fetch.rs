@@ -53,7 +53,7 @@ use crate::backend::{
 };
 use crate::cancel::CancelToken;
 
-use super::{ConnectionPool, ImapSession, Priority, map_client_error, skip_counter};
+use super::{ConnectionPool, ImapSession, Priority, skip_counter};
 
 /// Fetches metadata for `uids` in `mailbox` — no body bytes.
 ///
@@ -166,8 +166,8 @@ async fn fetch_batch_inner(
             MacroOrMessageDataItemNames::MessageDataItemNames(item_names),
             opts,
         )
-        .await
-        .map_err(|error| map_client_error("FETCH", session.account(), error))?;
+        .await;
+    let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
 
     raw.into_values()
         .map(|items| build_fetched_message(items, uid_validity))

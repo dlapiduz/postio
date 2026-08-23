@@ -67,9 +67,11 @@ impl Session {
             self.shared.lock().log.push(command.raw.clone());
 
             let fault = self.shared.lock().take_fault(&command.name);
+            let trickling = matches!(fault, Some(Fault::Trickle { .. }));
             match fault {
                 Some(Fault::DropConnection { .. }) => return self.tear(&command).await,
                 Some(Fault::Stall { .. }) => return self.stall().await,
+                Some(Fault::Trickle { gap, .. }) => self.conn.set_trickle(Some(gap)),
                 Some(Fault::Reject { reason, .. }) => {
                     self.conn
                         .write_line(&format!("{} NO {reason}", command.tag))
@@ -80,6 +82,9 @@ impl Session {
             }
 
             let finished = self.dispatch(&command).await?;
+            if trickling {
+                self.conn.set_trickle(None);
+            }
             if finished {
                 break;
             }

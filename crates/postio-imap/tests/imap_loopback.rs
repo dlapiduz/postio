@@ -596,30 +596,135 @@ async fn a_missing_enabled_echo_is_success_not_a_downgrade() {
 }
 
 #[tokio::test]
-async fn a_stalled_server_leaves_the_command_outstanding() {
-    // Postio has no per-command deadline yet: a server that accepts a command
-    // and never answers holds the connection open until the pool's own
-    // timeouts fire. This pins that down rather than pretending otherwise.
+async fn a_stalled_server_fails_the_command_and_frees_the_connection() {
+    // The pool is bounded, so a server that accepts a command and never
+    // answers does not cost one connection — it costs one of four,
+    // permanently. Enough of those and sync stops with nothing logged, which
+    // reads to the user as the app quietly ceasing to work.
     let server = server().await;
-    let pool = pool_for(&server).await;
+    let pool = pool_with(
+        &server,
+        PoolConfig {
+            command_timeout: Duration::from_millis(200),
+            ..PoolConfig::default()
+        },
+    )
+    .await;
     server.inject(Fault::Stall {
         during: "FETCH".to_owned(),
     });
 
-    let outcome = tokio::time::timeout(
-        Duration::from_millis(250),
-        fetch_headers(
-            &pool,
-            "INBOX",
-            &UidSet::all(),
-            None,
-            Priority::Background,
-            &cancel(),
-        ),
+    let started = tokio::time::Instant::now();
+    let error = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        None,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, BackendError::TimedOut { .. }), "{error}");
+    assert!(error.is_transient(), "the caller has to be able to retry");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "it gave up promptly"
+    );
+
+    // The connection is discarded rather than parked, so the retry gets a
+    // fresh one and the slot is not poisoned for everything after it.
+    let recovered = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        None,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovered.len(), 3);
+    assert_eq!(
+        pool.stats().opened,
+        2,
+        "the stalled connection was replaced, not reused"
+    );
+}
+
+#[tokio::test]
+async fn a_slow_but_progressing_fetch_is_not_killed_by_the_deadline() {
+    // The trap in bounding a command: a large attachment over a slow link
+    // takes longer than any deadline worth setting on a SELECT. So the bound
+    // is on silence, not on duration — a response that keeps arriving keeps
+    // its connection however long it takes.
+    let server = server().await;
+    let pool = pool_with(
+        &server,
+        PoolConfig {
+            command_timeout: Duration::from_millis(300),
+            ..PoolConfig::default()
+        },
     )
     .await;
+    server.inject(Fault::Trickle {
+        during: "FETCH".to_owned(),
+        gap: Duration::from_millis(50),
+    });
 
-    assert!(outcome.is_err(), "the fetch should still be waiting");
+    let mut sink = VecSink::new();
+    let started = tokio::time::Instant::now();
+    fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(2),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .expect("a response that never stops for longer than the deadline survives it");
+
+    assert_eq!(sink.as_slice(), corpus("attachment-pdf").as_slice());
+    assert!(
+        started.elapsed() > Duration::from_millis(300),
+        "the fetch outlived the deadline it never tripped"
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_never_finishes_the_handshake_does_not_hold_the_opening() {
+    // The same hang, one layer earlier: the socket connected and the TLS
+    // handshake finished, so `connect_timeout` had already been satisfied
+    // before the exchange that never completes.
+    let server = server().await;
+    let store = MemorySecretStore::new();
+    let key = AccountKey::new(server.account());
+    store
+        .store(&key, &Password::new(server.password()))
+        .await
+        .expect("seed the keyring");
+    let pool = ConnectionPool::new(
+        server
+            .settings()
+            .with_connect_timeout(Duration::from_millis(200)),
+        key,
+        Arc::new(store),
+        Arc::new(RustlsConnector::new().expect("a connector")),
+        PoolConfig::default(),
+    );
+    server.inject(Fault::Stall {
+        during: "AUTHENTICATE".to_owned(),
+    });
+
+    let error = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, BackendError::TimedOut { .. }), "{error}");
+    assert!(error.is_transient());
 }
 
 // ---------------------------------------------------------------------------
