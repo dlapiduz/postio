@@ -33,9 +33,12 @@
 
 use std::path::Path;
 
+use postio_model::{Account, EmailAddress, Mailbox, MailboxId};
+use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::Database;
+use crate::repository::{AccountRepository, MailboxRepository};
 
 /// A migrated in-memory database, shared by every connection its pool opens.
 ///
@@ -91,4 +94,47 @@ impl std::ops::Deref for TempDatabase {
     fn deref(&self) -> &Database {
         &self.database
     }
+}
+
+/// Creates a throwaway account, so a test that is about something else does not
+/// have to spell one out.
+///
+/// # Panics
+///
+/// If the insert fails.
+pub fn account(connection: &Connection) -> Account {
+    let mut account = Account::new(
+        "Test",
+        EmailAddress::new(Some("Test User"), "test@example.com"),
+    );
+    account.incoming.host = "imap.example.com".to_owned();
+    account.outgoing.host = "smtp.example.com".to_owned();
+    AccountRepository::new(connection)
+        .create(&mut account)
+        .expect("create a test account");
+    account
+}
+
+/// Creates a mailbox at `path` in `account`.
+///
+/// # Panics
+///
+/// If the insert fails.
+pub fn mailbox(connection: &Connection, account: &Account, path: &str) -> Mailbox {
+    let mut mailbox = Mailbox::new(account.id, path, Some('/'));
+    MailboxRepository::new(connection)
+        .create(&mut mailbox)
+        .expect("create a test mailbox");
+    mailbox
+}
+
+/// Creates an account with an INBOX, the shape almost every test wants.
+///
+/// # Panics
+///
+/// If either insert fails.
+pub fn account_with_inbox(connection: &Connection) -> (Account, MailboxId) {
+    let account = account(connection);
+    let inbox = mailbox(connection, &account, "INBOX");
+    (account, inbox.id)
 }
