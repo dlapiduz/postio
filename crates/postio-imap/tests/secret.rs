@@ -306,6 +306,84 @@ async fn live_keyring_round_trip() {
     ));
 }
 
+/// `$XDG_DATA_HOME`, falling back to `$HOME/.local/share` when unset —
+/// mirroring `postio-config`'s `config_dir_from`. Under Flatpak this
+/// distinction matters: the sandboxed `$HOME` is a private, non-persistent
+/// location, and `XDG_DATA_HOME`/`XDG_CONFIG_HOME` are set to the real
+/// persistent app directory instead of being bind-mounted under `$HOME` —
+/// so joining onto `$HOME` directly finds nothing to scan there.
+fn xdg_data_home_from<F>(env: F) -> String
+where
+    F: Fn(&str) -> Option<String>,
+{
+    env("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| format!("{}/.local/share", env("HOME").expect("HOME")))
+}
+
+/// `$XDG_CONFIG_HOME`, falling back to `$HOME/.config` when unset. See
+/// [`xdg_data_home_from`].
+fn xdg_config_home_from<F>(env: F) -> String
+where
+    F: Fn(&str) -> Option<String>,
+{
+    env("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| format!("{}/.config", env("HOME").expect("HOME")))
+}
+
+fn xdg_data_home() -> String {
+    xdg_data_home_from(|key| std::env::var(key).ok())
+}
+
+fn xdg_config_home() -> String {
+    xdg_config_home_from(|key| std::env::var(key).ok())
+}
+
+fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+    let pairs: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    move |key| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+}
+
+#[test]
+fn xdg_data_home_prefers_the_xdg_var_over_home() {
+    let dir = xdg_data_home_from(env_of(&[
+        ("XDG_DATA_HOME", "/sandbox/data"),
+        ("HOME", "/home/p"),
+    ]));
+    assert_eq!(dir, "/sandbox/data");
+}
+
+#[test]
+fn xdg_data_home_falls_back_to_home_local_share_when_unset() {
+    let dir = xdg_data_home_from(env_of(&[("HOME", "/home/p")]));
+    assert_eq!(dir, "/home/p/.local/share");
+}
+
+#[test]
+fn xdg_data_home_ignores_an_empty_xdg_var() {
+    let dir = xdg_data_home_from(env_of(&[("XDG_DATA_HOME", ""), ("HOME", "/home/p")]));
+    assert_eq!(dir, "/home/p/.local/share");
+}
+
+#[test]
+fn xdg_config_home_prefers_the_xdg_var_over_home() {
+    let dir = xdg_config_home_from(env_of(&[
+        ("XDG_CONFIG_HOME", "/sandbox/config"),
+        ("HOME", "/home/p"),
+    ]));
+    assert_eq!(dir, "/sandbox/config");
+}
+
+#[test]
+fn xdg_config_home_falls_back_to_home_config_when_unset() {
+    let dir = xdg_config_home_from(env_of(&[("HOME", "/home/p")]));
+    assert_eq!(dir, "/home/p/.config");
+}
+
 #[tokio::test]
 #[ignore = "needs a live Secret Service session"]
 async fn live_keyring_never_writes_the_password_in_plaintext() {
@@ -322,12 +400,13 @@ async fn live_keyring_never_writes_the_password_in_plaintext() {
     // Give the daemon a moment to flush its encrypted store.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let home = std::env::var("HOME").expect("HOME");
+    let data_home = xdg_data_home();
+    let config_home = xdg_config_home();
     let mut scanned = 0usize;
     for dir in [
-        format!("{home}/.local/share/keyrings"),
-        format!("{home}/.local/share/postio"),
-        format!("{home}/.config/postio"),
+        format!("{data_home}/keyrings"),
+        format!("{data_home}/postio"),
+        format!("{config_home}/postio"),
     ] {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

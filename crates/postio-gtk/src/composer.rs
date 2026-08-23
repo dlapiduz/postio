@@ -215,6 +215,9 @@ type SaveHandler = Box<dyn Fn(&mut Draft)>;
 /// What to call when the composer closes, with what became of the draft.
 type ClosedHandler = Box<dyn Fn(Closing)>;
 
+/// What to call when the composer takes over the reading pane.
+type OpenedHandler = Box<dyn Fn()>;
+
 /// Answers "what does `prefix` complete to" for recipient completion —
 /// contacts and previous correspondents, ranked by frequency and recency, are
 /// [`Composer::connect_recipient_suggestions`]'s job to supply; the composer
@@ -290,6 +293,11 @@ mod imp {
         pub saved: RefCell<Vec<SaveHandler>>,
         pub changed: RefCell<Vec<DraftHandler>>,
         pub closed: RefCell<Vec<ClosedHandler>>,
+        /// Called when a fresh `open()` actually takes the pane — not on the
+        /// no-op path where the composer was already open. What the header's
+        /// `Compose` button listens to, alongside `closed`, to say `Composing`
+        /// only while that is true.
+        pub opened: RefCell<Vec<OpenedHandler>>,
         /// Where `e`/`E`/`f` get the message and account to reply to. One
         /// slot, last registration wins: there is exactly one reading pane.
         pub reply_source: RefCell<Option<ReplySourceProvider>>,
@@ -343,6 +351,7 @@ mod imp {
                 saved: RefCell::new(Vec::new()),
                 changed: RefCell::new(Vec::new()),
                 closed: RefCell::new(Vec::new()),
+                opened: RefCell::new(Vec::new()),
                 reply_source: RefCell::new(None),
                 recipient_suggestions: RefCell::new(None),
                 attach: RefCell::new(None),
@@ -420,6 +429,10 @@ impl Composer {
         self.take_pane();
         self.set_visible(true);
         self.focus_first();
+
+        for handler in self.imp().opened.borrow().iter() {
+            handler();
+        }
     }
 
     /// Whether the composer is on screen.
@@ -709,6 +722,13 @@ impl Composer {
         self.imp().closed.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called when the composer takes over the reading pane — not when `c`
+    /// (or the header button) finds it already open and just moves the
+    /// keyboard back to it.
+    pub fn connect_opened(&self, handler: impl Fn() + 'static) {
+        self.imp().opened.borrow_mut().push(Box::new(handler));
+    }
+
     /// Registers where `e`/`E`/`f` find the message and account to reply to.
     ///
     /// The composer holds no reading-pane state of its own; whatever tracks
@@ -764,7 +784,18 @@ impl Composer {
         action.connect_activate(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |_, _| composer.open(Draft::new(composer.account()))
+            move |_, _| {
+                // The header button reaches this action whether or not the
+                // composer is open; the keyboard's `c` reaches `dispatch`
+                // instead and stays a pure open (`open` is already a no-op
+                // once composing, so `e`/`c` mid-reply cannot clobber it).
+                // Only the button doubles as the close it now visibly is.
+                if composer.is_open() {
+                    composer.close();
+                } else {
+                    composer.open(Draft::new(composer.account()));
+                }
+            }
         ));
         window.add_action(&action);
 
@@ -773,6 +804,15 @@ impl Composer {
             self,
             move |id| composer.dispatch(id)
         ));
+
+        if let Some(button) = window.compose_button() {
+            sync_compose_button(&button, false);
+            self.connect_opened({
+                let button = button.clone();
+                move || sync_compose_button(&button, true)
+            });
+            self.connect_closed(move |_outcome| sync_compose_button(&button, false));
+        }
     }
 
     /// Acts on the commands the composer owns, and ignores the rest.
@@ -1545,6 +1585,35 @@ fn labelled(text: &str, key: &str) -> gtk::Widget {
     row.append(&label);
     row.append(&hint);
     row.upcast()
+}
+
+/// Redraws the header's `Compose` button for whether the composer has the
+/// reading pane. The button never stops naming `win.compose` — see
+/// `mount`'s action handler for what that does in each state — this only
+/// changes what it says while it does it.
+fn sync_compose_button(button: &gtk::Button, composing: bool) {
+    let (icon, text, key, tooltip) = if composing {
+        (
+            "window-close-symbolic",
+            "Composing",
+            "Esc",
+            "Close the composer",
+        )
+    } else {
+        (
+            "document-edit-symbolic",
+            "Compose",
+            "c",
+            "Compose a message",
+        )
+    };
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.append(&gtk::Image::from_icon_name(icon));
+    content.append(&labelled(text, key));
+    button.set_child(Some(&content));
+    button.set_tooltip_text(Some(tooltip));
+    button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }
 
 /// Recipient completion attached to one entry: a popover of suggestions from
