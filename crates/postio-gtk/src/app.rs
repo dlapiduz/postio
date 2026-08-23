@@ -91,6 +91,11 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
 
         let window = Window::new(app);
         crate::config::install(&window);
+        // Installed here, unconditionally, rather than left to whoever wires
+        // storage into it: the `win.compose` action and the `c` binding must
+        // exist even when there is no store or no account yet, the same way
+        // the rest of the window stays usable with nothing behind it.
+        window.composer();
         install_actions(app, &window);
         timeline.mark(Phase::Window);
         report_first_frame(&window, app, &timeline);

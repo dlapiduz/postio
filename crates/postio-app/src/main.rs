@@ -26,6 +26,7 @@
 //! the window — which happens on `activate`, after the frontend has built its
 //! own.
 
+mod compose;
 mod engine;
 mod feed;
 mod paths;
@@ -190,12 +191,21 @@ fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed:
     }
 
     let sources = feed::Sources::new(wiring.store.clone(), wiring.runtime.clone());
-    Some(window.install_feeds(
+    let feeds = window.install_feeds(
         account.id,
         account.address.address.as_str(),
         sources.clone(),
         sources,
-    ))
+    );
+
+    compose::install(
+        window,
+        account.id,
+        wiring.database.clone(),
+        wiring.blobs.clone(),
+    );
+
+    Some(feeds)
 }
 
 /// Jump a message to the front of the backfill when it is opened.
