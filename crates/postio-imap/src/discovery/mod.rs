@@ -36,7 +36,6 @@
 //! ```
 
 mod builtin;
-mod cancel;
 mod settings;
 mod transport;
 
@@ -47,12 +46,12 @@ use io_pim_discovery::autoconfig::config::{
     DiscoverySecurityType, DiscoveryServer, DiscoveryServerType,
 };
 
-pub use self::cancel::CancelToken;
 pub use self::settings::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 pub use self::transport::{
     AutoconfigEndpoint, DiscoveryAutoconfig, DiscoverySrvReport, DiscoverySrvService,
     DiscoveryTransport, PimalayaTransport, TransportError,
 };
+pub use crate::cancel::CancelToken;
 
 /// A step in the probe chain that costs a network round trip.
 ///
