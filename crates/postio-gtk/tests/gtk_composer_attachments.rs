@@ -9,6 +9,12 @@
 //! so what is tested here is what both converge on:
 //! `Composer::test_attach_path` calls exactly what a chosen or dropped
 //! `gio::File` reaches.
+//!
+//! `connect_attach`'s handler answers through a callback rather than a
+//! return value specifically so a real handler can hand a large file's bytes
+//! to a background task and call back once they land in the blob store
+//! (`postio-c16.6`) — the deferred-handler case below proves the composer
+//! never assumes that callback runs before `add_file` returns.
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -63,13 +69,13 @@ fn attaching_shows_the_row_and_removing_cleans_it_up() {
         composer.status()
     );
 
-    // ── Connected: attaching shows the row ────────────────────────────────
-    composer.connect_attach(|path| {
+    // ── Connected, and answering synchronously: attaching shows the row ───
+    composer.connect_attach(|path, then| {
         let mut attachment = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 2_048);
         attachment.filename = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned());
-        Some(attachment)
+        then(Some(attachment));
     });
     composer.test_attach_path(&file_path);
     settle();
@@ -80,17 +86,26 @@ fn attaching_shows_the_row_and_removing_cleans_it_up() {
     assert_eq!(draft.attachments[0].filename.as_deref(), Some("report.pdf"));
     assert_eq!(draft.attachments[0].size, 2_048);
 
-    // ── A large one still attaches — nothing here blocks on it ────────────
-    composer.connect_attach(|_| {
-        Some(Attachment::new(
-            MessageId::UNASSIGNED,
-            "application/zip",
-            64 * 1024 * 1024,
-        ))
+    // ── A handler that answers later — the point of the callback shape ───
+    // Stands in for a real handler spawning a slow blob-store write and
+    // calling back once it finishes: nothing here blocks on `then` ever
+    // being called, and the row still appears once it is.
+    composer.connect_attach(|_, then| {
+        glib::idle_add_local_once(move || {
+            then(Some(Attachment::new(
+                MessageId::UNASSIGNED,
+                "application/zip",
+                64 * 1024 * 1024,
+            )));
+        });
     });
     composer.test_attach_path(&file_path);
     settle();
-    assert_eq!(composer.test_attachment_count(), 2);
+    assert_eq!(
+        composer.test_attachment_count(),
+        2,
+        "the row appears once the deferred handler calls back"
+    );
 
     // ── Removing before send cleans up ────────────────────────────────────
     composer.test_remove_attachment(0);

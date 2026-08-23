@@ -193,7 +193,7 @@ fn menu_button() -> gtk::MenuButton {
 }
 
 /// A label and the key that reaches it, set in the mono face.
-fn labelled(text: &str, key: &str) -> gtk::Widget {
+pub(crate) fn labelled(text: &str, key: &str) -> gtk::Widget {
     let label = gtk::Label::new(Some(text));
 
     // The shortcut is already in the button's accessible label; a screen

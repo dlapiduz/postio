@@ -230,9 +230,15 @@ struct Palette {
     selected_edge: gdk::RGBA,
     key_edge: gdk::RGBA,
     selected_bg: gdk::RGBA,
+    /// The ground under a row that is in the selection, as against the one
+    /// the cursor is on.
+    checked_bg: gdk::RGBA,
+    /// The check itself, on the accent chip it sits in.
+    checked_mark: gdk::RGBA,
     hover_bg: gdk::RGBA,
     unread_chip: gdk::RGBA,
     clip: Option<gtk::IconPaintable>,
+    check: Option<gtk::IconPaintable>,
 }
 
 impl Palette {
@@ -275,9 +281,12 @@ impl Palette {
             selected_edge: paint(&["postio-row-edge", "selected"]),
             key_edge: paint(&["postio-row-edge", "key"]),
             selected_bg: paint(&["postio-row-ground", "selected"]),
+            checked_bg: paint(&["postio-row-ground", "checked"]),
+            checked_mark: paint(&["postio-row-ground", "check-mark"]),
             hover_bg: paint(&["postio-row-ground", "hover"]),
             unread_chip: paint(&["postio-row-ground", "unread"]),
             clip: probe.display().pipe_icon("mail-attachment-symbolic"),
+            check: probe.display().pipe_icon("object-select-symbolic"),
         };
         probe.set_css_classes(&[]);
         palette
@@ -346,7 +355,14 @@ mod imp {
         pub(super) row: RefCell<Option<Row>>,
         pub(super) density: Cell<Density>,
         pub(super) first: Cell<bool>,
+        /// Whether an action would hit this row.
         pub(super) selected: Cell<bool>,
+        /// Whether this is the row the keyboard is *on* — the list's cursor,
+        /// which `GtkSingleSelection` calls its selection and this widget
+        /// does not. See [`crate::selection`] for why the two are separate.
+        pub(super) cursor: Cell<bool>,
+        /// Where this row sits in the list, for turning a click into a range.
+        pub(super) index: Cell<u32>,
         pub(super) hovered: Cell<bool>,
         /// Whether the keyboard is on this row.
         ///
@@ -381,6 +397,8 @@ mod imp {
                 density: Cell::new(Density::default()),
                 first: Cell::new(false),
                 selected: Cell::new(false),
+                cursor: Cell::new(false),
+                index: Cell::new(0),
                 hovered: Cell::new(false),
                 focused: Cell::new(false),
                 probe: gtk::Label::new(None),
@@ -605,6 +623,51 @@ impl MessageRowView {
     /// Whether an action would hit this row.
     pub fn is_selected(&self) -> bool {
         self.imp().selected.get()
+    }
+
+    /// Mark the row as the one the keyboard is on.
+    ///
+    /// `GtkSingleSelection`'s "selected" item, which is this list's *cursor*
+    /// and not its selection — see [`crate::selection`]. It is a different
+    /// fact with a different treatment: the cursor wears canvas 1b's tint
+    /// and steel edge, a selected row wears a check.
+    pub fn set_cursor(&self, cursor: bool) {
+        if self.imp().cursor.replace(cursor) != cursor {
+            self.imp().laid.replace(None);
+            self.queue_draw();
+        }
+    }
+
+    /// Whether the keyboard is on this row.
+    pub fn is_cursor(&self) -> bool {
+        self.imp().cursor.get()
+    }
+
+    /// Where this row sits in the list.
+    ///
+    /// Handed down on bind, because a click has to become a *position* — a
+    /// range runs from one place in the list to another — and a widget that
+    /// recycles through a hundred rows cannot be asked which one it is
+    /// currently drawing.
+    pub fn set_index(&self, index: u32) {
+        self.imp().index.set(index);
+    }
+
+    /// Where this row sits in the list.
+    pub fn index(&self) -> u32 {
+        self.imp().index.get()
+    }
+
+    /// Whether `(x, y)`, in this row's coordinates, is inside the square the
+    /// avatar and the check share.
+    ///
+    /// The check is a click target, so where it is has to be answerable — and
+    /// only this widget knows, because only this widget lays the row out.
+    pub fn is_in_check(&self, x: f64, y: f64) -> bool {
+        let metrics = Metrics::for_density(self.imp().density.get());
+        let (x, y) = (x as f32, y as f32);
+        (metrics.inset..metrics.inset + metrics.avatar).contains(&x)
+            && (metrics.pad_y..metrics.pad_y + metrics.avatar).contains(&y)
     }
 
     /// Whether the pointer is over this row.
@@ -860,22 +923,34 @@ impl MessageRowView {
         let row = imp.row.borrow();
         let height = self.height() as f32;
         let selected = imp.selected.get();
+        let cursor = imp.cursor.get();
         let hovered = imp.hovered.get();
         let unread = row.as_ref().is_some_and(|row| !row.seen);
 
         let rect = |x: f32, y: f32, w: f32, h: f32| graphene::Rect::new(x, y, w, h);
         let fill = |color: &gdk::RGBA, x, y, w, h| snapshot.append_color(color, &rect(x, y, w, h));
 
-        // Two states, two devices, so they stay legible apart once a
-        // selection can be more than one row (`postio-qhz.1`): the accent
-        // tint is *selected* — what an action will hit — and the 3px steel
-        // edge is *focused*, where the keyboard is. Today a single-selection
-        // list puts both on the same row, which is exactly what canvas 1b
-        // draws; tomorrow they come apart without either changing meaning.
+        // Three facts, three devices, so they stay legible apart when a row
+        // is more than one of them at once (`postio-qhz.1`):
+        //
+        //   cursor    where the keyboard is — canvas 1b's accent tint
+        //   focused   the keyboard is *here*, in this window — the 3px edge
+        //             and the key hints
+        //   selected  what an action will hit — a steel check where the
+        //             avatar was, on its own ground
+        //
+        // The check is what carries the meaning. Ground alone could not: the
+        // cursor tint and the selected ground are two steps of one colour in
+        // light and the same colour in dark (canvas 3c), and a distinction
+        // nobody can see in dark is not a distinction. A glyph reads at a
+        // glance, survives high contrast, and does not depend on hue.
+        //
         // The edge is also this widget's focus ring: it paints its own
         // pixels, so no CSS `outline` reaches it.
         let focused = self.shows_hints();
         if selected {
+            fill(&palette.checked_bg, 0.0, 0.0, width, height);
+        } else if cursor {
             fill(&palette.selected_bg, 0.0, 0.0, width, height);
         } else if hovered {
             fill(&palette.hover_bg, 0.0, 0.0, width, height);
@@ -885,7 +960,7 @@ impl MessageRowView {
         }
 
         // One hairline between rows, and none above the first.
-        if !selected && !imp.first.get() {
+        if !selected && !cursor && !imp.first.get() {
             fill(&palette.hairline, 0.0, 0.0, width, 1.0);
         }
 
@@ -910,23 +985,63 @@ impl MessageRowView {
             snapshot.restore();
         };
 
-        // ── the avatar chip ──────────────────────────────────────────
+        // ── the avatar chip, or the check that replaces it ───────────
+        //
+        // The check takes the chip's own square rather than adding a column:
+        // a checkbox that appears beside the avatar would move every row's
+        // text sideways the moment a selection started, and a list that
+        // reflows while you are selecting in it is a list you cannot aim at.
+        // The same square is also the mouse's way in — hovering an
+        // unselected row offers the outline, so selecting with the pointer
+        // does not require knowing that Ctrl-click exists.
         let chip = rect(metrics.inset, metrics.pad_y, metrics.avatar, metrics.avatar);
-        if unread {
+        let offering = hovered && !selected;
+        if selected {
+            snapshot.append_color(&palette.selected_edge, &chip);
+        } else if unread {
             snapshot.append_color(&palette.unread_chip, &chip);
         }
         snapshot.append_border(
             &gsk::RoundedRect::from_rect(chip, 0.0),
             &[1.0; 4],
-            &[palette.hairline; 4],
+            &[if selected {
+                palette.selected_edge
+            } else {
+                palette.hairline
+            }; 4],
         );
-        let (aw, ah) = laid.avatar.pixel_size();
-        text(
-            &laid.avatar,
-            &palette.avatar[laid.tone].color,
-            metrics.inset + (metrics.avatar - aw as f32) / 2.0,
-            metrics.pad_y + (metrics.avatar - ah as f32) / 2.0,
-        );
+
+        match (selected || offering, &palette.check) {
+            (true, Some(check)) => {
+                let size = (metrics.avatar * 0.62).round();
+                let inset = ((metrics.avatar - size) / 2.0).round();
+                let mark = if selected {
+                    palette.checked_mark
+                } else {
+                    palette.hairline
+                };
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(
+                    metrics.inset + inset,
+                    metrics.pad_y + inset,
+                ));
+                check.snapshot_symbolic(snapshot, size as f64, size as f64, &[mark]);
+                snapshot.restore();
+            }
+            // No check glyph in the icon theme, and no initials either while
+            // the row is selected: a chip that still said "AL" would be
+            // saying the one thing the selection has to override.
+            (true, None) => {}
+            (false, _) => {
+                let (aw, ah) = laid.avatar.pixel_size();
+                text(
+                    &laid.avatar,
+                    &palette.avatar[laid.tone].color,
+                    metrics.inset + (metrics.avatar - aw as f32) / 2.0,
+                    metrics.pad_y + (metrics.avatar - ah as f32) / 2.0,
+                );
+            }
+        }
 
         // ── the sender line ──────────────────────────────────────────
         let column_x = metrics.inset + metrics.avatar + metrics.gap;
