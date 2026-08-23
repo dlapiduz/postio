@@ -109,6 +109,8 @@ command_ids! {
     CommandPalette => "command_palette",
     /// Show the keyboard cheat sheet.
     CheatSheet => "cheat_sheet",
+    /// Show the settings panel.
+    Settings => "settings",
     /// Open `config.toml` in the user's editor.
     EditConfig => "edit_config",
     /// Show or hide the sidebar.
@@ -310,6 +312,8 @@ pub enum Command {
     CommandPalette,
     /// Show the keyboard cheat sheet.
     CheatSheet,
+    /// Show the settings panel.
+    Settings,
     /// Open `config.toml` in the user's editor.
     EditConfig,
     /// Show or hide the sidebar.
@@ -349,6 +353,7 @@ impl Command {
             Command::Undo => CommandId::Undo,
             Command::CommandPalette => CommandId::CommandPalette,
             Command::CheatSheet => CommandId::CheatSheet,
+            Command::Settings => CommandId::Settings,
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::Refresh => CommandId::Refresh,
@@ -405,6 +410,7 @@ impl Command {
             CommandId::Undo => Command::Undo,
             CommandId::CommandPalette => Command::CommandPalette,
             CommandId::CheatSheet => Command::CheatSheet,
+            CommandId::Settings => Command::Settings,
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::Refresh => Command::Refresh,
