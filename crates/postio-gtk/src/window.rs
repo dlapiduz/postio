@@ -31,6 +31,7 @@ use postio_core::{CommandId, Context};
 use crate::cheatsheet::CheatSheet;
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
+use crate::list_view::MessageListView;
 use crate::palette::Palette;
 use crate::search::SearchBar;
 use crate::settings::SettingsPanel;
@@ -59,6 +60,7 @@ mod imp {
         pub shell: OnceCell<Shell>,
         pub sidebar: OnceCell<Sidebar>,
         pub list_state: OnceCell<ListStateView>,
+        pub list: OnceCell<MessageListView>,
         pub palette: OnceCell<Palette>,
         pub cheatsheet: OnceCell<CheatSheet>,
         pub search: OnceCell<SearchBar>,
@@ -126,11 +128,16 @@ impl Window {
             .clone()
     }
 
+    /// The message list: canvas 1b's header, and the rows under it.
+    pub fn list(&self) -> MessageListView {
+        self.imp().list.get().expect("built in constructed").clone()
+    }
+
     /// The list pane's placeholder for inbox zero, offline and sync failure.
     ///
-    /// Canvas 3d. The message list's row view has not landed yet, so this is
-    /// the whole of `shell().list()`'s content until it does — see
-    /// `crate::list_state` for why that is the right seam.
+    /// Canvas 3d. It sits *over* the message list rather than beside it and
+    /// hides itself the moment there are rows, which is the seam
+    /// `crate::list_state` was built for.
     pub fn list_state(&self) -> ListStateView {
         self.imp()
             .list_state
@@ -154,8 +161,16 @@ impl Window {
         sidebar.set_vexpand(true);
         shell.sidebar().append(&sidebar);
 
+        // The named states cover the rows rather than replacing them: an
+        // empty mailbox still has a header saying which mailbox it is, and
+        // the state view hides itself the instant a row arrives.
+        let list_view = MessageListView::new();
         let list_state = ListStateView::new();
-        shell.list().append(&list_state);
+        let list_overlay = gtk::Overlay::new();
+        list_overlay.set_vexpand(true);
+        list_overlay.set_child(Some(&list_view));
+        list_overlay.add_overlay(&list_state);
+        shell.list().append(&list_overlay);
 
         let header = header::build();
 
@@ -210,6 +225,7 @@ impl Window {
         let _ = self.imp().shell.set(shell);
         let _ = self.imp().sidebar.set(sidebar);
         let _ = self.imp().list_state.set(list_state);
+        let _ = self.imp().list.set(list_view);
         let _ = self.imp().palette.set(palette);
         let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().search.set(search);

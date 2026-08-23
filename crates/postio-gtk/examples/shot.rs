@@ -24,6 +24,8 @@
 //! It is a development tool, not part of the application: examples are not
 //! built into the shipped binary. Nothing here touches the network.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
@@ -64,11 +66,162 @@ fn populate(window: &Window) {
         folder(7, "wayland-devel", MailboxRole::Regular, counts(880, 37, 0)),
     ]);
     sidebar.select(postio_model::ids::MailboxId::new(1));
-    sidebar.set_status(SyncStatus {
+    populate_list(window);
+    let status = SyncStatus {
         state: ConnectionState::Online,
         last_sync: Instant::now().checked_sub(Duration::from_secs(12)),
         ..SyncStatus::default()
-    });
+    };
+    sidebar.set_status(status.clone());
+    // The list pane's named states read the same status the sidebar does;
+    // `postio-4e2` is what makes one connection drive both in the running
+    // application.
+    window.list_state().set_status(status, 6, 4291, 0);
+}
+
+/// Canvas 1b's own six messages, so the row anatomy can be held up against
+/// the drawing before there is a database to read.
+///
+/// The rows arrive through the real [`PageSource`] seam rather than being
+/// pushed at the model, so what the shot renders is what a repository would
+/// produce. Every address is a reserved domain, per CLAUDE.md.
+fn populate_list(window: &Window) {
+    use postio_gtk::list::{PageSource, Row};
+    use postio_model::EmailAddress;
+    use postio_model::ids::{MessageId, ThreadId};
+
+    let today = chrono::Local::now().date_naive();
+    let at = |hour: u32, minute: u32, days: i64| {
+        (today - chrono::Duration::days(days))
+            .and_hms_opt(hour, minute, 0)
+            .and_then(|naive| naive.and_local_timezone(chrono::Local).single())
+            .expect("a valid local time")
+            .with_timezone(&chrono::Utc)
+    };
+    let message = |id,
+                   name: Option<&str>,
+                   address: &str,
+                   subject: &str,
+                   preview: &str,
+                   when,
+                   seen,
+                   thread_count,
+                   has_attachments| Row {
+        id: MessageId::new(id),
+        thread: Some(ThreadId::new(id)),
+        from: Some(EmailAddress::new(name, address)),
+        subject: Some(subject.to_owned()),
+        preview: Some(preview.to_owned()),
+        received_at: when,
+        seen,
+        flagged: false,
+        answered: false,
+        draft: false,
+        has_attachments,
+        thread_count,
+    };
+
+    let rows = vec![
+        message(
+            1,
+            Some("Lena Tomlin"),
+            "lena@example.com",
+            "Re: maildir index rebuild is O(n²)",
+            "Confirmed on 0.4.1 — the rebuild walks every…",
+            at(9, 14, 0),
+            false,
+            6,
+            true,
+        ),
+        message(
+            2,
+            Some("buildbot"),
+            "buildbot@example.net",
+            "[FAIL] main · imap-idle · 3 tests",
+            "3 failing, 1 flaky. Full log attached…",
+            at(8, 52, 0),
+            false,
+            1,
+            true,
+        ),
+        message(
+            3,
+            Some("Nadia Okafor"),
+            "nadia@example.org",
+            "Notes from the sync — attaching the deck",
+            "Short one. Decisions at the top, owners…",
+            at(8, 30, 0),
+            true,
+            1,
+            true,
+        ),
+        message(
+            4,
+            Some("lkml"),
+            "lkml@example.org",
+            "[PATCH v3 2/7] sched: fix EEVDF lag accounting",
+            "Peter, Vincent — the lag decay was applied…",
+            at(7, 41, 0),
+            false,
+            14,
+            false,
+        ),
+        message(
+            5,
+            Some("Diogo Ferreira"),
+            "diogo@example.org",
+            "Can you review the mbox importer today?",
+            "Small diff, mostly the folder walker…",
+            at(16, 20, 3),
+            false,
+            1,
+            false,
+        ),
+        message(
+            6,
+            Some("Sara Abadi"),
+            "sara@example.com",
+            "Re: Re: keyring unlock on wayland",
+            "gnome-keyring works, kwallet needs the…",
+            at(11, 5, 4),
+            true,
+            3,
+            false,
+        ),
+    ];
+
+    /// The in-memory stand-in for `postio-91i`'s repository-backed source.
+    struct Sample {
+        rows: Vec<Row>,
+        list: postio_gtk::list::MessageList,
+    }
+    impl PageSource for Sample {
+        fn total(&self) -> u32 {
+            self.rows.len() as u32
+        }
+        fn request(&self, page: u32) {
+            // Never synchronously: `request` is called from inside the
+            // model answering `item()`, and delivering there would emit
+            // `items_changed` while the view is mid-read. A real source is
+            // a repository call on another thread, which cannot come back
+            // any sooner than this either.
+            let start = (page * postio_gtk::list::PAGE_SIZE) as usize;
+            let end = (start + postio_gtk::list::PAGE_SIZE as usize).min(self.rows.len());
+            let rows = self.rows[start..end].to_vec();
+            let list = self.list.clone();
+            glib::idle_add_local_once(move || list.deliver(page, rows));
+        }
+    }
+
+    let pane = window.list();
+    pane.set_mailbox("Inbox", 12);
+    pane.model().set_source(std::rc::Rc::new(Sample {
+        rows,
+        list: pane.model(),
+    }));
+    // The canvas draws its key hints on the first row, which means the list
+    // has the keyboard. Anything else would be a shot of a different state.
+    pane.grab_focus();
 }
 
 /// Canvas 3f's own sample file, so the shot can be held up against the
@@ -140,6 +293,51 @@ fn show_composer(window: &Window) {
     composer.open(draft);
 }
 
+/// How many frames to let the window paint before the shot is taken.
+///
+/// One to allocate, one to settle any size that depended on it, and the
+/// rest for work that only starts once there is a viewport to fill — the
+/// message list asks for its first page from inside its first layout, so
+/// the rows are a frame or two behind the panes around them.
+const SETTLE_FRAMES: u32 = 8;
+
+/// The ceiling on that wait, so a window that never paints reports rather
+/// than hangs.
+const SETTLE_MS: u64 = 5000;
+
+/// Run the main loop until `window` has painted [`SETTLE_FRAMES`] frames.
+///
+/// Not a spin count. `MainContext::iteration(false)` returns immediately
+/// when nothing is pending, so a fixed number of them is not a wait at all
+/// and the frame clock may never tick inside it — which is how this example
+/// came to render an empty message list while the running application drew
+/// it correctly. Counting actual frames is the thing that was meant all
+/// along. The heartbeat guarantees the blocking iteration returns.
+fn settle(window: &Window) {
+    let left = Rc::new(Cell::new(SETTLE_FRAMES));
+    window.add_tick_callback(glib::clone!(
+        #[strong]
+        left,
+        move |_, _| {
+            left.set(left.get().saturating_sub(1));
+            if left.get() == 0 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        }
+    ));
+
+    let context = glib::MainContext::default();
+    let heartbeat =
+        glib::timeout_add_local(Duration::from_millis(10), || glib::ControlFlow::Continue);
+    let deadline = Instant::now() + Duration::from_millis(SETTLE_MS);
+    while left.get() > 0 && Instant::now() < deadline {
+        context.iteration(true);
+    }
+    heartbeat.remove();
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
@@ -181,6 +379,16 @@ fn main() -> glib::ExitCode {
     if flag("demo") {
         populate(&window);
     }
+    // The list has three row heights and a design that only works at one of
+    // them is unfinished, so the shot can render any of them.
+    for (name, density) in [
+        ("comfortable", postio_config::Density::Comfortable),
+        ("compact", postio_config::Density::Compact),
+    ] {
+        if flag(name) {
+            window.list().set_density(density);
+        }
+    }
     if flag("settings") {
         show_settings(&window);
     }
@@ -189,18 +397,14 @@ fn main() -> glib::ExitCode {
     }
     window.present();
 
-    // Two frames: one to allocate, one to settle any size that depended on it.
-    for _ in 0..200 {
-        glib::MainContext::default().iteration(false);
-    }
+    settle(&window);
 
     let (width, height) = (window.width(), window.height());
     let paintable = gtk::WidgetPaintable::new(Some(&window));
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(&snapshot, width as f64, height as f64);
-
     let Some(node) = snapshot.to_node() else {
-        eprintln!("shot: the window drew nothing");
+        eprintln!("shot: the window drew nothing after {SETTLE_MS}ms");
         return glib::ExitCode::FAILURE;
     };
     let renderer = window
