@@ -30,6 +30,7 @@ use postio_core::{CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
+use crate::list_state::ListStateView;
 use crate::palette::Palette;
 use crate::search::SearchBar;
 use crate::settings::SettingsPanel;
@@ -57,6 +58,7 @@ mod imp {
     pub struct Window {
         pub shell: OnceCell<Shell>,
         pub sidebar: OnceCell<Sidebar>,
+        pub list_state: OnceCell<ListStateView>,
         pub palette: OnceCell<Palette>,
         pub cheatsheet: OnceCell<CheatSheet>,
         pub search: OnceCell<SearchBar>,
@@ -124,6 +126,19 @@ impl Window {
             .clone()
     }
 
+    /// The list pane's placeholder for inbox zero, offline and sync failure.
+    ///
+    /// Canvas 3d. The message list's row view has not landed yet, so this is
+    /// the whole of `shell().list()`'s content until it does — see
+    /// `crate::list_state` for why that is the right seam.
+    pub fn list_state(&self) -> ListStateView {
+        self.imp()
+            .list_state
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     fn build(&self) {
         self.set_title(Some("Postio"));
         self.add_css_class("postio-window");
@@ -138,6 +153,9 @@ impl Window {
         let sidebar = Sidebar::new();
         sidebar.set_vexpand(true);
         shell.sidebar().append(&sidebar);
+
+        let list_state = ListStateView::new();
+        shell.list().append(&list_state);
 
         let header = header::build();
 
@@ -191,6 +209,7 @@ impl Window {
 
         let _ = self.imp().shell.set(shell);
         let _ = self.imp().sidebar.set(sidebar);
+        let _ = self.imp().list_state.set(list_state);
         let _ = self.imp().palette.set(palette);
         let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().search.set(search);
@@ -303,6 +322,7 @@ impl Window {
         match id {
             CommandId::CommandPalette => self.open_palette(),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
+            CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_search(),
             // One `Esc` closes one overlay, nearest first.
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),

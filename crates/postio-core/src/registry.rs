@@ -358,6 +358,16 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
     },
     CommandSpec {
+        id: CommandId::Settings,
+        title: "Settings",
+        default_binding: "ctrl+comma",
+        alternate_bindings: &[],
+        // Universal, like the palette it is an alternative to reaching.
+        contexts: ContextSet::ANY,
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
         id: CommandId::EditConfig,
         title: "Edit configuration",
         default_binding: "ctrl+e",

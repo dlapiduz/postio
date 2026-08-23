@@ -63,6 +63,7 @@ command from inside a text field.
 | `u` | Undo | List, thread, reader |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |
+| `ctrl+comma` | Settings | Everywhere |  | `settings` |
 | `ctrl+e` | Edit configuration | List, thread, reader |  | `edit_config` |
 | `ctrl+b` | Toggle sidebar | List, thread, reader |  | `toggle_sidebar` |
 | `F5` | Refresh | List, thread, reader |  | `refresh` |
