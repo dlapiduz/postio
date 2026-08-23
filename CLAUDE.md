@@ -191,6 +191,30 @@ Naming a provider in a comment is fine where it explains a real-world
 compatibility quirk ("some servers spell it `Sent Messages`"), as is a test
 fixture named for the *behaviour* it replays rather than the vendor.
 
+### Privacy is a feature, not a setting
+
+Email is the most sensitive thing on most people's machines, and mail is
+attacker-controlled content that actively tries to phone home. Postio's
+commitment is one sentence: **nothing leaves this machine that the user did not
+ask for.**
+
+- Remote images and tracking pixels are blocked until the user allows them,
+  per sender. Never a global default-on.
+- **Read receipts are never sent automatically.** `Disposition-Notification-To`
+  is tracking with a friendly name.
+- `List-Unsubscribe` One-Click only fires on deliberate activation -- sending it
+  confirms to a spammer that the address is live.
+- No link prefetch, no favicon fetch, no speculative connections from the
+  reader. The hardened WebKit view has JavaScript off and network access off;
+  `cid:` images resolve from the local blob store.
+- No telemetry, no crash reporting, no update ping.
+- Credentials live in the OS keyring, never in `config.toml`, never in a log.
+
+When adding anything that could make a network request, the question is not
+"is this useful" but "did the user ask for it". If the answer is no, it does
+not ship. `postio-qhz.2` tracks proving this with a request log rather than
+asserting it.
+
 ### Architectural invariants (CI enforces these)
 
 - `postio-core` must not depend on `gtk4`/`libadwaita`. It is the UI-agnostic

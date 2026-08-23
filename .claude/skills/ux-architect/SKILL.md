@@ -58,6 +58,13 @@ never a state with no way forward.
 needs a binding, a palette entry, and an accessible control. Generated from
 one registry so the three cannot drift.
 
+**Nothing leaves the machine unasked.** Remote images blocked until allowed,
+read receipts never sent automatically, One-Click unsubscribe only on
+deliberate activation, no prefetch of any kind, no telemetry. When a design
+would make a network request, the question is not whether it is useful but
+whether the user asked for it. A privacy default that is merely *configurable*
+has already lost -- most people never open settings.
+
 **The app teaches itself.** Key hints on the focused row, bindings shown in the
 palette, `?` for the full sheet. A user should learn the keyboard by using the
 app, never by reading docs.
