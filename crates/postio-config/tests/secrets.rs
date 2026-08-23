@@ -19,18 +19,18 @@ secret = "{PASSWORD}"
 [sync]
 api_key = "{PASSWORD}"
 
-[accounts.icloud]
+[accounts.personal]
 email = "ada@example.com"
 password = "{PASSWORD}"
 
-[accounts.icloud.imap]
-host = "imap.mail.me.com"
+[accounts.personal.imap]
+host = "imap.example.com"
 password = "{PASSWORD}"
 app_password = "{PASSWORD}"
 access_token = "{PASSWORD}"
 
-[accounts.icloud.smtp]
-host = "smtp.mail.me.com"
+[accounts.personal.smtp]
+host = "smtp.example.com"
 passwd = "{PASSWORD}"
 client_secret = "{PASSWORD}"
 "#
@@ -53,11 +53,11 @@ fn stripped_secrets_are_reported_by_path() {
     let found = cfg.rejected_secrets();
     assert!(found.contains(&"password".to_string()), "{found:?}");
     assert!(
-        found.contains(&"accounts.icloud.imap.app_password".to_string()),
+        found.contains(&"accounts.personal.imap.app_password".to_string()),
         "{found:?}"
     );
     assert!(
-        found.contains(&"accounts.icloud.smtp.client_secret".to_string()),
+        found.contains(&"accounts.personal.smtp.client_secret".to_string()),
         "{found:?}"
     );
     assert_eq!(
@@ -84,7 +84,7 @@ fn no_secret_can_round_trip_to_disk() {
         assert!(!out.contains(key), "secret key `{key}` serialized:\n{out}");
     }
     // The rest of the file is untouched.
-    assert!(out.contains("imap.mail.me.com"));
+    assert!(out.contains("imap.example.com"));
     assert!(out.contains("ada@example.com"));
 }
 
@@ -111,14 +111,18 @@ fn keyring_entry_is_not_mistaken_for_a_secret() {
 
     let cfg = Config::from_toml_str(
         r#"
-        [accounts.icloud.imap]
-        keyring_entry = "postio:icloud:imap"
+        [accounts.personal.imap]
+        keyring_entry = "postio:personal:imap"
         "#,
     )
     .unwrap();
     assert_eq!(
-        cfg.account("icloud").unwrap().imap.keyring_entry.as_deref(),
-        Some("postio:icloud:imap")
+        cfg.account("personal")
+            .unwrap()
+            .imap
+            .keyring_entry
+            .as_deref(),
+        Some("postio:personal:imap")
     );
     assert!(
         cfg.to_toml_string().unwrap().contains("keyring_entry"),

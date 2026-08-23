@@ -184,7 +184,7 @@ mod tests {
         let mut table: Table = toml::from_str(
             r#"
             password = "x"
-            [accounts.icloud.imap]
+            [accounts.personal.imap]
             host = "h"
             app_password = "x"
             "#,
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(
             removed,
             vec![
-                "accounts.icloud.imap.app_password".to_string(),
+                "accounts.personal.imap.app_password".to_string(),
                 "password".to_string()
             ]
         );
@@ -212,10 +212,10 @@ mod tests {
 
     #[test]
     fn redaction_keeps_the_key_and_drops_the_value() {
-        let text = "2 | password = \"hunter2\"\nhost = \"imap.mail.me.com\"";
+        let text = "2 | password = \"hunter2\"\nhost = \"imap.example.com\"";
         let out = redact_secret_lines(text);
         assert!(!out.contains("hunter2"), "{out}");
         assert!(out.contains("password = <redacted>"), "{out}");
-        assert!(out.contains("imap.mail.me.com"), "{out}");
+        assert!(out.contains("imap.example.com"), "{out}");
     }
 }
