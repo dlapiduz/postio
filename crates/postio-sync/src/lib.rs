@@ -25,6 +25,8 @@
 //! - [`connect`] keeps the session up underneath all of it: exponential
 //!   backoff with jitter, a flapping link that converges rather than thrashes,
 //!   and a hard stop on a refused password.
+//! - [`initial`] enumerates a mailbox for the first time, newest message
+//!   first, so the app feels usable before the sync is done.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -32,9 +34,13 @@
 pub mod coalesce;
 pub mod connect;
 pub mod drain;
+pub mod initial;
 pub mod retry;
 
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
+pub use initial::{
+    DEFAULT_BATCH_SIZE, Progress, Report, sync_mailbox, sync_mailbox_with_batch_size,
+};
 pub use retry::RetryPolicy;
