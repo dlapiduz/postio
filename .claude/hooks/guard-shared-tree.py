@@ -23,6 +23,7 @@ payload, not the exit code.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 
@@ -124,6 +125,11 @@ def main() -> int:
 
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
+        return 0
+
+    # Kill switch: export POSTIO_GUARD=off to disable without editing settings,
+    # which already-running sessions would not re-read.
+    if os.environ.get("POSTIO_GUARD", "").lower() in {"off", "0", "false"}:
         return 0
 
     haystack = strip_heredocs(command)
