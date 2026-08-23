@@ -139,7 +139,11 @@ fn the_plate_layout_matches_the_canvas() {
     // Measured as natural-minus-margin, which is the box the canvas draws:
     // `width()` would report the *content* box, inside the padding and the
     // hairline, and the canvas' 600px includes both.
-    let field = find(root, &|w| w.has_css_class("postio-search")).expect("the search field");
+    // Scoped to the header bar, not to the whole window. `.postio-search` is
+    // the plate every search-shaped field wears — the palette's and the query
+    // bar's included — and a window-wide search finds whichever one the widget
+    // tree happens to reach first. What this assertion is about is the header's.
+    let field = find(&bar, &|w| w.has_css_class("postio-search")).expect("the search field");
     let (minimum, natural, _, _) = field.measure(gtk::Orientation::Horizontal, -1);
     let width = natural - field.margin_start();
     assert!(

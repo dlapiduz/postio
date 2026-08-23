@@ -18,7 +18,9 @@
 //! module for why sequences, per-context `Esc` and "typing always wins" cannot
 //! be expressed as accelerators. What comes back is a [`CommandId`], which the
 //! window hands to whoever registered with
-//! [`connect_command`](Window::connect_command).
+//! [`connect_command`](Window::connect_command); the window itself only acts on
+//! the commands that are *about* the window, opening the palette and closing
+//! what is open.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -27,6 +29,7 @@ use gtk::glib;
 use postio_core::{CommandId, Context};
 
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
+use crate::palette::Palette;
 use crate::shell::Shell;
 use crate::sidebar::Sidebar;
 use crate::state::WindowState;
@@ -51,6 +54,8 @@ mod imp {
     pub struct Window {
         pub shell: OnceCell<Shell>,
         pub sidebar: OnceCell<Sidebar>,
+        pub palette: OnceCell<Palette>,
+        pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
         pub context: std::cell::Cell<Option<Context>>,
@@ -145,9 +150,18 @@ impl Window {
             ),
         );
 
+        // The palette floats over the workspace rather than replacing it: the
+        // canvas shows the panes still visible behind it, and a palette that
+        // blanked the window would lose the context the user is choosing in.
+        let palette = Palette::new();
+        palette.set_visible(false);
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&shell));
+        overlay.add_overlay(&palette);
+
         let layout = adw::ToolbarView::new();
         layout.add_top_bar(&header.bar);
-        layout.set_content(Some(&shell));
+        layout.set_content(Some(&overlay));
         self.set_content(Some(&layout));
 
         // Breakpoints only fire once the window has a size, so the restored
@@ -159,6 +173,8 @@ impl Window {
 
         let _ = self.imp().shell.set(shell);
         let _ = self.imp().sidebar.set(sidebar);
+        let _ = self.imp().palette.set(palette);
+        let _ = self.imp().overlay.set(overlay);
         self.imp().context.set(Some(Context::List));
 
         self.install_keyboard();
@@ -170,6 +186,21 @@ impl Window {
             Resolver::from_commands(&postio_core::Keymap::resolve(&Default::default()));
         report(&problems);
         let _ = self.imp().resolver.set(std::cell::RefCell::new(resolver));
+
+        let palette = self.palette();
+        palette.connect_activated(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |id| {
+                window.close_palette();
+                window.dispatch(id);
+            }
+        ));
+        palette.connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.close_palette()
+        ));
 
         // Capture, not bubble: a single-key binding has to be seen before the
         // focused widget consumes it, and whether the focused widget *should*
@@ -214,7 +245,7 @@ impl Window {
         match outcome {
             Outcome::Command(id) => match id.parse::<CommandId>() {
                 Ok(id) => {
-                    self.dispatch(id);
+                    self.run(id);
                     glib::Propagation::Stop
                 }
                 // A binding for a command this build does not know: leave the
@@ -225,6 +256,15 @@ impl Window {
             // reach the widget underneath.
             Outcome::Pending(_) => glib::Propagation::Stop,
             Outcome::Unhandled => glib::Propagation::Proceed,
+        }
+    }
+
+    /// Acts on the commands that are about the window, and passes on the rest.
+    fn run(&self, id: CommandId) {
+        match id {
+            CommandId::CommandPalette => self.open_palette(),
+            CommandId::Back if self.palette().is_visible() => self.close_palette(),
+            _ => self.dispatch(id),
         }
     }
 
@@ -245,6 +285,9 @@ impl Window {
     }
 
     fn key_context(&self) -> KeyContext {
+        if self.palette().is_visible() {
+            return KeyContext::Palette;
+        }
         KeyContext::from(self.context())
     }
 }
@@ -256,6 +299,15 @@ fn report(problems: &[String]) {
 }
 
 impl Window {
+    /// The `Ctrl+K` overlay.
+    pub fn palette(&self) -> Palette {
+        self.imp()
+            .palette
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     /// Which surface owns the keyboard.
     pub fn context(&self) -> Context {
         self.imp().context.get().unwrap_or(Context::List)
@@ -267,11 +319,42 @@ impl Window {
     /// something different in a thread than in the list.
     pub fn set_context(&self, context: Context) {
         self.imp().context.set(Some(context));
+        self.palette().set_context(context);
     }
 
     /// Called with every command a key press resolves to.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.imp().commands.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Opens the palette over the workspace, filtered to the current context.
+    pub fn open_palette(&self) {
+        let palette = self.palette();
+        palette.set_context(self.context());
+        palette.set_visible(true);
+        palette.focus_search();
+    }
+
+    /// Closes the palette and gives the keyboard back to the workspace.
+    pub fn close_palette(&self) {
+        let palette = self.palette();
+        palette.set_visible(false);
+        if let Some(resolver) = self.imp().resolver.get() {
+            resolver.borrow_mut().clear_pending();
+        }
+        self.shell().grab_focus();
+    }
+
+    /// Rebuilds the keymap after `config.toml` changed, without a restart.
+    ///
+    /// Everything downstream follows from this one call: the resolver reparses
+    /// its chords, and the palette reprints its keys.
+    pub fn apply_keymap(&self, keymap: postio_core::Keymap) {
+        if let Some(resolver) = self.imp().resolver.get() {
+            let problems = resolver.borrow_mut().apply_commands(&keymap);
+            report(&problems);
+        }
+        self.palette().set_keymap(keymap);
     }
 
     /// Reopen where the last session left off.
