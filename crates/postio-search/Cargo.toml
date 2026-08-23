@@ -28,4 +28,10 @@ rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 thiserror = { version = "2.0.20", optional = true }
 
 [dev-dependencies]
+criterion = "0.7.0"
 postio-storage = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "search_budget"
+harness = false
+required-features = ["index"]
