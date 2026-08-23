@@ -30,7 +30,8 @@
 //! `postio-skc`'s job, not this one's: `CommandId::EditConfig` already
 //! resolves from the keymap (see `crates/postio-gtk/tests/gtk_live_config.rs`)
 //! independently of this panel being open. This module only builds the panel
-//! canvas 3f draws and makes it reachable from the main menu.
+//! canvas 3f draws; `CommandId::Settings` (`window.rs::run()`) is what makes
+//! it reachable from a binding and the palette, alongside the main menu.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
