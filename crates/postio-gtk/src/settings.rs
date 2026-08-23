@@ -24,14 +24,25 @@
 //! — see [`write_atomically`] for why that write is a rename, not an
 //! in-place write.
 //!
+//! # Revert
+//!
+//! [`SettingsPanel::revert`] writes the last configuration that loaded
+//! without error back over the file, and says so on the footer line —
+//! canvas 3f's "Revert file" button. [`SettingsPanel::note_known_good`] is
+//! what keeps that memory honest when the edit that validated did not come
+//! from this panel at all: `$EDITOR` writes the same file, through the same
+//! watcher, and `crate::config`'s bridge reports every reload here, not only
+//! the ones this widget's own buffer caused.
+//!
 //! # What this module does not do
 //!
-//! `Ctrl+E` to open `$EDITOR` and the "Revert file" action are
-//! `postio-skc`'s job, not this one's: `CommandId::EditConfig` already
+//! Launching `$EDITOR` itself is `crate::config`'s job: `CommandId::EditConfig`
 //! resolves from the keymap (see `crates/postio-gtk/tests/gtk_live_config.rs`)
-//! independently of this panel being open. This module only builds the panel
-//! canvas 3f draws; `CommandId::Settings` (`window.rs::run()`) is what makes
-//! it reachable from a binding and the palette, alongside the main menu.
+//! independently of this panel being open, and the palette already gives it
+//! an accessible control, so this panel does not duplicate that with a
+//! second button of its own. `CommandId::Settings` (`window.rs::run()`) is
+//! what makes the panel itself reachable from a binding and the palette,
+//! alongside the main menu.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -214,6 +225,7 @@ mod imp {
         pub buffer: gtk::TextBuffer,
         pub view: gtk::TextView,
         pub status: gtk::Label,
+        pub revert: gtk::Button,
         pub path: RefCell<Option<PathBuf>>,
         /// Set while [`super::SettingsPanel::load`] is replacing the buffer's
         /// text, so that reload does not read back as an edit and schedule a
@@ -221,6 +233,11 @@ mod imp {
         pub loading: Cell<bool>,
         pub write_source: RefCell<Option<glib::SourceId>>,
         pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
+        /// The last text that loaded without error — from this panel's own
+        /// typing, or from anywhere else that writes the same file. `None`
+        /// only before anything has ever validated, which in practice means
+        /// never: even a missing file validates to defaults.
+        pub last_good: RefCell<Option<String>>,
     }
 
     impl Default for SettingsPanel {
@@ -232,10 +249,12 @@ mod imp {
                 buffer: gtk::TextBuffer::new(None),
                 view: gtk::TextView::new(),
                 status: gtk::Label::new(None),
+                revert: gtk::Button::with_label("Revert file"),
                 path: RefCell::new(None),
                 loading: Cell::new(false),
                 write_source: RefCell::new(None),
                 dismissed: RefCell::new(Vec::new()),
+                last_good: RefCell::new(None),
             }
         }
     }
@@ -287,7 +306,10 @@ impl SettingsPanel {
     ///
     /// A missing file opens empty rather than erroring: first run has nothing
     /// on disk yet, and typing here is what creates it, exactly as a first
-    /// `$EDITOR` save would.
+    /// `$EDITOR` save would. A file that is already usable seeds
+    /// [`SettingsPanel::revert`]'s target, the same as any later save —
+    /// otherwise a config nobody has edited since startup would have nothing
+    /// to revert to.
     pub fn load(&self, path: &Path) {
         let imp = self.imp();
         *imp.path.borrow_mut() = Some(path.to_path_buf());
@@ -299,6 +321,12 @@ impl SettingsPanel {
         imp.loading.set(false);
 
         self.refresh_validity();
+        if postio_config::validate::check_str(&text)
+            .validation
+            .is_valid()
+        {
+            self.note_known_good(&text);
+        }
     }
 
     /// The file this panel is showing, if [`SettingsPanel::load`] has been
@@ -320,6 +348,13 @@ impl SettingsPanel {
     /// `set_query`.
     pub fn set_text(&self, text: &str) {
         self.imp().buffer.set_text(text);
+    }
+
+    /// The footer line exactly as shown: the validity line, or — after
+    /// [`SettingsPanel::revert`] — the confirmation that replaces it until
+    /// the next edit. A test seam, in the same spirit as [`SettingsPanel::set_text`].
+    pub fn footer_text(&self) -> String {
+        self.imp().status.label().to_string()
     }
 
     /// Whether the buffer's current text is usable as written — what the
@@ -364,10 +399,19 @@ impl SettingsPanel {
     ///
     /// `postio_config::validate` does the actual parsing and timing; this
     /// only formats what it reports into the tag and the foot line canvas 3f
-    /// draws.
+    /// draws. Deliberately does not feed [`SettingsPanel::revert`]'s target:
+    /// `gtk::TextBuffer::set_text` fires `changed` once for the delete and
+    /// once for the insert, so mid-edit this sees a transiently empty buffer
+    /// — and an empty file is valid TOML. Recording that as "last good" would
+    /// make every edit briefly overwrite the real one. [`note_known_good`]
+    /// only ever sees text that actually reached disk, which a buffer signal
+    /// firing mid-mutation cannot promise.
+    ///
+    /// [`note_known_good`]: SettingsPanel::note_known_good
     fn refresh_validity(&self) {
         let imp = self.imp();
-        let checked = postio_config::validate::check_str(&self.text());
+        let text = self.text();
+        let checked = postio_config::validate::check_str(&text);
         let valid = checked.validation.is_valid();
 
         imp.tag.set_label(if valid { "valid" } else { "invalid" });
@@ -381,6 +425,46 @@ impl SettingsPanel {
             "{} · applied live · nothing to save",
             checked.validation.status_line()
         ));
+    }
+
+    /// Records `text` as the last configuration known to load without error,
+    /// without touching the buffer.
+    ///
+    /// For a save that reached the file some way other than typing here —
+    /// `$EDITOR`, most of all. Keeping this separate from the buffer-driven
+    /// validity check is what stops a `$EDITOR` save from clobbering an edit
+    /// in progress in this panel: it updates what "last good" means without
+    /// ever touching what is on screen.
+    pub fn note_known_good(&self, text: &str) {
+        *self.imp().last_good.borrow_mut() = Some(text.to_string());
+    }
+
+    /// Restores the file to the last configuration known to load without
+    /// error, and says so on the footer line.
+    ///
+    /// Quietly does nothing when there is no path to write to, or nothing has
+    /// ever validated — the second case cannot happen in practice, since even
+    /// a missing file validates to defaults, but pretending there is always
+    /// something to revert to would risk overwriting a first, never-saved
+    /// edit with nothing.
+    pub fn revert(&self) {
+        let imp = self.imp();
+        let Some(text) = imp.last_good.borrow().clone() else {
+            return;
+        };
+        let Some(path) = imp.path.borrow().clone() else {
+            return;
+        };
+        if let Err(error) = write_atomically(&path, &text) {
+            eprintln!("postio: cannot revert {}: {error}", path.display());
+            return;
+        }
+        imp.loading.set(true);
+        imp.buffer.set_text(&text);
+        imp.loading.set(false);
+        self.refresh_validity();
+        imp.status
+            .set_label("Reverted to the last configuration that loaded without error.");
     }
 
     /// Highlights whichever nav row the cursor currently sits inside.
@@ -503,16 +587,28 @@ impl SettingsPanel {
         body.append(&view_scroller);
         body.set_size_request(-1, BODY_HEIGHT);
 
-        // ── footer: the validity line ────────────────────────────────────
+        // ── footer: the validity line, and Revert file ───────────────────
         imp.status.set_xalign(0.0);
+        imp.status.set_hexpand(true);
         imp.status.add_css_class("postio-settings-footer");
+        imp.revert.add_css_class("postio-settings-revert");
+        imp.revert.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.revert()
+        ));
+
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        footer.add_css_class("postio-settings-footer-row");
+        footer.append(&imp.status);
+        footer.append(&imp.revert);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&header);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        column.append(&imp.status);
+        column.append(&footer);
         self.set_child(Some(&column));
 
         imp.buffer.connect_changed(glib::clone!(

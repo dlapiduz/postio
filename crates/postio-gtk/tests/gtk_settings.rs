@@ -133,6 +133,97 @@ fn the_settings_panel_edits_the_file_in_place() {
         "not still the value from before the edit"
     );
 
+    // ── Ctrl+E launches $EDITOR on the real path ───────────────────────────
+    // A fake editor that records the one argument it was called with, rather
+    // than an interactive one: this proves the command actually reaches a
+    // process with the config path, without needing a real terminal editor
+    // installed in whatever environment runs the test.
+    let marker = root.join("editor-invoked");
+    let fake_editor = root.join("fake-editor.sh");
+    std::fs::write(
+        &fake_editor,
+        format!("#!/bin/sh\nprintf '%s' \"$1\" > {:?}\n", marker.display()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake_editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // SAFETY: single-threaded test; nothing else reads $EDITOR here.
+    unsafe { std::env::set_var("EDITOR", &fake_editor) };
+
+    window.handle_key(gdk::Key::e, gdk::ModifierType::CONTROL_MASK);
+    assert!(
+        wait_until(|| marker.is_file()),
+        "Ctrl+E never launched $EDITOR"
+    );
+    assert!(
+        wait_until(
+            || std::fs::read_to_string(&marker).unwrap_or_default() == path.display().to_string()
+        ),
+        "the editor was not launched on the real config path: got {:?}",
+        std::fs::read_to_string(&marker)
+    );
+
+    // ── Revert restores the last configuration that loaded without error ──
+    window.settings().set_text("[keys\nbroken");
+    settle();
+    assert!(
+        !window.settings().is_valid(),
+        "the broken edit is on screen"
+    );
+
+    window.settings().revert();
+    settle();
+    assert!(
+        window.settings().is_valid(),
+        "revert did not restore validity"
+    );
+    assert_eq!(
+        window.settings().text(),
+        edited,
+        "revert did not restore the last-good text"
+    );
+    assert!(
+        wait_until(|| std::fs::read_to_string(&path).unwrap_or_default() == edited),
+        "revert never reached disk"
+    );
+    assert!(
+        window
+            .settings()
+            .footer_text()
+            .to_lowercase()
+            .contains("reverted"),
+        "revert did not say so: {:?}",
+        window.settings().footer_text()
+    );
+
+    // ── and it restores a save that came from outside the panel, too ──────
+    // Simulates `$EDITOR` saving the file directly, the same shape
+    // `write_atomically` uses: a temp file renamed over the target, which is
+    // what the watcher is built to notice.
+    let from_editor = "[keys]\narchive = \"a\"\n\n[ui]\ndensity = \"comfortable\"\n";
+    let tmp = config_dir.join(".config.toml.tmp");
+    std::fs::write(&tmp, from_editor).unwrap();
+    std::fs::rename(&tmp, &path).unwrap();
+    assert!(
+        wait_until(|| binding(&window, CommandId::Archive).as_deref() == Some("a")),
+        "the external save never reached the running app"
+    );
+
+    window.settings().set_text("[keys\nstill broken");
+    settle();
+    assert!(!window.settings().is_valid());
+
+    window.settings().revert();
+    settle();
+    assert_eq!(
+        window.settings().text(),
+        from_editor,
+        "revert did not know about a save `$EDITOR` made outside the panel"
+    );
+
     window.close();
     settle();
     let _ = std::fs::remove_dir_all(&root);
