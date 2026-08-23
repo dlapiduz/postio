@@ -471,6 +471,7 @@ pub struct ScriptedConnector {
     log: Arc<Mutex<ConnectionLog>>,
     tls_failure: Option<String>,
     tcp_failure: Option<String>,
+    close_after: Option<usize>,
 }
 
 impl ScriptedConnector {
@@ -481,6 +482,7 @@ impl ScriptedConnector {
             log: Arc::new(Mutex::new(ConnectionLog::default())),
             tls_failure: None,
             tcp_failure: None,
+            close_after: None,
         }
     }
 
@@ -498,6 +500,16 @@ impl ScriptedConnector {
     /// Makes every plaintext connect fail with `reason`.
     pub fn failing_tcp(mut self, reason: impl Into<String>) -> Self {
         self.tcp_failure = Some(reason.into());
+        self
+    }
+
+    /// Makes every connection go silent after it has served `commands`.
+    ///
+    /// The server stops answering, so the next read sees EOF — a connection
+    /// the far end dropped while the client still believed in it, which is
+    /// what an idle timeout or a server restart looks like from here.
+    pub fn closing_after(mut self, commands: usize) -> Self {
+        self.close_after = Some(commands);
         self
     }
 
@@ -533,6 +545,7 @@ impl ImapConnector for ScriptedConnector {
             Arc::clone(&self.log),
             self.tls_failure.clone(),
             false,
+            self.close_after,
         )))
     }
 
@@ -559,6 +572,7 @@ impl ImapConnector for ScriptedConnector {
             Arc::clone(&self.log),
             None,
             true,
+            self.close_after,
         )))
     }
 }
@@ -571,6 +585,8 @@ struct ScriptedStream {
     pending: VecDeque<u8>,
     tls_failure: Option<String>,
     encrypted: bool,
+    /// Commands still to be answered before the server goes silent.
+    budget: Option<usize>,
 }
 
 impl ScriptedStream {
@@ -579,6 +595,7 @@ impl ScriptedStream {
         log: Arc<Mutex<ConnectionLog>>,
         tls_failure: Option<String>,
         encrypted: bool,
+        budget: Option<usize>,
     ) -> Self {
         let greeting = crlf(&script.greeting);
         Self {
@@ -587,6 +604,7 @@ impl ScriptedStream {
             pending: greeting.into_bytes().into(),
             tls_failure,
             encrypted,
+            budget,
         }
     }
 }
@@ -615,6 +633,11 @@ impl ImapStream for ScriptedStream {
         // terminated, which is where the server would.
         let text = String::from_utf8_lossy(bytes);
         for line in text.split("\r\n").filter(|line| !line.is_empty()) {
+            match &mut self.budget {
+                Some(0) => return Ok(()),
+                Some(remaining) => *remaining -= 1,
+                None => {}
+            }
             self.pending.extend(self.script.reply_to(line).into_bytes());
         }
         Ok(())
