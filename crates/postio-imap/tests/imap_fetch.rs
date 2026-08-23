@@ -8,7 +8,7 @@ use postio_imap::backend::UidSet;
 use postio_imap::cancel::CancelToken;
 use postio_imap::imap::{
     ConnectionPool, ConnectionSettings, IMAPS_PORT, ImapScript, PoolConfig, Priority,
-    ScriptedConnector, fetch_headers,
+    RustlsConnector, ScriptedConnector, fetch_headers,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::{ModSeq, TransportSecurity, Uid};
@@ -357,4 +357,89 @@ async fn the_same_undecodable_line_is_tolerated_outside_a_changedsince_fetch() {
     .unwrap();
 
     assert_eq!(messages.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Live server. Ignored by default; needs a real account. See
+// `imap_session.rs` for the connect/capability live tests and
+// `imap_mailboxes.rs` for folder discovery — this covers header fetch.
+// ---------------------------------------------------------------------------
+
+/// Reads the live-test credentials, or skips.
+///
+/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` — for a provider
+/// that requires one, an app-specific password. The host comes from Postio's
+/// preset table when it ships one for the address's domain, and
+/// `POSTIO_TEST_IMAP_HOST` overrides it for anything else.
+async fn live_pool() -> Option<ConnectionPool> {
+    let user = std::env::var("POSTIO_TEST_IMAP_USER").ok()?;
+    let password = std::env::var("POSTIO_TEST_IMAP_PASSWORD").ok()?;
+
+    let store = MemorySecretStore::new();
+    let key = AccountKey::new(&user);
+    store
+        .store(&key, &Password::new(password))
+        .await
+        .expect("seed the keyring");
+
+    let settings = ConnectionSettings::preset_for(&user).unwrap_or_else(|| {
+        ConnectionSettings::new(
+            std::env::var("POSTIO_TEST_IMAP_HOST").expect("POSTIO_TEST_IMAP_HOST"),
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            &user,
+        )
+    });
+
+    Some(ConnectionPool::new(
+        settings,
+        key,
+        Arc::new(store),
+        Arc::new(RustlsConnector::new().expect("TLS configuration")),
+        PoolConfig::default(),
+    ))
+}
+
+#[tokio::test]
+#[ignore = "talks to a live IMAP server; set POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD"]
+async fn live_server_fetches_real_headers() {
+    let Some(pool) = live_pool().await else {
+        panic!("POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD must be set");
+    };
+
+    // A bounded prefix, not "1:*": the point is proving the wire path works
+    // against a real server, not paging through everything a real inbox
+    // holds. Read-only (BODY.PEEK carries no \Seen side effect), so there is
+    // nothing to clean up afterward.
+    let uids = UidSet::range(Uid::new(1), Uid::new(500));
+
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &uids,
+        None,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("live header fetch");
+
+    println!("fetched {} header(s) from INBOX", messages.len());
+    for message in &messages {
+        assert!(
+            uids.contains(message.uid),
+            "{:?} was outside the requested range",
+            message.uid
+        );
+        assert!(
+            message.envelope.is_some(),
+            "a header fetch must carry ENVELOPE"
+        );
+        assert!(
+            message.structure.is_some(),
+            "a header fetch must carry BODYSTRUCTURE"
+        );
+    }
+
+    pool.close();
 }

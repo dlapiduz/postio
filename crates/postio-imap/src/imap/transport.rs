@@ -419,7 +419,7 @@ impl ImapScript {
     }
 
     /// Replies to `keyword` with a literal body of `len` synthesized bytes,
-    /// generated a chunk at a time as [`ScriptedStream`] is read rather than
+    /// generated a chunk at a time as the stream is read rather than
     /// held in memory — for a test that must prove a fetch streams a large
     /// response instead of buffering it, where an ordinary [`Self::on`]
     /// reply of the same size would itself dominate the measurement.

@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
-use postio_imap::backend::{BackendError, BodyPart, VecSink};
+use postio_imap::backend::{BackendError, BodyPart, CountingSink, UidSet, VecSink};
 use postio_imap::cancel::CancelToken;
 use postio_imap::imap::{
     ConnectionPool, ConnectionSettings, IMAPS_PORT, ImapScript, PARTIAL_FETCH_WINDOW, PoolConfig,
-    Priority, ScriptedConnector, fetch_part,
+    Priority, RustlsConnector, ScriptedConnector, fetch_headers, fetch_part,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::{TransportSecurity, Uid};
@@ -291,4 +291,104 @@ async fn a_malformed_section_number_never_reaches_the_wire() {
 
     assert!(error.to_string().contains("2.x"));
     assert!(connector.log().tls.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Live server. Ignored by default; needs a real account. See
+// `imap_session.rs` for the connect/capability live tests and
+// `imap_mailboxes.rs` for folder discovery — this covers body fetch.
+// ---------------------------------------------------------------------------
+
+/// Reads the live-test credentials, or skips.
+///
+/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` — for a provider
+/// that requires one, an app-specific password. The host comes from Postio's
+/// preset table when it ships one for the address's domain, and
+/// `POSTIO_TEST_IMAP_HOST` overrides it for anything else.
+async fn live_pool() -> Option<ConnectionPool> {
+    let user = std::env::var("POSTIO_TEST_IMAP_USER").ok()?;
+    let password = std::env::var("POSTIO_TEST_IMAP_PASSWORD").ok()?;
+
+    let store = MemorySecretStore::new();
+    let key = AccountKey::new(&user);
+    store
+        .store(&key, &Password::new(password))
+        .await
+        .expect("seed the keyring");
+
+    let settings = ConnectionSettings::preset_for(&user).unwrap_or_else(|| {
+        ConnectionSettings::new(
+            std::env::var("POSTIO_TEST_IMAP_HOST").expect("POSTIO_TEST_IMAP_HOST"),
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            &user,
+        )
+    });
+
+    Some(ConnectionPool::new(
+        settings,
+        key,
+        Arc::new(store),
+        Arc::new(RustlsConnector::new().expect("TLS configuration")),
+        PoolConfig::default(),
+    ))
+}
+
+#[tokio::test]
+#[ignore = "talks to a live IMAP server; set POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD"]
+async fn live_server_streams_a_real_body() {
+    let Some(pool) = live_pool().await else {
+        panic!("POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD must be set");
+    };
+
+    // Discover a real UID to fetch: a bounded header prefix first, same as
+    // `imap_fetch.rs`'s live test, rather than assuming one.
+    let uids = UidSet::range(Uid::new(1), Uid::new(500));
+    let headers = fetch_headers(
+        &pool,
+        "INBOX",
+        &uids,
+        None,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("live header fetch");
+
+    let Some(message) = headers.first() else {
+        println!("INBOX has no message in UID range 1:500; skipping the body fetch");
+        pool.close();
+        return;
+    };
+
+    // `CountingSink`, not `VecSink`: this only needs to prove the round trip
+    // and the streaming path work against a real server, not inspect the
+    // content. Read-only (BODY.PEEK carries no \Seen side effect), so there
+    // is nothing to clean up afterward.
+    let mut sink = CountingSink::new();
+    let fetched = fetch_part(
+        &pool,
+        "INBOX",
+        message.uid,
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("live body fetch");
+
+    println!(
+        "streamed {} byte(s) for UID {} from INBOX (RFC822.SIZE reported {})",
+        sink.bytes(),
+        message.uid,
+        message.size
+    );
+    assert_eq!(fetched.bytes_written, sink.bytes());
+    assert!(
+        fetched.bytes_written > 0,
+        "a real message must not be empty"
+    );
+
+    pool.close();
 }
