@@ -67,6 +67,27 @@ fn strip_one_prefix(subject: &str) -> Option<&str> {
     None
 }
 
+/// Whether a subject carries reply or forward decoration.
+///
+/// The safeguard on subject-based threading. JWZ groups by subject only as a
+/// fallback for a broken `References` chain, and only where one side *looks*
+/// like a reply — otherwise every message anyone ever titled "Hello" collapses
+/// into one conversation, which is worse than the broken chain it was meant to
+/// repair.
+///
+/// ```
+/// use postio_model::subject::is_reply;
+/// assert!(is_reply("Re: Contract"));
+/// assert!(is_reply("[list] FWD: Contract"));
+/// assert!(!is_reply("Contract"));
+/// assert!(!is_reply("Reference check"));
+/// ```
+pub fn is_reply(subject: &str) -> bool {
+    let collapsed = subject.to_lowercase();
+    let (_, rest) = split_leading_tag(collapsed.trim());
+    strip_one_prefix(rest).is_some()
+}
+
 /// Strips a `[2]` or `(2)` repetition counter, if one is there.
 fn strip_counter(subject: &str) -> &str {
     for (open, close) in [('[', ']'), ('(', ')')] {
@@ -114,6 +135,23 @@ mod tests {
     fn strips_non_english_prefixes() {
         assert_eq!(normalize_subject("AW: Vertrag"), "vertrag");
         assert_eq!(normalize_subject("SV: Avtal"), "avtal");
+    }
+
+    #[test]
+    fn a_reply_is_recognized_wherever_its_prefix_sits() {
+        assert!(is_reply("Re: Contract"));
+        assert!(is_reply("re: contract"));
+        assert!(is_reply("RE[2]: Contract"));
+        assert!(is_reply("[postio-dev] Re: Contract"));
+        assert!(is_reply("AW: Vertrag"));
+    }
+
+    #[test]
+    fn an_ordinary_subject_is_not_a_reply() {
+        assert!(!is_reply("Contract"));
+        assert!(!is_reply("Reference check"), "not every word starting `re`");
+        assert!(!is_reply("[postio-dev] Contract"));
+        assert!(!is_reply(""));
     }
 
     #[test]
