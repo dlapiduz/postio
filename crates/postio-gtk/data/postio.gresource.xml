@@ -28,6 +28,7 @@
     <!-- The application icon, in the directory layout GtkIconTheme expects
          under a resource path: <path>/<size>/<context>/<name>.svg. -->
     <file compressed="true">icons/scalable/apps/dev.postio.Postio.svg</file>
+    <file compressed="true">icons/scalable/actions/postio-archive-symbolic.svg</file>
 
     <!-- Barlow — body text. -->
     <file>fonts/barlow/Barlow-Regular.ttf</file>

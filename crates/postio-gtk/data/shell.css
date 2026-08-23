@@ -347,6 +347,14 @@ button.postio-compose {
   color: var(--postio-selected-bg);
 }
 
+/* A folder the pointer is holding messages over. The accent says "let go
+   here"; without it a drop is a guess, and a guess that moves mail is not a
+   guess anybody should have to make. */
+.postio-folder.postio-drop-into {
+  background: var(--postio-selected-strong-bg);
+  box-shadow: inset 3px 0 0 var(--postio-selected-border);
+}
+
 /* The ground under a row that is *in the selection*, which is not the row
    the cursor is on: see `crate::selection`. The check in the avatar's square
    is what carries the meaning — these two grounds are a step apart in light

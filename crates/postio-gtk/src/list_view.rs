@@ -31,9 +31,9 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{gdk, glib, graphene};
+use gtk::{gdk, gio, glib, graphene};
 use postio_config::Density;
-use postio_core::CommandId;
+use postio_core::{Command, CommandId, MessageTarget};
 use postio_model::MessageId;
 
 use crate::list::{MessageList, MessageRow};
@@ -43,9 +43,13 @@ use crate::selection::{self, SelectionState};
 /// What to call when a row is activated — `Enter`, or a double click.
 type ActivateHandler = Box<dyn Fn(crate::list::Row)>;
 
-/// What to call when the bulk bar is used — the same command ids the keyboard
-/// resolves to, so the two paths cannot drift.
-type CommandHandler = Box<dyn Fn(CommandId)>;
+/// What to call when the mouse runs a command.
+///
+/// A whole [`Command`] rather than a [`CommandId`], because the mouse can be
+/// more specific than a keystroke: `a` archives the selection, but the
+/// archive glyph on a row archives *that row*, and the target is the only
+/// place that difference lives.
+type CommandHandler = Box<dyn Fn(Command)>;
 
 /// The verbs the bulk bar carries, in the order they appear.
 ///
@@ -85,6 +89,8 @@ mod imp {
         pub(super) density: Rc<Cell<Density>>,
         pub(super) activated: RefCell<Vec<ActivateHandler>>,
         pub(super) commands: RefCell<Vec<CommandHandler>>,
+        /// `[ui].show_hover_actions`, handed to every row as it binds.
+        pub(super) show_actions: Rc<Cell<bool>>,
         /// The mailbox in view, so opening another one drops a selection that
         /// was about the last.
         pub(super) mailbox: RefCell<String>,
@@ -109,6 +115,7 @@ mod imp {
                 density: Rc::new(Cell::new(Density::default())),
                 activated: RefCell::new(Vec::new()),
                 commands: RefCell::new(Vec::new()),
+                show_actions: Rc::new(Cell::new(true)),
                 mailbox: RefCell::new(String::new()),
             }
         }
@@ -188,9 +195,21 @@ impl MessageListView {
         self.imp().selected.clone()
     }
 
-    /// Called with every command the bulk bar runs.
-    pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
+    /// Called with every command the mouse runs — the bulk bar, a hover
+    /// action, the context menu.
+    pub fn connect_command(&self, handler: impl Fn(Command) + 'static) {
         self.imp().commands.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Whether rows offer their actions under the pointer.
+    ///
+    /// `[ui].show_hover_actions`. Applied to the rows on screen now and to
+    /// every row that binds after.
+    pub fn set_show_actions(&self, show: bool) {
+        if self.imp().show_actions.replace(show) == show {
+            return;
+        }
+        self.each_row(|row| row.set_show_actions(show));
     }
 
     /// Name the mailbox in view and say how much of it is unread.
@@ -351,11 +370,21 @@ impl MessageListView {
         }
     }
 
-    /// Run `id` through whoever is listening — the bulk bar's buttons and the
-    /// keyboard end up in the same place.
+    /// Run `id` against whatever is selected — what the bulk bar means.
     fn run(&self, id: CommandId) {
+        self.act(Command::default_for(id));
+    }
+
+    /// Run `id` against one row — what a hover action or the context menu on
+    /// a row means, whether or not that row is in the selection.
+    fn run_on(&self, id: CommandId, message: MessageId) {
+        self.act(Command::default_for(id).with_target(MessageTarget::Messages(vec![message])));
+    }
+
+    /// Hand a command to whoever is listening.
+    fn act(&self, command: Command) {
         for handler in self.imp().commands.borrow().iter() {
-            handler(id);
+            handler(command.clone());
         }
     }
 
@@ -485,6 +514,10 @@ impl MessageListView {
         });
         let bound = imp.density.clone();
         let chosen = imp.selected.clone();
+        // Shared with the pane the same way the density is: the factory
+        // outlives any borrow of it, and a bind should cost a `Cell` read
+        // rather than an upgrade through a weak reference.
+        let offers = imp.show_actions.clone();
         factory.connect_bind(move |_, item| {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
@@ -493,6 +526,7 @@ impl MessageListView {
                 return;
             };
             view.set_density(bound.get());
+            view.set_show_actions(offers.get());
             view.set_first(item.position() == 0);
             view.set_index(item.position());
             view.set_cursor(item.is_selected());
@@ -597,6 +631,53 @@ impl MessageListView {
         ));
         imp.view.add_controller(click);
 
+        // Right-click, from the registry rather than from a list written out
+        // here: a menu that named its own verbs would be a third place to
+        // keep them in step with the keys and the palette.
+        let menu = gtk::GestureClick::new();
+        menu.set_button(gdk::BUTTON_SECONDARY);
+        menu.set_propagation_phase(gtk::PropagationPhase::Capture);
+        menu.connect_pressed(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |gesture, _, x, y| {
+                if pane.open_context_menu(x, y) {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
+                }
+            }
+        ));
+        imp.view.add_controller(menu);
+
+        // Dragging a row onto a folder moves it there. What travels is the
+        // row the drag started on; `postio-qhz.3` widens that to the whole
+        // selection, which is why the payload is a list from the outset.
+        let drag = gtk::DragSource::new();
+        drag.set_actions(gdk::DragAction::MOVE);
+        drag.connect_prepare(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            #[upgrade_or]
+            None,
+            move |_, x, y| {
+                let (view, _) = pane.row_at(x, y)?;
+                // A drag that starts on a hover action is not a drag: the
+                // pointer is over a button, and pulling it sideways should
+                // not take the message with it.
+                let local = pane
+                    .imp()
+                    .view
+                    .compute_point(&view, &graphene::Point::new(x as f32, y as f32));
+                if local.is_some_and(|local| {
+                    view.action_at(local.x() as f64, local.y() as f64).is_some()
+                }) {
+                    return None;
+                }
+                let id = view.row().map(|row| row.id)?;
+                Some(drag_payload(&[id]))
+            }
+        ));
+        imp.view.add_controller(drag);
+
         let motion = gtk::EventControllerMotion::new();
         motion.connect_motion(glib::clone!(
             #[weak(rename_to = pane)]
@@ -621,11 +702,24 @@ impl MessageListView {
         };
         let imp = self.imp();
 
-        let in_check = self
+        let local = self
             .imp()
             .view
-            .compute_point(&view, &graphene::Point::new(x as f32, y as f32))
-            .is_some_and(|local| view.is_in_check(local.x() as f64, local.y() as f64));
+            .compute_point(&view, &graphene::Point::new(x as f32, y as f32));
+
+        // A hover action is a button the row drew, so it takes the press
+        // before any selection gesture does — clicking "archive" means
+        // archive, whatever modifier happens to be held.
+        if state.is_empty()
+            && let Some(local) = local
+            && let Some(action) = view.action_at(local.x() as f64, local.y() as f64)
+        {
+            self.run_on(command_for(action), id);
+            return true;
+        }
+
+        let in_check =
+            local.is_some_and(|local| view.is_in_check(local.x() as f64, local.y() as f64));
 
         match press_kind(state, in_check) {
             Press::Extend => {
@@ -695,6 +789,79 @@ impl MessageListView {
         }
     }
 
+    /// Open the row's context menu at `(x, y)`, and say whether there was a
+    /// row there to open one for.
+    ///
+    /// The menu is generated from the command registry, filtered to what
+    /// applies to a message in the list, with each item carrying the key that
+    /// does the same thing — the same table the cheat sheet and the palette
+    /// are built from, so a verb cannot appear in one and not another.
+    fn open_context_menu(&self, x: f64, y: f64) -> bool {
+        let Some((view, position)) = self.row_at(x, y) else {
+            return false;
+        };
+        let Some(id) = view.row().map(|row| row.id) else {
+            return false;
+        };
+
+        // Right-clicking a row outside the selection moves the keyboard to it
+        // first, so what the menu is about is never in doubt. A row already
+        // in the selection is left alone: right-clicking one of twelve
+        // selected messages must not collapse the twelve.
+        if !self.imp().selected.contains(id) {
+            self.move_cursor_to(position);
+        }
+
+        let menu = gio::Menu::new();
+        for spec in postio_core::registry::all() {
+            if !spec.contexts.contains(postio_core::Context::List) || !is_message_action(spec.id) {
+                continue;
+            }
+            let item = gio::MenuItem::new(Some(spec.title), None);
+            item.set_action_and_target_value(
+                Some("listrow.command"),
+                Some(&spec.id.as_str().to_variant()),
+            );
+            menu.append_item(&item);
+        }
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&self.imp().view);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        let actions = gio::SimpleActionGroup::new();
+        let command = gio::SimpleAction::new("command", Some(glib::VariantTy::STRING));
+        command.connect_activate(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_, parameter| {
+                let Some(name) = parameter.and_then(|value| value.str().map(str::to_owned)) else {
+                    return;
+                };
+                let Some(spec) = postio_core::registry::all().find(|spec| spec.id.as_str() == name)
+                else {
+                    return;
+                };
+                // The menu is about the row it was opened on, not about the
+                // selection — unless that row is in the selection, in which
+                // case the whole selection is what the user is pointing at.
+                if pane.imp().selected.contains(id) {
+                    pane.run(spec.id);
+                } else {
+                    pane.run_on(spec.id, id);
+                }
+            }
+        ));
+        actions.add_action(&command);
+        popover.insert_action_group("listrow", Some(&actions));
+
+        popover.connect_closed(|popover| popover.unparent());
+        popover.popup();
+        true
+    }
+
     /// Put the hover treatment on `row` and take it off whatever had it.
     fn hover(&self, row: Option<MessageRowView>) {
         let previous = self.imp().hovered.replace(row.clone());
@@ -708,6 +875,68 @@ impl MessageListView {
             row.set_hovered(true);
         }
     }
+}
+
+/// What a drag of Postio's own messages carries, so a drop can tell it from
+/// any other text that lands on a folder.
+///
+/// A string rather than a custom GType, because the same drag will grow other
+/// formats — dragging *out* of the application means `message/rfc822`
+/// materialised from the blob store, which is `postio-qhz.3`'s — and a
+/// content provider can offer several spellings of one drag only if each is
+/// something the toolkit already knows how to carry.
+const DRAG_PREFIX: &str = "postio-messages:";
+
+/// The ids in a drag payload, or nothing if it did not come from Postio.
+///
+/// Anything else dropped on a folder — a selection of text, a file, a link —
+/// reads as no messages and is refused, rather than being parsed for numbers
+/// that happen to be in it.
+pub fn dragged_messages(payload: &str) -> Vec<MessageId> {
+    let Some(ids) = payload.strip_prefix(DRAG_PREFIX) else {
+        return Vec::new();
+    };
+    ids.split(',')
+        .filter_map(|id| id.trim().parse::<i64>().ok())
+        .map(MessageId::new)
+        .collect()
+}
+
+/// The payload for `messages`, in the spelling [`dragged_messages`] reads.
+fn drag_payload(messages: &[MessageId]) -> gdk::ContentProvider {
+    let ids: Vec<String> = messages.iter().map(|id| id.get().to_string()).collect();
+    gdk::ContentProvider::for_value(&format!("{DRAG_PREFIX}{}", ids.join(",")).to_value())
+}
+
+/// Which command a hover action runs.
+fn command_for(action: crate::row::RowAction) -> CommandId {
+    match action {
+        crate::row::RowAction::Archive => CommandId::Archive,
+        crate::row::RowAction::Flag => CommandId::Flag,
+        crate::row::RowAction::Delete => CommandId::Delete,
+    }
+}
+
+/// Whether a command is one that acts on the message under the pointer.
+///
+/// The context menu is about a row, so it carries the verbs that take a
+/// message and not the ones that move around the list or open a surface —
+/// "next message" in a menu about *this* message is noise.
+fn is_message_action(id: CommandId) -> bool {
+    matches!(
+        Command::default_for(id),
+        Command::Archive { .. }
+            | Command::Delete { .. }
+            | Command::Move { .. }
+            | Command::Flag { .. }
+            | Command::MarkUnread { .. }
+            | Command::AddLabel { .. }
+            | Command::Reply { .. }
+            | Command::ReplyAll { .. }
+            | Command::Forward { .. }
+            | Command::OpenMessage { .. }
+            | Command::ArchiveThread { .. }
+    )
 }
 
 /// What a press on a row means.
@@ -790,6 +1019,67 @@ mod tests {
         assert_eq!(press_kind(SHIFT, false), Press::Extend);
         assert_eq!(press_kind(SHIFT | CTRL, false), Press::Extend);
         assert_eq!(press_kind(SHIFT, true), Press::Extend);
+    }
+
+    #[test]
+    fn a_drag_from_postio_names_its_messages() {
+        assert_eq!(
+            dragged_messages("postio-messages:3,7,11"),
+            vec![MessageId::new(3), MessageId::new(7), MessageId::new(11)]
+        );
+    }
+
+    #[test]
+    fn anything_else_dropped_on_a_folder_is_refused() {
+        // Text dragged from a browser, a file, a link. None of it is mail,
+        // and none of it should be parsed for the numbers it happens to
+        // contain — a drop that moved message 2026 because the user dragged
+        // a date onto a folder would be indefensible.
+        assert!(dragged_messages("2026,1,2").is_empty());
+        assert!(dragged_messages("https://example.com/1").is_empty());
+        assert!(dragged_messages("").is_empty());
+    }
+
+    #[test]
+    fn a_hover_action_is_the_key_that_does_the_same_thing() {
+        use crate::row::RowAction;
+
+        assert_eq!(command_for(RowAction::Archive), CommandId::Archive);
+        assert_eq!(command_for(RowAction::Flag), CommandId::Flag);
+        assert_eq!(command_for(RowAction::Delete), CommandId::Delete);
+    }
+
+    #[test]
+    fn the_context_menu_carries_verbs_about_a_message_and_not_about_the_list() {
+        assert!(is_message_action(CommandId::Archive));
+        assert!(is_message_action(CommandId::Reply));
+        assert!(!is_message_action(CommandId::NextMessage));
+        assert!(!is_message_action(CommandId::CommandPalette));
+        assert!(!is_message_action(CommandId::SelectAll));
+    }
+
+    #[test]
+    fn every_context_menu_entry_is_a_registry_command() {
+        // The menu is generated, so this is really a check that the filter
+        // above has not drifted from the table it filters — a verb in the
+        // menu that the registry does not know would have no key and no
+        // palette entry.
+        let listed: Vec<CommandId> = postio_core::registry::all()
+            .filter(|spec| {
+                spec.contexts.contains(postio_core::Context::List) && is_message_action(spec.id)
+            })
+            .map(|spec| spec.id)
+            .collect();
+
+        assert!(listed.contains(&CommandId::Archive));
+        assert!(listed.contains(&CommandId::Delete));
+        assert!(!listed.is_empty());
+        for id in listed {
+            assert!(
+                postio_core::registry::all().any(|spec| spec.id == id),
+                "{id:?} is in the menu and not in the registry"
+            );
+        }
     }
 
     #[test]
