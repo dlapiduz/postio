@@ -65,6 +65,14 @@ command_ids! {
     LastMessage => "last_message",
     /// Open the focused message in the reading pane.
     OpenMessage => "open_message",
+    /// Add the focused message to the selection, or take it out again.
+    ToggleSelection => "toggle_selection",
+    /// Extend the selection to the next message down.
+    ExtendSelectionDown => "extend_selection_down",
+    /// Extend the selection to the previous message up.
+    ExtendSelectionUp => "extend_selection_up",
+    /// Select every message the list is showing.
+    SelectAll => "select_all",
     /// Step back to the previous view without leaving the keyboard.
     PrevView => "prev_view",
     /// Leave the current overlay, search or composer.
@@ -210,6 +218,20 @@ pub enum Command {
         /// The message to open; `None` means the focused row.
         message: Option<MessageId>,
     },
+    /// Add a message to the selection, or take it out again.
+    ToggleSelection {
+        /// The message to toggle; `None` means the focused row.
+        message: Option<MessageId>,
+    },
+    /// Extend the selection to the next message down.
+    ExtendSelectionDown,
+    /// Extend the selection to the previous message up.
+    ExtendSelectionUp,
+    /// Select every message the list is showing.
+    ///
+    /// Never resolved into a list of ids on the way through — see
+    /// [`crate::state::Selection`] for why that matters.
+    SelectAll,
     /// Return to the previous view.
     PrevView,
     /// Leave the current overlay, search or composer.
@@ -331,6 +353,10 @@ impl Command {
             Command::FirstMessage => CommandId::FirstMessage,
             Command::LastMessage => CommandId::LastMessage,
             Command::OpenMessage { .. } => CommandId::OpenMessage,
+            Command::ToggleSelection { .. } => CommandId::ToggleSelection,
+            Command::ExtendSelectionDown => CommandId::ExtendSelectionDown,
+            Command::ExtendSelectionUp => CommandId::ExtendSelectionUp,
+            Command::SelectAll => CommandId::SelectAll,
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
             Command::Thread { .. } => CommandId::Thread,
@@ -372,6 +398,10 @@ impl Command {
             CommandId::FirstMessage => Command::FirstMessage,
             CommandId::LastMessage => Command::LastMessage,
             CommandId::OpenMessage => Command::OpenMessage { message: None },
+            CommandId::ToggleSelection => Command::ToggleSelection { message: None },
+            CommandId::ExtendSelectionDown => Command::ExtendSelectionDown,
+            CommandId::ExtendSelectionUp => Command::ExtendSelectionUp,
+            CommandId::SelectAll => Command::SelectAll,
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
             CommandId::Thread => Command::Thread { thread: None },

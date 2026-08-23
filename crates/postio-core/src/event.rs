@@ -77,9 +77,13 @@ pub enum Event {
 
     // -- View ------------------------------------------------------------
     /// The selection changed, by keyboard or pointer.
+    ///
+    /// Carries the selection rather than a list of ids: "select all" in a
+    /// large mailbox is a predicate, and an event that flattened it would
+    /// undo the whole reason it is one. See [`crate::state::Selection`].
     SelectionChanged {
-        /// The selected messages, in list order.
-        messages: Vec<MessageId>,
+        /// What an action would now hit.
+        selection: crate::state::Selection,
     },
     /// The reading pane changed what it is showing: the list, a thread, a
     /// message, search results or the composer.

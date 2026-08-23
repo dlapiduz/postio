@@ -146,6 +146,46 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
     },
     CommandSpec {
+        id: CommandId::ToggleSelection,
+        title: "Toggle selection",
+        // Gmail's, and everyone else's since. Muscle memory is worth more
+        // here than a mnemonic nobody has.
+        default_binding: "x",
+        alternate_bindings: &[],
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        // Changing what an action *would* hit changes no durable state, so
+        // there is nothing to undo and nothing to confirm.
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::ExtendSelectionDown,
+        title: "Extend selection down",
+        default_binding: "J",
+        alternate_bindings: &["shift+Down"],
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::ExtendSelectionUp,
+        title: "Extend selection up",
+        default_binding: "K",
+        alternate_bindings: &["shift+Up"],
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::SelectAll,
+        title: "Select all",
+        default_binding: "ctrl+a",
+        alternate_bindings: &[],
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
         id: CommandId::PrevView,
         title: "Previous view",
         default_binding: "h",

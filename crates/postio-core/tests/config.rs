@@ -123,16 +123,56 @@ fn an_override_for_a_command_this_build_does_not_know_is_only_a_warning() {
 }
 
 #[test]
-fn two_commands_cannot_share_a_key_in_one_context() {
-    // Whoever comes second in the registry loses the key rather than silently
-    // shadowing the first: a dead `a` would be much harder to diagnose.
+fn an_override_takes_a_key_from_the_default_that_had_it() {
+    // `a` is Archive's default. Someone who writes `delete = "a"` has said
+    // what they want, and a default is only a suggestion — so the override
+    // takes the key and Archive gives it up rather than the line being
+    // ignored.
+    //
+    // This reverses an earlier rule (registry order wins, the override is
+    // dropped). That rule was there so a key could never be silently
+    // shadowed, and nothing here is silent: the command that lost its key
+    // says so in `problems()`, which the settings panel shows. What the old
+    // rule did instead was ignore a line the user had written, and make which
+    // of two commands won depend on the order of a table they have never
+    // seen — so adding a command with a popular default could quietly take a
+    // key somebody was already using. See `postio-7bc`.
     let keymap = Keymap::resolve(&bindings(&[("delete", "a")]));
 
     assert_eq!(
         keymap.command_for(Context::List, "a"),
+        Some(CommandId::Delete)
+    );
+    assert_eq!(
+        keymap.binding(CommandId::Archive),
+        None,
+        "and the command that lost the key is palette-only rather than dead"
+    );
+    assert!(
+        keymap
+            .problems()
+            .iter()
+            .any(|problem| problem.contains("archive")),
+        "{:?}",
+        keymap.problems()
+    );
+}
+
+#[test]
+fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
+    // Between two explicit choices there is nothing to prefer, so the order
+    // is at least deterministic, and the one that loses is told.
+    let keymap = Keymap::resolve(&bindings(&[("archive", "q"), ("delete", "q")]));
+
+    assert_eq!(
+        keymap.command_for(Context::List, "q"),
         Some(CommandId::Archive)
     );
-    assert_eq!(keymap.binding(CommandId::Delete), Some("d"), "kept its own");
+    assert_eq!(
+        keymap.binding(CommandId::Delete),
+        Some("d"),
+        "the loser falls back to its own default, which nobody took"
+    );
     assert!(
         keymap
             .problems()
