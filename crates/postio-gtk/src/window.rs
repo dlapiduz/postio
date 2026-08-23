@@ -433,7 +433,7 @@ impl Window {
         undo.connect_activate(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_, _| window.dispatch(CommandId::Undo)
+            move |_, _| window.run(CommandId::Undo)
         ));
         self.add_action(&undo);
 
@@ -478,7 +478,11 @@ impl Window {
             self,
             move |id| {
                 window.close_finder();
-                window.dispatch(id);
+                // Through `run`, not straight out: a command the window
+                // answers itself means the same thing chosen from the
+                // palette as it does typed, and the bus must not hear it
+                // twice.
+                window.run(id);
             }
         ));
         // Arriving somewhere is the end of asking where to go, so the box
@@ -567,6 +571,20 @@ impl Window {
 
     /// Acts on the commands that are about the window, and passes on the rest.
     fn run(&self, id: CommandId) {
+        if self.handled_here(id) {
+            return;
+        }
+        // A keystroke says only which verb it meant, so the registry's
+        // default target — "the selection" — is the whole of the invocation.
+        self.deliver(postio_core::Command::default_for(id));
+    }
+
+    /// Whether the window answered `id` itself.
+    ///
+    /// Closing an overlay and moving the cursor are the window's own
+    /// business: nothing outside it needs to hear about them, and there is
+    /// nothing for a command bus to do with them.
+    fn handled_here(&self, id: CommandId) -> bool {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
@@ -592,13 +610,30 @@ impl Window {
             CommandId::ExtendSelectionDown => self.list().extend_down(),
             CommandId::ExtendSelectionUp => self.list().extend_up(),
             CommandId::SelectAll => self.list().select_all(),
-            _ => self.dispatch(id),
+            _ => return false,
         }
+        true
     }
 
-    fn dispatch(&self, id: CommandId) {
+    /// Hand one invocation to everything listening, in both shapes.
+    ///
+    /// Every gesture goes out exactly once, and it goes out *whole*. The two
+    /// seams are two views of the same invocation rather than two paths a
+    /// command might take: `connect_command` consumers act on the verb alone
+    /// — the composer opens, the editor launches — while `connect_action`
+    /// consumers need to know what it was aimed at.
+    ///
+    /// The mouse used to reach the id seam through the window's fallthrough
+    /// *and* the action seam with its own target, which handed a command bus
+    /// subscribed to both one gesture as two different invocations: archive
+    /// the selection, then archive the hovered row.
+    fn deliver(&self, command: postio_core::Command) {
+        let id = command.id();
         for handler in self.imp().commands.borrow().iter() {
             handler(id);
+        }
+        for handler in self.imp().actions.borrow().iter() {
+            handler(command.clone());
         }
     }
 
@@ -666,11 +701,17 @@ impl Window {
 
     /// Called with every *invocation* — a command and what it is aimed at.
     ///
-    /// The keyboard produces ids, because a keystroke says only which verb it
-    /// meant and the registry's default target ("the selection") is the right
-    /// answer. The mouse produces whole commands: a hover action names its
-    /// row, a drop names its destination folder. Both are the same verbs from
-    /// the same table; only the specificity differs.
+    /// This is the seam a command bus subscribes to, and it sees every
+    /// gesture: the keyboard's invocations carry the registry's default
+    /// target, because a keystroke says only which verb it meant and "the
+    /// selection" is the right answer for one; the mouse's carry their own,
+    /// because a hover action names its row and a drop names its destination
+    /// folder. Both are the same verbs from the same table, so a subscriber
+    /// here never has to ask which input produced one.
+    ///
+    /// [`connect_command`](Self::connect_command) is the other view of the
+    /// same invocation, for consumers that only need the verb. Subscribing to
+    /// both would see each gesture twice.
     pub fn connect_action(&self, handler: impl Fn(postio_core::Command) + 'static) {
         self.imp().actions.borrow_mut().push(Box::new(handler));
     }
@@ -678,11 +719,12 @@ impl Window {
     /// Run an invocation: the window's own commands first, then the handlers.
     pub fn act(&self, command: postio_core::Command) {
         // A command the window answers itself — closing an overlay, moving
-        // the cursor — means the same thing however it was invoked.
-        self.run(command.id());
-        for handler in self.imp().actions.borrow().iter() {
-            handler(command.clone());
+        // the cursor — means the same thing however it was invoked, and stops
+        // here either way.
+        if self.handled_here(command.id()) {
+            return;
         }
+        self.deliver(command);
     }
 
     /// Opens the box in `mode`, remembering what to come back to.
