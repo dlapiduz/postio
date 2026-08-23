@@ -73,6 +73,9 @@ jobs:
       - name: Enforce architectural invariants
         run: python3 scripts/check-crate-boundaries.py
 
+      - name: Enforce no personal data in the repository
+        run: python3 scripts/check-no-personal-data.py
+
       - name: Prove the boundary check actually fails when violated
         run: python3 scripts/test-check-crate-boundaries.py
 
