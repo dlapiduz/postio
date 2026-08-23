@@ -9,6 +9,14 @@
 //!    later never reaches a label that already exists.
 //! 4. Install the generated tokens and the bundled icon theme on the display.
 //! 5. Build the application, and open a [`Window`] on `activate`.
+//!
+//! # Configuration
+//!
+//! The window is built on the registry's default bindings so that it can be
+//! constructed without touching the disk — that is what lets the widget tests
+//! run hermetically. `activate` then hands it to [`crate::config::install`],
+//! which lays the user's `[keys]` over them and keeps doing so as the file
+//! changes.
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
@@ -82,6 +90,7 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
         }
 
         let window = Window::new(app);
+        crate::config::install(&window);
         timeline.mark(Phase::Window);
         report_first_frame(&window, app, &timeline);
         window.present();
