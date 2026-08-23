@@ -9,7 +9,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_imap::backend::{Fault, MockBackend};
+use postio_imap::backend::{Fault, MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
 use postio_runtime::engine::{Engine, EngineParts, Link, NetworkState};
@@ -43,7 +43,7 @@ fn engine_with_backend() -> (
     let blobs = BlobStore::open(directory.keep()).expect("a blob store");
     let (sink, events) = event_channel();
 
-    let backend = Arc::new(MockBackend::new());
+    let backend = Arc::new(server());
     let engine = Engine::spawn(EngineParts {
         account: report.account.id,
         database: database.clone(),
@@ -125,6 +125,51 @@ async fn seeding_the_backfill_finds_bodies_worth_having() {
     assert!(
         queued <= 50,
         "seeding asked for more than the limit it was given"
+    );
+}
+
+#[tokio::test]
+async fn a_seeded_body_is_actually_fetched() {
+    // postio-26c's real gap. `seed` queued bodies and nothing ever claimed
+    // one, so every message stayed headers-only for ever. The loop has to
+    // take a claim, fetch it, and report what became of it — otherwise the
+    // queue grows and the reading pane shows nothing.
+    let (engine, database, report, _events) = engine();
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+
+    give_the_inbox_uids(&database, inbox.id);
+
+    let queued = engine
+        .seed_backfill(inbox.id, 10)
+        .await
+        .expect("seeding reads the store");
+    assert!(queued > 0, "the seed left nothing worth fetching");
+
+    // Give the loop a moment to claim and settle what it was handed.
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let progress = engine
+                .backfill_progress()
+                .await
+                .expect("the engine answers");
+            if progress.pending == 0 && progress.in_flight == 0 {
+                return progress;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the backfill loop never settled — nothing is claiming bodies");
+
+    assert!(
+        settled.stored > 0,
+        "no body ever actually arrived, so this proves only that the loop \
+         settles failures: {settled:?}"
+    );
+    assert_eq!(
+        settled.stored + settled.gone + settled.failed + settled.skipped,
+        queued,
+        "every queued body should end in exactly one outcome: {settled:?}"
     );
 }
 
@@ -296,6 +341,51 @@ async fn no_network_is_not_a_backoff() {
         "the reason should name the network: {}",
         error.message()
     );
+}
+
+/// A mock server holding an INBOX with mail in it.
+///
+/// The seeded database's messages get `uid = id`, so the mock's own UIDs —
+/// handed out from 1 in the order given — line up with them. That is what
+/// lets a backfill test watch a body actually arrive rather than only watch
+/// it fail.
+fn server() -> MockBackend {
+    // Written out rather than taken from the corpus: the corpus loader is
+    // behind a postio-model feature, and what this needs is three messages
+    // with bodies, not three realistic ones. Reserved domains, per CLAUDE.md.
+    let message = |n: u32| {
+        format!(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             To: Postio <postio@example.net>\r\n\
+             Subject: body {n}\r\n\
+             Message-ID: <body-{n}@example.com>\r\n\
+             Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+             \r\n\
+             The bytes that had to travel to get here.\r\n"
+        )
+        .into_bytes()
+    };
+    let mut inbox = MockMailbox::new("INBOX");
+    for n in 1..=10 {
+        inbox = inbox.message(MockMessage::new(message(n)));
+    }
+    MockBackend::builder().mailbox(inbox).build()
+}
+
+/// Give the seeded messages server UIDs.
+///
+/// `postio_storage::seed` writes bodies as `NotFetched` but assigns no UID —
+/// it exists to fill a screenshot, not to stand in for a synced mailbox — and
+/// `needing_backfill` will not offer a message it cannot ask the server for.
+/// A backfill test has to supply that itself.
+fn give_the_inbox_uids(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) {
+    let connection = database.connection().expect("a connection");
+    connection
+        .execute(
+            "UPDATE messages SET uid = id WHERE mailbox_id = ?1",
+            [mailbox.get()],
+        )
+        .expect("the fixture writes");
 }
 
 /// Queue one flag change against the newest message in `mailbox`.
