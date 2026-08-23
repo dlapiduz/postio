@@ -23,12 +23,16 @@ DENY = [
     "git remote add origin git@github.com:x/y",
     "git rebase -i HEAD~3",
     "cargo test && git push",
+    # Learned since this guard was last live:
+    "git commit -- crates/postio-core",
+    "git commit -m 'wip' -- crates/postio-core/src/lib.rs",
+    "cargo fmt -p postio-gtk",
+    "cargo fmt -p postio-core",
 ]
 
 ALLOW = [
     "git add crates/postio-core Cargo.lock",
     "git commit -m 'feat(core): add thing'",
-    "cargo fmt -p postio-core",
     "cargo fmt --all --check",
     "git stash list",
     "git stash show",
@@ -41,6 +45,12 @@ ALLOW = [
     # The case that caught the shell version: a heredoc documenting the rules.
     "cat > doc.md <<'EOF'\nNever run git stash or git add -A here.\nUse git reset --hard nowhere.\nEOF",
     "python3 - <<'PY'\nprint('git push is forbidden')\nPY",
+    # The write forms are refused; the read-only checks are not.
+    "cargo fmt -p postio-gtk --check",
+    "cargo fmt --all --check",
+    "rustfmt --edition 2024 crates/postio-core/src/lib.rs",
+    "rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs')",
+    "git commit -m 'feat: handle -- in the parser'",
 ]
 
 
