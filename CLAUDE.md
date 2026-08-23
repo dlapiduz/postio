@@ -289,6 +289,22 @@ the normal state of this project, not an exception. Several sessions work
 different crates at the same time, in the *same* working tree, on the *same*
 branch, sharing one git index and one cargo target directory.
 
+### Tooling
+
+Four project skills encode the routines below — use them rather than
+reconstructing the commands:
+
+| Skill | Use it when |
+|---|---|
+| `/lanes` | Starting up: who else is here, what is safe to claim |
+| `/preflight` | Checking the real state of the tree, or when it looks broken |
+| `/land` | A bead is done: gates, staging, message, `bd close` |
+| `/add-fixture` | Adding `.eml` test mail to the corpus |
+
+A `PreToolUse` hook (`.claude/hooks/guard-shared-tree.py`) refuses the
+destructive commands listed below rather than trusting anyone to have read this
+far. Its own test suite is `.claude/hooks/test-guard-shared-tree.py`.
+
 Check who is active before you start:
 
 ```bash
