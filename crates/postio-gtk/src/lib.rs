@@ -33,6 +33,8 @@
 //!   mailbox is never loaded into memory.
 //! - [`keymap`] — the resolver behind every key press: sequences like `g g`,
 //!   per-context meanings for `Esc`, and the rule that typing always wins.
+//! - [`palette`] — the `Ctrl+K` overlay, generated from the command registry
+//!   so every command is reachable without memorizing a key.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -53,6 +55,7 @@ pub mod fonts;
 pub mod header;
 pub mod keymap;
 pub mod list;
+pub mod palette;
 pub mod resources;
 pub mod shell;
 pub mod sidebar;
