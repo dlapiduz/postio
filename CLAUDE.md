@@ -81,6 +81,14 @@ sqlite3 3.51.2, libsecret-1 0.21.7, glib-2.0 2.88.3.
 
 ## Development rules
 
+> **You are probably not alone in this repository.** Other Claude sessions work
+> other crates in this same working tree, concurrently. Claim your bead with
+> `bd update <id> --claim`, stay inside your crate, and never run a command that
+> touches files you do not own — `git add -A`, `git reset --hard`, `git stash`
+> and `cargo fmt --all` all destroy or corrupt other sessions' work. See
+> **Working in parallel** at the end of this file before your first commit.
+
+
 ### Test-driven development is mandatory
 
 **Write the failing test first, then the implementation.** This is not a
@@ -236,15 +244,48 @@ postio-model  pure domain types + JWZ threading. No storage, no protocol.
 
 ## Working in parallel
 
-Several sessions may run at once. Claim before you start so others skip it:
+**Assume other Claude sessions are editing this repository right now.** That is
+the normal state of this project, not an exception. Several sessions work
+different crates at the same time, in the *same* working tree, on the *same*
+branch, sharing one git index and one cargo target directory.
+
+Check who is active before you start:
 
 ```bash
-bd ready                      # only genuinely unblocked work (ignore [epic] rows)
+bd list --status=in_progress   # claimed by someone; leave it alone
+bd ready                       # unblocked work (ignore [epic] rows)
 bd show <id>
-bd update <id> --claim
+bd update <id> --claim         # claim BEFORE writing code
 bd close <id> --suggest-next
 ```
 
-Take one epic per session where possible — the crates are deliberately disjoint.
-Avoid editing the workspace root `Cargo.toml` and CI config concurrently; if you
-must add a shared dependency, add it and say so in the bead notes.
+### Never do these — they destroy other sessions' work
+
+| Don't | Why | Do instead |
+|---|---|---|
+| `git add -A`, `git add .`, `git commit -a` | Commits other sessions' half-written files | `git add crates/<your-crate> Cargo.lock` |
+| `git reset --hard`, `git checkout .` | **Irrecoverably deletes** uncommitted work across every crate | Revert only your own files, by path |
+| `git stash` | Stashes *everyone's* changes, not just yours | Leave the tree alone; commit your own work |
+| `git rebase`, `git filter-repo`, history rewrites | Others hold refs that become invalid | Only when the user confirms the tree is quiet |
+| `cargo fmt --all` | Reformats crates being edited right now, creating phantom diffs | `cargo fmt -p <your-crate>` |
+| Editing the workspace root `Cargo.toml` | Four sessions colliding on one manifest | `cargo add -p <your-crate> <dep>` |
+| "Fixing" a failure in a crate you don't own | It is almost always someone's in-flight TDD | Note it in your bead and move on |
+
+### Expected friction, not breakage
+
+- **`cargo test --workspace` may fail in a crate you don't own.** That is another
+  session mid-TDD. Verify your own work with `cargo test -p <your-crate>`, and
+  only require the full workspace green for the crates you touched.
+- **`Cargo.lock` churns constantly.** Expected — it is a resolved superset and
+  last-writer-wins is fine. Stage it with your commit.
+- **`index.lock` contention** means another session is mid-commit. Wait and retry.
+- **Cargo serialises on the target directory**, so builds feel slower than usual.
+  That is contention, not a problem to debug.
+
+### Scope discipline
+
+Take one epic, and stay inside its crates. The crate split exists partly so
+sessions do not collide: `postio-model`, `postio-storage`, `postio-search`,
+`postio-config`, `postio-imap`, `postio-smtp`, `postio-sync`, `postio-core` and
+`postio-gtk` are deliberately disjoint. If your bead genuinely requires touching
+a crate another session owns, say so in the bead notes rather than editing it.
