@@ -45,8 +45,9 @@ use postio_storage::{BlobStore, Database, Pool};
 use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
 use postio_sync::{
-    Backfill, BackfillPolicy, BackfillProgress, Drainer, ReconnectPolicy, RetryPolicy, SmtpContext,
-    Supervisor, SyncError, SyncStatus, backfill, initial, resync,
+    Attention, Backfill, BackfillPolicy, BackfillProgress, Drainer, ReconnectPolicy, RetryPolicy,
+    SmtpContext, Supervisor, SyncError, SyncStatus, Wake, Watch, WatchPolicy, Watcher, backfill,
+    initial, resync,
 };
 // The crate root's `Outcome` is the *resync* one; a body has its own.
 use postio_sync::backfill::Outcome;
@@ -176,6 +177,8 @@ pub struct EngineParts {
     pub backfill: BackfillPolicy,
     /// How long to wait before trying a dropped connection again.
     pub reconnect: ReconnectPolicy,
+    /// How closely to watch for mail arriving.
+    pub watch: WatchPolicy,
 }
 
 /// One unit of work for the engine's thread.
@@ -397,6 +400,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             status: StatusTracker::new(),
             online: false,
             to_sync: std::collections::VecDeque::new(),
+            watcher: None,
         };
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
         // The first tick fires immediately; skipping it would leave the link
@@ -428,11 +432,13 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 announce_drain(&parts.events, &outcome);
                 // And find out what the server has been doing meanwhile.
                 queue_every_mailbox(&parts, &pool, &mut state);
+                start_watching(&parts, &pool, &mut state).await;
             }
 
             // One mailbox at a time, inbox checked between each: a folder
             // with forty thousand messages must not hold the engine away
             // from a body the user is waiting for.
+            #[allow(clippy::never_loop)]
             while inbox.is_empty()
                 && state.supervisor.link().is_online()
                 && let Some(mailbox) = state.to_sync.pop_front()
@@ -453,6 +459,20 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 && state.supervisor.link().is_online()
                 && pump_body(&parts, &pool, &mut state).await
             {}
+
+            // Then wait to be told about mail. This is the branch that idles,
+            // so it goes last and races the inbox: a job arriving while an
+            // `IDLE` is held must not wait out the timeout.
+            if inbox.is_empty() && state.to_sync.is_empty() {
+                tokio::select! {
+                    biased;
+                    // Peeking rather than taking: whichever branch loses is
+                    // cancelled, and a job taken off the queue by a branch
+                    // that is then dropped is a job nobody serves.
+                    _ = wait_for_job(&inbox) => {}
+                    _ = keep_watch(&parts, &mut state) => {}
+                }
+            }
         }
     });
 }
@@ -472,6 +492,13 @@ struct State {
     /// A queue rather than a loop, so one long mailbox cannot hold the engine
     /// away from everything else it is asked to do.
     to_sync: std::collections::VecDeque<MailboxId>,
+    /// What is being watched for mail arriving, and how.
+    ///
+    /// `None` until the first connection tells us what the server can do —
+    /// whether it offers `IDLE` decides between holding a connection open and
+    /// asking on an interval, and guessing wrong either wastes a connection
+    /// or misses mail.
+    watcher: Option<Watcher>,
 }
 
 /// Whether the link has come up since this was last asked.
@@ -480,6 +507,125 @@ fn came_up(state: &mut State) -> bool {
     let transition = online && !state.online;
     state.online = online;
     transition
+}
+
+/// Resolve once the inbox has something in it, without taking it.
+///
+/// `recv` would take the job and then be cancelled by the other branch of the
+/// `select!`, losing it. This only ever observes.
+async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
+    while inbox.is_empty() && !inbox.is_closed() {
+        tokio::time::sleep(WATCH_FLOOR).await;
+    }
+}
+
+/// The shortest a watch step will ever sleep.
+///
+/// Stops a watcher that says "nothing due, now" from spinning the loop.
+const WATCH_FLOOR: Duration = Duration::from_millis(50);
+
+/// Start watching for mail, now that there is a connection to watch over.
+///
+/// The inbox gets the dedicated connection — it is the one mailbox worth one
+/// — and everything else is checked on an interval over the shared one.
+async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
+    let Ok(capabilities) = parts.backend.capabilities().await else {
+        return;
+    };
+    let mut watcher = Watcher::new(parts.watch, &capabilities);
+
+    let Ok(connection) = pool.get() else {
+        return;
+    };
+    let Ok(mailboxes) = MailboxRepository::new(&connection).list_for_account(parts.account) else {
+        return;
+    };
+    for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
+        let attention = if mailbox.role == postio_model::MailboxRole::Inbox {
+            Attention::Push
+        } else {
+            Attention::Poll
+        };
+        watcher.watch(mailbox.id, mailbox.path.clone(), attention);
+    }
+    state.watcher = Some(watcher);
+}
+
+/// Do whatever the watcher says is due, and queue a sync if anything moved.
+///
+/// Returns when there is something to report or the step ends. The caller
+/// races this against the inbox, so an `IDLE` being held never delays a job.
+async fn keep_watch(parts: &EngineParts, state: &mut State) {
+    if !state.supervisor.link().is_online() {
+        // Nothing to watch over. Wait rather than spin.
+        tokio::time::sleep(POLL_INTERVAL).await;
+        return;
+    }
+    let Some(watcher) = state.watcher.as_mut() else {
+        tokio::time::sleep(POLL_INTERVAL).await;
+        return;
+    };
+
+    let now = Utc::now();
+    // Push first: the inbox is the one mailbox worth a connection of its
+    // own, and if it has nothing due the shared connection can do a round.
+    let step = match watcher.next_push(now) {
+        Watch::Wait { .. } => watcher.next_poll(now),
+        step => step,
+    };
+
+    // Kept before the step is consumed: matching on it moves the path out.
+    let watched = step_mailbox(&step);
+    let wake = match step {
+        Watch::Idle {
+            mailbox,
+            path,
+            timeout,
+            cancel,
+        } => match parts.backend.idle(&path, timeout, &cancel).await {
+            Ok(events) => watcher.woke(mailbox, &events, Utc::now()),
+            Err(error) => {
+                watcher.failed(mailbox, Utc::now());
+                let moved = state.supervisor.observe(&error, Utc::now());
+                announce_link(parts, state, moved);
+                return;
+            }
+        },
+        Watch::Poll { mailbox, path } => match parts.backend.status(&path).await {
+            Ok(status) => watcher.observed(mailbox, &status, Utc::now()),
+            Err(error) => {
+                watcher.failed(mailbox, Utc::now());
+                let moved = state.supervisor.observe(&error, Utc::now());
+                announce_link(parts, state, moved);
+                return;
+            }
+        },
+        // Nothing due yet. Sleep until something might be, rather than
+        // spinning the loop on a watcher with nothing to say.
+        Watch::Wait { until } => {
+            let delay = until
+                .map(|at| (at - Utc::now()).to_std().unwrap_or_default())
+                .unwrap_or(POLL_INTERVAL);
+            tokio::time::sleep(delay.clamp(WATCH_FLOOR, POLL_INTERVAL)).await;
+            return;
+        }
+    };
+
+    if let (Wake::Changed, Some(mailbox)) = (wake, watched) {
+        // What moved is not worth inferring from the events — they say only
+        // *that* the mailbox moved — so pull.
+        if !state.to_sync.contains(&mailbox) {
+            state.to_sync.push_back(mailbox);
+        }
+    }
+}
+
+/// Which mailbox a step was about.
+fn step_mailbox(step: &Watch) -> Option<MailboxId> {
+    match step {
+        Watch::Idle { mailbox, .. } | Watch::Poll { mailbox, .. } => Some(*mailbox),
+        _ => None,
+    }
 }
 
 /// Line every selectable folder up for a sync pass.
