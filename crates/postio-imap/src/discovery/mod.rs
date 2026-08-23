@@ -458,6 +458,7 @@ fn settings_from_autoconfig(
         source,
         requires_app_password: false,
         note: None,
+        password_help_url: None,
         display_name: provider.display_name.clone(),
     })
 }
@@ -552,6 +553,7 @@ fn settings_from_srv(address: &Address, report: &DiscoverySrvReport) -> Option<A
         source: SettingsSource::Srv,
         requires_app_password: false,
         note: None,
+        password_help_url: None,
         display_name: None,
     })
 }
@@ -571,6 +573,7 @@ fn guess(address: &Address) -> Option<AccountSettings> {
              — check them against your provider's documentation."
                 .to_owned(),
         ),
+        password_help_url: None,
         display_name: None,
     })
 }
