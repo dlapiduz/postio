@@ -13,6 +13,7 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/narrow.png 900x700
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png demo
 //! cargo run -p postio-gtk --example shot -- /tmp/settings.png settings
+//! cargo run -p postio-gtk --example shot -- /tmp/compose.png demo compose
 //! ```
 //!
 //! `demo` fills the panes with canvas 1b's own sample content, which is the
@@ -93,6 +94,48 @@ fn show_settings(window: &Window) {
     window.open_settings();
 }
 
+/// Canvas 2a's own reply, so the composer can be held up against the drawing.
+///
+/// The canvas' addresses are not ours to ship: every one here is a reserved
+/// domain, per CLAUDE.md.
+fn show_composer(window: &Window) {
+    let account = AccountId::new(1);
+    let identity = |name: &str, address: &str, default| postio_model::Identity {
+        display_name: name.to_owned(),
+        is_default: default,
+        ..postio_model::Identity::new(
+            account,
+            postio_model::EmailAddress::new(Some(name), address),
+        )
+    };
+
+    let composer = postio_gtk::composer::install(window);
+    composer.set_identities(vec![
+        identity("Lena Tomlin", "lena@example.com", true),
+        identity("Lena Tomlin", "lena@example.net", false),
+    ]);
+
+    let mut draft = postio_model::Draft::new(account);
+    draft.kind = postio_model::DraftKind::Reply;
+    draft.to = vec![postio_model::EmailAddress::new(
+        Some("Diogo Ferreira"),
+        "diogo@example.org",
+    )];
+    draft.subject = "Re: mbox importer review".to_owned();
+    draft.body = postio_model::MessageBody {
+        text: Some(
+            "Looking now. The folder walker reads right, but I'd key the dedupe on \
+             the maildir filename so it matches the index patch — otherwise the two \
+             disagree on re-imported mail.\n\n\
+             > Small diff, mostly the folder walker and a\n\
+             > dedupe pass keyed on Message-ID.\n"
+                .to_owned(),
+        ),
+        html: None,
+    };
+    composer.open(draft);
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
@@ -136,6 +179,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("settings") {
         show_settings(&window);
+    }
+    if flag("compose") {
+        show_composer(&window);
     }
     window.present();
 

@@ -44,6 +44,8 @@
 //!   they were parsed from, and Backspace that pops one whole.
 //! - [`settings`] — the settings panel: canvas 3f, `config.toml` edited in
 //!   place, with a validity line instead of a save button.
+//! - [`composer`] — canvas 2a: compose takes over the reading pane, so the
+//!   list never moves while you write.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -61,6 +63,7 @@
 
 pub mod app;
 pub mod cheatsheet;
+pub mod composer;
 pub mod config;
 pub mod fonts;
 pub mod header;
