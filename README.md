@@ -79,15 +79,54 @@ invariants enforced in CI.
 Performance is a functional requirement, enforced by `cargo bench` rather
 than checked by hand:
 
-| Budget | Target |
-|---|---|
-| Startup to usable UI (populated DB) | < 500 ms |
-| Ordinary UI interaction | < 16 ms |
-| Local search | < 100 ms |
+| Budget | Target | Measured |
+|---|---|---|
+| Startup to usable UI (populated DB) | < 500 ms | **147 ms** |
+| Ordinary UI interaction | < 16 ms | **~2 ms** |
+| Local search | < 100 ms | *not yet measured* |
 
 Transitions are ≤ 100 ms or absent entirely, and `prefers-reduced-motion`
 is always honored. A mailbox is never loaded into memory in full — the
 message list is windowed over paged SQLite.
+
+#### The baseline
+
+Measured on one developer machine, which makes the numbers a regression
+guard rather than a promise about anybody else's hardware. Reproduce them:
+
+```sh
+cargo run -p postio-runtime --example seed_store -- /tmp/postio.db 20000
+POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
+  cargo run --release -p postio-app
+
+cargo bench -p postio-runtime --bench store_reads   # the database read
+cargo bench -p postio-gtk     --bench list_scroll   # the row draw
+```
+
+Startup, on a 20,000-message store with an account and six folders:
+147 ms, of which 47 ms is `adw::init` and 82 ms is the first frame. The
+window, the styles and the fonts are 18 ms between them.
+
+An ordinary interaction is a scroll, and a scroll is two things — a page
+read and a screenful of rows drawn. Together they are the ~2 ms above:
+
+| | 1,000 messages | 100,000 messages |
+|---|---|---|
+| Page read, top of the folder | 139 µs | 219 µs |
+| Page read, scrolled to the middle | — | 176 µs |
+| Page read, *jumped* to the middle | — | 28 ms |
+| Row draw, one screenful | 1.6 ms | 1.6 ms |
+
+Flat against mailbox size, which is the claim that matters: reading page
+one of a hundred thousand messages costs what reading page one of a
+thousand costs. The exception is a *jump* to a page nobody has scrolled
+through — the store has no boundary to seek from and falls back to walking
+— which happens once per jump, and every page after it is the 176 µs row.
+
+Search is unmeasured against a realistic index; `postio-search` has a bench
+harness and nothing has run it on real volume. Memory on a large mailbox is
+bounded by the list model's own cache, which its tests assert, but resident
+size has not been measured.
 
 ## Configuration
 
