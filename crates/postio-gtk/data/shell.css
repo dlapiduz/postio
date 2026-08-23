@@ -255,3 +255,28 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* ── The ? cheat sheet ───────────────────────────────────────────────
+   The same plate as the palette, centred rather than dropped from the top:
+   this one is read, not typed into. No transition — the canvas' motion
+   budget applies to an overlay as much as to a pane. */
+.postio-cheatsheet {
+  padding: 20px 24px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.postio-cheatsheet-heading {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 15px;
+  color: var(--postio-ink);
+  margin-bottom: 4px;
+}
+
+.postio-cheatsheet-title {
+  font-size: 12.5px;
+  color: var(--postio-ink);
+}
+

@@ -35,6 +35,8 @@
 //!   per-context meanings for `Esc`, and the rule that typing always wins.
 //! - [`palette`] — the `Ctrl+K` overlay, generated from the command registry
 //!   so every command is reachable without memorizing a key.
+//! - [`cheatsheet`] — the `?` overlay, generated from the same table, so the
+//!   key it prints is the key that is bound.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -51,6 +53,7 @@
 //! ```
 
 pub mod app;
+pub mod cheatsheet;
 pub mod fonts;
 pub mod header;
 pub mod keymap;

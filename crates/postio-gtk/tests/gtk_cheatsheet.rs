@@ -1,0 +1,125 @@
+//! The `?` cheat sheet on a real display.
+//!
+//! Its own file, not another function in `gtk_palette.rs`: two `#[test]`
+//! functions in one integration test share a process and run on separate
+//! threads, and GTK is single-threaded and initialised once. A separate file is
+//! a separate binary, which is a separate process.
+//!
+//! What the sheet *contains* is unit-tested in `src/cheatsheet.rs` with no
+//! display. What needs one is the overlay around it: that `?` opens it, that
+//! `?` and `Esc` both close it, and that a rebind reaches it.
+
+use gtk::gdk;
+use gtk::prelude::*;
+use postio_core::{CommandId, Keymap};
+use postio_gtk::window::Window;
+use postio_gtk::{app, fonts, style};
+
+fn defaults() -> Keymap {
+    Keymap::resolve(&postio_config::KeyBindings::default())
+}
+
+/// Runs the main loop until everything queued has been done.
+fn settle() {
+    while glib::MainContext::default().iteration(false) {}
+}
+
+#[test]
+fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
+    let state_dir = std::env::temp_dir().join(format!("postio-sheet-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    window.apply_keymap(defaults());
+    window.present();
+    settle();
+
+    assert!(!window.cheatsheet().is_visible());
+
+    // `?` opens it, through the resolver.
+    assert_eq!(
+        window.handle_key(
+            gdk::Key::from_name("question").unwrap(),
+            gdk::ModifierType::SHIFT_MASK
+        ),
+        glib::Propagation::Stop
+    );
+    settle();
+    assert!(window.cheatsheet().is_visible(), "? opens the sheet");
+
+    let sections = window.cheatsheet().sections();
+    assert!(!sections.is_empty(), "and it has something in it");
+    let listed: Vec<CommandId> = sections
+        .iter()
+        .flat_map(|section| section.rows.iter().map(|row| row.id))
+        .collect();
+    assert_eq!(
+        listed.len(),
+        postio_core::registry::all().count(),
+        "every command, once each"
+    );
+
+    // `?` again closes it — the key that opened it has to be able to close it.
+    window.handle_key(
+        gdk::Key::from_name("question").unwrap(),
+        gdk::ModifierType::SHIFT_MASK,
+    );
+    settle();
+    assert!(!window.cheatsheet().is_visible());
+
+    // Esc closes it too.
+    window.handle_key(
+        gdk::Key::from_name("question").unwrap(),
+        gdk::ModifierType::SHIFT_MASK,
+    );
+    settle();
+    window.handle_key(
+        gdk::Key::from_name("Escape").unwrap(),
+        gdk::ModifierType::empty(),
+    );
+    settle();
+    assert!(!window.cheatsheet().is_visible(), "Esc closes it");
+
+    // A rebind reaches the sheet with no code edit.
+    let mut overrides = postio_config::KeyBindings::default();
+    overrides
+        .overrides_mut()
+        .insert("archive".to_owned(), "y".to_owned());
+    window.apply_keymap(Keymap::resolve(&overrides));
+    settle();
+
+    let archive = window
+        .cheatsheet()
+        .sections()
+        .into_iter()
+        .flat_map(|section| section.rows)
+        .find(|row| row.id == CommandId::Archive)
+        .expect("archive");
+    assert_eq!(archive.binding.as_deref(), Some("y"));
+
+    // Opening the sheet puts the palette away, and vice versa.
+    window.open_palette();
+    settle();
+    window.open_cheatsheet();
+    settle();
+    assert!(window.cheatsheet().is_visible());
+    assert!(
+        !window.palette().is_visible(),
+        "two overlays at once is one too many"
+    );
+
+    window.close_cheatsheet();
+    window.close();
+    settle();
+}
