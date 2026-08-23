@@ -22,7 +22,7 @@
 //! the page size: reordering a few hundred rows in memory is cheap, and it
 //! keeps the scoring logic out of SQL entirely.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use postio_model::{AccountId, EmailAddress, MailboxId, MessageId, ThreadId};
@@ -30,7 +30,10 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
 
 use crate::error::Result;
+use crate::facets::{Facets, Refinement, Scope, ScopeCount};
+use crate::highlight::{ELLIPSIS, MATCH_END, MATCH_START};
 use crate::query::{Filter, ParsedQuery, fts_literal};
+use crate::results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
 /// as a multiple of the requested page size.
@@ -56,12 +59,6 @@ const RECENCY_POOL_MIN: u32 = 50;
 /// keeps on either side of a match.
 const SNIPPET_TOKENS: i32 = 12;
 
-/// Snippet match markers. Plain and greppable; the reading pane turns these
-/// into the highlighted span the canvas shows.
-const SNIPPET_START: &str = "\u{1}";
-const SNIPPET_END: &str = "\u{2}";
-const SNIPPET_ELLIPSIS: &str = "…";
-
 /// Recency's weight in [`rank_score`], relative to `bm25`'s native scale.
 const RECENCY_WEIGHT: f64 = 2.0;
 /// The age, in days, at which the recency boost has halved.
@@ -76,60 +73,15 @@ pub struct SearchRequest<'a> {
     pub account_id: AccountId,
     /// The already-parsed query. See [`crate::parser::parse`].
     pub query: &'a ParsedQuery,
+    /// Which slice of the account to look in.
+    ///
+    /// The canvas' left column, and a constraint the query text never
+    /// carries: switching scope must not mean editing what was typed. See
+    /// [`Scope`].
+    pub scope: Scope,
     /// How many hits to return, at most.
     pub limit: u32,
 }
-
-/// One ranked, snippeted result.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SearchHit {
-    /// The message.
-    pub message_id: MessageId,
-    /// Its thread, if threading has run.
-    pub thread_id: Option<ThreadId>,
-    /// Which mailbox holds this copy.
-    pub mailbox_id: MailboxId,
-    /// `Subject`, verbatim.
-    pub subject: Option<String>,
-    /// Who it is from.
-    pub from: Option<EmailAddress>,
-    /// When the server received it.
-    pub received_at: DateTime<Utc>,
-    /// A snippet of the matching text, with the match wrapped in
-    /// [`SNIPPET_START`]/[`SNIPPET_END`]. Empty for a query with no free text
-    /// to snippet.
-    pub snippet: String,
-    /// The rank score: lower is a better match. Not meaningful on its own,
-    /// only as an ordering.
-    pub score: f64,
-}
-
-/// What one search produced, for the canvas 2b readout.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SearchResults {
-    /// This page of hits, best match first.
-    pub hits: Vec<SearchHit>,
-    /// The total number of messages that match, regardless of `limit`, up to
-    /// [`TOTAL_HITS_CAP`]. See [`SearchResults::total_hits_capped`].
-    pub total_hits: u64,
-    /// Whether `total_hits` is a floor rather than the true count.
-    ///
-    /// A word common enough to sit in most of a large mailbox's messages
-    /// still has to stay inside the `<100 ms` budget (CLAUDE.md), and an
-    /// exact count of a match that broad means walking every one of
-    /// them — there is no shortcut, because FTS5 does not expose a term's
-    /// document frequency to plain SQL. So counting stops at
-    /// [`TOTAL_HITS_CAP`]: when this is `true`, `total_hits` is exactly that
-    /// cap and the readout should show "`{total_hits}+ hits`" rather than a
-    /// number that reads as precise. Ordinary queries never reach the cap.
-    pub total_hits_capped: bool,
-    /// How long the search took, start to finish.
-    pub elapsed: Duration,
-}
-
-/// The most `total_hits` will ever count exactly. See
-/// [`SearchResults::total_hits_capped`].
-pub const TOTAL_HITS_CAP: u64 = 10_000;
 
 /// Runs a search and returns a ranked page of results.
 ///
@@ -196,6 +148,61 @@ pub fn search(
         total_hits,
         total_hits_capped,
         elapsed: start.elapsed(),
+    })
+}
+
+/// The size `larger:` is offered at, when a result set has anything that big.
+///
+/// The canvas' own `larger:1M`. One threshold rather than a ramp: the chip is
+/// a shortcut for "the ones with something heavy attached", and a second size
+/// chip would be two ways of saying the same thing.
+const LARGE_BYTES: u64 = 1024 * 1024;
+
+/// The `larger:` token [`LARGE_BYTES`] is spelled as. Round-trips through
+/// [`crate::parser::parse`] — a test asserts it.
+const LARGE_TOKEN: &str = "larger:1M";
+
+/// How many folders the refine column offers as `in:` chips.
+///
+/// Two, so a mailbox that files list traffic into a dozen folders does not
+/// spend the whole shortlist on them and crowd out `is:unread`.
+const REFINE_FOLDERS: usize = 2;
+
+/// Measures what the query's result set is made of: how it splits across the
+/// scopes, and which narrowings are worth offering.
+///
+/// Separate from [`search`] rather than folded into it because they are asked
+/// for at different rates. The readout and the result rows follow every
+/// keystroke; the facets only need to be right by the time the eye reaches
+/// the column beside them, and making every keystroke pay for four extra
+/// aggregate queries would spend the interaction budget on a number nobody is
+/// looking at yet.
+///
+/// Every count here is bounded the same way [`SearchResults::total_hits`] is
+/// — see [`TOTAL_HITS_CAP`] — so a query broad enough to match a whole
+/// mailbox costs the same as any other.
+pub fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Facets> {
+    // Scope counts hold the query and vary the scope: the column says what
+    // *switching* would find, so it cannot be measured inside the scope the
+    // user is already in.
+    let mut scopes = Vec::with_capacity(Scope::ALL.len());
+    for scope in Scope::ALL {
+        let plan = Plan::build(&SearchRequest { scope, ..*request });
+        scopes.push(ScopeCount {
+            scope,
+            hits: plan.count(connection)?,
+        });
+    }
+
+    // Refinements are the opposite: they narrow what is on screen, so they
+    // are measured inside the current scope.
+    let plan = Plan::build(request);
+    let mut refinements = plan.flag_refinements(connection)?;
+    refinements.extend(plan.folder_refinements(connection)?);
+
+    Ok(Facets {
+        scopes,
+        refinements,
     })
 }
 
@@ -317,6 +324,11 @@ impl Plan {
             }
         }
 
+        if let Some((sql, mut values)) = scope_condition(request.scope, request.account_id) {
+            conditions.push(sql);
+            params.append(&mut values);
+        }
+
         for clause in request.query.filters() {
             let (sql, mut values) = filter_condition(&clause.filter);
             let sql = if clause.negated {
@@ -392,6 +404,82 @@ impl Plan {
         Ok(count as u64)
     }
 
+    /// The flag-shaped refinements — unread, flagged, attachments, size —
+    /// counted over the match set in one pass.
+    ///
+    /// Conditional aggregates over a `LIMIT`ed subquery rather than four
+    /// separate counts: the expensive part of any of these is walking the
+    /// match, and walking it once for four answers is the whole point. The
+    /// inner `LIMIT` is [`TOTAL_HITS_CAP`], the same bound [`Plan::count`]
+    /// uses, so a very broad query cannot make the column expensive.
+    ///
+    /// The counts are therefore floors past the cap, exactly as
+    /// [`SearchResults::total_hits`] is — and since [`Facets::suggested`]
+    /// only ever compares them against that same capped total, a capped
+    /// result set still ranks its refinements against each other correctly.
+    fn flag_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+        let sql = format!(
+            "SELECT
+                 coalesce(sum(seen = 0), 0),
+                 coalesce(sum(flagged), 0),
+                 coalesce(sum(has_attachments), 0),
+                 coalesce(sum(size >= ?), 0)
+             FROM (SELECT m.seen, m.flagged, m.has_attachments, m.size {from} WHERE {where_sql} LIMIT ?)",
+            from = self.join_sql(),
+            where_sql = self.where_sql(),
+        );
+
+        // The `size >= ?` bind sits before every condition's parameter,
+        // because the aggregate is in the outer SELECT and the conditions are
+        // in the subquery.
+        let mut params = vec![Value::Integer(LARGE_BYTES as i64)];
+        params.extend(self.params.iter().cloned());
+        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
+
+        let counts: [i64; 4] = connection.query_row(&sql, params_from_iter(&params), |row| {
+            Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?])
+        })?;
+
+        Ok(["is:unread", "is:flagged", "has:attach", LARGE_TOKEN]
+            .into_iter()
+            .zip(counts)
+            .map(|(token, hits)| Refinement {
+                token: token.to_string(),
+                hits: hits.max(0) as u64,
+            })
+            .collect())
+    }
+
+    /// The folders the matches are actually in, as `in:` chips.
+    ///
+    /// Canvas 2b draws this chip as `list:lkml`; it is spelled `in:` here
+    /// because `list:` cannot yet be answered exactly — see [`Scope::Lists`]
+    /// and `postio-0bz`. `in:` names the same folder and is exact today, and
+    /// the chip is a token the user could have typed either way.
+    fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+        let sql = format!(
+            "SELECT name, count(*) AS hits FROM (
+                 SELECT mb.name AS name {from} JOIN mailboxes mb ON mb.id = m.mailbox_id
+                  WHERE {where_sql} LIMIT ?)
+             GROUP BY name ORDER BY hits DESC, name LIMIT ?",
+            from = self.join_sql(),
+            where_sql = self.where_sql(),
+        );
+
+        let mut params = self.params.clone();
+        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
+        params.push(Value::Integer(REFINE_FOLDERS as i64));
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(&params), |row| {
+            Ok(Refinement {
+                token: format!("in:{}", quote_value(&row.get::<_, String>(0)?)),
+                hits: row.get::<_, i64>(1)?.max(0) as u64,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
+    }
+
     /// Selects a candidate pool, then hydrates it into full [`Candidate`]s.
     ///
     /// Two queries rather than one: the first selects only `m.id`, ordered
@@ -455,7 +543,7 @@ impl Plan {
         let score_columns = if self.has_match {
             format!(
                 "bm25(messages_fts) AS bm25_score, \
-                 snippet(messages_fts, -1, '{SNIPPET_START}', '{SNIPPET_END}', '{SNIPPET_ELLIPSIS}', {SNIPPET_TOKENS}) AS snippet"
+                 snippet(messages_fts, -1, '{MATCH_START}', '{MATCH_END}', '{ELLIPSIS}', {SNIPPET_TOKENS}) AS snippet"
             )
         } else {
             "0.0 AS bm25_score, '' AS snippet".to_string()
@@ -525,6 +613,24 @@ impl Plan {
         // (by relevance or by recency) lives entirely in `ids`.
         Ok(ids.iter().filter_map(|id| by_id.get(id).cloned()).collect())
     }
+}
+
+/// Translates a [`Scope`] into a SQL condition, or `None` for the scope that
+/// constrains nothing.
+///
+/// Scoped by mailbox *role* rather than by id, because the scope has to mean
+/// the same thing on every account and before any folder has been chosen. See
+/// [`Scope::Lists`] for why "lists" is a role test and not a `List-Id` one.
+fn scope_condition(scope: Scope, account_id: AccountId) -> Option<(String, Vec<Value>)> {
+    let role = match scope {
+        Scope::AllMail => return None,
+        Scope::Inbox => "role = 'inbox'",
+        Scope::Lists => "role = 'regular'",
+    };
+    Some((
+        format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE account_id = ? AND {role})"),
+        vec![Value::Integer(account_id.get())],
+    ))
 }
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
@@ -600,6 +706,17 @@ fn fts_column_condition(column: &str, value: &str) -> (String, Vec<Value>) {
         "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)".to_string(),
         vec![Value::Text(format!("{column}:{}", fts_literal(value)))],
     )
+}
+
+/// Quotes an operator value that would otherwise not survive being typed
+/// back in — a folder called `Old Mail` has to become `in:"Old Mail"` or the
+/// parser reads it as `in:Old` and a stray word.
+fn quote_value(value: &str) -> String {
+    if value.chars().any(char::is_whitespace) {
+        format!("\"{}\"", value.replace('"', ""))
+    } else {
+        value.to_string()
+    }
 }
 
 fn day_start_millis(date: NaiveDate) -> i64 {

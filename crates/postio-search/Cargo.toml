@@ -19,11 +19,11 @@ repository.workspace = true
 # own default features are active in that resolve regardless of what any one
 # dependent asks for. Whoever wires the index and executor into the running
 # application enables this explicitly.
-index = ["dep:rusqlite", "dep:postio-model", "dep:thiserror"]
+index = ["dep:rusqlite", "dep:thiserror"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-postio-model = { workspace = true, optional = true }
+postio-model = { workspace = true }
 rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 thiserror = { version = "2.0.20", optional = true }
 
