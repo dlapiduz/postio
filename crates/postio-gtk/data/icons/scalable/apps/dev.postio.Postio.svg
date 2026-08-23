@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Postio's application icon.
+
+  The Industry identity, reduced to what survives at 16px: the steel accent
+  #5980a6 as a solid plate, and the envelope stated as line-work on the paper
+  tone rather than filled. No gradient, no bevel, no shadow — this design draws
+  edges, it does not light them.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Postio</title>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#5980a6"/>
+  <g fill="none" stroke="#f2f2f3" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="27" y="42" width="74" height="44" rx="5"/>
+    <path d="M30 45 L64 67 L98 45"/>
+  </g>
+</svg>

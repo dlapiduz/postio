@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# The crate is `postio-gtk`; what lands on PATH — and what the desktop
+# entry's `Exec` names — is `postio`.
+[[bin]]
+name = "postio"
+path = "src/main.rs"
+
 [dependencies]
 adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
 gio = "0.21.5"
