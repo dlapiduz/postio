@@ -33,6 +33,7 @@ use gtk::glib;
 use postio_model::message::MessageBody;
 use webkit6::prelude::*;
 
+use super::quote;
 use super::sanitize::{self, RemoteImages};
 use super::scheme::{self, BlobSource};
 use crate::resources;
@@ -105,33 +106,17 @@ impl Reader {
     }
 }
 
-/// The body markup, not yet wrapped in the document template
-/// [`wrap_document`] adds.
-///
-/// Quoted-text folding and a richer `text/plain` rendering land in
-/// `postio-1bz`; for now a text body is escaped and shown verbatim.
+/// The body markup: sanitized and quote-folded, but not yet wrapped in the
+/// document template [`wrap_document`] adds.
 fn body_html(body: &MessageBody, remote: RemoteImages) -> String {
     if let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) {
-        return sanitize::sanitize_body(html, remote).html;
+        let sanitized = sanitize::sanitize_body(html, remote);
+        return quote::fold_html_quotes(&sanitized.html);
     }
     if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        return format!("<pre class=\"postio-body-text\">{}</pre>", escape(text));
+        return quote::text_to_html(text);
     }
     String::new()
-}
-
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// Every scripting-adjacent `WebKitSettings` flag, turned off.
