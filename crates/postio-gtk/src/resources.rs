@@ -14,6 +14,12 @@ pub const TOKENS_CSS: &str = "/dev/postio/Postio/tokens.css";
 /// Postio's own widget styles, layered on top of the tokens.
 pub const SHELL_CSS: &str = "/dev/postio/Postio/shell.css";
 
+/// The reading pane's stylesheet, injected into the `WebView` — see
+/// `reader::view`. Separate from [`SHELL_CSS`] because it targets a
+/// different CSS engine entirely and cannot use the GTK `--postio-*`
+/// variables `tokens.css` defines.
+pub const READER_CSS: &str = "/dev/postio/Postio/reader.css";
+
 /// The directory holding the vendored font families, each next to its licence.
 pub const FONTS: &str = "/dev/postio/Postio/fonts";
 

@@ -1,0 +1,137 @@
+/* Postio's reading-pane stylesheet, injected into the `WebView` that
+ * renders a message body (crates/postio-gtk/src/reader/view.rs).
+ *
+ * This is NOT the GTK stylesheet tokens.css/shell.css are. A `WebView` has
+ * its own CSS engine with no notion of GTK's style context, so the
+ * `--postio-*` custom properties tokens.css defines are invisible here —
+ * every colour below is the same literal value tokens.css computes from the
+ * Industry design system, restated by hand. If the design system's palette
+ * moves, this file has to move with it; nothing regenerates it.
+ *
+ * `@font-face` rules for Barlow / Barlow Condensed / IBM Plex Mono are
+ * prepended at runtime (see `embedded_font_faces` in view.rs), not written
+ * here: they carry the vendored font bytes as `data:` URIs, because the
+ * `WebView`'s web process never sees the PangoFontMap the rest of the app
+ * registers fonts into.
+ *
+ * Postio owns the type: `ammonia` strips every sender `style` attribute and
+ * `<style>` tag before a body ever reaches this document (see
+ * `reader/sanitize.rs`), so nothing here competes with a sender's CSS.
+ */
+
+:root {
+  --r-ground: #f5f5f8;
+  --r-ink: #1d1f20;
+  --r-ink-secondary: rgba(29, 31, 32, 0.8);
+  --r-dim: rgba(29, 31, 32, 0.55);
+  --r-hairline: rgba(29, 31, 32, 0.16);
+  --r-accent: #5980a6;
+  --r-quote-bg: rgba(89, 128, 166, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --r-ground: #2b2b2d;
+    --r-ink: #f5f5f8;
+    --r-ink-secondary: #e7e7ea;
+    --r-dim: #b7b7ba;
+    --r-hairline: #5d5d60;
+    --r-accent: #94bce3;
+    --r-quote-bg: rgba(148, 188, 227, 0.08);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--r-ground);
+  color: var(--r-ink);
+  font-family: "Barlow", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 20px 24px;
+  /* Long unbroken tokens (a tracking URL, a base64 fragment a sender left
+     visible) must wrap rather than force horizontal scroll on the pane. */
+  overflow-wrap: anywhere;
+}
+
+body:empty::before {
+  content: "";
+}
+
+p {
+  margin: 0 0 1em 0;
+}
+
+a {
+  color: var(--r-accent);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+table {
+  max-width: 100%;
+}
+
+/* A sender's own <table> layout keeps its structure — ammonia allows the
+   generic layout attributes (width, align, valign, cellpadding) — but never
+   its colours or fonts, which are stripped with the `style` attribute. */
+
+pre.postio-body-text {
+  font-family: "Barlow", sans-serif;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0 0 1em 0;
+}
+
+/* Quoted-text folding (postio-1bz): closed by default — no `open` attribute
+   — and expands on click with no script involved. */
+details.postio-quote {
+  margin: 0.4em 0;
+  border-left: 2px solid var(--r-hairline);
+  padding-left: 0.8em;
+}
+
+details.postio-quote > summary {
+  cursor: pointer;
+  color: var(--r-dim);
+  font-size: 0.9em;
+  padding: 0.2em 0;
+  list-style: none;
+}
+
+details.postio-quote > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.postio-quote > summary::before {
+  content: "\25B8  ";
+}
+
+details.postio-quote[open] > summary::before {
+  content: "\25BE  ";
+}
+
+details.postio-quote blockquote {
+  background: var(--r-quote-bg);
+  border-radius: 4px;
+  padding: 0.6em 0.8em;
+}
+
+blockquote {
+  margin: 0.4em 0 0.4em 0;
+  padding-left: 0.8em;
+  border-left: 2px solid var(--r-hairline);
+  color: var(--r-ink-secondary);
+}
