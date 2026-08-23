@@ -345,6 +345,31 @@ pub enum Command {
 }
 
 impl Command {
+    /// Point this invocation at `target`, if it acts on messages at all.
+    ///
+    /// The registry's default for every message action is
+    /// [`MessageTarget::Selection`], which is right for a keystroke: `a`
+    /// means "archive what I have chosen". A mouse can be more specific —
+    /// a hover action on a row, or a drag that started on one — and saying
+    /// so has to be possible without rebuilding the command by hand, or the
+    /// two paths drift on which variant carries a target.
+    ///
+    /// Commands that act on something other than a set of messages are
+    /// returned unchanged: pointing `Send` at a selection is not a narrower
+    /// request, it is a meaningless one.
+    #[must_use]
+    pub fn with_target(self, target: MessageTarget) -> Self {
+        match self {
+            Command::Archive { .. } => Command::Archive { target },
+            Command::Delete { .. } => Command::Delete { target },
+            Command::Move { to, .. } => Command::Move { target, to },
+            Command::Flag { flagged, .. } => Command::Flag { target, flagged },
+            Command::MarkUnread { unread, .. } => Command::MarkUnread { target, unread },
+            Command::AddLabel { label, .. } => Command::AddLabel { target, label },
+            other => other,
+        }
+    }
+
     /// The registry id this invocation belongs to.
     pub fn id(&self) -> CommandId {
         match self {
@@ -486,6 +511,50 @@ mod tests {
         };
         assert_eq!(command.id(), CommandId::Move);
         assert_ne!(command, Command::default_for(CommandId::Move));
+    }
+
+    #[test]
+    fn a_command_can_be_pointed_at_one_message() {
+        // What a hover action or a drag needs: the same verb, aimed at the
+        // row under the pointer rather than at whatever is selected.
+        let one = MessageTarget::Messages(vec![MessageId::new(7)]);
+
+        assert_eq!(
+            Command::Archive {
+                target: MessageTarget::Selection
+            }
+            .with_target(one.clone()),
+            Command::Archive {
+                target: one.clone()
+            }
+        );
+        assert_eq!(
+            Command::Move {
+                target: MessageTarget::Selection,
+                to: Some(MailboxId::new(3)),
+            }
+            .with_target(one.clone()),
+            Command::Move {
+                target: one,
+                to: Some(MailboxId::new(3)),
+            },
+            "retargeting keeps the rest of the invocation"
+        );
+    }
+
+    #[test]
+    fn a_command_that_does_not_act_on_messages_ignores_a_target() {
+        // Aiming `Send` at a selection is not a narrower request; it is one
+        // that means nothing, and quietly accepting it would invite a caller
+        // to believe it did something.
+        let command = Command::Send;
+
+        assert_eq!(
+            command
+                .clone()
+                .with_target(MessageTarget::Messages(vec![MessageId::new(1)])),
+            command
+        );
     }
 
     #[test]

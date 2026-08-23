@@ -36,6 +36,9 @@ use postio_model::mailbox::{Mailbox, MailboxRole};
 /// What to call when the user picks a folder.
 type SelectionHandler = Box<dyn Fn(MailboxId)>;
 
+/// What to call when messages are dropped on a folder.
+type DropHandler = Box<dyn Fn(Vec<postio_model::ids::MessageId>, MailboxId)>;
+
 /// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
 const PROTOCOL: &str = "imap";
 
@@ -206,6 +209,7 @@ mod imp {
         pub status: RefCell<SyncStatus>,
         pub tick: RefCell<Option<glib::SourceId>>,
         pub selected: RefCell<Vec<SelectionHandler>>,
+        pub dropped: RefCell<Vec<DropHandler>>,
         /// Set while a selection is being applied programmatically, so
         /// restoring one does not look like the user clicking it.
         pub echoing: std::cell::Cell<bool>,
@@ -341,8 +345,8 @@ impl Sidebar {
         let (special, ordinary) = sections(mailboxes);
         let selected = self.selected();
 
-        sync_rows(&imp.special, &special);
-        sync_rows(&imp.ordinary, &ordinary);
+        sync_rows(&imp.special, &special, self);
+        sync_rows(&imp.ordinary, &ordinary, self);
         imp.ordinary_section.set_visible(!ordinary.is_empty());
 
         if let Some(id) = selected {
@@ -375,6 +379,18 @@ impl Sidebar {
     }
 
     /// Called when the user picks a folder, by click or by keyboard.
+    /// Called when messages are dropped on a folder.
+    ///
+    /// The move itself is not this widget's to make: it hands over what was
+    /// dropped and where, and the window turns that into the registry's
+    /// `Move` command so a drag and the `m` key are the same action.
+    pub fn connect_dropped(
+        &self,
+        callback: impl Fn(Vec<postio_model::ids::MessageId>, MailboxId) + 'static,
+    ) {
+        self.imp().dropped.borrow_mut().push(Box::new(callback));
+    }
+
     pub fn connect_selected(&self, callback: impl Fn(MailboxId) + 'static) {
         self.imp().selected.borrow_mut().push(Box::new(callback));
     }
@@ -436,11 +452,15 @@ fn folder_list(list: &gtk::ListBox) -> gtk::Widget {
 }
 
 /// Bring `list` in line with `mailboxes`, reusing the rows that survive.
-fn sync_rows(list: &gtk::ListBox, mailboxes: &[Mailbox]) {
+fn sync_rows(list: &gtk::ListBox, mailboxes: &[Mailbox], sidebar: &Sidebar) {
     for (index, mailbox) in mailboxes.iter().enumerate() {
         match list.row_at_index(index as i32) {
             Some(row) => update_row(&row, mailbox),
-            None => list.append(&folder_row(mailbox)),
+            None => {
+                let row = folder_row(mailbox);
+                accept_drops(&row, sidebar);
+                list.append(&row);
+            }
         }
     }
     while let Some(extra) = list.row_at_index(mailboxes.len() as i32) {
@@ -468,6 +488,56 @@ fn folder_row(mailbox: &Mailbox) -> gtk::ListBoxRow {
     row.set_child(Some(&line));
     update_row(&row, mailbox);
     row
+}
+
+/// Make `row` a place messages can be dropped.
+///
+/// A folder is the one thing in the sidebar a message can be moved *to*, so
+/// every folder row is a target and nothing else is. The highlight is the
+/// whole point: a drop target that does not say it is one is a drop that
+/// happens by luck.
+fn accept_drops(row: &gtk::ListBoxRow, sidebar: &Sidebar) {
+    let target = gtk::DropTarget::new(glib::types::Type::STRING, gtk::gdk::DragAction::MOVE);
+
+    target.connect_enter(|target, _, _| {
+        if let Some(row) = target.widget() {
+            row.add_css_class("postio-drop-into");
+        }
+        gtk::gdk::DragAction::MOVE
+    });
+    target.connect_leave(|target| {
+        if let Some(row) = target.widget() {
+            row.remove_css_class("postio-drop-into");
+        }
+    });
+    target.connect_drop(glib::clone!(
+        #[weak]
+        sidebar,
+        #[upgrade_or]
+        false,
+        move |target, value, _, _| {
+            if let Some(row) = target.widget() {
+                row.remove_css_class("postio-drop-into");
+            }
+            let Some(row) = target.widget().and_downcast::<gtk::ListBoxRow>() else {
+                return false;
+            };
+            let Ok(payload) = value.get::<String>() else {
+                return false;
+            };
+            let messages = crate::list_view::dragged_messages(&payload);
+            if messages.is_empty() {
+                return false;
+            }
+            // SAFETY: the key is private to this module and always holds an i64.
+            let mailbox = MailboxId::new(unsafe { row_id(&row) });
+            for handler in sidebar.imp().dropped.borrow().iter() {
+                handler(messages.clone(), mailbox);
+            }
+            true
+        }
+    ));
+    row.add_controller(target);
 }
 
 fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {

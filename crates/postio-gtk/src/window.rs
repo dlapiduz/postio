@@ -43,6 +43,9 @@ use crate::{header, style};
 /// What to call when a key press resolves to a command.
 type CommandHandler = Box<dyn Fn(CommandId)>;
 
+/// What to call with a whole invocation — the verb *and* what it is aimed at.
+type ActionHandler = Box<dyn Fn(postio_core::Command)>;
+
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
 /// Wide enough that the three-pane layout is what a first run actually looks
@@ -81,6 +84,9 @@ mod imp {
         /// `None` until `build` sets it; the accessor reads it as `List`.
         pub context: std::cell::Cell<Option<Context>>,
         pub commands: std::cell::RefCell<Vec<CommandHandler>>,
+        /// Handlers for whole invocations, which the mouse produces — see
+        /// [`Window::connect_action`](super::Window::connect_action).
+        pub actions: std::cell::RefCell<Vec<ActionHandler>>,
     }
 
     #[glib::object_subclass]
@@ -310,6 +316,20 @@ impl Window {
         sidebar.set_vexpand(true);
         shell.sidebar().append(&sidebar);
 
+        // A message dragged onto a folder is the `m` key with the destination
+        // already answered — the same registry command, so it is undoable the
+        // same way and reaches the server through the same queue.
+        sidebar.connect_dropped(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |messages, mailbox| {
+                window.act(postio_core::Command::Move {
+                    target: postio_core::MessageTarget::Messages(messages),
+                    to: Some(mailbox),
+                });
+            }
+        ));
+
         // The named states cover the rows rather than replacing them: an
         // empty mailbox still has a header saying which mailbox it is, and
         // the state view hides itself the instant a row arrives.
@@ -321,13 +341,13 @@ impl Window {
         list_overlay.add_overlay(&list_state);
         shell.list().append(&list_overlay);
 
-        // The bulk bar runs the same commands the keyboard does, through the
+        // The mouse runs the same commands the keyboard does, through the
         // same path: a button that acted directly would be a second
         // implementation of a verb the registry already owns.
         list_view.connect_command(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |id| window.run(id)
+            move |command| window.act(command)
         ));
 
         let header = header::build();
@@ -596,6 +616,27 @@ impl Window {
         self.imp().commands.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called with every *invocation* — a command and what it is aimed at.
+    ///
+    /// The keyboard produces ids, because a keystroke says only which verb it
+    /// meant and the registry's default target ("the selection") is the right
+    /// answer. The mouse produces whole commands: a hover action names its
+    /// row, a drop names its destination folder. Both are the same verbs from
+    /// the same table; only the specificity differs.
+    pub fn connect_action(&self, handler: impl Fn(postio_core::Command) + 'static) {
+        self.imp().actions.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Run an invocation: the window's own commands first, then the handlers.
+    pub fn act(&self, command: postio_core::Command) {
+        // A command the window answers itself — closing an overlay, moving
+        // the cursor — means the same thing however it was invoked.
+        self.run(command.id());
+        for handler in self.imp().actions.borrow().iter() {
+            handler(command.clone());
+        }
+    }
+
     /// Opens the box in `mode`, remembering what to come back to.
     ///
     /// No animation and no dialog: the field is typeable the instant it has
@@ -712,6 +753,15 @@ impl Window {
         }
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap);
+    }
+
+    /// Apply the `[ui]` block: what the list shows, and how much of it.
+    ///
+    /// Live — the config watcher calls this on every save that changes the
+    /// section, so turning hover actions off in `config.toml` takes them off
+    /// the rows already on screen rather than at the next start.
+    pub fn apply_ui(&self, ui: &postio_config::UiConfig) {
+        self.list().set_show_actions(ui.show_hover_actions);
     }
 
     /// Reopen where the last session left off.

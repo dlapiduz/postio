@@ -70,6 +70,7 @@ pub fn install_at(window: &Window, path: &Path) {
     let mut service = ConfigService::load(path);
     report(service.status().errors());
     window.apply_keymap(service.keymap().clone());
+    window.apply_ui(&service.config().ui);
     window.settings().load(path);
 
     window.connect_command({
@@ -114,6 +115,9 @@ pub fn install_at(window: &Window, path: &Path) {
             };
             if update.changed.keys {
                 window.apply_keymap(service.keymap().clone());
+            }
+            if update.changed.ui {
+                window.apply_ui(&service.config().ui);
             }
             // Whichever save this was — the panel's own debounced write, or
             // `$EDITOR`'s — a file that loads without error is what "Revert
