@@ -1,10 +1,35 @@
-//! See the crate description in `Cargo.toml` and the bead epic covering this crate.
+//! Postio's sync engine: the queue drainer, resync, IDLE and backoff.
 //!
-//! Development in this repository is test-first: write the failing test, then
-//! the implementation. See `CLAUDE.md`.
+//! # Where this sits
+//!
+//! Everything below is reached through
+//! [`MailBackend`](postio_imap::backend::MailBackend); nothing here names a
+//! protocol type. That is ADR 0001's requirement and it is what makes the whole
+//! engine testable against
+//! [`MockBackend`](postio_imap::backend::MockBackend) with no server and no
+//! network — every test in this crate does exactly that.
+//!
+//! # Local-first, drained later
+//!
+//! A mutating action writes SQLite and enqueues an operation in one
+//! transaction, and the UI repaints without waiting (`CLAUDE.md`). This crate
+//! owns what happens next:
+//!
+//! - [`coalesce`] folds a batch down to the operations the server actually
+//!   needs, so a minute of offline flagging is not replayed keystroke by
+//!   keystroke.
+//! - [`drain`] sends them in order, resolves conflicts against what the server
+//!   says, and settles each queue row.
+//! - [`retry`] decides when a failure is worth another attempt, and when the
+//!   user has to be told instead.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_builds() {}
-}
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+pub mod coalesce;
+pub mod drain;
+pub mod retry;
+
+pub use coalesce::{Plan, Step, coalesce};
+pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
+pub use retry::RetryPolicy;
