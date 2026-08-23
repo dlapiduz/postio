@@ -82,13 +82,14 @@ fn populate(window: &Window) {
 /// Canvas 1b's own six messages, so the row anatomy can be held up against
 /// the drawing before there is a database to read.
 ///
-/// The rows arrive through the real [`PageSource`] seam rather than being
-/// pushed at the model, so what the shot renders is what a repository would
-/// produce. Every address is a reserved domain, per CLAUDE.md.
+/// They arrive through the real [`MessageSource`] seam rather than being
+/// pushed at the model, so what the shot renders is what a repository-backed
+/// source would produce. Every address is a reserved domain, per CLAUDE.md.
 fn populate_list(window: &Window) {
-    use postio_gtk::list::{PageSource, Row};
+    use postio_gtk::feed::{MessageSource, Page, PageFuture, PageRequest};
+    use postio_gtk::list::Row;
     use postio_model::EmailAddress;
-    use postio_model::ids::{MessageId, ThreadId};
+    use postio_model::ids::{MailboxId, MessageId, ThreadId};
 
     let today = chrono::Local::now().date_naive();
     let at = |hour: u32, minute: u32, days: i64| {
@@ -98,33 +99,38 @@ fn populate_list(window: &Window) {
             .expect("a valid local time")
             .with_timezone(&chrono::Utc)
     };
-    let message = |id,
-                   name: Option<&str>,
-                   address: &str,
-                   subject: &str,
-                   preview: &str,
-                   when,
-                   seen,
-                   thread_count,
-                   has_attachments| Row {
-        id: MessageId::new(id),
-        thread: Some(ThreadId::new(id)),
-        from: Some(EmailAddress::new(name, address)),
-        subject: Some(subject.to_owned()),
-        preview: Some(preview.to_owned()),
-        received_at: when,
-        seen,
-        flagged: false,
-        answered: false,
-        draft: false,
-        has_attachments,
-        thread_count,
-    };
+    #[allow(clippy::too_many_arguments)]
+    fn message(
+        id: i64,
+        name: &str,
+        address: &str,
+        subject: &str,
+        preview: &str,
+        when: chrono::DateTime<chrono::Utc>,
+        seen: bool,
+        thread_count: u32,
+        has_attachments: bool,
+    ) -> Row {
+        Row {
+            id: MessageId::new(id),
+            thread: Some(ThreadId::new(id)),
+            from: Some(EmailAddress::new(Some(name), address)),
+            subject: Some(subject.to_owned()),
+            preview: Some(preview.to_owned()),
+            received_at: when,
+            seen,
+            flagged: false,
+            answered: false,
+            draft: false,
+            has_attachments,
+            thread_count,
+        }
+    }
 
     let rows = vec![
         message(
             1,
-            Some("Lena Tomlin"),
+            "Lena Tomlin",
             "lena@example.com",
             "Re: maildir index rebuild is O(n²)",
             "Confirmed on 0.4.1 — the rebuild walks every…",
@@ -135,7 +141,7 @@ fn populate_list(window: &Window) {
         ),
         message(
             2,
-            Some("buildbot"),
+            "buildbot",
             "buildbot@example.net",
             "[FAIL] main · imap-idle · 3 tests",
             "3 failing, 1 flaky. Full log attached…",
@@ -146,7 +152,7 @@ fn populate_list(window: &Window) {
         ),
         message(
             3,
-            Some("Nadia Okafor"),
+            "Nadia Okafor",
             "nadia@example.org",
             "Notes from the sync — attaching the deck",
             "Short one. Decisions at the top, owners…",
@@ -157,7 +163,7 @@ fn populate_list(window: &Window) {
         ),
         message(
             4,
-            Some("lkml"),
+            "lkml",
             "lkml@example.org",
             "[PATCH v3 2/7] sched: fix EEVDF lag accounting",
             "Peter, Vincent — the lag decay was applied…",
@@ -168,7 +174,7 @@ fn populate_list(window: &Window) {
         ),
         message(
             5,
-            Some("Diogo Ferreira"),
+            "Diogo Ferreira",
             "diogo@example.org",
             "Can you review the mbox importer today?",
             "Small diff, mostly the folder walker…",
@@ -179,7 +185,7 @@ fn populate_list(window: &Window) {
         ),
         message(
             6,
-            Some("Sara Abadi"),
+            "Sara Abadi",
             "sara@example.com",
             "Re: Re: keyring unlock on wayland",
             "gnome-keyring works, kwallet needs the…",
@@ -190,38 +196,24 @@ fn populate_list(window: &Window) {
         ),
     ];
 
-    /// The in-memory stand-in for `postio-91i`'s repository-backed source.
-    struct Sample {
-        rows: Vec<Row>,
-        list: postio_gtk::list::MessageList,
-    }
-    impl PageSource for Sample {
-        fn total(&self) -> u32 {
-            self.rows.len() as u32
-        }
-        fn request(&self, page: u32) {
-            // Never synchronously: `request` is called from inside the
-            // model answering `item()`, and delivering there would emit
-            // `items_changed` while the view is mid-read. A real source is
-            // a repository call on another thread, which cannot come back
-            // any sooner than this either.
-            let start = (page * postio_gtk::list::PAGE_SIZE) as usize;
-            let end = (start + postio_gtk::list::PAGE_SIZE as usize).min(self.rows.len());
-            let rows = self.rows[start..end].to_vec();
-            let list = self.list.clone();
-            glib::idle_add_local_once(move || list.deliver(page, rows));
+    /// The in-memory stand-in for the repository-backed source.
+    struct Sample(Vec<Row>);
+    impl MessageSource for Sample {
+        fn fetch(&self, request: PageRequest) -> PageFuture {
+            let total = self.0.len() as u32;
+            let start = (request.offset as usize).min(self.0.len());
+            let end = (start + request.limit as usize).min(self.0.len());
+            let rows = self.0[start..end].to_vec();
+            Box::pin(async move { Ok(Page { total, rows }) })
         }
     }
 
     let pane = window.list();
     pane.set_mailbox("Inbox", 12);
-    pane.model().set_source(std::rc::Rc::new(Sample {
-        rows,
-        list: pane.model(),
-    }));
-    // The canvas draws its key hints on the first row, which means the list
-    // has the keyboard. Anything else would be a shot of a different state.
-    pane.grab_focus();
+    // Leaked on purpose: the shot renders one window and exits, and a feed
+    // dropped here would stop answering before the first page arrived.
+    let feed = Box::leak(Box::new(pane.feed(std::rc::Rc::new(Sample(rows)))));
+    feed.open(MailboxId::new(1));
 }
 
 /// Canvas 3f's own sample file, so the shot can be held up against the
@@ -398,6 +390,15 @@ fn main() -> glib::ExitCode {
     window.present();
 
     settle(&window);
+
+    // The canvas draws its key hints on the first row, which means the list
+    // has the keyboard — and a shot without them is a shot of a different
+    // state. Focused here rather than in `populate_list` because the rows
+    // arrive a frame or two later and an empty list has no row to focus.
+    if flag("demo") {
+        window.list().grab_focus();
+        settle(&window);
+    }
 
     let (width, height) = (window.width(), window.height());
     let paintable = gtk::WidgetPaintable::new(Some(&window));

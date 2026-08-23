@@ -113,10 +113,18 @@ impl MessageListView {
         Self::default()
     }
 
-    /// The model to point at a mailbox with `set_source`, and to drive from
-    /// the event stream. `postio-91i` is what fills it.
+    /// The windowed model under the rows.
     pub fn model(&self) -> MessageList {
         self.imp().model.clone()
+    }
+
+    /// Feed this pane from `source`.
+    ///
+    /// The returned [`Feed`] is what opens a mailbox and what the runtime's
+    /// events are handed to; the pane itself stays ignorant of where rows
+    /// come from, which is what keeps `rusqlite` out of this crate.
+    pub fn feed(&self, source: std::rc::Rc<dyn crate::feed::MessageSource>) -> crate::feed::Feed {
+        crate::feed::Feed::new(&self.imp().model, source)
     }
 
     /// The selection, for whoever needs to know what an action will hit.
