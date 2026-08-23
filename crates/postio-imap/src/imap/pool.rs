@@ -38,6 +38,7 @@ use tokio::time::Instant;
 use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::{AccountKey, SecretStore};
 
+use super::select::Generations;
 use super::{ConnectionSettings, Dispatch, ImapConnector, ImapSession};
 
 /// How many connections a pool opens by default, the watcher included.
@@ -54,6 +55,18 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// How long an acquisition waits for a slot before giving up.
 pub const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a cached mailbox selection may answer before the server is asked
+/// to confirm it again.
+///
+/// This is the window in which a `UIDVALIDITY` change nobody has noticed yet
+/// could still be acted on, so it is short; and it is not zero because the
+/// chunks of a backfill follow each other in milliseconds and re-selecting
+/// before each of them would double that operation's round trips. Thirty
+/// seconds costs an interactive user at most one extra `SELECT` per mailbox
+/// per half-minute and a backfill nothing at all. See
+/// [`select`](super::select).
+pub const DEFAULT_SELECTION_MAX_AGE: Duration = Duration::from_secs(30);
 
 /// What a piece of work is competing for.
 ///
@@ -95,6 +108,12 @@ pub struct PoolConfig {
     /// With this off, watching competes for a general slot, which on a
     /// two-connection server is the difference between watching *or* fetching.
     pub dedicate_watch_connection: bool,
+    /// How long a cached mailbox selection may answer before the server has
+    /// to confirm it again.
+    ///
+    /// [`Duration::ZERO`] re-`SELECT`s before every operation, which is the
+    /// safest and the most expensive. See [`DEFAULT_SELECTION_MAX_AGE`].
+    pub selection_max_age: Duration,
 }
 
 impl Default for PoolConfig {
@@ -104,6 +123,7 @@ impl Default for PoolConfig {
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
             acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
             dedicate_watch_connection: true,
+            selection_max_age: DEFAULT_SELECTION_MAX_AGE,
         }
     }
 }
@@ -240,6 +260,10 @@ pub struct ConnectionPool {
     config: PoolConfig,
     /// Whether the watch lane has a slot of its own; see [`ConnectionPool::new`].
     watch_dedicated: bool,
+    /// What every session in this pool has observed about each mailbox's UID
+    /// generation. Shared so that one connection discovering a renumber stops
+    /// the others from acting on what they cached before it.
+    generations: Arc<Generations>,
     inner: Mutex<PoolInner>,
 }
 
@@ -275,6 +299,7 @@ impl ConnectionPool {
             key,
             connector,
             watch_dedicated: watch_slots > 0,
+            generations: Arc::new(Generations::new()),
             config: PoolConfig {
                 max_connections: capacity,
                 ..config
@@ -441,7 +466,9 @@ impl ConnectionPool {
     /// Opens and authenticates one connection.
     async fn open(&self) -> BackendResult<ImapSession> {
         let password = self.store.retrieve(&self.key).await?;
-        let session = ImapSession::open(&self.settings, &password, self.connector.as_ref()).await?;
+        let mut session =
+            ImapSession::open(&self.settings, &password, self.connector.as_ref()).await?;
+        session.set_selection_policy(Arc::clone(&self.generations), self.config.selection_max_age);
 
         let mut inner = self.lock();
         inner.opened += 1;

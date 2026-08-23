@@ -51,6 +51,10 @@ async fn server() -> TestServer {
 }
 
 async fn pool_for(server: &TestServer) -> ConnectionPool {
+    pool_with(server, PoolConfig::default()).await
+}
+
+async fn pool_with(server: &TestServer, config: PoolConfig) -> ConnectionPool {
     let store = MemorySecretStore::new();
     let key = AccountKey::new(server.account());
     store
@@ -63,8 +67,17 @@ async fn pool_for(server: &TestServer) -> ConnectionPool {
         key,
         Arc::new(store),
         Arc::new(RustlsConnector::new().expect("a connector")),
-        PoolConfig::default(),
+        config,
     )
+}
+
+/// How many times the server has been asked to select a mailbox.
+fn selects(server: &TestServer) -> usize {
+    server
+        .commands()
+        .iter()
+        .filter(|command| command.to_ascii_uppercase().contains(" SELECT "))
+        .count()
 }
 
 fn cancel() -> CancelToken {
@@ -248,9 +261,25 @@ async fn a_delivery_is_visible_to_the_next_changedsince_fetch() {
 }
 
 #[tokio::test]
-async fn a_uidvalidity_bump_is_observed_on_the_next_select() {
+async fn a_uidvalidity_bump_is_refused_rather_than_acted_on() {
+    // The worst thing this codebase can do: a mailbox is renumbered, the
+    // session's cached SELECT still reports the old generation, and UIDs from
+    // the new one are read as though they were the old ones. Flags land on
+    // the wrong messages and a delete hits mail the user never chose — with
+    // nothing erroring, because every layer above believes the generation it
+    // was told.
     let server = server().await;
-    let pool = pool_for(&server).await;
+    let pool = pool_with(
+        &server,
+        PoolConfig {
+            // Trust no cached selection across a checkout, so the renumber is
+            // caught on the very next operation rather than up to
+            // `selection_max_age` later.
+            selection_max_age: Duration::ZERO,
+            ..PoolConfig::default()
+        },
+    )
+    .await;
 
     let before = fetch_headers(
         &pool,
@@ -264,23 +293,35 @@ async fn a_uidvalidity_bump_is_observed_on_the_next_select() {
     .unwrap();
     assert_eq!(before[0].uid_validity, UidValidity::new(4_242));
 
-    // The mailbox is renumbered under us, as a server that restored from
-    // backup does. Nothing about the UIDs we hold is valid any more.
     server.set_uid_validity("INBOX", UidValidity::new(9_001));
 
-    // Another mailbox in between, so the session's cached SELECT cannot
-    // answer from what it already knew.
-    let _ = fetch_headers(
+    // No mailbox switch in between: the same mailbox, the same pool, the next
+    // operation.
+    let error = fetch_headers(
         &pool,
-        "Archive",
-        &UidSet::all(),
+        "INBOX",
+        &UidSet::single(Uid::new(1)),
         None,
         Priority::Interactive,
         &cancel(),
     )
     .await
-    .unwrap();
+    .unwrap_err();
 
+    assert!(
+        matches!(
+            &error,
+            BackendError::UidValidityChanged { mailbox, known, observed }
+                if mailbox == "INBOX"
+                    && *known == UidValidity::new(4_242)
+                    && *observed == UidValidity::new(9_001)
+        ),
+        "{error}"
+    );
+    assert!(error.requires_full_resync());
+
+    // Reported once, then work resumes in the new generation: the caller
+    // rebuilds and retries, and the retry must not keep failing.
     let after = fetch_headers(
         &pool,
         "INBOX",
@@ -291,8 +332,83 @@ async fn a_uidvalidity_bump_is_observed_on_the_next_select() {
     )
     .await
     .unwrap();
-
     assert_eq!(after[0].uid_validity, UidValidity::new(9_001));
+}
+
+#[tokio::test]
+async fn a_body_fetch_is_refused_across_a_uidvalidity_bump_too() {
+    // Bodies are the half that attaches downloaded bytes to a row, so a
+    // generation the caller did not ask for has to stop this path as well.
+    let server = server().await;
+    let pool = pool_with(
+        &server,
+        PoolConfig {
+            selection_max_age: Duration::ZERO,
+            ..PoolConfig::default()
+        },
+    )
+    .await;
+    let mut sink = VecSink::new();
+
+    fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(1),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    server.set_uid_validity("INBOX", UidValidity::new(9_001));
+
+    let mut sink = VecSink::new();
+    let error = fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(1),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.requires_full_resync(), "{error}");
+    assert!(sink.is_empty(), "no bytes may reach the sink");
+}
+
+#[tokio::test]
+async fn consecutive_fetches_on_one_mailbox_still_select_once() {
+    // The cache this guard sits on is a real optimisation: a backfill is many
+    // small fetches on one mailbox, and re-selecting before each of them
+    // would double the round trips. Making staleness impossible must not cost
+    // that.
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    for uid in [1u32, 2, 3] {
+        fetch_headers(
+            &pool,
+            "INBOX",
+            &UidSet::single(Uid::new(uid)),
+            None,
+            Priority::Background,
+            &cancel(),
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        selects(&server),
+        1,
+        "one SELECT for three chunks: {:?}",
+        server.commands()
+    );
 }
 
 #[tokio::test]
