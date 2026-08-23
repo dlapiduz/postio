@@ -18,10 +18,12 @@ async-channel = "2.5.0"
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
 postio-core.workspace = true
 postio-gtk.workspace = true
+postio-imap.workspace = true
 postio-model.workspace = true
 # The database half. Nothing else depends on it but this crate, so nothing is
 # guarded against the `rusqlite` it pulls in — which is the whole reason this
 # crate exists. See its `main.rs`.
 postio-runtime.workspace = true
+postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
