@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+ammonia = "4"
 async-channel = "2.5.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 gio = "0.21.5"
@@ -27,9 +28,11 @@ postio-core.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
 thiserror = "2.0.20"
+webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
 postio-config.workspace = true
+postio-model = { workspace = true, features = ["test-corpus"] }
 tempfile = "3.27.0"
 
 [build-dependencies]
