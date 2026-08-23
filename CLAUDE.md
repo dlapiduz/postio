@@ -213,6 +213,9 @@ ask for.**
   `cid:` images resolve from the local blob store.
 - No telemetry, no crash reporting, no update ping.
 - Credentials live in the OS keyring, never in `config.toml`, never in a log.
+- **Logs never carry message content** — no bodies, subjects, or recipient
+  addresses, at any level. Log ids, counts and outcomes. A debug log full of
+  someone's mail is the same leak as shipping their address in a fixture.
 
 When adding anything that could make a network request, the question is not
 "is this useful" but "did the user ask for it". If the answer is no, it does
