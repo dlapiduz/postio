@@ -17,7 +17,10 @@
 //! the same reason — a small, bounded, local read is not what the `MailStore`
 //! crossing exists to protect against. Attachments are the exception: a
 //! file's bytes can be large enough to actually cost wall-clock time, so
-//! `postio-c16.6` goes through the runtime instead of this module.
+//! [`install_attach`] hands the blob-store write to `runtime` and answers
+//! through the callback [`Composer::connect_attach`] gives it whenever the
+//! write finishes, rather than reading the file inline the way everything
+//! else here does.
 //!
 //! # Carrying the draft's id forward
 //!
@@ -32,10 +35,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gtk::gio;
+use gtk::prelude::*;
 use postio_gtk::composer::{Closing, Composer};
 use postio_gtk::window::Window;
 use postio_model::ids::{AccountId, MessageId};
-use postio_model::{Draft, DraftId, DraftState, EmailAddress, MessageBody};
+use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress, MessageBody};
 use postio_storage::repository::{
     AccountRepository, ContactRepository, DraftRepository, MessageRepository,
 };
@@ -46,16 +51,23 @@ use postio_storage::{BlobStore, Database};
 const SUGGESTION_LIMIT: u32 = 8;
 
 /// Wires `window`'s composer to `database` for `account`: autosave with
-/// crash recovery, recipient completion from contacts, and replying to
-/// whatever the list last opened. `blobs` is only for reading a message's
-/// body back for a reply's quote — see [`load_body`].
-pub fn install(window: &Window, account: AccountId, database: Database, blobs: BlobStore) {
+/// crash recovery, recipient completion from contacts, replying to whatever
+/// the list last opened, and attaching files into `blobs`. `runtime` is only
+/// for [`install_attach`] — everything else here is synchronous.
+pub fn install(
+    window: &Window,
+    account: AccountId,
+    database: Database,
+    blobs: BlobStore,
+    runtime: tokio::runtime::Handle,
+) {
     let composer = window.composer();
     composer.set_account(account);
 
     install_autosave(&composer, database.clone(), account);
     install_recipient_suggestions(&composer, database.clone(), account);
-    install_reply_source(window, &composer, database, blobs);
+    install_reply_source(window, &composer, database, blobs.clone());
+    install_attach(&composer, blobs, runtime);
 }
 
 /// Autosave to [`DraftRepository`], crash recovery, and clearing the row once
@@ -207,6 +219,66 @@ fn install_reply_source(
     });
 }
 
+/// Writes a chosen or dropped file into `blobs` without blocking the
+/// composer on it. The read, the MIME sniff and the write are all blocking
+/// calls, so they run on `runtime`'s blocking pool rather than an async
+/// task — a worker thread costs nothing borrowed from anywhere else, where a
+/// blocking call inside a tokio task would stall whatever else that task's
+/// worker was meant to poll.
+fn install_attach(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime::Handle) {
+    composer.connect_attach(move |path, then| {
+        let blobs = blobs.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        runtime.spawn_blocking(move || {
+            let attachment = attach_file(&blobs, &path);
+            let _ = sender.send_blocking(attachment);
+        });
+        gtk::glib::spawn_future_local(async move {
+            then(receiver.recv().await.ok().flatten());
+        });
+    });
+}
+
+/// Reads `path`'s size and MIME type and writes its bytes into `blobs`.
+///
+/// Blocking throughout, deliberately — see [`install_attach`], the only
+/// place this is ever called from.
+fn attach_file(blobs: &BlobStore, path: &std::path::Path) -> Option<Attachment> {
+    let size = std::fs::metadata(path).ok()?.len();
+    let mime_type = mime_type_of(path);
+    let file = std::fs::File::open(path)
+        .map_err(|error| eprintln!("postio: could not read {}: {error}", path.display()))
+        .ok()?;
+    let blob_id = blobs
+        .put_reader(file)
+        .map_err(|error| eprintln!("postio: could not store the attachment: {error}"))
+        .ok()?;
+
+    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
+    attachment.filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    attachment.blob_id = Some(blob_id);
+    Some(attachment)
+}
+
+/// A best guess at `path`'s MIME type, from the same shared-mime-info
+/// database a file manager reads — sniffed from content and extension
+/// together, not just the extension. Falls back to the generic "some bytes"
+/// type rather than failing the attachment over a type nothing recognises.
+fn mime_type_of(path: &std::path::Path) -> String {
+    gio::File::for_path(path)
+        .query_info(
+            "standard::content-type",
+            gio::FileQueryInfoFlags::NONE,
+            gio::Cancellable::NONE,
+        )
+        .ok()
+        .and_then(|info| info.content_type())
+        .map(|content_type| content_type.to_string())
+        .unwrap_or_else(|| "application/octet-stream".to_owned())
+}
+
 /// A message's text and HTML, if they have been downloaded.
 ///
 /// Absent rather than an error for a message still `Partial` — headers synced,
@@ -294,6 +366,9 @@ mod tests {
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
         let account = seed_account(&Database::open(&db_path).unwrap());
+        // Only `install_attach` ever spawns onto this; nothing in this test
+        // attaches a file, so it exists purely to give `install` a handle.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
 
         // ── Run one: open, type, autosave, and stop cold ─────────────────
         //
@@ -308,7 +383,7 @@ mod tests {
             window.present();
             settle();
 
-            install(&window, account, database, blobs);
+            install(&window, account, database, blobs, runtime.handle().clone());
             let composer = window.composer();
             composer.open(Draft::new(account));
             settle();
@@ -328,7 +403,7 @@ mod tests {
             window.present();
             settle();
 
-            install(&window, account, database, blobs);
+            install(&window, account, database, blobs, runtime.handle().clone());
             settle();
 
             let composer = window.composer();
