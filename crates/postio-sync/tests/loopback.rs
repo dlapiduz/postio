@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
+use postio_imap::backend::MailBackend;
 use postio_imap::cancel::CancelToken;
 use postio_imap::imap::{ImapBackend, PoolConfig, RustlsConnector};
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
@@ -32,7 +33,9 @@ use postio_storage::repository::{
 use postio_storage::test_support::{self, TempDatabase};
 use postio_storage::{BlobStore, PooledConnection};
 use postio_sync::backfill::{BodyRequest, Outcome as BackfillOutcome, fetch_body};
-use postio_sync::{Drainer, Outcome, resync_mailbox, sync_mailbox};
+use postio_sync::{
+    Attention, Drainer, Outcome, Watch, WatchPolicy, Watcher, resync_mailbox, sync_mailbox,
+};
 use rusqlite::Connection;
 
 const INBOX: &str = "INBOX";
@@ -465,6 +468,127 @@ async fn a_body_torn_off_the_socket_stores_nothing() {
         "a half-arrived body must not be recorded as a body"
     );
     assert!(stored.raw_blob_id.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Watching, over a connection that really idles
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
+    // The whole point of the watcher, end to end for the first time: a real
+    // IDLE held on a real connection, a message delivered while it is
+    // outstanding, and the resync that the wake-up is supposed to trigger.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let mut watcher = Watcher::new(
+        WatchPolicy {
+            idle: true,
+            idle_refresh: Duration::from_secs(60),
+            poll_interval: Duration::from_secs(300),
+        },
+        &backend.capabilities().await.expect("capabilities"),
+    );
+    watcher.watch(inbox.id, INBOX, Attention::Push);
+    watcher.watch(archive.id, ARCHIVE, Attention::Poll);
+
+    // The first push step verifies rather than idling blind.
+    let Watch::Poll { .. } = watcher.next_push(at(9)) else {
+        panic!("the first push step is a verifying STATUS");
+    };
+    let status = backend.status(INBOX).await.expect("status");
+    watcher.observed(inbox.id, &status, at(9));
+
+    let Watch::Idle {
+        path,
+        timeout,
+        cancel,
+        ..
+    } = watcher.next_push(at(9))
+    else {
+        panic!("a verified mailbox is idled on");
+    };
+    assert_eq!(path, INBOX);
+
+    let (events, arrival) = tokio::join!(backend.idle(&path, timeout, &cancel), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        server.deliver(INBOX, TestMessage::corpus("list-thread-01-root"))
+    });
+    let events = events.expect("idle");
+
+    assert!(
+        !events.is_empty(),
+        "the server announced the delivery, so IDLE must not report silence"
+    );
+    assert!(
+        watcher.woke(inbox.id, &events, at(10)).needs_resync(),
+        "an announced change needs a pull"
+    );
+
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+    assert!(
+        known_uids(&connection, &inbox, VALIDITY).contains(&arrival.get()),
+        "the message the wake-up was about has to be in the database"
+    );
+}
+
+#[tokio::test]
+async fn the_poll_floor_notices_what_no_wake_up_reported() {
+    // The guarantee the watcher is shaped around: however badly push is
+    // behaving — and a real server pushes nothing to a connection that was
+    // not idling when the change happened — new mail surfaces within one
+    // poll interval.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    // IDLE is available and on; this mailbox simply is not the one the
+    // dedicated connection is holding, which is the ordinary case for every
+    // folder but one.
+    let mut watcher = Watcher::new(
+        WatchPolicy {
+            idle: true,
+            idle_refresh: Duration::from_secs(60),
+            poll_interval: Duration::from_secs(300),
+        },
+        &backend.capabilities().await.expect("capabilities"),
+    );
+    watcher.watch(inbox.id, INBOX, Attention::Poll);
+
+    // A first look, to learn what the mailbox looks like when nothing has
+    // happened.
+    let Watch::Poll { path, .. } = watcher.next_poll(at(9)) else {
+        panic!("a polled mailbox is checked");
+    };
+    let before = backend.status(&path).await.expect("status");
+    watcher.observed(inbox.id, &before, at(9));
+
+    // Mail lands with nobody watching for it.
+    server.deliver(INBOX, TestMessage::corpus("list-thread-01-root"));
+
+    // One poll interval later, the floor does its job.
+    let Watch::Poll { path, .. } = watcher.next_poll(at(9) + chrono::TimeDelta::seconds(300))
+    else {
+        panic!("the interval elapsed, so the mailbox is due");
+    };
+    let after = backend.status(&path).await.expect("status");
+
+    assert!(
+        watcher
+            .observed(inbox.id, &after, at(9) + chrono::TimeDelta::seconds(300))
+            .needs_resync(),
+        "a mailbox that changed under a quiet connection still has to be pulled"
+    );
 }
 
 // ---------------------------------------------------------------------------
