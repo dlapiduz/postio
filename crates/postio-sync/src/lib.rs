@@ -22,6 +22,8 @@
 //!   keystroke.
 //! - [`drain`] sends them in order, resolves conflicts against what the server
 //!   says, and settles each queue row.
+//! - [`send`] is what [`drain`] calls for `Operation::Send`: build the
+//!   message, hand it to SMTP, file the Sent copy.
 //! - [`retry`] decides when a failure is worth another attempt, and when the
 //!   user has to be told instead.
 //! - [`connect`] keeps the session up underneath all of it: exponential
@@ -50,6 +52,7 @@ pub mod drain;
 pub mod initial;
 pub mod resync;
 pub mod retry;
+pub mod send;
 pub mod status;
 pub mod watch;
 
@@ -62,5 +65,6 @@ pub use initial::{
 };
 pub use resync::{Outcome, resync_mailbox};
 pub use retry::RetryPolicy;
+pub use send::SmtpContext;
 pub use status::{StatusTracker, SyncProgress, SyncStatus};
 pub use watch::{Attention, Wake, Watch, WatchPolicy, Watcher};

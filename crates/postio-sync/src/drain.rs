@@ -37,12 +37,21 @@
 //! information, so the move is treated as applied and the next resync
 //! reconciles.
 //!
+//! # Sending
+//!
+//! [`Operation::Send`] is a step like any other, except that once the SMTP
+//! transaction is accepted, it can never be retried or reported failed again
+//! -- the recipient's server already has the message, and a "failure" from
+//! here on would mean sending it twice. See [`crate::send`] for the whole
+//! path: resolving the draft, building the message, the transport, and
+//! filing the local Sent copy.
+//!
 //! # Not here yet
 //!
-//! [`Operation::Send`] and [`Operation::Append`] need the SMTP transport and
-//! the blob store, and are their own bead. They are *failed* with a clear
-//! reason rather than skipped, so one cannot sit in a queue forever looking
-//! pending.
+//! [`Operation::Append`] needs the blob store, which the drainer does not
+//! have unless it is draining a [`Operation::Send`] (which brings its own).
+//! It is its own bead, and is *failed* with a clear reason rather than
+//! skipped, so one cannot sit in a queue forever looking pending.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -57,6 +66,7 @@ use rusqlite::Connection;
 
 use crate::coalesce::{Step, coalesce};
 use crate::retry::RetryPolicy;
+use crate::send::SmtpContext;
 
 /// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
@@ -135,20 +145,37 @@ impl DrainReport {
 pub struct Drainer<'a> {
     backend: &'a dyn MailBackend,
     policy: RetryPolicy,
+    smtp: Option<SmtpContext<'a>>,
 }
 
 impl<'a> Drainer<'a> {
     /// Drains against `backend` with the default retry policy.
+    ///
+    /// `Operation::Send` fails outright until [`Drainer::with_smtp`] gives it
+    /// a transport — a queue with nothing to send through is not a bug.
     pub fn new(backend: &'a dyn MailBackend) -> Self {
         Self {
             backend,
             policy: RetryPolicy::default(),
+            smtp: None,
         }
     }
 
     /// Drains with a different retry policy.
     pub fn with_policy(backend: &'a dyn MailBackend, policy: RetryPolicy) -> Self {
-        Self { backend, policy }
+        Self {
+            backend,
+            policy,
+            smtp: None,
+        }
+    }
+
+    /// Gives this drainer what [`Operation::Send`] needs: an SMTP transport,
+    /// the account's credentials, and the blob store attachments and the
+    /// sent copy read and write through.
+    pub fn with_smtp(mut self, smtp: SmtpContext<'a>) -> Self {
+        self.smtp = Some(smtp);
+        self
     }
 
     /// Sends everything due for `account`, in order, and settles every row.
@@ -189,7 +216,10 @@ impl<'a> Drainer<'a> {
             let outcome = self.run(connection, step, &capabilities, &mut resync)?;
             let outcome = match outcome {
                 Pending::Settled(outcome) => outcome,
-                Pending::Send(context) => self.send(&context, &capabilities, &mut resync).await,
+                Pending::Send(context) => {
+                    self.send(connection, &context, &capabilities, &mut resync)
+                        .await
+                }
             };
             self.settle(connection, step, outcome, now, &mut report)?;
         }
@@ -222,6 +252,7 @@ impl<'a> Drainer<'a> {
     /// Issues the backend call for a resolved step.
     async fn send(
         &self,
+        connection: &Connection,
         context: &Context,
         capabilities: &Capabilities,
         resync: &mut BTreeSet<i64>,
@@ -259,13 +290,24 @@ impl<'a> Drainer<'a> {
                 .expunge(&context.path, None)
                 .await
                 .map(|_| Outcome::Applied),
-            Operation::Append { .. } | Operation::Send { .. } => {
+            Operation::Append { .. } => {
                 return Outcome::Failed {
                     reason: format!(
-                        "`{}` needs the SMTP transport, which the drainer does not have yet",
+                        "`{}` needs the blob store, which the drainer does not have yet",
                         context.operation.op_type()
                     ),
                 };
+            }
+            Operation::Send { .. } => {
+                let job = context
+                    .send
+                    .as_ref()
+                    .expect("resolve() always attaches a SendJob to a Ready Send context");
+                let smtp = self
+                    .smtp
+                    .as_ref()
+                    .expect("resolve() only returns Ready for Send when smtp is configured");
+                return crate::send::send(connection, self.backend, smtp, resync, job).await;
             }
         };
 
@@ -299,18 +341,35 @@ impl<'a> Drainer<'a> {
 
     /// Looks up everything the backend call needs, or says why it cannot run.
     fn resolve(&self, connection: &Connection, step: &Step) -> Result<Resolved> {
-        if matches!(
-            step.operation,
-            Operation::Append { .. } | Operation::Send { .. }
-        ) {
+        if let Operation::Send { draft } = &step.operation {
+            return Ok(
+                match crate::send::resolve(connection, self.smtp.as_ref(), *draft)? {
+                    crate::send::ResolvedSend::Ready(job) => Resolved::Ready(Context {
+                        operation: step.operation.clone(),
+                        path: String::new(),
+                        destination: None,
+                        uids: UidSet::new(),
+                        mailbox: MailboxId::UNASSIGNED,
+                        send: Some(job),
+                    }),
+                    crate::send::ResolvedSend::Obsolete(reason) => Resolved::Obsolete {
+                        reason,
+                        mailbox: None,
+                    },
+                    crate::send::ResolvedSend::Impossible(reason) => Resolved::Impossible(reason),
+                },
+            );
+        }
+        if matches!(step.operation, Operation::Append { .. }) {
             // Resolved as ready so `send` can report it uniformly; there is no
-            // mailbox or UID to look up for either.
+            // mailbox or UID to look up.
             return Ok(Resolved::Ready(Context {
                 operation: step.operation.clone(),
                 path: String::new(),
                 destination: None,
                 uids: UidSet::new(),
                 mailbox: MailboxId::UNASSIGNED,
+                send: None,
             }));
         }
 
@@ -386,6 +445,7 @@ impl<'a> Drainer<'a> {
             destination,
             uids,
             mailbox,
+            send: None,
         }))
     }
 
@@ -481,6 +541,11 @@ struct Context {
     destination: Option<String>,
     uids: UidSet,
     mailbox: MailboxId,
+    /// Resolved only for [`Operation::Send`]: everything local storage could
+    /// answer, so [`Drainer::send`] has nothing left to look up. Boxed: it is
+    /// by far the largest field here and every other operation leaves it
+    /// `None`.
+    send: Option<Box<crate::send::SendJob>>,
 }
 
 /// Whether a step still has to go to the server.
@@ -504,7 +569,7 @@ enum Resolved {
 
 /// What happened to a step.
 #[derive(Debug)]
-enum Outcome {
+pub(crate) enum Outcome {
     Applied,
     Obsolete {
         reason: String,
