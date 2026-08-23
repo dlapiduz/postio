@@ -17,6 +17,7 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/tight.png demo compact
 //! cargo run -p postio-gtk --example shot -- /tmp/large.png demo text2
 //! cargo run -p postio-gtk --example shot -- /tmp/box.png demo command
+//! cargo run -p postio-gtk --example shot -- /tmp/selected.png demo selected
 //! ```
 //!
 //! `demo` fills the panes with canvas 1b's own sample content, which is the
@@ -442,6 +443,22 @@ fn main() -> glib::ExitCode {
     // a frame or two later and an empty list has no row to focus.
     if flag("demo") {
         window.list().grab_focus();
+        settle(&window);
+    }
+
+    // A selection is a *second* state on top of the focused row, and the two
+    // have to be told apart at a glance (`postio-qhz.1`). This is the only way
+    // to look at them together before there is a mailbox to select in.
+    if flag("selected") {
+        let list = window.list();
+        list.first_row();
+        list.toggle_cursor_row();
+        list.extend_down();
+        list.extend_down();
+        // Leave the keyboard one row below the selection, so the shot shows a
+        // cursor row that is *not* selected next to selected rows that are
+        // not the cursor.
+        list.next_row();
         settle(&window);
     }
 

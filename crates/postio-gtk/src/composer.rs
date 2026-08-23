@@ -227,13 +227,21 @@ type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<EmailAddress>>;
 /// the keystroke does nothing rather than opening a broken composer.
 type ReplySourceProvider = Box<dyn Fn() -> Option<(Message, Account)>>;
 
-/// Turns a file the user chose or dropped into attachment metadata.
-///
-/// Reading the bytes into the blob store is the handler's job, not the
-/// composer's — the composer only asks "what should this row say", fast
-/// enough not to stall the widget that is asking. `None` rejects the file
-/// (unreadable, say), leaving the draft exactly as it was.
-type AttachHandler = Box<dyn Fn(&std::path::Path) -> Option<Attachment>>;
+/// What [`Composer::connect_attach`] hands its result to, exactly once:
+/// `Some` with the finished attachment, `None` to reject the file (unreadable,
+/// say). Calling this is what actually adds the row — synchronously, for a
+/// handler that already has the answer, or from a spawned task's own
+/// callback, for one that had to go read the file first. `pub` because it
+/// appears in `connect_attach`'s public signature, not because anything
+/// outside this module constructs one.
+pub type AttachReady = Box<dyn FnOnce(Option<Attachment>)>;
+
+/// Turns a chosen or dropped file into attachment metadata, calling
+/// [`AttachReady`] with the result whenever it is ready. A handler that
+/// blocks here to read a large file blocks the composer along with it; slow
+/// work belongs on a thread or task the handler spawns itself, calling back
+/// once it finishes — `add_file` never waits on this closure to return.
+type AttachHandler = Box<dyn Fn(std::path::PathBuf, AttachReady)>;
 
 /// Which of [`postio_model::reply`]'s three functions a command asks for.
 ///
@@ -726,10 +734,11 @@ impl Composer {
     /// Registers what turns a chosen or dropped file into attachment
     /// metadata — and, however long it takes, into the blob store. The
     /// composer only draws the row; storing the bytes is the caller's job.
-    pub fn connect_attach(
-        &self,
-        handler: impl Fn(&std::path::Path) -> Option<Attachment> + 'static,
-    ) {
+    ///
+    /// `handler` is given the path and a callback to invoke with the result;
+    /// it may call the callback immediately or hand it to a background task
+    /// and return right away. Either way `add_file` does not block on it.
+    pub fn connect_attach(&self, handler: impl Fn(std::path::PathBuf, AttachReady) + 'static) {
         *self.imp().attach.borrow_mut() = Some(Box::new(handler));
     }
 
@@ -880,16 +889,20 @@ impl Composer {
         let Some(path) = file.path() else {
             return;
         };
-        let attachment = self
-            .imp()
-            .attach
-            .borrow()
-            .as_ref()
-            .and_then(|handler| handler(&path));
-        match attachment {
-            Some(attachment) => self.add_attachment(attachment),
-            None => self.set_status(NO_ATTACH_PATH),
-        }
+        let handler = self.imp().attach.borrow();
+        let Some(handler) = handler.as_ref() else {
+            drop(handler);
+            self.set_status(NO_ATTACH_PATH);
+            return;
+        };
+        let composer = self.clone();
+        handler(
+            path,
+            Box::new(move |attachment| match attachment {
+                Some(attachment) => composer.add_attachment(attachment),
+                None => composer.set_status(NO_ATTACH_PATH),
+            }),
+        );
     }
 
     /// Adds `attachment` to the draft and redraws the list. Counts as an

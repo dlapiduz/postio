@@ -309,6 +309,15 @@ impl Window {
         list_overlay.add_overlay(&list_state);
         shell.list().append(&list_overlay);
 
+        // The bulk bar runs the same commands the keyboard does, through the
+        // same path: a button that acted directly would be a second
+        // implementation of a verb the registry already owns.
+        list_view.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |id| window.run(id)
+        ));
+
         let header = header::build();
 
         // The toggle drives the sidebar, and the breakpoints drive the toggle:
@@ -482,10 +491,26 @@ impl Window {
             CommandId::CheatSheet => self.toggle_cheatsheet(),
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
-            // One `Esc` closes one overlay, nearest first.
+            // One `Esc` closes one overlay, nearest first — and a selection
+            // is the nearest thing of all once every overlay is shut. It is
+            // also the only way out of one that does not require picking a
+            // row, which matters most when the selection is a predicate.
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.finder().is_open() => self.close_finder(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
+            CommandId::Back if !self.list().selection().is_empty() => self.list().clear_selection(),
+
+            // Where the keyboard is, and what an action would hit. Two
+            // different things, moved by two different sets of keys — see
+            // `crate::selection`.
+            CommandId::NextMessage => self.list().next_row(),
+            CommandId::PrevMessage => self.list().prev_row(),
+            CommandId::FirstMessage => self.list().first_row(),
+            CommandId::LastMessage => self.list().last_row(),
+            CommandId::ToggleSelection => self.list().toggle_cursor_row(),
+            CommandId::ExtendSelectionDown => self.list().extend_down(),
+            CommandId::ExtendSelectionUp => self.list().extend_up(),
+            CommandId::SelectAll => self.list().select_all(),
             _ => self.dispatch(id),
         }
     }

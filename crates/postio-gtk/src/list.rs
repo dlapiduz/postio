@@ -460,6 +460,27 @@ impl MessageList {
         pages
     }
 
+    /// The message at `position`, but only if its page is already here.
+    ///
+    /// [`row_at`](Self::row_at) fetches what it does not have, which is right
+    /// for drawing — a row on screen has to become real — and wrong for
+    /// answering "what is in this range". A Shift-click across ten thousand
+    /// rows must not ask the store for ten thousand rows: the ones the user
+    /// scrolled through are resident and get selected, and the ones they
+    /// jumped over were never on screen. Selecting those is what `Ctrl+A`
+    /// is for, and it does it with a predicate rather than a list.
+    pub fn peek(&self, position: u32) -> Option<MessageId> {
+        let imp = self.imp();
+        if position >= imp.total.get() {
+            return None;
+        }
+        imp.pages
+            .borrow()
+            .get(&(position / PAGE_SIZE))
+            .and_then(|rows| rows.get((position % PAGE_SIZE) as usize))
+            .and_then(MessageRow::id)
+    }
+
     /// The row at `position`, fetching its page if it is not resident.
     fn row_at(&self, position: u32) -> Option<MessageRow> {
         let imp = self.imp();

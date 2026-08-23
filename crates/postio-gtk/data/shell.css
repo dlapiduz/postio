@@ -347,6 +347,18 @@ button.postio-compose {
   color: var(--postio-selected-bg);
 }
 
+/* The ground under a row that is *in the selection*, which is not the row
+   the cursor is on: see `crate::selection`. The check in the avatar's square
+   is what carries the meaning — these two grounds are a step apart in light
+   and the same colour in dark, by canvas 3c's own palette. */
+.postio-row-ground.checked {
+  color: var(--postio-selected-strong-bg);
+}
+
+.postio-row-ground.check-mark {
+  color: var(--postio-accent-fg);
+}
+
 .postio-row-ground.hover {
   color: var(--postio-hover-bg);
 }
@@ -371,6 +383,13 @@ button.postio-compose {
   font-family: var(--postio-font-mono);
   font-size: 0.7841rem;
   color: var(--postio-dim);
+}
+
+/* "12 selected" takes the meta line's place while a selection is up. The
+   accent says this is not a passive count but the thing an action is about
+   to land on. */
+.postio-list-count {
+  color: var(--postio-selected-accent-text);
 }
 
 .postio-rows {

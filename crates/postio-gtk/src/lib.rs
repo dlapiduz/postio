@@ -78,6 +78,7 @@ pub mod reader;
 pub mod resources;
 pub mod row;
 pub mod search;
+pub mod selection;
 pub mod settings;
 pub mod shell;
 pub mod sidebar;

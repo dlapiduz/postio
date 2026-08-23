@@ -203,6 +203,7 @@ fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed:
         account.id,
         wiring.database.clone(),
         wiring.blobs.clone(),
+        wiring.runtime.clone(),
     );
 
     Some(feeds)
