@@ -149,7 +149,10 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
     // test suite is.
     press(&window, "Escape", gdk::ModifierType::empty());
     let start = Instant::now();
-    window.handle_key(gdk::Key::from_name("c").unwrap(), gdk::ModifierType::empty());
+    window.handle_key(
+        gdk::Key::from_name("c").unwrap(),
+        gdk::ModifierType::empty(),
+    );
     let elapsed = start.elapsed();
     settle();
     assert!(composer.is_open());
@@ -247,6 +250,20 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
         composer.draft().subject.is_empty(),
         "a sent draft is not still sitting in the composer"
     );
+
+    // ── The header's Compose button reaches the same command ─────────────
+    //
+    // Every action needs a key *and* a control: `c` and this button are the
+    // same `win.compose`, not two paths that could drift apart.
+    assert_eq!(
+        postio_gtk::header::build().compose.action_name().as_deref(),
+        Some("win.compose"),
+        "the button in the header names the action the composer installs"
+    );
+    gtk::prelude::WidgetExt::activate_action(&window, "win.compose", None).unwrap();
+    settle();
+    assert!(composer.is_open(), "and activating it composes");
+    press(&window, "Escape", gdk::ModifierType::empty());
 
     // ── The list came through all of it untouched ────────────────────────
     assert_eq!(rows.selected_row().map(|row| row.index()), Some(7));
