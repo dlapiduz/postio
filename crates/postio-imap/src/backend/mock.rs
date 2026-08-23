@@ -575,6 +575,13 @@ impl MockBackend {
         Ok(index)
     }
 
+    /// Queues an event for the next [`idle`](MailBackend::idle).
+    ///
+    /// Every change made through this backend is announced, the caller's own
+    /// included — see [`MailBackend::idle`] for why that is deliberately
+    /// unlike a real server, and which direction the difference errs in. Use
+    /// [`push_event`](Self::push_event) to stage a change that nothing here
+    /// made.
     fn announce(&self, state: &mut State, index: usize, event: MailboxEvent) {
         state.mailboxes[index].pending.push(event);
     }
