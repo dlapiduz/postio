@@ -1,0 +1,10 @@
+[package]
+name = "postio-smtp"
+description = "SMTP sending built on Pimalaya io-smtp."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

@@ -1,0 +1,19 @@
+[package]
+name = "postio-gtk"
+description = "GTK4/libadwaita frontend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+gio = "0.21.5"
+glib = "0.21.5"
+gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
+pango = { version = "0.21.5", features = ["v1_56"] }
+pangocairo = "0.21.5"
+
+[build-dependencies]
+glib-build-tools = "0.21.0"
