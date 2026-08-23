@@ -550,6 +550,19 @@ impl ConnectionPool {
         inner.lane_mut(lane).release_permit();
     }
 
+    /// Closes every parked connection, leaving the pool open.
+    ///
+    /// Connections currently checked out are untouched and finish normally.
+    /// This is "hold nothing open" — after a disconnect, on suspend, or when
+    /// the network went away — not "shut down", which is [`close`](Self::close).
+    pub fn drop_idle(&self) {
+        let mut inner = self.lock();
+        let inner = &mut *inner;
+        for lane in [&mut inner.general, &mut inner.watch] {
+            lane.parked.clear();
+        }
+    }
+
     /// Closes the pool: parked connections are dropped and new acquisitions
     /// are refused.
     ///
