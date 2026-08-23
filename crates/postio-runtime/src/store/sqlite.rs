@@ -7,9 +7,12 @@
 
 use postio_model::ids::AccountId;
 use postio_model::mailbox::Mailbox;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
 use postio_storage::repository::{
-    ListQuery, ListScope as StorageScope, MailboxRepository, MessageListRow, MessageRepository,
-    ThreadRepository,
+    ListCursor, ListQuery, ListScope as StorageScope, MailboxRepository, MessageListRow,
+    MessageRepository, ThreadRepository,
 };
 use postio_storage::{Database, Pool};
 
@@ -37,6 +40,67 @@ impl From<postio_storage::Error> for StoreError {
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
     pool: Pool,
+    /// Where each page boundary starts, so a page does not have to be
+    /// counted to from the top of the folder every time. See [`Marks`].
+    marks: Arc<Mutex<Marks>>,
+}
+
+/// Remembered page boundaries for one scope.
+///
+/// `page_at` is an `OFFSET` query and SQLite walks the rows it skips, so a
+/// page halfway down a 100,000-message folder costs 24ms against a 16ms
+/// budget — measured, in `benches/store_reads.rs`. The fix is to seek instead
+/// of skip: `MessageRepository::page` takes a [`ListCursor`] and its where
+/// clause is a row value, which SQLite turns into a range constraint.
+///
+/// The frontend's windowed model asks for *page N*, which a cursor cannot
+/// answer on its own — so the store remembers where each page it has already
+/// read began. Scrolling is sequential, so the next page's start is nearly
+/// always known and the read seeks straight to it. A jump to a page nobody
+/// has visited falls back to the nearest mark below it and skips the
+/// remainder, which is at worst what it costs today.
+///
+/// # When they are wrong
+///
+/// New mail shifts every row down, and a mark then points one row off. The
+/// total is checked on every read — it is a column lookup now, not a count —
+/// and a change drops every mark. That misses the case where one message
+/// arrives and another is deleted between two reads, leaving the total equal
+/// and the order shifted; the consequence is one page off by a row, which is
+/// exactly what a plain `OFFSET` does in the same situation and what
+/// `page_at`'s own documentation warns about.
+#[derive(Debug, Default)]
+struct Marks {
+    /// The row count the marks were taken against.
+    total: Option<u32>,
+    /// Offset of a page boundary, and the cursor the row before it left.
+    at: BTreeMap<u32, ListCursor>,
+}
+
+impl Marks {
+    /// Forget everything if the list is not the length it was.
+    fn check(&mut self, total: u32) {
+        if self.total != Some(total) {
+            self.at.clear();
+            self.total = Some(total);
+        }
+    }
+
+    /// The nearest remembered boundary at or before `offset`.
+    fn nearest(&self, offset: u32) -> Option<(u32, ListCursor)> {
+        self.at
+            .range(..=offset)
+            .next_back()
+            .map(|(at, cursor)| (*at, *cursor))
+    }
+
+    /// Remember where the page after `offset` begins.
+    fn remember(&mut self, offset: u32, cursor: ListCursor) {
+        // Bounded: a folder read end to end at 50 a page leaves 2,000 marks
+        // for 100,000 messages, and each is two integers. Worth the memory to
+        // never walk the folder again.
+        self.at.insert(offset, cursor);
+    }
 }
 
 impl SqliteStore {
@@ -47,10 +111,12 @@ impl SqliteStore {
     pub fn new(database: &Database) -> Self {
         SqliteStore {
             pool: database.pool().clone(),
+            marks: Arc::new(Mutex::new(Marks::default())),
         }
     }
 
     async fn read_page(&self, request: PageRequest) -> Result<MessagePage, StoreError> {
+        let marks = self.marks.clone();
         self.read(move |connection| {
             let messages = MessageRepository::new(connection);
             let query = ListQuery {
@@ -61,7 +127,31 @@ impl SqliteStore {
             // Both from one connection and one moment, so the rows and the
             // number of them cannot disagree.
             let total = count(connection, request.scope, &query)?;
-            let rows = messages.page_at(&query, request.offset)?;
+
+            // Seek to the nearest boundary anybody has already read, and skip
+            // only what is left. For sequential scrolling that is nothing.
+            let start = {
+                let mut marks = marks.lock().expect("not poisoned");
+                marks.check(total);
+                marks.nearest(request.offset)
+            };
+            let (seek, skip) = match start {
+                Some((at, cursor)) => (Some(cursor), request.offset - at),
+                None => (None, request.offset),
+            };
+            let query = ListQuery {
+                after: seek,
+                ..query
+            };
+            let rows = messages.page_at(&query, skip)?;
+
+            // And remember where the next page begins, so it can seek too.
+            if let Some(last) = rows.last() {
+                marks
+                    .lock()
+                    .expect("not poisoned")
+                    .remember(request.offset + rows.len() as u32, last.cursor());
+            }
 
             let threads = ThreadRepository::new(connection);
             let rows = rows

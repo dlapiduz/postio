@@ -89,8 +89,19 @@ fn bench_message_page(c: &mut Criterion) {
     c.bench_function("message page, 100k mailbox", |b| {
         b.iter(|| read(&runtime, &huge, huge_inbox, 0))
     });
-    c.bench_function("message page, 100k mailbox, halfway down", |b| {
+    // Cold: nobody has read anything between the top and here, so the store
+    // has no boundary to seek from and falls back to walking.
+    c.bench_function("message page, 100k mailbox, halfway down (cold)", |b| {
         b.iter(|| read(&runtime, &huge, huge_inbox, (HUGE / 2) as u32))
+    });
+
+    // Warm: the page before it has already been read, which is what
+    // scrolling does. This is the number that matters, because this is the
+    // case that happens — a jump to an unvisited offset happens once, and
+    // every page after it is this.
+    read(&runtime, &huge, huge_inbox, (HUGE / 2) as u32);
+    c.bench_function("message page, 100k mailbox, scrolled to (warm)", |b| {
+        b.iter(|| read(&runtime, &huge, huge_inbox, (HUGE / 2) as u32 + PAGE))
     });
 
     // Criterion reports; these fail. A budget nobody notices breaking is not
@@ -100,17 +111,20 @@ fn bench_message_page(c: &mut Criterion) {
     // a budget, which is why `postio-core`'s own benches assert as well as
     // measure.
     //
-    // Only the shallow page is asserted, and the reason is written down
-    // rather than left as a gap: a deep page is *known* to miss, because
-    // `page_at` is an OFFSET query and OFFSET walks what it skips. See
-    // `bench_where_the_time_goes` below and postio-om2. Asserting a miss
-    // that is already filed would only mean nobody could run this.
-    read(&runtime, &huge, huge_inbox, 0); // warm the cache
-    let start = Instant::now();
-    read(&runtime, &huge, huge_inbox, 0);
-    let measured = start.elapsed();
-    if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
-        panic!("the first page of a {HUGE}-message mailbox is over budget: {exceeded:?}");
+    // Both the pages a user actually meets: the top of the folder, and one
+    // reached by scrolling. A *jump* to a page nobody has visited still walks
+    // — that is the `OFFSET` fallback, it happens once per jump, and every
+    // page after it is the warm case measured here.
+    let deep = (HUGE / 2) as u32;
+    read(&runtime, &huge, huge_inbox, deep); // leaves a boundary at deep + PAGE
+    for (what, offset) in [("the first page", 0), ("a page scrolled to", deep + PAGE)] {
+        read(&runtime, &huge, huge_inbox, offset); // warm the cache
+        let start = Instant::now();
+        read(&runtime, &huge, huge_inbox, offset);
+        let measured = start.elapsed();
+        if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
+            panic!("{what} of a {HUGE}-message mailbox is over budget: {exceeded:?}");
+        }
     }
 }
 
@@ -123,9 +137,10 @@ fn bench_message_page(c: &mut Criterion) {
 ///   page. Fixed: a single mailbox answers from `mailboxes.total`, which is
 ///   maintained against the same predicate the list query uses.
 /// * `page_at(offset)` — 25ms halfway down 100,000 messages, because OFFSET
-///   walks the rows it skips. Not fixed: the answer is cursor paging, which
-///   `MessageRepository::page` already offers and the frontend's windowed
-///   model cannot yet ask for. postio-om2.
+///   walks the rows it skips. Fixed for the case that happens: the store
+///   remembers where each page it has read began and seeks from the nearest
+///   one, so scrolling costs 176µs at any depth. A jump to a page nobody has
+///   visited still walks, once.
 fn bench_where_the_time_goes(c: &mut Criterion) {
     let (_store, inbox, database) = seeded(HUGE);
     let connection = database.connection().expect("a connection");
