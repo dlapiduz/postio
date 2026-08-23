@@ -37,7 +37,7 @@ impl<'a> AccountRepository<'a> {
     /// account whose identity list was half saved would show a "From" picker
     /// missing the address the user just typed.
     pub fn create(&self, account: &mut Account) -> Result<AccountId> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
 
         transaction.execute(
             "INSERT INTO accounts (display_name, address, address_name, incoming_host,
@@ -94,7 +94,7 @@ impl<'a> AccountRepository<'a> {
     pub fn update(&self, account: &mut Account) -> Result<()> {
         let id = require_persisted(account.id.get(), "account")?;
         let account_id = account.id;
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
 
         let changed = transaction.execute(
             "UPDATE accounts
@@ -295,7 +295,7 @@ impl<'a> IdentityRepository<'a> {
 
     /// Makes one identity the account's default, clearing any other.
     pub fn set_default(&self, account_id: AccountId, id: IdentityId) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         transaction.execute(
             "UPDATE identities SET is_default = 0 WHERE account_id = ?1",
             [account_id.get()],

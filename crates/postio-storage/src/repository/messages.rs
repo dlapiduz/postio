@@ -225,7 +225,7 @@ impl<'a> MessageRepository<'a> {
     /// store, and their keys are set with
     /// [`MessageRepository::set_body_blobs`].
     pub fn create(&self, message: &mut Message) -> Result<MessageId> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         let id = insert(&transaction, message)?;
         message.id = id;
         write_children(&transaction, message)?;
@@ -239,7 +239,7 @@ impl<'a> MessageRepository<'a> {
     /// re-issued: the value would otherwise be left holding ids that no longer
     /// exist.
     pub fn update(&self, message: &mut Message) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         write_update(&transaction, message)?;
         transaction.commit()?;
         Ok(())
@@ -257,7 +257,7 @@ impl<'a> MessageRepository<'a> {
     /// messages is a thousand `fsync`s otherwise, and a half-applied page is a
     /// mailbox the next sync would have to reconcile against itself.
     pub fn upsert_batch(&self, batch: &mut [Message]) -> Result<UpsertReport> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         let mut report = UpsertReport::default();
 
         for message in batch.iter_mut() {
