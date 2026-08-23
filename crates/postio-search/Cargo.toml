@@ -1,0 +1,11 @@
+[package]
+name = "postio-search"
+description = "FTS5 search index and the query-operator parser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }

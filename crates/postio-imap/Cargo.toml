@@ -1,0 +1,24 @@
+[package]
+name = "postio-imap"
+description = "IMAP backend built on Pimalaya io-imap, behind the MailBackend trait."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rustls-ring"] }
+oo7 = "0.6.0-alpha"
+pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt", "macros", "process", "time", "sync"] }
+url = "2.5.8"
+zeroize = "1.9.0"
+
+[dev-dependencies]
+serde-xml-rs = "0.8"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+toml = "1.1.4"

@@ -1,0 +1,16 @@
+[package]
+name = "postio-storage"
+description = "SQLite metadata store, migrations, repositories, and the content-addressed blob store."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+postio-model = { version = "0.1.0", path = "../postio-model" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }

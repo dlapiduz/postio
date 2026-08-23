@@ -1,0 +1,15 @@
+[package]
+name = "postio-core"
+description = "UI-agnostic runtime: command bus, event stream, app state, undo."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+postio-model.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"

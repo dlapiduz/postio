@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/postio-model",
+    "crates/postio-storage",
+    "crates/postio-search",
+    "crates/postio-config",
+    "crates/postio-imap",
+    "crates/postio-smtp",
+    "crates/postio-sync",
+    "crates/postio-core",
+    "crates/postio-gtk",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/dlapiduz/postio"
+
+[workspace.dependencies]
+postio-model   = { path = "crates/postio-model" }
+postio-storage = { path = "crates/postio-storage" }
+postio-search  = { path = "crates/postio-search" }
+postio-config  = { path = "crates/postio-config" }
+postio-imap    = { path = "crates/postio-imap" }
+postio-smtp    = { path = "crates/postio-smtp" }
+postio-sync    = { path = "crates/postio-sync" }
+postio-core    = { path = "crates/postio-core" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Dev builds must stay fast to iterate on, but the perf budget is measured in
+# release; see CLAUDE.md.
+[profile.dev.package."*"]
+opt-level = 2

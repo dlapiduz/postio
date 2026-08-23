@@ -1,0 +1,24 @@
+[package]
+name = "postio-model"
+description = "Postio domain model: pure types and threading. No storage or protocol dependencies."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Test-only: embeds the `.eml` corpus in `tests/corpus/` and exposes the
+# `test_corpus` loader. Off by default; downstream crates enable it from their
+# dev-dependencies so nothing ships in a normal build.
+test-corpus = []
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"
+# Self dev-dependency so `cargo test -p postio-model` exercises the corpus
+# loader without making `test-corpus` a default feature.
+postio-model = { path = ".", features = ["test-corpus"] }
