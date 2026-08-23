@@ -43,7 +43,7 @@ use postio_model::Uid;
 use crate::backend::{BackendError, BackendResult, BodyPart, BodySink, FetchedBody};
 use crate::cancel::CancelToken;
 
-use super::{ConnectionPool, ImapSession, Priority, READ_BUFFER, TransportError, map_client_error};
+use super::{ConnectionPool, ImapSession, Priority, READ_BUFFER, TransportError};
 
 /// Octets asked for per round trip. See the [module docs](self) for why this
 /// is a loop of partial fetches rather than one streamed command.
@@ -169,7 +169,13 @@ async fn stream_whole(
                 session.stream.write_all(&bytes).await?;
             }
             ImapCoroutineState::Yielded(ImapMessageFetchStreamYield::WantsRead) => {
-                let read = session.stream.read(&mut buffer).await?;
+                // Bounded on silence, not on how long the download takes: a
+                // large attachment over a slow link is not a hung server.
+                let timeout = session.command_timeout();
+                let read = session
+                    .stream
+                    .read_within(&mut buffer, timeout, "a streamed FETCH")
+                    .await?;
                 resume = Some(&buffer[..read]);
             }
             ImapCoroutineState::Yielded(ImapMessageFetchStreamYield::BodyChunk(bytes)) => {
@@ -213,9 +219,14 @@ async fn stream_len_into_sink(
 ) -> BackendResult<(u64, bool)> {
     let mut written = 0u64;
 
+    let timeout = session.command_timeout();
     while len > 0 {
         let want = (len as usize).min(buffer.len());
-        match session.stream.read(&mut buffer[..want]).await {
+        match session
+            .stream
+            .read_within(&mut buffer[..want], timeout, "a streamed body")
+            .await
+        {
             Ok(read) => {
                 sink.chunk(&buffer[..read]).await?;
                 written += read as u64;
@@ -284,10 +295,8 @@ async fn fetch_window(
         modifiers: Vec::new(),
     };
 
-    let raw = session
-        .fetch(sequence_set, items, opts)
-        .await
-        .map_err(|error| map_client_error("FETCH", session.account(), error))?;
+    let raw = session.fetch(sequence_set, items, opts).await;
+    let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
 
     let Some(items) = raw.into_values().next() else {
         return Err(BackendError::NoSuchMessage {

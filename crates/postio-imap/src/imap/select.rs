@@ -60,8 +60,8 @@ use tokio::time::Instant;
 
 use crate::backend::{BackendError, Capability};
 
+use super::ImapSession;
 use super::mailboxes::mailbox_argument;
-use super::{ImapSession, map_client_error};
 use crate::backend::BackendResult;
 
 /// What is currently selected on a session, and how.
@@ -212,8 +212,8 @@ impl ImapSession {
 
         let data = self
             .select(mailbox, ImapMailboxSelectOptions { parameters })
-            .await
-            .map_err(|error| map_client_error("SELECT", self.account(), error))?;
+            .await;
+        let data = data.map_err(|error| self.command_error("SELECT", error))?;
 
         let uid_validity = data
             .uid_validity

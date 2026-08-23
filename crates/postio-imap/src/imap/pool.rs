@@ -56,6 +56,16 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// How long an acquisition waits for a slot before giving up.
 pub const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a command may go without a byte from the server before it is
+/// given up on.
+///
+/// The bound is on silence, never on how long an exchange takes: a large
+/// attachment over a slow link legitimately needs minutes, and a deadline
+/// tight enough to catch a hung server would kill it. Sixty seconds is far
+/// longer than any healthy server pauses mid-response and far shorter than
+/// forever, which is what this replaced.
+pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// How long a cached mailbox selection may answer before the server is asked
 /// to confirm it again.
 ///
@@ -114,6 +124,13 @@ pub struct PoolConfig {
     /// [`Duration::ZERO`] re-`SELECT`s before every operation, which is the
     /// safest and the most expensive. See [`DEFAULT_SELECTION_MAX_AGE`].
     pub selection_max_age: Duration,
+    /// How long a command may go without a byte from the server.
+    ///
+    /// Measured between reads, not across the command, so a slow transfer is
+    /// never mistaken for a hung one. [`Duration::ZERO`] waits forever, which
+    /// is what the pool before this bound did. See
+    /// [`DEFAULT_COMMAND_TIMEOUT`].
+    pub command_timeout: Duration,
 }
 
 impl Default for PoolConfig {
@@ -124,6 +141,7 @@ impl Default for PoolConfig {
             acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
             dedicate_watch_connection: true,
             selection_max_age: DEFAULT_SELECTION_MAX_AGE,
+            command_timeout: DEFAULT_COMMAND_TIMEOUT,
         }
     }
 }
@@ -469,6 +487,7 @@ impl ConnectionPool {
         let mut session =
             ImapSession::open(&self.settings, &password, self.connector.as_ref()).await?;
         session.set_selection_policy(Arc::clone(&self.generations), self.config.selection_max_age);
+        session.set_command_timeout(self.config.command_timeout);
 
         let mut inner = self.lock();
         inner.opened += 1;
