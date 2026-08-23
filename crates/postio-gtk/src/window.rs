@@ -7,14 +7,17 @@
 //! identity lives in the type, the steel accent and the hairlines inside that
 //! chrome, not in a replacement for it.
 //!
-//! What is here today is the shell: chrome, size and scheme. The three panes
-//! that fill it are the next bead.
+//! The window owns three things the panes below it should not have to: the
+//! header bar, the breakpoints that decide how many panes fit, and the state
+//! that has to survive a restart.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
-use crate::style;
+use crate::shell::Shell;
+use crate::state::WindowState;
+use crate::{header, style};
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -24,10 +27,14 @@ use crate::style;
 pub const DEFAULT_SIZE: (i32, i32) = (1120, 700);
 
 mod imp {
+    use std::cell::OnceCell;
+
     use super::*;
 
     #[derive(Default)]
-    pub struct Window;
+    pub struct Window {
+        pub shell: OnceCell<Shell>,
+    }
 
     #[glib::object_subclass]
     impl ObjectSubclass for Window {
@@ -65,10 +72,17 @@ impl Window {
             .build()
     }
 
-    /// A window with no application, for tests and for previewing a widget.
+    /// The three panes, for whoever is filling them.
+    pub fn shell(&self) -> Shell {
+        self.imp()
+            .shell
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     fn build(&self) {
         self.set_title(Some("Postio"));
-        self.set_default_size(DEFAULT_SIZE.0, DEFAULT_SIZE.1);
         self.add_css_class("postio-window");
 
         // Every window carries its own scheme classes: `tokens.css` keys its
@@ -77,20 +91,70 @@ impl Window {
         // application. See `crate::style`.
         style::track(self);
 
-        let header = adw::HeaderBar::new();
+        let shell = Shell::new();
+        let header = header::build();
 
-        // The shell that fills this is the next bead; the empty content area
-        // is deliberately the plain ground rather than a placeholder that
-        // would have to be designed and then deleted.
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        content.add_css_class("postio-shell");
-        content.set_hexpand(true);
-        content.set_vexpand(true);
+        // The toggle drives the sidebar, and the breakpoints drive the toggle:
+        // widening the window past the three-pane threshold brings the sidebar
+        // back, and the button has to say so.
+        header.sidebar_toggle.connect_toggled(glib::clone!(
+            #[weak]
+            shell,
+            move |toggle| shell.set_sidebar_visible(toggle.is_active())
+        ));
+        shell.connect_notify_local(
+            Some("sidebar-visible"),
+            glib::clone!(
+                #[weak(rename_to = toggle)]
+                header.sidebar_toggle,
+                move |shell: &Shell, _| toggle.set_active(shell.sidebar_visible())
+            ),
+        );
 
         let layout = adw::ToolbarView::new();
-        layout.add_top_bar(&header);
-        layout.set_content(Some(&content));
+        layout.add_top_bar(&header.bar);
+        layout.set_content(Some(&shell));
         self.set_content(Some(&layout));
+
+        // Breakpoints only fire once the window has a size, so the restored
+        // state goes on first and the breakpoints correct it if it does not
+        // fit.
+        self.restore(&shell);
+        shell.install_breakpoints(self);
+        header.sidebar_toggle.set_active(shell.sidebar_visible());
+
+        let _ = self.imp().shell.set(shell);
+    }
+
+    /// Reopen where the last session left off.
+    fn restore(&self, shell: &Shell) {
+        let state = WindowState::load();
+        self.set_default_size(state.width, state.height);
+        self.set_maximized(state.maximized);
+        shell.set_divider_positions(state.sidebar_width, state.list_width);
+        shell.set_sidebar_visible(state.sidebar_visible);
+    }
+
+    /// Write the geometry and the divider positions back out.
+    ///
+    /// Best-effort: a state file that cannot be written is worth one line on
+    /// stderr and nothing more.
+    pub fn save_state(&self) {
+        let Some(shell) = self.imp().shell.get() else {
+            return;
+        };
+        let (sidebar_width, list_width) = shell.divider_positions();
+        let state = WindowState {
+            width: self.default_width(),
+            height: self.default_height(),
+            maximized: self.is_maximized(),
+            sidebar_width,
+            list_width,
+            sidebar_visible: shell.sidebar_visible(),
+        };
+        if let Err(error) = state.save() {
+            eprintln!("postio: cannot save the window state: {error}");
+        }
     }
 }
 
