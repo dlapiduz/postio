@@ -39,8 +39,9 @@ mod dispatch;
 mod fetch;
 mod idle;
 mod mailboxes;
+mod mutate;
 mod pool;
-mod select;
+mod selection;
 mod settings;
 mod skip_counter;
 mod transport;
@@ -73,6 +74,7 @@ pub use self::dispatch::{
 pub use self::fetch::fetch_headers;
 pub use self::idle::idle;
 pub use self::mailboxes::list_mailboxes;
+pub use self::mutate::{append, copy_messages, expunge, move_messages, store_flags};
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
@@ -81,6 +83,7 @@ pub use self::pool::{
     DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE, DEFAULT_WATCH_POLL_INTERVAL,
     DEFAULT_WATCH_REFRESH,
 };
+pub use self::selection::{select, status};
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
 pub use self::skip_counter::{
     exclusive_measurement as skip_counter_exclusive_measurement, install as install_skip_counter,
@@ -115,14 +118,14 @@ pub struct ImapSession {
     pre_authenticated: bool,
     /// The mailbox this session currently has selected, cached so a fetch
     /// loop over many chunks of the same mailbox does not re-issue `SELECT`
-    /// for every one of them. See [`select`].
-    selected: Option<select::SelectedMailbox>,
+    /// for every one of them. See [`selection`].
+    selected: Option<selection::SelectedMailbox>,
     /// The UID generation observed for each mailbox. Shared with every other
     /// session in the same pool, so one connection discovering a renumber
     /// stops the rest from acting on what they cached before it.
-    generations: std::sync::Arc<select::Generations>,
+    generations: std::sync::Arc<selection::Generations>,
     /// How long [`selected`](Self::selected) may answer without the server
-    /// confirming it again. See [`select`] for why a cached generation is the
+    /// confirming it again. See [`selection`] for why a cached generation is the
     /// dangerous half of that cache.
     selection_max_age: std::time::Duration,
     /// How long a command may go without a byte from the server before it is
@@ -251,7 +254,7 @@ impl ImapSession {
             selected: None,
             // A session opened outside a pool answers only to itself; the
             // pool replaces both of these when it opens one.
-            generations: std::sync::Arc::new(select::Generations::new()),
+            generations: std::sync::Arc::new(selection::Generations::new()),
             selection_max_age: DEFAULT_SELECTION_MAX_AGE,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
             timed_out: None,
