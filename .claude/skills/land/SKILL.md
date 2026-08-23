@@ -14,7 +14,7 @@ This is the **only** place the gates need to run. Formatting in particular is
 not verification: run it here, not after every edit.
 
 ```bash
-rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs') \
+rustfmt --edition 2024 $(git diff --name-only HEAD -- "*.rs"; git ls-files --others --exclude-standard -- "*.rs") \
   && cargo clippy -p <your-crate> --all-targets -- -D warnings \
   && cargo test   -p <your-crate> \
   && python3 scripts/check-crate-boundaries.py \
@@ -42,7 +42,9 @@ open and uncommitted. That already happened once: a composer session ran
 `cargo fmt -p postio-gtk` and churned whitespace through the settings session's
 in-flight test file. Nothing was lost, but their diff got noise they did not
 write. `rustfmt --edition 2024 <files>` touches only what you name; the command
-above derives that list from your own changes.
+above derives that list from your own changes. It lists untracked files
+too — `git diff HEAD` alone silently skips a brand-new test file, which is
+exactly how unformatted code has reached a commit here before.
 
 `cargo fmt --all --check` and `-p <crate> --check` are read-only and safe. It is
 only the writing forms that reach into other people's files.

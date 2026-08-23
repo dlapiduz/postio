@@ -22,7 +22,9 @@ use chrono::{TimeZone, Utc};
 use gtk::gdk;
 use gtk::prelude::*;
 use gtk::{AccessibleProperty, AccessibleRelation, AccessibleRole};
-use postio_gtk::feed::{MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest};
+use postio_gtk::feed::{
+    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+};
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
@@ -89,7 +91,9 @@ impl MessageSource for Sample {
                     )),
                     subject: Some(format!("a subject, number {position}")),
                     preview: Some("a snippet under it".into()),
-                    received_at: Utc.timestamp_opt(1_700_000_000 - position as i64, 0).unwrap(),
+                    received_at: Utc
+                        .timestamp_opt(1_700_000_000 - position as i64, 0)
+                        .unwrap(),
                     seen: position % 2 == 0,
                     flagged: false,
                     answered: false,
@@ -190,7 +194,12 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
 
     // ── and nothing in the tree is nameless or roleless ──────────────────
     let mut problems = Vec::new();
-    audit(window.upcast_ref::<gtk::Widget>(), "window", false, &mut problems);
+    audit(
+        window.upcast_ref::<gtk::Widget>(),
+        "window",
+        false,
+        &mut problems,
+    );
     assert!(
         problems.is_empty(),
         "{} widget(s) a screen reader cannot use:\n  {}",
