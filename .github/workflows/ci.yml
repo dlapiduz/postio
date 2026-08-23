@@ -74,6 +74,13 @@ jobs:
         run: python3 scripts/check-crate-boundaries.py
 
       - name: Enforce no personal data in the repository
+        # Output is redacted by default -- these logs are public. Run the
+        # script locally with --reveal to see the offending values.
+        # POSTIO_DENY_NAMES is optional: without it the reserved-domain rule
+        # still runs. A runner's git config is the bot's, so the git fallback
+        # cannot see a maintainer's name; set the secret to enable that rule.
+        env:
+          POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
         run: python3 scripts/check-no-personal-data.py
 
       - name: Prove the boundary check actually fails when violated
