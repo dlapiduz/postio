@@ -23,20 +23,30 @@ pub const DARK_CLASS: &str = "postio-dark";
 /// The class `tokens.css` uses for its high-contrast block.
 pub const HIGH_CONTRAST_CLASS: &str = "postio-hc";
 
-/// Load the generated tokens for `display`.
+/// Load the generated tokens for `display`, then Postio's own widget styles.
 ///
-/// Returns the provider so a caller can drop it again; the app normally just
-/// leaves it installed for the life of the process.
-pub fn install(display: &gdk::Display) -> gtk::CssProvider {
+/// Two sheets, in this order and at this priority: `tokens.css` is generated
+/// from the design system and defines the variables, `shell.css` is written by
+/// hand and dresses the widgets in them. Returns the providers so a caller can
+/// drop them again; the app normally just leaves them installed for the life
+/// of the process.
+pub fn install(display: &gdk::Display) -> Vec<gtk::CssProvider> {
     resources::register();
+    [resources::TOKENS_CSS, resources::SHELL_CSS]
+        .into_iter()
+        .map(|sheet| load(display, sheet))
+        .collect()
+}
 
+fn load(display: &gdk::Display, sheet: &'static str) -> gtk::CssProvider {
+    let name = sheet.rsplit('/').next().unwrap_or(sheet);
     let provider = gtk::CssProvider::new();
-    provider.connect_parsing_error(|_, section, error| {
-        // A parse error here means the generated sheet used something GTK's
-        // CSS subset does not have. Loud, because the UI would be subtly wrong.
-        glib::g_critical!("postio", "tokens.css: {}: {error}", section.to_str());
+    provider.connect_parsing_error(move |_, section, error| {
+        // A parse error here means a sheet used something GTK's CSS subset
+        // does not have. Loud, because the UI would be subtly wrong.
+        glib::g_critical!("postio", "{name}: {}: {error}", section.to_str());
     });
-    provider.load_from_resource(resources::TOKENS_CSS);
+    provider.load_from_resource(sheet);
     gtk::style_context_add_provider_for_display(
         display,
         &provider,

@@ -11,6 +11,9 @@ pub const PREFIX: &str = "/dev/postio/Postio";
 /// The generated design tokens.
 pub const TOKENS_CSS: &str = "/dev/postio/Postio/tokens.css";
 
+/// Postio's own widget styles, layered on top of the tokens.
+pub const SHELL_CSS: &str = "/dev/postio/Postio/shell.css";
+
 /// The directory holding the vendored font families, each next to its licence.
 pub const FONTS: &str = "/dev/postio/Postio/fonts";
 

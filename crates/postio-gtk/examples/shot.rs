@@ -10,6 +10,7 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png             # light
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png dark
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png dark hc
+//! cargo run -p postio-gtk --example shot -- /tmp/narrow.png 900x700
 //! ```
 //!
 //! It is a development tool, not part of the application: examples are not
@@ -26,6 +27,12 @@ fn main() -> glib::ExitCode {
         .cloned()
         .unwrap_or_else(|| "postio.png".to_string());
     let flag = |name: &str| args.iter().skip(1).any(|a| a == name);
+    // A `WxH` argument forces the window size, which is how the adaptive
+    // modes get rendered without a compositor in the loop.
+    let size = args.iter().skip(1).find_map(|a| {
+        let (w, h) = a.split_once('x')?;
+        Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?))
+    });
     let scheme = if flag("dark") {
         adw::ColorScheme::ForceDark
     } else {
@@ -47,6 +54,9 @@ fn main() -> glib::ExitCode {
     let window = Window::default();
     if high_contrast {
         window.add_css_class(style::HIGH_CONTRAST_CLASS);
+    }
+    if let Some((width, height)) = size {
+        window.set_default_size(width, height);
     }
     window.present();
 
