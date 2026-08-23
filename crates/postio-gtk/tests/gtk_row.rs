@@ -74,6 +74,31 @@ fn the_row_draws_the_canvas_anatomy_at_every_density() {
         );
     }
 
+    // ── flagged, answered and draft each get a word, not just a glyph ────
+    // `postio-apz`: a glyph only `describe`s the row to a screen reader that
+    // can already see it.
+    row.set_row(Some(Row {
+        flagged: true,
+        answered: true,
+        draft: true,
+        ..canvas_row()
+    }));
+    pump();
+    let marked = row.spoken();
+    for expected in ["Flagged", "Answered", "Draft"] {
+        assert!(
+            marked.contains(expected),
+            "{marked:?} never says {expected:?}"
+        );
+    }
+    let height_with_marks = row.measured_height(404);
+    row.set_row(Some(canvas_row()));
+    pump();
+    assert!(
+        (row.measured_height(404) - height_with_marks).abs() < f32::EPSILON,
+        "the marks must not change the row's height — they share the meta line, not a new one"
+    );
+
     // ── three densities, three heights, tightest last ────────────────────
     let height = |density| {
         row.set_density(density);
