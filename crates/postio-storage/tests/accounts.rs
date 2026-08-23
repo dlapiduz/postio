@@ -1,0 +1,375 @@
+//! Accounts and identities: create, read, update, delete, cascade.
+//!
+//! Written before the repositories existed.
+
+use chrono::{TimeZone, Utc};
+
+use postio_model::{
+    Account, AccountId, AuthMethod, EmailAddress, Identity, IdentityId, Signature,
+    TransportSecurity,
+};
+use postio_storage::repository::{AccountRepository, IdentityRepository};
+use postio_storage::test_support;
+
+fn an_account() -> Account {
+    let mut account = Account::new(
+        "iCloud",
+        EmailAddress::new(Some("Ada Norwood"), "ada@icloud.example"),
+    );
+    account.incoming.host = "imap.mail.icloud.example".to_owned();
+    account.outgoing.host = "smtp.mail.icloud.example".to_owned();
+    account.auth = AuthMethod::AppPassword;
+    account.created_at = Utc.with_ymd_and_hms(2026, 1, 5, 8, 30, 0).unwrap();
+    account
+}
+
+fn an_identity(address: &str) -> Identity {
+    Identity::new(
+        AccountId::UNASSIGNED,
+        EmailAddress::new(Some("Ada Norwood"), address),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Create and read
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_account_round_trips_through_the_database() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    assert!(!account.id.is_assigned(), "not persisted yet");
+
+    let id = accounts.create(&mut account).expect("create");
+
+    assert!(id.is_assigned(), "the database hands out the id");
+    assert_eq!(account.id, id, "and it is written back into the value");
+
+    let stored = accounts.get(id).expect("get").expect("the account exists");
+    assert_eq!(
+        stored, account,
+        "everything comes back exactly as it went in"
+    );
+    assert_eq!(stored.address.name.as_deref(), Some("Ada Norwood"));
+    assert_eq!(stored.incoming.port, 993);
+    assert_eq!(stored.incoming.security, TransportSecurity::Tls);
+    assert_eq!(stored.outgoing.security, TransportSecurity::StartTls);
+    assert_eq!(stored.auth, AuthMethod::AppPassword);
+    assert_eq!(
+        stored.created_at,
+        Utc.with_ymd_and_hms(2026, 1, 5, 8, 30, 0).unwrap(),
+        "timestamps survive the round trip through integer milliseconds"
+    );
+}
+
+#[test]
+fn enumerations_are_stored_with_the_spelling_the_model_documents() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    account.incoming.security = TransportSecurity::StartTls;
+    account.outgoing.security = TransportSecurity::None;
+    account.auth = AuthMethod::XOAuth2;
+    accounts.create(&mut account).expect("create");
+
+    let (incoming, outgoing, auth): (String, String, String) = connection
+        .query_row(
+            "SELECT incoming_security, outgoing_security, auth_method FROM accounts",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read the raw row");
+
+    assert_eq!(incoming, TransportSecurity::StartTls.as_str());
+    assert_eq!(outgoing, TransportSecurity::None.as_str());
+    assert_eq!(auth, AuthMethod::XOAuth2.as_str());
+}
+
+#[test]
+fn an_account_created_with_identities_gets_them_all_persisted() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let mut work = an_identity("ada@work.example");
+    work.is_default = true;
+    work.signature = Some(Signature {
+        text: "-- \nAda".to_owned(),
+        html: None,
+    });
+    account.identities = vec![an_identity("ada@icloud.example"), work];
+
+    let id = accounts.create(&mut account).expect("create");
+
+    for identity in &account.identities {
+        assert!(identity.id.is_assigned(), "every identity got an id");
+        assert_eq!(identity.account_id, id, "and knows its account");
+    }
+
+    let stored = accounts.get(id).expect("get").expect("the account");
+    assert_eq!(stored.identities.len(), 2);
+    assert_eq!(
+        stored.identities[0].address.address, "ada@icloud.example",
+        "identity order is preserved: it is the order the picker shows"
+    );
+    assert_eq!(
+        stored
+            .default_identity()
+            .map(|identity| identity.address.address.as_str()),
+        Some("ada@work.example")
+    );
+    assert_eq!(
+        stored.identities[1]
+            .signature
+            .as_ref()
+            .map(|s| s.text.as_str()),
+        Some("-- \nAda")
+    );
+}
+
+#[test]
+fn reading_an_account_that_is_not_there_is_none_rather_than_an_error() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    assert!(accounts.get(AccountId::new(404)).expect("get").is_none());
+    assert!(accounts.list().expect("list").is_empty());
+}
+
+#[test]
+fn listing_returns_accounts_in_a_stable_order_and_can_filter_to_enabled() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut first = an_account();
+    accounts.create(&mut first).expect("create");
+    let mut second = Account::new(
+        "Fastmail",
+        EmailAddress::new(None::<String>, "b@example.com"),
+    );
+    second.enabled = false;
+    accounts.create(&mut second).expect("create");
+
+    let all = accounts.list().expect("list");
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].id, first.id, "creation order, stable across runs");
+    assert_eq!(all[1].id, second.id);
+
+    let enabled = accounts.list_enabled().expect("list enabled");
+    assert_eq!(enabled.len(), 1);
+    assert_eq!(enabled[0].id, first.id, "a disabled account does not sync");
+}
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+#[test]
+fn updating_an_account_changes_its_row() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+
+    account.display_name = "iCloud (personal)".to_owned();
+    account.incoming.host = "imap2.example.com".to_owned();
+    account.enabled = false;
+    accounts.update(&mut account).expect("update");
+
+    let stored = accounts.get(id).expect("get").expect("the account");
+    assert_eq!(stored.display_name, "iCloud (personal)");
+    assert_eq!(stored.incoming.host, "imap2.example.com");
+    assert!(!stored.enabled);
+}
+
+#[test]
+fn updating_reconciles_the_identity_list() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    account.identities = vec![
+        an_identity("one@example.com"),
+        an_identity("two@example.com"),
+    ];
+    let id = accounts.create(&mut account).expect("create");
+    let kept = account.identities[1].id;
+
+    // Drop the first, keep the second, add a third — and reorder.
+    let mut third = an_identity("three@example.com");
+    third.is_default = true;
+    account.identities = vec![third, account.identities[1].clone()];
+    account.identities[1].display_name = "Renamed".to_owned();
+    accounts.update(&mut account).expect("update");
+
+    let stored = accounts.get(id).expect("get").expect("the account");
+    let addresses: Vec<&str> = stored
+        .identities
+        .iter()
+        .map(|identity| identity.address.address.as_str())
+        .collect();
+    assert_eq!(
+        addresses,
+        ["three@example.com", "two@example.com"],
+        "the list is exactly what was handed in, in that order"
+    );
+    assert_eq!(
+        stored.identities[1].id, kept,
+        "an identity that stayed keeps its id, so drafts pointing at it survive"
+    );
+    assert_eq!(stored.identities[1].display_name, "Renamed");
+    assert!(stored.identities[0].is_default);
+
+    let orphans: i64 = connection
+        .query_row("SELECT count(*) FROM identities", [], |row| row.get(0))
+        .expect("count");
+    assert_eq!(orphans, 2, "the removed identity's row is gone");
+}
+
+#[test]
+fn updating_an_unpersisted_account_is_an_error_rather_than_a_silent_no_op() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    assert!(accounts.update(&mut an_account()).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Identities on their own
+// ---------------------------------------------------------------------------
+
+#[test]
+fn identities_can_be_managed_without_rewriting_the_account() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let identities = IdentityRepository::new(&connection);
+
+    let mut account = an_account();
+    let account_id = accounts.create(&mut account).expect("create");
+
+    let mut identity = an_identity("extra@example.com");
+    identity.account_id = account_id;
+    identity.reply_to = Some(EmailAddress::new(None::<String>, "replies@example.com"));
+    let id = identities.create(&mut identity).expect("create");
+
+    let stored = identities.get(id).expect("get").expect("the identity");
+    assert_eq!(stored, identity);
+    assert_eq!(stored.effective_reply_to().address, "replies@example.com");
+
+    identity.display_name = "Extra".to_owned();
+    identities.update(&identity).expect("update");
+    assert_eq!(
+        identities
+            .get(id)
+            .expect("get")
+            .expect("still there")
+            .display_name,
+        "Extra"
+    );
+
+    assert_eq!(
+        identities.list_for_account(account_id).expect("list").len(),
+        1
+    );
+    assert!(identities.delete(id).expect("delete"));
+    assert!(identities.get(id).expect("get").is_none());
+    assert!(
+        !identities.delete(id).expect("delete again"),
+        "deleting what is gone is false, not an error"
+    );
+}
+
+#[test]
+fn an_account_has_at_most_one_default_identity() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let identities = IdentityRepository::new(&connection);
+
+    let mut account = an_account();
+    let mut first = an_identity("one@example.com");
+    first.is_default = true;
+    account.identities = vec![first, an_identity("two@example.com")];
+    let account_id = accounts.create(&mut account).expect("create");
+    let second = account.identities[1].id;
+
+    identities
+        .set_default(account_id, second)
+        .expect("move the default");
+
+    let stored = accounts.get(account_id).expect("get").expect("the account");
+    let defaults: Vec<IdentityId> = stored
+        .identities
+        .iter()
+        .filter(|identity| identity.is_default)
+        .map(|identity| identity.id)
+        .collect();
+    assert_eq!(defaults, [second], "exactly one, and it moved");
+}
+
+// ---------------------------------------------------------------------------
+// Delete and cascade
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deleting_an_account_takes_everything_that_hangs_off_it() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    account.identities = vec![an_identity("one@example.com")];
+    let id = accounts.create(&mut account).expect("create");
+
+    connection
+        .execute_batch(
+            "INSERT INTO mailboxes (id, account_id, name, path) VALUES (1, 1, 'INBOX', 'INBOX');
+             INSERT INTO sync_state (mailbox_id, account_id, uid_validity) VALUES (1, 1, 42);
+             INSERT INTO messages (id, account_id, mailbox_id, received_at) VALUES (1, 1, 1, 0);
+             INSERT INTO labels (id, account_id, name) VALUES (1, 1, 'Work');
+             INSERT INTO message_labels (message_id, label_id) VALUES (1, 1);
+             INSERT INTO threads (id, account_id) VALUES (1, 1);
+             INSERT INTO operation_queue (account_id, op_type, created_at, updated_at)
+                 VALUES (1, 'flag', 0, 0);",
+        )
+        .expect("seed everything that references an account");
+
+    assert!(accounts.delete(id).expect("delete"));
+
+    for table in [
+        "accounts",
+        "identities",
+        "mailboxes",
+        "sync_state",
+        "messages",
+        "labels",
+        "message_labels",
+        "threads",
+        "operation_queue",
+    ] {
+        let remaining: i64 = connection
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("count");
+        assert_eq!(remaining, 0, "{table} should have been cascaded away");
+    }
+
+    assert!(
+        !accounts.delete(id).expect("delete again"),
+        "deleting what is gone is false, not an error"
+    );
+}

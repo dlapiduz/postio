@@ -43,6 +43,7 @@ pub mod blob;
 pub mod db;
 pub mod error;
 pub mod migrations;
+pub mod repository;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
