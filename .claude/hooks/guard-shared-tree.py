@@ -1,48 +1,248 @@
 #!/usr/bin/env python3
-"""DISABLED 2026-08-23 — allows everything.
+"""Refuse commands that destroy or corrupt other sessions' work.
 
-Removed from `.claude/settings.json` at the user's request after the guards
-caused more disruption than they prevented. Kept as a no-op rather than
-deleted for two reasons:
+Several Claude sessions edit this repository concurrently, sharing one working
+tree, one branch, one git index and one cargo target directory. CLAUDE.md
+documents which commands are unsafe there; this hook enforces it, because
+documentation is advisory and `git reset --hard` is irreversible.
 
-  * a session whose settings still reference this path would fail on a missing
-    file, which is the same class of breakage that made the guards look like
-    they were denying work when they were actually failing to run;
-  * the rules and their test suite are worth reviving, and the working version
-    is one `git show` away.
+Matching is deliberately careful about two false positives that would make the
+hook worse than useless:
 
-## What it did
+1. **Heredoc bodies.** Writing a file that *documents* a forbidden command must
+   not be blocked. Heredoc bodies are stripped before matching.
+2. **Quoted arguments.** A commit message that mentions `--` or `git stash`
+   is data the command carries, not part of its invocation. Quoted spans
+   are blanked before matching.
+3. **Command position.** A forbidden invocation only counts at the start of a
+   command -- after nothing, or after `;`, `&&`, `||`, `|`, `(`, or a newline.
+   A path or message that merely contains the words is not an invocation.
 
-Refused commands that destroy other sessions' work in a shared working tree:
-`git reset --hard`, `git clean`, whole-tree checkout/restore, `git stash`,
-whole-tree staging, `git commit -a`, `cargo fmt --all`, plus `git push`,
-adding a remote, and history rewrites. Matching stripped heredoc bodies and
-anchored to command position, so documenting a command was not running it.
-`.claude/hooks/test-guard-shared-tree.py` covers 30 cases in both directions
-and passed.
+PreToolUse contract: the tool call arrives as JSON on stdin; a permission
+decision goes out as JSON on stdout. Exit 0 either way -- "deny" is the
+payload, not the exit code.
 
-## Why it went wrong
+## If you change this, verify it the way settings invokes it
 
-Not the rules — the plumbing. Settings invoke hooks by path, and the Python
-rewrites were written with an editor tool, which does not set the executable
-bit. Every matching tool call then failed with "permission denied" (exit 126),
-so *every* Bash call in every running session broke, not just the ones the
-guard would have refused. That is fixed in git history (the mode is tracked),
-but it burned enough trust to be worth recording.
+An earlier version was correct in every unit test and still broke every
+session, because it was invoked by path without an executable bit and failed
+with "permission denied" (exit 126) on every matching call. Piping into
+`python3 hook.py` proves the logic; it says nothing about the wiring. Settings
+now invokes it through `python3` so the mode cannot matter, and the entry point
+fails open so a bug costs a missed denial rather than a blocked session.
 
-Two lessons for whoever revives this:
-
-1. **`chmod +x`, and verify by executing the file the way settings does** --
-   piping into `python3 hook.py` proves the logic, not the wiring.
-2. **Running sessions re-read this file on every tool call but only read
-   settings.json at startup.** To change behaviour for a live session, edit
-   the script; editing settings alone reaches nobody until they restart.
-
-The rules themselves still hold, and `CLAUDE.md` documents them under
-"Working in parallel" -- as guidance now, which is where they started.
+`POSTIO_GUARD=off` disables it without editing settings -- which a running
+session would not re-read anyway. Note that a live session re-reads THIS FILE
+on every call but reads settings.json only at startup, so to change behaviour
+for a session already running, edit the script.
 """
 
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
 import sys
+from datetime import datetime, timezone
+
+SHARED = "Other Claude sessions are editing this tree right now."
+
+# (pattern after the command-position anchor, reason). First match wins.
+RULES: list[tuple[str, str]] = [
+    (
+        r"git\s+reset\s+(?:[^|;&]*\s)?--hard",
+        f"{SHARED} Refusing 'git reset --hard': it irrecoverably deletes every "
+        "session's uncommitted work, not just yours. Revert your own files by "
+        "path, or commit what you have. See 'Working in parallel' in CLAUDE.md.",
+    ),
+    (
+        r"git\s+clean\s+-",
+        f"{SHARED} Refusing 'git clean': it deletes untracked files across all "
+        "crates, including work another session has not committed yet.",
+    ),
+    (
+        r"git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)",
+        f"{SHARED} Refusing a whole-tree checkout/restore: it discards other "
+        "sessions' edits. Name your own paths explicitly.",
+    ),
+    (
+        r"git\s+stash(?!\s+(?:list|show))",
+        f"{SHARED} Refusing 'git stash': it stashes every session's changes, "
+        "not just yours. If you need a green tree, keep working until your "
+        "crate builds -- do not stash. See CLAUDE.md.",
+    ),
+    (
+        r"git\s+add\s+(?:-A|--all|-u|\.(?:\s|$))",
+        f"{SHARED} Refusing to stage everything: it commits other sessions' "
+        "unfinished files. Stage explicit paths, e.g. "
+        "'git add crates/<your-crate> Cargo.lock'.",
+    ),
+    (
+        r"git\s+commit\s+(?:[^|;&]*\s)?(?:-a\b|--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)",
+        f"{SHARED} Refusing 'git commit -a': it commits every modified file in "
+        "the tree, including other sessions'. Stage your own paths first, then "
+        "plain 'git commit'.",
+    ),
+    (
+        r"git\s+commit\s+(?:[^|;&]*\s)?--\s+\S",
+        "Refusing 'git commit -- <path>': that form bypasses the index and "
+        "commits the WORKING TREE version of those paths, sweeping in your own "
+        "half-written edits. A session did this and produced a commit that "
+        "would not build in isolation. Stage first, then a bare 'git commit'.",
+    ),
+    (
+        r"cargo\s+fmt\s+(?:[^|;&]*\s)?(?:--all|--workspace|-p\s)(?![^|;&]*--check)",
+        f"{SHARED} Refusing a crate-wide format: both --all and -p WRITE to every "
+        "file in scope, including one another session has open. That has "
+        "already put whitespace churn into someone else's diff. Format what "
+        "you changed: rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs'). "
+        "The --check forms are read-only and allowed.",
+    ),
+    (
+        r"git\s+push",
+        "Refusing 'git push': pushing is NOT standing-authorised in this "
+        "repository -- only commits are. Nothing has been published yet and "
+        "history was rewritten to scrub personal data. Ask the user first. "
+        "See 'Git authority' in CLAUDE.md.",
+    ),
+    (
+        r"git\s+remote\s+(?:add|set-url)",
+        "Refusing to add a remote: the user has not chosen to publish this "
+        "repository yet, and history was rewritten to remove personal data. "
+        "Ask first.",
+    ),
+    (
+        r"git\s+(?:filter-repo|filter-branch|rebase)",
+        "Refusing a history rewrite: other sessions hold refs that would become "
+        "invalid, and the user must confirm the tree is quiet first. Ask before "
+        "rewriting history.",
+    ),
+]
+
+# Start of string, or just after a shell command separator.
+ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
+
+
+def strip_heredocs(command: str) -> str:
+    """Remove heredoc bodies so documenting a command is not running it."""
+    out: list[str] = []
+    lines = command.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        m = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", line)
+        i += 1
+        if not m:
+            continue
+        marker = m.group(2)
+        # Skip the body up to and including the terminator.
+        while i < len(lines) and lines[i].strip() != marker:
+            i += 1
+        if i < len(lines):
+            i += 1
+    return "\n".join(out)
+
+
+def strip_quoted(command: str) -> str:
+    """Blank quoted spans so an argument cannot be read as a flag.
+
+    `git commit -m 'feat: handle -- in the parser'` is not a pathspec commit,
+    and `git commit -m "fix git stash"` is not a stash. Anything inside quotes
+    is data the command carries, not part of its invocation.
+    """
+    out, quote = [], None
+    for ch in command:
+        if quote:
+            out.append(" " if ch != quote else ch)
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+LOG = pathlib.Path(__file__).with_name("guard.log")
+
+
+def log(event: str, **fields: object) -> None:
+    """Append one JSONL record. Must never raise, and never blocks.
+
+    Two things are worth having on disk. Denials, so a rule that is firing more
+    than it should is visible as data rather than as a session complaining --
+    the last time this guard caused trouble I estimated its blast radius from
+    the mechanism and was badly wrong, when a log would have said so exactly.
+    And errors, because the entry point fails open: without a record, a broken
+    guard silently allows everything and looks identical to a quiet one.
+    """
+    try:
+        record = {
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "event": event,
+            **fields,
+        }
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:  # noqa: BLE001 - logging must not break the guard
+        pass
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return 0
+    except Exception:  # noqa: BLE001 - see fail-open note in the module docs
+        return 0
+
+    command = (payload.get("tool_input") or {}).get("command") or ""
+    if not command:
+        return 0
+
+    # Kill switch: export POSTIO_GUARD=off to disable without editing settings,
+    # which already-running sessions would not re-read.
+    if os.environ.get("POSTIO_GUARD", "").lower() in {"off", "0", "false"}:
+        return 0
+
+    haystack = strip_quoted(strip_heredocs(command))
+
+    for pattern, reason in RULES:
+        if re.search(ANCHOR + pattern, haystack):
+            log(
+                "deny",
+                rule=pattern,
+                command=command[:200],
+                session=payload.get("session_id", ""),
+            )
+            json.dump(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                },
+                sys.stdout,
+            )
+            return 0
+
+    return 0
+
 
 if __name__ == "__main__":
-    sys.exit(0)
+    # Fail OPEN, always. A guard that errors must allow the command through.
+    # The first version of this hook was invoked by path without an executable
+    # bit, so it failed with "permission denied" (exit 126) on EVERY matching
+    # tool call -- not just the ones it would have refused. Settings now runs
+    # it through `python3`, which removes that failure mode entirely, and this
+    # catch-all removes the rest: a bug in here costs a missed denial, never a
+    # blocked session.
+    try:
+        sys.exit(main())
+    except Exception as exc:  # noqa: BLE001
+        log("error", error=f"{type(exc).__name__}: {exc}")
+        sys.exit(0)
