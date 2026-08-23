@@ -209,7 +209,7 @@ fn mailbox_name(mailbox: &Mailbox<'_>) -> String {
     }
 }
 
-fn mailbox_argument(name: &str) -> BackendResult<Mailbox<'static>> {
+pub(super) fn mailbox_argument(name: &str) -> BackendResult<Mailbox<'static>> {
     Mailbox::try_from(name.to_owned()).map_err(|error| BackendError::Protocol {
         reason: format!("{name:?} is not a mailbox name IMAP can carry: {error}"),
     })

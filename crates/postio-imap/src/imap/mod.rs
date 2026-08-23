@@ -31,8 +31,10 @@
 //! touches the network.
 
 mod dispatch;
+mod fetch;
 mod mailboxes;
 mod pool;
+mod select;
 mod settings;
 mod transport;
 
@@ -60,6 +62,7 @@ use crate::secret::Password;
 pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };
+pub use self::fetch::fetch_headers;
 pub use self::mailboxes::list_mailboxes;
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
@@ -93,6 +96,10 @@ pub struct ImapSession {
     endpoint: String,
     account: String,
     pre_authenticated: bool,
+    /// The mailbox this session currently has selected, cached so a fetch
+    /// loop over many chunks of the same mailbox does not re-issue `SELECT`
+    /// for every one of them. See [`select`].
+    selected: Option<select::SelectedMailbox>,
 }
 
 impl fmt::Debug for ImapSession {
@@ -202,6 +209,7 @@ impl ImapSession {
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
             pre_authenticated: opened.pre_authenticated,
+            selected: None,
         })
     }
 
