@@ -202,6 +202,16 @@ pub const COMPOSING_CLASS: &str = "composing";
 /// What to call with the draft when the user sends or saves.
 type DraftHandler = Box<dyn Fn(&Draft)>;
 
+/// What to call with the draft when the user asks it to be saved.
+///
+/// `&mut`, unlike [`DraftHandler`]: the storage-backed handler assigns a
+/// [`DraftId`](postio_model::DraftId) the first time it persists a draft, and
+/// has nowhere else to put it back — the composer never constructs its own
+/// repository row. [`Composer::save`] writes the id back onto its own draft
+/// afterward, which is what makes every save after the first an update to the
+/// same row instead of a fresh insert.
+type SaveHandler = Box<dyn Fn(&mut Draft)>;
+
 /// What to call when the composer closes, with what became of the draft.
 type ClosedHandler = Box<dyn Fn(Closing)>;
 
@@ -269,7 +279,7 @@ mod imp {
         pub draft: RefCell<Draft>,
         pub identities: RefCell<Vec<Identity>>,
         pub sent: RefCell<Vec<DraftHandler>>,
-        pub saved: RefCell<Vec<DraftHandler>>,
+        pub saved: RefCell<Vec<SaveHandler>>,
         pub changed: RefCell<Vec<DraftHandler>>,
         pub closed: RefCell<Vec<ClosedHandler>>,
         /// Where `e`/`E`/`f` get the message and account to reply to. One
@@ -654,11 +664,18 @@ impl Composer {
     }
 
     /// Hands the draft to the save handlers. What `ctrl+s` does.
+    ///
+    /// A handler may assign the draft an id (its first persisted save); that
+    /// id is written back onto this composer's own draft afterward, so the
+    /// next save updates the same row rather than inserting a second one.
+    /// Nothing else a handler touches is kept — the fields are the widgets'
+    /// to own, not a save handler's.
     pub fn save(&self) {
-        let draft = self.draft();
+        let mut draft = self.draft();
         for handler in self.imp().saved.borrow().iter() {
-            handler(&draft);
+            handler(&mut draft);
         }
+        self.imp().draft.borrow_mut().id = draft.id;
     }
 
     /// Called with the draft when the user sends it.
@@ -667,7 +684,10 @@ impl Composer {
     }
 
     /// Called with the draft when the user asks for it to be saved.
-    pub fn connect_save(&self, handler: impl Fn(&Draft) + 'static) {
+    ///
+    /// `&mut Draft`: see [`SaveHandler`] for why a save handler is allowed to
+    /// write back the id it persisted under.
+    pub fn connect_save(&self, handler: impl Fn(&mut Draft) + 'static) {
         self.imp().saved.borrow_mut().push(Box::new(handler));
     }
 
@@ -786,6 +806,18 @@ impl Composer {
 
     fn account(&self) -> AccountId {
         self.imp().draft.borrow().account_id
+    }
+
+    /// Sets which account a fresh `Compose` starts from.
+    ///
+    /// For whoever assembles the application: the composer is built with no
+    /// account at all ([`AccountId::UNASSIGNED`]), and nothing in
+    /// `composer.rs` ever learns of one on its own. Meant to be called once,
+    /// before the first composition — it writes straight onto the current
+    /// draft, so calling it mid-compose would reassign whatever is already
+    /// being written.
+    pub fn set_account(&self, account_id: AccountId) {
+        self.imp().draft.borrow_mut().account_id = account_id;
     }
 
     // -- Attachments ------------------------------------------------------

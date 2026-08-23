@@ -18,7 +18,7 @@ use gtk::prelude::*;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_model::{AccountId, Draft};
+use postio_model::{AccountId, Draft, DraftId};
 
 fn settle() {
     while glib::MainContext::default().iteration(false) {}
@@ -108,4 +108,63 @@ fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() {
         "closing must flush a pending autosave rather than leave it in a timer a crash could lose"
     );
     assert_eq!(saves.borrow().last().unwrap().subject, "hello!");
+}
+
+/// The one piece of storage-wiring correctness a composer with no storage of
+/// its own can still prove: [`Composer::connect_save`] hands its handler
+/// `&mut Draft`, and [`Composer::save`] writes back whatever id the handler
+/// assigns. A real `DraftRepository::save` is idempotent on that id — insert
+/// once, update forever after — so a wiring that did not carry the id forward
+/// would silently insert a fresh row on every debounce tick instead of
+/// updating the one row the draft actually is.
+#[test]
+fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
+    let state_dir = std::env::temp_dir().join(format!(
+        "postio-composer-autosave-id-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    window.present();
+    settle();
+
+    let composer = composer::install(&window);
+    let seen_ids: std::rc::Rc<std::cell::RefCell<Vec<DraftId>>> = Default::default();
+    composer.connect_save({
+        let seen_ids = std::rc::Rc::clone(&seen_ids);
+        move |draft| {
+            // Stands in for `DraftRepository::save`: assigns an id the first
+            // time, and every save after that already carries one.
+            if !draft.id.is_assigned() {
+                draft.id = DraftId::new(42);
+            }
+            seen_ids.borrow_mut().push(draft.id);
+        }
+    });
+
+    composer.open(Draft::new(AccountId::UNASSIGNED));
+    settle();
+
+    composer.save();
+    composer.test_set_subject("revised");
+    settle();
+    composer.save();
+
+    assert_eq!(
+        *seen_ids.borrow(),
+        vec![DraftId::new(42), DraftId::new(42)],
+        "the second save should see the id the first save assigned, not start over"
+    );
 }
