@@ -723,6 +723,109 @@ fn arriving_newest_first_still_gathers_everything_the_chain_names() {
 }
 
 #[test]
+fn rethreading_recovers_the_orphan_arrival_order_stranded() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    let mut placed: Vec<(&str, ThreadId)> = Vec::new();
+    for (index, name) in LIST_THREAD.iter().enumerate().rev() {
+        placed.push((
+            name,
+            file_fixture(&connection, account.id, inbox, index as i64, name),
+        ));
+    }
+    let conversation = placed
+        .iter()
+        .find(|(name, _)| *name == "list-thread-01-root")
+        .expect("the root")
+        .1;
+    let (_, stranded_before) = placed
+        .iter()
+        .find(|(name, _)| *name == "list-thread-06-reply-subject-only")
+        .expect("the subject-only reply");
+    assert_ne!(
+        *stranded_before, conversation,
+        "stranded, as established above"
+    );
+
+    let moved = ThreadingRepository::new(&connection, account.id)
+        .rethread_orphans(inbox)
+        .expect("rethread");
+
+    assert_eq!(moved, 1, "exactly the one stranded orphan moves");
+    let members_now = members(&connection, conversation);
+    assert_eq!(
+        members_now.len(),
+        LIST_THREAD.len(),
+        "the whole mailing-list conversation is one thread now"
+    );
+
+    // Idempotent: nothing left to reconsider, so a second pass is a no-op.
+    let moved_again = ThreadingRepository::new(&connection, account.id)
+        .rethread_orphans(inbox)
+        .expect("rethread again");
+    assert_eq!(moved_again, 0);
+}
+
+#[test]
+fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    // Two ordinary replies converge on their own thread via real references —
+    // never touching the subject fallback at all.
+    let (_, root_thread) = file(
+        &connection,
+        account.id,
+        inbox,
+        0,
+        "<root@example.com>",
+        &[],
+        "Quarterly numbers",
+    );
+    file(
+        &connection,
+        account.id,
+        inbox,
+        1,
+        "<reply@example.com>",
+        &["<root@example.com>"],
+        "Re: Quarterly numbers",
+    );
+    assert_eq!(members(&connection, root_thread).len(), 2);
+
+    // A third message with no reference at all, but the same subject as the
+    // thread above -- it must not drag `root_thread`'s other member along.
+    let mut orphan = Message::new(account.id, inbox, at(2));
+    orphan.rfc_message_id = Some(id("<orphan@example.net>"));
+    orphan.subject = Some("Re: Quarterly numbers".to_owned());
+    let orphan_id = MessageRepository::new(&connection)
+        .create(&mut orphan)
+        .expect("create");
+    let orphan_thread = ThreadingRepository::new(&connection, account.id)
+        .thread(&orphan)
+        .expect("thread")
+        .thread_id;
+    assert_eq!(
+        orphan_thread, root_thread,
+        "the fallback already joins it to the two-message thread at insertion time"
+    );
+
+    let moved = ThreadingRepository::new(&connection, account.id)
+        .rethread_orphans(inbox)
+        .expect("rethread");
+
+    assert_eq!(
+        moved, 0,
+        "the orphan already sits with others, so nothing is reconsidered for it"
+    );
+    assert_eq!(members(&connection, root_thread).len(), 3);
+    let _ = orphan_id;
+}
+
+#[test]
 fn a_message_with_broken_references_still_finds_its_conversation() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");

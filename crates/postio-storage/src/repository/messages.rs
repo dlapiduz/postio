@@ -637,6 +637,26 @@ impl<'a> MessageRepository<'a> {
         let mailbox_id = MailboxId::new(row.get(5)?);
         Ok(Some(read_backfill_candidate(row, mailbox_id)?))
     }
+
+    /// Messages in `mailbox_id` that carry no usable thread reference at all —
+    /// no `In-Reply-To` and an empty `References` — and are still threaded.
+    ///
+    /// These are the only messages [`crate::repository::ThreadingRepository::reconsider`]
+    /// can ever have a better answer for later than it did at insertion: one
+    /// that names an ancestor either already found it or is waiting to, so
+    /// only silence at insertion time is worth asking about again.
+    pub fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM messages
+              WHERE mailbox_id = ?1
+                AND thread_id IS NOT NULL
+                AND in_reply_to IS NULL
+                AND reference_ids = ''",
+        )?;
+        let rows =
+            statement.query_map([mailbox_id.get()], |row| Ok(MessageId::new(row.get(0)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
 }
 
 // ---------------------------------------------------------------------------
