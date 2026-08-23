@@ -226,6 +226,16 @@ impl EventStream {
     }
 }
 
+/// An event channel with no runtime behind it.
+///
+/// The [`Bridge`] builds its own; this is for the pieces that emit events
+/// without owning a runtime — the config watcher on its own thread — and for
+/// tests that want the frontend's end without starting one.
+pub fn event_channel() -> (EventSink, EventStream) {
+    let (sender, receiver) = async_channel::unbounded();
+    (EventSink(sender), EventStream(receiver))
+}
+
 /// How to build a [`Bridge`]. The defaults are what the application uses.
 #[derive(Debug, Clone)]
 pub struct BridgeBuilder {
