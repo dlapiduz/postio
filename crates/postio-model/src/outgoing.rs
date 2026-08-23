@@ -9,16 +9,21 @@
 //! bytes the caller already resolved, exactly as [`ParsedPart`](crate::mime::ParsedPart)
 //! does for the parsing side.
 //!
-//! # What this does not do
+//! # Threading
 //!
-//! It does not thread. `In-Reply-To` and `References` need the RFC
-//! `Message-ID` chain of the message being replied to, which is not part of a
-//! [`Draft`] — that is `postio-p8q`'s job, building on top of this.
+//! `In-Reply-To` and `References` need the RFC `Message-ID` chain of the
+//! message being replied to, which is not part of a [`Draft`] — a `Draft`
+//! only carries the *local* id of that message ([`Draft::in_reply_to`]), so
+//! [`build`] takes the parent [`Message`] itself and computes both headers
+//! from [`Message::reference_chain`]. [`crate::reply`] is what builds the
+//! reply `Draft` in the first place; this is only where its headers get
+//! written.
 
 use chrono::Utc;
 use mail_builder::MessageBuilder;
 use mail_builder::headers::address::Address as MbAddress;
 use mail_builder::headers::date::Date as MbDate;
+use mail_builder::headers::message_id::MessageId as MbMessageId;
 use mail_builder::mime::make_boundary;
 
 use crate::account::Identity;
@@ -26,6 +31,7 @@ use crate::address::EmailAddress;
 use crate::attachment::{Attachment, Disposition};
 use crate::draft::Draft;
 use crate::ids::RfcMessageId;
+use crate::message::Message;
 
 /// A domain to fall back on when an identity's address has none.
 ///
@@ -63,12 +69,21 @@ pub struct BuiltMessage {
 /// [`Disposition::Inline`] and carries a `content_id`, and as a regular
 /// attachment otherwise.
 ///
+/// `in_reply_to` is the message `draft` answers, when it answers one —
+/// the same message [`Draft::in_reply_to`] names by local id, resolved by the
+/// caller to the domain object this crate needs. Its `Message-ID` becomes
+/// `In-Reply-To`, and its own chain plus that id becomes `References`; see
+/// [`Message::reference_chain`] for why that is the whole rule. A parent with
+/// no `Message-ID` of its own (the sender omitted one) contributes no
+/// `In-Reply-To`, but its chain still becomes `References` if it has one.
+///
 /// A fresh `Message-ID` and the current time are generated on every build —
 /// a draft may be edited and resent, and each attempt is its own message.
 pub fn build(
     draft: &Draft,
     identity: &Identity,
     attachments: &[OutgoingAttachment<'_>],
+    in_reply_to: Option<&Message>,
 ) -> BuiltMessage {
     let message_id = generate_message_id(identity.address.domain().unwrap_or(FALLBACK_DOMAIN));
 
@@ -77,6 +92,10 @@ pub fn build(
         .date(MbDate::new(Utc::now().timestamp()))
         .from(mb_address(&identity.address))
         .reply_to(mb_address(identity.effective_reply_to()));
+
+    if let Some(parent) = in_reply_to {
+        builder = add_threading_headers(builder, parent);
+    }
 
     if !draft.subject.is_empty() {
         builder = builder.subject(draft.subject.clone());
@@ -105,6 +124,31 @@ pub fn build(
         .write_to_vec()
         .expect("writing RFC 5322 bytes to a Vec<u8> cannot fail");
     BuiltMessage { raw, message_id }
+}
+
+/// Sets `In-Reply-To` and `References` from `parent`.
+///
+/// `References` is exactly what a message threading *into* `parent` would
+/// have claimed as its own ancestors: `parent`'s [`Message::reference_chain`]
+/// — its own `References` plus its `In-Reply-To`, deduplicated the same way —
+/// with `parent`'s `Message-ID` appended at the end. That is the RFC 5322
+/// rule stated the other way around, and it is why threading a reply here
+/// costs nothing beyond what parsing already computed for `parent`.
+fn add_threading_headers<'x>(builder: MessageBuilder<'x>, parent: &Message) -> MessageBuilder<'x> {
+    let mut references: Vec<String> = parent
+        .reference_chain()
+        .map(|id| id.without_brackets().to_owned())
+        .collect();
+
+    let mut builder = builder;
+    if let Some(parent_id) = &parent.rfc_message_id {
+        builder = builder.in_reply_to(parent_id.without_brackets().to_owned());
+        references.push(parent_id.without_brackets().to_owned());
+    }
+    if !references.is_empty() {
+        builder = builder.references(MbMessageId::new_list(references.into_iter()));
+    }
+    builder
 }
 
 fn add_attachment<'x>(
@@ -182,7 +226,7 @@ mod tests {
     #[test]
     fn a_plain_text_draft_round_trips_through_the_parser() {
         let ada = identity("ada@example.com");
-        let built = build(&draft(), &ada, &[]);
+        let built = build(&draft(), &ada, &[], None);
 
         let parsed = mime::parse(&built.raw);
         assert_eq!(parsed.subject.as_deref(), Some("Tuesday walkthrough notes"));
@@ -197,8 +241,8 @@ mod tests {
     #[test]
     fn each_build_gets_a_fresh_message_id() {
         let ada = identity("ada@example.com");
-        let first = build(&draft(), &ada, &[]);
-        let second = build(&draft(), &ada, &[]);
+        let first = build(&draft(), &ada, &[], None);
+        let second = build(&draft(), &ada, &[], None);
         assert_ne!(first.message_id, second.message_id);
     }
 
@@ -209,7 +253,7 @@ mod tests {
         let mut draft = draft();
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
 
-        let parsed = mime::parse(&build(&draft, &ada, &[]).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
         assert_eq!(parsed.reply_to[0].address, "replies@example.org");
         assert_eq!(parsed.bcc[0].address, "quiet@example.com");
     }
@@ -221,7 +265,7 @@ mod tests {
         draft.subject = "Gruß aus München".to_owned();
         draft.to = vec![EmailAddress::new(Some("田中 陽子"), "yoko@example.net")];
 
-        let parsed = mime::parse(&build(&draft, &ada, &[]).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
         assert_eq!(parsed.subject.as_deref(), Some("Gruß aus München"));
         assert_eq!(parsed.to[0].name.as_deref(), Some("田中 陽子"));
     }
@@ -232,7 +276,7 @@ mod tests {
         let mut draft = draft();
         draft.body.html = Some("<p>Looking now.</p>".to_owned());
 
-        let parsed = mime::parse(&build(&draft, &ada, &[]).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
         assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
         assert_eq!(parsed.body.html.as_deref(), Some("<p>Looking now.</p>"));
     }
@@ -251,6 +295,7 @@ mod tests {
                 attachment: &file,
                 content: &content,
             }],
+            None,
         );
         let parsed = mime::parse(&built.raw);
 
@@ -279,6 +324,7 @@ mod tests {
                 attachment: &image,
                 content: &content,
             }],
+            None,
         );
         let parsed = mime::parse(&built.raw);
 
@@ -301,7 +347,80 @@ mod tests {
         let mut draft = draft();
         draft.subject = String::new();
 
-        let parsed = mime::parse(&build(&draft, &ada, &[]).raw);
+        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
         assert!(parsed.subject.is_none());
+    }
+
+    fn parent(rfc_message_id: &str, references: &[&str]) -> Message {
+        let mut message = Message::new(
+            AccountId::new(1),
+            crate::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        message.rfc_message_id = Some(RfcMessageId::new(rfc_message_id));
+        message.references = references.iter().map(|id| RfcMessageId::new(*id)).collect();
+        message
+    }
+
+    #[test]
+    fn replying_sets_in_reply_to_and_appends_the_parent_to_its_own_chain() {
+        let ada = identity("ada@example.com");
+        let root = parent("<root@example.com>", &[]);
+
+        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&root)).raw);
+        assert_eq!(
+            parsed.in_reply_to,
+            Some(RfcMessageId::new("<root@example.com>"))
+        );
+        assert_eq!(
+            parsed.references,
+            vec![RfcMessageId::new("<root@example.com>")]
+        );
+    }
+
+    #[test]
+    fn replying_deep_in_a_thread_carries_the_whole_chain_forward() {
+        let ada = identity("ada@example.com");
+        let middle = parent("<middle@example.com>", &["<root@example.com>"]);
+
+        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&middle)).raw);
+        assert_eq!(
+            parsed.in_reply_to,
+            Some(RfcMessageId::new("<middle@example.com>"))
+        );
+        assert_eq!(
+            parsed.references,
+            vec![
+                RfcMessageId::new("<root@example.com>"),
+                RfcMessageId::new("<middle@example.com>"),
+            ],
+            "the parent's own ancestors, then the parent itself"
+        );
+    }
+
+    #[test]
+    fn a_parent_with_no_message_id_still_contributes_no_dangling_reference() {
+        let ada = identity("ada@example.com");
+        let mut orphan = parent("<unused@example.com>", &[]);
+        orphan.rfc_message_id = None;
+
+        let parsed = mime::parse(&build(&draft(), &ada, &[], Some(&orphan)).raw);
+        assert!(
+            parsed.in_reply_to.is_none(),
+            "nothing to reply to without a Message-ID"
+        );
+        assert!(
+            parsed.references.is_empty(),
+            "and no chain either, since the parent contributed nothing to it"
+        );
+    }
+
+    #[test]
+    fn with_no_parent_no_threading_headers_are_written_at_all() {
+        let ada = identity("ada@example.com");
+
+        let parsed = mime::parse(&build(&draft(), &ada, &[], None).raw);
+        assert!(parsed.in_reply_to.is_none());
+        assert!(parsed.references.is_empty());
     }
 }
