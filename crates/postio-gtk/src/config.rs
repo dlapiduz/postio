@@ -72,6 +72,7 @@ pub fn install_at(window: &Window, path: &Path) {
     window.apply_keymap(service.keymap().clone());
     window.apply_ui(&service.config().ui);
     window.list().set_density(service.config().ui.density);
+    window.list().set_keymap(service.keymap().clone());
     window.settings().load(path);
 
     window.connect_command({
@@ -116,6 +117,7 @@ pub fn install_at(window: &Window, path: &Path) {
             };
             if update.changed.keys {
                 window.apply_keymap(service.keymap().clone());
+                window.list().set_keymap(service.keymap().clone());
             }
             if update.changed.ui {
                 window.apply_ui(&service.config().ui);
