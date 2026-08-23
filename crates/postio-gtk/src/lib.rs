@@ -29,6 +29,8 @@
 //! - [`header`] — the header bar the canvas draws.
 //! - [`shell`] — the three panes, and the rule for how many of them fit.
 //! - [`sidebar`] — the folders, their counts, and the sync status line.
+//! - [`list`] — the message list's model, windowed over paged storage so a
+//!   mailbox is never loaded into memory.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -47,6 +49,7 @@
 pub mod app;
 pub mod fonts;
 pub mod header;
+pub mod list;
 pub mod resources;
 pub mod shell;
 pub mod sidebar;
