@@ -7,11 +7,11 @@
 //!
 //! # Where it lives
 //!
-//! The message list's row view has not landed yet (`postio-5dz`), so today
-//! this widget *is* the whole of [`crate::shell::Shell::list`]'s content. It
-//! is built to hide itself the moment [`derive`] returns `None` — there are
-//! rows to show — which is what lets the eventual row view slot in later
-//! without this module changing.
+//! It is an overlay over [`crate::list_view::MessageListView`], and hides
+//! itself the moment [`derive`] returns `None` — there are rows to show. So
+//! the list pane always has its header and its rows underneath, and this
+//! widget is an opaque plate that covers them when there is something to say
+//! instead.
 //!
 //! # What is not wired yet
 //!
@@ -232,7 +232,11 @@ impl ListStateView {
         let imp = self.imp();
         self.add_css_class("postio-liststate");
         self.set_halign(gtk::Align::Fill);
-        self.set_valign(gtk::Align::Center);
+        // Fill, not centre: this widget sits *over* the message list now
+        // that `crate::list_view` fills the pane, so it has to be an opaque
+        // plate covering the rows rather than a caption printed across
+        // them. The column inside it is what centres.
+        self.set_valign(gtk::Align::Fill);
         self.set_vexpand(true);
 
         imp.icon.add_css_class("postio-liststate-icon");
@@ -251,6 +255,8 @@ impl ListStateView {
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
         column.set_halign(gtk::Align::Center);
+        column.set_valign(gtk::Align::Center);
+        column.set_vexpand(true);
         column.set_margin_start(32);
         column.set_margin_end(32);
         column.append(&imp.icon);
