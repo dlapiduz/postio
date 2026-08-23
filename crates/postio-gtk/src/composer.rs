@@ -41,27 +41,42 @@
 //!
 //! * MIME construction is `postio-es9`, reached from a [`connect_send`] handler
 //!   with the [`Draft`] this widget produces.
-//! * Sending through the operation queue is `postio-pzy`, autosave is
-//!   `postio-own`, attachments `postio-tws`, recipient completion `postio-agd`,
-//!   and reply seeding and quoting `postio-p8q` — which builds the [`Draft`]
-//!   that [`Composer::open`] takes.
+//! * Sending through the operation queue is `postio-pzy`, and reply seeding
+//!   and quoting is `postio-p8q` — which builds the [`Draft`] that
+//!   [`Composer::open`] takes.
+//! * Autosave (`postio-own`), attachments (`postio-tws`) and recipient
+//!   completion (`postio-agd`) each end at a seam this widget owns —
+//!   [`connect_save`], [`connect_attach`] and
+//!   [`connect_recipient_suggestions`] — and stop there. What debounces a
+//!   save, draws an attachment row, or shows a completion popover lives here;
+//!   writing any of it to disk is `postio-storage`'s job, reached through
+//!   whoever wires the seam.
 //!
 //! Until a handler is connected the composer says so instead of pretending:
 //! [`CommandId::Send`] with nothing listening leaves the draft in place and
 //! names the missing piece on the status line, because a composer that empties
 //! itself into a seam that is not connected yet has silently lost the mail.
+//! [`CommandId::AttachFile`] and a drop with no [`connect_attach`] handler do
+//! the same.
 //!
 //! [`connect_send`]: Composer::connect_send
+//! [`connect_save`]: Composer::connect_save
+//! [`connect_attach`]: Composer::connect_attach
+//! [`connect_recipient_suggestions`]: Composer::connect_recipient_suggestions
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::glib;
+use gtk::{gdk, glib};
 use postio_core::{CommandId, Context};
-use postio_model::address::{format_list, parse_list};
-use postio_model::signature;
-use postio_model::{AccountId, Draft, DraftKind, Identity, IdentityId, MessageBody};
+use postio_model::address::{current_entry, format_list, parse_list};
+use postio_model::{
+    Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
+    MessageBody,
+};
+use postio_model::{reply, signature};
 
 use crate::shell::Pane;
 use crate::window::Window;
@@ -157,6 +172,26 @@ const RETAINED: &str = "still holding the draft Esc kept";
 /// What the status line says when [`CommandId::Send`] has nowhere to go.
 const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 
+/// What the status line says when a file was chosen or dropped but nothing
+/// is listening on [`Composer::connect_attach`] to turn it into an attachment.
+const NO_ATTACH_PATH: &str = "not attached — no attachment handler is connected yet";
+
+/// Above this, an attachment's row calls out its size.
+///
+/// The bead asks for a *configurable* threshold; that means reading
+/// `postio-config`, which this crate does not touch. A fixed default earns
+/// its keep until that wiring exists rather than silently warning never.
+const LARGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
+
+/// How long an edit waits before [`Composer::save`] runs again on its own.
+///
+/// Long enough that a burst of keystrokes coalesces into one save rather than
+/// one per character — the acceptance criterion is that autosave never
+/// blocks typing, and firing on every keystroke would eventually compete with
+/// it even if each save were fast. Short enough that a crash loses at most
+/// this much of a sentence.
+const AUTOSAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// The class `shell.css` dims the sidebar and the list under.
 ///
 /// Canvas 2a's own signal that the keyboard is in the composer: the list is
@@ -169,6 +204,40 @@ type DraftHandler = Box<dyn Fn(&Draft)>;
 
 /// What to call when the composer closes, with what became of the draft.
 type ClosedHandler = Box<dyn Fn(Closing)>;
+
+/// Answers "what does `prefix` complete to" for recipient completion —
+/// contacts and previous correspondents, ranked by frequency and recency, are
+/// [`Composer::connect_recipient_suggestions`]'s job to supply; the composer
+/// only shows what it is given, in the order it is given.
+type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<EmailAddress>>;
+
+/// Answers "what message is `e`/`E`/`f` about" — the composer has no notion
+/// of a reading pane or a selection of its own. `None` means there is nothing
+/// to reply to right now (nothing open, or nothing to send as), in which case
+/// the keystroke does nothing rather than opening a broken composer.
+type ReplySourceProvider = Box<dyn Fn() -> Option<(Message, Account)>>;
+
+/// Turns a file the user chose or dropped into attachment metadata.
+///
+/// Reading the bytes into the blob store is the handler's job, not the
+/// composer's — the composer only asks "what should this row say", fast
+/// enough not to stall the widget that is asking. `None` rejects the file
+/// (unreadable, say), leaving the draft exactly as it was.
+type AttachHandler = Box<dyn Fn(&std::path::Path) -> Option<Attachment>>;
+
+/// Which of [`postio_model::reply`]'s three functions a command asks for.
+///
+/// [`CommandId::Reply`], [`CommandId::ReplyAll`] and [`CommandId::Forward`]
+/// are the only commands this maps, and only when the composer is not
+/// already open — replying to a reply in progress is not a thing.
+fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Draft> {
+    match id {
+        CommandId::Reply => Some(reply::reply(source, account)),
+        CommandId::ReplyAll => Some(reply::reply_all(source, account)),
+        CommandId::Forward => Some(reply::forward(source, account)),
+        _ => None,
+    }
+}
 
 mod imp {
     use super::*;
@@ -190,6 +259,11 @@ mod imp {
         pub send: gtk::Button,
         pub save: gtk::Button,
         pub warning: gtk::Label,
+        /// The attachment list's own row, hidden entirely while there is
+        /// nothing to show — a bare "no attachments" line is clutter the Cc
+        /// row already taught this composer not to add.
+        pub attachments_box: gtk::Box,
+        pub attachments_list: gtk::ListBox,
         /// Everything about the draft that is not in a field: its id, account,
         /// kind, attachments, and what it is a reply to.
         pub draft: RefCell<Draft>,
@@ -198,6 +272,15 @@ mod imp {
         pub saved: RefCell<Vec<DraftHandler>>,
         pub changed: RefCell<Vec<DraftHandler>>,
         pub closed: RefCell<Vec<ClosedHandler>>,
+        /// Where `e`/`E`/`f` get the message and account to reply to. One
+        /// slot, last registration wins: there is exactly one reading pane.
+        pub reply_source: RefCell<Option<ReplySourceProvider>>,
+        /// Where recipient completion gets its candidates. One slot: the
+        /// same search serves `To`, `Cc` and `Bcc` alike.
+        pub recipient_suggestions: RefCell<Option<RecipientSuggestions>>,
+        /// Where a chosen or dropped file becomes attachment metadata. One
+        /// slot: the same handler serves the file chooser and drag-and-drop.
+        pub attach: RefCell<Option<AttachHandler>>,
         /// The window the composer took a pane from, once mounted.
         pub window: glib::WeakRef<Window>,
         /// The context and pane to put back when the composer closes.
@@ -205,6 +288,13 @@ mod imp {
         /// Set while `open` is filling the fields, so the widgets' own
         /// `changed` signals do not report the fill as the user typing.
         pub filling: Cell<bool>,
+        /// The pending debounced autosave, if an edit is waiting out the
+        /// quiet period before [`Composer::save`] runs again.
+        pub autosave_source: Cell<Option<glib::SourceId>>,
+        /// Recipient completion for `To`. Kept here (rather than relying on
+        /// the entry's signal connections to be the only thing keeping it
+        /// alive) so tests can reach it; see `test_accept_recipient_suggestion`.
+        pub(crate) to_completion: RefCell<Option<Rc<Completion>>>,
     }
 
     impl Default for Composer {
@@ -227,15 +317,22 @@ mod imp {
                 send: gtk::Button::new(),
                 save: gtk::Button::new(),
                 warning: gtk::Label::new(None),
+                attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                attachments_list: gtk::ListBox::new(),
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
                 identities: RefCell::new(Vec::new()),
                 sent: RefCell::new(Vec::new()),
                 saved: RefCell::new(Vec::new()),
                 changed: RefCell::new(Vec::new()),
                 closed: RefCell::new(Vec::new()),
+                reply_source: RefCell::new(None),
+                recipient_suggestions: RefCell::new(None),
+                attach: RefCell::new(None),
                 window: glib::WeakRef::new(),
                 restore: Cell::new(None),
                 filling: Cell::new(false),
+                autosave_source: Cell::new(None),
+                to_completion: RefCell::new(None),
             }
         }
     }
@@ -353,6 +450,11 @@ impl Composer {
 
     /// Takes the composer off screen and tells everyone what became of it.
     fn shut(&self, outcome: Closing) {
+        // A debounced save still waiting out its quiet period must not be
+        // left ticking against a composer nobody can see: flush it now, so
+        // an edit made just before closing is on the same footing as one made
+        // a second earlier that the timer already caught.
+        self.flush_autosave();
         self.set_visible(false);
         self.release_pane();
         for handler in self.imp().closed.borrow().iter() {
@@ -579,6 +681,38 @@ impl Composer {
         self.imp().closed.borrow_mut().push(Box::new(handler));
     }
 
+    /// Registers where `e`/`E`/`f` find the message and account to reply to.
+    ///
+    /// The composer holds no reading-pane state of its own; whatever tracks
+    /// the message currently on screen connects this once, at mount time.
+    pub fn connect_reply_source(
+        &self,
+        provider: impl Fn() -> Option<(Message, Account)> + 'static,
+    ) {
+        *self.imp().reply_source.borrow_mut() = Some(Box::new(provider));
+    }
+
+    /// Registers what completes a recipient prefix — contacts and previous
+    /// correspondents, ranked and searched however the caller sees fit. The
+    /// composer only shows what comes back, in that order, and never touches
+    /// the network itself: purely local completion is the whole point.
+    pub fn connect_recipient_suggestions(
+        &self,
+        provider: impl Fn(&str) -> Vec<EmailAddress> + 'static,
+    ) {
+        *self.imp().recipient_suggestions.borrow_mut() = Some(Box::new(provider));
+    }
+
+    /// Registers what turns a chosen or dropped file into attachment
+    /// metadata — and, however long it takes, into the blob store. The
+    /// composer only draws the row; storing the bytes is the caller's job.
+    pub fn connect_attach(
+        &self,
+        handler: impl Fn(&std::path::Path) -> Option<Attachment> + 'static,
+    ) {
+        *self.imp().attach.borrow_mut() = Some(Box::new(handler));
+    }
+
     // -- Mounting -------------------------------------------------------------
 
     /// Puts the composer in `window`'s reading pane and wires the keyboard.
@@ -619,15 +753,216 @@ impl Composer {
             CommandId::Send if self.is_open() => self.send(),
             CommandId::SaveDraft if self.is_open() => self.save(),
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
+            CommandId::AttachFile if self.is_open() => self.open_file_chooser(),
             CommandId::Back if self.is_open() => {
                 self.close();
+            }
+            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward if !self.is_open() => {
+                self.open_reply(id);
             }
             _ => {}
         }
     }
 
+    /// Opens a reply, reply-all or forward for whatever
+    /// [`connect_reply_source`](Self::connect_reply_source) says is on
+    /// screen. Silently does nothing without a source connected, or when the
+    /// source has nothing to offer — `e` with no message open is not an
+    /// error, it is nothing to reply to.
+    fn open_reply(&self, id: CommandId) {
+        let found = self
+            .imp()
+            .reply_source
+            .borrow()
+            .as_ref()
+            .and_then(|provider| provider());
+        let Some((source, account)) = found else {
+            return;
+        };
+        if let Some(draft) = reply_draft(id, &source, &account) {
+            self.open(draft);
+        }
+    }
+
     fn account(&self) -> AccountId {
         self.imp().draft.borrow().account_id
+    }
+
+    // -- Attachments ------------------------------------------------------
+
+    /// Opens the platform file chooser for `ctrl+shift+a` and the "attach
+    /// another" hint. `GtkFileDialog` goes through the XDG desktop portal on
+    /// its own, which is what makes this work unmodified under Flatpak.
+    fn open_file_chooser(&self) {
+        let Some(window) = self.imp().window.upgrade() else {
+            return;
+        };
+        let dialog = gtk::FileDialog::builder().title("Attach files").build();
+        dialog.open_multiple(
+            Some(&window),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |result| {
+                    let Ok(files) = result else {
+                        return;
+                    };
+                    for i in 0..files.n_items() {
+                        if let Some(file) = files.item(i).and_downcast::<gio::File>() {
+                            composer.add_file(&file);
+                        }
+                    }
+                }
+            ),
+        );
+    }
+
+    /// Wires dropping files anywhere on the composer to the same path as the
+    /// file chooser.
+    fn install_drop_target(&self) {
+        let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+        target.connect_drop(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[upgrade_or]
+            false,
+            move |_, value, _, _| {
+                let Ok(list) = value.get::<gdk::FileList>() else {
+                    return false;
+                };
+                for file in list.files() {
+                    composer.add_file(&file);
+                }
+                true
+            }
+        ));
+        self.add_controller(target);
+    }
+
+    /// Turns a chosen or dropped file into an attachment via whatever
+    /// [`connect_attach`](Self::connect_attach) is wired to, and says so on
+    /// the status line when nothing is, rather than the file silently going
+    /// nowhere.
+    fn add_file(&self, file: &gio::File) {
+        let Some(path) = file.path() else {
+            return;
+        };
+        let attachment = self
+            .imp()
+            .attach
+            .borrow()
+            .as_ref()
+            .and_then(|handler| handler(&path));
+        match attachment {
+            Some(attachment) => self.add_attachment(attachment),
+            None => self.set_status(NO_ATTACH_PATH),
+        }
+    }
+
+    /// Adds `attachment` to the draft and redraws the list. Counts as an
+    /// edit: autosave and the `changed` handlers see it exactly like a typed
+    /// word, which is what makes the debounce in `postio-own` cover it too.
+    fn add_attachment(&self, attachment: Attachment) {
+        self.imp().draft.borrow_mut().attachments.push(attachment);
+        self.render_attachments();
+        self.refresh();
+    }
+
+    /// Removes the attachment at `index`. What removing a row before send
+    /// does — the acceptance criterion "removing before send cleans up" is
+    /// this and [`Composer::draft`] never seeing it again.
+    fn remove_attachment(&self, index: usize) {
+        let imp = self.imp();
+        if index < imp.draft.borrow().attachments.len() {
+            imp.draft.borrow_mut().attachments.remove(index);
+        }
+        self.render_attachments();
+        self.refresh();
+    }
+
+    /// Rebuilds the attachment rows from the draft's own list, which stays
+    /// the single source of truth — never the widgets, matching how `to`,
+    /// `cc` and `bcc` work the other way around.
+    fn render_attachments(&self) {
+        let imp = self.imp();
+        while let Some(row) = imp.attachments_list.row_at_index(0) {
+            imp.attachments_list.remove(&row);
+        }
+        let attachments = imp.draft.borrow().attachments.clone();
+        for (index, attachment) in attachments.iter().enumerate() {
+            imp.attachments_list
+                .append(&self.build_attachment_row(index, attachment));
+        }
+        imp.attachments_box.set_visible(!attachments.is_empty());
+    }
+
+    /// One row: name, size (flagging one past [`LARGE_ATTACHMENT_BYTES`]),
+    /// and a button to remove it before send.
+    fn build_attachment_row(&self, index: usize, attachment: &Attachment) -> gtk::Widget {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.set_margin_top(4);
+        row.set_margin_bottom(4);
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Attachment: {}",
+            attachment.display_name()
+        ))]);
+
+        let name = gtk::Label::new(Some(attachment.display_name()));
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        name.set_ellipsize(pango::EllipsizeMode::Middle);
+
+        let mut meta_text = format_size(attachment.size);
+        if attachment.size >= LARGE_ATTACHMENT_BYTES {
+            meta_text.push_str(" — large");
+        }
+        let meta = gtk::Label::new(Some(&meta_text));
+        meta.add_css_class("postio-compose-label");
+        meta.add_css_class("dim-label");
+
+        let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
+        remove.add_css_class("flat");
+        remove.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Remove {}",
+            attachment.display_name()
+        ))]);
+        remove.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.remove_attachment(index)
+        ));
+
+        row.append(&name);
+        row.append(&meta);
+        row.append(&remove);
+        row.upcast()
+    }
+
+    /// The attachment list's own row: a header naming the `ctrl+shift+a`
+    /// hint per canvas 2a, and the rows themselves — hidden entirely until
+    /// there is something to show.
+    fn build_attachments(&self) -> gtk::Box {
+        let imp = self.imp();
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let title = gtk::Label::new(Some("Attachments"));
+        title.add_css_class("postio-compose-label");
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+        header.append(&title);
+        header.append(&labelled("Attach another", "C-⇧-A"));
+
+        imp.attachments_list
+            .set_selection_mode(gtk::SelectionMode::None);
+        imp.attachments_list
+            .add_css_class("postio-compose-attachments");
+        imp.attachments_list
+            .set_accessible_role(gtk::AccessibleRole::ListBox);
+
+        imp.attachments_box.append(&header);
+        imp.attachments_box.append(&imp.attachments_list);
+        imp.attachments_box.set_visible(false);
+        imp.attachments_box.clone()
     }
 
     /// Hides whatever else is in the reading pane and remembers the way back.
@@ -678,6 +1013,10 @@ impl Composer {
     fn fill(&self, draft: Draft) {
         let imp = self.imp();
         imp.filling.set(true);
+        // Whatever this draft is replacing, filling the fields is not itself
+        // an edit worth autosaving, and a timer armed for the *previous*
+        // content must not fire against this one.
+        self.cancel_autosave();
 
         imp.to.set_text(&format_list(&draft.to));
         imp.cc.set_text(&format_list(&draft.cc));
@@ -698,6 +1037,7 @@ impl Composer {
         let identity = draft.identity_id;
         *imp.draft.borrow_mut() = draft;
         imp.filling.set(false);
+        self.render_attachments();
 
         // The draft's own identity wins over the account default: an override
         // made before it was closed is still this draft's.
@@ -766,6 +1106,52 @@ impl Composer {
         for handler in imp.changed.borrow().iter() {
             handler(&draft);
         }
+        self.schedule_autosave();
+    }
+
+    /// Arms (or re-arms) the debounced autosave: [`Composer::save`] runs
+    /// again once [`AUTOSAVE_DEBOUNCE`] passes with no further edit.
+    ///
+    /// A source id is not `Clone`, so re-arming always cancels whatever was
+    /// pending first — there is only ever one edit's worth of waiting to do.
+    fn schedule_autosave(&self) {
+        // Not mounted yet: this is `build()`'s own initial layout — setting
+        // the placeholder identity, for instance — not a user editing
+        // anything, and there is nowhere for a save to go yet regardless.
+        if self.imp().window.upgrade().is_none() {
+            return;
+        }
+        self.cancel_autosave();
+        let source = glib::timeout_add_local_once(
+            AUTOSAVE_DEBOUNCE,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move || {
+                    composer.imp().autosave_source.set(None);
+                    composer.save();
+                }
+            ),
+        );
+        self.imp().autosave_source.set(Some(source));
+    }
+
+    /// Drops any pending debounced autosave without running it — for content
+    /// that is about to stop existing (a fresh draft loaded, a discard, a
+    /// send), where firing it later would save the wrong thing.
+    fn cancel_autosave(&self) {
+        if let Some(source) = self.imp().autosave_source.take() {
+            source.remove();
+        }
+    }
+
+    /// Runs a pending debounced autosave immediately instead of letting it
+    /// lapse, and cancels the timer that would otherwise fire it again later.
+    fn flush_autosave(&self) {
+        if let Some(source) = self.imp().autosave_source.take() {
+            source.remove();
+            self.save();
+        }
     }
 
     fn build(&self) {
@@ -831,8 +1217,10 @@ impl Composer {
         column.append(&fields);
         column.append(&scroller);
         column.append(&imp.warning);
+        column.append(&self.build_attachments());
         column.append(&self.build_actions());
         self.set_child(Some(&column));
+        self.install_drop_target();
 
         for entry in [&imp.to, &imp.cc, &imp.bcc, &imp.subject] {
             entry.connect_changed(glib::clone!(
@@ -846,6 +1234,12 @@ impl Composer {
             self,
             move |_| composer.refresh()
         ));
+
+        // Recipient completion, on every field it makes sense for — not
+        // `Subject`, which is not an address.
+        *imp.to_completion.borrow_mut() = Some(Completion::install(self, &imp.to));
+        Completion::install(self, &imp.cc);
+        Completion::install(self, &imp.bcc);
 
         self.set_identities(Vec::new());
         self.refresh();
@@ -955,6 +1349,77 @@ impl Composer {
         row.append(&escape);
         row
     }
+
+    // -- Test support -----------------------------------------------------
+
+    /// Sets the subject field as if the user had typed it, firing the
+    /// entry's own `changed` signal.
+    ///
+    /// This crate's GTK integration tests are a separate compilation unit
+    /// from `src/composer.rs`'s own `#[cfg(test)]` module (GTK needs one
+    /// process per display, so each lives in its own file — see
+    /// `tests/gtk_composer.rs`) and so cannot reach a private field to
+    /// exercise what a keystroke triggers. Not meant for anything but tests.
+    #[doc(hidden)]
+    pub fn test_set_subject(&self, text: &str) {
+        self.imp().subject.set_text(text);
+    }
+
+    /// Types `text` into `To`, firing recipient completion the same way the
+    /// entry's own `changed` signal does for a real keystroke.
+    #[doc(hidden)]
+    pub fn test_set_to(&self, text: &str) {
+        self.imp().to.set_text(text);
+    }
+
+    /// Whether `To`'s completion popover is currently showing suggestions.
+    #[doc(hidden)]
+    pub fn test_recipient_popover_visible(&self) -> bool {
+        self.imp()
+            .to_completion
+            .borrow()
+            .as_ref()
+            .is_some_and(|completion| completion.popover.is_visible())
+    }
+
+    /// Accepts `To`'s currently-selected suggestion, exactly as `Enter` would
+    /// — without synthesizing a real key event, which a test cannot easily do
+    /// for a specific widget's own key controller.
+    #[doc(hidden)]
+    pub fn test_accept_recipient_suggestion(&self) -> bool {
+        let imp = self.imp();
+        let Some(completion) = imp.to_completion.borrow().clone() else {
+            return false;
+        };
+        completion.accept(&imp.to)
+    }
+
+    /// Attaches `path` exactly as [`CommandId::AttachFile`] or a drop would,
+    /// without going through `GtkFileDialog` or GTK's drag machinery — a
+    /// headless test can drive neither. Both real paths converge on the same
+    /// `add_file`, so this exercises what they exercise.
+    #[doc(hidden)]
+    pub fn test_attach_path(&self, path: &std::path::Path) {
+        self.add_file(&gio::File::for_path(path));
+    }
+
+    /// How many attachments the draft currently carries.
+    #[doc(hidden)]
+    pub fn test_attachment_count(&self) -> usize {
+        self.imp().draft.borrow().attachments.len()
+    }
+
+    /// Whether the attachment list is showing at all.
+    #[doc(hidden)]
+    pub fn test_attachments_visible(&self) -> bool {
+        self.imp().attachments_box.is_visible()
+    }
+
+    /// Removes the attachment at `index`, as its row's own button would.
+    #[doc(hidden)]
+    pub fn test_remove_attachment(&self, index: usize) {
+        self.remove_attachment(index);
+    }
 }
 
 /// Installs a composer in `window` and returns it.
@@ -1010,6 +1475,20 @@ fn field_label(text: &str) -> gtk::Label {
     label
 }
 
+/// A human size for an attachment row: `812 B`, `48 KB`, `3.2 MB`.
+fn format_size(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= MIB {
+        format!("{:.1} MB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.0} KB", bytes / KIB)
+    } else {
+        format!("{bytes:.0} B")
+    }
+}
+
 /// A button label with the key that reaches it, as the header bar does it.
 fn labelled(text: &str, key: &str) -> gtk::Widget {
     let label = gtk::Label::new(Some(text));
@@ -1021,6 +1500,175 @@ fn labelled(text: &str, key: &str) -> gtk::Widget {
     row.append(&label);
     row.append(&hint);
     row.upcast()
+}
+
+/// Recipient completion attached to one entry: a popover of suggestions from
+/// [`Composer::connect_recipient_suggestions`], keyboard-navigable and
+/// accepted without ever reaching for the mouse.
+///
+/// One per entry (`To`, `Cc`, `Bcc`) rather than one shared instance, because
+/// a `Popover` is parented to the one widget it points at.
+pub(crate) struct Completion {
+    popover: gtk::Popover,
+    list: gtk::ListBox,
+    /// What `list`'s rows currently show, in the same order, so accepting a
+    /// selected row can look up the address it stands for.
+    candidates: RefCell<Vec<EmailAddress>>,
+}
+
+impl Completion {
+    /// Wires completion onto `entry`. The returned value is not meant to be
+    /// kept: `entry`'s own signal connections hold it alive for as long as
+    /// the entry exists, which for a composer field is the app's lifetime.
+    fn install(composer: &Composer, entry: &gtk::Entry) -> Rc<Self> {
+        let list = gtk::ListBox::new();
+        list.set_selection_mode(gtk::SelectionMode::Browse);
+        list.add_css_class("postio-recipient-suggestions");
+        list.set_accessible_role(gtk::AccessibleRole::ListBox);
+
+        let popover = gtk::Popover::new();
+        // Autohide would take the grab away from the entry the moment the
+        // popover opens, and a completion list that steals the keyboard from
+        // what is still being typed into is worse than no completion at all.
+        popover.set_autohide(false);
+        popover.set_has_arrow(false);
+        popover.set_position(gtk::PositionType::Bottom);
+        popover.add_css_class("postio-recipient-completion");
+        popover.set_child(Some(&list));
+        popover.set_parent(entry);
+
+        let this = Rc::new(Self {
+            popover,
+            list,
+            candidates: RefCell::new(Vec::new()),
+        });
+
+        entry.connect_changed(glib::clone!(
+            #[weak]
+            composer,
+            #[strong]
+            this,
+            move |entry| this.update(&composer, entry)
+        ));
+
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[strong]
+            this,
+            #[weak]
+            entry,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, _| this.handle_key(&entry, key)
+        ));
+        entry.add_controller(keys);
+
+        this
+    }
+
+    /// Re-searches for whatever is now being typed, and shows or hides the
+    /// popover to match.
+    fn update(&self, composer: &Composer, entry: &gtk::Entry) {
+        let text = entry.text();
+        let (_, token) = current_entry(&text);
+        if token.is_empty() {
+            self.popover.popdown();
+            return;
+        }
+        let candidates = {
+            let provider = composer.imp().recipient_suggestions.borrow();
+            match provider.as_ref() {
+                Some(provider) => provider(token),
+                None => return,
+            }
+        };
+        self.populate(candidates);
+    }
+
+    fn populate(&self, candidates: Vec<EmailAddress>) {
+        while let Some(row) = self.list.row_at_index(0) {
+            self.list.remove(&row);
+        }
+        for address in &candidates {
+            let label = gtk::Label::new(Some(&address.to_string()));
+            label.set_xalign(0.0);
+            self.list.append(&label);
+        }
+        let empty = candidates.is_empty();
+        *self.candidates.borrow_mut() = candidates;
+
+        if empty {
+            self.popover.popdown();
+        } else {
+            self.list.select_row(self.list.row_at_index(0).as_ref());
+            if !self.popover.is_visible() {
+                self.popover.popup();
+            }
+        }
+    }
+
+    /// Handles the keys that only mean something while the popover is open;
+    /// everything else falls through to the entry as normal.
+    fn handle_key(&self, entry: &gtk::Entry, key: gdk::Key) -> glib::Propagation {
+        if !self.popover.is_visible() {
+            return glib::Propagation::Proceed;
+        }
+        match key {
+            gdk::Key::Down => {
+                self.move_selection(1);
+                glib::Propagation::Stop
+            }
+            gdk::Key::Up => {
+                self.move_selection(-1);
+                glib::Propagation::Stop
+            }
+            gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::Tab => {
+                if self.accept(entry) {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+            gdk::Key::Escape => {
+                self.popover.popdown();
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
+        }
+    }
+
+    fn move_selection(&self, delta: i32) {
+        let count = self.candidates.borrow().len() as i32;
+        if count == 0 {
+            return;
+        }
+        let current = self.list.selected_row().map(|row| row.index()).unwrap_or(0);
+        let next = (current + delta).rem_euclid(count);
+        if let Some(row) = self.list.row_at_index(next) {
+            self.list.select_row(Some(&row));
+        }
+    }
+
+    /// Replaces the token being typed with the selected suggestion, leaving
+    /// every address typed before it untouched, and leaves a `, ` in place
+    /// for whatever the user types next.
+    fn accept(&self, entry: &gtk::Entry) -> bool {
+        let Some(row) = self.list.selected_row() else {
+            return false;
+        };
+        let Some(address) = self.candidates.borrow().get(row.index() as usize).cloned() else {
+            return false;
+        };
+
+        let text = entry.text();
+        let (start, _) = current_entry(&text);
+        let mut replaced = text.to_string();
+        replaced.replace_range(start.., &format!("{address}, "));
+        entry.set_text(&replaced);
+        entry.set_position(-1);
+        self.popover.popdown();
+        true
+    }
 }
 
 #[cfg(test)]
@@ -1120,5 +1768,51 @@ mod tests {
         let mut fine = draft();
         fine.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
         assert_eq!(recipient_warning(&fine), None);
+    }
+
+    fn source_message() -> Message {
+        let mut message = Message::new(
+            AccountId::new(1),
+            postio_model::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        message.id = postio_model::ids::MessageId::new(42);
+        message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
+        message.to = vec![EmailAddress::new(None::<String>, "grace@example.com")];
+        message.subject = Some("Quarterly numbers".to_owned());
+        message
+    }
+
+    fn account_reading_it() -> Account {
+        let mut account = Account::new(
+            "Test",
+            EmailAddress::new(None::<String>, "grace@example.com"),
+        );
+        account.id = AccountId::new(1);
+        account
+    }
+
+    #[test]
+    fn each_reply_command_maps_to_its_own_draft_kind() {
+        let source = source_message();
+        let account = account_reading_it();
+
+        let reply = reply_draft(CommandId::Reply, &source, &account).expect("a draft");
+        assert_eq!(reply.kind, DraftKind::Reply);
+        assert_eq!(reply.subject, "Re: Quarterly numbers");
+
+        let reply_all = reply_draft(CommandId::ReplyAll, &source, &account).expect("a draft");
+        assert_eq!(reply_all.kind, DraftKind::ReplyAll);
+
+        let forward = reply_draft(CommandId::Forward, &source, &account).expect("a draft");
+        assert_eq!(forward.kind, DraftKind::Forward);
+        assert_eq!(forward.subject, "Fwd: Quarterly numbers");
+    }
+
+    #[test]
+    fn a_command_that_is_not_a_reply_maps_to_nothing() {
+        let source = source_message();
+        let account = account_reading_it();
+        assert!(reply_draft(CommandId::Archive, &source, &account).is_none());
     }
 }

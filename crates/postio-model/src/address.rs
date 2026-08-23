@@ -130,6 +130,34 @@ pub fn format_list(addresses: &[EmailAddress]) -> String {
         .join(", ")
 }
 
+/// The last address in `input`, still being typed — what recipient
+/// completion should search contacts for and, if the user picks one, replace.
+///
+/// Returns `(start, text)`: `text` is the token to search for, and `start` is
+/// its byte offset in `input`, so a caller can replace exactly
+/// `input[start..]` with whatever was chosen and leave every address typed
+/// before it untouched. Splits on the same rules as [`parse_list`] — a comma
+/// or semicolon inside a quoted name or an angle-bracketed address is not a
+/// separator — and the whitespace after a separator is not part of the token:
+/// completing `"Ada <ada@example.com>, gr"` searches for `"gr"` starting where
+/// the letter is, not at the space right after the comma.
+///
+/// ```
+/// use postio_model::address::current_entry;
+/// assert_eq!(current_entry("grace"), (0, "grace"));
+/// assert_eq!(current_entry("ada@example.com, gr"), (17, "gr"));
+/// assert_eq!(current_entry("ada@example.com, "), (17, ""));
+/// ```
+pub fn current_entry(input: &str) -> (usize, &str) {
+    let last = split_list(input).pop().unwrap_or(input);
+    // `last` is a subslice of `input` by construction, so this offset is
+    // sound and is the only way to recover it without `split_list` keeping
+    // more than the borrowed text itself.
+    let start = last.as_ptr() as usize - input.as_ptr() as usize;
+    let trimmed = last.trim_start();
+    (start + (last.len() - trimmed.len()), trimmed)
+}
+
 /// Splits on the separators that are not inside quotes or angle brackets.
 fn split_list(input: &str) -> Vec<&str> {
     let mut entries = Vec::new();
@@ -282,5 +310,56 @@ mod tests {
             let address = EmailAddress::new(None::<String>, bad);
             assert!(!address.is_plausible(), "{bad:?} should not be plausible");
         }
+    }
+
+    #[test]
+    fn current_entry_is_the_whole_field_with_nothing_typed_yet() {
+        assert_eq!(current_entry(""), (0, ""));
+        assert_eq!(current_entry("gr"), (0, "gr"));
+    }
+
+    #[test]
+    fn current_entry_is_only_the_token_after_the_last_separator() {
+        assert_eq!(
+            current_entry("ada@example.com, gr"),
+            (17, "gr"),
+            "the finished first address is not part of what is being typed"
+        );
+        assert_eq!(
+            current_entry("ada@example.com,gr"),
+            (16, "gr"),
+            "no space after the comma is still a separator"
+        );
+        assert_eq!(
+            current_entry("ada@example.com, "),
+            (17, ""),
+            "right after a separator, nothing has been typed yet"
+        );
+    }
+
+    #[test]
+    fn current_entry_does_not_split_inside_a_quoted_name_or_an_address() {
+        assert_eq!(
+            current_entry("\"Hopper, Grace\" <g"),
+            (0, "\"Hopper, Grace\" <g"),
+            "a quoted comma is not a separator"
+        );
+        assert_eq!(
+            current_entry("Ada <ada@example.com>, \"Hopper, Grace\" <g"),
+            (23, "\"Hopper, Grace\" <g")
+        );
+    }
+
+    #[test]
+    fn current_entry_replaces_exactly_what_completion_should_and_nothing_before_it() {
+        let input = "Ada Lovelace <ada@example.com>, gr";
+        let (start, token) = current_entry(input);
+        assert_eq!(token, "gr");
+        let mut replaced = input.to_owned();
+        replaced.replace_range(start.., "Grace Hopper <grace@example.com>");
+        assert_eq!(
+            replaced,
+            "Ada Lovelace <ada@example.com>, Grace Hopper <grace@example.com>"
+        );
     }
 }
