@@ -467,3 +467,133 @@ button.postio-compose {
   font-size: 10.5px;
   color: var(--postio-faint);
 }
+
+/* ── The composer (canvas 2a) ─────────────────────────────────────────
+   Compose takes over the reading pane, so it has to read as a different
+   plane from the message it replaced: `--postio-surface` rather than
+   `--postio-ground`, and hairline rules between the fields exactly as the
+   canvas draws them. Nothing animates — the pane switch is instant, and a
+   composer that slid in would be a composer you waited for. */
+.postio-composer {
+  background-color: var(--postio-surface);
+}
+
+.postio-compose-title {
+  padding: 20px 28px 14px;
+}
+
+.postio-compose-heading {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 20px;
+  color: var(--postio-ink);
+}
+
+/* `draft is in the composer only` — what just happened to the draft, in
+   the metadata face, never louder than the heading it follows. */
+.postio-compose-status,
+.postio-compose-escape {
+  font-family: var(--postio-font-mono);
+  font-size: 11px;
+  color: var(--postio-faint);
+}
+
+.postio-compose-row {
+  padding: 6px 28px;
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+.postio-compose-label {
+  font-family: var(--postio-font-mono);
+  font-size: 11px;
+  color: var(--postio-dim);
+}
+
+/* The fields are the pane, not widgets sitting on it: no frame, no second
+   background, so the hairlines are the only structure and the eye goes to
+   the text. */
+.postio-compose-field,
+.postio-compose-field:focus {
+  background: none;
+  border: none;
+  box-shadow: none;
+  outline: none;
+  min-height: 26px;
+  padding: 0;
+  font-size: 13.5px;
+  color: var(--postio-ink);
+}
+
+/* Focus still has to be visible — it is just drawn as the accent under the
+   field rather than as a box around it. */
+.postio-compose-row:focus-within {
+  box-shadow:
+    inset 0 1px var(--postio-hairline),
+    inset 0 -2px var(--postio-accent);
+}
+
+.postio-compose-identity {
+  font-size: 13.5px;
+  color: var(--postio-ink-secondary);
+}
+
+button.postio-compose-more {
+  font-family: var(--postio-font-mono);
+  font-size: 10.5px;
+  padding: 2px 6px;
+  min-height: 0;
+  color: var(--postio-dim);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-compose-body {
+  padding: 18px 28px;
+  font-size: 14.5px;
+  background: none;
+  color: var(--postio-ink);
+}
+
+.postio-compose-body text {
+  background: none;
+}
+
+/* An address that will not deliver is worth saying out loud, in the one
+   colour the system has for "look at this". */
+.postio-compose-warning {
+  padding: 0 28px 6px;
+  font-family: var(--postio-font-mono);
+  font-size: 11px;
+  color: var(--postio-accent-text);
+}
+
+.postio-compose-actions {
+  padding: 12px 28px 20px;
+}
+
+/* ── Composing dims what it is not ───────────────────────────────────
+   Canvas 2a draws the sidebar and the list at half strength while the
+   composer is open: the list stays put so context never disappears, but
+   the keyboard is unmistakably somewhere else. High contrast is exempt —
+   it exists to raise contrast, and this is the one place the design
+   deliberately lowers it. */
+.postio-shell.composing .postio-sidebar,
+.postio-shell.composing .postio-list {
+  opacity: 0.5;
+}
+
+:root.postio-hc .postio-shell.composing .postio-sidebar,
+:root.postio-hc .postio-shell.composing .postio-list {
+  opacity: 1;
+}
+
+/* The field block closes with a rule, as the canvas draws it: the body is a
+   different kind of thing from the headers above it. */
+.postio-compose-fields {
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-compose-identity button {
+  padding: 2px 8px;
+  min-height: 24px;
+}
