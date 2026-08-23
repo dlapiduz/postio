@@ -226,6 +226,35 @@ fn the_row_draws_the_canvas_anatomy_at_every_density() {
     });
     assert_eq!(hinting.get(), 1, "the key hints belong to exactly one row");
 
+    // A source that answers inside `request` used to take the process down
+    // with it: the delivery emitted `items_changed` while the view was
+    // part-way through its first layout, and GtkListView segfaulted. A fresh
+    // pane, because that first layout is where it happened. The model holds
+    // the delivery now, and this test proves it by continuing to exist.
+    let hasty = MessageListView::new();
+    let hasty_window = gtk::Window::new();
+    style::track(&hasty_window);
+    hasty_window.set_child(Some(&hasty));
+    hasty_window.set_default_size(404, 600);
+    hasty.model().set_source(std::rc::Rc::new(Impatient {
+        total: 300,
+        list: hasty.model(),
+    }));
+    hasty_window.present();
+    frames(&hasty_window, 6);
+    assert_eq!(hasty.model().n_items(), 300);
+    let drawn = std::cell::Cell::new(0);
+    hasty.each_row(|row| {
+        if row.row().is_some() {
+            drawn.set(drawn.get() + 1);
+        }
+    });
+    assert!(
+        drawn.get() > 0,
+        "an impatient source's rows never reached a row widget"
+    );
+    hasty_window.destroy();
+
     // And the density switch re-measures what is already on screen rather
     // than rebuilding it.
     let before: Vec<f32> = heights(&pane);
@@ -250,6 +279,28 @@ fn sample_row(id: i64) -> Row {
         id: MessageId::new(id),
         seen: id % 2 == 0,
         ..canvas_row()
+    }
+}
+
+/// A source that answers before `request` returns, which the contract
+/// forbids and which used to be a segfault rather than a diagnostic.
+struct Impatient {
+    total: u32,
+    list: postio_gtk::list::MessageList,
+}
+
+impl postio_gtk::list::PageSource for Impatient {
+    fn total(&self) -> u32 {
+        self.total
+    }
+
+    fn request(&self, page: u32) {
+        let start = page * postio_gtk::list::PAGE_SIZE;
+        let end = (start + postio_gtk::list::PAGE_SIZE).min(self.total);
+        let rows = (start..end)
+            .map(|index| sample_row(index as i64 + 1))
+            .collect();
+        self.list.deliver(page, rows);
     }
 }
 
