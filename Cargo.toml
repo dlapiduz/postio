@@ -10,6 +10,7 @@ members = [
     "crates/postio-sync",
     "crates/postio-core",
     "crates/postio-gtk",
+    "crates/postio-app",
 ]
 
 [workspace.package]
@@ -28,6 +29,7 @@ postio-imap    = { path = "crates/postio-imap" }
 postio-smtp    = { path = "crates/postio-smtp" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
+postio-gtk     = { path = "crates/postio-gtk" }
 
 [profile.release]
 lto = "thin"

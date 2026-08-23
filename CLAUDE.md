@@ -329,7 +329,10 @@ E12 so the core mail experience lands first.
 ## Architecture
 
 ```
-postio-gtk    GTK4 + libadwaita + WebKitGTK. Widgets, CSS, keymap, palette.
+postio-app    The composition root: opens the store, starts the runtime,
+     |        runs the UI. The only crate that knows both halves exist, and
+     |        the only one that turns on `postio-core/runtime`.
+     +-- postio-gtk    GTK4 + libadwaita + WebKitGTK. Widgets, CSS, keymap.
      |        Command down / Event up. No SQL, no IMAP.
 postio-core   UI-agnostic runtime: command bus, registry, event stream,
      |        app state, undo stack, tokio<->glib bridge.

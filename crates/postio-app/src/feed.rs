@@ -1,0 +1,126 @@
+//! The adapter: `postio-core`'s store, as the frontend's sources.
+//!
+//! Two traits meet here and neither crate can name the other's. `postio-gtk`
+//! asks for rows through [`MessageSource`] and folders through
+//! [`MailboxSource`]; `postio-core` answers through [`MailStore`]. Joining
+//! them is composition, which is what this crate is for — and it is why the
+//! join lives here rather than in either of them.
+//!
+//! # Crossing the two loops
+//!
+//! The frontend's futures are awaited by `glib::spawn_future_local` on the
+//! GTK main context. The store's are tokio futures: they end in
+//! `spawn_blocking`, which needs a tokio runtime to be polled at all. Neither
+//! loop can drive the other.
+//!
+//! So the request is `spawn`ed onto the tokio runtime and the answer comes
+//! back over an `async_channel`, which both loops can wait on. The future the
+//! frontend awaits is a channel receive and nothing more, so the GTK main
+//! loop is never inside a query — which is the rule the whole seam exists to
+//! keep.
+
+use std::rc::Rc;
+use std::sync::Arc;
+
+use postio_core::store::{ListScope, MailStore, PageRequest as StoreRequest};
+use postio_gtk::feed::{
+    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+};
+use postio_gtk::list::Row;
+use postio_model::ids::AccountId;
+
+/// The frontend's two sources, over one store.
+pub struct Sources {
+    store: Arc<dyn MailStore>,
+    /// The runtime the reads are polled on. Cloning a `Handle` is cheap and
+    /// gives another way into the same runtime.
+    runtime: tokio::runtime::Handle,
+}
+
+impl Sources {
+    /// Read `store`, on `runtime`.
+    pub fn new(store: Arc<dyn MailStore>, runtime: tokio::runtime::Handle) -> Rc<Self> {
+        Rc::new(Sources { store, runtime })
+    }
+
+    /// Run `read` on the runtime and hand the answer back over a channel.
+    ///
+    /// One slot: there is exactly one answer, and a sender that cannot block
+    /// is a sender that cannot hold up the runtime.
+    fn ask<T, F>(&self, read: F) -> async_channel::Receiver<Result<T, String>>
+    where
+        T: Send + 'static,
+        F: FnOnce(Arc<dyn MailStore>) -> SendRead<T>,
+    {
+        let (sender, receiver) = async_channel::bounded(1);
+        let future = read(self.store.clone());
+        self.runtime.spawn(async move {
+            let answer = future.await.map_err(|error| error.to_string());
+            let _ = sender.send(answer).await;
+        });
+        receiver
+    }
+}
+
+/// The shape `ask` takes: a `Send` future the runtime can poll.
+type SendRead<T> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<T, postio_core::store::StoreError>> + Send>,
+>;
+
+impl MessageSource for Sources {
+    fn fetch(&self, request: PageRequest) -> PageFuture {
+        let wanted = StoreRequest {
+            scope: ListScope::Mailbox(request.mailbox),
+            offset: request.offset,
+            limit: request.limit,
+        };
+        let answer =
+            self.ask(move |store| Box::pin(async move { store.message_page(wanted).await }));
+        Box::pin(async move {
+            match answer.recv().await {
+                Ok(Ok(page)) => Ok(Page {
+                    total: page.total,
+                    rows: page.rows.into_iter().map(row).collect(),
+                }),
+                Ok(Err(reason)) => Err(reason),
+                // The runtime went away mid-read. Rare, and still worth a
+                // sentence rather than a blank list.
+                Err(_) => Err("the runtime stopped before the page arrived".to_string()),
+            }
+        })
+    }
+}
+
+impl MailboxSource for Sources {
+    fn mailboxes(&self, account: AccountId) -> MailboxFuture {
+        let answer = self.ask(move |store| Box::pin(async move { store.mailboxes(account).await }));
+        Box::pin(async move {
+            match answer.recv().await {
+                Ok(Ok(mailboxes)) => Ok(mailboxes),
+                Ok(Err(reason)) => Err(reason),
+                Err(_) => Err("the runtime stopped before the folders arrived".to_string()),
+            }
+        })
+    }
+}
+
+/// One row, as the list draws it.
+///
+/// Field for field: the two types exist separately so that neither crate has
+/// to depend on the other's, not because they disagree about what a row is.
+fn row(summary: postio_core::store::MessageSummary) -> Row {
+    Row {
+        id: summary.id,
+        thread: summary.thread,
+        from: summary.from,
+        subject: summary.subject,
+        preview: summary.preview,
+        received_at: summary.received_at,
+        seen: summary.seen,
+        flagged: summary.flagged,
+        answered: summary.answered,
+        draft: summary.draft,
+        has_attachments: summary.has_attachments,
+        thread_count: summary.thread_count,
+    }
+}
