@@ -23,6 +23,30 @@
 //! the crate is the seam, the mock, discovery and the keyring — which is all
 //! `postio-sync` needs, and keeps the protocol crate out of its graph.
 //!
+//! # Live tests
+//!
+//! `cargo test -p postio-imap` never touches the network: every live-server
+//! test is `#[ignore]`d, scattered next to the mock-backed tests for the same
+//! operation (`imap_session.rs` for connect and the post-auth capability
+//! re-read, `imap_mailboxes.rs` for folder discovery, `imap_fetch.rs` for
+//! header fetch, `imap_body.rs` for body fetch). None of them name a
+//! provider: they read `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD`
+//! (an app-specific password where the account needs one) from the
+//! environment, resolve server settings from [`discovery`]'s preset table
+//! when the address's domain has a row there, and otherwise fall back to
+//! `POSTIO_TEST_IMAP_HOST`. Run them against any real IMAP account with:
+//!
+//! ```text
+//! POSTIO_TEST_IMAP_USER=you@example.com \
+//! POSTIO_TEST_IMAP_PASSWORD=your-app-specific-password \
+//! cargo test -p postio-imap -- --ignored
+//! ```
+//!
+//! Every live test today only reads (`LIST`, `SELECT`, `FETCH` with
+//! `BODY.PEEK`) and so leaves the account exactly as it found it. A future
+//! live test for a mutating operation (flag store, move, append) must clean
+//! up whatever it creates or changes as part of the same test.
+//!
 //! Development in this repository is test-first: write the failing test,
 //! then the implementation. See `CLAUDE.md`.
 
