@@ -241,6 +241,17 @@ fn map_fetch_stream_error(error: ImapMessageFetchStreamError) -> BackendError {
             context: "the IMAP session".to_owned(),
             reason,
         },
+        // The socket died in the middle of the exchange: the literal stopped
+        // short of the octet count the server announced, or the tagged
+        // response never came. That is the connection failing, not the server
+        // refusing — and the difference decides whether the caller retries,
+        // because `Protocol` is permanent and `Disconnected` is not. Found by
+        // `tests/imap_loopback.rs`, which tears a connection mid-FETCH.
+        error @ (ImapMessageFetchStreamError::ShortBody
+        | ImapMessageFetchStreamError::MissingTagged) => BackendError::Disconnected {
+            context: "a streamed FETCH".to_owned(),
+            reason: error.to_string(),
+        },
         other => BackendError::Protocol {
             reason: other.to_string(),
         },
