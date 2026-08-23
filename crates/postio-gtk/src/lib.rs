@@ -28,6 +28,7 @@
 //!   survives a restart.
 //! - [`header`] — the header bar the canvas draws.
 //! - [`shell`] — the three panes, and the rule for how many of them fit.
+//! - [`sidebar`] — the folders, their counts, and the sync status line.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -48,6 +49,7 @@ pub mod fonts;
 pub mod header;
 pub mod resources;
 pub mod shell;
+pub mod sidebar;
 pub mod startup;
 pub mod state;
 pub mod style;
