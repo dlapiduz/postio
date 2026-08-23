@@ -48,7 +48,7 @@ pub struct CommandSpec {
     /// The human-readable title, as the palette and cheat sheet show it.
     pub title: &'static str,
     /// The built-in binding, in the untyped syntax the keymap resolver parses
-    /// (`"a"`, `"A"`, `"ctrl+k"`, `"gg"`). Overridable via `[keys]`.
+    /// (`"a"`, `"A"`, `"ctrl+k"`, `"g g"`). Overridable via `[keys]`.
     pub default_binding: &'static str,
     /// Secondary bindings for the same command — the arrow keys beside `j`/`k`,
     /// `l` beside `Return`. Not overridable; `[keys]` replaces the primary.
@@ -115,7 +115,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::FirstMessage,
         title: "First message",
-        default_binding: "gg",
+        // The canvas writes this `gg`, vim-style, but a binding *string* spells
+        // a sequence with a space between the chords — that is the syntax both
+        // `postio-config`'s validator and the keymap resolver parse, and `gg`
+        // would be read as a key named "gg", which no keyboard has.
+        default_binding: "g g",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
         destructive: false,
@@ -425,6 +429,24 @@ mod tests {
         assert_eq!(SPECS.len(), CommandId::ALL.len());
         for (spec, id) in SPECS.iter().zip(CommandId::ALL) {
             assert_eq!(spec.id, *id, "registry row out of order at `{id}`");
+        }
+    }
+
+    #[test]
+    fn every_binding_in_the_table_is_one_the_resolver_can_parse() {
+        // A default nobody can press is worse than no default: it silently
+        // costs the command its key. `postio-config` only validates the user's
+        // overrides, so the built-ins need their own check.
+        for spec in all() {
+            for binding in spec.bindings() {
+                assert_eq!(
+                    postio_config::keys::binding_problem(binding),
+                    None,
+                    "`{}` for `{}`",
+                    binding,
+                    spec.id
+                );
+            }
         }
     }
 

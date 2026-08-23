@@ -116,7 +116,7 @@ fn canvas_bindings_win_over_the_spec() {
         ("next_message", "j"),
         ("prev_message", "k"),
         ("prev_view", "h"),
-        ("first_message", "gg"),
+        ("first_message", "g g"),
         ("last_message", "G"),
     ];
     for (id, key) in expected {
