@@ -60,7 +60,7 @@ impl SqliteStore {
             };
             // Both from one connection and one moment, so the rows and the
             // number of them cannot disagree.
-            let total = messages.count(&query)?;
+            let total = count(connection, request.scope, &query)?;
             let rows = messages.page_at(&query, request.offset)?;
 
             let threads = ThreadRepository::new(connection);
@@ -75,11 +75,15 @@ impl SqliteStore {
 
     async fn read_count(&self, scope: ListScope) -> Result<u32, StoreError> {
         self.read(move |connection| {
-            Ok(MessageRepository::new(connection).count(&ListQuery {
-                scope: scope.into(),
-                limit: 0,
-                after: None,
-            })?)
+            count(
+                connection,
+                scope,
+                &ListQuery {
+                    scope: scope.into(),
+                    limit: 0,
+                    after: None,
+                },
+            )
         })
         .await
     }
@@ -115,6 +119,31 @@ impl SqliteStore {
             })
         })
     }
+}
+
+/// How many rows the list would show.
+///
+/// A single mailbox answers from its own cached count rather than by
+/// counting: `count(*)` over a folder is linear in its size, and the message
+/// list asks for the total with *every page* — so a 100,000-message mailbox
+/// paid 12ms per scroll for a number it already had written down. The
+/// `mailboxes.total` column is maintained by `MailboxRepository::recount`
+/// against `deleted_locally = 0`, which is exactly the list query's own
+/// predicate, so the two cannot mean different things.
+///
+/// The account-wide and flagged views still count: there is no column for
+/// them, and neither is on the scrolling hot path.
+fn count(
+    connection: &postio_storage::PooledConnection,
+    scope: ListScope,
+    query: &ListQuery,
+) -> Result<u32, StoreError> {
+    if let ListScope::Mailbox(mailbox) = scope
+        && let Some(counts) = MailboxRepository::new(connection).counts(mailbox)?
+    {
+        return Ok(counts.total);
+    }
+    Ok(MessageRepository::new(connection).count(query)?)
 }
 
 /// Add the thread count a row's badge needs.
