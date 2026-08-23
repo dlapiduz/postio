@@ -2278,6 +2278,7 @@ name = "postio-app"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "chrono",
  "gtk4",
  "libadwaita",
  "postio-core",

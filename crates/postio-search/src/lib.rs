@@ -64,15 +64,21 @@ mod date;
 pub mod error;
 #[cfg(feature = "index")]
 pub mod executor;
+pub mod facets;
+pub mod highlight;
 #[cfg(feature = "index")]
 pub mod index;
 mod parser;
 pub mod query;
+pub mod results;
 mod size;
 
 #[cfg(feature = "index")]
 pub use error::{Error, Result};
 #[cfg(feature = "index")]
-pub use executor::{SearchHit, SearchRequest, SearchResults, TOTAL_HITS_CAP, search};
+pub use executor::{SearchRequest, search};
+pub use facets::{Facets, Refinement, Scope};
+pub use highlight::Highlighted;
 pub use parser::parse;
 pub use query::ParsedQuery;
+pub use results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
