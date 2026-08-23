@@ -582,7 +582,10 @@ pub async fn fetch_body(
 
 /// Stores one decoded body form, skipping an empty one so a message with no
 /// HTML alternative does not get a blob saying so.
-fn put_text(blobs: &BlobStore, text: Option<&str>) -> Result<Option<postio_model::BlobId>> {
+pub(crate) fn put_text(
+    blobs: &BlobStore,
+    text: Option<&str>,
+) -> Result<Option<postio_model::BlobId>> {
     match text {
         Some(text) if !text.is_empty() => Ok(Some(blobs.put(text.as_bytes())?)),
         _ => Ok(None),
