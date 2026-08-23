@@ -8,6 +8,10 @@ HOOK = "/home/diego/src/postio/.claude/hooks/guard-shared-tree.py"
 
 DENY = [
     "git reset --hard",
+    "git reset HEAD~1",
+    "git reset",
+    "git reset --soft HEAD~1",
+    "git reset --mixed origin/main",
     "cd /tmp && git reset --hard HEAD~1",
     "git stash",
     "git stash push -m wip",
@@ -24,8 +28,6 @@ DENY = [
     "git rebase -i HEAD~3",
     "cargo test && git push",
     # Learned since this guard was last live:
-    "git commit -- crates/postio-core",
-    "git commit -m 'wip' -- crates/postio-core/src/lib.rs",
     "cargo fmt -p postio-gtk",
     "cargo fmt -p postio-core",
 ]
@@ -35,6 +37,13 @@ ALLOW = [
     "git commit -m 'feat(core): add thing'",
     "cargo fmt --all --check",
     "git stash list",
+    "git reset -- crates/postio-core/src/lib.rs",
+    "git reset HEAD -- crates/postio-core",
+    "git restore --staged crates/postio-core/src/lib.rs",
+    # The shared index makes add+commit racy; these are the safe forms now.
+    "git commit --only crates/postio-core -m 'feat: x'",
+    "git commit -- crates/postio-core",
+    "git commit -m 'wip' -- crates/postio-core/src/lib.rs",
     "git stash show",
     "cargo test --workspace",
     "git status",
