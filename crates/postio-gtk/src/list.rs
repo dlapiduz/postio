@@ -181,6 +181,12 @@ mod imp {
         pub recent: RefCell<VecDeque<u32>>,
         /// Pages already asked for and not yet delivered.
         pub pending: RefCell<HashSet<u32>>,
+        /// Whether the model is part-way through answering `item()`.
+        ///
+        /// See [`super::MessageList::hold`]: anything that would emit
+        /// `items_changed` while this is set waits for the next turn of the
+        /// main loop instead.
+        pub reading: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -202,7 +208,14 @@ mod imp {
         }
 
         fn item(&self, position: u32) -> Option<glib::Object> {
-            self.obj().row_at(position).map(|row| row.upcast())
+            // `row_at` may ask the source for a page, and a source that
+            // answers before it returns would change the model from inside
+            // this call. Marking the read is what lets those changes be
+            // held until it is over.
+            let outer = self.reading.replace(true);
+            let row = self.obj().row_at(position);
+            self.reading.set(outer);
+            row.map(|row| row.upcast())
         }
     }
 }
@@ -225,10 +238,42 @@ impl MessageList {
         Self::default()
     }
 
+    /// Whether the model is part-way through answering `item()`.
+    ///
+    /// `PageSource::request` is called from inside the model answering
+    /// `item()` — that is the whole design, and it is what keeps the fetch
+    /// off the read path. What it also means is that a source which delivers
+    /// before returning changes the model while a view is part-way through
+    /// reading it. `GtkListView` does not survive that: it segfaults, with no
+    /// message, a long way from the mistake that caused it.
+    ///
+    /// The contract already says answers arrive later, and a real source —
+    /// a repository call marshalled through the `postio-core` bridge —
+    /// cannot answer any sooner. But a test double, a bench or the next view
+    /// written in a hurry can, and taking the process down is a
+    /// disproportionate punishment for it. So the change is held for one turn
+    /// of the main loop, by which time the read is over and it is merely
+    /// late.
+    fn reading(&self) -> bool {
+        self.imp().reading.get()
+    }
+
+    /// Re-run `action` on the next turn of the main loop. See [`reading`].
+    ///
+    /// [`reading`]: Self::reading
+    fn hold(&self, action: impl FnOnce(&MessageList) + 'static) {
+        let list = self.clone();
+        glib::idle_add_local_once(move || action(&list));
+    }
+
     /// Point the list at a new query: a different folder, or a search.
     ///
     /// Everything cached is dropped — it answered a different question.
     pub fn set_source(&self, source: Rc<dyn PageSource>) {
+        if self.reading() {
+            self.hold(move |list| list.set_source(source));
+            return;
+        }
         let imp = self.imp();
         let removed = imp.total.get();
         let total = source.total();
@@ -247,6 +292,10 @@ impl MessageList {
     /// Rows already resident for the same message keep their `GObject`, so a
     /// redelivered page does not invalidate anything holding onto them.
     pub fn deliver(&self, page: u32, rows: Vec<Row>) {
+        if self.reading() {
+            self.hold(move |list| list.deliver(page, rows));
+            return;
+        }
         let imp = self.imp();
         imp.pending.borrow_mut().remove(&page);
 
@@ -292,6 +341,10 @@ impl MessageList {
     ///
     /// [`inserted_at_top`]: Self::inserted_at_top
     pub fn set_total(&self, total: u32) {
+        if self.reading() {
+            self.hold(move |list| list.set_total(total));
+            return;
+        }
         let imp = self.imp();
         let previous = imp.total.get();
         if previous == total {
@@ -317,6 +370,10 @@ impl MessageList {
     /// moves the selection down with the row it is on and the view keeps its
     /// scroll anchor.
     pub fn inserted_at_top(&self, count: u32) {
+        if self.reading() {
+            self.hold(move |list| list.inserted_at_top(count));
+            return;
+        }
         if count == 0 {
             return;
         }
@@ -333,8 +390,19 @@ impl MessageList {
     /// Cheap and local — the row keeps its `GObject` and its position, so
     /// nothing reloads and nothing loses its place. Returns whether the row
     /// was resident; a message that is not on screen needs no update, because
-    /// its page will be fetched fresh when it is.
+    /// its page will be fetched fresh when it is. A call made while the model
+    /// is answering `item()` is held (see [`hold`](Self::hold)) and reports
+    /// `false`, because by then the answer is not yet knowable.
     pub fn update_row(&self, row: Row) -> bool {
+        if self.reading() {
+            self.hold(move |list| {
+                list.update_row(row);
+            });
+            // Held, so whether the row was resident is not yet knowable.
+            // The caller learns nothing, which is honest — and no caller
+            // that goes through `crate::feed` asks.
+            return false;
+        }
         let imp = self.imp();
         let found = imp.pages.borrow().iter().find_map(|(page, items)| {
             let index = items.iter().position(|item| item.id() == Some(row.id))?;
@@ -354,6 +422,10 @@ impl MessageList {
     ///
     /// The blunt instrument, for when the order itself changed.
     pub fn invalidate(&self) {
+        if self.reading() {
+            self.hold(|list| list.invalidate());
+            return;
+        }
         let imp = self.imp();
         imp.pages.borrow_mut().clear();
         imp.recent.borrow_mut().clear();

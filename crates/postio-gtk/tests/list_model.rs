@@ -462,3 +462,86 @@ fn the_model_can_say_which_page_holds_a_message() {
         "a message whose page is not resident has no page to refetch"
     );
 }
+
+/// A source that answers inside `request`, which the contract forbids and
+/// which a real one cannot do — but a test double, a bench or a second view
+/// written in a hurry can, and used to take the process down with it.
+struct Impatient {
+    total: u32,
+    list: RefCell<Option<MessageList>>,
+}
+
+impl PageSource for Impatient {
+    fn total(&self) -> u32 {
+        self.total
+    }
+
+    fn request(&self, page: u32) {
+        let Some(list) = self.list.borrow().clone() else {
+            return;
+        };
+        let start = page * PAGE_SIZE;
+        let end = (start + PAGE_SIZE).min(self.total);
+        list.deliver(page, (start..end).map(row).collect());
+    }
+}
+
+#[test]
+fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
+    // `request` is called from inside the model answering `item()`, so a
+    // delivery made there would emit `items_changed` while a view is
+    // mid-read. GtkListView does not survive that — it segfaults, with no
+    // message and a long way from the mistake. So the model holds the
+    // delivery until the read is over rather than trusting the contract.
+    let source = Rc::new(Impatient {
+        total: 120,
+        list: RefCell::new(None),
+    });
+    let list = MessageList::new();
+    *source.list.borrow_mut() = Some(list.clone());
+    list.set_source(source.clone());
+
+    let reading = Rc::new(std::cell::Cell::new(false));
+    let during = Rc::new(std::cell::Cell::new(false));
+    list.connect_items_changed({
+        let reading = reading.clone();
+        let during = during.clone();
+        move |_, _, _, _| {
+            if reading.get() {
+                during.set(true);
+            }
+        }
+    });
+
+    reading.set(true);
+    let first = list.item(0).and_downcast::<MessageRow>().unwrap();
+    reading.set(false);
+
+    assert!(
+        !during.get(),
+        "the model told the world its rows changed while it was handing one out"
+    );
+    assert!(
+        !first.is_loaded(),
+        "a position answered with data the view had not been told about yet"
+    );
+
+    // The held delivery lands on the next turn of the main loop, and the
+    // rows are the rows that were asked for.
+    for _ in 0..8 {
+        while glib::MainContext::default().iteration(false) {}
+    }
+    assert!(
+        list.item(0)
+            .and_downcast::<MessageRow>()
+            .is_some_and(|item| item.is_loaded()),
+        "an impatient source's rows never arrived at all"
+    );
+    assert_eq!(
+        list.item(3)
+            .and_downcast::<MessageRow>()
+            .and_then(|item| item.row())
+            .and_then(|row| row.subject),
+        Some("message 3".to_string())
+    );
+}
