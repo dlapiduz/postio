@@ -317,3 +317,111 @@ button.postio-compose {
   border: 1px solid var(--postio-selected-border);
   color: var(--postio-faint);
 }
+
+/* ── Settings (canvas 3f) ────────────────────────────────────────────
+   The panel and the file are the same thing: a plate over the raw TOML,
+   the folder list's own selected-row treatment for its section nav, and a
+   validity line where a save button would otherwise go. No transition — an
+   overlay, same as the palette and the cheat sheet. Measurements
+   (`NAV_WIDTH`, `BODY_HEIGHT`) are Rust constants in `src/settings.rs`,
+   applied as size requests rather than CSS, the way `shell.rs` sizes its
+   panes — this file is colour, spacing and type only. */
+.postio-settings {
+  min-width: 640px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.postio-settings-header {
+  min-height: 42px;
+  padding: 0 16px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-settings-path {
+  font-family: var(--postio-font-mono);
+  font-size: 11px;
+  color: var(--postio-ink-secondary);
+}
+
+/* The same chip vocabulary the query bar uses for an operator: a small
+   labelled tag, not a bespoke pill. */
+.postio-settings-tag {
+  font-family: var(--postio-font-mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* No dedicated error colour exists in the design system (`.postio-status`
+   uses the accent for its failing state too); this follows the same rule
+   rather than inventing a red. */
+.postio-settings-tag.invalid {
+  background: none;
+  border: 1px solid var(--postio-accent);
+  color: var(--postio-accent-text);
+}
+
+.postio-settings-nav {
+  padding: 12px 0;
+  box-shadow: inset -1px 0 var(--postio-hairline);
+}
+
+.postio-settings-nav-list {
+  background: none;
+}
+
+/* The sidebar's own folder-row treatment: one selection idiom across the
+   application, not two. */
+.postio-settings-nav-row {
+  min-height: 28px;
+  padding: 0 17px;
+  border-left: 3px solid transparent;
+}
+
+.postio-settings-nav-row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-nav-row:selected {
+  padding-left: 14px;
+  border-left: 3px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+}
+
+.postio-settings-nav-row label {
+  font-size: 12.5px;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-nav-row:selected label {
+  font-weight: 500;
+  color: var(--postio-selected-accent-text);
+}
+
+.postio-settings-view {
+  padding: 14px 18px;
+  background-color: var(--postio-ground);
+}
+
+.postio-settings-view text {
+  font-family: var(--postio-font-mono);
+  font-size: 12px;
+  color: var(--postio-ink);
+  background: none;
+}
+
+/* `parsed in 2 ms · applied live · nothing to save` — the validity line
+   that replaces OK/Cancel. */
+.postio-settings-footer {
+  min-height: 38px;
+  padding: 0 16px;
+  box-shadow: inset 0 1px var(--postio-hairline);
+  font-family: var(--postio-font-mono);
+  font-size: 10.5px;
+  color: var(--postio-faint);
+}

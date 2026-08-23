@@ -1,0 +1,139 @@
+//! The settings panel on a real display: it shows the real file, `Escape`
+//! closes it, typing is validated as you type, and an edit writes back to
+//! disk and comes back around live through the same watcher `$EDITOR` uses.
+//!
+//! Its own file: GTK is single-threaded and initialised once, so one
+//! `#[test]` per integration binary. See `gtk_cheatsheet.rs`.
+//!
+//! Section navigation and the validity-line formatting are unit-tested in
+//! `src/settings.rs` with no display. What needs one here is the widget
+//! around them, and the seam with the rest of the running app: that the
+//! panel's own write reaches `crate::config`'s watcher exactly the way a
+//! hand save does — `gtk_live_config.rs` already proves that watcher rebinds
+//! a running keymap, so reusing its `binding` helper here is the proof that
+//! the panel is not a second, parallel path to the same file.
+
+use std::time::{Duration, Instant};
+
+use gtk::gdk;
+use gtk::prelude::*;
+use postio_core::CommandId;
+use postio_gtk::window::Window;
+use postio_gtk::{app, fonts, style};
+
+/// How long to give the write debounce and the watcher's own debounce
+/// together. Generous: this is a correctness check, not a latency budget.
+const PATIENCE: Duration = Duration::from_secs(5);
+
+/// Runs the main loop until `condition` holds, or gives up.
+fn wait_until(condition: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + PATIENCE;
+    while Instant::now() < deadline {
+        while glib::MainContext::default().iteration(false) {}
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+fn settle() {
+    while glib::MainContext::default().iteration(false) {}
+}
+
+/// The binding the window currently has for a command, as the cheat sheet
+/// would print it — which is the live keymap, not the registry default.
+fn binding(window: &Window, id: CommandId) -> Option<String> {
+    window
+        .cheatsheet()
+        .sections()
+        .into_iter()
+        .flat_map(|section| section.rows)
+        .find(|row| row.id == id)
+        .and_then(|row| row.binding)
+}
+
+#[test]
+fn the_settings_panel_edits_the_file_in_place() {
+    let root = std::env::temp_dir().join(format!("postio-settings-{}", std::process::id()));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    let original = "# a hand-written comment, above the key it explains\n[keys]\narchive = \"a\"\n\n[ui]\ndensity = \"compact\"\n";
+    std::fs::write(&path, original).unwrap();
+
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+
+    // ── loading shows the real file, byte for byte ─────────────────────────
+    assert_eq!(
+        window.settings().text(),
+        original,
+        "the panel and the file are the same thing"
+    );
+    assert!(window.settings().is_valid());
+    assert!(!window.settings().is_visible(), "closed until asked for");
+
+    // ── opening and Escape to close ─────────────────────────────────────────
+    window.open_settings();
+    settle();
+    assert!(window.settings().is_visible());
+
+    window.handle_key(gdk::Key::Escape, gdk::ModifierType::empty());
+    settle();
+    assert!(!window.settings().is_visible(), "Escape closes it");
+
+    window.open_settings();
+    settle();
+
+    // ── typing is validated as you type, before any write settles ─────────
+    window.settings().set_text("[keys\narchive = \"a\"\n");
+    settle();
+    assert!(
+        !window.settings().is_valid(),
+        "broken TOML shows invalid immediately"
+    );
+
+    // ── an edit writes back to disk, preserving the rest of the file ──────
+    let edited = "# a hand-written comment, above the key it explains\n[keys]\narchive = \"y\"\n\n[ui]\ndensity = \"compact\"\n";
+    window.settings().set_text(edited);
+    settle();
+    assert!(window.settings().is_valid());
+    assert!(
+        wait_until(|| std::fs::read_to_string(&path).unwrap_or_default() == edited),
+        "the edit never reached disk: got {:?}",
+        std::fs::read_to_string(&path)
+    );
+
+    // ── and it is applied live, through the same watcher `$EDITOR` uses ────
+    assert!(
+        wait_until(|| binding(&window, CommandId::Archive).as_deref() == Some("y")),
+        "the panel's own write never came back around through the config watcher"
+    );
+    assert_eq!(
+        binding(&window, CommandId::Archive).as_deref(),
+        Some("y"),
+        "not still the value from before the edit"
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}

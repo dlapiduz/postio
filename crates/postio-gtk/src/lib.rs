@@ -42,6 +42,8 @@
 //!   own thread to the main context, where the widgets are.
 //! - [`search`] — the `/` query bar: operators drawn as chips over the query
 //!   they were parsed from, and Backspace that pops one whole.
+//! - [`settings`] — the settings panel: canvas 3f, `config.toml` edited in
+//!   place, with a validity line instead of a save button.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -68,6 +70,7 @@ pub mod palette;
 pub mod reader;
 pub mod resources;
 pub mod search;
+pub mod settings;
 pub mod shell;
 pub mod sidebar;
 pub mod startup;

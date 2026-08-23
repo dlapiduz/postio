@@ -91,12 +91,30 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
 
         let window = Window::new(app);
         crate::config::install(&window);
+        install_actions(app, &window);
         timeline.mark(Phase::Window);
         report_first_frame(&window, app, &timeline);
         window.present();
     });
 
     app
+}
+
+/// Wires the actions the header's main menu already refers to.
+///
+/// The menu (`header::build`) has named `app.preferences` since before there
+/// was anything behind it; this is that connection. `app.about` and
+/// `win.show-help-overlay` are still unbound — out of scope here, and each
+/// one clicks the menu into doing nothing rather than crashing, which is why
+/// nothing noticed until now.
+fn install_actions(app: &adw::Application, window: &Window) {
+    let preferences = gio::SimpleAction::new("preferences", None);
+    preferences.connect_activate(glib::clone!(
+        #[weak]
+        window,
+        move |_, _| window.toggle_settings()
+    ));
+    app.add_action(&preferences);
 }
 
 /// Make the bundled icon resolvable by name, and adopt it as the default.
