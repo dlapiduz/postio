@@ -58,6 +58,7 @@ pub mod context;
 pub mod dispatch;
 pub mod event;
 pub mod registry;
+pub mod state;
 
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{Command, CommandId, MessageTarget, UnknownCommand};
@@ -65,3 +66,4 @@ pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event};
 pub use registry::{CommandSpec, Recovery};
+pub use state::{AppState, SharedState, ViewMode};
