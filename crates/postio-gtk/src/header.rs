@@ -14,6 +14,9 @@
 //! rest of the actions arrive with their own beads.
 
 use adw::prelude::*;
+
+use crate::finder;
+
 /// How wide the search field is allowed to get, from the canvas.
 pub const SEARCH_MAX_WIDTH: i32 = 600;
 
@@ -34,9 +37,11 @@ pub struct Header {
     pub bar: adw::HeaderBar,
     /// Shows and hides the sidebar.
     pub sidebar_toggle: gtk::ToggleButton,
-    /// The search field. The query bar with token chips replaces its innards
-    /// in E7.7; this is the field the canvas draws.
-    pub search: gtk::Text,
+    /// The one box: search mail, run a command, jump to a folder.
+    ///
+    /// Canvas 1b draws it at rest and 2b draws it active; they are the same
+    /// field. [`crate::finder::Finder`] drives it.
+    pub search: finder::Field,
     /// `Compose c`, wired to the `win.compose` action.
     pub compose: gtk::Button,
 }
@@ -81,14 +86,21 @@ pub fn build() -> Header {
     }
 }
 
-/// The search field: accent magnifier, placeholder, and the `/` that opens it.
+/// The one box: accent magnifier, mode marker, chips, text, and the `/` cap.
 ///
 /// Built out of a `GtkText` in a styled box rather than a `GtkSearchEntry`,
-/// because the canvas puts a key hint inside the field and an entry only has
-/// room for icons.
-fn search_field() -> (gtk::Widget, gtk::Text) {
+/// because the canvas puts a key hint and the query's chips inside the field
+/// and an entry has room for neither.
+fn search_field() -> (gtk::Widget, finder::Field) {
     let icon = gtk::Image::from_icon_name("system-search-symbolic");
     icon.add_css_class("postio-search-icon");
+
+    // Shown in place of the magnifier once a prefix has chosen a mode, so
+    // which question the box is asking is visible without reading the text.
+    let marker = gtk::Label::new(None);
+    marker.add_css_class("postio-search-marker");
+    marker.set_visible(false);
+    marker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
     let text = gtk::Text::builder()
         .placeholder_text("Search all mail")
@@ -105,22 +117,30 @@ fn search_field() -> (gtk::Widget, gtk::Text) {
     hint.set_accessible_role(gtk::AccessibleRole::Presentation);
 
     // `space-2` from the design system, rounded to the pixel GTK works in.
-    let field = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    field.add_css_class("postio-search");
-    field.append(&icon);
-    field.append(&text);
-    field.append(&hint);
+    let frame = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    frame.add_css_class("postio-search");
+    frame.append(&icon);
+    frame.append(&marker);
+    frame.append(&text);
+    frame.append(&hint);
 
     // Not `AdwClamp`: it centres its child, and the canvas has the field
     // flush against the sidebar toggle. Start-aligned and non-expanding gives
     // the same cap without the centring.
-    field.set_halign(gtk::Align::Start);
-    field.set_valign(gtk::Align::Center);
-    field.set_hexpand(false);
+    frame.set_halign(gtk::Align::Start);
+    frame.set_valign(gtk::Align::Center);
+    frame.set_hexpand(false);
     // The canvas' 16px gap between the sidebar toggle and the field.
-    field.set_margin_start(16);
+    frame.set_margin_start(16);
 
-    (field.upcast(), text)
+    let field = finder::Field {
+        frame: frame.clone(),
+        icon,
+        marker,
+        text,
+        hint,
+    };
+    (frame.upcast(), field)
 }
 
 /// `Keys ?` — the cheat sheet, which arrives in E6.

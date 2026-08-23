@@ -1,4 +1,4 @@
-//! The `Ctrl+K` command palette.
+//! Finding a command: fuzzy matching over the command registry.
 //!
 //! # Why it exists
 //!
@@ -16,9 +16,11 @@
 //! unit-tested with no display and no GTK main loop, which is also what makes
 //! the 16 ms budget measurable rather than a hope.
 //!
-//! [`Palette`] is the widget around them. It rebuilds its rows from `entries`
-//! on every keystroke, which is affordable because the registry is a few dozen
-//! rows: no incremental diffing, no stale state, nothing to get out of step.
+//! There is no `Palette` widget any more. `postio-cfd.1` folded the palette
+//! and the query bar into one box — [`crate::finder`] — which is where these
+//! rows are now drawn, on every keystroke. That is affordable because the
+//! registry is a few dozen rows: no incremental diffing, no stale state,
+//! nothing to get out of step.
 //!
 //! # What the rows say
 //!
@@ -26,9 +28,6 @@
 //! arrangement the canvas uses for the key hints on a focused row, so a key
 //! learned in the palette looks the same when it appears in the list.
 
-use adw::prelude::*;
-use adw::subclass::prelude::*;
-use gtk::glib;
 use postio_core::{CommandId, Context, Keymap, registry};
 
 /// How many rows the palette will show at once.
@@ -205,320 +204,12 @@ pub fn entries(keymap: &Keymap, context: Context, query: &str) -> Vec<Entry> {
     found
 }
 
-// ---------------------------------------------------------------------------
-// The widget
-// ---------------------------------------------------------------------------
-
-/// What to call when the user picks a command.
-type ActivateHandler = Box<dyn Fn(CommandId)>;
-
-mod imp {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    pub struct Palette {
-        pub search: gtk::SearchEntry,
-        pub list: gtk::ListBox,
-        pub empty: gtk::Label,
-        pub scroller: gtk::ScrolledWindow,
-        pub keymap: RefCell<Keymap>,
-        pub context: RefCell<Context>,
-        pub shown: RefCell<Vec<CommandId>>,
-        pub activated: RefCell<Vec<ActivateHandler>>,
-        pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
-    }
-
-    impl Default for Palette {
-        fn default() -> Self {
-            Self {
-                search: gtk::SearchEntry::new(),
-                list: gtk::ListBox::new(),
-                empty: gtk::Label::new(None),
-                scroller: gtk::ScrolledWindow::new(),
-                keymap: RefCell::new(Keymap::default()),
-                context: RefCell::new(Context::List),
-                shown: RefCell::new(Vec::new()),
-                activated: RefCell::new(Vec::new()),
-                dismissed: RefCell::new(Vec::new()),
-            }
-        }
-    }
-
-    #[glib::object_subclass]
-    impl ObjectSubclass for Palette {
-        const NAME: &'static str = "PostioPalette";
-        type Type = super::Palette;
-        type ParentType = adw::Bin;
-    }
-
-    impl ObjectImpl for Palette {
-        fn constructed(&self) {
-            self.parent_constructed();
-            self.obj().build();
-        }
-    }
-
-    impl WidgetImpl for Palette {}
-    impl BinImpl for Palette {}
-}
-
-glib::wrapper! {
-    /// The `Ctrl+K` overlay: type, pick, run.
-    pub struct Palette(ObjectSubclass<imp::Palette>)
-        @extends adw::Bin, gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
-}
-
-impl Default for Palette {
-    fn default() -> Self {
-        glib::Object::new()
-    }
-}
-
-impl Palette {
-    /// An empty palette over the registry defaults.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The bindings to show beside each command.
-    ///
-    /// Call this whenever `[keys]` changes; the rows are rebuilt from it.
-    pub fn set_keymap(&self, keymap: Keymap) {
-        *self.imp().keymap.borrow_mut() = keymap;
-        self.refresh();
-    }
-
-    /// The context to filter commands by.
-    pub fn set_context(&self, context: Context) {
-        *self.imp().context.borrow_mut() = context;
-        self.refresh();
-    }
-
-    /// The commands currently listed, best first.
-    pub fn visible(&self) -> Vec<CommandId> {
-        self.imp().shown.borrow().clone()
-    }
-
-    /// The query as typed.
-    pub fn query(&self) -> String {
-        self.imp().search.text().to_string()
-    }
-
-    /// Types a query, as though the user had.
-    pub fn set_query(&self, query: &str) {
-        self.imp().search.set_text(query);
-    }
-
-    /// The row the user would run by pressing Enter.
-    pub fn selected(&self) -> Option<CommandId> {
-        let index = self.imp().list.selected_row()?.index();
-        self.imp().shown.borrow().get(index as usize).copied()
-    }
-
-    /// Moves the selection by `delta` rows, stopping at either end.
-    ///
-    /// The palette owns arrow-key navigation rather than letting the list box
-    /// have it, because focus stays in the search entry the whole time — the
-    /// user is still typing.
-    pub fn move_selection(&self, delta: i32) {
-        let count = self.imp().shown.borrow().len() as i32;
-        if count == 0 {
-            return;
-        }
-        let current = self
-            .imp()
-            .list
-            .selected_row()
-            .map(|row| row.index())
-            .unwrap_or(0);
-        let next = (current + delta).clamp(0, count - 1);
-        if let Some(row) = self.imp().list.row_at_index(next) {
-            self.imp().list.select_row(Some(&row));
-            row.grab_focus();
-            self.imp().search.grab_focus();
-        }
-    }
-
-    /// Runs the selected command, if there is one.
-    pub fn activate_selected(&self) {
-        let Some(id) = self.selected() else {
-            return;
-        };
-        for handler in self.imp().activated.borrow().iter() {
-            handler(id);
-        }
-    }
-
-    /// Called with the command the user picked.
-    pub fn connect_activated(&self, handler: impl Fn(CommandId) + 'static) {
-        self.imp().activated.borrow_mut().push(Box::new(handler));
-    }
-
-    /// Called when the user presses `Escape`.
-    pub fn connect_dismissed(&self, handler: impl Fn() + 'static) {
-        self.imp().dismissed.borrow_mut().push(Box::new(handler));
-    }
-
-    /// Clears the query and puts the cursor in the entry.
-    ///
-    /// What `Ctrl+K` does. The query is *not* remembered between openings: a
-    /// palette that reopens showing the last search is one the user has to
-    /// clear before they can use it.
-    pub fn focus_search(&self) {
-        self.imp().search.set_text("");
-        self.imp().search.grab_focus();
-        self.refresh();
-    }
-
-    fn dismiss(&self) {
-        for handler in self.imp().dismissed.borrow().iter() {
-            handler();
-        }
-    }
-
-    fn build(&self) {
-        let imp = self.imp();
-        self.add_css_class("postio-palette");
-
-        imp.search.set_placeholder_text(Some("Run a command…"));
-        imp.search.add_css_class("postio-search");
-
-        imp.list.set_selection_mode(gtk::SelectionMode::Single);
-        imp.list.add_css_class("postio-palette-list");
-        imp.list.set_activate_on_single_click(true);
-
-        imp.empty.set_label("No matching command");
-        imp.empty.add_css_class("postio-palette-empty");
-        imp.empty.set_visible(false);
-
-        imp.scroller.set_child(Some(&imp.list));
-        imp.scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.scroller.set_vexpand(true);
-        imp.scroller.set_max_content_height(360);
-        imp.scroller.set_propagate_natural_height(true);
-
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&imp.search);
-        column.append(&imp.empty);
-        column.append(&imp.scroller);
-        self.set_child(Some(&column));
-        self.set_halign(gtk::Align::Center);
-        self.set_valign(gtk::Align::Start);
-
-        // `changed`, not `search-changed`: the latter debounces by 150 ms,
-        // which is right for a search that hits a database and wrong for a list
-        // of thirty rows already in memory. The bead asks that it filter
-        // instantly, and instantly is what a keystroke costs here.
-        imp.search.connect_changed(glib::clone!(
-            #[weak(rename_to = palette)]
-            self,
-            move |_| palette.refresh()
-        ));
-
-        imp.list.connect_row_activated(glib::clone!(
-            #[weak(rename_to = palette)]
-            self,
-            move |_, row| {
-                let index = row.index() as usize;
-                let id = palette.imp().shown.borrow().get(index).copied();
-                if let Some(id) = id {
-                    for handler in palette.imp().activated.borrow().iter() {
-                        handler(id);
-                    }
-                }
-            }
-        ));
-
-        // The search entry keeps focus, so the keys that drive the list have to
-        // be caught before it consumes them.
-        let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = palette)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, _| match key {
-                gtk::gdk::Key::Down => {
-                    palette.move_selection(1);
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Up => {
-                    palette.move_selection(-1);
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
-                    palette.activate_selected();
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Escape => {
-                    palette.dismiss();
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
-            }
-        ));
-        imp.search.add_controller(keys);
-
-        self.refresh();
-    }
-
-    /// Rebuilds the rows from the current query.
-    ///
-    /// Whole-list rebuild on every keystroke: the registry is a few dozen rows,
-    /// so this is microseconds, and it cannot leave a stale row behind the way
-    /// an incremental update can.
-    fn refresh(&self) {
-        let imp = self.imp();
-        let query = imp.search.text().to_string();
-        let found = entries(&imp.keymap.borrow(), *imp.context.borrow(), &query);
-
-        while let Some(row) = imp.list.first_child() {
-            imp.list.remove(&row);
-        }
-        for entry in &found {
-            imp.list.append(&row_for(entry));
-        }
-
-        let empty = found.is_empty();
-        imp.empty.set_visible(empty);
-        imp.scroller.set_visible(!empty);
-
-        *imp.shown.borrow_mut() = found.iter().map(|entry| entry.id).collect();
-        if let Some(first) = imp.list.row_at_index(0) {
-            imp.list.select_row(Some(&first));
-        }
-    }
-}
-
-fn row_for(entry: &Entry) -> gtk::ListBoxRow {
-    let row = gtk::ListBoxRow::new();
-    row.add_css_class("postio-palette-row");
-
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let title = gtk::Label::new(None);
-    title.set_markup(&highlight(entry.title, &entry.positions));
-    title.set_xalign(0.0);
-    title.set_hexpand(true);
-    title.add_css_class("postio-palette-title");
-    line.append(&title);
-
-    if let Some(binding) = &entry.binding {
-        let hint = gtk::Label::new(Some(binding));
-        hint.add_css_class("postio-keyhint");
-        line.append(&hint);
-    }
-
-    row.set_child(Some(&line));
-    row.set_tooltip_text(Some(entry.id.as_str()));
-    row
-}
-
-/// Bolds the characters the query matched.
-fn highlight(title: &str, positions: &[usize]) -> String {
+/// `title` as Pango markup, with the matched characters in bold.
+///
+/// Escaped as it goes: a command title is static text from the registry
+/// today, but a folder name is not, and markup assembled from a name the
+/// server chose is a hole waiting to be found.
+pub fn highlight(title: &str, positions: &[usize]) -> String {
     let mut out = String::with_capacity(title.len() + positions.len() * 7);
     for (index, character) in title.char_indices() {
         let escaped = glib::markup_escape_text(&character.to_string());
