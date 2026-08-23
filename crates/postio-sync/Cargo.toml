@@ -25,5 +25,12 @@ secrecy = "0.10.3"
 thiserror = "2.0.20"
 
 [dev-dependencies]
+# Tests only: the real io-imap-backed backend and the in-process IMAP server
+# it can be pointed at, so the engine can be driven over a loopback socket
+# rather than only against the mock. Everything above still goes through
+# `MailBackend` — no io-imap type appears anywhere in this crate — and the
+# ordinary build keeps `default-features = false` above, which is what keeps
+# the protocol crate out of the engine's dependency graph.
+postio-imap = { path = "../postio-imap", features = ["imap", "test-server"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

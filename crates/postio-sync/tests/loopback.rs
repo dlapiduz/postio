@@ -1,0 +1,537 @@
+//! The engine against a real socket.
+//!
+//! Every other test in this crate drives [`MockBackend`], which is how the
+//! whole engine was developed and why it can be developed at all. But a mock
+//! cannot lie the way a server does: it never renumbers a mailbox mid-session,
+//! never tears a connection in the middle of a body, never emits a sequence
+//! number no decoder can read, and never goes quiet holding a connection open.
+//!
+//! So these run `postio_imap::imap::ImapBackend` — real `io-imap`, real
+//! session, real bytes — against `postio_imap::test_server::TestServer` on an
+//! ephemeral loopback port, with the same [`Quirk`] and [`Fault`] injection
+//! that suite uses. Nothing here touches the network.
+//!
+//! The seam is still [`MailBackend`]: no protocol type appears below, and
+//! everything asserted is asserted through the engine's own vocabulary.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::{DateTime, TimeZone, Utc};
+use postio_imap::cancel::CancelToken;
+use postio_imap::imap::{ImapBackend, PoolConfig, RustlsConnector};
+use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_imap::test_server::{Fault, Quirk, TestMailbox, TestMessage, TestServer};
+use postio_model::{
+    AccountId, BodyState, Flag, FlagSet, FullResyncReason, Mailbox, MessageId, ModSeq, Operation,
+    OperationTarget, Uid, UidValidity,
+};
+use postio_storage::repository::{
+    MessageRepository, OperationQueueRepository, SyncStateRepository,
+};
+use postio_storage::test_support::{self, TempDatabase};
+use postio_storage::{BlobStore, PooledConnection};
+use postio_sync::backfill::{BodyRequest, Outcome as BackfillOutcome, fetch_body};
+use postio_sync::{Drainer, Outcome, resync_mailbox, sync_mailbox};
+use rusqlite::Connection;
+
+const INBOX: &str = "INBOX";
+const ARCHIVE: &str = "Archive";
+const VALIDITY: u32 = 4_242;
+const BASELINE: u64 = 900;
+
+/// The messages both the server and the assertions are built from.
+const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
+
+fn at(hour: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 8, 23, hour, 0, 0).unwrap()
+}
+
+/// A server shaped like the account this project targets: extensions hidden
+/// until after login, no special-use attributes, three messages from the
+/// corpus.
+async fn server() -> TestServer {
+    TestServer::builder()
+        .mailbox(
+            TestMailbox::new(INBOX)
+                .uid_validity(UidValidity::new(VALIDITY))
+                .highest_mod_seq(ModSeq::new(BASELINE))
+                .corpus(SEEDED),
+        )
+        .mailbox(TestMailbox::new(ARCHIVE))
+        .start()
+        .await
+}
+
+async fn backend_for(server: &TestServer) -> ImapBackend {
+    backend_with(server, PoolConfig::default()).await
+}
+
+async fn backend_with(server: &TestServer, config: PoolConfig) -> ImapBackend {
+    let store = MemorySecretStore::new();
+    let key = AccountKey::new(server.account());
+    store
+        .store(&key, &Password::new(server.password()))
+        .await
+        .expect("seed the keyring");
+
+    ImapBackend::new(
+        server.settings(),
+        key,
+        Arc::new(store),
+        Arc::new(RustlsConnector::new().expect("a connector")),
+        config,
+    )
+}
+
+fn local(connection: &Connection) -> (AccountId, Mailbox, Mailbox) {
+    let account = test_support::account(connection);
+    let inbox = test_support::mailbox(connection, &account, INBOX);
+    let archive = test_support::mailbox(connection, &account, ARCHIVE);
+    (account.id, inbox, archive)
+}
+
+async fn bootstrap(connection: &Connection, backend: &ImapBackend, mailbox: &Mailbox) {
+    sync_mailbox(connection, backend, mailbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("bootstrap sync");
+}
+
+fn known_uids(connection: &Connection, mailbox: &Mailbox, generation: u32) -> Vec<u32> {
+    MessageRepository::new(connection)
+        .uids_in(mailbox.id, UidValidity::new(generation))
+        .expect("uids_in")
+        .into_iter()
+        .map(Uid::get)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// The happy path, over bytes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+
+    let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("initial sync");
+
+    assert_eq!(report.inserted, 3);
+    assert_eq!(known_uids(&connection, &inbox, VALIDITY), vec![1, 2, 3]);
+
+    // The corpus reached the database through ENVELOPE and BODYSTRUCTURE on
+    // the wire, not through a mock handing back what it was given.
+    let stored = MessageRepository::new(&connection)
+        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(1))
+        .expect("look up")
+        .expect("message 1");
+    assert_eq!(stored.subject.as_deref(), Some("Tuesday walkthrough notes"));
+    assert_eq!(stored.from[0].address, "ada.norwood@example.com");
+
+    let state = SyncStateRepository::new(&connection)
+        .require(inbox.id)
+        .expect("sync state");
+    assert_eq!(state.uid_validity, Some(UidValidity::new(VALIDITY)));
+    assert!(state.has_synced());
+}
+
+#[tokio::test]
+async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    // Another client reads one message, and new mail lands.
+    server.set_flags(INBOX, Uid::new(2), FlagSet::from_iter([Flag::Seen]));
+    let arrival = server.deliver(INBOX, TestMessage::corpus("list-thread-01-root"));
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    match outcome {
+        Outcome::Incremental { changed, vanished } => {
+            assert_eq!(changed, 2, "the flag change and the arrival");
+            assert_eq!(vanished, 0);
+        }
+        other => panic!("expected an incremental resync, got {other:?}"),
+    }
+
+    assert_eq!(
+        known_uids(&connection, &inbox, VALIDITY),
+        vec![1, 2, 3, arrival.get()]
+    );
+    let seen = MessageRepository::new(&connection)
+        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(2))
+        .expect("look up")
+        .expect("message 2");
+    assert!(seen.flags.is_seen());
+}
+
+// ---------------------------------------------------------------------------
+// The lies a mock cannot tell
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
+    // The worst thing this codebase can do. The backend refuses to serve a
+    // generation nobody confirmed — it reports the change once and adopts the
+    // new one — and the engine has to hear that as "throw the local copy away
+    // and re-enumerate", not as an error that fails the pass.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    server.set_uid_validity(INBOX, UidValidity::new(9_001));
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    match outcome {
+        Outcome::Full { reason, report } => {
+            assert_eq!(reason, FullResyncReason::UidValidityChanged);
+            assert_eq!(report.inserted, 3);
+        }
+        other => panic!("expected a full resync, got {other:?}"),
+    }
+
+    assert!(
+        known_uids(&connection, &inbox, VALIDITY).is_empty(),
+        "every row under the stale generation must be gone"
+    );
+    assert_eq!(known_uids(&connection, &inbox, 9_001), vec![1, 2, 3]);
+    assert_eq!(
+        SyncStateRepository::new(&connection)
+            .require(inbox.id)
+            .expect("sync state")
+            .uid_validity,
+        Some(UidValidity::new(9_001))
+    );
+}
+
+#[tokio::test]
+async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
+    // At least one mainstream provider has shipped `* -1 FETCH (…)` under
+    // QRESYNC. io-imap skips a line it cannot decode and completes the command
+    // `Ok`, so the pull looks whole while a message's flags never arrived —
+    // which is why postio-imap counts the skips and refuses the result. The
+    // engine's answer has to be a full pass: the same incremental pull would
+    // lose the same line again.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    server.set_flags(INBOX, Uid::new(2), FlagSet::from_iter([Flag::Seen]));
+    server.quirk(Quirk::MalformedFetchSequenceNumber);
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    match outcome {
+        Outcome::Rebuilt { report } => assert!(
+            report.updated >= 1,
+            "a rebuild has to *re-read* what it already holds, not fill gaps: {report:?}"
+        ),
+        other => panic!("expected a rebuild, got {other:?}"),
+    }
+
+    // And the change the incremental pull could not be trusted with is in
+    // the database anyway, because the full pass does not use CHANGEDSINCE.
+    let seen = MessageRepository::new(&connection)
+        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(2))
+        .expect("look up")
+        .expect("message 2");
+    assert!(seen.flags.is_seen());
+}
+
+#[tokio::test]
+async fn a_torn_fetch_fails_the_pass_and_the_next_one_succeeds() {
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+
+    server.inject(Fault::DropConnection {
+        during: "FETCH".to_owned(),
+    });
+
+    let error = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect_err("a torn connection is a failure");
+    assert!(
+        is_transient(&error),
+        "a dropped socket has to be retryable: {error}"
+    );
+
+    // The fault fired once; the pool replaces the dead connection rather than
+    // handing it out again, so the retry is an ordinary sync.
+    let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("the retry");
+    assert_eq!(report.inserted, 3);
+}
+
+#[tokio::test]
+async fn a_stalled_server_fails_the_pass_instead_of_wedging_the_engine() {
+    let server = server().await;
+    let backend = backend_with(
+        &server,
+        PoolConfig {
+            command_timeout: Duration::from_millis(300),
+            ..PoolConfig::default()
+        },
+    )
+    .await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox, _archive) = local(&connection);
+
+    server.inject(Fault::Stall {
+        during: "FETCH".to_owned(),
+    });
+
+    let started = tokio::time::Instant::now();
+    let error = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect_err("a server that never answers is a failure");
+
+    assert!(is_transient(&error), "{error}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the pass gave up rather than waiting forever"
+    );
+
+    let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("the retry");
+    assert_eq!(report.inserted, 3);
+}
+
+// ---------------------------------------------------------------------------
+// The queue, against a server that answers
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_queued_flag_change_and_move_reach_a_real_server() {
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox, archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let message = message_at(&connection, &inbox, Uid::new(1));
+    enqueue(
+        &connection,
+        account,
+        message,
+        Operation::SetFlags {
+            flags: FlagSet::from_iter([Flag::Seen]),
+        },
+        at(9),
+    );
+    enqueue(
+        &connection,
+        account,
+        message,
+        Operation::Move {
+            from: inbox.id,
+            to: archive.id,
+        },
+        at(9),
+    );
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, account, at(10))
+        .await
+        .expect("drain");
+
+    assert_eq!(report.applied, 2, "{report:?}");
+    assert!(report.failed.is_empty());
+    assert_eq!(server.uids(ARCHIVE).len(), 1);
+    assert_eq!(server.uids(INBOX), vec![Uid::new(2), Uid::new(3)]);
+}
+
+// ---------------------------------------------------------------------------
+// Bodies, streamed
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_backfilled_body_arrives_byte_for_byte() {
+    // The one path that streams rather than parses: io-imap's real streaming
+    // FETCH, through the engine, into the blob store. What is asserted is
+    // that the bytes stored are the bytes the corpus holds — a mock hands
+    // back what it was given, so only a socket can prove this.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let local = on_disk();
+
+    sync_mailbox(
+        &local.connection,
+        &backend,
+        &local.inbox,
+        &CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("headers");
+
+    let id = message_at(&local.connection, &local.inbox, Uid::new(2));
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &body_request(&local.inbox, id, Uid::new(2)),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch body");
+
+    assert!(matches!(outcome, BackfillOutcome::Stored { .. }));
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+    let blob = stored.raw_blob_id.expect("the raw message is kept");
+    assert_eq!(
+        local.blobs.get(&blob).expect("read the blob"),
+        postio_model::test_corpus::load("attachment-pdf").bytes(),
+        "the bytes the server sent, verbatim"
+    );
+}
+
+#[tokio::test]
+async fn a_body_torn_off_the_socket_stores_nothing() {
+    // The failure a mock cannot stage: the server announces an octet count
+    // and then hangs up short of it. Whatever reached the sink has to be
+    // discarded, and the message has to still be marked as needing its body.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let local = on_disk();
+
+    sync_mailbox(
+        &local.connection,
+        &backend,
+        &local.inbox,
+        &CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("headers");
+
+    let id = message_at(&local.connection, &local.inbox, Uid::new(1));
+    server.inject(Fault::DropConnection {
+        during: "FETCH".to_owned(),
+    });
+
+    let error = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &body_request(&local.inbox, id, Uid::new(1)),
+        &CancelToken::new(),
+    )
+    .await
+    .expect_err("a torn body is a failure");
+    assert!(is_transient(&error), "{error}");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert_eq!(
+        stored.sync.body_state,
+        BodyState::HeadersOnly,
+        "a half-arrived body must not be recorded as a body"
+    );
+    assert!(stored.raw_blob_id.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// A file-backed database with a blob store beside it, because a blob store
+/// is a directory and an in-memory database has no directory to sit next to.
+struct OnDisk {
+    #[allow(dead_code)]
+    database: TempDatabase,
+    connection: PooledConnection,
+    blobs: BlobStore,
+    inbox: Mailbox,
+}
+
+fn on_disk() -> OnDisk {
+    let database = test_support::temp();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let inbox = test_support::mailbox(&connection, &account, INBOX);
+    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+
+    OnDisk {
+        database,
+        connection,
+        blobs,
+        inbox,
+    }
+}
+
+fn body_request(mailbox: &Mailbox, message: MessageId, uid: Uid) -> BodyRequest {
+    BodyRequest {
+        message,
+        mailbox: mailbox.id,
+        path: mailbox.path.clone(),
+        uid,
+        size: 0,
+        received_at: at(9),
+    }
+}
+
+/// Whether the engine's error is one the caller is expected to retry.
+fn is_transient(error: &postio_sync::SyncError) -> bool {
+    match error {
+        postio_sync::SyncError::Backend(error) => error.is_transient(),
+        other => panic!("expected a backend failure, got {other:?}"),
+    }
+}
+
+/// The local row for a message the sync just stored.
+fn message_at(connection: &Connection, mailbox: &Mailbox, uid: Uid) -> MessageId {
+    MessageRepository::new(connection)
+        .by_uid(mailbox.id, UidValidity::new(VALIDITY), uid)
+        .expect("look up")
+        .expect("a synced message")
+        .id
+}
+
+fn enqueue(
+    connection: &Connection,
+    account: AccountId,
+    message: MessageId,
+    operation: Operation,
+    when: DateTime<Utc>,
+) {
+    OperationQueueRepository::new(connection)
+        .enqueue(account, OperationTarget::Message(message), &operation, when)
+        .expect("enqueue");
+}
