@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeZone, Utc};
 use criterion::{Criterion, criterion_group, criterion_main};
 use postio_model::{AccountId, EmailAddress, Message};
+use postio_search::facets::Scope;
 use postio_search::{SearchRequest, parse, search};
 use postio_storage::repository::MessageRepository;
 use postio_storage::{Database, test_support};
@@ -160,6 +161,7 @@ fn run(query: &str, limit: u32) -> Duration {
     let request = SearchRequest {
         account_id: corpus.account_id,
         query: &parsed,
+        scope: Scope::AllMail,
         limit,
     };
 
@@ -167,6 +169,29 @@ fn run(query: &str, limit: u32) -> Duration {
     let results = search(&connection, &request, now()).expect("search");
     let elapsed = start.elapsed();
     assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
+    elapsed
+}
+
+/// [`run`], but for the canvas' left column: the three scope counts and the
+/// refine aggregates, measured together the way the panel asks for them.
+fn run_facets(query: &str) -> Duration {
+    let corpus = corpus();
+    let connection = corpus.database.connection().expect("checkout");
+    let parsed = parse(query, now().date_naive());
+    let request = SearchRequest {
+        account_id: corpus.account_id,
+        query: &parsed,
+        scope: Scope::AllMail,
+        limit: 50,
+    };
+
+    let start = Instant::now();
+    let facets = postio_search::executor::facets(&connection, &request).expect("facets");
+    let elapsed = start.elapsed();
+    assert!(
+        facets.hits(Scope::AllMail) > 0,
+        "query {query:?} matched nothing"
+    );
     elapsed
 }
 
@@ -199,11 +224,25 @@ fn bench_common_word_worst_case(c: &mut Criterion) {
     assert_budget("common-word worst case", run(COMMON_WORD, 50));
 }
 
+/// The facet column on the worst case the corpus has.
+///
+/// Four aggregate queries over a match set that is effectively the whole
+/// corpus. They are bounded by `TOTAL_HITS_CAP` exactly as the hit count is,
+/// which is what this asserts: a panel that could cost a full-corpus walk
+/// per keystroke would be the one place the `<100 ms` budget quietly leaks.
+fn bench_facets_worst_case(c: &mut Criterion) {
+    c.bench_function("search_facets_common_word", |b| {
+        b.iter(|| run_facets(COMMON_WORD))
+    });
+    assert_budget("facets, common-word worst case", run_facets(COMMON_WORD));
+}
+
 criterion_group!(
     benches,
     bench_simple_term,
     bench_operator_only,
     bench_composed,
-    bench_common_word_worst_case
+    bench_common_word_worst_case,
+    bench_facets_worst_case
 );
 criterion_main!(benches);
