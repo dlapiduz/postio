@@ -31,9 +31,14 @@ thiserror = "2.0.20"
 webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
+criterion = "0.7.0"
 postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
 tempfile = "3.27.0"
 
 [build-dependencies]
 glib-build-tools = "0.21.0"
+
+[[bench]]
+name = "list_scroll"
+harness = false

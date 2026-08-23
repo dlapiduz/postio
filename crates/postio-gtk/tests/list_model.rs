@@ -436,3 +436,29 @@ fn there_is_nothing_past_the_end() {
         "the last page and the one before it, and no page 3"
     );
 }
+
+#[test]
+fn the_model_can_say_which_page_holds_a_message() {
+    // What makes an in-place update cheap: a changed message costs a refetch
+    // of the one page it is on, not of the folder.
+    let source = Fake::new(HUGE);
+    let list = MessageList::new();
+    list.set_source(source.clone());
+
+    list.item(0);
+    list.item(PAGE_SIZE * 4);
+    source.drain();
+    list.deliver(0, (0..PAGE_SIZE).map(row).collect());
+    list.deliver(4, (PAGE_SIZE * 4..PAGE_SIZE * 5).map(row).collect());
+
+    assert_eq!(list.page_of(MessageId::new(1)), Some(0));
+    assert_eq!(
+        list.page_of(MessageId::new(PAGE_SIZE as i64 * 4 + 1)),
+        Some(4)
+    );
+    assert_eq!(
+        list.page_of(MessageId::new(PAGE_SIZE as i64 * 2 + 1)),
+        None,
+        "a message whose page is not resident has no page to refetch"
+    );
+}
