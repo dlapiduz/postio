@@ -1,5 +1,5 @@
-//! The reading pane on a real display: `postio-lu6` and `postio-1bz`,
-//! against the corpus fixtures they exist for.
+//! The reading pane on a real display: `postio-lu6`, `postio-1bz` and
+//! `postio-xxz` end to end, against the corpus fixtures they exist for.
 //!
 //! One test function, for the reason `gtk_shell.rs` gives — GTK is
 //! single-threaded and initialised once. Skips without a display. The
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::reader::{BlobSource, Reader, RemoteImages};
+use postio_gtk::reader::{BlobSource, Reader, RemoteImageAllowList};
 use postio_model::message::MessageBody;
 use postio_model::test_corpus;
 use webkit6::prelude::*;
@@ -54,13 +54,18 @@ fn the_reader_renders_and_hardens_the_corpus() {
         blobs.get(content_id).cloned()
     });
 
-    let reader = Reader::new(source);
+    let allowlist_path = scratch_path("allowlist");
+    let reader = Reader::with_allowlist(
+        source,
+        RemoteImageAllowList::default(),
+        allowlist_path.clone(),
+    );
     window.set_child(Some(&reader.widget()));
     window.present();
     pump();
 
     let finished = track_load_finished(&reader);
-    reader.render(&parsed.body, RemoteImages::Blocked);
+    reader.render(&parsed.body, Some("ada.norwood@example.com"));
     wait_for(&finished, Duration::from_secs(5));
 
     let seen = requested.borrow().clone();
@@ -78,18 +83,59 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "the dangling cid: reference should still reach the scheme handler: {seen:?}"
     );
 
-    // ── a newsletter with script, remote CSS and no consent loads clean ────
-    let newsletter = test_corpus::load("html-newsletter");
-    let parsed = postio_model::mime::parse(newsletter.bytes());
-    let finished = track_load_finished(&reader);
-    reader.render(&parsed.body, RemoteImages::Blocked);
-    wait_for(&finished, Duration::from_secs(5));
-
+    // ── the tracking-pixel fixture: blocked by default, banner says so ────
     let tracking = test_corpus::load("html-tracking-pixel-remote-images");
     let parsed = postio_model::mime::parse(tracking.bytes());
+
     let finished = track_load_finished(&reader);
-    reader.render(&parsed.body, RemoteImages::Blocked);
+    reader.render(&parsed.body, Some("orders@shop.example.org"));
     wait_for(&finished, Duration::from_secs(5));
+
+    assert!(
+        reader.banner_visible(),
+        "a message with remote images, none of them allowed, should show the banner"
+    );
+    assert!(
+        reader
+            .banner_always_allow_label()
+            .contains("orders@shop.example.org"),
+        "the banner should name the sender it would allow: {}",
+        reader.banner_always_allow_label()
+    );
+
+    // ── a newsletter with nothing remote gets no banner ────────────────────
+    let newsletter = test_corpus::load("html-newsletter");
+    let parsed = postio_model::mime::parse(newsletter.bytes());
+
+    let finished = track_load_finished(&reader);
+    reader.render(&parsed.body, Some("weekly@news.example.org"));
+    wait_for(&finished, Duration::from_secs(5));
+
+    assert!(
+        !reader.banner_visible(),
+        "no remote reference was stripped, so there is nothing for the banner to report"
+    );
+
+    // ── "always allow" persists and lifts the block on the next render ────
+    let tracking_body = postio_model::mime::parse(tracking.bytes()).body;
+    let finished = track_load_finished(&reader);
+    reader.render(&tracking_body, Some("orders@shop.example.org"));
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(reader.banner_visible());
+
+    let finished = track_load_finished(&reader);
+    reader.click_always_allow();
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(
+        !reader.banner_visible(),
+        "the banner should drop once its own sender is allow-listed"
+    );
+
+    let persisted = RemoteImageAllowList::load_from(&allowlist_path);
+    assert!(
+        persisted.is_allowed("orders@shop.example.org"),
+        "the allow-list file should carry the exception, not just memory"
+    );
 
     // ── quoted-text folding: the corpus's flowed reply ─────────────────────
     let flowed = test_corpus::load("plain-text-flowed-reply");
@@ -103,8 +149,11 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "sanity: the fixture actually has a quote marker"
     );
     let finished = track_load_finished(&reader);
-    reader.render(&parsed.body, RemoteImages::Blocked);
+    reader.render(&parsed.body, Some("quinn.abara@example.net"));
     wait_for(&finished, Duration::from_secs(5));
+    // The body has no images at all, so folding a quote must not trip the
+    // remote-image banner.
+    assert!(!reader.banner_visible());
 
     // ── network isolation: nothing ever reaches a real socket ─────────────
     let listener = TcpListener::bind("127.0.0.1:0").expect("a local listener should bind");
@@ -129,7 +178,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
         )),
     };
     let finished = track_load_finished(&reader);
-    reader.render(&beacon, RemoteImages::Blocked);
+    reader.render(&beacon, Some("no-one@example.org"));
     wait_for(&finished, Duration::from_secs(5));
     // Give the background listener thread the full window it waits, in case
     // WebKit's own image fetch is merely slow rather than blocked.
@@ -141,6 +190,12 @@ fn the_reader_renders_and_hardens_the_corpus() {
     );
 
     window.destroy();
+}
+
+fn scratch_path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("postio-gtk-reader-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join(format!("{name}.ini"))
 }
 
 /// A flag that flips once `reader`'s `WebView` finishes its current load —

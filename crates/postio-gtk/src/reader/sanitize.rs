@@ -57,9 +57,10 @@ pub struct Sanitized {
     pub html: String,
     /// Whether at least one remote (`http`/`https`) reference was stripped.
     ///
-    /// A message with nothing remote in it has nothing to say "blocked"
-    /// about; this is the flag a "remote images blocked" affordance can use
-    /// to stay quiet on a plain newsletter.
+    /// What [`super::banner::RemoteImageBanner`] uses to decide whether a
+    /// message actually has anything for it to say — a newsletter with no
+    /// images should not get a "remote images blocked" banner it can never
+    /// have anything to show for.
     pub remote_blocked: bool,
 }
 
