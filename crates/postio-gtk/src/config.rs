@@ -55,6 +55,7 @@ pub fn install_at(window: &Window, path: &Path) {
     let mut service = ConfigService::load(path);
     report(service.status().errors());
     window.apply_keymap(service.keymap().clone());
+    window.settings().load(path);
 
     // Unbounded because the sender is a file watcher that has already debounced
     // a burst of save events down to one message, and because blocking that

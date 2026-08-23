@@ -12,11 +12,13 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png dark hc
 //! cargo run -p postio-gtk --example shot -- /tmp/narrow.png 900x700
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png demo
+//! cargo run -p postio-gtk --example shot -- /tmp/settings.png settings
 //! ```
 //!
 //! `demo` fills the panes with canvas 1b's own sample content, which is the
 //! only way to check things like the selected row against the drawing before
-//! there is a database to read.
+//! there is a database to read. `settings` opens the canvas 3f panel over a
+//! sample `config.toml` written to a scratch directory for the shot.
 //!
 //! It is a development tool, not part of the application: examples are not
 //! built into the shipped binary. Nothing here touches the network.
@@ -68,6 +70,29 @@ fn populate(window: &Window) {
     });
 }
 
+/// Canvas 3f's own sample file, so the shot can be held up against the
+/// drawing.
+fn show_settings(window: &Window) {
+    let path =
+        std::env::temp_dir().join(format!("postio-shot-settings-{}.toml", std::process::id()));
+    std::fs::write(
+        &path,
+        "# edits here and in the panel are the same file\n\
+         [ui]\n\
+         density = \"compact\"\n\
+         theme = \"system\"\n\
+         show_hover_actions = true\n\
+         thread_drill = true\n\n\
+         [keys]\n\
+         archive = \"a\"\n\
+         archive_thread = \"A\"\n\
+         undo = \"u\"\n",
+    )
+    .expect("a scratch config.toml for the shot");
+    window.settings().load(&path);
+    window.open_settings();
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
@@ -108,6 +133,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("demo") {
         populate(&window);
+    }
+    if flag("settings") {
+        show_settings(&window);
     }
     window.present();
 

@@ -32,6 +32,7 @@ use crate::cheatsheet::CheatSheet;
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::palette::Palette;
 use crate::search::SearchBar;
+use crate::settings::SettingsPanel;
 use crate::shell::Shell;
 use crate::sidebar::Sidebar;
 use crate::state::WindowState;
@@ -59,6 +60,7 @@ mod imp {
         pub palette: OnceCell<Palette>,
         pub cheatsheet: OnceCell<CheatSheet>,
         pub search: OnceCell<SearchBar>,
+        pub settings: OnceCell<SettingsPanel>,
         /// The pane that had the keyboard when search opened.
         pub before_search: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
         pub overlay: OnceCell<gtk::Overlay>,
@@ -166,11 +168,14 @@ impl Window {
         let search = SearchBar::new();
         search.set_visible(false);
         search.set_valign(gtk::Align::Start);
+        let settings = SettingsPanel::new();
+        settings.set_visible(false);
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&shell));
         overlay.add_overlay(&palette);
         overlay.add_overlay(&search);
         overlay.add_overlay(&cheatsheet);
+        overlay.add_overlay(&settings);
 
         let layout = adw::ToolbarView::new();
         layout.add_top_bar(&header.bar);
@@ -189,6 +194,7 @@ impl Window {
         let _ = self.imp().palette.set(palette);
         let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().search.set(search);
+        let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         self.imp().context.set(Some(Context::List));
 
@@ -227,6 +233,12 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move || window.close_search()
+        ));
+
+        self.settings().connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.close_settings()
         ));
 
         // Capture, not bubble: a single-key binding has to be seen before the
@@ -296,6 +308,7 @@ impl Window {
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.palette().is_visible() => self.close_palette(),
             CommandId::Back if self.search().is_visible() => self.close_search(),
+            CommandId::Back if self.settings().is_visible() => self.close_settings(),
             _ => self.dispatch(id),
         }
     }
@@ -463,6 +476,40 @@ impl Window {
             self.shell().set_focused_pane(pane);
         }
         self.shell().grab_focus();
+    }
+
+    /// The settings panel: canvas 3f, `config.toml` edited in place.
+    pub fn settings(&self) -> SettingsPanel {
+        self.imp()
+            .settings
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
+    /// Shows the settings panel over the workspace.
+    pub fn open_settings(&self) {
+        // Only one overlay at a time.
+        self.close_palette();
+        self.close_cheatsheet();
+        self.close_search();
+        self.settings().set_visible(true);
+        self.settings().grab_focus();
+    }
+
+    /// Hides the settings panel and gives the keyboard back to the workspace.
+    pub fn close_settings(&self) {
+        self.settings().set_visible(false);
+        self.shell().grab_focus();
+    }
+
+    /// Shows the settings panel, or hides it if it is already up.
+    pub fn toggle_settings(&self) {
+        if self.settings().is_visible() {
+            self.close_settings();
+        } else {
+            self.open_settings();
+        }
     }
 
     /// Rebuilds the keymap after `config.toml` changed, without a restart.
