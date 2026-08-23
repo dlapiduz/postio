@@ -31,12 +31,14 @@ mod contacts;
 mod drafts;
 mod mailboxes;
 mod messages;
+mod sync_state;
 mod threads;
 
 pub use accounts::{AccountRepository, IdentityRepository};
 pub use contacts::ContactRepository;
 pub use drafts::DraftRepository;
 pub use mailboxes::MailboxRepository;
+pub use sync_state::SyncStateRepository;
 pub use threads::{
     DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadListQuery, ThreadListRow, ThreadOrder,
     ThreadRepository,
