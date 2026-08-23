@@ -65,6 +65,28 @@ would make a network request, the question is not whether it is useful but
 whether the user asked for it. A privacy default that is merely *configurable*
 has already lost -- most people never open settings.
 
+**Surfaces are in-place by default; a modal has to earn it.** Postio has exactly
+one modal dialog in the entire app, and everything else — the composer, the
+`Ctrl+K` palette, the `?` cheat sheet, the settings panel — is an overlay or a
+pane on the main window. That is the pattern; keep it.
+
+| Want to show | Use |
+|---|---|
+| A command surface, help, settings | An overlay on the main window |
+| Composing a message | The reading pane, list keeps scroll and selection |
+| Something the user must answer before anything else can happen | A modal — and say why in the bead |
+| Something the user wants *alongside* the main window | A real non-modal window, opt-in only |
+
+A modal is a claim that nothing else in the app matters until this is resolved.
+That is almost never true in a mail client, and it is never true for a
+confirmation that undo could replace. Before adding one, check the reversibility
+table above: if the action can carry `Recovery::Undo`, it does not need a
+dialog.
+
+Detached windows are opt-in, never a default. `postio-c16.2` is the pattern:
+the composer lives in the reading pane, and popping out is a command the user
+runs — not what happens when they press `c`.
+
 **The app teaches itself.** Key hints on the focused row, bindings shown in the
 palette, `?` for the full sheet. A user should learn the keyboard by using the
 app, never by reading docs.
