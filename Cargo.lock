@@ -2288,9 +2288,14 @@ name = "postio-core"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "chrono",
  "criterion",
  "postio-config",
+ "postio-imap",
  "postio-model",
+ "postio-smtp",
+ "postio-storage",
+ "postio-sync",
  "serde",
  "serde_json",
  "tempfile",
