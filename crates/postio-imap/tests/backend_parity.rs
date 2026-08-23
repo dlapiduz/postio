@@ -175,12 +175,14 @@ async fn conforms(backend: &dyn MailBackend) {
 
     // --- watching -----------------------------------------------------
     //
-    // One difference the two cannot be made to share: the mock queues an
-    // event for every change made through it, this test's own included, while
-    // a real server does not report a connection's own commands back to it as
-    // unilateral updates. So whatever is outstanding is drained first, and
-    // what both must agree on is the part that matters — with nothing new
-    // arriving, a watch ends empty rather than erroring or hanging.
+    // The one difference the two are allowed to keep, decided in
+    // postio-wy2.11 and written down on `MailBackend::idle`: the mock queues
+    // every change made through it, this test's own included, while a real
+    // server reports only what the connection did not do. The mock errs
+    // towards more resyncs, which is the safe direction. So whatever is
+    // outstanding is drained first, and what both must agree on is the part
+    // that matters — with nothing new arriving, a watch ends empty rather
+    // than erroring or hanging.
     let _backlog = backend
         .idle("INBOX", Duration::from_millis(100), &cancel)
         .await
