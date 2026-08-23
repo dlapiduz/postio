@@ -416,15 +416,22 @@ button.postio-compose {
 }
 
 /* ── The list pane's named states (canvas 3d) ────────────────────────
-   Inbox zero, offline and sync failure share one layout: an icon, a title,
-   a sentence that names the local store, and the keys that get you
-   somewhere. It replaces the list's rows entirely — there is nothing else
-   to show underneath an empty mailbox. No error red: the design system has
+   Inbox zero, offline and sync failure share one icon/title/detail/hints
+   vocabulary, laid out one of two ways (`postio_gtk::list_state::Placement`):
+   the full plate replaces the list's rows entirely, correct only when there
+   is nothing else to show underneath — an empty mailbox, whatever put it
+   there. `.postio-liststate-banner` is the other one: offline or failing
+   with rows still loaded keeps them on screen, this strip on top of them
+   rather than instead of them. No error red either way: the design system has
    no such role, so severity comes from icon and weight, the same as the
    sidebar's own `.postio-status.error` reaching for `--postio-accent-text`
    rather than inventing a colour. */
 .postio-liststate {
   background-color: var(--postio-ground);
+}
+
+.postio-liststate-banner {
+  border-bottom: 1px solid var(--postio-hairline);
 }
 
 .postio-liststate-icon {
