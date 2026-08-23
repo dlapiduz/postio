@@ -1,0 +1,29 @@
+Return-Path: <harbour-dev-bounces@lists.example.org>
+Delivered-To: quinn.abara@example.net
+Message-ID: <harbour-dev.20260303T072211.f6@lists.example.org>
+Date: Tue, 03 Mar 2026 07:22:11 +0000
+From: Priya Raman <priya.raman@example.org>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: Re: [harbour-dev] Tide gate interlock: proposal for revision D
+Sender: harbour-dev-bounces@lists.example.org
+List-Id: Harbour redevelopment engineering <harbour-dev.lists.example.org>
+List-Help: <mailto:harbour-dev-request@lists.example.org?subject=help>
+List-Post: <mailto:harbour-dev@lists.example.org>
+List-Subscribe: <https://lists.example.org/harbour-dev/join>,
+	<mailto:harbour-dev-join@lists.example.org>
+List-Unsubscribe: <https://lists.example.org/harbour-dev/leave>,
+	<mailto:harbour-dev-leave@lists.example.org>
+List-Archive: <https://lists.example.org/archives/harbour-dev>
+Precedence: list
+X-Mailman-Version: 2.1.39
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+No In-Reply-To, no References — this arrived through a gateway that
+strips both, so subject normalization is the only thing that can attach
+it to the thread. That is exactly the JWZ subject-matching fallback.
+
+Late to this, but +1 to writing the manual override down properly.
+
+Priya

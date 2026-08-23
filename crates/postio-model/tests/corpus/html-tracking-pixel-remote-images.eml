@@ -1,0 +1,43 @@
+Message-ID: <20260216T131415.tracking.pixel@shop.example.org>
+Date: Mon, 16 Feb 2026 13:14:15 +0000
+From: Cooperage Supply <orders@shop.example.org>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Order 44-2199 has shipped
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html>
+<head>
+<style type=3D"text/css">
+  .hero { background-image: url('https://cdn.tracker.example.org/bg/hero-=
+9f2.jpg');
+          background-size: cover; height: 180px; }
+  .sig  { background: url("https://pixel.tracker.example.org/css-beacon?i=
+d=3Daa71"); }
+</style>
+</head>
+<body style=3D"margin:0; font-family:Barlow,Arial,sans-serif;">
+  <div class=3D"hero">&nbsp;</div>
+  <p>Your order <strong>#44-2199</strong> has shipped. The product shot b=
+elow
+     is loaded from a content delivery network:</p>
+  <p><img src=3D"https://cdn.tracker.example.org/products/lamp-brass-441.=
+png"
+          width=3D"320" height=3D"240" alt=3D"Brass reading lamp" /></p>
+  <p>And this one is a hosted logo:
+     <img src=3D"http://images.tracker.example.org/logo.gif" width=3D"120=
+"
+          height=3D"28" alt=3D"Cooperage Supply" /></p>
+  <p><a href=3D"https://click.tracker.example.org/r?u=3DaHR0cHM6Ly9zaG9wL=
+mV4YW1wbGUub3Jn&amp;c=3Daa71">
+     Track your parcel</a></p>
+  <!-- Open-rate beacon: one transparent pixel, no visible effect. -->
+  <img src=3D"https://pixel.tracker.example.org/o.gif?id=3Daa71&amp;u=3Dq=
+uinn"
+       width=3D"1" height=3D"1" border=3D"0" alt=3D"" style=3D"display:bl=
+ock;
+       width:1px; height:1px; border:0; outline:none;" />
+</body>
+</html>
+

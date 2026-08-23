@@ -1,0 +1,22 @@
+Message-ID: <20260213T113000.qp.body@example.com>
+Date: Fri, 13 Feb 2026 11:30:00 +0000
+From: Ada Norwood <ada.norwood@example.com>
+To: "Bergstrom, Tove" <tove.bergstrom@example.com>
+Subject: =?utf-8?Q?Decoder_torture:_=C3=A9=C3=A8=C3=AA_and_=E2=82=AC?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Tove,
+
+Every awkward character I could think of, so the decoder has something to=
+ chew on: a soft break in the middle of a long sentence that runs well pa=
+st the seventy-six column limit, an equals sign (=3D) that must survive a=
+s =3D3D, a non-breaking space, and the following accented run: =C3=A9=C3=
+=A8=C3=AA=C3=AB =C3=BC=C3=B6=C3=A4 =C3=B1 =C3=A7 =C3=85ngstr=C3=B6m.
+
+Currency too: 12,50 =E2=82=AC and =C2=A39.99 and =C2=A51200.
+
+Trailing whitespace on the next line is deliberate.  =20
+Ada
+

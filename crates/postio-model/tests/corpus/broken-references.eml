@@ -1,0 +1,27 @@
+Message-ID: <20260304T084500.brokenrefs@example.net>
+Date: Wed, 04 Mar 2026 08:45:00 +0000
+From: Quinn Abara <quinn.abara@example.net>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: Re: [harbour-dev] Tide gate interlock: proposal for revision D
+In-Reply-To: <this-message-id-was-never-seen@nowhere.example.invalid>
+References: <harbour-dev.20260302T081200.a1@lists.example.org
+	<>
+	<harbour-dev.20260302T093345.b2@lists.example.org>
+	not-an-angle-addr-at-all
+	<harbour-dev.20260302T093345.b2@lists.example.org>
+	<dangling-parent@nowhere.example.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Every failure mode a References header can have, in one header:
+
+  * an unterminated angle-addr (the first entry has no closing '>'),
+  * an empty '<>' entry,
+  * a bare token that is not an angle-addr,
+  * a duplicate of an earlier entry,
+  * a reference to a message that does not exist in the store,
+  * and an In-Reply-To that matches nothing at all.
+
+The threading pass must still place this message somewhere sensible
+rather than panicking or dropping it.

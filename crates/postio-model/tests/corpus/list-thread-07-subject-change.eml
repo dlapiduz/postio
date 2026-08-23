@@ -1,0 +1,33 @@
+Return-Path: <harbour-dev-bounces@lists.example.org>
+Delivered-To: quinn.abara@example.net
+Message-ID: <harbour-dev.20260303T160418.g7@lists.example.org>
+Date: Tue, 03 Mar 2026 16:04:18 +0000
+From: Quinn Abara <quinn.abara@example.net>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: [harbour-dev] Manual override wiring (was: Tide gate interlock:
+	proposal for revision D)
+In-Reply-To: <harbour-dev.20260302T131500.e5@lists.example.org>
+References: <harbour-dev.20260302T114930.d4@lists.example.org> <harbour-dev.20260302T131500.e5@lists.example.org>
+Sender: harbour-dev-bounces@lists.example.org
+List-Id: Harbour redevelopment engineering <harbour-dev.lists.example.org>
+List-Help: <mailto:harbour-dev-request@lists.example.org?subject=help>
+List-Post: <mailto:harbour-dev@lists.example.org>
+List-Subscribe: <https://lists.example.org/harbour-dev/join>,
+	<mailto:harbour-dev-join@lists.example.org>
+List-Unsubscribe: <https://lists.example.org/harbour-dev/leave>,
+	<mailto:harbour-dev-leave@lists.example.org>
+List-Archive: <https://lists.example.org/archives/harbour-dev>
+Precedence: list
+X-Mailman-Version: 2.1.39
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Splitting this off, and my client has helpfully truncated References to
+the last two entries, so the chain back to the root is only reachable
+through the parent's own References.
+
+The override is wired to the contactor coil, not to the controller. It
+has been that way since the first commissioning and nobody wrote it down.
+
+Quinn

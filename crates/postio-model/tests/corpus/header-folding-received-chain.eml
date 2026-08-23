@@ -1,0 +1,42 @@
+Return-Path: <no-reply@notify.example.org>
+Received: from mx4.example.net (mx4.example.net [198.51.100.24])
+	by imap.example.net (Postfix) with ESMTPS id 8B21C4A0F19
+	for <quinn.abara@example.net>; Thu, 12 Feb 2026 06:12:44 +0000 (UTC)
+Received: from relay-b.notify.example.org (relay-b.notify.example.org
+	[203.0.113.77])
+	by mx4.example.net (Postfix) with ESMTPS id 1F0AA6C22B7
+	for <quinn.abara@example.net>; Thu, 12 Feb 2026 06:12:41 +0000 (UTC)
+Received: by relay-b.notify.example.org (Postfix, from userid 1103)
+	id D4C3E1802A6; Thu, 12 Feb 2026 06:12:39 +0000 (UTC)
+Authentication-Results: mx4.example.net;
+	dkim=pass (2048-bit key) header.d=notify.example.org header.i=@notify.example.org;
+	spf=pass (mx4.example.net: domain of no-reply@notify.example.org designates
+	 203.0.113.77 as permitted sender) smtp.mailfrom=no-reply@notify.example.org;
+	dmarc=pass (p=quarantine sp=quarantine dis=none) header.from=notify.example.org
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=notify.example.org;
+	s=2026a; t=1770876759;
+	h=from:to:subject:date:message-id:mime-version:content-type;
+	bh=Wt3rJ0nQvV7YkFbq0m2sK9dPX1uZc4hLmA8oTgRe5Bw=;
+	b=Zq4mB1sTn7XvCk0LpJ9RdYwUaHf3EoM6NgIt2QsVbA5cXyZ8rWkPmDlOu1TjFhSe4
+	 GbnKqRvXcYzMwAaPpLd0EiUoTgHfJs9NrBk2VmQxCyZtW1eDh6ObUlAvIsRfPnKgMj7
+	 Xy0TcQaLdEuHmBpNvZoWkRjSfGtIiCyXbAeQlPdOnUrMhKvTgZ4sJ1wFyBcNaXeLoQ2
+X-Spam-Score: -1.9
+X-Spam-Status: No, score=-1.9 required=5.0 tests=BAYES_00,DKIM_SIGNED,
+	DKIM_VALID,DKIM_VALID_AU,RCVD_IN_DNSWL_NONE,SPF_HELO_NONE,SPF_PASS
+	autolearn=ham autolearn_force=no version=4.0.1
+Message-ID: <20260212T061239.folded.headers@notify.example.org>
+Date: Thu, 12 Feb 2026 06:12:39 +0000
+From: "Notify (no reply)" <no-reply@notify.example.org>
+To: Quinn Abara <quinn.abara@example.net>,
+	Ada Norwood <ada.norwood@example.com>,
+	"Bergstrom, Tove" <tove.bergstrom@example.com>
+Subject: Weekly digest for the north entrance project, covering the
+	period of 5 February through 12 February 2026
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Three items changed this week. Nothing is overdue.
+
+Open: gate timings, second reader decision.
+Closed: final layout sign-off.

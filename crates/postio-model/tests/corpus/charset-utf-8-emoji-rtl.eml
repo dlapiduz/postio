@@ -1,0 +1,20 @@
+Message-ID: <20260220T160000.utf8.mixed@example.net>
+Date: Fri, 20 Feb 2026 16:00:00 +0000
+From: Quinn Abara <quinn.abara@example.net>
+To: Ada Norwood <ada.norwood@example.com>
+Subject: Rendering torture: 🛟 ﻿مرحبا שלום 🇸🇪 👩‍🔧
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Straight UTF-8, no transfer encoding, and every awkward class of glyph:
+
+  Emoji, including a ZWJ sequence:  🛟 👩‍🔧 🧑‍🚒 🇸🇪 🇯🇵
+  Right-to-left, Arabic:            مرحبا بكم في الميناء
+  Right-to-left, Hebrew:            שלום, הנה שורה בעברית
+  Combining marks:                  q̈ x̧ e᷅ o͜o
+  Zero-width joiner and BOM in the middle of the line: ​﻿ (invisible)
+  Astral plane:                     𝔊𝔬𝔱𝔥𝔦𝔠 and 𐌰𐌱𐌲
+
+Line lengths measured in bytes, chars and grapheme clusters all differ
+here, which is the point.

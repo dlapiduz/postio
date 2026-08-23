@@ -1,0 +1,33 @@
+Return-Path: <harbour-dev-bounces@lists.example.org>
+Delivered-To: quinn.abara@example.net
+Message-ID: <harbour-dev.20260302T093345.b2@lists.example.org>
+Date: Mon, 02 Mar 2026 09:33:45 +0000
+From: Quinn Abara <quinn.abara@example.net>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: Re: [harbour-dev] Tide gate interlock: proposal for revision D
+In-Reply-To: <harbour-dev.20260302T081200.a1@lists.example.org>
+References: <harbour-dev.20260302T081200.a1@lists.example.org>
+Sender: harbour-dev-bounces@lists.example.org
+List-Id: Harbour redevelopment engineering <harbour-dev.lists.example.org>
+List-Help: <mailto:harbour-dev-request@lists.example.org?subject=help>
+List-Post: <mailto:harbour-dev@lists.example.org>
+List-Subscribe: <https://lists.example.org/harbour-dev/join>,
+	<mailto:harbour-dev-join@lists.example.org>
+List-Unsubscribe: <https://lists.example.org/harbour-dev/leave>,
+	<mailto:harbour-dev-leave@lists.example.org>
+List-Archive: <https://lists.example.org/archives/harbour-dev>
+Precedence: list
+X-Mailman-Version: 2.1.39
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+On 2026-03-02, Ada Norwood wrote:
+> 2. Make the signage controller a pure subscriber.
+
+No objection in principle, but the signage controller is the only thing
+that knows whether the east breakwater lamps are lit, and that fact has
+to reach the interlock somehow. Pure subscriber means we need a second
+channel for it.
+
+Quinn

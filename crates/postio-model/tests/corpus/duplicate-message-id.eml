@@ -1,0 +1,15 @@
+Message-ID: <20260210T091500.plain.simple@example.com>
+Date: Tue, 10 Feb 2026 09:15:04 +0000
+From: Ada Norwood <ada.norwood@example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Tuesday walkthrough notes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+This message deliberately reuses the Message-ID of
+plain-text-simple.eml, with a different body and a four-second later
+Date. Servers do deliver the same Message-ID twice — a Bcc to oneself, a
+mailing list echo, a resend from a broken client — so deduplication
+must key on more than the Message-ID alone, and threading must not build
+a cycle out of the pair.

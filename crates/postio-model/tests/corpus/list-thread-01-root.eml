@@ -1,0 +1,35 @@
+Return-Path: <harbour-dev-bounces@lists.example.org>
+Delivered-To: quinn.abara@example.net
+Message-ID: <harbour-dev.20260302T081200.a1@lists.example.org>
+Date: Mon, 02 Mar 2026 08:12:00 +0000
+From: Ada Norwood <ada.norwood@example.com>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: [harbour-dev] Tide gate interlock: proposal for revision D
+Sender: harbour-dev-bounces@lists.example.org
+List-Id: Harbour redevelopment engineering <harbour-dev.lists.example.org>
+List-Help: <mailto:harbour-dev-request@lists.example.org?subject=help>
+List-Post: <mailto:harbour-dev@lists.example.org>
+List-Subscribe: <https://lists.example.org/harbour-dev/join>,
+	<mailto:harbour-dev-join@lists.example.org>
+List-Unsubscribe: <https://lists.example.org/harbour-dev/leave>,
+	<mailto:harbour-dev-leave@lists.example.org>
+List-Archive: <https://lists.example.org/archives/harbour-dev>
+Precedence: list
+X-Mailman-Version: 2.1.39
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+The interlock as built cannot express "gate closing, reader disabled"
+without a third state, and every workaround we have tried leaks that
+state into the signage controller.
+
+Proposal for revision D:
+
+  1. Promote the interlock to a three-state machine.
+  2. Make the signage controller a pure subscriber.
+  3. Keep the manual override wired directly, as now.
+
+Objections welcome, especially to (2).
+
+Ada

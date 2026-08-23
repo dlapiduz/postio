@@ -1,0 +1,25 @@
+Message-ID: <20260221T090000.encodedword@fr.example>
+Date: Sat, 21 Feb 2026 09:00:00 +0000
+From: =?utf-8?Q?Fran=C3=A7oise_Lema=C3=AEtre?= <f.lemaitre@fr.example>
+To: =?utf-8?B?w4VzYSDDlnN0ZXJsdW5k?= <asa.osterlund@se.example>,
+	=?iso-8859-1?Q?Jos=E9_Mart=EDnez?= <jose.martinez@es.example>,
+	"Plain Ascii Person" <plain@example.com>
+Cc: =?utf-8?B?55Sw5Lit?= =?utf-8?B?IOmZveWtkA==?= <tanaka.yoko@jp.example>
+Subject: =?utf-8?Q?R=C3=A9union_du_comit=C3=A9=3A_?=
+	=?utf-8?B?bMOgIG/DuSDDp2Egc2UgcGFzc2U=?=
+	=?iso-8859-1?Q?_=28d=E9tails_ci-dessous=29?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+The interesting part of this message is entirely in the headers:
+
+  * Adjacent encoded words that must be joined with no space between
+    them (the Subject and the Cc display name both do this).
+  * Two different charsets inside one header field.
+  * A folded Subject where the continuation line begins with an
+    encoded word.
+  * Display names in Q and B encoding, plus one that needs neither.
+
+The body itself is unremarkable ASCII so that decoding failures are
+unambiguously header-side.

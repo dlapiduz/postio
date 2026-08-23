@@ -1,0 +1,60 @@
+Return-Path: <>
+Message-ID: <20260306T072000.bounce@mx4.example.net>
+Date: Fri, 06 Mar 2026 07:20:00 +0000
+From: Mail Delivery Subsystem <MAILER-DAEMON@mx4.example.net>
+To: Ada Norwood <ada.norwood@example.com>
+Subject: Undelivered Mail Returned to Sender
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="=_report_e3a1"
+
+--=_report_e3a1
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+This is the mail system at host mx4.example.net.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients.
+
+                   The mail system
+
+<harbour-dev-old@lists.example.invalid>: host
+    lists.example.invalid[203.0.113.9] said: 550 5.1.1 <harbour-dev-old@
+    lists.example.invalid>: Recipient address rejected: User unknown in
+    virtual mailbox table (in reply to RCPT TO command)
+
+--=_report_e3a1
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mx4.example.net
+X-Postfix-Queue-ID: 3F0C21A22E4
+X-Postfix-Sender: rfc822; ada.norwood@example.com
+Arrival-Date: Fri, 06 Mar 2026 07:19:58 +0000 (UTC)
+
+Final-Recipient: rfc822; harbour-dev-old@lists.example.invalid
+Original-Recipient: rfc822;harbour-dev-old@lists.example.invalid
+Action: failed
+Status: 5.1.1
+Remote-MTA: dns; lists.example.invalid
+Diagnostic-Code: smtp; 550 5.1.1 <harbour-dev-old@lists.example.invalid>:
+    Recipient address rejected: User unknown in virtual mailbox table
+
+--=_report_e3a1
+Content-Type: message/rfc822
+Content-Description: Undelivered Message Headers
+
+Return-Path: <ada.norwood@example.com>
+Message-ID: <20260306T071957.original@example.com>
+Date: Fri, 06 Mar 2026 07:19:57 +0000
+From: Ada Norwood <ada.norwood@example.com>
+To: harbour-dev-old@lists.example.invalid
+Subject: Interlock state table, revision D
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Forwarding the signed state table to the old list address as well.
+
+--=_report_e3a1--
