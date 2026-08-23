@@ -1,10 +1,13 @@
 //! A minimal cancellation token.
 //!
-//! Deliberately small and dependency-free: the probe is the only thing that
-//! needs cancellation today, and pulling in `tokio-util` for one type is not
-//! worth it. The semantics match `CancellationToken`: cloning shares one
-//! cancelled flag, cancelling is idempotent, and awaiting an
+//! Deliberately small and dependency-free: pulling in `tokio-util` for one
+//! type is not worth it. The semantics match `CancellationToken`: cloning
+//! shares one cancelled flag, cancelling is idempotent, and awaiting an
 //! already-cancelled token returns immediately.
+//!
+//! It lives at the crate root rather than inside [`discovery`](crate::discovery)
+//! because everything that reaches a server needs it: the autoconfig probe, a
+//! long `IDLE`, and a multi-megabyte body fetch the user navigated away from.
 
 use std::future;
 use std::sync::Arc;
