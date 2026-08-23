@@ -40,7 +40,10 @@ headerbar.postio-header button.toggle:checked {
   box-shadow: none;
 }
 
-/* The search field: a hairline plate, not a bevelled entry. */
+/* The search field: a hairline plate, not a bevelled entry. Worn by every
+   search-shaped field — the header's and the palette's — so they read as one
+   control rather than two. A test that means a particular one scopes its
+   lookup to that widget's subtree rather than to the window. */
 .postio-search {
   min-height: 32px;
   padding: 0 8px;
@@ -201,3 +204,54 @@ button.postio-compose {
 .postio-reader {
   background-color: var(--postio-ground);
 }
+
+/* ── The Ctrl+K palette ──────────────────────────────────────────────
+   A plate floating over the workspace: the same hairline-and-surface
+   vocabulary as the search field, sized so the list reads as one object
+   rather than as a dialog. No transition — the canvas' motion budget
+   applies to an overlay as much as to a pane, and a palette that fades in
+   is a palette you type into before it is there. */
+.postio-palette {
+  margin-top: 72px;
+  min-width: 520px;
+  padding: 8px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.postio-palette-list {
+  background: none;
+  margin-top: 6px;
+}
+
+.postio-palette-row {
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: var(--postio-radius-sm);
+}
+
+/* The 3px accent edge the message list uses for its selected row: one
+   selection idiom across the application, not two. */
+.postio-palette-row:selected {
+  background-color: var(--postio-selected-strong-bg);
+  box-shadow: inset 3px 0 var(--postio-selected-border);
+  color: var(--postio-selected-fg);
+}
+
+.postio-palette-title {
+  font-size: 13px;
+  color: var(--postio-ink);
+}
+
+.postio-palette-row:selected .postio-palette-title {
+  color: var(--postio-selected-fg);
+}
+
+.postio-palette-empty {
+  padding: 16px 8px;
+  font-size: 12.5px;
+  color: var(--postio-faint);
+}
+

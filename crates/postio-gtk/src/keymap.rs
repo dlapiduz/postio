@@ -731,6 +731,22 @@ impl Resolver {
         (Self::new(keymap), Self::all_problems(commands, problems))
     }
 
+    /// Rebuilds the table after `config.toml` changed, without a restart.
+    ///
+    /// Called when a reload reports `ConfigChange { keys: true }`. Returns the
+    /// problems to report — core's first, since "`y` is already bound to
+    /// `flag`" is what the user needs to hear, and this crate's parse failures
+    /// after.
+    ///
+    /// Everything downstream — the palette, the cheat sheet, the key hints —
+    /// reads [`postio_core::Keymap`] directly and so follows on its own; this
+    /// is only the half that has to be reparsed into chords.
+    pub fn apply_commands(&mut self, commands: &postio_core::Keymap) -> Vec<String> {
+        let (keymap, problems) = Keymap::from_commands(commands);
+        self.set_keymap(keymap);
+        Self::all_problems(commands, problems)
+    }
+
     fn all_problems(
         commands: &postio_core::Keymap,
         mut parse_problems: Vec<String>,
