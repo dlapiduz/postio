@@ -67,6 +67,18 @@ single atomic step.
 
 Never `git add -A`, `git add .`, or `git commit -a`.
 
+**New files need `git add` first.** `--only` diffs tracked paths, so it cannot
+introduce a file git has never seen. Add just your new files, then commit with
+`--only` over everything you are landing:
+
+```bash
+git add crates/<your-crate>/src/new_thing.rs        # new files only
+git commit --only crates/<your-crate> Cargo.lock -m "..."
+```
+
+Adding two named new files is a far smaller race window than `git add -A`, and
+`--only` still scopes the commit to your paths.
+
 ## 3. Write the message
 
 ```
