@@ -1,0 +1,191 @@
+//! Where the keyboard is pointing: which surface owns the next keystroke.
+//!
+//! A context is *not* a widget — `postio-core` knows nothing about widgets. It
+//! is the coarse mode the user is in, and it is what makes one key mean two
+//! things without ambiguity: `Escape` leaves the search field in
+//! [`Context::Search`] and closes the composer in [`Context::Composer`].
+//!
+//! Every [`CommandSpec`](crate::CommandSpec) carries the set of contexts it is
+//! meaningful in, which is what the palette and the `?` cheat sheet filter on.
+//!
+//! Availability is not key routing. A command being available in
+//! [`Context::Search`] says the user can reach it there; whether a bare letter
+//! key reaches it, or is swallowed as typed text by a focused entry, is the
+//! keymap resolver's decision in `postio-gtk`.
+
+use std::fmt;
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
+
+/// The surface that owns the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Context {
+    /// The message list: rows, selection, bulk actions.
+    List,
+    /// A thread drilled into from the list.
+    Thread,
+    /// The reading pane showing one message.
+    Reader,
+    /// Compose, which takes over the reading pane rather than opening a window.
+    Composer,
+    /// The search field and its results.
+    Search,
+    /// The `Ctrl+K` command palette overlay.
+    Palette,
+}
+
+impl Context {
+    /// Every context, in a stable order. The cheat sheet renders in this order.
+    pub const ALL: &'static [Context] = &[
+        Context::List,
+        Context::Thread,
+        Context::Reader,
+        Context::Composer,
+        Context::Search,
+        Context::Palette,
+    ];
+
+    /// The stable serialized name, matching the `Deserialize` spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Context::List => "list",
+            Context::Thread => "thread",
+            Context::Reader => "reader",
+            Context::Composer => "composer",
+            Context::Search => "search",
+            Context::Palette => "palette",
+        }
+    }
+
+    /// This context on its own, as a set.
+    pub const fn as_set(self) -> ContextSet {
+        ContextSet::of(self)
+    }
+
+    const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
+impl fmt::Display for Context {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The error from parsing an unknown context name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownContext(String);
+
+impl UnknownContext {
+    /// The text that did not name a context.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UnknownContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown context `{}`", self.0)
+    }
+}
+
+impl std::error::Error for UnknownContext {}
+
+impl FromStr for Context {
+    type Err = UnknownContext;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Context::ALL
+            .iter()
+            .copied()
+            .find(|context| context.as_str() == text)
+            .ok_or_else(|| UnknownContext(text.to_owned()))
+    }
+}
+
+/// The set of contexts a command is available in — its context predicate.
+///
+/// A set rather than a closure on purpose: a predicate you can only *call* can
+/// answer "is this command available here?" but not "what is available here?",
+/// and the palette and cheat sheet need the second question answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ContextSet(u8);
+
+impl ContextSet {
+    /// The empty set. No command may keep this — see the registry tests.
+    pub const EMPTY: ContextSet = ContextSet(0);
+
+    /// Every context, for commands like the palette that are always reachable.
+    pub const ANY: ContextSet = ContextSet(0b0011_1111);
+
+    /// A set holding exactly one context.
+    pub const fn of(context: Context) -> ContextSet {
+        ContextSet(context.bit())
+    }
+
+    /// A set built from a slice, usable in a `const` table.
+    pub const fn from_slice(contexts: &[Context]) -> ContextSet {
+        let mut bits = 0u8;
+        let mut index = 0;
+        while index < contexts.len() {
+            bits |= contexts[index].bit();
+            index += 1;
+        }
+        ContextSet(bits)
+    }
+
+    /// Whether `context` is in the set — the predicate itself.
+    pub const fn contains(self, context: Context) -> bool {
+        self.0 & context.bit() != 0
+    }
+
+    /// Whether the set holds no context at all.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The contexts in the set, in [`Context::ALL`] order.
+    pub fn iter(self) -> impl Iterator<Item = Context> {
+        Context::ALL
+            .iter()
+            .copied()
+            .filter(move |context| self.contains(*context))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_set_holds_what_it_was_built_from() {
+        let set = ContextSet::from_slice(&[Context::List, Context::Reader]);
+        assert!(set.contains(Context::List));
+        assert!(set.contains(Context::Reader));
+        assert!(!set.contains(Context::Composer));
+        assert_eq!(set.iter().count(), 2);
+    }
+
+    #[test]
+    fn any_holds_every_context_and_empty_holds_none() {
+        for context in Context::ALL {
+            assert!(ContextSet::ANY.contains(*context));
+            assert!(!ContextSet::EMPTY.contains(*context));
+        }
+        assert!(ContextSet::EMPTY.is_empty());
+        assert_eq!(ContextSet::ANY.iter().count(), Context::ALL.len());
+    }
+
+    #[test]
+    fn every_context_has_a_distinct_bit() {
+        let mut bits = 0u8;
+        for context in Context::ALL {
+            assert_eq!(bits & context.bit(), 0, "{context} reuses a bit");
+            bits |= context.bit();
+        }
+        assert_eq!(ContextSet(bits), ContextSet::ANY);
+    }
+}
