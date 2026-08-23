@@ -18,7 +18,9 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -170,6 +172,21 @@ pub enum SecretError {
         /// The backend's own message.
         reason: String,
     },
+
+    /// The keyring never answered within [`KEYRING_TIMEOUT`]. Under Flatpak
+    /// this happens when `org.freedesktop.portal.Secret`'s `RetrieveSecret`
+    /// request never gets a `Response` signal — no error, no prompt, just
+    /// silence — so without this bound a credential read hangs the caller
+    /// forever instead of failing.
+    #[error(
+        "the keyring did not respond about {account} within {seconds}s; it may be unavailable or unresponsive"
+    )]
+    Timeout {
+        /// The account whose password was wanted.
+        account: String,
+        /// How long Postio waited before giving up.
+        seconds: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +298,29 @@ impl SecretSource {
 // Keyring store
 // ---------------------------------------------------------------------------
 
+/// How long a single keyring round trip may take before Postio gives up.
+///
+/// Generous enough to tolerate a cold D-Bus activation of the keyring daemon,
+/// short enough that a hung Secret portal is a visible error in seconds
+/// rather than an indefinitely frozen account setup.
+const KEYRING_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bounds `fut` to [`KEYRING_TIMEOUT`], turning "never resolves" into
+/// [`SecretError::Timeout`] instead of hanging the caller forever.
+async fn with_timeout<T>(
+    key: &AccountKey,
+    fut: impl Future<Output = Result<T, SecretError>>,
+) -> Result<T, SecretError> {
+    tokio::time::timeout(KEYRING_TIMEOUT, fut)
+        .await
+        .unwrap_or_else(|_| {
+            Err(SecretError::Timeout {
+                account: key.account().to_owned(),
+                seconds: KEYRING_TIMEOUT.as_secs(),
+            })
+        })
+}
+
 /// Secret Service / Flatpak portal backed store. The default.
 #[derive(Clone, Debug, Default)]
 pub struct KeyringSecretStore {
@@ -318,45 +358,55 @@ impl SecretStore for KeyringSecretStore {
     }
 
     async fn store(&self, key: &AccountKey, password: &Password) -> Result<(), SecretError> {
-        let keyring = self.keyring(key).await?;
-        keyring
-            .create_item(
-                &key.label(),
-                &key.attributes(),
-                oo7::Secret::text(password.expose()),
-                true,
-            )
-            .await
-            .map_err(|err| map_oo7_error(key, err))
+        with_timeout(key, async {
+            let keyring = self.keyring(key).await?;
+            keyring
+                .create_item(
+                    &key.label(),
+                    &key.attributes(),
+                    oo7::Secret::text(password.expose()),
+                    true,
+                )
+                .await
+                .map_err(|err| map_oo7_error(key, err))
+        })
+        .await
     }
 
     async fn retrieve(&self, key: &AccountKey) -> Result<Password, SecretError> {
-        let keyring = self.keyring(key).await?;
-        let items = keyring
-            .search_items(&key.attributes())
-            .await
-            .map_err(|err| map_oo7_error(key, err))?;
+        with_timeout(key, async {
+            let keyring = self.keyring(key).await?;
+            let items = keyring
+                .search_items(&key.attributes())
+                .await
+                .map_err(|err| map_oo7_error(key, err))?;
 
-        let item = items.first().ok_or_else(|| SecretError::NotFound {
-            account: key.account().to_owned(),
-        })?;
-
-        let secret = item.secret().await.map_err(|err| map_oo7_error(key, err))?;
-        let password =
-            String::from_utf8(secret.as_bytes().to_vec()).map_err(|_| SecretError::Backend {
+            let item = items.first().ok_or_else(|| SecretError::NotFound {
                 account: key.account().to_owned(),
-                reason: "the stored secret is not valid UTF-8".to_owned(),
             })?;
 
-        Ok(Password::new(password))
+            let secret = item.secret().await.map_err(|err| map_oo7_error(key, err))?;
+            let password = String::from_utf8(secret.as_bytes().to_vec()).map_err(|_| {
+                SecretError::Backend {
+                    account: key.account().to_owned(),
+                    reason: "the stored secret is not valid UTF-8".to_owned(),
+                }
+            })?;
+
+            Ok(Password::new(password))
+        })
+        .await
     }
 
     async fn delete(&self, key: &AccountKey) -> Result<(), SecretError> {
-        let keyring = self.keyring(key).await?;
-        keyring
-            .delete(&key.attributes())
-            .await
-            .map_err(|err| map_oo7_error(key, err))
+        with_timeout(key, async {
+            let keyring = self.keyring(key).await?;
+            keyring
+                .delete(&key.attributes())
+                .await
+                .map_err(|err| map_oo7_error(key, err))
+        })
+        .await
     }
 }
 
@@ -612,6 +662,43 @@ mod tests {
                 "`{kind}` was accepted as a secret source"
             );
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_keyring_call_that_never_resolves_times_out() {
+        let key = AccountKey::new("ada@example.com");
+        let never = std::future::pending::<Result<(), SecretError>>();
+
+        let result = with_timeout(&key, never).await;
+
+        assert!(matches!(
+            result,
+            Err(SecretError::Timeout { account, seconds })
+                if account == "ada@example.com" && seconds == KEYRING_TIMEOUT.as_secs()
+        ));
+    }
+
+    #[tokio::test]
+    async fn with_timeout_passes_through_a_fast_result() {
+        let key = AccountKey::new("ada@example.com");
+
+        let result = with_timeout(&key, async { Ok::<_, SecretError>(42) }).await;
+
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn with_timeout_passes_through_a_fast_error() {
+        let key = AccountKey::new("ada@example.com");
+
+        let result = with_timeout(&key, async {
+            Err::<(), _>(SecretError::NotFound {
+                account: "ada@example.com".to_owned(),
+            })
+        })
+        .await;
+
+        assert!(matches!(result, Err(SecretError::NotFound { .. })));
     }
 
     #[test]

@@ -67,6 +67,11 @@ mod imp {
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
         pub composer: OnceCell<crate::composer::Composer>,
+        /// The header's own `Compose` button — kept so the composer can make
+        /// it say `Composing` while it has the reading pane. The rest of
+        /// `Header` has no other reader today, so only the button is worth
+        /// keeping rather than the whole struct.
+        pub compose_button: OnceCell<gtk::Button>,
 
         pub settings: OnceCell<SettingsPanel>,
         /// The pane that had the keyboard when the box opened.
@@ -149,6 +154,13 @@ impl Window {
             .composer
             .get_or_init(|| crate::composer::install(self))
             .clone()
+    }
+
+    /// The header's `Compose` button, once `build` has run. `None` only
+    /// before `constructed` finishes, which nothing outside this module ever
+    /// observes.
+    pub fn compose_button(&self) -> Option<gtk::Button> {
+        self.imp().compose_button.get().cloned()
     }
 
     /// The list pane's placeholder for inbox zero, offline and sync failure.
@@ -373,6 +385,7 @@ impl Window {
         let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
+        let _ = self.imp().compose_button.set(header.compose.clone());
         self.imp().context.set(Some(Context::List));
 
         self.install_keyboard();
