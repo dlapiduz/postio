@@ -186,6 +186,7 @@ fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed:
         // before the process ends anyway.
         let sync: &'static _ = Box::leak(Box::new(sync));
         seed_the_backfill(sync, wiring);
+        fetch_what_is_opened(window, sync, wiring.runtime.clone());
     }
 
     let sources = feed::Sources::new(wiring.store.clone(), wiring.runtime.clone());
@@ -195,6 +196,26 @@ fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed:
         sources.clone(),
         sources,
     ))
+}
+
+/// Jump a message to the front of the backfill when it is opened.
+///
+/// The one body the user is actually waiting for. Everything else in the
+/// queue is a guess about what they will want next; this is not a guess, so
+/// it goes to the front of the queue rather than the back.
+fn fetch_what_is_opened(
+    window: &Window,
+    sync: &'static postio_runtime::Engine,
+    runtime: tokio::runtime::Handle,
+) {
+    window.list().connect_activated(move |row| {
+        let message = row.id;
+        runtime.spawn(async move {
+            if let Err(error) = sync.request_body(message).await {
+                eprintln!("postio: cannot fetch that message: {error}");
+            }
+        });
+    });
 }
 
 /// Ask for the bodies worth having, one mailbox at a time.
