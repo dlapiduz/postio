@@ -60,7 +60,8 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_core::{CommandId, Context};
 use postio_model::address::{format_list, parse_list};
-use postio_model::{AccountId, Draft, DraftKind, Identity, MessageBody};
+use postio_model::signature;
+use postio_model::{AccountId, Draft, DraftKind, Identity, IdentityId, MessageBody};
 
 use crate::shell::Pane;
 use crate::window::Window;
@@ -114,12 +115,16 @@ pub enum Closing {
 /// makes the draft worth keeping. Only a composition that is still exactly as
 /// it opened is dropped, and dropping *that* discards nothing.
 ///
-/// Whitespace does not count as content. A body holding a newline the user
-/// never typed would make every abandoned composer permanent, which is how a
-/// "we kept your draft" message stops meaning anything.
+/// Neither whitespace nor the signature counts as content. A body holding
+/// only what the composer put there would make every abandoned composer
+/// permanent, which is how a "we kept your draft" message stops meaning
+/// anything.
 pub fn closing(draft: &Draft) -> Closing {
     let body = draft.body.text.as_deref().unwrap_or_default();
-    if draft.has_recipients() || !draft.subject.trim().is_empty() || !body.trim().is_empty() {
+    // The signature is the composer's own doing, not something the user
+    // wrote, so a body holding nothing else is still an untouched composer.
+    let written = signature::split(body).0;
+    if draft.has_recipients() || !draft.subject.trim().is_empty() || !written.trim().is_empty() {
         Closing::Keep
     } else {
         Closing::Drop
@@ -430,6 +435,10 @@ impl Composer {
     ///
     /// One identity is not a choice, so it is drawn as a line of text rather
     /// than as a picker with nothing else in it.
+    ///
+    /// The account's default is selected, and its signature goes into the body
+    /// straight away — the composer opens showing what will be sent, not a
+    /// body that grows a signature at some later moment.
     pub fn set_identities(&self, identities: Vec<Identity>) {
         let imp = self.imp();
         let names: Vec<String> = identities.iter().map(identity_label).collect();
@@ -444,7 +453,68 @@ impl Composer {
         );
         imp.identity.set_visible(identities.len() > 1);
         imp.identity_only.set_visible(identities.len() <= 1);
+
+        let default = identities.iter().position(|identity| identity.is_default);
         *imp.identities.borrow_mut() = identities;
+        imp.identity.set_selected(default.unwrap_or(0) as u32);
+        self.apply_identity();
+    }
+
+    /// Sends this draft as the identity with `id`, if the account has it.
+    ///
+    /// The override is the *draft's*: it is recorded on the draft, so closing
+    /// the composer and coming back to it sends from the same address, and a
+    /// later reply picks its own identity again rather than inheriting this
+    /// one.
+    pub fn select_identity(&self, id: IdentityId) -> bool {
+        let Some(index) = self
+            .imp()
+            .identities
+            .borrow()
+            .iter()
+            .position(|identity| identity.id == id)
+        else {
+            return false;
+        };
+        self.imp().identity.set_selected(index as u32);
+        self.apply_identity();
+        true
+    }
+
+    /// Puts the selected identity, and its signature, into the draft.
+    ///
+    /// Idempotent, because [`Draft::use_identity`] replaces the signature
+    /// block rather than appending one: switching identity mid-compose swaps
+    /// signatures, and re-running this over an unchanged draft changes
+    /// nothing.
+    fn apply_identity(&self) {
+        let Some(identity) = self.identity() else {
+            return;
+        };
+        let imp = self.imp();
+        let mut draft = self.draft();
+        draft.use_identity(&identity);
+        imp.draft.borrow_mut().identity_id = draft.identity_id;
+
+        let buffer = imp.body.buffer();
+        let current = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        let wanted = draft.body.text.unwrap_or_default();
+        if current == wanted {
+            return;
+        }
+
+        // The written part above the signature is untouched, so the caret
+        // belongs exactly where it was — switching identity mid-sentence must
+        // not send the cursor to the end of the message.
+        let caret = buffer.cursor_position();
+        let was_filling = imp.filling.replace(true);
+        buffer.set_text(&wanted);
+        let caret = caret.min(buffer.char_count());
+        buffer.place_cursor(&buffer.iter_at_offset(caret));
+        imp.filling.set(was_filling);
+        self.refresh();
     }
 
     /// The status line under the heading.
@@ -593,6 +663,14 @@ impl Composer {
             window.set_context(context);
             window.shell().set_focused_pane(pane);
         }
+
+        // The keyboard is still in one of the composer's fields, which is
+        // about to be a *hidden* text entry — and the resolver's "typing
+        // always wins" rule would then swallow the next single-key binding as
+        // a character typed into something nobody can see. Dropping the focus
+        // first is what makes `c` after `Esc` open the composer again rather
+        // than type a `c` into it.
+        gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
         window.shell().grab_focus();
     }
 
@@ -617,8 +695,20 @@ impl Composer {
         imp.bcc_row.set_visible(!draft.bcc.is_empty());
         self.sync_more();
 
+        let identity = draft.identity_id;
         *imp.draft.borrow_mut() = draft;
         imp.filling.set(false);
+
+        // The draft's own identity wins over the account default: an override
+        // made before it was closed is still this draft's.
+        if !identity.is_some_and(|id| self.select_identity(id)) {
+            self.apply_identity();
+        }
+
+        // Above the quote and above the signature, which is where a reply is
+        // written and where a new message starts.
+        let buffer = imp.body.buffer();
+        buffer.place_cursor(&buffer.start_iter());
         self.refresh();
     }
 
@@ -798,6 +888,11 @@ impl Composer {
         imp.identity.set_halign(gtk::Align::Start);
         imp.identity
             .update_property(&[gtk::accessible::Property::Label("Send as")]);
+        imp.identity.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.apply_identity()
+        ));
         imp.identity_only.add_css_class("postio-compose-identity");
         imp.identity_only.set_xalign(0.0);
         imp.identity_only.set_hexpand(true);
@@ -971,6 +1066,26 @@ mod tests {
             html: None,
         };
         assert_eq!(closing(&with_body), Closing::Keep);
+    }
+
+    #[test]
+    fn closing_drops_a_draft_holding_only_the_signature_the_composer_added() {
+        let mut signed = draft();
+        signed.body = MessageBody {
+            text: Some("\n\n-- \nAda\n".to_owned()),
+            html: None,
+        };
+        assert_eq!(closing(&signed), Closing::Drop);
+
+        signed.body = MessageBody {
+            text: Some("Looking now.\n\n-- \nAda\n".to_owned()),
+            html: None,
+        };
+        assert_eq!(
+            closing(&signed),
+            Closing::Keep,
+            "a word above it is content"
+        );
     }
 
     #[test]
