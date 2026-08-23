@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Everything the UI needs at runtime, compiled into the binary.
+
+  Paths are relative to `data/`, the sourcedir build.rs passes to
+  glib-compile-resources. The fonts are vendored under the SIL Open Font
+  License; each family ships next to its OFL.txt and both are read out of this
+  bundle — never from the system, never from the network.
+
+  Provenance — https://github.com/google/fonts, `main`, fetched 2026-08-22:
+    fonts/barlow/            ofl/barlow/            © 2017 The Barlow Project Authors
+    fonts/barlow-condensed/  ofl/barlowcondensed/   © 2017 The Barlow Project Authors
+    fonts/ibm-plex-mono/     ofl/ibmplexmono/       © 2017 IBM Corp. ("Plex")
+-->
+<gresources>
+  <gresource prefix="/dev/postio/Postio">
+    <!-- Generated from the Industry design system by build.rs. -->
+    <file compressed="true">tokens.css</file>
+
+    <!-- Barlow — body text. -->
+    <file>fonts/barlow/Barlow-Regular.ttf</file>
+    <file>fonts/barlow/Barlow-Medium.ttf</file>
+    <file>fonts/barlow/Barlow-Bold.ttf</file>
+    <file>fonts/barlow/Barlow-Italic.ttf</file>
+    <file compressed="true">fonts/barlow/OFL.txt</file>
+
+    <!-- Barlow Condensed — headings. -->
+    <file>fonts/barlow-condensed/BarlowCondensed-Regular.ttf</file>
+    <file>fonts/barlow-condensed/BarlowCondensed-SemiBold.ttf</file>
+    <file compressed="true">fonts/barlow-condensed/OFL.txt</file>
+
+    <!-- IBM Plex Mono — counts, key hints, metadata. -->
+    <file>fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf</file>
+    <file>fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf</file>
+    <file compressed="true">fonts/ibm-plex-mono/OFL.txt</file>
+  </gresource>
+</gresources>
