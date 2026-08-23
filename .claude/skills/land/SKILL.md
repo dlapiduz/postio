@@ -52,26 +52,20 @@ only the writing forms that reach into other people's files.
 If your crate is not green, keep working. Do not reach for a stash to get a
 clean tree; that would take every session's changes with it.
 
-## 2. Stage explicit paths
+## 2. Commit your paths, atomically
 
 ```bash
-git add crates/<your-crate> Cargo.lock
+git commit --only crates/<your-crate> Cargo.lock -m "..."
 ```
 
-Never stage everything — other sessions have unfinished files in this tree.
+**Not `git add` then `git commit`.** The index is *shared*: those are two steps,
+and anything another session stages in between lands in your commit. That has
+happened three times here — one commit absorbed another session's compose work,
+another absorbed an unrelated keyring fix. `--only` commits exactly the paths
+you name and leaves everyone else's staged work untouched, which makes it a
+single atomic step.
 
-**And never `git commit -- <path>`.** That form bypasses the index and commits
-the *working tree* version of those paths, so anything you had half-written in
-them goes in too. A session did exactly this and produced an intermediate
-commit that would not build in isolation. Stage first, then commit with no
-pathspec:
-
-```bash
-git add crates/<your-crate> Cargo.lock
-git commit          # no -- <path>, no -a
-``` `Cargo.lock` churns
-constantly and is a resolved superset; staging it alongside your crate is
-expected and merges fine.
+Never `git add -A`, `git add .`, or `git commit -a`.
 
 ## 3. Write the message
 

@@ -61,6 +61,20 @@ RULES: list[tuple[str, str]] = [
         "path, or commit what you have. See 'Working in parallel' in CLAUDE.md.",
     ),
     (
+        # --hard is caught above with its own message. This is every other
+        # form: bare `git reset`, `git reset HEAD~1`, `--soft`, `--mixed`.
+        # A pathspec reset (`git reset -- <path>`) is the one safe use and is
+        # allowed by requiring the `--` separator.
+        r"git\s+reset(?![^|;&\n]*\s--\s)(?![^|;&\n]*--hard)",
+        f"{SHARED} Refusing 'git reset': it moves the branch and DROPS commits, "
+        "including ones another session landed -- and unlike --hard it leaves "
+        "the files in place, so nothing looks wrong. That has already happened "
+        "here: a landed commit vanished from history and its content resurfaced "
+        "inside an unrelated commit. To unstage a path use "
+        "'git restore --staged <path>'. To undo your own last commit, ask the "
+        "user -- the branch is shared.",
+    ),
+    (
         r"git\s+clean\s+-",
         f"{SHARED} Refusing 'git clean': it deletes untracked files across all "
         "crates, including work another session has not committed yet.",
@@ -79,21 +93,17 @@ RULES: list[tuple[str, str]] = [
     (
         r"git\s+add\s+(?:-A|--all|-u|\.(?:\s|$))",
         f"{SHARED} Refusing to stage everything: it commits other sessions' "
-        "unfinished files. Stage explicit paths, e.g. "
-        "'git add crates/<your-crate> Cargo.lock'.",
+        "unfinished files. The index is SHARED, so even staging your own "
+        "paths races anyone staging between your add and your commit -- "
+        "that has happened three times here. Use "
+        "'git commit --only <your paths> -m \"...\"' instead: it commits "
+        "exactly those paths and leaves everyone else's staged work alone.",
     ),
     (
         r"git\s+commit\s+(?:[^|;&\n]*\s)?(?:-a\b|--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)",
         f"{SHARED} Refusing 'git commit -a': it commits every modified file in "
         "the tree, including other sessions'. Stage your own paths first, then "
         "plain 'git commit'.",
-    ),
-    (
-        r"git\s+commit\s+(?:[^|;&\n]*\s)?--\s+\S",
-        "Refusing 'git commit -- <path>': that form bypasses the index and "
-        "commits the WORKING TREE version of those paths, sweeping in your own "
-        "half-written edits. A session did this and produced a commit that "
-        "would not build in isolation. Stage first, then a bare 'git commit'.",
     ),
     (
         r"cargo\s+fmt\s+(?:[^|;&\n]*\s)?(?:--all|--workspace|-p\s)(?![^|;&\n]*--check)",
@@ -211,6 +221,15 @@ def main() -> int:
     # which already-running sessions would not re-read.
     if os.environ.get("POSTIO_GUARD", "").lower() in {"off", "0", "false"}:
         return 0
+
+    # Only guard the shared repository. A session doing scratch git work in
+    # /tmp is not a hazard to anyone, and blocking it is pure friction.
+    project = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    first_cd = re.match(r"\s*cd\s+(\S+)", command)
+    if first_cd and project:
+        target = first_cd.group(1).strip("\"'")
+        if not target.startswith(project) and target.startswith("/"):
+            return 0
 
     haystack = strip_quoted(strip_heredocs(command))
 
