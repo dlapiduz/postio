@@ -27,8 +27,12 @@
 //! # Testing
 //!
 //! `io-imap` is sans-I/O, so the whole handshake runs over a canned transcript
-//! with no socket: see [`ScriptedConnector`]. No test in the default suite
-//! touches the network.
+//! with no socket: see [`ScriptedConnector`]. That covers the exchanges whose
+//! exact bytes are the point; for the ones where *state* is the point — a
+//! resync, a UIDVALIDITY bump, a torn body fetch — point a [`ConnectionPool`]
+//! at the `test_server` module's in-process server, which is a real IMAP
+//! server on a loopback port. No test in the default suite touches the
+//! network.
 
 mod body;
 mod dispatch;
