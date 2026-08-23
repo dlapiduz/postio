@@ -51,6 +51,10 @@ ALLOW = [
     "rustfmt --edition 2024 crates/postio-core/src/lib.rs",
     "rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs')",
     "git commit -m 'feat: handle -- in the parser'",
+    # A later line must not be read as flags of an earlier command.
+    'git add CLAUDE.md && git commit -q -m "docs: x"\ncargo fmt --all --check',
+    "git commit -m 'docs: x'\ngit add crates/postio-core\ncargo fmt --all --check",
+    "cargo fmt -p postio-core --check\ngit commit -m 'x'",
 ]
 
 
