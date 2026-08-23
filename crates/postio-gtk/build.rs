@@ -20,6 +20,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/tokens.rs");
     println!("cargo:rerun-if-changed=data/postio.gresource.xml");
+    println!("cargo:rerun-if-changed=data/shell.css");
     println!("cargo:rerun-if-env-changed=POSTIO_DESIGN_SYSTEM");
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());

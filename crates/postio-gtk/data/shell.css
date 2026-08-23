@@ -1,0 +1,127 @@
+/* Postio's own widget styles, layered on the generated design tokens.
+ *
+ * `tokens.css` is generated from the Industry design system and must not be
+ * hand-edited; this file is where the widgets are dressed in it. Everything
+ * below refers to a `--postio-*` role rather than a literal colour, so
+ * retuning the design system still moves the whole application.
+ *
+ * Measurements come from canvas 1b. Where a number is stated twice — the 52px
+ * header, the 3px selected edge — it is because the canvas states it twice.
+ *
+ * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent, and
+ * pane switches have none at all. `tests/gtk_shell.rs` enforces that by
+ * reading this file back.
+ */
+
+/* ── Header ──────────────────────────────────────────────────────────
+   52px tall, hairline underneath, nothing else. */
+headerbar.postio-header {
+  min-height: 52px;
+  padding: 0 8px;
+  background-color: var(--postio-ground);
+  /* The hairline is drawn *inside* the 52px, not added to it: the canvas
+     measures its header the way CSS `border-box` does, and a border here
+     would make the bar 53px tall. */
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* The canvas' 30px icon buttons, not Adwaita's 34px. */
+headerbar.postio-header button.image-button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+/* The sidebar toggle carries no checked fill: whether the sidebar is on
+   screen is already visible from the sidebar being on screen. GTK4 names a
+   toggle's node `button`, with a `.toggle` style class. */
+headerbar.postio-header button.toggle:checked {
+  background: none;
+  box-shadow: none;
+}
+
+/* The search field: a hairline plate, not a bevelled entry. */
+.postio-search {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+}
+
+.postio-search:focus-within {
+  border-color: var(--postio-accent);
+}
+
+.postio-search text {
+  font-size: 13px;
+  color: var(--postio-ink);
+  background: none;
+}
+
+.postio-search text placeholder {
+  color: var(--postio-color-neutral-600);
+}
+
+.postio-search-icon {
+  color: var(--postio-accent);
+  -gtk-icon-size: 16px;
+}
+
+/* A key hint riding along inside a control. Quieter than `.postio-key`,
+   which is the standalone cap the focused row draws. */
+.postio-keyhint {
+  font-family: var(--postio-font-mono);
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+
+/* Industry sets buttons in the heading face — Barlow Condensed, semibold.
+   The canvas keeps that and only changes the size. */
+button.postio-ghost,
+button.postio-compose {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  border-radius: var(--postio-radius-md);
+}
+
+button.postio-ghost {
+  font-size: 12px;
+  padding: 6px 10px;
+  color: var(--postio-color-neutral-600);
+}
+
+button.postio-compose {
+  padding: 6px 13px;
+  font-size: 12.5px;
+}
+
+/* ── The three panes ─────────────────────────────────────────────────
+   Hairline dividers, an airy ground, and no transition of any kind: a
+   pane switch is a relayout, and the next frame already has it. */
+.postio-shell {
+  background-color: var(--postio-ground);
+}
+
+.postio-shell paned > separator {
+  min-width: 1px;
+  background-color: var(--postio-hairline);
+  background-image: none;
+}
+
+.postio-shell paned > separator:hover {
+  background-color: var(--postio-hairline-strong);
+}
+
+.postio-sidebar {
+  padding: 18px 0;
+  background-color: var(--postio-ground);
+}
+
+.postio-list {
+  background-color: var(--postio-ground);
+}
+
+.postio-reader {
+  background-color: var(--postio-ground);
+}
