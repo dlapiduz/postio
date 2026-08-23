@@ -5,19 +5,19 @@
 //! [`crate::secrets`] for how that is enforced.
 //!
 //! ```toml
-//! [accounts.icloud]
+//! [accounts.personal]
 //! email = "ada@example.com"
 //! display_name = "Person"
 //! default = true
 //!
-//! [accounts.icloud.imap]
-//! host = "imap.mail.me.com"
+//! [accounts.personal.imap]
+//! host = "imap.example.com"
 //! port = 993
 //! security = "implicit-tls"
-//! # keyring_entry = "postio:icloud:imap"   # defaults to this
+//! # keyring_entry = "postio:personal:imap"   # defaults to this
 //!
-//! [accounts.icloud.smtp]
-//! host = "smtp.mail.me.com"
+//! [accounts.personal.smtp]
+//! host = "smtp.example.com"
 //! port = 465
 //! security = "implicit-tls"
 //! ```

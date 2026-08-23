@@ -20,18 +20,18 @@ theme = "dark"
 archive = "x"
 summarize = "g s"
 
-[accounts.icloud]
+[accounts.personal]
 email = "ada@example.com"
 display_name = "Person"
 default = true
 
-[accounts.icloud.imap]
-host = "imap.mail.me.com"
+[accounts.personal.imap]
+host = "imap.example.com"
 port = 993
 security = "implicit-tls"
 
-[accounts.icloud.smtp]
-host = "smtp.mail.me.com"
+[accounts.personal.smtp]
+host = "smtp.example.com"
 port = 465
 security = "implicit-tls"
 
@@ -263,20 +263,20 @@ fn a_forgiving_enum_spelling_is_still_valid() {
 
 #[test]
 fn a_host_without_an_email_is_reported_against_the_account() {
-    let text = r#"[accounts.icloud]
+    let text = r#"[accounts.personal]
 display_name = "Person"
 
-[accounts.icloud.imap]
-host = "imap.mail.me.com"
+[accounts.personal.imap]
+host = "imap.example.com"
 
-[accounts.icloud.smtp]
-host = "smtp.mail.me.com"
+[accounts.personal.smtp]
+host = "smtp.example.com"
 "#;
     let checked = check(text);
     let err = checked.validation.first_error().expect("an error");
     assert_eq!(err.line, 1, "point at the account table: {err:?}");
-    assert_eq!(err.path, "accounts.icloud.email");
-    assert!(err.message.contains("icloud"), "{}", err.message);
+    assert_eq!(err.path, "accounts.personal.email");
+    assert!(err.message.contains("personal"), "{}", err.message);
     assert!(err.message.contains("email"), "{}", err.message);
     // The config still parsed: the app keeps running and shows the line.
     assert!(checked.config.is_some());
@@ -285,9 +285,9 @@ host = "smtp.mail.me.com"
 #[test]
 fn an_email_that_is_not_an_address_is_reported() {
     let msg = first_message(
-        "[accounts.a]\nemail = \"person-at-icloud\"\n[accounts.a.imap]\nhost = \"i\"\n[accounts.a.smtp]\nhost = \"s\"\n",
+        "[accounts.a]\nemail = \"ada-at-example\"\n[accounts.a.imap]\nhost = \"i\"\n[accounts.a.smtp]\nhost = \"s\"\n",
     );
-    assert!(msg.contains("person-at-icloud"), "{msg}");
+    assert!(msg.contains("ada-at-example"), "{msg}");
 }
 
 #[test]
@@ -424,12 +424,12 @@ fn validation_never_quotes_a_secret() {
         r#"[ui]
 density = "enormous"
 
-[accounts.icloud]
+[accounts.personal]
 email = "ada@example.com"
 password = "{PASSWORD}"
 
-[accounts.icloud.imap]
-host = "imap.mail.me.com"
+[accounts.personal.imap]
+host = "imap.example.com"
 app_password = "{PASSWORD}"
 "#
     );
@@ -446,14 +446,14 @@ app_password = "{PASSWORD}"
 #[test]
 fn a_secret_in_the_file_is_reported_as_a_problem_to_fix() {
     let text = format!(
-        "[accounts.icloud]\nemail = \"ada@example.com\"\npassword = \"{PASSWORD}\"\n[accounts.icloud.imap]\nhost = \"i\"\n[accounts.icloud.smtp]\nhost = \"s\"\n"
+        "[accounts.personal]\nemail = \"ada@example.com\"\npassword = \"{PASSWORD}\"\n[accounts.personal.imap]\nhost = \"i\"\n[accounts.personal.smtp]\nhost = \"s\"\n"
     );
     let checked = check(&text);
     let err = checked
         .validation
         .errors()
         .iter()
-        .find(|e| e.path == "accounts.icloud.password")
+        .find(|e| e.path == "accounts.personal.password")
         .unwrap_or_else(|| panic!("{:?}", checked.validation.errors()));
     assert_eq!(err.line, 3);
     assert!(err.message.contains("keyring"), "{}", err.message);

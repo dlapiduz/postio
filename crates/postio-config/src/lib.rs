@@ -32,17 +32,17 @@
 //!     [ui]
 //!     density = "compact"
 //!
-//!     [accounts.icloud]
+//!     [accounts.personal]
 //!     email = "ada@example.com"
 //!
-//!     [accounts.icloud.imap]
-//!     host = "imap.mail.me.com"
+//!     [accounts.personal.imap]
+//!     host = "imap.example.com"
 //! "#).unwrap();
 //!
 //! assert_eq!(cfg.ui.density, Density::Compact);
 //! assert_eq!(cfg.ui.theme, postio_config::Theme::System); // untouched default
-//! assert_eq!(cfg.account("icloud").unwrap().imap.port, 993);
-//! assert_eq!(cfg.account("icloud").unwrap().imap_keyring_entry(), "postio:icloud:imap");
+//! assert_eq!(cfg.account("personal").unwrap().imap.port, 993);
+//! assert_eq!(cfg.account("personal").unwrap().imap_keyring_entry(), "postio:personal:imap");
 //! ```
 
 #![warn(missing_docs)]
