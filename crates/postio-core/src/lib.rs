@@ -70,5 +70,5 @@ pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event};
 pub use registry::{CommandSpec, Recovery};
-pub use state::{AppState, SharedState, ViewMode};
+pub use state::{AppState, Resolved, Selection, SharedState, ViewMode};
 pub use undo::{UndoEntry, UndoKind, UndoStack};

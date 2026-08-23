@@ -29,7 +29,7 @@ use postio_model::{AccountId, DraftId, MailboxId, MessageId, ThreadId};
 use serde::{Deserialize, Serialize};
 
 use crate::bridge::EventSink;
-use crate::{ConnectionState, Context, Event};
+use crate::{ConnectionState, Context, Event, MessageTarget};
 
 /// Which surface the reading pane is showing.
 ///
@@ -177,6 +177,28 @@ impl Selection {
     }
 }
 
+/// What a [`MessageTarget`] came out as, once app state had its say.
+///
+/// The predicate stays a predicate: a handler that receives
+/// [`Resolved::Everything`] hands it to the store to turn into affected rows
+/// in one statement, rather than being given a hundred thousand ids that
+/// something had to enumerate first. That is the whole reason this is not
+/// simply `Vec<MessageId>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolved {
+    /// These messages, named.
+    Messages(Vec<MessageId>),
+    /// Every message in a mailbox, less the ones taken back out.
+    Everything {
+        /// The mailbox the predicate is about.
+        mailbox: MailboxId,
+        /// Rows the user removed from the selection.
+        except: Vec<MessageId>,
+    },
+    /// Every message in a thread.
+    Thread(ThreadId),
+}
+
 /// One step of the back stack: where the user was, and where they were in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
@@ -235,6 +257,45 @@ impl AppState {
     /// round trip through a thread has to restore.
     pub fn focus(&self) -> Option<MessageId> {
         self.focus
+    }
+
+    /// What a command aimed at `target` would actually act on.
+    ///
+    /// # Why an empty selection is not "nothing"
+    ///
+    /// [`MessageTarget::Selection`] is the registry's default for every
+    /// message action, because a keystroke says only which verb it meant. But
+    /// the selection is *deliberate* — it is what the user marked with `x`,
+    /// Ctrl-click or `Ctrl+A` — and reading mail one message at a time never
+    /// marks anything. Pressing `a` there has to archive the message being
+    /// read, which is the row the cursor is on.
+    ///
+    /// So an empty selection falls back to the focus. Without that fallback
+    /// the daily case — click a message, press `a` — would archive nothing at
+    /// all, silently, which is the single most likely way this whole design
+    /// fails. The frontends depend on it: `postio-gtk`'s list deliberately
+    /// clears the selection on a plain click for exactly this reason.
+    ///
+    /// Returns `None` when there is genuinely nothing to act on — no
+    /// selection, no focused row — which a handler reports as
+    /// `CommandError::rejected` rather than doing nothing quietly.
+    pub fn resolve(&self, target: &MessageTarget) -> Option<Resolved> {
+        match target {
+            MessageTarget::Thread(thread) => Some(Resolved::Thread(*thread)),
+            MessageTarget::Messages(messages) if messages.is_empty() => None,
+            MessageTarget::Messages(messages) => Some(Resolved::Messages(messages.clone())),
+            MessageTarget::Selection => match &self.selected {
+                Selection::Everything { except } => Some(Resolved::Everything {
+                    mailbox: self.mailbox?,
+                    except: except.clone(),
+                }),
+                Selection::These(messages) if !messages.is_empty() => {
+                    Some(Resolved::Messages(messages.clone()))
+                }
+                // Nothing marked: the row being read is what "this" means.
+                Selection::These(_) => self.focus.map(|focus| Resolved::Messages(vec![focus])),
+            },
+        }
     }
 
     /// The current view.
@@ -559,6 +620,93 @@ impl SharedState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_selection_means_the_row_the_cursor_is_on() {
+        // The daily case, and the one that would fail silently: click a
+        // message, press `a`. Nothing was marked, so "the selection" has to
+        // mean the message being read or the archive hits nothing at all.
+        let mut state = AppState::new();
+        state.focus_on(Some(MessageId::new(9)));
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            Some(Resolved::Messages(vec![MessageId::new(9)]))
+        );
+    }
+
+    #[test]
+    fn a_deliberate_selection_wins_over_the_cursor() {
+        let mut state = AppState::new();
+        state.select(vec![MessageId::new(1), MessageId::new(2)], None);
+        state.focus_on(Some(MessageId::new(9)));
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            Some(Resolved::Messages(vec![
+                MessageId::new(1),
+                MessageId::new(2)
+            ])),
+            "what the user marked, not where they happen to be looking"
+        );
+    }
+
+    #[test]
+    fn select_all_stays_a_predicate_all_the_way_to_the_handler() {
+        // Resolving must not be the moment a hundred thousand ids appear:
+        // the store turns this into affected rows in one statement.
+        let mut state = AppState::new();
+        state.open_mailbox(MailboxId::new(4));
+        state.select_all();
+        state.toggle_selection(MessageId::new(7));
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            Some(Resolved::Everything {
+                mailbox: MailboxId::new(4),
+                except: vec![MessageId::new(7)],
+            })
+        );
+    }
+
+    #[test]
+    fn nothing_selected_and_nothing_focused_resolves_to_nothing() {
+        // Which a handler reports as a rejection — a quiet hint — rather
+        // than doing nothing and looking like a bug.
+        assert_eq!(AppState::new().resolve(&MessageTarget::Selection), None);
+        assert_eq!(
+            AppState::new().resolve(&MessageTarget::Messages(Vec::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_named_target_is_taken_at_its_word() {
+        // A hover action or a drop names its own rows, and app state must not
+        // second-guess it: the user pointed at that message.
+        let mut state = AppState::new();
+        state.select(vec![MessageId::new(1)], Some(MessageId::new(1)));
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Messages(vec![MessageId::new(42)])),
+            Some(Resolved::Messages(vec![MessageId::new(42)]))
+        );
+        assert_eq!(
+            state.resolve(&MessageTarget::Thread(ThreadId::new(5))),
+            Some(Resolved::Thread(ThreadId::new(5)))
+        );
+    }
+
+    #[test]
+    fn a_predicate_with_no_mailbox_open_resolves_to_nothing() {
+        // "Everything" is relative to the list in view. Without one there is
+        // no query to hand the store, and inventing one would be a guess
+        // about which mailbox the user meant.
+        let mut state = AppState::new();
+        state.select_all();
+
+        assert_eq!(state.resolve(&MessageTarget::Selection), None);
+    }
 
     #[test]
     fn the_reader_selects_what_it_shows() {
