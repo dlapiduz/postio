@@ -44,14 +44,30 @@
 //! negated with a leading `-`, each composable with the others and with free
 //! text. Dates accept ISO (`2026-01-01`), loose (`aug1`) and relative
 //! (`yesterday`, `last week`, `3m`) forms; sizes accept `K`/`M`/`G`.
+//!
+//! # The `index` feature
+//!
+//! [`index`] (the FTS5 schema and triggers) sits behind the `index` cargo
+//! feature, off by default. It pulls in `rusqlite` and `postio-model`, which
+//! `postio-gtk` must never depend on (`scripts/check-crate-boundaries.py`) —
+//! it depends on this crate at its plain defaults, which is why this feature
+//! defaults off rather than on: `postio-gtk` needs only the parser above, and
+//! a workspace member's own default features are active across the whole
+//! workspace resolve regardless of what any one dependent asks for.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod date;
+#[cfg(feature = "index")]
+pub mod error;
+#[cfg(feature = "index")]
+pub mod index;
 mod parser;
 pub mod query;
 mod size;
 
+#[cfg(feature = "index")]
+pub use error::{Error, Result};
 pub use parser::parse;
 pub use query::ParsedQuery;

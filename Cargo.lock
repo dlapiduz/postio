@@ -2355,7 +2355,6 @@ name = "postio-search"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "criterion",
  "postio-model",
  "postio-storage",
  "rusqlite",
