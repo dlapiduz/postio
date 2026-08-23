@@ -233,6 +233,23 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     /// The events are deliberately raw. They say *that* the mailbox changed,
     /// not what it now contains; the correct response is a resync pull, not
     /// applying them as a diff.
+    ///
+    /// # What a watcher is not told
+    ///
+    /// A server reports what *other* connections did. Changes this backend
+    /// itself made came back in their own command responses and are not
+    /// repeated here, so a caller must never wait on a watch to confirm its
+    /// own write — it already has the answer.
+    ///
+    /// [`MockBackend`] is more talkative than that: having one connection and
+    /// no way to tell whose change it was, it queues every change made
+    /// through it, including the caller's own. That is the safe direction to
+    /// be wrong in — the engine is exercised on a resync path that a real
+    /// second client can also trigger — but it means a watcher against a real
+    /// server fires *less* often than the mock suggests. Anything that
+    /// depends on the difference is depending on the mock, not on the
+    /// protocol; `crates/postio-imap/tests/backend_parity.rs` marks the seam
+    /// where the two part company.
     async fn idle(
         &self,
         mailbox: &str,
