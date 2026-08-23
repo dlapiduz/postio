@@ -11,14 +11,62 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png dark
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png dark hc
 //! cargo run -p postio-gtk --example shot -- /tmp/narrow.png 900x700
+//! cargo run -p postio-gtk --example shot -- /tmp/plate.png demo
 //! ```
+//!
+//! `demo` fills the panes with canvas 1b's own sample content, which is the
+//! only way to check things like the selected row against the drawing before
+//! there is a database to read.
 //!
 //! It is a development tool, not part of the application: examples are not
 //! built into the shipped binary. Nothing here touches the network.
 
+use std::time::{Duration, Instant};
+
 use adw::prelude::*;
 use gtk::{gdk, glib, graphene};
+use postio_core::ConnectionState;
+use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::{app, fonts, style, window::Window};
+use postio_model::ids::AccountId;
+use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
+
+/// Canvas 1b's own sample account, so the drawing and the application can be
+/// held up against each other.
+fn populate(window: &Window) {
+    let account = AccountId::new(1);
+    let folder = |id: i64, path: &str, role, counts| {
+        let mut mailbox = Mailbox::new(account, path, Some('/'));
+        mailbox.id = postio_model::ids::MailboxId::new(id);
+        mailbox.role = role;
+        mailbox.counts = counts;
+        mailbox
+    };
+    let counts = |total, unread, flagged| MailboxCounts {
+        total,
+        unread,
+        flagged,
+    };
+
+    let sidebar = window.sidebar();
+    // A reserved domain, per CLAUDE.md: the canvas' address is not ours to ship.
+    sidebar.set_account("lena@example.com");
+    sidebar.set_mailboxes(&[
+        folder(1, "INBOX", MailboxRole::Inbox, counts(940, 12, 3)),
+        folder(2, "Flagged", MailboxRole::Flagged, counts(940, 12, 3)),
+        folder(3, "Drafts", MailboxRole::Drafts, counts(2, 0, 0)),
+        folder(4, "Sent", MailboxRole::Sent, counts(4021, 0, 0)),
+        folder(5, "Archive", MailboxRole::Archive, counts(38122, 0, 0)),
+        folder(6, "lkml", MailboxRole::Regular, counts(9004, 204, 0)),
+        folder(7, "wayland-devel", MailboxRole::Regular, counts(880, 37, 0)),
+    ]);
+    sidebar.select(postio_model::ids::MailboxId::new(1));
+    sidebar.set_status(SyncStatus {
+        state: ConnectionState::Online,
+        last_sync: Instant::now().checked_sub(Duration::from_secs(12)),
+        ..SyncStatus::default()
+    });
+}
 
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -57,6 +105,9 @@ fn main() -> glib::ExitCode {
     }
     if let Some((width, height)) = size {
         window.set_default_size(width, height);
+    }
+    if flag("demo") {
+        populate(&window);
     }
     window.present();
 

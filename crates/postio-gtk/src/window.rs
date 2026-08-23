@@ -16,6 +16,7 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use crate::shell::Shell;
+use crate::sidebar::Sidebar;
 use crate::state::WindowState;
 use crate::{header, style};
 
@@ -34,6 +35,7 @@ mod imp {
     #[derive(Default)]
     pub struct Window {
         pub shell: OnceCell<Shell>,
+        pub sidebar: OnceCell<Sidebar>,
     }
 
     #[glib::object_subclass]
@@ -81,6 +83,15 @@ impl Window {
             .clone()
     }
 
+    /// The folder list and the sync status line.
+    pub fn sidebar(&self) -> Sidebar {
+        self.imp()
+            .sidebar
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     fn build(&self) {
         self.set_title(Some("Postio"));
         self.add_css_class("postio-window");
@@ -92,6 +103,10 @@ impl Window {
         style::track(self);
 
         let shell = Shell::new();
+        let sidebar = Sidebar::new();
+        sidebar.set_vexpand(true);
+        shell.sidebar().append(&sidebar);
+
         let header = header::build();
 
         // The toggle drives the sidebar, and the breakpoints drive the toggle:
@@ -124,6 +139,7 @@ impl Window {
         header.sidebar_toggle.set_active(shell.sidebar_visible());
 
         let _ = self.imp().shell.set(shell);
+        let _ = self.imp().sidebar.set(sidebar);
     }
 
     /// Reopen where the last session left off.
