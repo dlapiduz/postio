@@ -22,14 +22,19 @@
 //!   says, and settles each queue row.
 //! - [`retry`] decides when a failure is worth another attempt, and when the
 //!   user has to be told instead.
+//! - [`connect`] keeps the session up underneath all of it: exponential
+//!   backoff with jitter, a flapping link that converges rather than thrashes,
+//!   and a hard stop on a refused password.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod coalesce;
+pub mod connect;
 pub mod drain;
 pub mod retry;
 
 pub use coalesce::{Plan, Step, coalesce};
+pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
 pub use retry::RetryPolicy;
