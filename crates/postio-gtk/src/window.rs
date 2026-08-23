@@ -19,8 +19,8 @@
 //! be expressed as accelerators. What comes back is a [`CommandId`], which the
 //! window hands to whoever registered with
 //! [`connect_command`](Window::connect_command); the window itself only acts on
-//! the commands that are *about* the window, opening the palette and closing
-//! what is open.
+//! the two commands that are *about* the window, opening the palette and
+//! closing what is open.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -31,6 +31,7 @@ use postio_core::{CommandId, Context};
 use crate::cheatsheet::CheatSheet;
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::palette::Palette;
+use crate::search::SearchBar;
 use crate::shell::Shell;
 use crate::sidebar::Sidebar;
 use crate::state::WindowState;
@@ -57,6 +58,9 @@ mod imp {
         pub sidebar: OnceCell<Sidebar>,
         pub palette: OnceCell<Palette>,
         pub cheatsheet: OnceCell<CheatSheet>,
+        pub search: OnceCell<SearchBar>,
+        /// The pane that had the keyboard when search opened.
+        pub before_search: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -159,9 +163,13 @@ impl Window {
         palette.set_visible(false);
         let cheatsheet = CheatSheet::new();
         cheatsheet.set_visible(false);
+        let search = SearchBar::new();
+        search.set_visible(false);
+        search.set_valign(gtk::Align::Start);
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&shell));
         overlay.add_overlay(&palette);
+        overlay.add_overlay(&search);
         overlay.add_overlay(&cheatsheet);
 
         let layout = adw::ToolbarView::new();
@@ -180,6 +188,7 @@ impl Window {
         let _ = self.imp().sidebar.set(sidebar);
         let _ = self.imp().palette.set(palette);
         let _ = self.imp().cheatsheet.set(cheatsheet);
+        let _ = self.imp().search.set(search);
         let _ = self.imp().overlay.set(overlay);
         self.imp().context.set(Some(Context::List));
 
@@ -212,6 +221,12 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move || window.close_cheatsheet()
+        ));
+
+        self.search().connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.close_search()
         ));
 
         // Capture, not bubble: a single-key binding has to be seen before the
@@ -276,9 +291,11 @@ impl Window {
         match id {
             CommandId::CommandPalette => self.open_palette(),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
+            CommandId::Search => self.open_search(),
             // One `Esc` closes one overlay, nearest first.
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.palette().is_visible() => self.close_palette(),
+            CommandId::Back if self.search().is_visible() => self.close_search(),
             _ => self.dispatch(id),
         }
     }
@@ -302,6 +319,9 @@ impl Window {
     fn key_context(&self) -> KeyContext {
         if self.palette().is_visible() {
             return KeyContext::Palette;
+        }
+        if self.search().is_visible() {
+            return KeyContext::Search;
         }
         KeyContext::from(self.context())
     }
@@ -393,6 +413,55 @@ impl Window {
     /// Hides the cheat sheet.
     pub fn close_cheatsheet(&self) {
         self.cheatsheet().set_visible(false);
+        self.shell().grab_focus();
+    }
+
+    /// The `/` query bar.
+    pub fn search(&self) -> SearchBar {
+        self.imp()
+            .search
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
+    /// Opens the query bar over the list, remembering what to come back to.
+    ///
+    /// No animation and no dialog: the bar is typeable the instant it appears,
+    /// which is what the canvas means by search being navigation rather than a
+    /// mode you enter.
+    pub fn open_search(&self) {
+        if self.search().is_visible() {
+            self.search().focus_entry();
+            return;
+        }
+        self.close_palette();
+        self.close_cheatsheet();
+
+        // Remembered before anything moves, so `Esc` puts the keyboard back
+        // where the user left it rather than wherever the bar happened to
+        // leave it.
+        self.imp()
+            .before_search
+            .set(Some((self.context(), self.shell().focused_pane())));
+
+        let bar = self.search();
+        bar.set_visible(true);
+        self.set_context(Context::Search);
+        bar.focus_entry();
+    }
+
+    /// Closes the query bar and restores the view it opened over.
+    pub fn close_search(&self) {
+        let bar = self.search();
+        if !bar.is_visible() {
+            return;
+        }
+        bar.set_visible(false);
+        if let Some((context, pane)) = self.imp().before_search.take() {
+            self.set_context(context);
+            self.shell().set_focused_pane(pane);
+        }
         self.shell().grab_focus();
     }
 
