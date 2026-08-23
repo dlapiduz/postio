@@ -9,8 +9,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Write;
 use std::net::TcpListener;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -156,18 +159,30 @@ fn the_reader_renders_and_hardens_the_corpus() {
     assert!(!reader.banner_visible());
 
     // ── network isolation: nothing ever reaches a real socket ─────────────
+    //
+    // The claim is "nothing leaves this machine that the user did not ask
+    // for", and half a proof of it is worthless: a listener nobody could ever
+    // have reached would sit silent whether the reader were hardened or wide
+    // open. So this runs twice — blocked, then consented — and the second run
+    // is what makes the first one mean something.
     let listener = TcpListener::bind("127.0.0.1:0").expect("a local listener should bind");
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_millis(800);
-        while Instant::now() < deadline {
-            if let Ok((_stream, _addr)) = listener.accept() {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = Arc::clone(&stop);
+    let accepting = std::thread::spawn(move || {
+        while !stopping.load(Ordering::Relaxed) {
+            if let Ok((stream, _addr)) = listener.accept() {
+                // Answered, so WebKit's fetch completes rather than hanging:
+                // a request that arrives is the thing being measured, and it
+                // has to arrive the same way in both phases.
+                let _ = (&stream).write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\nContent-Length: 0\r\n\r\n",
+                );
                 let _ = tx.send(());
-                return;
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(10));
         }
     });
 
@@ -177,19 +192,56 @@ fn the_reader_renders_and_hardens_the_corpus() {
             r#"<html><body><img src="http://127.0.0.1:{port}/beacon.gif"></body></html>"#
         )),
     };
+    let sender = "tracker@example.org";
     let finished = track_load_finished(&reader);
-    reader.render(&beacon, Some("no-one@example.org"));
+    reader.render(&beacon, Some(sender));
     wait_for(&finished, Duration::from_secs(5));
-    // Give the background listener thread the full window it waits, in case
-    // WebKit's own image fetch is merely slow rather than blocked.
+    // Give the listener the full window, in case WebKit's own image fetch is
+    // merely slow rather than blocked.
     pump_for(Duration::from_millis(900));
 
     assert!(
         rx.try_recv().is_err(),
         "the reader must never have connected to its own blocked image's host"
     );
+    assert!(
+        reader.banner_visible(),
+        "and it has to say so, or the user cannot consent to what they cannot see"
+    );
+
+    // ── and the same beacon does arrive once the user asks for it ─────────
+    //
+    // Not a feature test: this is what proves the silence above was the
+    // reader's doing. If this fetch never lands either, the listener was
+    // unreachable and the assertion before it proved nothing at all.
+    let finished = track_load_finished(&reader);
+    reader.click_always_allow();
+    wait_for(&finished, Duration::from_secs(5));
+    let arrived = wait_for_connection(&rx, Duration::from_secs(3));
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = accepting.join();
+
+    assert!(
+        arrived,
+        "the beacon never arrived even after consent, so the blocked case \
+         proved nothing — the listener was never reachable"
+    );
 
     window.destroy();
+}
+
+/// Wait for the listener to report a connection, pumping GTK meanwhile.
+fn wait_for_connection(rx: &mpsc::Receiver<()>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if rx.try_recv().is_ok() {
+            return true;
+        }
+        glib::MainContext::default().iteration(false);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
 }
 
 fn scratch_path(name: &str) -> std::path::PathBuf {
