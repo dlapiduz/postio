@@ -225,8 +225,8 @@ mod tests {
         Dispatch::new(Capabilities::from_names(names.iter().copied()))
     }
 
-    /// iCloud's documented post-authentication set.
-    fn icloud() -> Dispatch {
+    /// A server that advertises everything Postio's fast paths want.
+    fn full_featured() -> Dispatch {
         dispatch(&[
             "IMAP4rev1",
             "ENABLE",
@@ -241,8 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn icloud_gets_every_fast_path() {
-        let dispatch = icloud();
+    fn a_full_featured_server_gets_every_fast_path() {
+        let dispatch = full_featured();
 
         assert_eq!(dispatch.move_strategy(), MoveStrategy::Move);
         assert_eq!(dispatch.expunge_strategy(true), ExpungeStrategy::UidExpunge);
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn lsub_is_only_paid_for_when_subscription_state_is_wanted() {
-        let dispatch = icloud();
+        let dispatch = full_featured();
 
         assert_eq!(
             dispatch.listing_strategy(true),
@@ -327,8 +327,8 @@ mod tests {
     }
 
     #[test]
-    fn icloud_does_not_advertise_special_use_so_roles_fall_back_to_names() {
-        assert!(!icloud().advertises_special_use());
+    fn a_server_without_special_use_makes_roles_fall_back_to_names() {
+        assert!(!full_featured().advertises_special_use());
         assert!(dispatch(&["IMAP4rev1", "SPECIAL-USE"]).advertises_special_use());
     }
 }

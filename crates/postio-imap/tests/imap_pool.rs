@@ -10,9 +10,11 @@ use std::time::Duration;
 
 use postio_imap::backend::{BackendError, Capability};
 use postio_imap::imap::{
-    ConnectionPool, ConnectionSettings, ImapScript, PoolConfig, Priority, ScriptedConnector,
+    ConnectionPool, ConnectionSettings, IMAPS_PORT, ImapScript, PoolConfig, Priority,
+    ScriptedConnector,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_model::TransportSecurity;
 
 const ACCOUNT: &str = "someone@example.com";
 
@@ -30,7 +32,12 @@ async fn pool_with(
         .expect("seed the keyring");
 
     let pool = ConnectionPool::new(
-        ConnectionSettings::icloud(ACCOUNT),
+        ConnectionSettings::new(
+            "imap.example.com",
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            ACCOUNT,
+        ),
         key,
         Arc::new(store),
         Arc::new(connector.clone()),
@@ -40,7 +47,7 @@ async fn pool_with(
 }
 
 async fn pool(config: PoolConfig) -> (ConnectionPool, ScriptedConnector) {
-    pool_with(config, ScriptedConnector::icloud()).await
+    pool_with(config, ScriptedConnector::extensions_hidden_until_login()).await
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +235,7 @@ async fn the_watcher_has_a_connection_of_its_own() {
         .watch(async |session| Ok(session.endpoint().to_owned()))
         .await;
 
-    assert_eq!(watched.unwrap(), "imap.mail.me.com:993");
+    assert_eq!(watched.unwrap(), "imap.example.com:993");
     assert_eq!(connector.log().tls.len(), 2);
 }
 
@@ -256,7 +263,7 @@ async fn a_dead_connection_is_thrown_away_and_replaced() {
     // so the first command after the handshake sees the connection drop.
     let (pool, connector) = pool_with(
         PoolConfig::default(),
-        ScriptedConnector::icloud().closing_after(2),
+        ScriptedConnector::extensions_hidden_until_login().closing_after(2),
     )
     .await;
 

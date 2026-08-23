@@ -10,12 +10,9 @@ use std::time::Duration;
 use postio_model::{ServerConfig, TransportSecurity};
 
 use crate::backend::{BackendError, BackendResult};
+use crate::discovery::{Encryption, preset_for_domain};
 
-/// iCloud's IMAP host.
-pub const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
-
-/// The implicit-TLS submission port, and the only one Postio's iCloud preset
-/// uses.
+/// The implicit-TLS IMAP port (RFC 8314).
 pub const IMAPS_PORT: u16 = 993;
 
 /// The cleartext IMAP port, reachable only through `STARTTLS`.
@@ -33,7 +30,7 @@ pub struct ConnectionSettings {
     pub port: u16,
     /// How the connection is protected.
     pub security: TransportSecurity,
-    /// The login name — for iCloud, the full address.
+    /// The login name. Usually the full address; some providers template it.
     pub username: String,
     /// How long a connect or handshake may take.
     pub connect_timeout: Duration,
@@ -56,18 +53,28 @@ impl ConnectionSettings {
         }
     }
 
-    /// The iCloud preset: implicit TLS on 993.
+    /// Settings from Postio's provider preset table, when it ships a row for
+    /// the address's domain.
     ///
-    /// iCloud offers no other IMAP endpoint, and the password must be an
-    /// app-specific one — an Apple ID password is refused even when it is
-    /// correct.
-    pub fn icloud(username: impl Into<String>) -> Self {
-        Self::new(
-            ICLOUD_IMAP_HOST,
-            IMAPS_PORT,
-            TransportSecurity::Tls,
-            username,
-        )
+    /// Providers are data: this reads the same table the first-run probe
+    /// consults, so adding a provider never means adding a branch here.
+    /// Returns `None` for a domain the table does not cover — the probe or
+    /// the manual form answers those.
+    pub fn preset_for(email: &str) -> Option<Self> {
+        let (_, domain) = email.rsplit_once('@')?;
+        let preset = preset_for_domain(domain)?;
+        let settings = preset.settings_for(email);
+
+        Some(Self::new(
+            settings.imap.host,
+            settings.imap.port,
+            match settings.imap.encryption {
+                Encryption::Tls => TransportSecurity::Tls,
+                Encryption::StartTls => TransportSecurity::StartTls,
+                Encryption::None => TransportSecurity::None,
+            },
+            settings.login,
+        ))
     }
 
     /// Settings from an account's stored incoming-server configuration.
@@ -146,15 +153,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_icloud_preset_is_implicit_tls_on_993() {
-        let settings = ConnectionSettings::icloud("someone@example.com");
+    fn a_shipped_provider_resolves_to_encrypted_settings_that_validate() {
+        for preset in crate::discovery::presets() {
+            let email = format!("a@{}", preset.domains()[0]);
+            let settings = ConnectionSettings::preset_for(&email).expect("a table row");
 
-        assert_eq!(settings.host, "imap.mail.me.com");
-        assert_eq!(settings.port, 993);
-        assert_eq!(settings.security, TransportSecurity::Tls);
-        assert!(settings.is_implicit_tls());
-        assert_eq!(settings.endpoint(), "imap.mail.me.com:993");
-        settings.validate().unwrap();
+            assert_eq!(settings.host, preset.imap_host());
+            assert_eq!(settings.username, email);
+            assert_ne!(
+                settings.security,
+                TransportSecurity::None,
+                "{} would send credentials in the clear",
+                preset.display_name()
+            );
+            settings.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_domain_the_table_does_not_cover_has_no_preset() {
+        assert!(ConnectionSettings::preset_for("someone@example.org").is_none());
+        assert!(ConnectionSettings::preset_for("not-an-address").is_none());
     }
 
     #[test]
@@ -190,9 +209,16 @@ mod tests {
 
     #[test]
     fn debug_output_carries_no_secret_because_settings_hold_none() {
-        let rendered = format!("{:?}", ConnectionSettings::icloud("someone@example.com"));
+        let settings = ConnectionSettings::new(
+            "imap.example.com",
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            "someone@example.com",
+        );
 
-        assert!(rendered.contains("imap.mail.me.com:993"));
+        let rendered = format!("{settings:?}");
+
+        assert!(rendered.contains("imap.example.com:993"));
         assert!(!rendered.to_lowercase().contains("password"));
     }
 }
