@@ -18,6 +18,7 @@ blake3 = "1.8.7"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model = { version = "0.1.0", path = "../postio-model" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde_json = "1.0.151"
 tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.20"
 
