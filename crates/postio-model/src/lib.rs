@@ -15,8 +15,9 @@
 //! * A [`Mailbox`] holds [`Message`] values, which carry [`FlagSet`],
 //!   [`Label`] references, [`Attachment`] metadata, [`Headers`],
 //!   [`ServerIdentifiers`] and [`LocalSyncState`].
-//! * Messages are grouped into a [`Thread`] by the JWZ threading pass, which
-//!   reads [`Message::reference_chain`] and [`normalize_subject`].
+//! * Messages are grouped into a [`Thread`] by [`threading::assign`], which
+//!   reads [`Message::reference_chain`] and [`normalize_subject`] and places
+//!   one message at a time rather than rethreading a mailbox.
 //! * [`Contact`] accumulates addresses that have been seen; [`Draft`] is a
 //!   message being composed.
 //!
@@ -57,6 +58,7 @@ pub mod subject;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
 pub mod thread;
+pub mod threading;
 
 pub use account::{Account, AuthMethod, Identity, ServerConfig, Signature, TransportSecurity};
 pub use address::EmailAddress;
@@ -73,5 +75,6 @@ pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
-pub use subject::normalize_subject;
+pub use subject::{is_reply, normalize_subject};
 pub use thread::Thread;
+pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
