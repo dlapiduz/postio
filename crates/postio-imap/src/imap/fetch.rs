@@ -53,7 +53,7 @@ use crate::backend::{
 };
 use crate::cancel::CancelToken;
 
-use super::{ConnectionPool, ImapSession, Priority, map_client_error};
+use super::{ConnectionPool, ImapSession, Priority, map_client_error, skip_counter};
 
 /// Fetches metadata for `uids` in `mailbox` — no body bytes.
 ///
@@ -88,13 +88,47 @@ pub async fn fetch_headers(
             return Err(BackendError::Cancelled);
         }
 
-        fetch_batch(session, uid_validity, &uids, changed_since).await
+        fetch_batch(session, &mailbox, uid_validity, &uids, changed_since).await
     })
     .await
 }
 
 /// Issues one `UID FETCH` and maps the response.
+///
+/// When `changed_since` is set this is an incremental resync's fetch, and
+/// [`skip_counter`] brackets the round trip: `io-imap` completing `Ok` after
+/// silently dropping an untagged line it could not decode is exactly the
+/// case a plain result can't distinguish from a genuinely complete pull. See
+/// the [module docs](self) and [`crate::backend::BackendError::ResyncIntegrityLost`].
 async fn fetch_batch(
+    session: &mut ImapSession,
+    mailbox: &str,
+    uid_validity: UidValidity,
+    uids: &UidSet,
+    changed_since: Option<ModSeq>,
+) -> BackendResult<Vec<FetchedMessage>> {
+    if changed_since.is_none() {
+        return fetch_batch_inner(session, uid_validity, uids, changed_since).await;
+    }
+
+    skip_counter::install();
+    let _exclusive = skip_counter::exclusive_measurement().await;
+    let before_skips = skip_counter::skipped_untagged_responses();
+
+    let messages = fetch_batch_inner(session, uid_validity, uids, changed_since).await?;
+
+    let skipped = skip_counter::skipped_untagged_responses() - before_skips;
+    if skipped > 0 {
+        return Err(BackendError::ResyncIntegrityLost {
+            mailbox: mailbox.to_owned(),
+            skipped,
+        });
+    }
+
+    Ok(messages)
+}
+
+async fn fetch_batch_inner(
     session: &mut ImapSession,
     uid_validity: UidValidity,
     uids: &UidSet,

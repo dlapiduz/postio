@@ -278,3 +278,83 @@ async fn a_cancelled_token_stops_before_any_round_trip() {
     ));
     assert!(connector.log().tls.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Resync integrity: a line io-imap could not decode must not pass as success
+// ---------------------------------------------------------------------------
+
+/// A `-1` sequence number is not a valid IMAP `seq-number` (`1*DIGIT`, never
+/// signed) — `imap-types` models one as `NonZeroU32` regardless — so
+/// `io-imap` cannot decode this line and, per ADR 0001, silently drops it
+/// rather than failing the command. Apple Developer Forums thread 694251
+/// reports exactly this shape from iCloud under QRESYNC.
+const UNDECODABLE_UNTAGGED_LINE: &str = "* -1 FETCH (FLAGS (\\Seen))";
+
+#[tokio::test]
+async fn a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_success() {
+    let reply = fetch_reply(&[UNDECODABLE_UNTAGGED_LINE.to_owned(), fetch_line(1, 101)]);
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on("FETCH", reply.as_str()),
+    );
+    let pool = pool_over(connector).await;
+
+    let error = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::single(Uid::new(101)),
+        Some(ModSeq::new(3000)),
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap_err();
+
+    let postio_imap::backend::BackendError::ResyncIntegrityLost { mailbox, skipped } = &error
+    else {
+        panic!("expected ResyncIntegrityLost, got {error:?}");
+    };
+    assert_eq!(mailbox, "INBOX");
+    assert!(*skipped >= 1);
+    assert!(
+        error.requires_full_resync(),
+        "a lost delta must be reported as needing a full resync, the same \
+         predicate a UIDVALIDITY change reports through"
+    );
+}
+
+#[tokio::test]
+async fn the_same_undecodable_line_is_tolerated_outside_a_changedsince_fetch() {
+    // The integrity check only brackets an incremental (CHANGEDSINCE)
+    // fetch: it is where a silently dropped delta is indistinguishable from
+    // "nothing changed," which is the failure mode this exists to catch. A
+    // plain fetch with no baseline to miss deltas from is not that case.
+    let reply = fetch_reply(&[UNDECODABLE_UNTAGGED_LINE.to_owned(), fetch_line(1, 101)]);
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on("FETCH", reply.as_str()),
+    );
+    let pool = pool_over(connector).await;
+
+    // This still makes io-imap skip a real, undecodable line and bump the
+    // real (process-wide) skip counter — production has no reason to care
+    // outside a CHANGEDSINCE fetch, but a sibling test *measuring* a delta
+    // of its own, running concurrently in the same test binary, would
+    // otherwise intermittently see this skip as its own.
+    let _exclusive = postio_imap::imap::skip_counter_exclusive_measurement().await;
+
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::single(Uid::new(101)),
+        None,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(messages.len(), 1);
+}
