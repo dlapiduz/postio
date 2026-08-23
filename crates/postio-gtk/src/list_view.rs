@@ -648,9 +648,11 @@ impl MessageListView {
         ));
         imp.view.add_controller(menu);
 
-        // Dragging a row onto a folder moves it there. What travels is the
-        // row the drag started on; `postio-qhz.3` widens that to the whole
-        // selection, which is why the payload is a list from the outset.
+        // Dragging a row onto a folder moves it there — and what travels is
+        // the *selection*, not the row under the cursor, whenever that row is
+        // part of one. Dragging twelve selected messages and having one of
+        // them move is the kind of thing people only notice after it has
+        // happened to their mail.
         let drag = gtk::DragSource::new();
         drag.set_actions(gdk::DragAction::MOVE);
         drag.connect_prepare(glib::clone!(
@@ -658,8 +660,8 @@ impl MessageListView {
             self,
             #[upgrade_or]
             None,
-            move |_, x, y| {
-                let (view, _) = pane.row_at(x, y)?;
+            move |source, x, y| {
+                let (view, position) = pane.row_at(x, y)?;
                 // A drag that starts on a hover action is not a drag: the
                 // pointer is over a button, and pulling it sideways should
                 // not take the message with it.
@@ -672,8 +674,23 @@ impl MessageListView {
                 }) {
                     return None;
                 }
+
                 let id = view.row().map(|row| row.id)?;
-                Some(drag_payload(&[id]))
+                // Grabbing a row that is not in the selection makes it the
+                // selection, which is what every desktop list does and what
+                // makes the drag image honest: it is about to say how many
+                // messages are moving, and the answer has to be the number
+                // that actually moves.
+                if !pane.imp().selected.contains(id) {
+                    pane.imp().anchor.set(Some(position));
+                    pane.imp().selected.select_only(id);
+                    pane.move_cursor_to(position);
+                }
+
+                if let Some(icon) = pane.drag_icon() {
+                    source.set_icon(Some(&icon), 12, 12);
+                }
+                Some(drag_payload())
             }
         ));
         imp.view.add_controller(drag);
@@ -789,6 +806,62 @@ impl MessageListView {
         }
     }
 
+    /// The picture that follows the pointer during a drag: how many messages
+    /// are moving, in words.
+    ///
+    /// A count rather than a ghost of the row, because the row under the
+    /// cursor is not what is moving when a selection is — and a drag that
+    /// looked like one message while carrying forty would be lying at exactly
+    /// the moment it matters. `None` when there is nothing to say, which the
+    /// caller reads as "use the default".
+    fn drag_icon(&self) -> Option<gdk::Paintable> {
+        let imp = self.imp();
+        let total = match imp.model.n_items() {
+            0 => None,
+            total => Some(total),
+        };
+        let text = match selection::summary(&imp.selected.selection(), total)? {
+            // "1 selected" is a count; "1 message" is what is being carried.
+            count if count.starts_with("1 ") => "1 message".to_owned(),
+            count => count.replace(" selected", " messages"),
+        };
+
+        let layout = self.create_pango_layout(Some(&text));
+        let (width, height) = layout.pixel_size();
+        let (pad_x, pad_y) = (10.0, 6.0);
+        let (w, h) = (width as f32 + pad_x * 2.0, height as f32 + pad_y * 2.0);
+
+        let snapshot = gtk::Snapshot::new();
+        let rect = graphene::Rect::new(0.0, 0.0, w, h);
+        snapshot.append_color(&self.drag_icon_ground(), &rect);
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(pad_x, pad_y));
+        snapshot.append_layout(&layout, &self.drag_icon_ink());
+        snapshot.restore();
+        snapshot.to_paintable(Some(&graphene::Size::new(w, h)))
+    }
+
+    /// The drag image's ground and ink, off the cascade like everything else.
+    fn drag_icon_ground(&self) -> gdk::RGBA {
+        self.style_probe(&["postio-row-edge", "selected"])
+    }
+
+    fn drag_icon_ink(&self) -> gdk::RGBA {
+        self.style_probe(&["postio-row-ground", "check-mark"])
+    }
+
+    /// Read one role's colour off a throwaway node under this widget's
+    /// classes — the same trick the row uses, for the same reason: a scheme
+    /// change has to move this with everything else.
+    fn style_probe(&self, classes: &[&str]) -> gdk::RGBA {
+        let probe = gtk::Label::new(None);
+        probe.set_css_classes(classes);
+        probe.set_parent(self);
+        let colour = probe.color();
+        probe.unparent();
+        colour
+    }
+
     /// Open the row's context menu at `(x, y)`, and say whether there was a
     /// row there to open one for.
     ///
@@ -887,25 +960,46 @@ impl MessageListView {
 /// something the toolkit already knows how to carry.
 const DRAG_PREFIX: &str = "postio-messages:";
 
-/// The ids in a drag payload, or nothing if it did not come from Postio.
+/// What the payload says when the drag is about the whole selection.
 ///
-/// Anything else dropped on a folder — a selection of text, a file, a link —
-/// reads as no messages and is refused, rather than being parsed for numbers
-/// that happen to be in it.
-pub fn dragged_messages(payload: &str) -> Vec<MessageId> {
-    let Some(ids) = payload.strip_prefix(DRAG_PREFIX) else {
-        return Vec::new();
-    };
-    ids.split(',')
-        .filter_map(|id| id.trim().parse::<i64>().ok())
-        .map(MessageId::new)
-        .collect()
+/// A selection can be the predicate `Everything { except }` over a hundred
+/// thousand rows, and naming them to carry them three inches across the
+/// window would be the one thing the predicate exists to prevent. So a drag
+/// of the selection says *that*, and the drop turns it into
+/// `MessageTarget::Selection` — the same target the `m` key uses, resolved
+/// once by whoever can resolve it cheaply.
+const DRAG_SELECTION: &str = "selection";
+
+/// What was dragged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Dragged {
+    /// These messages, named.
+    Messages(Vec<MessageId>),
+    /// Whatever is selected, however large that is.
+    Selection,
 }
 
-/// The payload for `messages`, in the spelling [`dragged_messages`] reads.
-fn drag_payload(messages: &[MessageId]) -> gdk::ContentProvider {
-    let ids: Vec<String> = messages.iter().map(|id| id.get().to_string()).collect();
-    gdk::ContentProvider::for_value(&format!("{DRAG_PREFIX}{}", ids.join(",")).to_value())
+/// What a drop is carrying, or `None` if it did not come from Postio.
+///
+/// Anything else dropped on a folder — a selection of text, a file, a link —
+/// reads as nothing and is refused, rather than being parsed for numbers that
+/// happen to be in it.
+pub fn dragged_messages(payload: &str) -> Option<Dragged> {
+    let body = payload.strip_prefix(DRAG_PREFIX)?;
+    if body == DRAG_SELECTION {
+        return Some(Dragged::Selection);
+    }
+    let messages: Vec<MessageId> = body
+        .split(',')
+        .filter_map(|id| id.trim().parse::<i64>().ok())
+        .map(MessageId::new)
+        .collect();
+    (!messages.is_empty()).then_some(Dragged::Messages(messages))
+}
+
+/// The payload for a drag of the selection.
+fn drag_payload() -> gdk::ContentProvider {
+    gdk::ContentProvider::for_value(&format!("{DRAG_PREFIX}{DRAG_SELECTION}").to_value())
 }
 
 /// Which command a hover action runs.
@@ -1025,7 +1119,22 @@ mod tests {
     fn a_drag_from_postio_names_its_messages() {
         assert_eq!(
             dragged_messages("postio-messages:3,7,11"),
-            vec![MessageId::new(3), MessageId::new(7), MessageId::new(11)]
+            Some(Dragged::Messages(vec![
+                MessageId::new(3),
+                MessageId::new(7),
+                MessageId::new(11)
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_drag_of_the_selection_refers_to_it_rather_than_listing_it() {
+        // The whole point: forty thousand selected messages cross the window
+        // as one word. Naming them to carry them is the thing the predicate
+        // exists to prevent.
+        assert_eq!(
+            dragged_messages("postio-messages:selection"),
+            Some(Dragged::Selection)
         );
     }
 
@@ -1035,9 +1144,10 @@ mod tests {
         // and none of it should be parsed for the numbers it happens to
         // contain — a drop that moved message 2026 because the user dragged
         // a date onto a folder would be indefensible.
-        assert!(dragged_messages("2026,1,2").is_empty());
-        assert!(dragged_messages("https://example.com/1").is_empty());
-        assert!(dragged_messages("").is_empty());
+        assert_eq!(dragged_messages("2026,1,2"), None);
+        assert_eq!(dragged_messages("https://example.com/1"), None);
+        assert_eq!(dragged_messages(""), None);
+        assert_eq!(dragged_messages("postio-messages:"), None);
     }
 
     #[test]
