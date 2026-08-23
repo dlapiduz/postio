@@ -16,6 +16,43 @@ pub enum Disposition {
     Other(String),
 }
 
+impl Disposition {
+    /// A stable lowercase identifier, for storage.
+    ///
+    /// [`Disposition::Other`] flattens to `other`; the verbatim value it
+    /// carries is [`Disposition::raw`], stored beside it so the pair round
+    /// trips.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Attachment => "attachment",
+            Self::Other(_) => "other",
+        }
+    }
+
+    /// The verbatim disposition, for a value [`Disposition::as_str`] flattened.
+    pub fn raw(&self) -> Option<&str> {
+        match self {
+            Self::Other(raw) => Some(raw),
+            _ => None,
+        }
+    }
+
+    /// Rebuilds a disposition from [`Disposition::as_str`] and
+    /// [`Disposition::raw`].
+    ///
+    /// `None` for an identifier this build does not know, or for `other` with
+    /// no verbatim value to restore.
+    pub fn from_parts(name: &str, raw: Option<&str>) -> Option<Self> {
+        match name {
+            "inline" => Some(Self::Inline),
+            "attachment" => Some(Self::Attachment),
+            "other" => raw.map(|raw| Self::Other(raw.to_owned())),
+            _ => None,
+        }
+    }
+}
+
 /// One attachment or inline part of a message.
 ///
 /// Metadata is stored eagerly so search and the list can show
@@ -85,5 +122,30 @@ impl Attachment {
             .as_deref()?
             .rsplit_once('.')
             .map(|(_, ext)| ext.to_lowercase())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispositions_round_trip_through_their_stored_parts() {
+        for disposition in [
+            Disposition::Inline,
+            Disposition::Attachment,
+            Disposition::Other("form-data".to_owned()),
+        ] {
+            assert_eq!(
+                Disposition::from_parts(disposition.as_str(), disposition.raw()),
+                Some(disposition.clone())
+            );
+        }
+        assert_eq!(
+            Disposition::from_parts("other", None),
+            None,
+            "`other` without the verbatim value cannot be rebuilt"
+        );
+        assert_eq!(Disposition::from_parts("nonsense", None), None);
     }
 }
