@@ -15,6 +15,8 @@
 //! transaction, and the UI repaints without waiting (`CLAUDE.md`). This crate
 //! owns what happens next:
 //!
+//! - [`backfill`] decides which message body to download next: newest first
+//!   in the background, and immediately for the one the user just opened.
 //! - [`coalesce`] folds a batch down to the operations the server actually
 //!   needs, so a minute of offline flagging is not replayed keystroke by
 //!   keystroke.
@@ -41,6 +43,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod backfill;
 pub mod coalesce;
 pub mod connect;
 pub mod drain;
@@ -50,6 +53,7 @@ pub mod retry;
 pub mod status;
 pub mod watch;
 
+pub use backfill::{Backfill, BackfillPolicy, BackfillProgress, BodyRequest, Claim, Priority};
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
