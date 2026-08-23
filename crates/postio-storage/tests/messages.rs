@@ -238,6 +238,121 @@ fn the_body_and_headers_live_in_the_blob_store_and_the_row_holds_the_keys() {
 }
 
 // ---------------------------------------------------------------------------
+// Backfill candidates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn needing_backfill_returns_newest_first_and_skips_full_bodies() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut oldest = a_message(inbox, account.id, 1);
+    let mut newest = a_message(inbox, account.id, 3);
+    let mut already_full = a_message(inbox, account.id, 2);
+    already_full.sync.body_state = BodyState::Full;
+
+    for message in [&mut oldest, &mut newest, &mut already_full] {
+        messages.create(message).expect("create");
+    }
+
+    let candidates = messages.needing_backfill(inbox, 10).expect("query");
+    assert_eq!(
+        candidates.iter().map(|c| c.message_id).collect::<Vec<_>>(),
+        vec![newest.id, oldest.id],
+        "newest first, and the fully-fetched message is not a candidate"
+    );
+    assert_eq!(candidates[0].mailbox_path, "INBOX");
+    assert_eq!(candidates[0].uid, newest.server.uid.unwrap());
+    assert_eq!(candidates[0].size, newest.size);
+    assert_eq!(candidates[0].received_at, newest.received_at);
+}
+
+#[test]
+fn needing_backfill_is_windowed_and_scoped_to_its_mailbox() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    let messages = MessageRepository::new(&connection);
+
+    for seconds in 0..5 {
+        messages
+            .create(&mut a_message(inbox, account.id, seconds))
+            .expect("create");
+    }
+    messages
+        .create(&mut a_message(archive.id, account.id, 99))
+        .expect("create in another mailbox");
+
+    let limited = messages.needing_backfill(inbox, 2).expect("query");
+    assert_eq!(limited.len(), 2, "the window caps how many come back");
+
+    let archived = messages.needing_backfill(archive.id, 10).expect("query");
+    assert_eq!(
+        archived.len(),
+        1,
+        "a mailbox never sees another mailbox's candidates"
+    );
+}
+
+#[test]
+fn a_message_with_no_uid_yet_is_not_a_backfill_candidate() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut composed = a_message(inbox, account.id, 1);
+    composed.server.uid = None;
+    messages.create(&mut composed).expect("create");
+
+    assert!(
+        messages
+            .needing_backfill(inbox, 10)
+            .expect("query")
+            .is_empty()
+    );
+    assert!(
+        messages
+            .backfill_candidate(composed.id)
+            .expect("query")
+            .is_none()
+    );
+}
+
+#[test]
+fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 7);
+    messages.create(&mut message).expect("create");
+
+    let candidate = messages
+        .backfill_candidate(message.id)
+        .expect("query")
+        .expect("a candidate, since the body is headers-only");
+    assert_eq!(candidate.mailbox_id, inbox);
+    assert_eq!(candidate.mailbox_path, "INBOX");
+    assert_eq!(candidate.uid, message.server.uid.unwrap());
+
+    messages
+        .set_body_blobs(message.id, &BodyBlobs::default(), BodyState::Full)
+        .expect("mark it fetched");
+    assert!(
+        messages
+            .backfill_candidate(message.id)
+            .expect("query")
+            .is_none(),
+        "a message that already has its full body is not a candidate"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Batch upsert, the shape sync writes in
 // ---------------------------------------------------------------------------
 
