@@ -14,7 +14,11 @@ hook worse than useless:
 2. **Quoted arguments.** A commit message that mentions `--` or `git stash`
    is data the command carries, not part of its invocation. Quoted spans
    are blanked before matching.
-3. **Command position.** A forbidden invocation only counts at the start of a
+3. **One line at a time.** The flag-scanning classes exclude newlines. A
+   negated class like `[^|;&]` matches a newline happily, so a scan for
+   flags after `git commit` once ran off the end of the command and matched
+   `--all` in an unrelated `cargo fmt` two lines below.
+4. **Command position.** A forbidden invocation only counts at the start of a
    command -- after nothing, or after `;`, `&&`, `||`, `|`, `(`, or a newline.
    A path or message that merely contains the words is not an invocation.
 
@@ -51,7 +55,7 @@ SHARED = "Other Claude sessions are editing this tree right now."
 # (pattern after the command-position anchor, reason). First match wins.
 RULES: list[tuple[str, str]] = [
     (
-        r"git\s+reset\s+(?:[^|;&]*\s)?--hard",
+        r"git\s+reset\s+(?:[^|;&\n]*\s)?--hard",
         f"{SHARED} Refusing 'git reset --hard': it irrecoverably deletes every "
         "session's uncommitted work, not just yours. Revert your own files by "
         "path, or commit what you have. See 'Working in parallel' in CLAUDE.md.",
@@ -79,20 +83,20 @@ RULES: list[tuple[str, str]] = [
         "'git add crates/<your-crate> Cargo.lock'.",
     ),
     (
-        r"git\s+commit\s+(?:[^|;&]*\s)?(?:-a\b|--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)",
+        r"git\s+commit\s+(?:[^|;&\n]*\s)?(?:-a\b|--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)",
         f"{SHARED} Refusing 'git commit -a': it commits every modified file in "
         "the tree, including other sessions'. Stage your own paths first, then "
         "plain 'git commit'.",
     ),
     (
-        r"git\s+commit\s+(?:[^|;&]*\s)?--\s+\S",
+        r"git\s+commit\s+(?:[^|;&\n]*\s)?--\s+\S",
         "Refusing 'git commit -- <path>': that form bypasses the index and "
         "commits the WORKING TREE version of those paths, sweeping in your own "
         "half-written edits. A session did this and produced a commit that "
         "would not build in isolation. Stage first, then a bare 'git commit'.",
     ),
     (
-        r"cargo\s+fmt\s+(?:[^|;&]*\s)?(?:--all|--workspace|-p\s)(?![^|;&]*--check)",
+        r"cargo\s+fmt\s+(?:[^|;&\n]*\s)?(?:--all|--workspace|-p\s)(?![^|;&\n]*--check)",
         f"{SHARED} Refusing a crate-wide format: both --all and -p WRITE to every "
         "file in scope, including one another session has open. That has "
         "already put whitespace churn into someone else's diff. Format what "
