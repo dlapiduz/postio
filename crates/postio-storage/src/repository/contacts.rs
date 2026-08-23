@@ -45,7 +45,7 @@ impl<'a> ContactRepository<'a> {
         address: &EmailAddress,
         at: DateTime<Utc>,
     ) -> Result<ContactId> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         let id = record_in(&transaction, account_id, address, at)?;
         transaction.commit()?;
         Ok(id)
@@ -78,7 +78,7 @@ impl<'a> ContactRepository<'a> {
             addresses.push(address);
         }
 
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         for address in &addresses {
             record_in(&transaction, account_id, address, at)?;
         }

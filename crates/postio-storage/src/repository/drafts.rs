@@ -48,7 +48,7 @@ impl<'a> DraftRepository<'a> {
     /// ids of the attachments already on it, do not change from one save to the
     /// next, so nothing the composer is holding goes stale.
     pub fn save(&self, draft: &mut Draft) -> Result<DraftId> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
 
         if draft.id.is_assigned() {
             let changed = transaction.execute(
