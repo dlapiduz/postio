@@ -15,6 +15,11 @@ serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
+criterion = "0.7.0"
 serde_json = "1.0.151"
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+[[bench]]
+name = "perf_budgets"
+harness = false
