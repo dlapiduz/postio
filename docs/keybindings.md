@@ -41,6 +41,10 @@ command from inside a text field.
 | `g g` | First message | List, thread, reader, search |  | `first_message` |
 | `G` | Last message | List, thread, reader, search |  | `last_message` |
 | `Return` or `l` or `Right` | Open message | List, thread, search |  | `open_message` |
+| `x` | Toggle selection | List, thread, reader, search |  | `toggle_selection` |
+| `J` or `shift+Down` | Extend selection down | List, thread, reader, search |  | `extend_selection_down` |
+| `K` or `shift+Up` | Extend selection up | List, thread, reader, search |  | `extend_selection_up` |
+| `ctrl+a` | Select all | List, thread, reader, search |  | `select_all` |
 | `h` or `Left` | Previous view | List, thread, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `t` | Show thread | List, reader |  | `thread` |

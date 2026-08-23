@@ -81,11 +81,107 @@ impl ViewMode {
     }
 }
 
+/// What an action will hit.
+///
+/// Deliberately not a `Vec<MessageId>`. spec.md §18 says a mailbox is never
+/// loaded into memory, and "select all" in a 100,000-message folder would
+/// defeat that with one keystroke if selecting meant naming every row. So the
+/// whole-mailbox case is a *predicate* — everything the list is showing, minus
+/// whatever has been taken back out — and the storage layer resolves it in one
+/// statement when an action finally lands. Bulk archive of 50,000 messages is
+/// then one `UPDATE` and one queued operation, not 50,000 of each.
+///
+/// The predicate is relative to the mailbox and query in view. It does not
+/// survive a change of either: [`AppState::open_mailbox`] clears it, because
+/// "everything" means something different the moment the list does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Selection {
+    /// These messages specifically. Empty means nothing is selected.
+    These(Vec<MessageId>),
+    /// Everything the list is showing, except these.
+    Everything {
+        /// Rows taken back out of the selection since it was made.
+        except: Vec<MessageId>,
+    },
+}
+
+impl Default for Selection {
+    fn default() -> Self {
+        Selection::These(Vec::new())
+    }
+}
+
+impl Selection {
+    /// Whether an action would hit nothing.
+    ///
+    /// [`Selection::Everything`] is never empty by this measure, even in an
+    /// empty mailbox: whether it covers any rows is a question for the store,
+    /// and answering it here would mean counting the thing the predicate
+    /// exists to avoid counting.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Selection::These(messages) if messages.is_empty())
+    }
+
+    /// Whether this is the whole-mailbox predicate.
+    pub fn is_everything(&self) -> bool {
+        matches!(self, Selection::Everything { .. })
+    }
+
+    /// The messages, when they can be named.
+    ///
+    /// `None` for [`Selection::Everything`] — which is the point. A caller
+    /// that needs the rows behind a predicate has to ask the store for them,
+    /// which is the only place that can answer without loading a mailbox.
+    pub fn ids(&self) -> Option<&[MessageId]> {
+        match self {
+            Selection::These(messages) => Some(messages),
+            Selection::Everything { .. } => None,
+        }
+    }
+
+    /// Whether `message` is in the selection.
+    pub fn contains(&self, message: MessageId) -> bool {
+        match self {
+            Selection::These(messages) => messages.contains(&message),
+            Selection::Everything { except } => !except.contains(&message),
+        }
+    }
+
+    /// Add `message` if it is out, take it out if it is in.
+    pub fn toggle(&mut self, message: MessageId) {
+        match self {
+            Selection::These(messages) => match messages.iter().position(|id| *id == message) {
+                Some(index) => {
+                    messages.remove(index);
+                }
+                None => messages.push(message),
+            },
+            // Inside the predicate, toggling edits the exceptions rather than
+            // giving the predicate up: taking one row out of forty thousand
+            // must not turn into naming the other 39,999.
+            Selection::Everything { except } => match except.iter().position(|id| *id == message) {
+                Some(index) => {
+                    except.remove(index);
+                }
+                None => except.push(message),
+            },
+        }
+    }
+
+    /// Add `message`, leaving it alone if it is already in.
+    pub fn insert(&mut self, message: MessageId) {
+        if !self.contains(message) {
+            self.toggle(message);
+        }
+    }
+}
+
 /// One step of the back stack: where the user was, and where they were in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
     view: ViewMode,
-    selected: Vec<MessageId>,
+    selected: Selection,
     focus: Option<MessageId>,
 }
 
@@ -98,7 +194,7 @@ struct Frame {
 pub struct AppState {
     account: Option<AccountId>,
     mailbox: Option<MailboxId>,
-    selected: Vec<MessageId>,
+    selected: Selection,
     focus: Option<MessageId>,
     view: ViewMode,
     back: Vec<Frame>,
@@ -130,8 +226,8 @@ impl AppState {
         self.mailbox
     }
 
-    /// The selected messages, in list order.
-    pub fn selection(&self) -> &[MessageId] {
+    /// What an action would hit.
+    pub fn selection(&self) -> &Selection {
         &self.selected
     }
 
@@ -212,9 +308,34 @@ impl AppState {
     /// Replace the selection and the focused row.
     pub fn select(&mut self, messages: Vec<MessageId>, focus: Option<MessageId>) -> Vec<Event> {
         self.commit(|state| {
-            state.selected = messages;
+            state.selected = Selection::These(messages);
             state.focus = focus;
         })
+    }
+
+    /// Add `message` to the selection, or take it out again.
+    ///
+    /// The `x` key. Leaves the focus alone: toggling is about what an action
+    /// hits, not about where the keyboard is.
+    pub fn toggle_selection(&mut self, message: MessageId) -> Vec<Event> {
+        self.commit(|state| state.selected.toggle(message))
+    }
+
+    /// Extend the selection onto `message` and move the focus with it.
+    ///
+    /// `Shift+J` and `Shift+K`. Which row is next is the frontend's to know —
+    /// it is the one holding the list order — so this takes the row rather
+    /// than a direction.
+    pub fn extend_selection_to(&mut self, message: MessageId) -> Vec<Event> {
+        self.commit(|state| {
+            state.selected.insert(message);
+            state.focus = Some(message);
+        })
+    }
+
+    /// Select everything the list is showing, without naming any of it.
+    pub fn select_all(&mut self) -> Vec<Event> {
+        self.commit(|state| state.selected = Selection::Everything { except: Vec::new() })
     }
 
     /// Move the focused row without changing the selection.
@@ -241,7 +362,7 @@ impl AppState {
             state.push(ViewMode::Reader { message });
             // What the reader is showing *is* the selection: an archive from
             // the reading pane must not land on the row behind it.
-            state.selected = vec![message];
+            state.selected = Selection::These(vec![message]);
             state.focus = Some(message);
         })
     }
@@ -295,7 +416,7 @@ impl AppState {
     // -- Internals -------------------------------------------------------
 
     fn clear_position(&mut self) {
-        self.selected.clear();
+        self.selected = Selection::default();
         self.focus = None;
     }
 
@@ -366,7 +487,7 @@ impl AppState {
         // it is the row wearing the key hints.
         if self.selected != next.selected || self.focus != next.focus {
             events.push(Event::SelectionChanged {
-                messages: next.selected.clone(),
+                selection: next.selected.clone(),
             });
         }
 
@@ -446,7 +567,7 @@ mod tests {
 
         state.open_message(MessageId::new(9));
 
-        assert_eq!(state.selection(), [MessageId::new(9)]);
+        assert_eq!(state.selection().ids(), Some(&[MessageId::new(9)][..]));
         assert_eq!(state.focus(), Some(MessageId::new(9)));
     }
 
