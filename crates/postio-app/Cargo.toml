@@ -27,3 +27,8 @@ postio-runtime.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
+
+[dev-dependencies]
+# Throwaway migrated databases, so a verb is an ordinary function over a real
+# schema rather than something only a running application can exercise.
+postio-storage = { workspace = true, features = ["test-support"] }
