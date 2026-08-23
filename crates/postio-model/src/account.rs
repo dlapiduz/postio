@@ -18,6 +18,31 @@ pub enum TransportSecurity {
     Tls,
 }
 
+impl TransportSecurity {
+    /// A stable lowercase identifier, for storage and config.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::StartTls => "starttls",
+            Self::Tls => "tls",
+        }
+    }
+
+    /// The inverse of [`TransportSecurity::as_str`].
+    ///
+    /// `None` for anything else: a value that is not one of these came from a
+    /// corrupt row or a hand-edited config, and guessing at it would be worse
+    /// than saying so.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "none" => Some(Self::None),
+            "starttls" => Some(Self::StartTls),
+            "tls" => Some(Self::Tls),
+            _ => None,
+        }
+    }
+}
+
 /// How Postio authenticates to a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AuthMethod {
@@ -30,6 +55,29 @@ pub enum AuthMethod {
     OAuth2,
     /// `XOAUTH2` SASL, as used by Gmail and Outlook.
     XOAuth2,
+}
+
+impl AuthMethod {
+    /// A stable lowercase identifier, for storage and config.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
+            Self::AppPassword => "app_password",
+            Self::OAuth2 => "oauth2",
+            Self::XOAuth2 => "xoauth2",
+        }
+    }
+
+    /// The inverse of [`AuthMethod::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "password" => Some(Self::Password),
+            "app_password" => Some(Self::AppPassword),
+            "oauth2" => Some(Self::OAuth2),
+            "xoauth2" => Some(Self::XOAuth2),
+            _ => None,
+        }
+    }
 }
 
 /// Where and how to reach one of an account's servers.
@@ -167,5 +215,38 @@ impl Account {
                 .identities
                 .iter()
                 .any(|identity| identity.address.same_address(address))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_security_round_trips_through_its_stored_identifier() {
+        for security in [
+            TransportSecurity::None,
+            TransportSecurity::StartTls,
+            TransportSecurity::Tls,
+        ] {
+            assert_eq!(
+                TransportSecurity::from_name(security.as_str()),
+                Some(security)
+            );
+        }
+        assert_eq!(TransportSecurity::from_name("TLS"), None);
+    }
+
+    #[test]
+    fn auth_methods_round_trip_through_their_stored_identifiers() {
+        for method in [
+            AuthMethod::Password,
+            AuthMethod::AppPassword,
+            AuthMethod::OAuth2,
+            AuthMethod::XOAuth2,
+        ] {
+            assert_eq!(AuthMethod::from_name(method.as_str()), Some(method));
+        }
+        assert_eq!(AuthMethod::from_name("app-password"), None);
     }
 }

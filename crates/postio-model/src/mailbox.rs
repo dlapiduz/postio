@@ -110,6 +110,25 @@ impl MailboxRole {
         !matches!(self, Self::Regular)
     }
 
+    /// The inverse of [`MailboxRole::as_str`].
+    ///
+    /// Parses the stable identifier a role is *stored* as. Distinct from
+    /// [`MailboxRole::guess_from_name`], which guesses a role from the folder
+    /// name a server reported; this one only ever accepts what `as_str` emits.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "inbox" => Some(Self::Inbox),
+            "archive" => Some(Self::Archive),
+            "sent" => Some(Self::Sent),
+            "drafts" => Some(Self::Drafts),
+            "trash" => Some(Self::Trash),
+            "junk" => Some(Self::Junk),
+            "flagged" => Some(Self::Flagged),
+            "regular" => Some(Self::Regular),
+            _ => None,
+        }
+    }
+
     /// A stable lowercase identifier, for storage and config.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -202,5 +221,28 @@ impl Mailbox {
     /// space and the mailbox must be resynchronized from scratch.
     pub fn uid_validity_changed(&self, observed: UidValidity) -> bool {
         matches!(self.uid_validity, Some(known) if known != observed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_role_round_trips_through_its_stored_identifier() {
+        for role in [
+            MailboxRole::Inbox,
+            MailboxRole::Archive,
+            MailboxRole::Sent,
+            MailboxRole::Drafts,
+            MailboxRole::Trash,
+            MailboxRole::Junk,
+            MailboxRole::Flagged,
+            MailboxRole::Regular,
+        ] {
+            assert_eq!(MailboxRole::from_name(role.as_str()), Some(role));
+        }
+        assert_eq!(MailboxRole::from_name("Inbox"), None, "spelling is exact");
+        assert_eq!(MailboxRole::from_name("nonsense"), None);
     }
 }
