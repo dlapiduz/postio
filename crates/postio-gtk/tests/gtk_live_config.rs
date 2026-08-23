@@ -72,6 +72,16 @@ fn editing_config_toml_rebinds_the_running_window() {
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    // `install_at` now wires `Ctrl+E` to actually launch `$EDITOR`
+    // (postio-skc); this test presses it, and must not inherit whatever a
+    // developer's own shell happens to have `$EDITOR` set to. `true` runs
+    // and exits instantly, which is all a test that only checks the command
+    // was dispatched needs.
+    // SAFETY: same statement group as above.
+    unsafe {
+        std::env::set_var("EDITOR", "true");
+        std::env::remove_var("VISUAL");
+    }
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
