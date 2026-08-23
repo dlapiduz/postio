@@ -9,7 +9,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_imap::backend::{Fault, MockBackend, MockMailbox, MockMessage};
+use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
 use postio_runtime::engine::{Engine, EngineParts, Link, NetworkState};
@@ -57,6 +57,7 @@ fn engine_with_backend() -> (
         retry: Default::default(),
         backfill: Default::default(),
         reconnect: Default::default(),
+        watch: Default::default(),
     })
     .expect("the engine starts");
 
@@ -274,6 +275,60 @@ async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
 }
 
 #[tokio::test]
+async fn mail_that_arrives_while_the_app_is_open_turns_up() {
+    // postio-e4n. The engine synced when the link came up and never again, so
+    // a Postio left open all afternoon showed nothing that arrived during it
+    // — which for a mail client is the whole job.
+    let database = test_support::memory();
+    let account =
+        postio_storage::test_support::account(&database.connection().expect("a connection"));
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, _events) = engine_over_arc(&database, account.id, backend.clone());
+
+    // A first pass, so the mailbox has sync state and the watcher is on it.
+    engine.sync(mailbox.id).await.expect("a first sync");
+
+    // Then let everything the connection coming up set off finish, so what
+    // this test observes afterwards can only be the watcher. Without this it
+    // would be racing the sync that a fresh link queues for every mailbox.
+    let before = settle(&database, mailbox.id).await;
+    assert!(before > 0);
+
+    // Now a message lands on the server, with nobody asking for it.
+    // `append` is how the mock's INBOX gains one; a real server would have
+    // been handed it by somebody else's SMTP.
+    backend
+        .append(
+            "INBOX",
+            &postio_imap::backend::AppendMessage::new(arriving_message()),
+        )
+        .await
+        .expect("the server takes delivery");
+
+    let after = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let count = stored_in(&database, mailbox.id);
+            if count > before {
+                return count;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("nothing noticed the new mail — the watcher is not running");
+
+    assert_eq!(after, before + 1, "exactly the one that arrived");
+}
+
+#[tokio::test]
 async fn a_message_nobody_has_is_nothing_to_fetch() {
     let (engine, _database, _report, _events) = engine();
 
@@ -443,11 +498,62 @@ async fn no_network_is_not_a_backoff() {
     );
 }
 
+/// Wait until the store stops changing, and say where it settled.
+async fn settle(
+    database: &postio_storage::Database,
+    mailbox: postio_model::ids::MailboxId,
+) -> usize {
+    let mut last = usize::MAX;
+    for _ in 0..100 {
+        let count = stored_in(database, mailbox);
+        if count == last {
+            return count;
+        }
+        last = count;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    last
+}
+
+/// How many messages the local store holds for `mailbox`.
+fn stored_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> usize {
+    let connection = database.connection().expect("a connection");
+    postio_storage::repository::MessageRepository::new(&connection)
+        .count(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(mailbox),
+            limit: 0,
+            after: None,
+        })
+        .expect("the count reads") as usize
+}
+
+/// One more message, of the kind `server` holds.
+fn arriving_message() -> Vec<u8> {
+    b"From: Grace Hopper <grace@example.org>\r\n\
+      To: Postio <postio@example.net>\r\n\
+      Subject: arrived while you were looking\r\n\
+      Message-ID: <arrived@example.org>\r\n\
+      Date: Mon, 1 Jun 2026 10:00:00 +0000\r\n\
+      \r\n\
+      Nobody asked for this one.\r\n"
+        .to_vec()
+}
+
 /// An engine over `database`, for a test that builds its own store.
 fn engine_over(
     database: &postio_storage::Database,
     account: postio_model::ids::AccountId,
     backend: MockBackend,
+) -> (Engine, EventStream) {
+    engine_over_arc(database, account, Arc::new(backend))
+}
+
+/// As [`engine_over`], keeping the mock so a test can change what the server
+/// holds while the engine is running.
+fn engine_over_arc(
+    database: &postio_storage::Database,
+    account: postio_model::ids::AccountId,
+    backend: Arc<MockBackend>,
 ) -> (Engine, EventStream) {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(directory.keep()).expect("a blob store");
@@ -456,13 +562,14 @@ fn engine_over(
         account,
         database: database.clone(),
         blobs,
-        backend: Arc::new(backend),
+        backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
         secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
         reconnect: Default::default(),
+        watch: Default::default(),
     })
     .expect("the engine starts");
     (engine, events)
