@@ -40,11 +40,13 @@ use postio_imap::backend::MailBackend;
 use postio_imap::secret::SecretStore;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
+use postio_storage::repository::{MailboxRepository, SyncStateRepository};
 use postio_storage::{BlobStore, Database, Pool};
+use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
 use postio_sync::{
     Backfill, BackfillPolicy, BackfillProgress, Drainer, ReconnectPolicy, RetryPolicy, SmtpContext,
-    Supervisor, SyncError, SyncStatus, backfill,
+    Supervisor, SyncError, SyncStatus, backfill, initial, resync,
 };
 // The crate root's `Outcome` is the *resync* one; a body has its own.
 use postio_sync::backfill::Outcome;
@@ -90,6 +92,29 @@ impl DrainSummary {
             && self.obsolete == 0
             && self.deferred == 0
             && self.failed.is_empty()
+    }
+}
+
+/// What one sync pass did to a mailbox.
+///
+/// Core's own summary, so `postio-sync`'s report types stay behind this
+/// boundary the way the storage types do.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncSummary {
+    /// Messages that were not known locally before this pass.
+    pub inserted: usize,
+    /// Messages already present that this pass wrote again.
+    pub updated: usize,
+    /// Messages filed into a thread during this pass.
+    pub threaded: usize,
+    /// Whether the whole mailbox had to be re-enumerated.
+    pub full: bool,
+}
+
+impl SyncSummary {
+    /// Whether the local store moved at all.
+    pub fn changed(&self) -> bool {
+        self.inserted > 0 || self.updated > 0 || self.threaded > 0
     }
 }
 
@@ -175,6 +200,11 @@ enum Job {
     BackfillProgress {
         reply: tokio::sync::oneshot::Sender<BackfillProgress>,
     },
+    /// Bring one mailbox in line with the server.
+    Sync {
+        mailbox: MailboxId,
+        reply: tokio::sync::oneshot::Sender<Result<SyncSummary, EngineError>>,
+    },
     SeedBackfill {
         mailbox: MailboxId,
         limit: u32,
@@ -203,6 +233,7 @@ impl fmt::Debug for Job {
             Job::SetNetwork { state, .. } => write!(formatter, "SetNetwork({state:?})"),
             Job::LinkState { .. } => formatter.write_str("LinkState"),
             Job::BackfillProgress { .. } => formatter.write_str("BackfillProgress"),
+            Job::Sync { mailbox, .. } => write!(formatter, "Sync({mailbox})"),
             Job::SeedBackfill { mailbox, .. } => write!(formatter, "SeedBackfill({mailbox})"),
             Job::RequestBody { message, .. } => write!(formatter, "RequestBody({message})"),
         }
@@ -267,6 +298,15 @@ impl Engine {
     /// drift.
     pub async fn backfill_progress(&self) -> Result<BackfillProgress, EngineError> {
         self.tell(|reply| Job::BackfillProgress { reply }).await
+    }
+
+    /// Bring `mailbox` in line with the server.
+    ///
+    /// The first pass enumerates it; every pass after that is incremental,
+    /// falling back to a full re-enumeration when the server says the UID
+    /// space it was counting on is gone.
+    pub async fn sync(&self, mailbox: MailboxId) -> Result<SyncSummary, EngineError> {
+        self.ask(|reply| Job::Sync { mailbox, reply }).await
     }
 
     /// Queue up to `limit` bodies worth having for `mailbox`.
@@ -356,6 +396,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             supervisor: Supervisor::new(parts.reconnect),
             status: StatusTracker::new(),
             online: false,
+            to_sync: std::collections::VecDeque::new(),
         };
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
         // The first tick fires immediately; skipping it would leave the link
@@ -385,6 +426,23 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             if came_up(&mut state) {
                 let outcome = drain(&parts, &pool, &mut state).await;
                 announce_drain(&parts.events, &outcome);
+                // And find out what the server has been doing meanwhile.
+                queue_every_mailbox(&parts, &pool, &mut state);
+            }
+
+            // One mailbox at a time, inbox checked between each: a folder
+            // with forty thousand messages must not hold the engine away
+            // from a body the user is waiting for.
+            while inbox.is_empty()
+                && state.supervisor.link().is_online()
+                && let Some(mailbox) = state.to_sync.pop_front()
+            {
+                let outcome = sync(&parts, &pool, &mut state, mailbox).await;
+                if let Err(error) = outcome {
+                    parts.events.emit(Event::Error {
+                        message: error.message().to_string(),
+                    });
+                }
             }
 
             // Then fetch bodies, but only while nothing else is asking. One
@@ -409,6 +467,11 @@ struct State {
     /// Only the *transition* is interesting: a connection that has been up
     /// for an hour is not a reason to drain again.
     online: bool,
+    /// Mailboxes waiting for a sync pass.
+    ///
+    /// A queue rather than a loop, so one long mailbox cannot hold the engine
+    /// away from everything else it is asked to do.
+    to_sync: std::collections::VecDeque<MailboxId>,
 }
 
 /// Whether the link has come up since this was last asked.
@@ -418,6 +481,26 @@ fn came_up(state: &mut State) -> bool {
     state.online = online;
     transition
 }
+
+/// Line every selectable folder up for a sync pass.
+fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
+    let Ok(connection) = pool.get() else {
+        return;
+    };
+    let Ok(mailboxes) = MailboxRepository::new(&connection).list_for_account(parts.account) else {
+        return;
+    };
+    state.to_sync.clear();
+    state.to_sync.extend(
+        mailboxes
+            .into_iter()
+            .filter(|mailbox| mailbox.selectable)
+            .map(|mailbox| mailbox.id),
+    );
+}
+
+/// How many bodies one finished sync pass queues for its mailbox.
+const SEED_PER_MAILBOX: u32 = 200;
 
 /// Fetch one queued body, if there is one and it is worth doing now.
 ///
@@ -517,6 +600,10 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
         Job::BackfillProgress { reply } => {
             let _ = reply.send(state.backfill.progress());
         }
+        Job::Sync { mailbox, reply } => {
+            let outcome = sync(parts, pool, state, mailbox).await;
+            let _ = reply.send(outcome);
+        }
     }
 }
 
@@ -580,6 +667,134 @@ async fn drain(
     })
 }
 
+/// One sync pass over one mailbox.
+///
+/// `sync_mailbox` the first time and `resync_mailbox` afterwards, decided by
+/// whether the mailbox has sync state — which is the record of a pass having
+/// completed, and the thing `resync_mailbox` needs to be incremental against.
+async fn sync(
+    parts: &EngineParts,
+    pool: &Pool,
+    state: &mut State,
+    mailbox: MailboxId,
+) -> Result<SyncSummary, EngineError> {
+    if !state.supervisor.link().is_online() {
+        let moved = state
+            .supervisor
+            .poll(parts.backend.as_ref(), Utc::now(), entropy())
+            .await;
+        announce_link(parts, state, moved);
+    }
+    if !state.supervisor.link().is_online() {
+        return Err(EngineError::new(offline_reason(state.supervisor.link())));
+    }
+
+    let connection = pool
+        .get()
+        .map_err(|error| EngineError::new(error.to_string()))?;
+    let record = MailboxRepository::new(&connection)
+        .get(mailbox)
+        .map_err(|error| EngineError::new(error.to_string()))?
+        .ok_or_else(|| EngineError::new("that folder is not in the local store"))?;
+    let synced_before = SyncStateRepository::new(&connection)
+        .get(mailbox)
+        .map_err(|error| EngineError::new(error.to_string()))?
+        .is_some();
+
+    announce_status(parts, &state.status.on_sync_started(mailbox));
+
+    // Progress is collected rather than emitted from inside the callback:
+    // `on_progress` is `FnMut` and borrows the tracker, which the emit would
+    // want too. A pass reports a handful of batches, not a stream.
+    let mut batches: Vec<Progress> = Vec::new();
+    let cancel = postio_imap::cancel::CancelToken::new();
+    let outcome = if synced_before {
+        resync::resync_mailbox(
+            &connection,
+            parts.backend.as_ref(),
+            &record,
+            &cancel,
+            |progress| batches.push(progress),
+        )
+        .await
+        .map(summarise_resync)
+    } else {
+        initial::sync_mailbox(
+            &connection,
+            parts.backend.as_ref(),
+            &record,
+            &cancel,
+            |progress| batches.push(progress),
+        )
+        .await
+        .map(|report| SyncSummary {
+            inserted: report.inserted,
+            updated: report.updated,
+            threaded: report.threaded,
+            full: true,
+        })
+    };
+
+    let now = Utc::now();
+    for progress in batches {
+        if let Some(status) = state.status.on_progress(progress, now) {
+            announce_status(parts, &status);
+        }
+    }
+
+    match outcome {
+        Ok(summary) => {
+            announce_status(parts, &state.status.on_sync_finished(now));
+            if summary.changed() {
+                // The list showing this folder has to re-read it.
+                parts.events.emit(Event::MessageListChanged { mailbox });
+                // And a sync is exactly when the set of messages missing a
+                // body changed, so it is exactly when the backfill is worth
+                // seeding again. Inside the pass rather than at its call
+                // sites, so every caller gets it and none has to remember.
+                if let Err(error) =
+                    backfill::seed(&connection, &mut state.backfill, mailbox, SEED_PER_MAILBOX)
+                {
+                    parts.events.emit(Event::Error {
+                        message: error.to_string(),
+                    });
+                }
+            }
+            Ok(summary)
+        }
+        Err(error) => {
+            if let SyncError::Backend(backend) = &error {
+                let moved = state.supervisor.observe(backend, now);
+                announce_link(parts, state, moved);
+            }
+            announce_status(parts, &state.status.on_sync_finished(now));
+            Err(EngineError::new(error.to_string()))
+        }
+    }
+}
+
+/// What a resync did, in the engine's own terms.
+fn summarise_resync(outcome: resync::Outcome) -> SyncSummary {
+    match outcome {
+        resync::Outcome::UpToDate => SyncSummary::default(),
+        resync::Outcome::Full { report, .. } | resync::Outcome::Rebuilt { report } => SyncSummary {
+            inserted: report.inserted,
+            updated: report.updated,
+            threaded: report.threaded,
+            full: true,
+        },
+        // An incremental pull counts what moved rather than what it wrote:
+        // a flag change is an update, and a message the server no longer has
+        // is a row removed. Both mean the list showing this folder is stale.
+        resync::Outcome::Incremental { changed, vanished } => SyncSummary {
+            inserted: 0,
+            updated: changed + vanished,
+            threaded: 0,
+            full: false,
+        },
+    }
+}
+
 /// Why the link is not usable, phrased for the user.
 fn offline_reason(link: &Link) -> String {
     match link {
@@ -587,6 +802,47 @@ fn offline_reason(link: &Link) -> String {
         Link::Offline => "there is no network".to_string(),
         Link::Waiting { .. } => "not connected yet".to_string(),
         Link::Online { .. } => "connected".to_string(),
+    }
+}
+
+/// Say what the status line should show now.
+///
+/// One place, because a link change and a sync pass both move the same
+/// status and the frontend should not have to tell which produced it.
+/// `SyncProgress` rather than `ConnectionChanged` while a pass is counting:
+/// they are different questions — *is there a connection* and *how far has
+/// this got* — and the sidebar draws them differently.
+fn announce_status(parts: &EngineParts, status: &SyncStatus) {
+    if let SyncStatus::Syncing {
+        progress: Some(progress),
+        ..
+    } = status
+    {
+        parts.events.emit(Event::SyncProgress {
+            account: parts.account,
+            done: progress.done,
+            total: progress.total,
+        });
+        return;
+    }
+    let connection = match status {
+        SyncStatus::Offline => postio_core::ConnectionState::Offline,
+        SyncStatus::Connecting => postio_core::ConnectionState::Connecting,
+        SyncStatus::Idle { .. } | SyncStatus::Syncing { .. } => {
+            postio_core::ConnectionState::Online
+        }
+        SyncStatus::Error { .. } => postio_core::ConnectionState::Failing,
+    };
+    parts.events.emit(Event::ConnectionChanged {
+        account: parts.account,
+        state: connection,
+    });
+    // `ConnectionState::Failing` carries no reason of its own, deliberately.
+    // The reason travels beside it, which is what the status line reads.
+    if let SyncStatus::Error { reason, .. } = status {
+        parts.events.emit(Event::Error {
+            message: reason.clone(),
+        });
     }
 }
 

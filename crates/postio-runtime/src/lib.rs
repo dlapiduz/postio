@@ -38,7 +38,9 @@
 pub mod engine;
 pub mod store;
 
-pub use engine::{DrainSummary, Engine, EngineError, EngineParts, Link, NetworkState};
+pub use engine::{
+    DrainSummary, Engine, EngineError, EngineParts, Link, NetworkState, SyncSummary,
+};
 pub use store::{
     ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, SqliteStore, StoreError,
 };
