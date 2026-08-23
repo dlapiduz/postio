@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Enforce Postio's architectural crate boundaries.
+
+The invariants (see CLAUDE.md, "Architectural invariants"):
+
+  * ``postio-core`` must not depend on ``gtk4``/``libadwaita``. It is the
+    UI-agnostic runtime -- commands in, events out -- which is what makes a
+    non-GTK frontend possible later.
+  * ``postio-gtk`` must not depend on ``rusqlite``/``io-imap``. The view layer
+    does no SQL and speaks no protocol.
+
+The check inspects ``cargo metadata``'s resolved dependency graph rather than
+grepping source, so it catches a violation that arrives *transitively* through
+some innocent-looking intermediate crate, and it cannot be fooled by a string in
+a comment.
+
+Kinds considered:
+
+  * normal and build dependencies, transitively, from the guarded crate;
+  * dev-dependencies of the guarded crate itself (a test that pulls rusqlite
+    into postio-gtk violates the invariant just as much as the library would),
+    but not dev-dependencies of its dependencies, which are never built.
+
+Exit status: 0 clean, 1 violation found, 2 the check itself could not run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from collections import deque
+
+# --- The invariants ---------------------------------------------------------
+#
+# `banned` lists crate names that must not appear anywhere in the guarded
+# crate's dependency closure. The `-sys` / companion crates are listed
+# alongside the bindings they belong to so the rule cannot be side-stepped by
+# depending on the lower layer directly.
+
+RULES: dict[str, dict[str, object]] = {
+    "postio-core": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+        ],
+        "why": (
+            "postio-core is the UI-agnostic runtime (commands in, events out). "
+            "Keeping GTK out of it is what makes a second frontend possible. "
+            "Widgets belong in postio-gtk; glib/gio are fine, gtk4 is not."
+        ),
+    },
+    "postio-gtk": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "io-imap",
+        ],
+        "why": (
+            "postio-gtk is the view layer: command down, event up. No SQL and "
+            "no protocol. Storage goes through postio-storage and mail through "
+            "the MailBackend trait, both behind postio-core."
+        ),
+    },
+}
+
+
+class CheckError(Exception):
+    """The check could not be run (as opposed to: the check failed)."""
+
+
+def load_metadata(manifest_path: str | None, offline: bool) -> dict:
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        raise CheckError("cargo was not found on PATH")
+
+    cmd = [cargo, "metadata", "--format-version", "1"]
+    if manifest_path:
+        cmd += ["--manifest-path", manifest_path]
+    if offline:
+        cmd.append("--offline")
+
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise CheckError(
+            "`{}` failed with status {}:\n{}".format(
+                " ".join(cmd), proc.returncode, proc.stderr.strip()
+            )
+        )
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:  # pragma: no cover - cargo bug territory
+        raise CheckError(f"could not parse cargo metadata output: {exc}") from exc
+
+
+def dep_kind_label(kinds: set[str | None]) -> str:
+    if None in kinds:
+        return "dependency"
+    if "build" in kinds:
+        return "build-dependency"
+    if "dev" in kinds:
+        return "dev-dependency"
+    return "dependency"
+
+
+def find_violations(meta: dict, crate: str, banned: set[str]) -> dict[str, list[tuple[str, str]]]:
+    """Breadth-first search of `crate`'s dependency closure.
+
+    Returns ``{banned_crate_name: shortest_path}`` where a path is a list of
+    ``(crate_name, edge_kind)`` pairs starting at the guarded crate itself.
+    """
+    packages = {pkg["id"]: pkg for pkg in meta["packages"]}
+    resolve = meta.get("resolve") or {}
+    nodes = {node["id"]: node for node in resolve.get("nodes", [])}
+
+    member_ids = [pid for pid in meta.get("workspace_members", []) if pid in packages]
+    roots = [pid for pid in member_ids if packages[pid]["name"] == crate]
+    if not roots:
+        raise CheckError(
+            f"workspace member `{crate}` was not found. The boundary rules name "
+            f"crates that must exist; rename the rule in {__file__} if the crate "
+            f"was intentionally renamed or removed."
+        )
+
+    root = roots[0]
+    violations: dict[str, list[tuple[str, str]]] = {}
+    seen = {root}
+    queue: deque[tuple[str, list[tuple[str, str]]]] = deque(
+        [(root, [(crate, "workspace member")])]
+    )
+
+    while queue:
+        current, path = queue.popleft()
+        node = nodes.get(current)
+        if node is None:
+            continue
+        for dep in node.get("deps", []):
+            dep_kinds = dep.get("dep_kinds") or [{"kind": None}]
+            kinds = {entry.get("kind") for entry in dep_kinds}
+            # dev-dependencies only count for the guarded crate itself: a
+            # dependency's own dev-dependencies are never built.
+            allowed: set[str | None] = {None, "build"}
+            if current == root:
+                allowed.add("dev")
+            kinds &= allowed
+            if not kinds:
+                continue
+
+            pkg_id = dep["pkg"]
+            pkg = packages.get(pkg_id)
+            if pkg is None:
+                continue
+            name = pkg["name"]
+            next_path = path + [(name, dep_kind_label(kinds))]
+
+            if name in banned:
+                violations.setdefault(name, next_path)
+                continue  # no need to walk inside a crate that is already banned
+            if pkg_id not in seen:
+                seen.add(pkg_id)
+                queue.append((pkg_id, next_path))
+
+    return violations
+
+
+def format_path(path: list[tuple[str, str]]) -> str:
+    out = path[0][0]
+    for name, kind in path[1:]:
+        out += f" --({kind})--> {name}"
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--manifest-path",
+        help="path to the workspace Cargo.toml (default: discovered from cwd)",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="pass --offline to cargo metadata (used by the self-test fixtures)",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        meta = load_metadata(args.manifest_path, args.offline)
+    except CheckError as exc:
+        print(f"crate-boundary check: {exc}", file=sys.stderr)
+        return 2
+
+    failed = False
+    for crate, rule in RULES.items():
+        banned = set(rule["banned"])  # type: ignore[arg-type]
+        try:
+            violations = find_violations(meta, crate, banned)
+        except CheckError as exc:
+            print(f"crate-boundary check: {exc}", file=sys.stderr)
+            return 2
+
+        if not violations:
+            print(f"ok: {crate} depends on none of: {', '.join(sorted(banned))}")
+            continue
+
+        failed = True
+        for name in sorted(violations):
+            path = violations[name]
+            direct = len(path) == 2
+            print(
+                f"\ncrate-boundary violation: `{crate}` must not depend on `{name}`",
+                file=sys.stderr,
+            )
+            print(f"  offending crate:      {crate}", file=sys.stderr)
+            print(f"  offending dependency: {name}", file=sys.stderr)
+            print(
+                "  how:                  {} ({})".format(
+                    format_path(path),
+                    "direct" if direct else "transitive",
+                ),
+                file=sys.stderr,
+            )
+            print(f"  why this matters:     {rule['why']}", file=sys.stderr)
+
+    if failed:
+        print(
+            "\ncrate-boundary check FAILED. See CLAUDE.md "
+            '"Architectural invariants".',
+            file=sys.stderr,
+        )
+        return 1
+
+    print("crate-boundary check passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

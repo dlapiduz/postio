@@ -1,0 +1,200 @@
+name: CI
+
+# Gates that run only when someone remembers are gates that do not exist.
+#
+# Runner images: the jobs that only need cargo metadata or rustfmt run on
+# ubuntu-latest. The jobs that actually compile the GTK frontend run on
+# ubuntu-26.04, because postio-gtk pins gtk4 `v4_20`, libadwaita `v1_7` and
+# pango `v1_56`, and those feature gates check the *system* library version at
+# build time. ubuntu-24.04 ships GTK 4.14 / libadwaita 1.5 and would fail before
+# compiling a line. Ubuntu 26.04 (resolute) ships GTK 4.22.2, libadwaita 1.9.1,
+# WebKitGTK 2.52.3 and pango 1.57 -- effectively the versions CLAUDE.md records
+# as verified on the development box.
+#
+# ubuntu-26.04 is still a preview runner label. If it is ever withdrawn, the
+# equivalent fallback is a `container: fedora:44` running the exact dnf line
+# from CLAUDE.md, rather than downgrading the feature floor.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+          cargo fmt --version
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+  boundaries:
+    name: Crate boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Only `cargo metadata` is needed here: it resolves the dependency graph
+      # without compiling anything, so this job needs no GTK system libraries
+      # and finishes in seconds.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Enforce architectural invariants
+        run: python3 scripts/check-crate-boundaries.py
+
+      - name: Prove the boundary check actually fails when violated
+        run: python3 scripts/test-check-crate-boundaries.py
+
+      - name: Assert CI never runs the network-touching tests
+        run: |
+          # Live-server tests are #[ignore]d and must stay out of CI. The
+          # pattern is split so this guard does not match itself.
+          flag="--ign""ored"
+          if grep -rnF -- "$flag" .github/workflows; then
+            echo "::error::CI must not run the ignored tests; they talk to a live mail server."
+            exit 1
+          fi
+          echo "ok: no workflow opts into the live-server tests."
+
+  build:
+    name: Clippy and tests
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
+      #   gtk4-devel        -> libgtk-4-dev
+      #   libadwaita-devel  -> libadwaita-1-dev
+      #   webkitgtk6.0-devel-> libwebkitgtk-6.0-dev
+      #   sqlite-devel      -> libsqlite3-dev
+      #   libsecret-devel   -> libsecret-1-dev
+      #   glib2-devel       -> libglib2.0-dev
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            pkg-config \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libwebkitgtk-6.0-dev \
+            libsqlite3-dev \
+            libsecret-1-dev \
+            libglib2.0-dev \
+            libpango1.0-dev
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version && cargo clippy --version
+
+      - name: Cache cargo registry and target dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-build-
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The default test suite never touches the network: live iCloud tests are
+      # #[ignore]d, and nothing here opts back into them.
+      - name: cargo test
+        run: cargo test --workspace
+
+  bench:
+    name: Benches (compile only)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # The criterion harness is a separate bead. Until it lands there are no
+      # bench targets, and a missing bench is not a CI failure -- this job just
+      # reports that it skipped. Once benches/ exists it starts compiling them,
+      # with no workflow change needed. Perf budgets are asserted by the bench
+      # code itself; this job deliberately only builds, because a shared runner
+      # is far too noisy to time anything on.
+      - name: Detect bench targets
+        id: detect
+        run: |
+          if cargo metadata --format-version 1 --no-deps \
+              | jq -e '[.packages[].targets[] | select(.kind[] == "bench")] | length > 0' >/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Bench targets found; they will be compiled."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No bench targets yet - skipping. (See the criterion harness bead.)"
+          fi
+
+      - name: Install system dependencies
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            pkg-config \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libwebkitgtk-6.0-dev \
+            libsqlite3-dev \
+            libsecret-1-dev \
+            libglib2.0-dev \
+            libpango1.0-dev
+
+      - name: Cache cargo registry and target dir
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-bench-
+
+      - name: Compile benches
+        if: steps.detect.outputs.found == 'true'
+        run: cargo bench --workspace --no-run
