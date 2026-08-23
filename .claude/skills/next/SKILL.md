@@ -17,11 +17,24 @@ crate causes exactly the collisions the crate split exists to prevent.
 
 ```bash
 git status --porcelain | awk '{print $NF}' | cut -d/ -f1-2 | sort | uniq -c | sort -rn
+git log --oneline -15 --name-only | grep '^crates/' | cut -d/ -f1-2 | sort -u
 bd list --status=in_progress
 ```
 
-Crates dirty from *your* edits are yours. Crates dirty from someone else's, or
-carrying someone else's claimed bead, are not.
+Three signals, not one:
+
+- **Crates dirty from your edits** are yours. Dirty from someone else's are not.
+- **Crates your recent commits touched** are also yours. Do not conclude your
+  lane is empty just because you committed everything — a clean tree means you
+  finished, not that you are done.
+- **Beads you filed are yours to pick up**, wherever they live. Work you
+  discovered often lands in another crate: a bug found while packaging can sit
+  in `postio-imap`. Take it if that crate is free — nobody else has the context,
+  and leaving it orphans the finding.
+
+A crate is free if nothing of someone else's is dirty in it and no claimed bead
+names it. Check before taking work outside the crates you have been editing;
+do not check and then avoid it out of caution.
 
 ## 2. Pick
 
