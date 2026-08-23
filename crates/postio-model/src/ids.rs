@@ -117,6 +117,14 @@ local_id!(
     /// Identifies a [`Draft`](crate::Draft).
     DraftId
 );
+local_id!(
+    /// Identifies a row in the local-first mutation queue.
+    ///
+    /// Ordering *is* meaningful for this one, and only this one: the queue
+    /// drains by ascending id, which is what makes it survive a restart in the
+    /// order the user performed the actions.
+    OperationId
+);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {

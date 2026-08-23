@@ -54,6 +54,7 @@ pub mod label;
 pub mod mailbox;
 pub mod message;
 pub mod mime;
+pub mod operation;
 pub mod subject;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
@@ -69,12 +70,13 @@ pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};
 pub use ids::{
     AccountId, AttachmentId, BlobId, ContactId, DraftId, IdentityId, LabelId, MailboxId, MessageId,
-    ModSeq, RfcMessageId, ThreadId, Uid, UidValidity,
+    ModSeq, OperationId, RfcMessageId, ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
+pub use operation::{Operation, OperationState, OperationTarget};
 pub use subject::{is_reply, normalize_subject};
 pub use thread::Thread;
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
