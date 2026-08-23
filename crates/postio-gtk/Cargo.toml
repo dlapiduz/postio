@@ -15,12 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+async-channel = "2.5.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 gio = "0.21.5"
 glib = { version = "0.21.5", features = ["v2_72"] }
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.21.5", features = ["v1_56"] }
 pangocairo = "0.21.5"
+postio-config.workspace = true
 postio-core.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
@@ -28,6 +30,7 @@ thiserror = "2.0.20"
 
 [dev-dependencies]
 postio-config.workspace = true
+tempfile = "3.27.0"
 
 [build-dependencies]
 glib-build-tools = "0.21.0"

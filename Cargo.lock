@@ -1882,6 +1882,7 @@ dependencies = [
 name = "postio-gtk"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "chrono",
  "gio",
  "glib",
@@ -1890,8 +1891,12 @@ dependencies = [
  "libadwaita",
  "pango",
  "pangocairo",
+ "postio-config",
  "postio-core",
  "postio-model",
+ "postio-search",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

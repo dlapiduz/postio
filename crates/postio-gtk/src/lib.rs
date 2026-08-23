@@ -37,6 +37,8 @@
 //!   so every command is reachable without memorizing a key.
 //! - [`cheatsheet`] — the `?` overlay, generated from the same table, so the
 //!   key it prints is the key that is bound.
+//! - [`config`] — `config.toml` applied live: the bridge from the watcher's
+//!   own thread to the main context, where the widgets are.
 //! - [`search`] — the `/` query bar: operators drawn as chips over the query
 //!   they were parsed from, and Backspace that pops one whole.
 //!
@@ -56,6 +58,7 @@
 
 pub mod app;
 pub mod cheatsheet;
+pub mod config;
 pub mod fonts;
 pub mod header;
 pub mod keymap;
