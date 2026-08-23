@@ -1,0 +1,203 @@
+//! Incremental resync: what changed since last time, and the `UIDVALIDITY`
+//! trap.
+//!
+//! No network and no server: `MockBackend` is the in-memory mail store the
+//! whole sync engine is developed against (see
+//! `crates/postio-imap/src/backend/mock.rs`).
+
+use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
+use postio_imap::cancel::CancelToken;
+use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
+use postio_storage::repository::{MessageRepository, SyncStateRepository};
+use postio_storage::test_support;
+use postio_sync::{Outcome, resync_mailbox, sync_mailbox};
+use rusqlite::Connection;
+
+const INBOX: &str = "INBOX";
+const VALIDITY: u32 = 1_707_000_000;
+
+fn note(n: u32) -> Vec<u8> {
+    format!(
+        "From: Ada Lovelace <ada@example.com>\r\n\
+         Subject: Note {n}\r\n\r\nBody {n}.\r\n"
+    )
+    .into_bytes()
+}
+
+async fn server_with_messages(count: u32) -> MockBackend {
+    let mut mailbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for n in 1..=count {
+        mailbox = mailbox.message(MockMessage::new(note(n)));
+    }
+    let backend = MockBackend::builder().mailbox(mailbox).build();
+    backend.connect().await.expect("connect");
+    backend
+}
+
+fn local(connection: &Connection) -> (AccountId, Mailbox) {
+    let account = test_support::account(connection);
+    let inbox = test_support::mailbox(connection, &account, INBOX);
+    (account.id, inbox)
+}
+
+/// Runs the initial sync so the local store matches `backend`, as a fixture
+/// step for tests that are about what happens *after* that.
+async fn bootstrap(connection: &Connection, backend: &MockBackend, mailbox: &Mailbox) {
+    sync_mailbox(connection, backend, mailbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("bootstrap sync");
+}
+
+fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
+    MessageRepository::new(connection)
+        .uids_in(mailbox.id, UidValidity::new(VALIDITY))
+        .expect("uids_in")
+        .into_iter()
+        .map(Uid::get)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_reconnect_with_no_server_changes_fetches_essentially_nothing() {
+    let backend = server_with_messages(3).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let calls_before = backend.calls();
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert_eq!(outcome, Outcome::UpToDate);
+    // Only the one SELECT this pass had to make to find out nothing changed —
+    // no FETCH at all.
+    assert_eq!(backend.calls() - calls_before, 1);
+    assert_eq!(known_uids(&connection, &inbox), vec![1, 2, 3]);
+}
+
+#[tokio::test]
+async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
+    let backend = server_with_messages(3).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    // Another client flags message 2 as seen...
+    backend
+        .store_flags(
+            INBOX,
+            &UidSet::single(Uid::new(2)),
+            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+        )
+        .await
+        .expect("flag");
+    // ...and deletes message 3 outright.
+    backend
+        .store_flags(
+            INBOX,
+            &UidSet::single(Uid::new(3)),
+            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        )
+        .await
+        .expect("mark deleted");
+    backend
+        .expunge(INBOX, Some(&UidSet::single(Uid::new(3))))
+        .await
+        .expect("expunge");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    match outcome {
+        Outcome::Incremental { changed, vanished } => {
+            assert_eq!(changed, 1, "only message 2's flag change was reported");
+            assert_eq!(vanished, 1, "message 3 is gone");
+        }
+        other => panic!("expected an incremental resync, got {other:?}"),
+    }
+
+    let messages = MessageRepository::new(&connection);
+    let seen = messages
+        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(2))
+        .expect("look up message 2")
+        .expect("message 2 still stored");
+    assert!(
+        seen.flags.is_seen(),
+        "the flag change must reach the local row"
+    );
+
+    assert_eq!(
+        known_uids(&connection, &inbox),
+        vec![1, 2],
+        "the expunged message must be gone locally too"
+    );
+}
+
+#[tokio::test]
+async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
+    let backend = server_with_messages(2).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let new_validity = UidValidity::new(1_900_000_000);
+    backend.change_uid_validity(INBOX, new_validity);
+    // A real server only ever reports a UIDVALIDITY change once, at the
+    // SELECT that reveals it, and behaves consistently under the new
+    // generation from then on; the mock's stricter guard on every other call
+    // exists to catch code that skips checking SELECT's answer, which is not
+    // what is under test here.
+    backend.acknowledge_uid_validity(INBOX);
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    match outcome {
+        Outcome::Full { reason, report } => {
+            assert_eq!(reason, postio_model::FullResyncReason::UidValidityChanged);
+            assert_eq!(report.inserted, 2);
+        }
+        other => panic!("expected a full resync, got {other:?}"),
+    }
+
+    let messages = MessageRepository::new(&connection);
+    assert!(
+        messages
+            .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(1))
+            .expect("look up under the old generation")
+            .is_none(),
+        "rows under the stale UIDVALIDITY must be gone"
+    );
+    let rebuilt = messages
+        .by_uid(inbox.id, new_validity, Uid::new(1))
+        .expect("look up under the new generation")
+        .expect("rebuilt under the new generation");
+    assert_eq!(rebuilt.server.uid_validity, Some(new_validity));
+
+    let state = SyncStateRepository::new(&connection)
+        .require(inbox.id)
+        .expect("sync state");
+    assert_eq!(state.uid_validity, Some(new_validity));
+    assert!(state.has_synced());
+}
+
+#[tokio::test]
+async fn a_transient_backend_failure_during_resync_is_not_treated_as_a_resync_result() {
+    let backend = server_with_messages(1).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    backend.inject(Fault::Disconnect);
+    let error = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect_err("a dropped connection must surface as an error, not UpToDate");
+    assert!(matches!(error, postio_sync::SyncError::Backend(_)));
+}
