@@ -47,13 +47,14 @@
 //!
 //! # The `index` feature
 //!
-//! [`index`] (the FTS5 schema and triggers) sits behind the `index` cargo
-//! feature, off by default. It pulls in `rusqlite` and `postio-model`, which
-//! `postio-gtk` must never depend on (`scripts/check-crate-boundaries.py`) —
-//! it depends on this crate at its plain defaults, which is why this feature
-//! defaults off rather than on: `postio-gtk` needs only the parser above, and
-//! a workspace member's own default features are active across the whole
-//! workspace resolve regardless of what any one dependent asks for.
+//! [`index`] (the FTS5 schema and triggers) and [`executor`] (query execution,
+//! ranking and snippets) sit behind the `index` cargo feature, off by
+//! default. They pull in `rusqlite` and `postio-model`, which `postio-gtk`
+//! must never depend on (`scripts/check-crate-boundaries.py`) — it depends on
+//! this crate at its plain defaults, which is why this feature defaults off
+//! rather than on: `postio-gtk` needs only the parser above, and a workspace
+//! member's own default features are active across the whole workspace
+//! resolve regardless of what any one dependent asks for.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -62,6 +63,8 @@ mod date;
 #[cfg(feature = "index")]
 pub mod error;
 #[cfg(feature = "index")]
+pub mod executor;
+#[cfg(feature = "index")]
 pub mod index;
 mod parser;
 pub mod query;
@@ -69,5 +72,7 @@ mod size;
 
 #[cfg(feature = "index")]
 pub use error::{Error, Result};
+#[cfg(feature = "index")]
+pub use executor::{SearchHit, SearchRequest, SearchResults, TOTAL_HITS_CAP, search};
 pub use parser::parse;
 pub use query::ParsedQuery;
