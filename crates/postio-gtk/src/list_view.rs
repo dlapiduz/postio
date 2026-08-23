@@ -33,7 +33,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene};
 use postio_config::Density;
-use postio_core::{Command, CommandId, MessageTarget};
+use postio_core::{Command, CommandId, Keymap, MessageTarget};
 use postio_model::MessageId;
 
 use crate::list::{MessageList, MessageRow};
@@ -91,6 +91,9 @@ mod imp {
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
+        /// The live keymap, handed to every row as it binds so the focused
+        /// row's key hints read the bindings actually in force.
+        pub(super) keymap: Rc<RefCell<Keymap>>,
         /// The mailbox in view, so opening another one drops a selection that
         /// was about the last.
         pub(super) mailbox: RefCell<String>,
@@ -116,6 +119,7 @@ mod imp {
                 activated: RefCell::new(Vec::new()),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
+                keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
                 mailbox: RefCell::new(String::new()),
             }
         }
@@ -210,6 +214,23 @@ impl MessageListView {
             return;
         }
         self.each_row(|row| row.set_show_actions(show));
+    }
+
+    /// The bindings the focused row's key hints read.
+    ///
+    /// Applied to the rows on screen now and to every row that binds after,
+    /// so a rebind in `config.toml` reaches the hints with no restart —
+    /// the same promise already kept for the resolver, the palette and the
+    /// cheat sheet.
+    pub fn set_keymap(&self, keymap: Keymap) {
+        self.imp().keymap.replace(keymap.clone());
+        self.each_row(|row| row.set_keymap(&keymap));
+    }
+
+    /// The keymap in force, for the rows that bind after this and for a test
+    /// to check against with nothing materialised on screen yet.
+    pub fn keymap(&self) -> Keymap {
+        self.imp().keymap.borrow().clone()
     }
 
     /// Name the mailbox in view and say how much of it is unread.
@@ -518,6 +539,7 @@ impl MessageListView {
         // outlives any borrow of it, and a bind should cost a `Cell` read
         // rather than an upgrade through a weak reference.
         let offers = imp.show_actions.clone();
+        let keymap = imp.keymap.clone();
         factory.connect_bind(move |_, item| {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
@@ -527,6 +549,7 @@ impl MessageListView {
             };
             view.set_density(bound.get());
             view.set_show_actions(offers.get());
+            view.set_keymap(&keymap.borrow());
             view.set_first(item.position() == 0);
             view.set_index(item.position());
             view.set_cursor(item.is_selected());

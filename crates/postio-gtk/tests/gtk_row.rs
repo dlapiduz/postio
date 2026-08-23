@@ -140,6 +140,32 @@ fn the_row_draws_the_canvas_anatomy_at_every_density() {
         row.measured_height(404) > quiet,
         "revealing the hints makes room for them"
     );
+    assert_eq!(
+        row.hints(),
+        vec![
+            ("e".to_string(), "reply"),
+            ("a".to_string(), "archive"),
+            ("t".to_string(), "thread"),
+        ],
+        "canvas 1b's own three hints, before any keymap is applied"
+    );
+
+    // A rebind reaches the hint text, not just the resolver.
+    let mut overrides = postio_config::KeyBindings::default();
+    overrides
+        .overrides_mut()
+        .insert("archive".to_string(), "x".to_string());
+    row.set_keymap(&postio_core::Keymap::resolve(&overrides));
+    assert_eq!(
+        row.hints(),
+        vec![
+            ("e".to_string(), "reply"),
+            ("x".to_string(), "archive"),
+            ("t".to_string(), "thread"),
+        ],
+        "postio-cpk: the hint follows the live binding"
+    );
+    row.set_keymap(&postio_core::Keymap::resolve(&Default::default()));
 
     // ── selected and focused are different states ────────────────────────
     // Focus is where the keyboard is; selection is what an action will hit.
