@@ -37,6 +37,7 @@
 mod body;
 mod dispatch;
 mod fetch;
+mod idle;
 mod mailboxes;
 mod pool;
 mod select;
@@ -70,12 +71,16 @@ pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };
 pub use self::fetch::fetch_headers;
+pub use self::idle::idle;
 pub use self::mailboxes::list_mailboxes;
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
 };
-pub use self::pool::{DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE};
+pub use self::pool::{
+    DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE, DEFAULT_WATCH_POLL_INTERVAL,
+    DEFAULT_WATCH_REFRESH,
+};
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
 pub use self::skip_counter::{
     exclusive_measurement as skip_counter_exclusive_measurement, install as install_skip_counter,

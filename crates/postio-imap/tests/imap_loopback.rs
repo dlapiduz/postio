@@ -18,10 +18,12 @@ use std::time::Duration;
 use io_imap::client::ImapClientAsync;
 use io_imap::types::core::Vec1;
 use io_imap::types::extensions::enable::CapabilityEnable;
-use postio_imap::backend::{BackendError, BodyPart, Capability, MailboxFilter, UidSet, VecSink};
+use postio_imap::backend::{
+    BackendError, BodyPart, Capability, MailboxEvent, MailboxFilter, UidSet, VecSink,
+};
 use postio_imap::cancel::CancelToken;
 use postio_imap::imap::{
-    ConnectionPool, PoolConfig, Priority, RustlsConnector, fetch_headers, fetch_part,
+    ConnectionPool, PoolConfig, Priority, RustlsConnector, fetch_headers, fetch_part, idle,
     list_mailboxes,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
@@ -801,27 +803,150 @@ async fn an_appended_message_lands_with_the_uid_the_server_reports() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn idle_wakes_when_mail_is_delivered() {
-    // Postio's client stack has no IDLE path yet — `io-imap`'s IDLE coroutine
-    // has its own yield vocabulary and needs wiring `postio-imap` does not
-    // have. So this drives the server directly, which is what proves the
-    // wake-up is there to be wired to.
+async fn idle_returns_the_change_the_server_pushed() {
     let server = server().await;
-    let mut raw = RawClient::connect(&server).await;
+    let pool = pool_for(&server).await;
 
-    raw.command("a1 LOGIN {user} {password}").await;
-    raw.command("a2 SELECT \"INBOX\"").await;
-    raw.send("a3 IDLE\r\n").await;
-    raw.expect_prefix("+").await;
+    let token = cancel();
+    let (events, _) = tokio::join!(
+        idle(&pool, "INBOX", Duration::from_secs(5), &token),
+        async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
+        }
+    );
 
-    server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"));
+    let events = events.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, MailboxEvent::Exists { .. })),
+        "{events:?}"
+    );
+    // This server hides IDLE from its banner, like the provider Postio
+    // targets. Gating on the post-auth capability list rather than on the
+    // greeting is the difference between watching and polling forever.
+    assert!(
+        server
+            .commands()
+            .iter()
+            .any(|command| command.contains("IDLE")),
+        "{:?}",
+        server.commands()
+    );
+}
 
-    let line = raw.expect_prefix("*").await;
-    assert!(line.contains("EXISTS"), "{line}");
+#[tokio::test]
+async fn idle_returns_empty_when_nothing_happens_before_the_timeout() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
 
-    raw.send("DONE\r\n").await;
-    let done = raw.expect_prefix("a3").await;
-    assert!(done.contains("OK"), "{done}");
+    let events = idle(&pool, "INBOX", Duration::from_millis(150), &cancel())
+        .await
+        .unwrap();
+
+    assert!(
+        events.is_empty(),
+        "nothing happened, which is not a failure"
+    );
+}
+
+#[tokio::test]
+async fn idle_returns_empty_when_cancelled() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let token = CancelToken::new();
+
+    let (events, ()) = tokio::join!(
+        idle(&pool, "INBOX", Duration::from_secs(30), &token),
+        async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            token.cancel();
+        }
+    );
+
+    assert!(events.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn idle_re_arms_before_the_server_gets_impatient() {
+    // The failure this guards is silent: a server drops an IDLE that has run
+    // too long, and the watcher goes deaf without an error anywhere. New mail
+    // simply stops appearing.
+    let server = TestServer::builder()
+        .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
+        .idle_limit(Duration::from_millis(150))
+        .start()
+        .await;
+    let pool = pool_with(
+        &server,
+        PoolConfig {
+            watch_refresh: Duration::from_millis(50),
+            ..PoolConfig::default()
+        },
+    )
+    .await;
+
+    let token = cancel();
+    let (events, _) = tokio::join!(
+        idle(&pool, "INBOX", Duration::from_secs(5), &token),
+        async {
+            // Well past the point where a single IDLE would have been dropped.
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
+        }
+    );
+
+    assert!(!events.unwrap().is_empty(), "the watcher went deaf");
+    let armings = server
+        .commands()
+        .iter()
+        .filter(|command| command.contains("IDLE"))
+        .count();
+    assert!(
+        armings > 1,
+        "IDLE was armed {armings} times, never re-armed"
+    );
+}
+
+#[tokio::test]
+async fn a_server_without_idle_is_polled_instead() {
+    let server = TestServer::builder()
+        .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "ENABLE", "CONDSTORE"])
+        .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
+        .start()
+        .await;
+    let pool = pool_with(
+        &server,
+        PoolConfig {
+            watch_poll_interval: Duration::from_millis(50),
+            ..PoolConfig::default()
+        },
+    )
+    .await;
+
+    let token = cancel();
+    let (events, _) = tokio::join!(
+        idle(&pool, "INBOX", Duration::from_secs(5), &token),
+        async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
+        }
+    );
+
+    assert!(
+        events
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, MailboxEvent::Exists { count: 2 })),
+        "polling has to notice the arrival"
+    );
+    let commands = server.commands();
+    assert!(commands.iter().any(|command| command.contains("STATUS")));
+    assert!(
+        !commands.iter().any(|command| command.contains("IDLE")),
+        "a server that never advertised IDLE must not be sent one"
+    );
 }
 
 #[tokio::test]
