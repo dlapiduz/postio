@@ -6,7 +6,7 @@
 
 use postio_imap::backend::{BackendError, Capability};
 use postio_imap::imap::{
-    ConnectionSettings, ImapScript, ImapSession, RustlsConnector, ScriptedConnector,
+    ConnectionSettings, IMAPS_PORT, ImapScript, ImapSession, RustlsConnector, ScriptedConnector,
 };
 use postio_imap::secret::Password;
 use postio_model::TransportSecurity;
@@ -15,8 +15,13 @@ fn password() -> Password {
     Password::new("app-specific-password")
 }
 
-fn icloud() -> ConnectionSettings {
-    ConnectionSettings::icloud("someone@example.com")
+fn settings() -> ConnectionSettings {
+    ConnectionSettings::new(
+        "imap.example.com",
+        IMAPS_PORT,
+        TransportSecurity::Tls,
+        "someone@example.com",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -29,9 +34,9 @@ async fn the_capability_set_comes_from_after_authentication() {
     // IMAP4rev1 and the auth mechanisms and nothing else; CONDSTORE, QRESYNC,
     // IDLE and UIDPLUS appear only once logged in. Trust the banner and the
     // client silently loses incremental sync forever.
-    let connector = ScriptedConnector::icloud();
+    let connector = ScriptedConnector::extensions_hidden_until_login();
 
-    let session = ImapSession::open(&icloud(), &password(), &connector)
+    let session = ImapSession::open(&settings(), &password(), &connector)
         .await
         .expect("the scripted iCloud handshake");
 
@@ -68,7 +73,7 @@ async fn the_banner_alone_would_not_have_been_enough() {
             .on("AUTHENTICATE", "{tag} OK [CAPABILITY IMAP4rev1] done");
     let connector = ScriptedConnector::new(banner_only);
 
-    let session = ImapSession::open(&icloud(), &password(), &connector)
+    let session = ImapSession::open(&settings(), &password(), &connector)
         .await
         .unwrap();
 
@@ -78,11 +83,15 @@ async fn the_banner_alone_would_not_have_been_enough() {
 
 #[tokio::test]
 async fn the_session_reports_the_endpoint_and_the_account_it_authenticated_as() {
-    let session = ImapSession::open(&icloud(), &password(), &ScriptedConnector::icloud())
-        .await
-        .unwrap();
+    let session = ImapSession::open(
+        &settings(),
+        &password(),
+        &ScriptedConnector::extensions_hidden_until_login(),
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(session.endpoint(), "imap.mail.me.com:993");
+    assert_eq!(session.endpoint(), "imap.example.com:993");
     assert_eq!(session.account(), "someone@example.com");
     assert!(session.is_encrypted());
 }
@@ -92,23 +101,24 @@ async fn the_session_reports_the_endpoint_and_the_account_it_authenticated_as() 
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn implicit_tls_is_the_only_connection_attempted_for_icloud() {
-    let connector = ScriptedConnector::icloud();
+async fn implicit_tls_is_the_only_connection_attempted() {
+    let connector = ScriptedConnector::extensions_hidden_until_login();
 
-    ImapSession::open(&icloud(), &password(), &connector)
+    ImapSession::open(&settings(), &password(), &connector)
         .await
         .unwrap();
 
     let log = connector.log();
-    assert_eq!(log.tls, [("imap.mail.me.com".to_owned(), 993)]);
+    assert_eq!(log.tls, [("imap.example.com".to_owned(), 993)]);
     assert!(log.tcp.is_empty(), "a plaintext socket was opened as well");
 }
 
 #[tokio::test]
 async fn a_tls_failure_is_surfaced_and_never_retried_in_the_clear() {
-    let connector = ScriptedConnector::icloud().failing_tls("certificate is not trusted");
+    let connector = ScriptedConnector::extensions_hidden_until_login()
+        .failing_tls("certificate is not trusted");
 
-    let error = ImapSession::open(&icloud(), &password(), &connector)
+    let error = ImapSession::open(&settings(), &password(), &connector)
         .await
         .unwrap_err();
 
@@ -136,7 +146,7 @@ async fn cleartext_to_a_remote_host_never_opens_a_socket_at_all() {
         TransportSecurity::None,
         "someone@example.com",
     );
-    let connector = ScriptedConnector::icloud();
+    let connector = ScriptedConnector::extensions_hidden_until_login();
 
     let error = ImapSession::open(&settings, &password(), &connector)
         .await
@@ -226,7 +236,7 @@ async fn a_rejected_password_is_an_authentication_failure_not_a_retry() {
         "{tag} NO [AUTHENTICATIONFAILED] Authentication failed",
     );
 
-    let error = ImapSession::open(&icloud(), &password(), &ScriptedConnector::new(script))
+    let error = ImapSession::open(&settings(), &password(), &ScriptedConnector::new(script))
         .await
         .unwrap_err();
 
@@ -244,7 +254,7 @@ async fn a_connection_that_dies_mid_handshake_is_transient() {
     let script = ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] iCloud ready");
     let connector = ScriptedConnector::new(script.on("AUTHENTICATE", ""));
 
-    let error = ImapSession::open(&icloud(), &password(), &connector)
+    let error = ImapSession::open(&settings(), &password(), &connector)
         .await
         .unwrap_err();
 
@@ -258,15 +268,15 @@ async fn a_connection_that_dies_mid_handshake_is_transient() {
 #[tokio::test]
 async fn the_password_never_reaches_a_log_line_or_a_debug_rendering() {
     let secret = "hunter2-app-specific";
-    let connector = ScriptedConnector::icloud();
+    let connector = ScriptedConnector::extensions_hidden_until_login();
 
-    let session = ImapSession::open(&icloud(), &Password::new(secret), &connector)
+    let session = ImapSession::open(&settings(), &Password::new(secret), &connector)
         .await
         .unwrap();
 
     let rendered = format!("{session:?}");
     assert!(!rendered.contains(secret));
-    assert!(rendered.contains("imap.mail.me.com:993"));
+    assert!(rendered.contains("imap.example.com:993"));
 
     // It is on the wire, base64-encoded, because that is what SASL PLAIN is —
     // but never in the clear, and never in anything we would print.
@@ -280,7 +290,7 @@ async fn an_authentication_error_does_not_quote_the_password_back() {
         .on("AUTHENTICATE", "{tag} NO Authentication failed");
 
     let error = ImapSession::open(
-        &icloud(),
+        &settings(),
         &Password::new(secret),
         &ScriptedConnector::new(script),
     )
@@ -296,13 +306,16 @@ async fn an_authentication_error_does_not_quote_the_password_back() {
 
 /// Reads the live-test credentials, or skips.
 ///
-/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` (an iCloud
-/// app-specific password); `POSTIO_TEST_IMAP_HOST` overrides the iCloud
-/// default.
+/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` — for a provider
+/// that requires one, an app-specific password. The host comes from Postio's
+/// preset table when it ships one for the address's domain, and
+/// `POSTIO_TEST_IMAP_HOST` overrides it for anything else.
 fn live_settings() -> Option<(ConnectionSettings, Password)> {
     let user = std::env::var("POSTIO_TEST_IMAP_USER").ok()?;
     let password = std::env::var("POSTIO_TEST_IMAP_PASSWORD").ok()?;
-    let mut settings = ConnectionSettings::icloud(&user);
+
+    let mut settings = ConnectionSettings::preset_for(&user)
+        .unwrap_or_else(|| ConnectionSettings::new("", IMAPS_PORT, TransportSecurity::Tls, &user));
     if let Ok(host) = std::env::var("POSTIO_TEST_IMAP_HOST") {
         settings.host = host;
     }
@@ -311,7 +324,7 @@ fn live_settings() -> Option<(ConnectionSettings, Password)> {
 
 #[tokio::test]
 #[ignore = "talks to a live IMAP server; set POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD"]
-async fn live_icloud_advertises_the_extensions_the_sync_design_needs() {
+async fn live_server_advertises_the_extensions_the_sync_design_needs() {
     let Some((settings, password)) = live_settings() else {
         panic!("POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD must be set");
     };
@@ -319,7 +332,7 @@ async fn live_icloud_advertises_the_extensions_the_sync_design_needs() {
     let connector = RustlsConnector::new().expect("TLS configuration");
     let session = ImapSession::open(&settings, &password, &connector)
         .await
-        .expect("live iCloud connect");
+        .expect("live connect");
 
     // The last unverified assumption in ADR 0001. Print it, then assert it.
     println!(
@@ -347,7 +360,7 @@ async fn live_icloud_advertises_the_extensions_the_sync_design_needs() {
 
 #[tokio::test]
 #[ignore = "talks to a live IMAP server; set POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD"]
-async fn live_icloud_rejects_a_wrong_password_without_asking_us_to_retry() {
+async fn live_server_rejects_a_wrong_password_without_asking_us_to_retry() {
     let Some((settings, _)) = live_settings() else {
         panic!("POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD must be set");
     };

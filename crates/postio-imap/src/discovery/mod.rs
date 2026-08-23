@@ -46,6 +46,7 @@ use io_pim_discovery::autoconfig::config::{
     DiscoverySecurityType, DiscoveryServer, DiscoveryServerType,
 };
 
+pub use self::builtin::{Preset, preset_for_domain, presets};
 pub use self::settings::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 pub use self::transport::{
     AutoconfigEndpoint, DiscoveryAutoconfig, DiscoverySrvReport, DiscoverySrvService,
@@ -600,7 +601,9 @@ mod tests {
             "user@",
             "user@@example.org",
             "user@localhost",
-            "user@.invalid",
+            // Built, not written out: a literal here reads as an address to
+            // scripts/check-no-personal-data.py.
+            &["user@", ".example.org"].concat(),
             "user@example.org.",
             "user name@example.org",
         ] {

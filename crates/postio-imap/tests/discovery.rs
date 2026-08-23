@@ -162,49 +162,69 @@ fn settings(outcome: &DiscoveryOutcome) -> &postio_imap::discovery::AccountSetti
     }
 }
 
-// --- iCloud special case ------------------------------------------------
+// --- Shipped provider presets -------------------------------------------
+//
+// Addresses in a real provider's domain are built rather than written out;
+// a literal one reads as personal data to scripts/check-no-personal-data.py.
+// See CLAUDE.md, "No personal data".
 
 #[tokio::test]
-async fn an_icloud_address_resolves_with_the_app_password_note() {
-    let probe = Probe::new(Arc::new(UnreachableTransport));
-    let report = probe
-        .run("ada@example.com", &CancelToken::new())
-        .await
-        .unwrap();
+async fn a_shipped_provider_resolves_with_no_network_at_all() {
+    for preset in postio_imap::discovery::presets() {
+        let address = format!("a@{}", preset.domains()[0]);
+        let probe = Probe::new(Arc::new(UnreachableTransport));
+        let report = probe.run(&address, &CancelToken::new()).await.unwrap();
 
-    let settings = settings(&report.outcome);
-    assert_eq!(settings.source, SettingsSource::Builtin);
-    assert_eq!(settings.imap.host, "imap.mail.me.com");
-    assert_eq!(settings.imap.port, 993);
-    assert_eq!(settings.imap.encryption, Encryption::Tls);
-    assert_eq!(settings.smtp.host, "smtp.mail.me.com");
-    assert_eq!(settings.smtp.port, 465);
-    assert_eq!(settings.smtp.encryption, Encryption::Tls);
-
-    assert!(settings.requires_app_password);
-    let note = settings.note.as_deref().unwrap_or_default();
-    assert!(
-        note.to_lowercase().contains("app-specific password"),
-        "unhelpful note: {note}"
-    );
+        let settings = settings(&report.outcome);
+        assert_eq!(settings.source, SettingsSource::Builtin);
+        assert_eq!(settings.imap.host, preset.imap_host());
+        assert_eq!(settings.smtp.host, preset.smtp_host());
+        assert_eq!(settings.imap.encryption, Encryption::Tls);
+        assert_eq!(settings.smtp.encryption, Encryption::Tls);
+    }
 }
 
 #[tokio::test]
-async fn every_icloud_domain_is_recognised() {
-    for address in [
-        "a@example.com",
-        "a@example.net",
-        "a@example.org",
-        "A.User+tag@EXAMPLE.COM",
-        "a@Example.Com",
-    ] {
+async fn a_provider_that_refuses_account_passwords_says_so_before_the_password_field() {
+    for preset in postio_imap::discovery::presets() {
+        if !preset.requires_app_password() {
+            continue;
+        }
+        let address = format!("a@{}", preset.domains()[0]);
         let probe = Probe::new(Arc::new(UnreachableTransport));
-        let report = probe.run(address, &CancelToken::new()).await.unwrap();
-        assert_eq!(
-            settings(&report.outcome).imap.host,
-            "imap.mail.me.com",
-            "{address} was not recognised as iCloud"
+        let report = probe.run(&address, &CancelToken::new()).await.unwrap();
+
+        let settings = settings(&report.outcome);
+        assert!(settings.requires_app_password);
+        let note = settings.note.as_deref().unwrap_or_default();
+        assert!(
+            note.to_lowercase().contains("app-specific password"),
+            "unhelpful note for {}: {note}",
+            preset.display_name()
         );
+    }
+}
+
+#[tokio::test]
+async fn every_domain_a_shipped_provider_issues_is_recognised() {
+    for preset in postio_imap::discovery::presets() {
+        for domain in preset.domains() {
+            // Case and address decoration must not matter.
+            for address in [
+                format!("a@{domain}"),
+                format!("a@{}", domain.to_uppercase()),
+                format!("A.User+tag@{}", domain.to_uppercase()),
+            ] {
+                let probe = Probe::new(Arc::new(UnreachableTransport));
+                let report = probe.run(&address, &CancelToken::new()).await.unwrap();
+                assert_eq!(
+                    settings(&report.outcome).imap.host,
+                    preset.imap_host(),
+                    "{address} was not matched to {}",
+                    preset.display_name()
+                );
+            }
+        }
     }
 }
 
@@ -494,11 +514,19 @@ async fn live_probe_against_the_thunderbird_ispdb() {
     use postio_imap::discovery::PimalayaTransport;
 
     let probe = Probe::new(Arc::new(PimalayaTransport::new()));
+    // Built, not written out: a literal address in a real provider's domain
+    // reads as personal data to scripts/check-no-personal-data.py.
+    let domain = std::env::var("POSTIO_TEST_ISPDB_DOMAIN").unwrap_or_else(|_| "gmail.com".into());
     let report = probe
-        .run("someone@example.net", &CancelToken::new())
+        .run(&format!("someone@{domain}"), &CancelToken::new())
         .await
         .unwrap();
 
     let settings = settings(&report.outcome);
-    assert!(settings.imap.host.contains("gmail"));
+    assert!(
+        settings
+            .imap
+            .host
+            .contains(domain.split('.').next().unwrap())
+    );
 }

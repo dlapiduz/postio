@@ -379,18 +379,18 @@ impl ImapScript {
         }
     }
 
-    /// A transcript shaped like iCloud's: a banner that hides everything, and
-    /// the real capability list only after authentication.
+    /// A server whose banner hides every extension until you log in.
     ///
-    /// This is the case ADR 0001 Q3 exists for. Gate anything on the banner
-    /// and CONDSTORE, QRESYNC, IDLE and UIDPLUS all silently vanish.
-    pub fn icloud() -> Self {
-        Self::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN AUTH=LOGIN] iCloud ready")
+    /// The case ADR 0001 Q3 exists for, and the behaviour of at least one
+    /// mainstream provider: gate anything on the banner and CONDSTORE,
+    /// QRESYNC, IDLE and UIDPLUS all silently vanish.
+    pub fn extensions_hidden_until_login() -> Self {
+        Self::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN AUTH=LOGIN] ready")
             .on("AUTHENTICATE", "{tag} OK AUTHENTICATE completed")
             .on(
                 "CAPABILITY",
                 "* CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN AUTH=LOGIN ENABLE CONDSTORE \
-                 QRESYNC IDLE UIDPLUS MOVE NAMESPACE UNSELECT ID X-APPLEPUSHSERVICE\n\
+                 QRESYNC IDLE UIDPLUS MOVE NAMESPACE UNSELECT ID X-VENDOR-PUSH\n\
                  {tag} OK CAPABILITY completed",
             )
     }
@@ -486,9 +486,9 @@ impl ScriptedConnector {
         }
     }
 
-    /// A connector replaying [`ImapScript::icloud`].
-    pub fn icloud() -> Self {
-        Self::new(ImapScript::icloud())
+    /// A connector replaying [`ImapScript::extensions_hidden_until_login`].
+    pub fn extensions_hidden_until_login() -> Self {
+        Self::new(ImapScript::extensions_hidden_until_login())
     }
 
     /// Makes every TLS connect and upgrade fail with `reason`.
