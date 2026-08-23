@@ -18,6 +18,8 @@
 //! * Messages are grouped into a [`Thread`] by [`threading::assign`], which
 //!   reads [`Message::reference_chain`] and [`normalize_subject`] and places
 //!   one message at a time rather than rethreading a mailbox.
+//! * [`SyncState`] is what the sync engine knows about a mailbox's place in the
+//!   server's UID space, and [`SyncState::plan`] is the decision it drives.
 //! * [`Contact`] accumulates addresses that have been seen; [`Draft`] is a
 //!   message being composed.
 //!
@@ -56,6 +58,7 @@ pub mod message;
 pub mod mime;
 pub mod operation;
 pub mod subject;
+pub mod sync;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
 pub mod thread;
@@ -78,5 +81,6 @@ pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentif
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationState, OperationTarget};
 pub use subject::{is_reply, normalize_subject};
+pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
