@@ -14,13 +14,17 @@
 //! [`MessageRowView`]s over and over. That is what makes the windowed model
 //! worth having.
 //!
-//! # Focus lands on the row, not on the list item
+//! # The accessible row is the list item, not the widget inside it
 //!
-//! `GtkListItem::set_focusable(false)` pushes the keyboard down into the row
-//! widget itself, so [`MessageRowView::shows_hints`] can simply ask whether it
-//! has focus. Without that, focus would stop at the list item wrapping the
-//! row and every row would have to ask its parent — the same answer, reached
-//! by a longer and more fragile route.
+//! `GtkListItemWidget` is what takes focus, what carries the `ListItem` role
+//! and what a screen reader navigates the list by. [`MessageRowView`] paints
+//! its own text rather than holding labels, so GTK has nothing to compute a
+//! name from and every row would otherwise announce as an unnamed list item.
+//! The sentence is handed over on bind, through
+//! `GtkListItem::set_accessible_label` — which is the API for exactly this,
+//! and not the same thing as pushing an accessible property onto the item
+//! widget: doing *that* from inside `bind` segfaults, because GTK is
+//! part-way through its own item bookkeeping at the time.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -204,8 +208,6 @@ impl MessageListView {
             };
             let view = MessageRowView::new();
             item.set_child(Some(&view));
-            // Focus belongs to the row, not to the box around it.
-            item.set_focusable(false);
             item.set_activatable(true);
             // Selection lives on the list item and its state flag does not
             // reach the child, so it is handed down explicitly — and kept
@@ -227,6 +229,7 @@ impl MessageListView {
             view.set_density(bound.get());
             view.set_first(item.position() == 0);
             view.set_selected(item.is_selected());
+            item.set_accessible_label(&view.spoken());
             view.set_row(
                 item.item()
                     .and_downcast::<MessageRow>()
@@ -240,6 +243,9 @@ impl MessageListView {
                 .and_downcast::<MessageRowView>()
             {
                 view.set_row(None);
+                if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+                    item.set_accessible_label("");
+                }
             }
         });
 
@@ -268,6 +274,10 @@ impl MessageListView {
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        // Not a tab stop: the list inside it already scrolls with the
+        // keyboard, so stopping here would be a stop that does nothing and
+        // announces nothing.
+        scroller.set_focusable(false);
         scroller.set_child(Some(&imp.view));
         scroller.set_vexpand(true);
 

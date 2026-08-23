@@ -395,12 +395,16 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
             obj.add_css_class("postio-row");
-            // The keyboard lands on the row itself rather than on the list
-            // item around it, so `has_focus` is the truth about which row
-            // reveals its key hints. `MessageRowView::bind` turns the list
-            // item's own focusability off to make that so.
+            // Focusable so the widget works on its own — in a test, a bench,
+            // or any surface that is not a `GtkListView`. Inside one, the
+            // list item around it takes the focus instead and
+            // `shows_hints` follows that.
             obj.set_focusable(true);
-            obj.set_accessible_role(gtk::AccessibleRole::ListItem);
+            // The picture of a row, not the row: `GtkListItemWidget` around
+            // it carries the `ListItem` role and the name, because that is
+            // what a screen reader navigates the list by. Two nested list
+            // items would be one more than there are rows.
+            obj.set_accessible_role(gtk::AccessibleRole::Presentation);
 
             for probe in [&self.probe, &self.sentinel] {
                 probe.set_child_visible(false);
@@ -618,7 +622,14 @@ impl MessageRowView {
     /// background. A row that forgot its hints on alt-tab would be teaching
     /// the keyboard only while you were not using it.
     pub fn shows_hints(&self) -> bool {
-        self.is_focus() && self.imp().row.borrow().is_some()
+        if self.imp().row.borrow().is_none() {
+            return false;
+        }
+        // Either is "the keyboard is on this row": inside a `GtkListView` it
+        // lands on the list item wrapping this widget, and anywhere else —
+        // a test, a bench, the row used as a plain widget — on the widget
+        // itself.
+        self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus())
     }
 
     /// The row's height at the width it has, for a test that wants to check
@@ -841,13 +852,22 @@ impl MessageRowView {
         let rect = |x: f32, y: f32, w: f32, h: f32| graphene::Rect::new(x, y, w, h);
         let fill = |color: &gdk::RGBA, x, y, w, h| snapshot.append_color(color, &rect(x, y, w, h));
 
-        // Ground: the selected row takes the accent tint and a 3px steel
-        // edge; hover is a wash and never both.
+        // Two states, two devices, so they stay legible apart once a
+        // selection can be more than one row (`postio-qhz.1`): the accent
+        // tint is *selected* — what an action will hit — and the 3px steel
+        // edge is *focused*, where the keyboard is. Today a single-selection
+        // list puts both on the same row, which is exactly what canvas 1b
+        // draws; tomorrow they come apart without either changing meaning.
+        // The edge is also this widget's focus ring: it paints its own
+        // pixels, so no CSS `outline` reaches it.
+        let focused = self.shows_hints();
         if selected {
             fill(&palette.selected_bg, 0.0, 0.0, width, height);
-            fill(&palette.selected_edge, 0.0, 0.0, EDGE, height);
         } else if hovered {
             fill(&palette.hover_bg, 0.0, 0.0, width, height);
+        }
+        if focused {
+            fill(&palette.selected_edge, 0.0, 0.0, EDGE, height);
         }
 
         // One hairline between rows, and none above the first.
