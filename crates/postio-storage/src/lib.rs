@@ -45,6 +45,8 @@ pub mod error;
 pub mod migrations;
 pub mod repository;
 #[cfg(feature = "test-support")]
+pub mod seed;
+#[cfg(feature = "test-support")]
 pub mod test_support;
 
 pub use blob::BlobStore;
