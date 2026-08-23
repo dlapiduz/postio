@@ -118,6 +118,82 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* The account address, and the heading over the ordinary folders. Both are
+   `.postio-kicker` from the generated tokens; only the inset is ours. */
+.postio-sidebar label.postio-kicker {
+  padding: 0 18px 12px;
+}
+
+.postio-sidebar .postio-rule {
+  margin: 16px 18px;
+  background-color: var(--postio-hairline);
+}
+
+.postio-folders {
+  background: none;
+  padding: 0;
+}
+
+/* 36px rows, 21px in from the edge. A selected row spends 3px of that on the
+   steel edge and 18px on padding, so the label does not shift when you move
+   the selection — the one thing that would make the whole list twitch. */
+.postio-folder {
+  min-height: 36px;
+  margin-bottom: 3px;
+  padding: 0 21px;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  background: none;
+}
+
+.postio-folder:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-folder:selected {
+  padding-left: 18px;
+  border-left: 3px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-strong-bg);
+  color: var(--postio-selected-fg);
+}
+
+.postio-folder-name {
+  font-size: 14px;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-folder:selected .postio-folder-name {
+  font-weight: 500;
+  color: var(--postio-selected-fg);
+}
+
+.postio-folder-count {
+  font-family: var(--postio-font-mono);
+  font-size: 11.5px;
+  color: var(--postio-dim);
+}
+
+.postio-folder:selected .postio-folder-count {
+  font-weight: 500;
+  color: var(--postio-selected-accent-text);
+}
+
+/* `idle · imap` / `last sync 12s`, pinned to the foot. */
+.postio-status-line {
+  padding: 12px 18px 0;
+}
+
+.postio-status {
+  font-family: var(--postio-font-mono);
+  font-size: 11px;
+  color: var(--postio-faint);
+}
+
+/* A failing connection is the one thing in this sidebar that shouts. */
+.postio-status.error {
+  color: var(--postio-accent-text);
+}
+
 .postio-list {
   background-color: var(--postio-ground);
 }

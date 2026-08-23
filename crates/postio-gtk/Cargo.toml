@@ -20,6 +20,8 @@ glib = { version = "0.21.5", features = ["v2_72"] }
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.21.5", features = ["v1_56"] }
 pangocairo = "0.21.5"
+postio-core.workspace = true
+postio-model.workspace = true
 
 [build-dependencies]
 glib-build-tools = "0.21.0"
