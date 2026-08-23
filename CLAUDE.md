@@ -224,6 +224,12 @@ asserting it.
 - `postio-core` must not depend on `gtk4`/`libadwaita`. It is the UI-agnostic
   runtime: commands in, events out. This is what makes a macOS frontend possible.
 - `postio-gtk` must not depend on `rusqlite` or `io-imap`. No SQL, no protocol.
+  This is why `postio-runtime` and `postio-app` are separate crates rather than
+  features of `postio-core`. Cargo resolves features as a *union* across
+  everything being built, so a `postio-core/runtime` feature would put SQLite in
+  the graph of every crate depending on `postio-core` the moment anything turned
+  it on — the view layer included, which in a workspace build really would link
+  the SQL. `postio-core` therefore has no optional dependencies at all.
 - `postio-sync` talks to the `MailBackend` trait, never to `io-imap` types
   directly — that crate is pre-1.0 and moving fast.
 - Every mutating action is local-first: SQLite write, enqueue the operation, emit
@@ -329,19 +335,22 @@ E12 so the core mail experience lands first.
 ## Architecture
 
 ```
-postio-app    The composition root: opens the store, starts the runtime,
-     |        runs the UI. The only crate that knows both halves exist, and
-     |        the only one that turns on `postio-core/runtime`.
-     +-- postio-gtk    GTK4 + libadwaita + WebKitGTK. Widgets, CSS, keymap.
-     |        Command down / Event up. No SQL, no IMAP.
-postio-core   UI-agnostic runtime: command bus, registry, event stream,
-     |        app state, undo stack, tokio<->glib bridge.
-     +-- postio-sync     operation queue, QRESYNC resync, IDLE, backoff
-     |     +-- postio-imap (io-imap)   postio-smtp (io-smtp)
-     +-- postio-storage  SQLite, migrations, repositories, blob store
-     +-- postio-search   FTS5 index, query-operator parser
-     +-- postio-config   TOML schema, validation, watcher, live reload
-postio-model  pure domain types + JWZ threading. No storage, no protocol.
+postio-app        The composition root: opens the store, starts the engine,
+   |              runs the UI. The only crate that knows both halves exist.
+   +-- postio-gtk        GTK4 + libadwaita + WebKitGTK. Widgets, CSS, keymap.
+   |     |               Command down / Event up. No SQL, no protocol.
+   |     +-- postio-search   FTS5 index, query-operator parser
+   |
+   +-- postio-runtime    The database half: the store, and the loop that
+         |               drains the queue, backfills bodies and reconnects.
+         +-- postio-sync     operation queue, QRESYNC resync, IDLE, backoff
+         |     +-- postio-imap (io-imap)   postio-smtp (io-smtp)
+         +-- postio-storage  SQLite, migrations, repositories, blob store
+
+postio-core       UI-agnostic contract, under both: command bus, registry,
+   |              event stream, app state, undo, tokio<->glib bridge.
+   +-- postio-config   TOML schema, validation, watcher, live reload
+postio-model      pure domain types + JWZ threading. No storage, no protocol.
 ```
 
 ## Working in parallel

@@ -9,6 +9,7 @@ members = [
     "crates/postio-smtp",
     "crates/postio-sync",
     "crates/postio-core",
+    "crates/postio-runtime",
     "crates/postio-gtk",
     "crates/postio-app",
 ]
@@ -29,6 +30,7 @@ postio-imap    = { path = "crates/postio-imap" }
 postio-smtp    = { path = "crates/postio-smtp" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
+postio-runtime = { path = "crates/postio-runtime" }
 postio-gtk     = { path = "crates/postio-gtk" }
 
 [profile.release]

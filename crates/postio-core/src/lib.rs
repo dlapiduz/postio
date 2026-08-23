@@ -60,10 +60,7 @@ pub mod dispatch;
 pub mod event;
 pub mod perf_budget;
 pub mod registry;
-#[cfg(feature = "runtime")]
-pub mod runtime;
 pub mod state;
-pub mod store;
 pub mod undo;
 
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};

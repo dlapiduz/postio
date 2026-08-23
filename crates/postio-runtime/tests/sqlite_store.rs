@@ -1,16 +1,11 @@
-#![cfg(feature = "runtime")]
-//! Skipped without the `runtime` feature: the SQLite store is the half of
-//! `postio-core` that owns a database, and it is off by default so that
-//! `postio-gtk` never has `rusqlite` in its dependency graph.
-
 //! Reading the local store through the runtime's own boundary.
 //!
 //! Everything here goes through [`Store`], which is what a frontend can reach:
 //! no `rusqlite` types cross it, and no call blocks the thread that made it.
 //! Nothing here touches the network.
 
-use postio_core::store::{ListScope, MailStore, PageRequest, SqliteStore};
 use postio_model::MailboxRole;
+use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 

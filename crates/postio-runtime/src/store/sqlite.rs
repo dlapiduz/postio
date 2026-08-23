@@ -13,7 +13,9 @@ use postio_storage::repository::{
 };
 use postio_storage::{Database, Pool};
 
-use super::{ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError};
+use crate::store::{
+    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
+};
 
 impl From<ListScope> for StorageScope {
     fn from(scope: ListScope) -> Self {

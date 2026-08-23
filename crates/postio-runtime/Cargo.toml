@@ -1,6 +1,6 @@
 [package]
-name = "postio-core"
-description = "UI-agnostic runtime: command bus, event stream, app state, undo."
+name = "postio-runtime"
+description = "The half of the runtime that owns a database and a connection."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,17 +9,16 @@ repository.workspace = true
 
 [dependencies]
 async-channel = "2.5.0"
-postio-config.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+postio-core.workspace = true
+postio-imap.workspace = true
 postio-model.workspace = true
-serde = { version = "1.0.229", features = ["derive"] }
+postio-smtp.workspace = true
+postio-storage.workspace = true
+postio-sync.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
-criterion = "0.7.0"
-serde_json = "1.0.151"
+postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
-
-[[bench]]
-name = "perf_budgets"
-harness = false
