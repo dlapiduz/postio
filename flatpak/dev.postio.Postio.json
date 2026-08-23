@@ -1,0 +1,51 @@
+{
+    "app-id": "dev.postio.Postio",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "50",
+    "sdk": "org.gnome.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "postio",
+    "finish-args": [
+        "--share=ipc",
+        "--share=network",
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--device=dri",
+        "--talk-name=org.freedesktop.secrets",
+        "--filesystem=xdg-download"
+    ],
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+            "CARGO_HOME": "/run/build/postio/cargo",
+            "CARGO_NET_OFFLINE": "true"
+        }
+    },
+    "modules": [
+        {
+            "name": "postio",
+            "buildsystem": "simple",
+            "build-commands": [
+                "cargo --offline build --release --package postio-gtk --bin postio",
+                "install -Dm755 target/release/postio /app/bin/postio",
+                "install -Dm644 crates/postio-gtk/data/dev.postio.Postio.desktop /app/share/applications/dev.postio.Postio.desktop",
+                "install -Dm644 crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png /app/share/icons/hicolor/128x128/apps/dev.postio.Postio.png"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "..",
+                    "skip": [
+                        "target",
+                        ".git",
+                        ".beads",
+                        "flatpak"
+                    ]
+                },
+                "cargo-sources.json"
+            ]
+        }
+    ]
+}
