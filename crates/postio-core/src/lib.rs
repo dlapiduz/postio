@@ -31,19 +31,28 @@
 //! );
 //! ```
 //!
+//! # Commands go through the bridge
+//!
+//! [`bridge`] owns the tokio runtime and is the only place the asynchronous
+//! backend touches the UI main loop: the frontend sends on a [`CommandSender`]
+//! (never blocking) and drains an [`EventStream`] from its own loop, so no
+//! backend work runs on the UI thread and no GTK type reaches this crate.
+//!
 //! # What lives elsewhere
 //!
-//! Dispatching commands, the tokio↔glib bridge, app state and the undo stack
-//! are separate beads in epic E6; this module is the vocabulary they share.
+//! App state and the undo stack are separate beads in epic E6; this module is
+//! the vocabulary they share.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod bridge;
 pub mod command;
 pub mod context;
 pub mod event;
 pub mod registry;
 
+pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{Command, CommandId, MessageTarget, UnknownCommand};
 pub use context::{Context, ContextSet, UnknownContext};
 pub use event::{ConnectionState, Event};

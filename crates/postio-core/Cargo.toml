@@ -8,8 +8,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-channel = "2.5.0"
 postio-model.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
 serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
