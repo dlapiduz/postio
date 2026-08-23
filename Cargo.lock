@@ -1882,6 +1882,7 @@ dependencies = [
 name = "postio-gtk"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gio",
  "glib",
  "glib-build-tools",
@@ -1949,6 +1950,7 @@ dependencies = [
  "postio-model",
  "postio-storage",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]

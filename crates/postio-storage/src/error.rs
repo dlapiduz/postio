@@ -49,6 +49,26 @@ pub enum Error {
         id: i64,
     },
 
+    /// A queue row's JSON payload could not be read back as an operation.
+    /// Either a newer Postio wrote it, or something edited the row by hand.
+    #[error("`operation_queue.{column}` does not hold a readable operation: {source}")]
+    CorruptPayload {
+        /// Which column failed to decode.
+        column: &'static str,
+        /// What the JSON decoder said.
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// Undo was asked for on an operation that has no inverse — an expunge, an
+    /// append, a send. The caller should not have offered it; see
+    /// [`Operation::inverse`](postio_model::Operation::inverse).
+    #[error("a `{op_type}` operation cannot be undone")]
+    NotUndoable {
+        /// The operation's stored `op_type`.
+        op_type: &'static str,
+    },
+
     /// A blob key is not a digest of the right shape. Nothing is looked up:
     /// an id from a corrupt row must not be able to name a path of its own
     /// choosing.
