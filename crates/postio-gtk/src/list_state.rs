@@ -5,13 +5,25 @@
 //! tested with no display, the same split [`crate::cheatsheet`] uses.
 //! [`ListStateView`] is the widget around it.
 //!
-//! # Where it lives
+//! # Where it lives, and how much of it it covers
 //!
 //! It is an overlay over [`crate::list_view::MessageListView`], and hides
-//! itself the moment [`derive`] returns `None` — there are rows to show. So
-//! the list pane always has its header and its rows underneath, and this
-//! widget is an opaque plate that covers them when there is something to say
-//! instead.
+//! itself the moment [`derive`] returns `None` — there are rows to show and
+//! nothing needs saying about them.
+//!
+//! The rest of the time, [`State::placement`] decides how much of the pane it
+//! takes. [`State::InboxZero`] is, by definition, an empty mailbox — there is
+//! nothing underneath to protect, so it is the opaque plate this widget
+//! started as. [`State::Offline`] and [`State::Failing`] are not: the whole
+//! point of "everything already synced still opens" is a promise about rows
+//! that are, in fact, still there. Covering them to say so would keep the
+//! promise in words and break it on screen — `postio-ma4` was exactly that
+//! bug, caught only once mailboxes actually had rows in them. So with any
+//! rows loaded, both become a [`Placement::Banner`] instead: a strip over the
+//! top of the list, rows still visible and scrollable underneath. Only an
+//! empty mailbox — offline or failing with nothing loaded at all — still
+//! takes the [`Placement::Full`] plate, because there is, once again, nothing
+//! under it to hide.
 //!
 //! # What is not wired yet
 //!
@@ -58,6 +70,39 @@ pub enum State {
         /// The actual error, phrased for the user. Never a shrug.
         reason: String,
     },
+}
+
+/// How much of the pane a [`State`] takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// Opaque, filling the pane. Correct only when there is nothing under it
+    /// — an empty mailbox, whatever the reason it is empty.
+    Full,
+    /// A strip over the top of the rows, which stay visible and scrollable
+    /// underneath.
+    Banner,
+}
+
+impl State {
+    /// Whether this state may share the pane with rows, or has to fill it.
+    ///
+    /// `item_count` is the same count [`derive`] was given: `InboxZero` never
+    /// needs it, since being empty is what put it here in the first place,
+    /// but `Offline` and `Failing` can arrive with a full mailbox loaded
+    /// underneath, and that is exactly the mail the banner treatment exists
+    /// to keep visible.
+    pub fn placement(&self, item_count: u64) -> Placement {
+        match self {
+            State::InboxZero { .. } => Placement::Full,
+            State::Offline { .. } | State::Failing { .. } => {
+                if item_count == 0 {
+                    Placement::Full
+                } else {
+                    Placement::Banner
+                }
+            }
+        }
+    }
 }
 
 /// Which state the list pane shows, from what it knows right now.
@@ -232,38 +277,12 @@ impl ListStateView {
         let imp = self.imp();
         self.add_css_class("postio-liststate");
         self.set_halign(gtk::Align::Fill);
-        // Fill, not centre: this widget sits *over* the message list now
-        // that `crate::list_view` fills the pane, so it has to be an opaque
-        // plate covering the rows rather than a caption printed across
-        // them. The column inside it is what centres.
-        self.set_valign(gtk::Align::Fill);
-        self.set_vexpand(true);
 
         imp.icon.add_css_class("postio-liststate-icon");
-        imp.icon.set_pixel_size(30);
-
         imp.title.add_css_class("postio-liststate-title");
-        imp.title.set_justify(gtk::Justification::Center);
         imp.title.set_wrap(true);
-
         imp.detail.add_css_class("postio-liststate-detail");
-        imp.detail.set_justify(gtk::Justification::Center);
         imp.detail.set_wrap(true);
-        imp.detail.set_max_width_chars(36);
-
-        imp.hints.set_halign(gtk::Align::Center);
-
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        column.set_halign(gtk::Align::Center);
-        column.set_valign(gtk::Align::Center);
-        column.set_vexpand(true);
-        column.set_margin_start(32);
-        column.set_margin_end(32);
-        column.append(&imp.icon);
-        column.append(&imp.title);
-        column.append(&imp.detail);
-        column.append(&imp.hints);
-        self.set_child(Some(&column));
 
         // A live region: the sync engine can flip this from "empty" to
         // "failing" with nobody having touched anything, and that has to be
@@ -285,8 +304,9 @@ impl ListStateView {
     /// loaded for the mailbox in view, how many messages the local store
     /// still holds, and how many local writes have not reached the server.
     ///
-    /// Call it whenever any of those change. The widget hides itself the
-    /// instant there are rows to show.
+    /// Call it whenever any of those change. The widget hides itself once
+    /// there is nothing left to say — see [`State::placement`] for when
+    /// having rows to show stops meaning that.
     pub fn set_status(&self, status: SyncStatus, item_count: u64, stored: u64, queued: u64) {
         let inputs = (status, item_count, stored, queued);
         // Cheap to call and cheap to call often: the row count moves with
@@ -341,6 +361,34 @@ impl ListStateView {
             for hint in &content.hints {
                 imp.hints.append(&hint_widget(hint));
             }
+
+            let placement = state.placement(item_count);
+            if placement == Placement::Banner {
+                self.add_css_class("postio-liststate-banner");
+            } else {
+                self.remove_css_class("postio-liststate-banner");
+            }
+            self.set_valign(match placement {
+                Placement::Full => gtk::Align::Fill,
+                Placement::Banner => gtk::Align::Start,
+            });
+            self.set_vexpand(placement == Placement::Full);
+
+            // The three decorative widgets move between the two layouts
+            // rather than existing twice — `unparent` first since a widget
+            // already inside last render's container cannot simply be
+            // `append`ed into a new one.
+            imp.icon.unparent();
+            imp.title.unparent();
+            imp.detail.unparent();
+            imp.hints.unparent();
+            let container = match placement {
+                Placement::Full => full_container(&imp.icon, &imp.title, &imp.detail, &imp.hints),
+                Placement::Banner => {
+                    banner_container(&imp.icon, &imp.title, &imp.detail, &imp.hints)
+                }
+            };
+            self.set_child(Some(&container));
         }
 
         // Re-arm at the granularity the inbox-zero sentence is actually
@@ -366,6 +414,66 @@ impl ListStateView {
             *imp.tick.borrow_mut() = Some(source);
         }
     }
+}
+
+/// The opaque plate: a centred column, filling the pane. What this widget
+/// always looked like, before there was a rows-still-loaded case to protect.
+fn full_container(
+    icon: &gtk::Image,
+    title: &gtk::Label,
+    detail: &gtk::Label,
+    hints: &gtk::Box,
+) -> gtk::Box {
+    icon.set_pixel_size(30);
+    title.set_justify(gtk::Justification::Center);
+    detail.set_justify(gtk::Justification::Center);
+    detail.set_max_width_chars(36);
+    hints.set_halign(gtk::Align::Center);
+
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    column.set_halign(gtk::Align::Center);
+    column.set_valign(gtk::Align::Center);
+    column.set_vexpand(true);
+    column.set_margin_start(32);
+    column.set_margin_end(32);
+    column.append(icon);
+    column.append(title);
+    column.append(detail);
+    column.append(hints);
+    column
+}
+
+/// The banner: a strip along the top edge, rows still visible and scrollable
+/// underneath it.
+fn banner_container(
+    icon: &gtk::Image,
+    title: &gtk::Label,
+    detail: &gtk::Label,
+    hints: &gtk::Box,
+) -> gtk::Box {
+    icon.set_pixel_size(20);
+    title.set_justify(gtk::Justification::Left);
+    detail.set_justify(gtk::Justification::Left);
+    detail.set_max_width_chars(-1);
+    hints.set_halign(gtk::Align::End);
+
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    text.set_hexpand(true);
+    text.set_valign(gtk::Align::Center);
+    text.append(title);
+    text.append(detail);
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.add_css_class("postio-liststate-banner-row");
+    row.set_valign(gtk::Align::Center);
+    row.set_margin_start(16);
+    row.set_margin_end(16);
+    row.set_margin_top(10);
+    row.set_margin_bottom(10);
+    row.append(icon);
+    row.append(&text);
+    row.append(hints);
+    row
 }
 
 fn hint_widget((label, key): &Hint) -> gtk::Box {
@@ -417,14 +525,50 @@ mod tests {
     }
 
     #[test]
-    fn offline_wins_even_with_rows_still_loaded() {
+    fn offline_is_the_state_regardless_of_how_many_rows_are_loaded() {
         // "Everything already synced still opens" is true whether the
         // mailbox in view is empty or not; the point is the connection, not
-        // the count.
+        // the count. Whether that turns into a full plate or a banner is
+        // `State::placement`'s decision, not `derive`'s — see the
+        // `placement` tests below, which is where `postio-ma4` actually
+        // lived: this state was always right, only how much of the pane it
+        // took was wrong.
         assert_eq!(
             derive(&status(ConnectionState::Offline), 12, 0, 2),
             Some(State::Offline { queued: 2 })
         );
+    }
+
+    #[test]
+    fn only_an_empty_mailbox_gets_the_full_opaque_plate() {
+        let offline = State::Offline { queued: 2 };
+        let failing = State::Failing {
+            reason: "IMAP rejected the credentials.".to_string(),
+        };
+
+        // `postio-ma4`: offline or failing with rows already loaded must not
+        // hide mail that is synced and readable — canvas 3d's "nothing is a
+        // dead end" and CLAUDE.md's "everything already synced still opens"
+        // are both broken by an opaque plate over rows that are right there.
+        assert_eq!(offline.placement(12), Placement::Banner);
+        assert_eq!(failing.placement(12), Placement::Banner);
+
+        // Nothing underneath to hide: the full plate is the right answer,
+        // not a banner floating over an empty pane.
+        assert_eq!(offline.placement(0), Placement::Full);
+        assert_eq!(failing.placement(0), Placement::Full);
+    }
+
+    #[test]
+    fn inbox_zero_is_always_the_full_plate() {
+        // True by construction -- `derive` only ever produces `InboxZero`
+        // when `item_count` is already 0 -- but the state's own rule should
+        // not silently depend on that invariant holding elsewhere.
+        let empty = State::InboxZero {
+            last_sync: None,
+            stored: 0,
+        };
+        assert_eq!(empty.placement(0), Placement::Full);
     }
 
     #[test]
