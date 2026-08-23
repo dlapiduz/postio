@@ -369,11 +369,32 @@ fn the_mailing_list_thread_is_a_real_thread() {
 
 // --------------------------------------------------------- no personal data
 
-/// Domains the corpus is allowed to use: RFC 2606 reserved second-level names,
-/// under a small set of TLDs, and nothing else.
-const ALLOWED_TLDS: &[&str] = &[
-    "com", "net", "org", "de", "es", "fr", "jp", "se", "invalid", "test", "example",
-];
+/// TLDs that are reserved outright, so anything under them is safe to invent
+/// addresses in (RFC 6761).
+const RESERVED_TLDS: &[&str] = &["test", "invalid", "example", "localhost"];
+
+/// TLDs under which the second-level name `example` is reserved (RFC 2606).
+const RESERVED_UNDER_EXAMPLE: &[&str] = &["com", "net", "org"];
+
+/// Whether `domain` is one nobody can register, and so one the corpus may use.
+///
+/// This is the same rule `scripts/check-no-personal-data.py` applies to the
+/// whole repository, restated here so the corpus cannot drift away from it.
+/// Deliberately narrower than "RFC 2606 second-level name": `example.de` reads
+/// like a reserved domain and is not one — it is registrable, and an address
+/// there could belong to somebody.
+fn is_reserved(domain: &str) -> bool {
+    let labels: Vec<&str> = domain.split('.').collect();
+    let Some(tld) = labels.last() else {
+        return false;
+    };
+    if RESERVED_TLDS.contains(tld) {
+        return true;
+    }
+    labels.len() >= 2
+        && labels[labels.len() - 2] == "example"
+        && RESERVED_UNDER_EXAMPLE.contains(tld)
+}
 
 #[test]
 fn every_address_in_the_corpus_is_an_invented_reserved_domain() {
@@ -406,21 +427,14 @@ fn every_address_in_the_corpus_is_an_invented_reserved_domain() {
     assert!(!seen.is_empty(), "the corpus should contain addresses");
 
     for (domain, fixture) in &seen {
-        let labels: Vec<&str> = domain.split('.').collect();
         assert!(
-            labels.len() >= 2,
+            domain.contains('.'),
             "{fixture}: bare domain {domain:?} in an address"
         );
-        let sld = labels[labels.len() - 2];
-        let tld = labels[labels.len() - 1];
-        assert_eq!(
-            sld, "example",
-            "{fixture}: {domain:?} is not an RFC 2606 reserved domain — the \
-             corpus must never contain a real address"
-        );
         assert!(
-            ALLOWED_TLDS.contains(&tld),
-            "{fixture}: unexpected TLD in {domain:?}"
+            is_reserved(domain),
+            "{fixture}: {domain:?} is registrable, so an address there could \
+             belong to somebody — the corpus must never contain a real address"
         );
     }
 }
