@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
+use postio_config::Density;
 use postio_core::CommandId;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -192,6 +193,33 @@ fn editing_config_toml_rebinds_the_running_window() {
     assert!(
         wait_until(|| binding(&window, CommandId::Archive).as_deref() == Some("q")),
         "the window never recovered from the broken save"
+    );
+
+    // ── `[ui].density` is live too, all the way to the list ───────────────
+    assert_eq!(
+        window.list().density(),
+        Density::Airy,
+        "nothing on disk yet, so the PLATE default is in force"
+    );
+
+    std::fs::write(
+        &path,
+        "[keys]\narchive = \"q\"\n\n[ui]\ndensity = \"compact\"\n",
+    )
+    .unwrap();
+    assert!(
+        wait_until(|| window.list().density() == Density::Compact),
+        "the density edit never reached the list"
+    );
+
+    std::fs::write(
+        &path,
+        "[keys]\narchive = \"q\"\n\n[ui]\ndensity = \"comfortable\"\n",
+    )
+    .unwrap();
+    assert!(
+        wait_until(|| window.list().density() == Density::Comfortable),
+        "switching density again never reached the list"
     );
 
     window.close();
