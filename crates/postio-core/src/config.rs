@@ -24,50 +24,21 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use postio_config::change::ConfigChanged;
 use postio_config::live::{LiveConfig, Reload};
 use postio_config::validate::{Checked, Validation};
 use postio_config::watch::{ConfigWatcher, WatchOptions};
 use postio_config::{Config, ConfigError, KeyBindings, keys};
-use serde::{Deserialize, Serialize};
 
 use crate::bridge::EventSink;
 use crate::{CommandId, Context, ContextSet, Event, registry};
 
 /// Which sections of the configuration moved.
 ///
-/// Consumers subscribe to what they care about: the keymap rebuilds on
-/// `keys`, the list re-measures its rows on `ui`, the sync engine re-plans on
-/// `sync`. Nothing else has to do anything.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConfigChange {
-    /// `[ui]` — density, theme, hover actions.
-    pub ui: bool,
-    /// `[keys]` — bindings, so the keymap must be rebuilt.
-    pub keys: bool,
-    /// `[accounts]` — a server, a login or a whole account changed.
-    pub accounts: bool,
-    /// `[sync]` — IDLE, polling, connection budget.
-    pub sync: bool,
-    /// `[filters]` — the saved queries in the sidebar.
-    pub filters: bool,
-}
-
-impl ConfigChange {
-    /// Whether any subsystem needs to do anything.
-    pub fn any(&self) -> bool {
-        self.ui || self.keys || self.accounts || self.sync || self.filters
-    }
-
-    fn between(old: &Config, new: &Config) -> Self {
-        ConfigChange {
-            ui: old.ui != new.ui,
-            keys: old.keys != new.keys,
-            accounts: old.accounts != new.accounts,
-            sync: old.sync != new.sync,
-            filters: old.filters != new.filters,
-        }
-    }
-}
+/// The diff itself lives in `postio_config::change` — pure comparison logic
+/// belongs with the schema it compares, not with the runtime that reacts to
+/// it. This alias keeps the name `postio_core` consumers already use.
+pub type ConfigChange = ConfigChanged;
 
 /// The bindings in force: the registry's defaults with `[keys]` applied.
 ///

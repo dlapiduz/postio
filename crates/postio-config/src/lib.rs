@@ -48,6 +48,7 @@
 #![warn(missing_docs)]
 
 pub mod accounts;
+pub mod change;
 pub mod error;
 pub mod filters;
 pub mod keys;
@@ -67,6 +68,7 @@ use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
 pub use accounts::{AccountConfig, AuthMethod, ImapConfig, MailSecurity, SmtpConfig};
+pub use change::ConfigChanged;
 pub use error::{ConfigError, Result};
 pub use filters::FilterConfig;
 pub use keys::KeyBindings;
