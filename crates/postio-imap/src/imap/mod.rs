@@ -71,6 +71,7 @@ pub use self::dispatch::{
 };
 pub use self::fetch::fetch_headers;
 pub use self::mailboxes::list_mailboxes;
+pub use self::pool::DEFAULT_SELECTION_MAX_AGE;
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
@@ -111,6 +112,14 @@ pub struct ImapSession {
     /// loop over many chunks of the same mailbox does not re-issue `SELECT`
     /// for every one of them. See [`select`].
     selected: Option<select::SelectedMailbox>,
+    /// The UID generation observed for each mailbox. Shared with every other
+    /// session in the same pool, so one connection discovering a renumber
+    /// stops the rest from acting on what they cached before it.
+    generations: std::sync::Arc<select::Generations>,
+    /// How long [`selected`](Self::selected) may answer without the server
+    /// confirming it again. See [`select`] for why a cached generation is the
+    /// dangerous half of that cache.
+    selection_max_age: std::time::Duration,
 }
 
 impl fmt::Debug for ImapSession {
@@ -221,6 +230,10 @@ impl ImapSession {
             account: settings.username.clone(),
             pre_authenticated: opened.pre_authenticated,
             selected: None,
+            // A session opened outside a pool answers only to itself; the
+            // pool replaces both of these when it opens one.
+            generations: std::sync::Arc::new(select::Generations::new()),
+            selection_max_age: DEFAULT_SELECTION_MAX_AGE,
         })
     }
 
