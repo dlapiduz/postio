@@ -182,6 +182,15 @@ impl Shell {
         imp.list.set_size_request(280, -1);
         imp.reader.set_size_request(320, -1);
 
+        // The paned handles are focusable so the panes can be resized from
+        // the keyboard. GTK gives them no role of their own, so a name is
+        // the only thing standing between a screen reader user and a tab
+        // stop that announces nothing at all.
+        imp.outer
+            .update_property(&[gtk::accessible::Property::Label("Sidebar width")]);
+        imp.inner
+            .update_property(&[gtk::accessible::Property::Label("Message list width")]);
+
         // The panes are landmarks: a screen reader user navigates by them, and
         // so does the keyboard focus order the rest of the epic hangs off.
         imp.sidebar

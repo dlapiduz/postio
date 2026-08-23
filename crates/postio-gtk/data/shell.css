@@ -8,6 +8,21 @@
  * Measurements come from canvas 1b. Where a number is stated twice — the 52px
  * header, the 3px selected edge — it is because the canvas states it twice.
  *
+ * TYPE IS IN `rem`, NEVER `px`. GNOME's text-scaling setting — "Large Text",
+ * and every step of the accessibility slider — works by moving
+ * `gtk-xft-dpi`, which scales the theme font and everything sized against
+ * it. A `font-size` in px is an *absolute* Pango size and ignores that
+ * outright, so an app written in px tells a partially sighted user its type
+ * is none of their business. Worse, it does it inconsistently: rules that
+ * set no size at all still inherit and grow, so at 200% the key caps
+ * ballooned while the subject beside them did not move.
+ *
+ * 1rem is the theme font: Adwaita Sans 11pt at 96dpi, so 14.667px on a
+ * default GNOME. Canvas 1b's px sizes are divided by that, which leaves the
+ * drawing pixel-exact out of the box and lets the whole scale move together
+ * when the user asks it to. `reader.css` is exempt — it is WebKit's engine
+ * with WebKit's own text scaling.
+ *
  * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent, and
  * pane switches have none at all. `tests/gtk_shell.rs` enforces that by
  * reading this file back.
@@ -57,7 +72,7 @@ headerbar.postio-header button.toggle:checked {
 }
 
 .postio-search text {
-  font-size: 13px;
+  font-size: 0.8863rem;
   color: var(--postio-ink);
   background: none;
 }
@@ -75,7 +90,7 @@ headerbar.postio-header button.toggle:checked {
    which is the standalone cap the focused row draws. */
 .postio-keyhint {
   font-family: var(--postio-font-mono);
-  font-size: 10.5px;
+  font-size: 0.7159rem;
   opacity: 0.75;
 }
 
@@ -89,14 +104,14 @@ button.postio-compose {
 }
 
 button.postio-ghost {
-  font-size: 12px;
+  font-size: 0.8182rem;
   padding: 6px 10px;
   color: var(--postio-color-neutral-600);
 }
 
 button.postio-compose {
   padding: 6px 13px;
-  font-size: 12.5px;
+  font-size: 0.8523rem;
 }
 
 /* ── The three panes ─────────────────────────────────────────────────
@@ -161,7 +176,7 @@ button.postio-compose {
 }
 
 .postio-folder-name {
-  font-size: 14px;
+  font-size: 0.9545rem;
   color: var(--postio-ink-secondary);
 }
 
@@ -172,7 +187,7 @@ button.postio-compose {
 
 .postio-folder-count {
   font-family: var(--postio-font-mono);
-  font-size: 11.5px;
+  font-size: 0.7841rem;
   color: var(--postio-dim);
 }
 
@@ -188,7 +203,7 @@ button.postio-compose {
 
 .postio-status {
   font-family: var(--postio-font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--postio-faint);
 }
 
@@ -222,7 +237,7 @@ button.postio-compose {
 }
 
 .postio-row-sender {
-  font-size: 13.5px;
+  font-size: 0.9204rem;
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -237,7 +252,7 @@ button.postio-compose {
 }
 
 .postio-row-subject {
-  font-size: 13px;
+  font-size: 0.8863rem;
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -252,7 +267,7 @@ button.postio-compose {
 }
 
 .postio-row-snippet {
-  font-size: 12px;
+  font-size: 0.8182rem;
   color: var(--postio-faint);
 }
 
@@ -267,7 +282,7 @@ button.postio-compose {
 }
 
 .postio-row-time {
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--postio-faint);
 }
 
@@ -276,7 +291,7 @@ button.postio-compose {
 }
 
 .postio-row-badge {
-  font-size: 10px;
+  font-size: 0.6818rem;
   color: var(--postio-dim);
 }
 
@@ -284,7 +299,7 @@ button.postio-compose {
    is what makes an unread run visible down the left edge at a glance. */
 .postio-row-avatar {
   font-family: var(--postio-font-heading);
-  font-size: 12px;
+  font-size: 0.8182rem;
   font-weight: 500;
   color: var(--postio-dim);
 }
@@ -294,7 +309,7 @@ button.postio-compose {
 }
 
 .postio-row-hint {
-  font-size: 10.5px;
+  font-size: 0.7159rem;
   color: var(--postio-faint);
 }
 
@@ -331,13 +346,13 @@ button.postio-compose {
 .postio-list-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 20px;
+  font-size: 1.3636rem;
   color: var(--postio-ink);
 }
 
 .postio-list-meta {
   font-family: var(--postio-font-mono);
-  font-size: 11.5px;
+  font-size: 0.7841rem;
   color: var(--postio-dim);
 }
 
@@ -383,12 +398,12 @@ button.postio-compose {
 .postio-liststate-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 17px;
+  font-size: 1.1591rem;
   color: var(--postio-ink);
 }
 
 .postio-liststate-detail {
-  font-size: 13px;
+  font-size: 0.8863rem;
   line-height: 1.5;
   color: var(--postio-ink-secondary);
 }
@@ -398,7 +413,7 @@ button.postio-compose {
 }
 
 .postio-liststate-hint-label {
-  font-size: 12px;
+  font-size: 0.8182rem;
   color: var(--postio-ink-secondary);
 }
 
@@ -438,7 +453,7 @@ button.postio-compose {
 }
 
 .postio-palette-title {
-  font-size: 13px;
+  font-size: 0.8863rem;
   color: var(--postio-ink);
 }
 
@@ -448,7 +463,7 @@ button.postio-compose {
 
 .postio-palette-empty {
   padding: 16px 8px;
-  font-size: 12.5px;
+  font-size: 0.8523rem;
   color: var(--postio-faint);
 }
 
@@ -467,13 +482,13 @@ button.postio-compose {
 .postio-cheatsheet-heading {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 15px;
+  font-size: 1.0227rem;
   color: var(--postio-ink);
   margin-bottom: 4px;
 }
 
 .postio-cheatsheet-title {
-  font-size: 12.5px;
+  font-size: 0.8523rem;
   color: var(--postio-ink);
 }
 
@@ -494,7 +509,7 @@ button.postio-compose {
 /* An operator, drawn as what it is. IBM Plex Mono, because it is syntax. */
 .postio-chip {
   font-family: var(--postio-font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   padding: 2px 7px;
   border-radius: var(--postio-radius-sm);
   background-color: var(--postio-selected-bg);
@@ -539,7 +554,7 @@ button.postio-compose {
 
 .postio-settings-path {
   font-family: var(--postio-font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--postio-ink-secondary);
 }
 
@@ -547,7 +562,7 @@ button.postio-compose {
    labelled tag, not a bespoke pill. */
 .postio-settings-tag {
   font-family: var(--postio-font-mono);
-  font-size: 10.5px;
+  font-size: 0.7159rem;
   padding: 2px 7px;
   border-radius: var(--postio-radius-sm);
   background-color: var(--postio-selected-bg);
@@ -591,7 +606,7 @@ button.postio-compose {
 }
 
 .postio-settings-nav-row label {
-  font-size: 12.5px;
+  font-size: 0.8523rem;
   color: var(--postio-ink-secondary);
 }
 
@@ -607,7 +622,7 @@ button.postio-compose {
 
 .postio-settings-view text {
   font-family: var(--postio-font-mono);
-  font-size: 12px;
+  font-size: 0.8182rem;
   color: var(--postio-ink);
   background: none;
 }
@@ -622,7 +637,7 @@ button.postio-compose {
 
 .postio-settings-footer {
   font-family: var(--postio-font-mono);
-  font-size: 10.5px;
+  font-size: 0.7159rem;
   color: var(--postio-faint);
 }
 
@@ -632,7 +647,7 @@ button.postio-compose {
 button.postio-settings-revert {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 11.5px;
+  font-size: 0.7841rem;
   padding: 5px 11px;
   border: 1px solid var(--postio-hairline);
   border-radius: var(--postio-radius-md);
@@ -660,7 +675,7 @@ button.postio-settings-revert:hover {
 .postio-compose-heading {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 20px;
+  font-size: 1.3636rem;
   color: var(--postio-ink);
 }
 
@@ -669,7 +684,7 @@ button.postio-settings-revert:hover {
 .postio-compose-status,
 .postio-compose-escape {
   font-family: var(--postio-font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--postio-faint);
 }
 
@@ -680,7 +695,7 @@ button.postio-settings-revert:hover {
 
 .postio-compose-label {
   font-family: var(--postio-font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--postio-dim);
 }
 
@@ -695,7 +710,7 @@ button.postio-settings-revert:hover {
   outline: none;
   min-height: 26px;
   padding: 0;
-  font-size: 13.5px;
+  font-size: 0.9204rem;
   color: var(--postio-ink);
 }
 
@@ -708,13 +723,13 @@ button.postio-settings-revert:hover {
 }
 
 .postio-compose-identity {
-  font-size: 13.5px;
+  font-size: 0.9204rem;
   color: var(--postio-ink-secondary);
 }
 
 button.postio-compose-more {
   font-family: var(--postio-font-mono);
-  font-size: 10.5px;
+  font-size: 0.7159rem;
   padding: 2px 6px;
   min-height: 0;
   color: var(--postio-dim);
@@ -728,7 +743,7 @@ button.postio-compose-more {
      hyphens by RFC 3676. What the composer shows has to be what goes on the
      wire. */
   font-feature-settings: "liga" 0;
-  font-size: 14.5px;
+  font-size: 0.9886rem;
   background: none;
   color: var(--postio-ink);
 }
@@ -742,7 +757,7 @@ button.postio-compose-more {
 .postio-compose-warning {
   padding: 0 28px 6px;
   font-family: var(--postio-font-mono);
-  font-size: 11px;
+  font-size: 0.75rem;
   color: var(--postio-accent-text);
 }
 

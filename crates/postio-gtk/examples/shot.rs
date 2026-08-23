@@ -14,12 +14,20 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/plate.png demo
 //! cargo run -p postio-gtk --example shot -- /tmp/settings.png settings
 //! cargo run -p postio-gtk --example shot -- /tmp/compose.png demo compose
+//! cargo run -p postio-gtk --example shot -- /tmp/tight.png demo compact
+//! cargo run -p postio-gtk --example shot -- /tmp/large.png demo text2
 //! ```
 //!
 //! `demo` fills the panes with canvas 1b's own sample content, which is the
 //! only way to check things like the selected row against the drawing before
 //! there is a database to read. `settings` opens the canvas 3f panel over a
 //! sample `config.toml` written to a scratch directory for the shot.
+//!
+//! `comfortable` and `compact` render the other two row densities — a design
+//! that only works at one of them is unfinished. `text2` is GNOME's
+//! text-scaling setting at 200%, which is how a partially sighted user
+//! actually reads this application, and the only way to see that the type
+//! scale moves with them rather than ignoring them.
 //!
 //! It is a development tool, not part of the application: examples are not
 //! built into the shipped binary. Nothing here touches the network.
@@ -366,6 +374,16 @@ fn main() -> glib::ExitCode {
     style::install(&display);
     app::install_icons(&display);
     adw::StyleManager::default().set_color_scheme(scheme);
+
+    // GNOME's "Large Text" works by moving `gtk-xft-dpi`, so this is what
+    // a text-scaling user actually sees.
+    if let Some(factor) = args.iter().skip(1).find_map(|a| a.strip_prefix("text")) {
+        let factor: f64 = factor.parse().unwrap_or(2.0);
+        if let Some(settings) = gtk::Settings::default() {
+            let base = settings.gtk_xft_dpi();
+            settings.set_gtk_xft_dpi((base as f64 * factor) as i32);
+        }
+    }
 
     let window = Window::default();
     if high_contrast {
