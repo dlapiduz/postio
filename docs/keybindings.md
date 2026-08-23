@@ -66,4 +66,4 @@ command from inside a text field.
 | `ctrl+comma` | Settings | Everywhere |  | `settings` |
 | `ctrl+e` | Edit configuration | List, thread, reader |  | `edit_config` |
 | `ctrl+b` | Toggle sidebar | List, thread, reader |  | `toggle_sidebar` |
-| `F5` | Refresh | List, thread, reader |  | `refresh` |
+| `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |

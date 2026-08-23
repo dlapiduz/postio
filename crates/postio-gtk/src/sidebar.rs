@@ -125,7 +125,7 @@ impl SyncStatus {
 }
 
 /// A duration in the canvas' compact form: `12s`, `4m`, `3h`, `2d`.
-fn age(elapsed: Duration) -> String {
+pub(crate) fn age(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     match seconds {
         0..60 => format!("{seconds}s"),
