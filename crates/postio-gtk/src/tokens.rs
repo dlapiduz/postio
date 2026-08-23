@@ -339,7 +339,7 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     writeln!(
         out,
         ".postio-kicker {{\n\
-         \x20 font-size: 10px;\n\
+         \x20 font-size: 0.6818rem;\n\
          \x20 letter-spacing: 0.18em;\n\
          \x20 text-transform: uppercase;\n\
          \x20 color: var(--postio-faint);\n\
