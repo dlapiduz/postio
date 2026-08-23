@@ -57,6 +57,18 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
 
+## Git authority for this repository
+
+The Beads block above describes a conservative default profile. **This project
+overrides it**, and the Beads block itself defers to explicit repository
+instructions:
+
+- **Commits are standing-authorised.** Commit each bead as you finish it. Do not
+  ask first, and do not leave work uncommitted. See **Commits** below.
+- **Pushes are not.** Never `git push`, add a remote, or rewrite history unless
+  the user asks in the current session.
+
+
 
 ## Build & Test
 
@@ -191,15 +203,43 @@ Refs: postio-abc
 - **footer**: every commit carries `Refs: <bead-id>`. Use `Closes: <bead-id>`
   when the commit completes the bead. Note `BREAKING CHANGE:` when applicable.
 
-**Every commit must be green** — `cargo build --workspace`, `cargo test
---workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
-`cargo fmt --all --check`, and `python3 scripts/check-crate-boundaries.py`.
-Do not commit a broken intermediate state; use `git stash` or keep working.
-The one exception is the initial import, which reconstructs parallel work.
+**Every commit must be green** for the crates you touched — `cargo build`,
+`cargo test -p <your-crate>`, `cargo clippy -p <your-crate> --all-targets --
+-D warnings`, `cargo fmt -p <your-crate> --check`,
+`python3 scripts/check-crate-boundaries.py`, and
+`python3 scripts/check-no-personal-data.py`. Keep working until it is green
+rather than committing a broken state — and never `git stash` to get there,
+which would stash every other session's work too.
 
-**Do not commit unless the user asked.** Never `git push` without being asked.
+### Never leave work uncommitted
+
+**Committing is standing-authorised in this repository — you do not need to ask.**
+Pushing still does: never `git push`, add a remote, or rewrite history without
+being asked.
+
+Commit each bead as you finish it. Do not batch a session's work into one commit
+at the end, and never end a session — or go idle waiting on the user — with
+uncommitted changes in the tree.
+
+Uncommitted work is *unprotected* work. Sessions get cut off by usage limits
+mid-task, and anything not committed is one `git reset --hard` away from being
+gone, in a tree that other sessions are editing. This has already cost this
+project a scare: roughly fifty files of finished work sat loose in the tree
+after four sessions were interrupted at once.
+
+If you are interrupted or must stop mid-bead, commit what you have rather than
+leaving it loose. Mark it plainly and keep the bead open:
+
+```
+feat(storage): begin the operation queue drainer
+
+Work in progress -- retry classification is not implemented yet.
+
+Refs: postio-abc
+```
+
 Never commit secrets — no passwords, no tokens, no real email addresses in
-fixtures. `crates/postio-model/tests/corpus/` has a test that enforces this.
+fixtures. Two CI checks enforce this; run them before you commit.
 
 ## Design and scope
 
