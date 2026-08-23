@@ -34,6 +34,9 @@
 //! - [`status`] turns [`connect::Link`] transitions and [`initial::Progress`]
 //!   batches into the throttled status-line state the UI needs, without this
 //!   crate having to know what an `Event` is.
+//! - [`watch`] decides when to look: `IDLE` on the one mailbox worth a
+//!   connection of its own, interval polling everywhere else, and a periodic
+//!   reconciliation that keeps a silently deaf `IDLE` from hiding new mail.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -45,6 +48,7 @@ pub mod initial;
 pub mod resync;
 pub mod retry;
 pub mod status;
+pub mod watch;
 
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
@@ -55,3 +59,4 @@ pub use initial::{
 pub use resync::{Outcome, resync_mailbox};
 pub use retry::RetryPolicy;
 pub use status::{StatusTracker, SyncProgress, SyncStatus};
+pub use watch::{Attention, Wake, Watch, WatchPolicy, Watcher};
