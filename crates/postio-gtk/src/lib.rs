@@ -31,6 +31,8 @@
 //! - [`sidebar`] — the folders, their counts, and the sync status line.
 //! - [`list`] — the message list's model, windowed over paged storage so a
 //!   mailbox is never loaded into memory.
+//! - [`keymap`] — the resolver behind every key press: sequences like `g g`,
+//!   per-context meanings for `Esc`, and the rule that typing always wins.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -49,6 +51,7 @@
 pub mod app;
 pub mod fonts;
 pub mod header;
+pub mod keymap;
 pub mod list;
 pub mod resources;
 pub mod shell;
