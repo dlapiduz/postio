@@ -49,6 +49,27 @@ pub enum BodyState {
 }
 
 impl BodyState {
+    /// A stable lowercase identifier, for storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFetched => "not_fetched",
+            Self::HeadersOnly => "headers_only",
+            Self::Partial => "partial",
+            Self::Full => "full",
+        }
+    }
+
+    /// The inverse of [`BodyState::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "not_fetched" => Some(Self::NotFetched),
+            "headers_only" => Some(Self::HeadersOnly),
+            "partial" => Some(Self::Partial),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+
     /// Whether a renderable body exists locally.
     pub fn has_body(self) -> bool {
         matches!(self, Self::Partial | Self::Full)
@@ -249,5 +270,23 @@ impl Message {
     /// Every recipient across `To`, `Cc` and `Bcc`, in that order.
     pub fn all_recipients(&self) -> impl Iterator<Item = &EmailAddress> {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_body_state_round_trips_through_its_stored_identifier() {
+        for state in [
+            BodyState::NotFetched,
+            BodyState::HeadersOnly,
+            BodyState::Partial,
+            BodyState::Full,
+        ] {
+            assert_eq!(BodyState::from_name(state.as_str()), Some(state));
+        }
+        assert_eq!(BodyState::from_name("headers-only"), None);
     }
 }
