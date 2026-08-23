@@ -63,6 +63,10 @@ mod imp {
         pub list: OnceCell<MessageListView>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
+        /// Installed lazily, on first [`Window::composer`] — nothing before
+        /// that call needs it, and the composition root is the one place
+        /// that both installs and wires it.
+        pub composer: OnceCell<crate::composer::Composer>,
 
         pub settings: OnceCell<SettingsPanel>,
         /// The pane that had the keyboard when the box opened.
@@ -131,6 +135,20 @@ impl Window {
     /// The message list: canvas 1b's header, and the rows under it.
     pub fn list(&self) -> MessageListView {
         self.imp().list.get().expect("built in constructed").clone()
+    }
+
+    /// The composer, installing it into the reading pane the first time
+    /// anyone asks.
+    ///
+    /// Lazy rather than built alongside the other panes in `constructed`: a
+    /// window used only for a test of, say, the sidebar has no reason to pay
+    /// for a composer nobody opens. Whoever wires storage to it — the
+    /// composition root — is the one place that needs this at all.
+    pub fn composer(&self) -> crate::composer::Composer {
+        self.imp()
+            .composer
+            .get_or_init(|| crate::composer::install(self))
+            .clone()
     }
 
     /// The list pane's placeholder for inbox zero, offline and sync failure.
