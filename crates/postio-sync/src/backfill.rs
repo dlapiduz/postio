@@ -49,7 +49,7 @@ use postio_imap::backend::{BackendError, MailBackend, VecSink};
 use postio_imap::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
-use postio_storage::repository::{BodyBlobs, MessageRepository};
+use postio_storage::repository::{BackfillCandidate, BodyBlobs, MessageRepository};
 use rusqlite::Connection;
 
 use crate::drain::SyncError;
@@ -130,6 +130,19 @@ pub struct BodyRequest {
     pub size: u64,
     /// When the server received it. The backlog's sort key.
     pub received_at: DateTime<Utc>,
+}
+
+impl From<BackfillCandidate> for BodyRequest {
+    fn from(candidate: BackfillCandidate) -> Self {
+        Self {
+            message: candidate.message_id,
+            mailbox: candidate.mailbox_id,
+            path: candidate.mailbox_path,
+            uid: candidate.uid,
+            size: candidate.size,
+            received_at: candidate.received_at,
+        }
+    }
 }
 
 /// A [`BodyRequest`] the queue has handed out.
@@ -445,6 +458,53 @@ impl Backfill {
 }
 
 // ---------------------------------------------------------------------------
+// Filling the queue from storage
+// ---------------------------------------------------------------------------
+
+/// Queues everything in `mailbox_id` still missing a body, newest first.
+///
+/// `Backfill` is deliberately in-memory (see the [module docs](self)): nothing
+/// here persists a backlog, because `body_state` on the message row already is
+/// the durable record of what is missing. This is what turns that record back
+/// into a backlog — at startup, so a cold start does not sit at zero forever,
+/// and again after a mailbox finishes an initial sync or a resync, so whatever
+/// it just wrote headers for gets backfilled too.
+///
+/// Returns how many requests were queued, for a caller that wants to log or
+/// report progress; not an error for there to be none.
+pub fn seed(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    mailbox_id: MailboxId,
+    limit: u32,
+) -> Result<usize> {
+    let candidates = MessageRepository::new(connection).needing_backfill(mailbox_id, limit)?;
+    let count = candidates.len();
+    for candidate in candidates {
+        backfill.enqueue(candidate.into());
+    }
+    Ok(count)
+}
+
+/// Asks the backfill for one message right now, looking up what it needs from
+/// storage so the caller only has to know the message it just opened.
+///
+/// Returns `false` when there is nothing to fetch — the message has no local
+/// row any more, has no `UID` yet, or already has its full body — in which
+/// case the reading pane already has everything it is going to get from this.
+pub fn request_body(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    message_id: MessageId,
+) -> Result<bool> {
+    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+        return Ok(false);
+    };
+    backfill.request_now(candidate.into());
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------------
 // Doing one
 // ---------------------------------------------------------------------------
 
@@ -619,5 +679,103 @@ mod tests {
 
         assert!(backfill.next_body().is_none());
         assert_eq!(backfill.progress().pending, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Filling the queue from storage
+    // -----------------------------------------------------------------------
+
+    fn headers_only(
+        account: postio_model::AccountId,
+        mailbox: MailboxId,
+        seconds: i64,
+        uid: u32,
+    ) -> postio_model::Message {
+        let mut message = postio_model::Message::new(account, mailbox, at(seconds));
+        message.server.uid = Some(Uid::new(uid));
+        message.sync.body_state = BodyState::HeadersOnly;
+        message
+    }
+
+    #[test]
+    fn seed_queues_everything_a_mailbox_is_missing_newest_first() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let messages = MessageRepository::new(&connection);
+
+        for (seconds, uid) in [(1, 1), (2, 2), (3, 3)] {
+            messages
+                .create(&mut headers_only(account.id, inbox, seconds, uid))
+                .expect("create");
+        }
+
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        let queued = seed(&connection, &mut backfill, inbox, 10).expect("seed");
+
+        assert_eq!(queued, 3);
+        assert_eq!(backfill.progress().pending, 3);
+        let claim = backfill.next_body().expect("a claim");
+        assert_eq!(claim.request.uid, Uid::new(3), "newest first");
+        assert_eq!(claim.priority, Priority::Background);
+    }
+
+    #[test]
+    fn seed_leaves_the_backlog_empty_when_nothing_is_missing() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("checkout");
+        let (_account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        assert_eq!(
+            seed(&connection, &mut backfill, inbox, 10).expect("seed"),
+            0
+        );
+        assert!(backfill.next_body().is_none());
+    }
+
+    #[test]
+    fn request_body_jumps_the_queue_for_whatever_the_reading_pane_opened() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let messages = MessageRepository::new(&connection);
+
+        let mut older = headers_only(account.id, inbox, 1, 1);
+        messages.create(&mut older).expect("create");
+        let mut newer = headers_only(account.id, inbox, 2, 2);
+        messages.create(&mut newer).expect("create");
+
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        seed(&connection, &mut backfill, inbox, 10).expect("seed");
+
+        // The user opened the OLDER message; the interactive lane must still
+        // put it ahead of the newer one the background lane would fetch first.
+        assert!(request_body(&connection, &mut backfill, older.id).expect("lookup"));
+
+        let claim = backfill.next_body().expect("a claim");
+        assert_eq!(claim.priority, Priority::Interactive);
+        assert_eq!(claim.request.message, older.id);
+    }
+
+    #[test]
+    fn request_body_for_a_message_with_nothing_to_fetch_is_a_no_op() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let messages = MessageRepository::new(&connection);
+
+        let mut fully_fetched = headers_only(account.id, inbox, 1, 1);
+        fully_fetched.sync.body_state = BodyState::Full;
+        messages.create(&mut fully_fetched).expect("create");
+
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+
+        assert!(!request_body(&connection, &mut backfill, fully_fetched.id).expect("lookup"));
+        assert!(
+            !request_body(&connection, &mut backfill, MessageId::new(404)).expect("lookup"),
+            "no local row at all is the same answer, not an error"
+        );
+        assert!(backfill.next_body().is_none());
     }
 }
