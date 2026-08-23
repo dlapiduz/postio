@@ -29,6 +29,7 @@ use gtk::glib;
 use postio_core::{CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
+use crate::feed::{Feeds, Folders, MailboxSource, MessageSource};
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
@@ -36,7 +37,7 @@ use crate::palette::Palette;
 use crate::search::SearchBar;
 use crate::settings::SettingsPanel;
 use crate::shell::Shell;
-use crate::sidebar::Sidebar;
+use crate::sidebar::{Sidebar, SyncStatus};
 use crate::state::WindowState;
 use crate::{header, style};
 
@@ -144,6 +145,108 @@ impl Window {
             .get()
             .expect("built in constructed")
             .clone()
+    }
+
+    /// Feed both panes from the runtime, and wire the sidebar to the list.
+    ///
+    /// The one call whoever assembles the application makes: hand it the two
+    /// sources and an account, keep the [`Feeds`] it returns, and give every
+    /// [`postio_core::Event`] to [`Feeds::apply`].
+    ///
+    /// Picking a folder becomes a load of that folder here rather than in
+    /// the sidebar, because the sidebar has no business knowing there is a
+    /// message list — and because this is the one place that already holds
+    /// both.
+    pub fn install_feeds(
+        &self,
+        account: postio_model::ids::AccountId,
+        address: &str,
+        messages: std::rc::Rc<dyn MessageSource>,
+        mailboxes: std::rc::Rc<dyn MailboxSource>,
+    ) -> Feeds {
+        let list = self.list();
+        let feed = list.feed(messages);
+        let folders = Folders::new(&self.sidebar(), mailboxes);
+
+        // One way to show a folder, whether the user picked it or the window
+        // is opening on the one they were last in.
+        let show: std::rc::Rc<dyn Fn(postio_model::ids::MailboxId)> = {
+            let feed = feed.clone();
+            let folders = folders.clone();
+            let list = list.clone();
+            std::rc::Rc::new(move |id| {
+                if let Some(mailbox) = folders.mailbox(id) {
+                    // The same word the sidebar uses, from the same place:
+                    // the folder the user clicked must not change its name
+                    // on the way to the header above the rows.
+                    list.set_mailbox(
+                        &crate::sidebar::display_name(&mailbox),
+                        mailbox.counts.unread,
+                    );
+                }
+                feed.open(id);
+            })
+        };
+
+        self.sidebar().connect_selected({
+            let show = show.clone();
+            move |id| show(id)
+        });
+
+        // The folders are not there yet when `open` returns, so the first
+        // one to show is chosen when they arrive — the folder the window was
+        // restored into, or the inbox. Opening into no folder at all would
+        // be asking the user a question before saying hello.
+        folders.connect_loaded({
+            let show = show.clone();
+            let feed = feed.clone();
+            let folders = folders.clone();
+            let sidebar = self.sidebar();
+            move |_| {
+                if feed.mailbox().is_some() {
+                    return;
+                }
+                if let Some(id) = sidebar.selected().or_else(|| folders.default_mailbox()) {
+                    sidebar.select(id);
+                    show(id);
+                }
+            }
+        });
+
+        // The list pane's named states read the same status the sidebar's
+        // line does, so there is one connection and one answer about it —
+        // and they also depend on whether there are rows, which arrive a
+        // beat after the status does.
+        folders.connect_status(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |status| window.refresh_list_state(status)
+        ));
+        list.model().connect_items_changed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[strong]
+            folders,
+            move |_, _, _, _| window.refresh_list_state(&folders.status())
+        ));
+
+        folders.open(account, address);
+        Feeds {
+            messages: feed,
+            folders,
+        }
+    }
+
+    /// Re-derive the list pane's named state from `status`.
+    ///
+    /// `stored` and `queued` are what the local store still holds and what is
+    /// waiting to reach the server. Neither has a cheap accessor on this side
+    /// of the crate boundary yet — `postio-storage`'s operation queue has no
+    /// count — so they are reported as what the pane can actually see, and
+    /// `postio-qhz` will widen them when the counts exist.
+    fn refresh_list_state(&self, status: &SyncStatus) {
+        let rows = self.list().model().n_items() as u64;
+        self.list_state().set_status(status.clone(), rows, rows, 0);
     }
 
     fn build(&self) {
