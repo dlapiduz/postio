@@ -31,6 +31,9 @@
 //!   incremental pulls, falling back to [`initial`] for a full re-enumeration
 //!   when the local state cannot answer "what changed" — most importantly
 //!   when `UIDVALIDITY` moves.
+//! - [`status`] turns [`connect::Link`] transitions and [`initial::Progress`]
+//!   batches into the throttled status-line state the UI needs, without this
+//!   crate having to know what an `Event` is.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -41,6 +44,7 @@ pub mod drain;
 pub mod initial;
 pub mod resync;
 pub mod retry;
+pub mod status;
 
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
@@ -50,3 +54,4 @@ pub use initial::{
 };
 pub use resync::{Outcome, resync_mailbox};
 pub use retry::RetryPolicy;
+pub use status::{StatusTracker, SyncProgress, SyncStatus};
