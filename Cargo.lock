@@ -1889,6 +1889,8 @@ dependencies = [
  "libadwaita",
  "pango",
  "pangocairo",
+ "postio-core",
+ "postio-model",
 ]
 
 [[package]]

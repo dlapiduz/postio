@@ -30,6 +30,8 @@
 //! with no socket: see [`ScriptedConnector`]. No test in the default suite
 //! touches the network.
 
+mod dispatch;
+mod pool;
 mod settings;
 mod transport;
 
@@ -54,6 +56,13 @@ use postio_model::TransportSecurity;
 use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::Password;
 
+pub use self::dispatch::{
+    Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
+};
+pub use self::pool::{
+    ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
+    PoolConfig, PoolStats, PooledSession, Priority,
+};
 pub use self::settings::{
     ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, ICLOUD_IMAP_HOST, IMAP_PORT, IMAPS_PORT,
 };
