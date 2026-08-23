@@ -205,6 +205,33 @@ impl Account {
             .or_else(|| self.identities.first())
     }
 
+    /// The identity a message sent to `recipients` was addressed to.
+    ///
+    /// A reply has to come from the address the mail arrived at — answering
+    /// from the wrong one is how a thread ends up split across two mailboxes
+    /// at the other end, and how a personal address leaks into a work thread.
+    ///
+    /// `recipients` is walked in order and the first match wins, so a caller
+    /// passing `To` before `Cc` gets the identity the message was actually
+    /// *sent* to rather than one that was merely copied. An identity's
+    /// explicit `Reply-To` counts as one of its addresses, because mail
+    /// answering that identity is addressed to it however it is spelled.
+    ///
+    /// Falls back to [`Account::default_identity`] when nothing matches: mail
+    /// reaches an account by routes that are not in any header, and a reply
+    /// with no `From` at all is worse than one from the usual address.
+    pub fn identity_for(&self, recipients: &[EmailAddress]) -> Option<&Identity> {
+        recipients
+            .iter()
+            .find_map(|recipient| {
+                self.identities.iter().find(|identity| {
+                    identity.address.same_address(recipient)
+                        || identity.effective_reply_to().same_address(recipient)
+                })
+            })
+            .or_else(|| self.default_identity())
+    }
+
     /// Whether `address` is one of this account's own addresses.
     ///
     /// Used to pick the "to me" affordances and to drop the user from
@@ -235,6 +262,80 @@ mod tests {
             );
         }
         assert_eq!(TransportSecurity::from_name("TLS"), None);
+    }
+
+    fn account_with_identities() -> Account {
+        let mut account = Account::new(
+            "Ada",
+            EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+        );
+        let mut work = Identity::new(
+            account.id,
+            EmailAddress::new(Some("Ada Lovelace"), "ada@work.example.com"),
+        );
+        work.id = IdentityId::new(1);
+        let mut personal = Identity::new(
+            account.id,
+            EmailAddress::new(Some("Ada"), "ada@example.com"),
+        );
+        personal.id = IdentityId::new(2);
+        personal.is_default = true;
+        let mut list = Identity::new(
+            account.id,
+            EmailAddress::new(Some("Ada"), "ada+lists@example.com"),
+        );
+        list.id = IdentityId::new(3);
+        list.reply_to = Some(EmailAddress::new(None::<String>, "ada@lists.example.org"));
+        account.identities = vec![work, personal, list];
+        account
+    }
+
+    #[test]
+    fn a_reply_comes_from_the_identity_the_mail_was_addressed_to() {
+        let account = account_with_identities();
+        let to = |address: &str| EmailAddress::new(None::<String>, address);
+
+        assert_eq!(
+            account
+                .identity_for(&[to("ADA@WORK.EXAMPLE.COM")])
+                .map(|identity| identity.id),
+            Some(IdentityId::new(1)),
+            "matched case-insensitively, as addresses compare"
+        );
+
+        // To first, then Cc: the identity it was sent to beats one copied.
+        assert_eq!(
+            account
+                .identity_for(&[to("ada@work.example.com"), to("ada@example.com")])
+                .map(|identity| identity.id),
+            Some(IdentityId::new(1))
+        );
+
+        assert_eq!(
+            account
+                .identity_for(&[to("ada@lists.example.org")])
+                .map(|identity| identity.id),
+            Some(IdentityId::new(3)),
+            "an explicit Reply-To is one of the identity's addresses"
+        );
+    }
+
+    #[test]
+    fn an_unrecognized_recipient_falls_back_to_the_default_identity() {
+        let account = account_with_identities();
+        let elsewhere = EmailAddress::new(None::<String>, "someone@example.net");
+        assert_eq!(
+            account.identity_for(&[elsewhere]).map(|i| i.id),
+            Some(IdentityId::new(2))
+        );
+        assert_eq!(
+            account.identity_for(&[]).map(|i| i.id),
+            Some(IdentityId::new(2)),
+            "and so does no recipient at all"
+        );
+
+        let empty = Account::new("nobody", EmailAddress::new(None::<String>, "n@example.com"));
+        assert_eq!(empty.identity_for(&[]), None);
     }
 
     #[test]

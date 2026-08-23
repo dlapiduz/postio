@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::account::Identity;
 use crate::address::EmailAddress;
 use crate::attachment::Attachment;
 use crate::ids::{AccountId, DraftId, IdentityId, MessageId, ThreadId};
@@ -157,6 +158,28 @@ impl Draft {
         }
     }
 
+    /// Sends this draft as `identity`, and puts its signature in the body.
+    ///
+    /// Replaces rather than appends — [`signature::apply`] splits the body at
+    /// the RFC 3676 separator first — so switching identity mid-compose swaps
+    /// one signature for the other and reopening a saved draft does not stack
+    /// a second copy on the first.
+    ///
+    /// Plain text only in v1. An identity's HTML signature waits for the
+    /// composer to have an HTML body to put it in (`postio-z3b.3`).
+    ///
+    /// [`signature::apply`]: crate::signature::apply
+    pub fn use_identity(&mut self, identity: &Identity) {
+        self.identity_id = Some(identity.id);
+        let signature = identity
+            .signature
+            .as_ref()
+            .map(|signature| signature.text.as_str());
+        let body =
+            crate::signature::apply(self.body.text.as_deref().unwrap_or_default(), signature);
+        self.body.text = (!body.is_empty()).then_some(body);
+    }
+
     /// Whether the draft has at least one recipient anywhere.
     pub fn has_recipients(&self) -> bool {
         !self.to.is_empty() || !self.cc.is_empty() || !self.bcc.is_empty()
@@ -176,6 +199,62 @@ impl Draft {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::Signature;
+    use crate::ids::IdentityId;
+
+    fn identity(address: &str, signature: Option<&str>) -> Identity {
+        let mut identity = Identity::new(
+            AccountId::UNASSIGNED,
+            EmailAddress::new(None::<String>, address),
+        );
+        identity.id = IdentityId::new(7);
+        identity.signature = signature.map(|text| Signature {
+            text: text.to_owned(),
+            html: None,
+        });
+        identity
+    }
+
+    #[test]
+    fn using_an_identity_records_it_and_signs_the_body_once() {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.body.text = Some("Looking now.".to_owned());
+
+        let ada = identity("ada@example.com", Some("Ada"));
+        draft.use_identity(&ada);
+        assert_eq!(draft.identity_id, Some(IdentityId::new(7)));
+        assert_eq!(
+            draft.body.text.as_deref(),
+            Some("Looking now.\n\n-- \nAda\n")
+        );
+
+        // The override the user made is the draft's, and re-applying it is not
+        // a second signature.
+        draft.use_identity(&ada);
+        assert_eq!(
+            draft.body.text.as_deref(),
+            Some("Looking now.\n\n-- \nAda\n")
+        );
+
+        let grace = identity("grace@example.net", Some("Grace"));
+        draft.use_identity(&grace);
+        assert_eq!(
+            draft.body.text.as_deref(),
+            Some("Looking now.\n\n-- \nGrace\n"),
+            "switching identity replaces the signature"
+        );
+    }
+
+    #[test]
+    fn an_identity_with_no_signature_leaves_the_body_unsigned() {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.use_identity(&identity("ada@example.com", None));
+        assert_eq!(draft.body.text, None, "and does not invent an empty body");
+
+        draft.body.text = Some("Looking now.".to_owned());
+        draft.use_identity(&identity("ada@example.com", None));
+        assert_eq!(draft.body.text.as_deref(), Some("Looking now.\n"));
+    }
 
     #[test]
     fn draft_kinds_and_states_round_trip_through_their_stored_identifiers() {
