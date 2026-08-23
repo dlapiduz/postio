@@ -41,6 +41,16 @@
 //! D-Bus `state` signal belongs to the layer that already owns a D-Bus
 //! connection and a main loop; this crate stays free of both, and works
 //! correctly — just less promptly — when nobody ever calls it.
+//!
+//! What the signal is *for* is worth being exact about, because getting it
+//! wrong in the obvious direction is worse than ignoring it. NetworkManager
+//! reports on the link: an interface, a route, a DHCP lease. It says nothing
+//! about whether a particular mail server is answering, and treating "the link
+//! is up" as "the connection will work" would reset the backoff on every
+//! Wi-Fi re-association while a server is down — turning a signal meant to
+//! make recovery *prompt* into one that makes it *loud*. So a link-up signal
+//! collapses the remaining wait and leaves the attempt count exactly where it
+//! was: try now, and if that fails, carry on backing off from where we were.
 
 use std::time::Duration;
 
@@ -271,11 +281,22 @@ impl Supervisor {
 
     /// Tells the supervisor what the operating system says about the network.
     ///
-    /// Going down parks the link without spending an attempt. Coming back up
-    /// makes the next [`poll`](Self::poll) try immediately rather than waiting
-    /// out a backoff that was measured against a network that no longer
-    /// exists — which is what makes closing a laptop lid and opening it again
-    /// feel instant.
+    /// Going down parks the link without spending an attempt.
+    ///
+    /// Coming *up* collapses whatever wait is in force, whether the link was
+    /// parked at [`Link::Offline`] or merely backing off: the delay was
+    /// measured against a network that is no longer the one we have, and
+    /// waiting it out is exactly the lag that makes opening a laptop lid feel
+    /// slow. It does not clear the attempt count, because **a link that is up
+    /// is not a server that is reachable** — the operating system knows about
+    /// the first and nothing about the second. So the next attempt happens at
+    /// once, and if it fails the backoff carries on from where it was rather
+    /// than starting again at one second, which is what stops a flapping
+    /// interface turning into a reconnection storm.
+    ///
+    /// [`NetworkState::Unknown`] is not a link-up signal — NetworkManager
+    /// stopped, or was never there — so it only un-parks a link that had been
+    /// told the network was gone. Not knowing is not evidence.
     ///
     /// Has no effect while [`Link::Blocked`]: a wrong password is still wrong
     /// on a different network.
@@ -291,17 +312,28 @@ impl Supervisor {
 
         match state {
             NetworkState::Down => self.transition(Link::Offline),
-            NetworkState::Up | NetworkState::Unknown => {
-                if matches!(self.link, Link::Offline) {
-                    self.transition(Link::Waiting {
-                        attempts: self.attempts,
-                        retry_at: now,
-                    })
-                } else {
-                    None
-                }
-            }
+            NetworkState::Up => match self.link {
+                Link::Offline => self.retry_at(now),
+                // Already past due: there is no wait left to collapse, and
+                // rewriting `retry_at` would report a transition that changed
+                // nothing.
+                Link::Waiting { retry_at, .. } if retry_at > now => self.retry_at(now),
+                _ => None,
+            },
+            NetworkState::Unknown => match self.link {
+                Link::Offline => self.retry_at(now),
+                _ => None,
+            },
         }
+    }
+
+    /// Makes the next [`poll`](Self::poll) attempt immediately, keeping the
+    /// attempt count.
+    fn retry_at(&mut self, now: DateTime<Utc>) -> Option<Link> {
+        self.transition(Link::Waiting {
+            attempts: self.attempts,
+            retry_at: now,
+        })
     }
 
     /// Records that a command failed, so a drop is noticed between polls.

@@ -390,6 +390,104 @@ async fn the_network_coming_back_reconnects_at_once() {
 }
 
 #[tokio::test]
+async fn the_link_coming_up_collapses_a_backoff_that_never_saw_it_go_down() {
+    let backend = backend();
+    let mut supervisor = Supervisor::new(policy());
+
+    // Six failures, so a long backoff is in force.
+    for minute in 0..6 {
+        backend.inject(Fault::Io("network is unreachable".to_owned()));
+        supervisor.poll(&backend, at(minute * 60), MIDPOINT).await;
+    }
+    assert_eq!(supervisor.attempts(), 6);
+    let due = retry_at(supervisor.link());
+    assert!(due > at(310), "the sixth wait is still outstanding at 310s");
+
+    // NetworkManager reports connectivity *without* ever having reported a
+    // loss: a move from "connected, no internet" to "connected", or simply the
+    // first signal after the app started while the link was already down.
+    // Nobody said Offline, so nothing has collapsed the wait.
+    let change = supervisor
+        .set_network(NetworkState::Up, at(310))
+        .expect("a change");
+
+    assert_eq!(
+        retry_at(&change),
+        at(310),
+        "the operating system just said the link is back; waiting out a delay \
+         measured against the one that was not there is exactly the lag this \
+         signal exists to remove"
+    );
+    assert_eq!(
+        supervisor.attempts(),
+        6,
+        "a link that is up is not a server that is reachable, so this collapses \
+         the wait rather than assuming success — if the attempt fails, the \
+         backoff carries on rather than starting again at one second"
+    );
+
+    backend.inject(Fault::Io("connection refused".to_owned()));
+    supervisor.poll(&backend, at(310), MIDPOINT).await;
+    assert_eq!(supervisor.attempts(), 7);
+}
+
+#[tokio::test]
+async fn a_link_up_signal_with_no_wait_left_to_collapse_reports_nothing() {
+    let backend = backend();
+    let mut supervisor = Supervisor::new(policy());
+    backend.inject(Fault::Io("network is unreachable".to_owned()));
+    let change = supervisor
+        .poll(&backend, at(0), MIDPOINT)
+        .await
+        .expect("a change");
+    let due = retry_at(&change);
+
+    assert_eq!(
+        supervisor.set_network(NetworkState::Up, due + TimeDelta::seconds(1)),
+        None,
+        "the attempt was already due, so there is nothing to bring forward and \
+         nothing to tell the status line"
+    );
+}
+
+#[tokio::test]
+async fn a_link_up_signal_does_not_disturb_a_healthy_connection() {
+    let backend = backend();
+    let mut supervisor = Supervisor::new(policy());
+    supervisor.poll(&backend, at(0), MIDPOINT).await;
+
+    assert_eq!(
+        supervisor.set_network(NetworkState::Up, at(1)),
+        None,
+        "an already-connected client has nothing to learn from being told the \
+         network works"
+    );
+    assert_eq!(supervisor.link(), &Link::Online { since: at(0) });
+}
+
+#[tokio::test]
+async fn losing_track_of_the_network_is_not_news_that_it_came_back() {
+    let backend = backend();
+    let mut supervisor = Supervisor::new(policy());
+    backend.inject(Fault::Io("network is unreachable".to_owned()));
+    let change = supervisor
+        .poll(&backend, at(0), MIDPOINT)
+        .await
+        .expect("a change");
+    let due = retry_at(&change);
+
+    // NetworkManager stopped, or was never there after all.
+    assert_eq!(supervisor.set_network(NetworkState::Unknown, at(1)), None);
+
+    assert_eq!(
+        retry_at(supervisor.link()),
+        due,
+        "not knowing is not evidence: only a positive link-up signal is worth \
+         collapsing a backoff for"
+    );
+}
+
+#[tokio::test]
 async fn the_network_returning_does_not_unblock_a_refused_password() {
     let backend = backend();
     let mut supervisor = Supervisor::new(policy());
