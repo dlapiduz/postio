@@ -442,6 +442,7 @@ bd close <id> --suggest-next
 |---|---|---|
 | `git add -A`, `git add .`, `git commit -a` | Commits other sessions' half-written files | `git commit --only crates/<your-crate> Cargo.lock` |
 | `git add <paths>` then `git commit` | Two steps over a SHARED index — anything another session stages in between lands in your commit | `git commit --only <your paths> -m "..."` |
+| Expecting `--only` to pick up a **new** file | It diffs tracked paths and cannot introduce one git has never seen | `git add <the new files>` first, then `git commit --only <paths>` |
 | `git reset --hard`, `git checkout .` | **Irrecoverably deletes** uncommitted work across every crate | Revert only your own files, by path |
 | `git stash` | Stashes *everyone's* changes, not just yours | Leave the tree alone; commit your own work |
 | `git rebase`, `git filter-repo`, history rewrites | Others hold refs that become invalid | Only when the user confirms the tree is quiet |
