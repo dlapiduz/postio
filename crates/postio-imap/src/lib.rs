@@ -16,6 +16,7 @@
 
 #![warn(missing_docs)]
 
+pub mod backend;
 pub mod cancel;
 pub mod discovery;
 pub mod secret;
