@@ -25,13 +25,13 @@ fn sample_account() -> Account {
         display_name: "Personal".into(),
         address: EmailAddress::new(Some("Ada"), "ada@example.com"),
         incoming: ServerConfig {
-            host: "imap.mail.me.com".into(),
+            host: "imap.example.com".into(),
             port: 993,
             security: TransportSecurity::Tls,
             username: "ada@example.com".into(),
         },
         outgoing: ServerConfig {
-            host: "smtp.mail.me.com".into(),
+            host: "smtp.example.com".into(),
             port: 587,
             security: TransportSecurity::StartTls,
             username: "ada@example.com".into(),
