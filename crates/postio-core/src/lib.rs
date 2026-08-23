@@ -58,6 +58,7 @@ pub mod config;
 pub mod context;
 pub mod dispatch;
 pub mod event;
+pub mod perf_budget;
 pub mod registry;
 pub mod state;
 pub mod undo;
