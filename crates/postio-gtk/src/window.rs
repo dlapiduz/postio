@@ -322,9 +322,20 @@ impl Window {
         sidebar.connect_dropped(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |messages, mailbox| {
+            move |dragged, mailbox| {
+                let target = match dragged {
+                    crate::list_view::Dragged::Messages(messages) => {
+                        postio_core::MessageTarget::Messages(messages)
+                    }
+                    // A drag of the selection stays a *reference* to the
+                    // selection all the way to the handler, so moving forty
+                    // thousand messages is one command with one target and
+                    // not forty thousand ids that had to be listed to be
+                    // carried across the window.
+                    crate::list_view::Dragged::Selection => postio_core::MessageTarget::Selection,
+                };
                 window.act(postio_core::Command::Move {
-                    target: postio_core::MessageTarget::Messages(messages),
+                    target,
                     to: Some(mailbox),
                 });
             }
