@@ -42,11 +42,25 @@ for fixture in test_corpus::by_category(Category::MalformedHeaders) {
 let hard = test_corpus::by_categories(&[Category::Threading, Category::BrokenReferences]);
 ```
 
-The loader hands out **bytes**, never parsed messages. MIME parsing is a
-consumer of this corpus; if the loader parsed, every parser test would be
-testing the parser against itself. Several fixtures are also not valid UTF-8 by
-design, so `Fixture::bytes()` is the primary accessor and `Fixture::as_str()` is
-fallible.
+The loader hands out **bytes**, never parsed messages, and `Fixture::bytes()`
+stays the primary accessor for that reason: MIME parsing is a consumer of this
+corpus, and the parser's own tests (`postio-model/tests/mime.rs`) call
+`mime::parse` directly, never through the fixture, or they would be testing the
+parser against itself. Several fixtures are also not valid UTF-8 by design, so
+`Fixture::as_str()` is fallible.
+
+Now that parsing exists, `Fixture::parse()` is a convenience for everyone else —
+threading, search, reader tests — that just wants the domain `Message` without
+calling `mime::parse` and `ParsedMessage::into_message` by hand:
+
+```rust
+let message = test_corpus::load("list-thread-04-reply-deep").parse();
+assert!(message.in_reply_to.is_some());
+```
+
+It fills in a fixed, arbitrary `account_id`, `mailbox_id` and `received_at` —
+these fixtures were never in a real mailbox, and most callers only care about
+what the message itself carries.
 
 ## Categories
 
