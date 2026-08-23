@@ -28,7 +28,7 @@
             "name": "postio",
             "buildsystem": "simple",
             "build-commands": [
-                "cargo --offline build --release --package postio-gtk --bin postio",
+                "cargo --offline build --release --package postio-app --bin postio",
                 "install -Dm755 target/release/postio /app/bin/postio",
                 "install -Dm644 crates/postio-gtk/data/dev.postio.Postio.desktop /app/share/applications/dev.postio.Postio.desktop",
                 "install -Dm644 crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png /app/share/icons/hicolor/128x128/apps/dev.postio.Postio.png"

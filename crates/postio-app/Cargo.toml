@@ -1,0 +1,26 @@
+[package]
+name = "postio-app"
+description = "The composition root: opens the store, starts the runtime, runs the UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# What lands on PATH — and what the desktop entry's `Exec` names — is `postio`.
+[[bin]]
+name = "postio"
+path = "src/main.rs"
+
+[dependencies]
+adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+async-channel = "2.5.0"
+gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
+# The one crate that turns `runtime` on. Nothing depends on this one, so
+# nothing is guarded against the `rusqlite` it pulls in — which is the whole
+# reason this crate exists. See its `main.rs`.
+postio-core = { workspace = true, features = ["runtime"] }
+postio-gtk.workspace = true
+postio-model.workspace = true
+postio-storage.workspace = true
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }

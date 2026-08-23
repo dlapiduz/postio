@@ -1,0 +1,93 @@
+//! Where Postio keeps its local store.
+//!
+//! `postio-config` owns the *configuration* path and deliberately says nothing
+//! about the database: the store is not a setting, and the crate that reads
+//! `config.toml` has no business knowing where SQLite lives. Choosing that is
+//! the composition root's job, which is here.
+
+use std::path::PathBuf;
+
+/// Overrides everything when set. For a second profile, and for tests.
+const STORE_PATH_ENV: &str = "POSTIO_STORE";
+
+/// The database file.
+///
+/// `$XDG_DATA_HOME/postio/postio.db`, falling back to
+/// `$HOME/.local/share/postio/postio.db`. Data rather than config or cache:
+/// this is the user's mail, so it is neither a preference they can retype nor
+/// something safe to delete.
+pub fn store_path() -> PathBuf {
+    store_path_from(|key| std::env::var(key).ok())
+}
+
+/// As [`store_path`], for an arbitrary environment lookup.
+fn store_path_from<F>(env: F) -> PathBuf
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(explicit) = env(STORE_PATH_ENV).filter(|value| !value.is_empty()) {
+        return PathBuf::from(explicit);
+    }
+    let directory = env("XDG_DATA_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|home| PathBuf::from(home).join(".local").join("share"))
+        })
+        // Nowhere to put it: the working directory is a poor answer and a
+        // loud one, which is better than a silent one somewhere surprising.
+        .unwrap_or_else(|| PathBuf::from("."));
+    directory.join("postio").join("postio.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        move |key| {
+            pairs
+                .iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    #[test]
+    fn the_store_lives_under_the_data_directory() {
+        assert_eq!(
+            store_path_from(env(&[("XDG_DATA_HOME", "/data")])),
+            PathBuf::from("/data/postio/postio.db")
+        );
+        assert_eq!(
+            store_path_from(env(&[("HOME", "/home/ada")])),
+            PathBuf::from("/home/ada/.local/share/postio/postio.db"),
+            "not $HOME/.config: mail is data, not a preference"
+        );
+    }
+
+    #[test]
+    fn an_explicit_path_wins() {
+        assert_eq!(
+            store_path_from(env(&[
+                ("POSTIO_STORE", "/tmp/other.db"),
+                ("XDG_DATA_HOME", "/data"),
+            ])),
+            PathBuf::from("/tmp/other.db")
+        );
+    }
+
+    #[test]
+    fn an_empty_override_is_not_an_override() {
+        assert_eq!(
+            store_path_from(env(&[("POSTIO_STORE", ""), ("XDG_DATA_HOME", "/data")])),
+            PathBuf::from("/data/postio/postio.db")
+        );
+    }
+}

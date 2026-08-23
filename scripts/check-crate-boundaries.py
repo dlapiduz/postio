@@ -9,17 +9,27 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-gtk`` must not depend on ``rusqlite``/``io-imap``. The view layer
     does no SQL and speaks no protocol.
 
-The check inspects ``cargo metadata``'s resolved dependency graph rather than
-grepping source, so it catches a violation that arrives *transitively* through
-some innocent-looking intermediate crate, and it cannot be fooled by a string in
-a comment.
+The check asks ``cargo tree`` rather than grepping source, so it catches a
+violation that arrives *transitively* through some innocent-looking
+intermediate crate, and it cannot be fooled by a string in a comment.
+
+``cargo tree -p <crate>`` and not ``cargo metadata``, because features are
+resolved per package and ``cargo metadata`` reports the *workspace union*.
+Since ``postio-app`` turns on ``postio-core/runtime``, the union has
+``postio-core`` pulling in ``postio-storage`` — and every crate depending on
+``postio-core`` then looks like it depends on ``rusqlite``, including the one
+crate that must not. That is an artefact of the union and not of any build:
+``cargo build -p postio-gtk`` does not enable that feature, and neither does
+anyone consuming ``postio-gtk`` on its own. ``cargo tree -p`` answers the
+question actually being asked.
 
 Kinds considered:
 
   * normal and build dependencies, transitively, from the guarded crate;
-  * dev-dependencies of the guarded crate itself (a test that pulls rusqlite
-    into postio-gtk violates the invariant just as much as the library would),
-    but not dev-dependencies of its dependencies, which are never built.
+  * the guarded crate's own *direct* dev-dependencies by name (a test that
+    pulls rusqlite into postio-gtk violates the invariant just as much as the
+    library would), but not dev-dependencies of its dependencies, which are
+    never built.
 
 Exit status: 0 clean, 1 violation found, 2 the check itself could not run.
 """
@@ -28,10 +38,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
-from collections import deque
 
 # --- The invariants ---------------------------------------------------------
 #
@@ -101,81 +111,95 @@ def load_metadata(manifest_path: str | None, offline: bool) -> dict:
         raise CheckError(f"could not parse cargo metadata output: {exc}") from exc
 
 
-def dep_kind_label(kinds: set[str | None]) -> str:
-    if None in kinds:
-        return "dependency"
-    if "build" in kinds:
-        return "build-dependency"
-    if "dev" in kinds:
-        return "dev-dependency"
-    return "dependency"
+def cargo_tree(
+    crate: str,
+    banned: str,
+    edges: str,
+    manifest_path: str | None,
+    offline: bool,
+    prefix: str = "indent",
+) -> str | None:
+    """Why `banned` is in `crate`'s graph, or `None` when it is not.
 
-
-def find_violations(meta: dict, crate: str, banned: set[str]) -> dict[str, list[tuple[str, str]]]:
-    """Breadth-first search of `crate`'s dependency closure.
-
-    Returns ``{banned_crate_name: shortest_path}`` where a path is a list of
-    ``(crate_name, edge_kind)`` pairs starting at the guarded crate itself.
+    `cargo tree -i` inverts the tree: it prints the banned crate and everything
+    that led to it, which is a better explanation than one this script could
+    assemble. A package that is not in the graph at all makes cargo exit
+    non-zero with "did not match any packages", which is the clean answer.
     """
-    packages = {pkg["id"]: pkg for pkg in meta["packages"]}
-    resolve = meta.get("resolve") or {}
-    nodes = {node["id"]: node for node in resolve.get("nodes", [])}
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        raise CheckError("cargo was not found on PATH")
 
-    member_ids = [pid for pid in meta.get("workspace_members", []) if pid in packages]
-    roots = [pid for pid in member_ids if packages[pid]["name"] == crate]
-    if not roots:
+    cmd = [cargo, "tree", "-p", crate, "-e", edges, "-i", banned, "--prefix", prefix]
+    if manifest_path:
+        cmd += ["--manifest-path", manifest_path]
+    if offline:
+        cmd.append("--offline")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        if "did not match any packages" in proc.stderr:
+            return None
         raise CheckError(
-            f"workspace member `{crate}` was not found. The boundary rules name "
-            f"crates that must exist; rename the rule in {__file__} if the crate "
-            f"was intentionally renamed or removed."
+            "`{}` failed with status {}:\n{}".format(
+                " ".join(cmd), proc.returncode, proc.stderr.strip()
+            )
         )
+    return proc.stdout.strip() or None
 
-    root = roots[0]
-    violations: dict[str, list[tuple[str, str]]] = {}
-    seen = {root}
-    queue: deque[tuple[str, list[tuple[str, str]]]] = deque(
-        [(root, [(crate, "workspace member")])]
+
+def direct_dev_dependencies(meta: dict, crate: str) -> set[str]:
+    """The names `crate` lists under `[dev-dependencies]`."""
+    for pkg in meta["packages"]:
+        if pkg["name"] != crate:
+            continue
+        if pkg["id"] not in meta.get("workspace_members", []):
+            continue
+        return {
+            dep["name"] for dep in pkg.get("dependencies", []) if dep.get("kind") == "dev"
+        }
+    raise CheckError(
+        f"workspace member `{crate}` was not found. The boundary rules name "
+        f"crates that must exist; rename the rule in {__file__} if the crate "
+        f"was intentionally renamed or removed."
     )
 
-    while queue:
-        current, path = queue.popleft()
-        node = nodes.get(current)
-        if node is None:
+
+def find_violations(
+    meta: dict, crate: str, banned: set[str], manifest_path: str | None, offline: bool
+) -> dict[str, str]:
+    """`{banned_crate_name: why}` for everything `crate` must not reach."""
+    dev = direct_dev_dependencies(meta, crate)
+    violations: dict[str, str] = {}
+    for name in sorted(banned):
+        if name in dev:
+            violations[name] = f"direct\n{crate} --(dev-dependency)--> {name}"
             continue
-        for dep in node.get("deps", []):
-            dep_kinds = dep.get("dep_kinds") or [{"kind": None}]
-            kinds = {entry.get("kind") for entry in dep_kinds}
-            # dev-dependencies only count for the guarded crate itself: a
-            # dependency's own dev-dependencies are never built.
-            allowed: set[str | None] = {None, "build"}
-            if current == root:
-                allowed.add("dev")
-            kinds &= allowed
-            if not kinds:
-                continue
-
-            pkg_id = dep["pkg"]
-            pkg = packages.get(pkg_id)
-            if pkg is None:
-                continue
-            name = pkg["name"]
-            next_path = path + [(name, dep_kind_label(kinds))]
-
-            if name in banned:
-                violations.setdefault(name, next_path)
-                continue  # no need to walk inside a crate that is already banned
-            if pkg_id not in seen:
-                seen.add(pkg_id)
-                queue.append((pkg_id, next_path))
-
+        why = cargo_tree(crate, name, "normal,build", manifest_path, offline)
+        if why is not None:
+            violations[name] = "{}\n{}".format(
+                describe_distance(crate, name, manifest_path, offline), why
+            )
     return violations
 
 
-def format_path(path: list[tuple[str, str]]) -> str:
-    out = path[0][0]
-    for name, kind in path[1:]:
-        out += f" --({kind})--> {name}"
-    return out
+def describe_distance(
+    crate: str, banned: str, manifest_path: str | None, offline: bool
+) -> str:
+    """Whether `crate` names `banned` itself, or arrives at it through others.
+
+    Worth saying, because the two are fixed differently: a direct dependency is
+    a line to delete from a manifest, and a transitive one is an argument to
+    have with whoever owns the crate in between.
+    """
+    depths = cargo_tree(crate, banned, "normal,build", manifest_path, offline, prefix="depth")
+    if depths is None:
+        return "transitive"
+    # `--prefix depth` writes the depth with no separator: `1postio-gtk v0.1.0`.
+    for line in depths.splitlines():
+        matched = re.match(r"^(\d+)(\S+)", line)
+        if matched and matched.group(1) == "1" and matched.group(2) == crate:
+            return "direct"
+    return "transitive"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -201,7 +225,9 @@ def main(argv: list[str] | None = None) -> int:
     for crate, rule in RULES.items():
         banned = set(rule["banned"])  # type: ignore[arg-type]
         try:
-            violations = find_violations(meta, crate, banned)
+            violations = find_violations(
+                meta, crate, banned, args.manifest_path, args.offline
+            )
         except CheckError as exc:
             print(f"crate-boundary check: {exc}", file=sys.stderr)
             return 2
@@ -212,21 +238,15 @@ def main(argv: list[str] | None = None) -> int:
 
         failed = True
         for name in sorted(violations):
-            path = violations[name]
-            direct = len(path) == 2
             print(
                 f"\ncrate-boundary violation: `{crate}` must not depend on `{name}`",
                 file=sys.stderr,
             )
             print(f"  offending crate:      {crate}", file=sys.stderr)
             print(f"  offending dependency: {name}", file=sys.stderr)
-            print(
-                "  how:                  {} ({})".format(
-                    format_path(path),
-                    "direct" if direct else "transitive",
-                ),
-                file=sys.stderr,
-            )
+            print("  how:", file=sys.stderr)
+            for line in violations[name].splitlines():
+                print(f"    {line}", file=sys.stderr)
             print(f"  why this matters:     {rule['why']}", file=sys.stderr)
 
     if failed:
