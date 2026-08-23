@@ -31,6 +31,7 @@ mod contacts;
 mod drafts;
 mod mailboxes;
 mod messages;
+mod operations;
 mod sync_state;
 mod threading;
 mod threads;
@@ -39,6 +40,7 @@ pub use accounts::{AccountRepository, IdentityRepository};
 pub use contacts::ContactRepository;
 pub use drafts::DraftRepository;
 pub use mailboxes::MailboxRepository;
+pub use operations::{OperationQueueRepository, QueuedOperation};
 pub use sync_state::SyncStateRepository;
 pub use threading::{Threaded, ThreadingRepository};
 pub use threads::{
