@@ -30,6 +30,7 @@
 //! with no socket: see [`ScriptedConnector`]. No test in the default suite
 //! touches the network.
 
+mod body;
 mod dispatch;
 mod fetch;
 mod mailboxes;
@@ -59,6 +60,7 @@ use postio_model::TransportSecurity;
 use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::Password;
 
+pub use self::body::{PARTIAL_FETCH_WINDOW, fetch_part};
 pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };
