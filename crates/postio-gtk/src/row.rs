@@ -348,6 +348,14 @@ mod imp {
         pub(super) first: Cell<bool>,
         pub(super) selected: Cell<bool>,
         pub(super) hovered: Cell<bool>,
+        /// Whether the keyboard is on this row.
+        ///
+        /// Stored rather than asked for, because `measure` reads it and a
+        /// measurement that depends on where the focus happens to be *during*
+        /// a layout pass is one that changes between passes. GTK's size
+        /// negotiation does not converge on that, and a list that will not
+        /// converge simply stops painting.
+        pub(super) focused: Cell<bool>,
         /// The invisible label the palette is read off. Never measured,
         /// never allocated, never drawn — only asked what the cascade says.
         pub(super) probe: gtk::Label,
@@ -374,6 +382,7 @@ mod imp {
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 hovered: Cell::new(false),
+                focused: Cell::new(false),
                 probe: gtk::Label::new(None),
                 sentinel: gtk::Label::new(None),
                 palette: RefCell::new(None),
@@ -396,9 +405,9 @@ mod imp {
             let obj = self.obj();
             obj.add_css_class("postio-row");
             // Focusable so the widget works on its own — in a test, a bench,
-            // or any surface that is not a `GtkListView`. Inside one, the
-            // list item around it takes the focus instead and
-            // `shows_hints` follows that.
+            // or any surface that is not a `GtkListView`. Inside one,
+            // `crate::list_view` turns this off: there the list item takes
+            // the keyboard, and `shows_hints` follows it up the tree.
             obj.set_focusable(true);
             // The picture of a row, not the row: `GtkListItemWidget` around
             // it carries the `ListItem` role and the name, because that is
@@ -483,6 +492,7 @@ mod imp {
             self.parent_state_flags_changed(previous);
             self.laid.replace(None);
             self.obj().queue_resize();
+            self.obj().refresh_focus();
         }
 
         /// The focused row is the row the keyboard is on, which is a fact
@@ -501,10 +511,7 @@ mod imp {
                 glib::clone!(
                     #[weak]
                     obj,
-                    move |_, _| {
-                        obj.imp().laid.replace(None);
-                        obj.queue_resize();
-                    }
+                    move |_, _| obj.refresh_focus()
                 ),
             );
             self.watch.replace(Some((window, id)));
@@ -622,14 +629,21 @@ impl MessageRowView {
     /// background. A row that forgot its hints on alt-tab would be teaching
     /// the keyboard only while you were not using it.
     pub fn shows_hints(&self) -> bool {
-        if self.imp().row.borrow().is_none() {
-            return false;
+        self.imp().focused.get() && self.imp().row.borrow().is_some()
+    }
+
+    /// Work out whether the keyboard is on this row, and remember it.
+    ///
+    /// Either place counts: inside a `GtkListView` the focus lands on the
+    /// list item wrapping this widget, and anywhere else — a test, a bench,
+    /// the row used as a plain widget — on the widget itself.
+    fn refresh_focus(&self) {
+        let focused = self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus());
+        if self.imp().focused.replace(focused) == focused {
+            return;
         }
-        // Either is "the keyboard is on this row": inside a `GtkListView` it
-        // lands on the list item wrapping this widget, and anywhere else —
-        // a test, a bench, the row used as a plain widget — on the widget
-        // itself.
-        self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus())
+        self.imp().laid.replace(None);
+        self.queue_resize();
     }
 
     /// The row's height at the width it has, for a test that wants to check

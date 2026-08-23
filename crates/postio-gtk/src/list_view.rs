@@ -207,6 +207,11 @@ impl MessageListView {
                 return;
             };
             let view = MessageRowView::new();
+            // Not focusable *here*: the accessible row is the list item
+            // around it, and the row must not take the keyboard out of it.
+            // A focusable widget that also calls itself presentational is a
+            // contradiction GTK does not survive — it stops painting.
+            view.set_focusable(false);
             item.set_child(Some(&view));
             item.set_activatable(true);
             // Selection lives on the list item and its state flag does not

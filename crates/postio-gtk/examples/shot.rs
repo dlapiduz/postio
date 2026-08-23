@@ -16,6 +16,7 @@
 //! cargo run -p postio-gtk --example shot -- /tmp/compose.png demo compose
 //! cargo run -p postio-gtk --example shot -- /tmp/tight.png demo compact
 //! cargo run -p postio-gtk --example shot -- /tmp/large.png demo text2
+//! cargo run -p postio-gtk --example shot -- /tmp/box.png demo command
 //! ```
 //!
 //! `demo` fills the panes with canvas 1b's own sample content, which is the
@@ -405,6 +406,22 @@ fn main() -> glib::ExitCode {
             window.list().set_density(density);
         }
     }
+    // The one box, in the mode a prefix puts it in. `postio-cfd.1` folded
+    // the palette and the query bar into this; a surface nobody can render
+    // is a surface nobody checks against the canvas.
+    if flag("command") {
+        window.open_finder(postio_gtk::finder::Mode::Command);
+    }
+    if flag("folder") {
+        window.open_finder(postio_gtk::finder::Mode::Mailbox);
+    }
+    if flag("search") {
+        window.open_finder(postio_gtk::finder::Mode::Search);
+        window.finder().set_query(postio_gtk::finder::Query {
+            mode: postio_gtk::finder::Mode::Search,
+            text: "from:lena has:attach after:aug1".into(),
+        });
+    }
     if flag("settings") {
         show_settings(&window);
     }
@@ -419,6 +436,10 @@ fn main() -> glib::ExitCode {
     // has the keyboard — and a shot without them is a shot of a different
     // state. Focused here rather than in `populate` because the rows
     // arrive a frame or two later and an empty list has no row to focus.
+    // The canvas draws its key hints on the first row, which means the list
+    // has the keyboard — and a shot without them is a shot of a different
+    // state. Focused here rather than in `populate` because the rows arrive
+    // a frame or two later and an empty list has no row to focus.
     if flag("demo") {
         window.list().grab_focus();
         settle(&window);
@@ -429,7 +450,16 @@ fn main() -> glib::ExitCode {
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(&snapshot, width as f64, height as f64);
     let Some(node) = snapshot.to_node() else {
-        eprintln!("shot: the window drew nothing after {SETTLE_MS}ms");
+        // Almost always the compositor rather than the widgets: it stops
+        // delivering frame callbacks to a window nobody can see, and the
+        // commonest reason on a developer's machine is that the screen
+        // blanked part-way through. Worth saying, because "the window drew
+        // nothing" reads like a bug in the thing being rendered.
+        eprintln!(
+            "shot: no frame after {SETTLE_MS}ms — is the screen blanked or the \
+             window occluded? Nothing is painted to a surface the compositor \
+             is not showing."
+        );
         return glib::ExitCode::FAILURE;
     };
     let renderer = window

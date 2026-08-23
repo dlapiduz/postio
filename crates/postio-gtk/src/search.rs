@@ -1,4 +1,4 @@
-//! The `/` query bar: chips over an editable query.
+//! Reading a search query as chips, and what Backspace does to one.
 //!
 //! Canvas 2b: `/` opens a bar over the list, parsed operators become chips, and
 //! Backspace pops a chip whole rather than nibbling a character off it. Search
@@ -18,14 +18,14 @@
 //! longer move through the query, and every edit becomes a merge between two
 //! representations. This way the entry is the truth and the chips follow it.
 //!
-//! # Two halves
+//! # Where the widget went
 //!
-//! [`chips`] and [`backspace`] are pure functions over a parsed query, tested
-//! with no display. [`SearchBar`] is the widget around them.
+//! There is no `SearchBar` any more. `postio-cfd.1` folded the query bar and
+//! the command palette into one box — [`crate::finder`] — which is where the
+//! chips are now drawn. What stays here is the part that has nothing to do
+//! with either surface: reading a parsed query as chips, and deciding what
+//! Backspace means. Both are pure and tested without a display.
 
-use adw::prelude::*;
-use adw::subclass::prelude::*;
-use gtk::glib;
 use postio_search::ParsedQuery;
 use postio_search::query::{Field, TokenKind};
 
@@ -66,9 +66,6 @@ pub fn chips(parsed: &ParsedQuery) -> Vec<Chip> {
         })
         .collect()
 }
-
-/// What to call when the query changes or is submitted.
-type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
 
 /// What Backspace should do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,271 +115,6 @@ pub fn backspace(parsed: &ParsedQuery, caret: usize) -> Backspace {
         query: parsed.remove_token(index),
         caret,
     }
-}
-
-// ---------------------------------------------------------------------------
-// The widget
-// ---------------------------------------------------------------------------
-
-mod imp {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    pub struct SearchBar {
-        pub entry: gtk::Entry,
-        pub chips: gtk::Box,
-        pub changed: RefCell<Vec<QueryHandler>>,
-        pub activated: RefCell<Vec<QueryHandler>>,
-        pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
-        pub parsed: RefCell<ParsedQuery>,
-    }
-
-    impl Default for SearchBar {
-        fn default() -> Self {
-            Self {
-                entry: gtk::Entry::new(),
-                chips: gtk::Box::new(gtk::Orientation::Horizontal, 6),
-                changed: RefCell::new(Vec::new()),
-                activated: RefCell::new(Vec::new()),
-                dismissed: RefCell::new(Vec::new()),
-                parsed: RefCell::new(ParsedQuery::default()),
-            }
-        }
-    }
-
-    #[glib::object_subclass]
-    impl ObjectSubclass for SearchBar {
-        const NAME: &'static str = "PostioSearchBar";
-        type Type = super::SearchBar;
-        type ParentType = adw::Bin;
-    }
-
-    impl ObjectImpl for SearchBar {
-        fn constructed(&self) {
-            self.parent_constructed();
-            self.obj().build();
-        }
-    }
-
-    impl WidgetImpl for SearchBar {}
-    impl BinImpl for SearchBar {}
-}
-
-glib::wrapper! {
-    /// The `/` query bar.
-    pub struct SearchBar(ObjectSubclass<imp::SearchBar>)
-        @extends adw::Bin, gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Editable;
-}
-
-impl Default for SearchBar {
-    fn default() -> Self {
-        glib::Object::new()
-    }
-}
-
-impl SearchBar {
-    /// An empty bar.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The query as typed.
-    pub fn query(&self) -> String {
-        self.imp().entry.text().to_string()
-    }
-
-    /// Replaces the query, as though the user had typed it.
-    pub fn set_query(&self, query: &str) {
-        self.imp().entry.set_text(query);
-        self.imp().entry.set_position(-1);
-    }
-
-    /// The query, parsed.
-    pub fn parsed(&self) -> ParsedQuery {
-        self.imp().parsed.borrow().clone()
-    }
-
-    /// The chips currently drawn.
-    pub fn chips(&self) -> Vec<Chip> {
-        chips(&self.imp().parsed.borrow())
-    }
-
-    /// The caret, in bytes into the query.
-    ///
-    /// GTK counts the cursor in characters; the parser's spans are in bytes,
-    /// and the two differ the moment somebody searches for a name with an
-    /// accent in it.
-    pub fn caret(&self) -> usize {
-        let text = self.imp().entry.text();
-        let chars = self.imp().entry.position();
-        if chars < 0 {
-            return text.len();
-        }
-        text.char_indices()
-            .nth(chars as usize)
-            .map(|(offset, _)| offset)
-            .unwrap_or(text.len())
-    }
-
-    /// Clears the query and takes the keyboard. What `/` does.
-    ///
-    /// The query is not remembered between openings: a bar that reopens showing
-    /// the last search is one the user has to clear before they can use it.
-    pub fn focus_entry(&self) {
-        self.imp().entry.set_text("");
-        self.grab_entry_focus();
-        self.refresh();
-    }
-
-    /// Puts the keyboard in the entry without disturbing what is in it.
-    pub fn grab_entry_focus(&self) {
-        self.imp().entry.grab_focus();
-    }
-
-    /// Called on every keystroke, with the query parsed.
-    pub fn connect_changed(&self, handler: impl Fn(&ParsedQuery) + 'static) {
-        self.imp().changed.borrow_mut().push(Box::new(handler));
-    }
-
-    /// Called when the user presses Enter.
-    pub fn connect_activated(&self, handler: impl Fn(&ParsedQuery) + 'static) {
-        self.imp().activated.borrow_mut().push(Box::new(handler));
-    }
-
-    /// Called when the user presses `Escape`.
-    pub fn connect_dismissed(&self, handler: impl Fn() + 'static) {
-        self.imp().dismissed.borrow_mut().push(Box::new(handler));
-    }
-
-    /// Applies the Backspace rule, and says whether it popped a chip.
-    ///
-    /// Public so the behaviour can be driven in a test without synthesizing a
-    /// key event, which GTK4 gives no supported way to do.
-    pub fn press_backspace(&self) -> bool {
-        let decision = backspace(&self.imp().parsed.borrow(), self.caret());
-        match decision {
-            Backspace::Ordinary => false,
-            Backspace::PopChip { query, caret, .. } => {
-                let entry = &self.imp().entry;
-                entry.set_text(&query);
-                let chars = query[..caret.min(query.len())].chars().count();
-                entry.set_position(chars as i32);
-                true
-            }
-        }
-    }
-
-    fn dismiss(&self) {
-        for handler in self.imp().dismissed.borrow().iter() {
-            handler();
-        }
-    }
-
-    fn build(&self) {
-        let imp = self.imp();
-        self.add_css_class("postio-searchbar");
-
-        imp.entry.add_css_class("postio-search");
-        imp.entry.set_placeholder_text(Some("Search mail…"));
-        imp.entry.set_hexpand(true);
-        imp.entry
-            .update_property(&[gtk::accessible::Property::Label("Search query")]);
-
-        imp.chips.add_css_class("postio-chips");
-
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        column.append(&imp.entry);
-        column.append(&imp.chips);
-        self.set_child(Some(&column));
-
-        imp.entry.connect_changed(glib::clone!(
-            #[weak(rename_to = bar)]
-            self,
-            move |_| bar.refresh()
-        ));
-
-        imp.entry.connect_activate(glib::clone!(
-            #[weak(rename_to = bar)]
-            self,
-            move |_| {
-                let parsed = bar.imp().parsed.borrow().clone();
-                for handler in bar.imp().activated.borrow().iter() {
-                    handler(&parsed);
-                }
-            }
-        ));
-
-        // Capture, so Backspace is decided before the entry deletes a character.
-        let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = bar)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, _| match key {
-                gtk::gdk::Key::BackSpace if bar.press_backspace() => glib::Propagation::Stop,
-                gtk::gdk::Key::Escape => {
-                    bar.dismiss();
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
-            }
-        ));
-        imp.entry.add_controller(keys);
-
-        self.refresh();
-    }
-
-    /// Reparses and redraws.
-    ///
-    /// The whole strip, every keystroke. A query is a line of text and the
-    /// parser is a single pass over it, so there is nothing to gain from an
-    /// incremental redraw and a stale chip to lose by it.
-    fn refresh(&self) {
-        let imp = self.imp();
-        let parsed = postio_search::parse(&imp.entry.text(), today());
-        let drawn = chips(&parsed);
-
-        while let Some(child) = imp.chips.first_child() {
-            imp.chips.remove(&child);
-        }
-        for chip in &drawn {
-            imp.chips.append(&chip_widget(chip));
-        }
-        imp.chips.set_visible(!drawn.is_empty());
-
-        *imp.parsed.borrow_mut() = parsed;
-        let parsed = imp.parsed.borrow().clone();
-        for handler in imp.changed.borrow().iter() {
-            handler(&parsed);
-        }
-    }
-}
-
-/// The day relative dates resolve against.
-///
-/// The *local* day, not UTC: `after:yesterday` means the user's yesterday.
-/// Read per keystroke rather than cached, so a session left open across
-/// midnight does not go on searching against the wrong day.
-fn today() -> chrono::NaiveDate {
-    chrono::Local::now().date_naive()
-}
-
-fn chip_widget(chip: &Chip) -> gtk::Label {
-    let label = gtk::Label::new(Some(&chip.label));
-    label.add_css_class("postio-chip");
-    if chip.negated {
-        label.add_css_class("negated");
-    }
-    if !chip.complete {
-        label.add_css_class("partial");
-    }
-    // Read as what it does, not as the shorthand it is written in.
-    label.update_property(&[gtk::accessible::Property::Label(&spoken(chip))]);
-    label
 }
 
 /// How a chip reads to a screen reader.
