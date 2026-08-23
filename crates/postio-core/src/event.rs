@@ -81,6 +81,16 @@ pub enum Event {
         /// The selected messages, in list order.
         messages: Vec<MessageId>,
     },
+    /// The reading pane changed what it is showing: the list, a thread, a
+    /// message, search results or the composer.
+    ///
+    /// Carries the view rather than just a flag because the frontend has to
+    /// know *which* thread to render, and because compose takes the pane over
+    /// rather than opening a window of its own.
+    ViewChanged {
+        /// What the pane is showing now.
+        view: crate::state::ViewMode,
+    },
     /// The keyboard context changed, so the key hints and palette must refilter.
     ContextChanged {
         /// The context that now owns the keyboard.
