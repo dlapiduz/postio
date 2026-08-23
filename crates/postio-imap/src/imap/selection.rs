@@ -48,20 +48,24 @@
 //!    discovery stops being a cache hit immediately rather than at the end of
 //!    its interval.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use io_imap::client::ImapClientAsync;
+use io_imap::rfc3501::examine::ImapMailboxExamineOptions;
 use io_imap::rfc3501::select::ImapMailboxSelectOptions;
 use io_imap::types::command::SelectParameter;
-use postio_model::UidValidity;
+use io_imap::types::flag::FlagPerm;
+use io_imap::types::status::{StatusDataItem, StatusDataItemName};
+use postio_model::{Flag, FlagSet, ModSeq, Uid, UidValidity};
 use tokio::time::Instant;
 
-use crate::backend::{BackendError, Capability};
+use crate::backend::{BackendError, Capability, MailboxStatus, SelectMode};
 
-use super::ImapSession;
 use super::mailboxes::mailbox_argument;
+use super::{ConnectionPool, ImapSession, Priority};
 use crate::backend::BackendResult;
 
 /// What is currently selected on a session, and how.
@@ -69,6 +73,9 @@ use crate::backend::BackendResult;
 pub(super) struct SelectedMailbox {
     path: String,
     condstore: bool,
+    /// Whether it was opened with `EXAMINE`. A read-only selection can serve
+    /// no write, so it is never a cache hit for anything else.
+    read_only: bool,
     uid_validity: UidValidity,
     /// The generation epoch this selection was confirmed against. A newer one
     /// means somebody else has since seen this mailbox renumbered.
@@ -192,6 +199,7 @@ impl ImapSession {
     ) -> BackendResult<UidValidity> {
         if let Some(selected) = &self.selected
             && selected.path == path
+            && !selected.read_only
             && (selected.condstore || !want_condstore)
             && Some(selected.epoch) == self.generations.epoch(path)
             && selected.confirmed_at.elapsed() < self.selection_max_age
@@ -199,6 +207,24 @@ impl ImapSession {
             return Ok(selected.uid_validity);
         }
 
+        let data = self
+            .select_now(path, SelectMode::ReadWrite, want_condstore)
+            .await?;
+        Ok(data.uid_validity)
+    }
+
+    /// Issues `SELECT` or `EXAMINE` and checks what comes back against the
+    /// generation everybody believed.
+    ///
+    /// The one place a `UIDVALIDITY` reaches the rest of the crate, so the
+    /// check cannot be walked around by taking a different route to the
+    /// server.
+    pub(super) async fn select_now(
+        &mut self,
+        path: &str,
+        mode: SelectMode,
+        want_condstore: bool,
+    ) -> BackendResult<SelectedState> {
         if want_condstore {
             self.capabilities().require(Capability::CondStore)?;
         }
@@ -209,11 +235,17 @@ impl ImapSession {
         } else {
             Vec::new()
         };
+        let read_only = mode == SelectMode::ReadOnly;
 
-        let data = self
-            .select(mailbox, ImapMailboxSelectOptions { parameters })
-            .await;
-        let data = data.map_err(|error| self.command_error("SELECT", error))?;
+        let data = if read_only {
+            let options = ImapMailboxExamineOptions { parameters };
+            let data = self.examine(mailbox, options).await;
+            data.map_err(|error| self.command_error("EXAMINE", error))?
+        } else {
+            let options = ImapMailboxSelectOptions { parameters };
+            let data = self.select(mailbox, options).await;
+            data.map_err(|error| self.command_error("SELECT", error))?
+        };
 
         let uid_validity = data
             .uid_validity
@@ -232,20 +264,154 @@ impl ImapSession {
         self.selected = Some(SelectedMailbox {
             path: path.to_owned(),
             condstore: want_condstore,
+            read_only,
             uid_validity,
             epoch,
             confirmed_at: Instant::now(),
         });
 
-        match verdict {
-            Verdict::Unchanged => Ok(uid_validity),
-            Verdict::Changed { known } => Err(BackendError::UidValidityChanged {
+        if let Verdict::Changed { known } = verdict {
+            return Err(BackendError::UidValidityChanged {
                 mailbox: path.to_owned(),
                 known,
                 observed: uid_validity,
-            }),
+            });
         }
+
+        Ok(SelectedState {
+            uid_validity,
+            read_only,
+            exists: data.exists.unwrap_or_default(),
+            uid_next: data.uid_next.map(|value| Uid::new(value.get())),
+            highest_mod_seq: data.highest_mod_seq.map(ModSeq::new),
+            permanent_flags: data
+                .permanent_flags
+                .iter()
+                .flatten()
+                .filter_map(|flag| match flag {
+                    FlagPerm::Flag(flag) => Some(Flag::parse(flag.to_string())),
+                    FlagPerm::Asterisk => None,
+                })
+                .collect(),
+            can_create_keywords: data
+                .permanent_flags
+                .iter()
+                .flatten()
+                .any(|flag| matches!(flag, FlagPerm::Asterisk)),
+        })
     }
+}
+
+/// What a `SELECT` or `EXAMINE` reported.
+#[derive(Clone, Debug)]
+pub(super) struct SelectedState {
+    pub(super) uid_validity: UidValidity,
+    pub(super) read_only: bool,
+    pub(super) exists: u32,
+    pub(super) uid_next: Option<Uid>,
+    pub(super) highest_mod_seq: Option<ModSeq>,
+    pub(super) permanent_flags: FlagSet,
+    pub(super) can_create_keywords: bool,
+}
+
+/// Opens `path` and reports its state.
+///
+/// `UNSEEN` is not carried across: `SELECT` reports the *sequence number of
+/// the first unseen message* (RFC 3501 §7.1), not a count, and a number that
+/// looks like a count but is not is worse than none. [`status`] reports the
+/// real count.
+pub async fn select(
+    pool: &ConnectionPool,
+    path: &str,
+    mode: SelectMode,
+    priority: Priority,
+) -> BackendResult<MailboxStatus> {
+    let path = path.to_owned();
+
+    pool.execute(priority, async |session| {
+        let condstore = session.capabilities().contains(Capability::CondStore);
+        let state = session.select_now(&path, mode, condstore).await?;
+
+        Ok(MailboxStatus {
+            path: path.clone(),
+            uid_validity: state.uid_validity,
+            uid_next: state.uid_next.unwrap_or_else(|| Uid::new(1)),
+            exists: state.exists,
+            unseen: None,
+            highest_mod_seq: state.highest_mod_seq,
+            permanent_flags: state.permanent_flags,
+            can_create_keywords: state.can_create_keywords,
+            read_only: state.read_only,
+        })
+    })
+    .await
+}
+
+/// Reports a mailbox's state without opening it.
+///
+/// The cheap per-mailbox change check for every folder that is not the one
+/// being watched — one round trip, no selection, and it does not disturb
+/// whatever the connection already had open.
+///
+/// Deliberately outside the generation guard in [`ImapSession::select_now`]:
+/// `STATUS` hands back no UID for anything to act on, and reporting the
+/// mailbox's current `UIDVALIDITY` is more use to a caller comparing it
+/// against its own records than an error would be.
+pub async fn status(
+    pool: &ConnectionPool,
+    path: &str,
+    priority: Priority,
+) -> BackendResult<MailboxStatus> {
+    let path = path.to_owned();
+
+    pool.execute(priority, async |session| {
+        let mut wanted = vec![
+            StatusDataItemName::Messages,
+            StatusDataItemName::UidNext,
+            StatusDataItemName::UidValidity,
+            StatusDataItemName::Unseen,
+        ];
+        if session.capabilities().contains(Capability::CondStore) {
+            wanted.push(StatusDataItemName::HighestModSeq);
+        }
+
+        let mailbox = mailbox_argument(&path)?;
+        let items = session.status(mailbox, Cow::Owned(wanted)).await;
+        let items = items.map_err(|error| session.command_error("STATUS", error))?;
+
+        let mut status = MailboxStatus {
+            path: path.clone(),
+            uid_validity: UidValidity::new(1),
+            uid_next: Uid::new(1),
+            exists: 0,
+            unseen: None,
+            highest_mod_seq: None,
+            // STATUS says nothing about what a mailbox will accept; only a
+            // selection does, and claiming otherwise would have a caller
+            // believe a keyword will stick when it may not.
+            permanent_flags: FlagSet::new(),
+            can_create_keywords: false,
+            read_only: true,
+        };
+
+        for item in items {
+            match item {
+                StatusDataItem::Messages(count) => status.exists = count,
+                StatusDataItem::UidNext(next) => status.uid_next = Uid::new(next.get()),
+                StatusDataItem::UidValidity(value) => {
+                    status.uid_validity = UidValidity::new(value.get());
+                }
+                StatusDataItem::Unseen(count) => status.unseen = Some(count),
+                StatusDataItem::HighestModSeq(value) => {
+                    status.highest_mod_seq = Some(ModSeq::new(value));
+                }
+                _ => {}
+            }
+        }
+
+        Ok(status)
+    })
+    .await
 }
 
 #[cfg(test)]

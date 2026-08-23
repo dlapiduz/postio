@@ -19,12 +19,13 @@ use io_imap::client::ImapClientAsync;
 use io_imap::types::core::Vec1;
 use io_imap::types::extensions::enable::CapabilityEnable;
 use postio_imap::backend::{
-    BackendError, BodyPart, Capability, MailboxEvent, MailboxFilter, UidSet, VecSink,
+    AppendMessage, BackendError, BodyPart, Capability, FlagChange, MailboxEvent, MailboxFilter,
+    SelectMode, UidSet, VecSink,
 };
 use postio_imap::cancel::CancelToken;
 use postio_imap::imap::{
-    ConnectionPool, PoolConfig, Priority, RustlsConnector, fetch_headers, fetch_part, idle,
-    list_mailboxes,
+    ConnectionPool, PoolConfig, Priority, RustlsConnector, append, copy_messages, expunge,
+    fetch_headers, fetch_part, idle, list_mailboxes, move_messages, select, status, store_flags,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_imap::test_server::{Fault, Quirk, TestMailbox, TestMessage, TestServer};
@@ -35,6 +36,22 @@ use postio_model::{Flag, FlagSet, ModSeq, Uid, UidValidity};
 // ---------------------------------------------------------------------------
 
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
+
+/// What a mainstream provider advertises after login.
+const FULL: [&str; 12] = [
+    "IMAP4rev1",
+    "SASL-IR",
+    "AUTH=PLAIN",
+    "ENABLE",
+    "CONDSTORE",
+    "QRESYNC",
+    "IDLE",
+    "UIDPLUS",
+    "MOVE",
+    "NAMESPACE",
+    "UNSELECT",
+    "ID",
+];
 
 /// A server shaped like the account this project targets: a provider that
 /// hides its extensions until you log in and names no special-use folders.
@@ -48,6 +65,28 @@ async fn server() -> TestServer {
         )
         .mailbox(TestMailbox::new("Archive"))
         .mailbox(TestMailbox::new("Sent Messages"))
+        .start()
+        .await
+}
+
+/// The same server, minus the named capabilities — how a fallback path is
+/// put under test rather than assumed.
+async fn without(dropped: &[&str]) -> TestServer {
+    let kept: Vec<&str> = FULL
+        .iter()
+        .copied()
+        .filter(|name| !dropped.contains(name))
+        .collect();
+
+    TestServer::builder()
+        .capabilities(kept)
+        .mailbox(
+            TestMailbox::new("INBOX")
+                .uid_validity(UidValidity::new(4_242))
+                .highest_mod_seq(ModSeq::new(900))
+                .corpus(SEEDED),
+        )
+        .mailbox(TestMailbox::new("Archive"))
         .start()
         .await
 }
@@ -80,6 +119,10 @@ fn selects(server: &TestServer) -> usize {
         .iter()
         .filter(|command| command.to_ascii_uppercase().contains(" SELECT "))
         .count()
+}
+
+fn uids(values: impl IntoIterator<Item = u32>) -> UidSet {
+    values.into_iter().map(Uid::new).collect()
 }
 
 fn cancel() -> CancelToken {
@@ -734,68 +777,246 @@ async fn a_server_that_never_finishes_the_handshake_does_not_hold_the_opening() 
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_store_a_move_and_an_expunge_change_the_server() {
+async fn storing_flags_reports_what_they_are_now() {
     let server = server().await;
     let pool = pool_for(&server).await;
-    let mut session = pool.acquire(Priority::Background).await.unwrap();
 
-    session
-        .select(
-            io_imap::types::mailbox::Mailbox::try_from("INBOX").unwrap(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+    let updates = store_flags(
+        &pool,
+        "INBOX",
+        &uids([1, 2]),
+        &FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+        Priority::Interactive,
+    )
+    .await
+    .unwrap();
 
-    session
-        .store(
-            io_imap::types::sequence::SequenceSet::try_from("1").unwrap(),
-            io_imap::types::flag::StoreType::Add,
-            vec![io_imap::types::flag::Flag::Deleted],
-            io_imap::rfc3501::store::ImapMessageStoreOptions { uid: true },
-        )
-        .await
-        .unwrap();
-    assert!(server.flags("INBOX", Uid::new(1)).is_deleted());
-
-    session
-        .copy(
-            io_imap::types::sequence::SequenceSet::try_from("2").unwrap(),
-            io_imap::types::mailbox::Mailbox::try_from("Archive").unwrap(),
-            io_imap::rfc3501::copy::ImapMessageCopyOptions { uid: true },
-        )
-        .await
-        .unwrap();
-    assert_eq!(server.uids("Archive"), vec![Uid::new(1)]);
-
-    let expunged = session
-        .uid_expunge(io_imap::types::sequence::SequenceSet::try_from("1").unwrap())
-        .await
-        .unwrap();
-    assert_eq!(expunged.len(), 1);
-    assert_eq!(server.uids("INBOX"), vec![Uid::new(2), Uid::new(3)]);
+    assert_eq!(updates.len(), 2);
+    assert!(updates.iter().all(|update| update.flags.is_seen()));
+    assert!(
+        updates.iter().all(|update| update.mod_seq.is_some()),
+        "a CONDSTORE server stamps every change"
+    );
+    assert!(server.flags("INBOX", Uid::new(1)).is_seen());
+    assert!(!server.flags("INBOX", Uid::new(3)).is_seen());
 }
 
 #[tokio::test]
-async fn an_appended_message_lands_with_the_uid_the_server_reports() {
+async fn moving_uses_move_where_the_server_has_it() {
     let server = server().await;
     let pool = pool_for(&server).await;
-    let mut session = pool.acquire(Priority::Background).await.unwrap();
 
-    session
-        .append(
-            io_imap::types::mailbox::Mailbox::try_from("Archive").unwrap(),
-            b"Subject: a draft\r\n\r\nnot sent yet\r\n",
-            io_imap::rfc3501::append::ImapMessageAppendOptions {
-                flags: vec![io_imap::types::flag::Flag::Draft],
-                ..Default::default()
-            },
-        )
+    let mapping = move_messages(&pool, "INBOX", &uids([1]), "Archive", Priority::Background)
         .await
         .unwrap();
 
+    assert_eq!(mapping.len(), 1, "UIDPLUS reports where it landed");
+    assert_eq!(mapping[0].source, Uid::new(1));
     assert_eq!(server.uids("Archive"), vec![Uid::new(1)]);
+    assert_eq!(server.uids("INBOX"), vec![Uid::new(2), Uid::new(3)]);
+    assert!(
+        server
+            .commands()
+            .iter()
+            .any(|command| command.to_ascii_uppercase().contains("UID MOVE"))
+    );
+}
+
+#[tokio::test]
+async fn moving_without_move_copies_then_deletes() {
+    // Three round trips instead of one, and not atomic: a crash between the
+    // copy and the store leaves the message in both mailboxes. That is the
+    // cost of the fallback, and it is the caller's to tolerate.
+    let server = without(&["MOVE"]).await;
+    let pool = pool_for(&server).await;
+
+    move_messages(&pool, "INBOX", &uids([1]), "Archive", Priority::Background)
+        .await
+        .unwrap();
+
+    assert_eq!(server.uids("Archive").len(), 1);
+    assert_eq!(server.uids("INBOX"), vec![Uid::new(2), Uid::new(3)]);
+
+    let commands = server.commands().join("\n").to_ascii_uppercase();
+    assert!(commands.contains("UID COPY"), "{commands}");
+    assert!(commands.contains("UID STORE"), "{commands}");
+    assert!(commands.contains("UID EXPUNGE"), "{commands}");
+    assert!(!commands.contains("UID MOVE"), "{commands}");
+}
+
+#[tokio::test]
+async fn moving_without_uidplus_leaves_the_source_marked_rather_than_expunged() {
+    // Without UIDPLUS the only expunge available also removes messages
+    // another client marked `\Deleted`. Losing somebody else's mail is worse
+    // than leaving ours in place, so the removal is left to the server.
+    let server = without(&["MOVE", "UIDPLUS"]).await;
+    let pool = pool_for(&server).await;
+
+    let mapping = move_messages(&pool, "INBOX", &uids([1]), "Archive", Priority::Background)
+        .await
+        .unwrap();
+
+    assert!(
+        mapping.is_empty(),
+        "no UIDPLUS, so no destination to report"
+    );
+    assert_eq!(server.uids("Archive").len(), 1, "the copy still happened");
+    assert!(
+        server.uids("INBOX").contains(&Uid::new(1)),
+        "the source is still there"
+    );
+    assert!(server.flags("INBOX", Uid::new(1)).is_deleted());
+    assert!(
+        !server
+            .commands()
+            .join("\n")
+            .to_ascii_uppercase()
+            .contains("EXPUNGE")
+    );
+}
+
+#[tokio::test]
+async fn copying_reports_the_destination_only_when_uidplus_said_so() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let with_uidplus = copy_messages(&pool, "INBOX", &uids([1]), "Archive", Priority::Background)
+        .await
+        .unwrap();
+    assert_eq!(with_uidplus.len(), 1);
+    assert_eq!(with_uidplus[0].destination, Uid::new(1));
+
+    let bare = without(&["UIDPLUS"]).await;
+    let bare_pool = pool_for(&bare).await;
+    let without_uidplus = copy_messages(
+        &bare_pool,
+        "INBOX",
+        &uids([1]),
+        "Archive",
+        Priority::Background,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        without_uidplus.is_empty(),
+        "a destination UID has to be searched for, not guessed"
+    );
+    assert_eq!(bare.uids("Archive").len(), 1, "the copy still happened");
+}
+
+#[tokio::test]
+async fn appending_lands_the_message_and_reports_where() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let message = AppendMessage::new(b"Subject: a draft\r\n\r\nnot sent yet\r\n".to_vec())
+        .with_flags(FlagSet::from_iter([Flag::Draft]));
+    let landed = append(&pool, "Archive", &message, Priority::Interactive)
+        .await
+        .unwrap();
+
+    let landed = landed.expect("UIDPLUS is advertised, so APPENDUID is reported");
+    assert_eq!(landed.destination, Uid::new(1));
+    assert_eq!(landed.uid_validity, server.uid_validity("Archive"));
     assert!(server.flags("Archive", Uid::new(1)).is_draft());
+}
+
+#[tokio::test]
+async fn a_targeted_expunge_without_uidplus_is_deferred_rather_than_widened() {
+    let server = without(&["UIDPLUS"]).await;
+    let pool = pool_for(&server).await;
+
+    // One we marked, one another client marked.
+    store_flags(
+        &pool,
+        "INBOX",
+        &uids([1]),
+        &FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        Priority::Background,
+    )
+    .await
+    .unwrap();
+    server.set_flags("INBOX", Uid::new(3), FlagSet::from_iter([Flag::Deleted]));
+
+    let gone = expunge(&pool, "INBOX", Some(&uids([1])), Priority::Background)
+        .await
+        .unwrap();
+
+    assert!(gone.is_empty());
+    assert_eq!(
+        server.uids("INBOX").len(),
+        3,
+        "nothing may be destroyed to make our own expunge convenient"
+    );
+}
+
+#[tokio::test]
+async fn an_untargeted_expunge_removes_every_deleted_message() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    store_flags(
+        &pool,
+        "INBOX",
+        &uids([2]),
+        &FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        Priority::Background,
+    )
+    .await
+    .unwrap();
+
+    expunge(&pool, "INBOX", None, Priority::Background)
+        .await
+        .unwrap();
+
+    assert_eq!(server.uids("INBOX"), vec![Uid::new(1), Uid::new(3)]);
+}
+
+#[tokio::test]
+async fn status_reports_a_mailbox_without_selecting_it() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let status = status(&pool, "INBOX", Priority::Background).await.unwrap();
+
+    assert_eq!(status.exists, 3);
+    assert_eq!(status.uid_validity, UidValidity::new(4_242));
+    assert_eq!(status.uid_next, Uid::new(4));
+    assert_eq!(status.highest_mod_seq, Some(ModSeq::new(900)));
+    assert_eq!(
+        selects(&server),
+        0,
+        "the cheap per-mailbox check must stay cheap: {:?}",
+        server.commands()
+    );
+}
+
+#[tokio::test]
+async fn selecting_reports_the_mailbox_and_whether_it_can_be_written() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let writable = select(&pool, "INBOX", SelectMode::ReadWrite, Priority::Interactive)
+        .await
+        .unwrap();
+    assert_eq!(writable.exists, 3);
+    assert_eq!(writable.uid_validity, UidValidity::new(4_242));
+    assert!(!writable.read_only);
+    assert!(
+        writable.permanent_flags.is_seen(),
+        "the server said \\Seen is permanent"
+    );
+
+    let readable = select(&pool, "INBOX", SelectMode::ReadOnly, Priority::Interactive)
+        .await
+        .unwrap();
+    assert!(readable.read_only);
+    assert!(
+        server
+            .commands()
+            .iter()
+            .any(|command| command.to_ascii_uppercase().contains("EXAMINE"))
+    );
 }
 
 // ---------------------------------------------------------------------------
