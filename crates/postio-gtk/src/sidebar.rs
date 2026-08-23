@@ -514,7 +514,11 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
 /// the server happens to have picked: an iCloud account calls its archive
 /// "Archive" but its junk folder "Junk E-mail", and the sidebar is not the
 /// place to learn that.
-fn display_name(mailbox: &Mailbox) -> String {
+///
+/// Public because the list pane's header names the same folder, and two
+/// places calling one mailbox by two names is exactly the vocabulary drift
+/// this function exists to prevent.
+pub fn display_name(mailbox: &Mailbox) -> String {
     match mailbox.role {
         MailboxRole::Inbox => "Inbox".to_string(),
         MailboxRole::Flagged => "Flagged".to_string(),

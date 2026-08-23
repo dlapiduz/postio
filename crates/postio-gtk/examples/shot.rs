@@ -31,189 +31,195 @@ use std::time::{Duration, Instant};
 use adw::prelude::*;
 use gtk::{gdk, glib, graphene};
 use postio_core::ConnectionState;
-use postio_gtk::sidebar::SyncStatus;
+use postio_gtk::feed::{
+    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+};
 use postio_gtk::{app, fonts, style, window::Window};
-use postio_model::ids::AccountId;
+use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 
-/// Canvas 1b's own sample account, so the drawing and the application can be
-/// held up against each other.
+/// Canvas 1b's own account, fed through the seams the application uses.
+///
+/// Not set on the widgets directly: `Window::install_feeds` is the whole of
+/// the wiring a running Postio does, so the shot goes through it too. What
+/// this renders is therefore what the application renders, minus a database.
+/// Every address is a reserved domain, per CLAUDE.md.
 fn populate(window: &Window) {
     let account = AccountId::new(1);
-    let folder = |id: i64, path: &str, role, counts| {
-        let mut mailbox = Mailbox::new(account, path, Some('/'));
-        mailbox.id = postio_model::ids::MailboxId::new(id);
-        mailbox.role = role;
-        mailbox.counts = counts;
-        mailbox
-    };
-    let counts = |total, unread, flagged| MailboxCounts {
-        total,
-        unread,
-        flagged,
-    };
+    let sample = Rc::new(Sample::new(account));
 
-    let sidebar = window.sidebar();
-    // A reserved domain, per CLAUDE.md: the canvas' address is not ours to ship.
-    sidebar.set_account("lena@example.com");
-    sidebar.set_mailboxes(&[
-        folder(1, "INBOX", MailboxRole::Inbox, counts(940, 12, 3)),
-        folder(2, "Flagged", MailboxRole::Flagged, counts(940, 12, 3)),
-        folder(3, "Drafts", MailboxRole::Drafts, counts(2, 0, 0)),
-        folder(4, "Sent", MailboxRole::Sent, counts(4021, 0, 0)),
-        folder(5, "Archive", MailboxRole::Archive, counts(38122, 0, 0)),
-        folder(6, "lkml", MailboxRole::Regular, counts(9004, 204, 0)),
-        folder(7, "wayland-devel", MailboxRole::Regular, counts(880, 37, 0)),
-    ]);
-    sidebar.select(postio_model::ids::MailboxId::new(1));
-    populate_list(window);
-    let status = SyncStatus {
+    let feeds = window.install_feeds(account, "lena@example.com", sample.clone(), sample);
+    // A connection that is up and has just finished a sync, so the status
+    // line reads `idle · imap` / `last sync 12s` as the canvas draws it.
+    feeds.apply(&postio_core::Event::ConnectionChanged {
+        account,
         state: ConnectionState::Online,
-        last_sync: Instant::now().checked_sub(Duration::from_secs(12)),
-        ..SyncStatus::default()
-    };
-    sidebar.set_status(status.clone());
-    // The list pane's named states read the same status the sidebar does;
-    // `postio-4e2` is what makes one connection drive both in the running
-    // application.
-    window.list_state().set_status(status, 6, 4291, 0);
+    });
+
+    // Leaked on purpose: the shot renders one window and exits, and feeds
+    // dropped here would stop answering before the first page arrived.
+    Box::leak(Box::new(feeds));
 }
 
-/// Canvas 1b's own six messages, so the row anatomy can be held up against
-/// the drawing before there is a database to read.
-///
-/// They arrive through the real [`MessageSource`] seam rather than being
-/// pushed at the model, so what the shot renders is what a repository-backed
-/// source would produce. Every address is a reserved domain, per CLAUDE.md.
-fn populate_list(window: &Window) {
-    use postio_gtk::feed::{MessageSource, Page, PageFuture, PageRequest};
-    use postio_gtk::list::Row;
-    use postio_model::EmailAddress;
-    use postio_model::ids::{MailboxId, MessageId, ThreadId};
+/// Canvas 1b's folders and its six messages, answering the two source
+/// traits the runtime will answer.
+struct Sample {
+    account: AccountId,
+    rows: Vec<postio_gtk::list::Row>,
+}
 
-    let today = chrono::Local::now().date_naive();
-    let at = |hour: u32, minute: u32, days: i64| {
-        (today - chrono::Duration::days(days))
-            .and_hms_opt(hour, minute, 0)
-            .and_then(|naive| naive.and_local_timezone(chrono::Local).single())
-            .expect("a valid local time")
-            .with_timezone(&chrono::Utc)
-    };
-    #[allow(clippy::too_many_arguments)]
-    fn message(
-        id: i64,
-        name: &str,
-        address: &str,
-        subject: &str,
-        preview: &str,
-        when: chrono::DateTime<chrono::Utc>,
-        seen: bool,
-        thread_count: u32,
-        has_attachments: bool,
-    ) -> Row {
-        Row {
-            id: MessageId::new(id),
-            thread: Some(ThreadId::new(id)),
-            from: Some(EmailAddress::new(Some(name), address)),
-            subject: Some(subject.to_owned()),
-            preview: Some(preview.to_owned()),
-            received_at: when,
-            seen,
-            flagged: false,
-            answered: false,
-            draft: false,
-            has_attachments,
-            thread_count,
+impl Sample {
+    fn new(account: AccountId) -> Self {
+        use postio_gtk::list::Row;
+        use postio_model::EmailAddress;
+        use postio_model::ids::{MessageId, ThreadId};
+
+        let today = chrono::Local::now().date_naive();
+        let at = |hour: u32, minute: u32, days: i64| {
+            (today - chrono::Duration::days(days))
+                .and_hms_opt(hour, minute, 0)
+                .and_then(|naive| naive.and_local_timezone(chrono::Local).single())
+                .expect("a valid local time")
+                .with_timezone(&chrono::Utc)
+        };
+        #[allow(clippy::too_many_arguments)]
+        fn message(
+            id: i64,
+            name: &str,
+            address: &str,
+            subject: &str,
+            preview: &str,
+            when: chrono::DateTime<chrono::Utc>,
+            seen: bool,
+            thread_count: u32,
+            has_attachments: bool,
+        ) -> Row {
+            Row {
+                id: MessageId::new(id),
+                thread: Some(ThreadId::new(id)),
+                from: Some(EmailAddress::new(Some(name), address)),
+                subject: Some(subject.to_owned()),
+                preview: Some(preview.to_owned()),
+                received_at: when,
+                seen,
+                flagged: false,
+                answered: false,
+                draft: false,
+                has_attachments,
+                thread_count,
+            }
+        }
+
+        Sample {
+            account,
+            rows: vec![
+                message(
+                    1,
+                    "Lena Tomlin",
+                    "lena@example.com",
+                    "Re: maildir index rebuild is O(n²)",
+                    "Confirmed on 0.4.1 — the rebuild walks every…",
+                    at(9, 14, 0),
+                    false,
+                    6,
+                    true,
+                ),
+                message(
+                    2,
+                    "buildbot",
+                    "buildbot@example.net",
+                    "[FAIL] main · imap-idle · 3 tests",
+                    "3 failing, 1 flaky. Full log attached…",
+                    at(8, 52, 0),
+                    false,
+                    1,
+                    true,
+                ),
+                message(
+                    3,
+                    "Nadia Okafor",
+                    "nadia@example.org",
+                    "Notes from the sync — attaching the deck",
+                    "Short one. Decisions at the top, owners…",
+                    at(8, 30, 0),
+                    true,
+                    1,
+                    true,
+                ),
+                message(
+                    4,
+                    "lkml",
+                    "lkml@example.org",
+                    "[PATCH v3 2/7] sched: fix EEVDF lag accounting",
+                    "Peter, Vincent — the lag decay was applied…",
+                    at(7, 41, 0),
+                    false,
+                    14,
+                    false,
+                ),
+                message(
+                    5,
+                    "Diogo Ferreira",
+                    "diogo@example.org",
+                    "Can you review the mbox importer today?",
+                    "Small diff, mostly the folder walker…",
+                    at(16, 20, 3),
+                    false,
+                    1,
+                    false,
+                ),
+                message(
+                    6,
+                    "Sara Abadi",
+                    "sara@example.com",
+                    "Re: Re: keyring unlock on wayland",
+                    "gnome-keyring works, kwallet needs the…",
+                    at(11, 5, 4),
+                    true,
+                    3,
+                    false,
+                ),
+            ],
         }
     }
+}
 
-    let rows = vec![
-        message(
-            1,
-            "Lena Tomlin",
-            "lena@example.com",
-            "Re: maildir index rebuild is O(n²)",
-            "Confirmed on 0.4.1 — the rebuild walks every…",
-            at(9, 14, 0),
-            false,
-            6,
-            true,
-        ),
-        message(
-            2,
-            "buildbot",
-            "buildbot@example.net",
-            "[FAIL] main · imap-idle · 3 tests",
-            "3 failing, 1 flaky. Full log attached…",
-            at(8, 52, 0),
-            false,
-            1,
-            true,
-        ),
-        message(
-            3,
-            "Nadia Okafor",
-            "nadia@example.org",
-            "Notes from the sync — attaching the deck",
-            "Short one. Decisions at the top, owners…",
-            at(8, 30, 0),
-            true,
-            1,
-            true,
-        ),
-        message(
-            4,
-            "lkml",
-            "lkml@example.org",
-            "[PATCH v3 2/7] sched: fix EEVDF lag accounting",
-            "Peter, Vincent — the lag decay was applied…",
-            at(7, 41, 0),
-            false,
-            14,
-            false,
-        ),
-        message(
-            5,
-            "Diogo Ferreira",
-            "diogo@example.org",
-            "Can you review the mbox importer today?",
-            "Small diff, mostly the folder walker…",
-            at(16, 20, 3),
-            false,
-            1,
-            false,
-        ),
-        message(
-            6,
-            "Sara Abadi",
-            "sara@example.com",
-            "Re: Re: keyring unlock on wayland",
-            "gnome-keyring works, kwallet needs the…",
-            at(11, 5, 4),
-            true,
-            3,
-            false,
-        ),
-    ];
-
-    /// The in-memory stand-in for the repository-backed source.
-    struct Sample(Vec<Row>);
-    impl MessageSource for Sample {
-        fn fetch(&self, request: PageRequest) -> PageFuture {
-            let total = self.0.len() as u32;
-            let start = (request.offset as usize).min(self.0.len());
-            let end = (start + request.limit as usize).min(self.0.len());
-            let rows = self.0[start..end].to_vec();
-            Box::pin(async move { Ok(Page { total, rows }) })
-        }
+impl MailboxSource for Sample {
+    fn mailboxes(&self, _account: AccountId) -> MailboxFuture {
+        let folder = |id: i64, path: &str, role, counts| {
+            let mut mailbox = Mailbox::new(self.account, path, Some('/'));
+            mailbox.id = MailboxId::new(id);
+            mailbox.role = role;
+            mailbox.counts = counts;
+            mailbox.last_synced_at = Some(chrono::Utc::now() - chrono::Duration::seconds(12));
+            mailbox
+        };
+        let counts = |total, unread, flagged| MailboxCounts {
+            total,
+            unread,
+            flagged,
+        };
+        let folders = vec![
+            folder(1, "INBOX", MailboxRole::Inbox, counts(940, 12, 3)),
+            folder(2, "Flagged", MailboxRole::Flagged, counts(940, 12, 3)),
+            folder(3, "Drafts", MailboxRole::Drafts, counts(2, 2, 0)),
+            folder(4, "Sent", MailboxRole::Sent, counts(4021, 0, 0)),
+            folder(5, "Archive", MailboxRole::Archive, counts(38122, 0, 0)),
+            folder(6, "lkml", MailboxRole::Regular, counts(9004, 204, 0)),
+            folder(7, "wayland-devel", MailboxRole::Regular, counts(880, 37, 0)),
+        ];
+        Box::pin(async move { Ok(folders) })
     }
+}
 
-    let pane = window.list();
-    pane.set_mailbox("Inbox", 12);
-    // Leaked on purpose: the shot renders one window and exits, and a feed
-    // dropped here would stop answering before the first page arrived.
-    let feed = Box::leak(Box::new(pane.feed(std::rc::Rc::new(Sample(rows)))));
-    feed.open(MailboxId::new(1));
+impl MessageSource for Sample {
+    fn fetch(&self, request: PageRequest) -> PageFuture {
+        let total = self.rows.len() as u32;
+        let start = (request.offset as usize).min(self.rows.len());
+        let end = (start + request.limit as usize).min(self.rows.len());
+        let rows = self.rows[start..end].to_vec();
+        Box::pin(async move { Ok(Page { total, rows }) })
+    }
 }
 
 /// Canvas 3f's own sample file, so the shot can be held up against the
@@ -393,7 +399,7 @@ fn main() -> glib::ExitCode {
 
     // The canvas draws its key hints on the first row, which means the list
     // has the keyboard — and a shot without them is a shot of a different
-    // state. Focused here rather than in `populate_list` because the rows
+    // state. Focused here rather than in `populate` because the rows
     // arrive a frame or two later and an empty list has no row to focus.
     if flag("demo") {
         window.list().grab_focus();

@@ -288,7 +288,14 @@ impl ListStateView {
     /// Call it whenever any of those change. The widget hides itself the
     /// instant there are rows to show.
     pub fn set_status(&self, status: SyncStatus, item_count: u64, stored: u64, queued: u64) {
-        *self.imp().inputs.borrow_mut() = (status, item_count, stored, queued);
+        let inputs = (status, item_count, stored, queued);
+        // Cheap to call and cheap to call often: the row count moves with
+        // every page the message list takes delivery of, and re-rendering
+        // an unchanged state would also re-arm the age timer each time.
+        if *self.imp().inputs.borrow() == inputs {
+            return;
+        }
+        *self.imp().inputs.borrow_mut() = inputs;
         self.render();
     }
 
