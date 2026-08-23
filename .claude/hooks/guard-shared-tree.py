@@ -1,155 +1,48 @@
 #!/usr/bin/env python3
-"""Refuse commands that destroy or corrupt other sessions' work.
+"""DISABLED 2026-08-23 — allows everything.
 
-Several Claude sessions edit this repository concurrently, sharing one working
-tree, one branch, one git index and one cargo target directory. CLAUDE.md
-documents which commands are unsafe there; this hook enforces it, because
-documentation is advisory and `git reset --hard` is irreversible.
+Removed from `.claude/settings.json` at the user's request after the guards
+caused more disruption than they prevented. Kept as a no-op rather than
+deleted for two reasons:
 
-Matching is deliberately careful about two false positives that would make the
-hook worse than useless:
+  * a session whose settings still reference this path would fail on a missing
+    file, which is the same class of breakage that made the guards look like
+    they were denying work when they were actually failing to run;
+  * the rules and their test suite are worth reviving, and the working version
+    is one `git show` away.
 
-1. **Heredoc bodies.** Writing a file that *documents* a forbidden command must
-   not be blocked. Heredoc bodies are stripped before matching.
-2. **Command position.** A forbidden invocation only counts at the start of a
-   command -- after nothing, or after `;`, `&&`, `||`, `|`, `(`, or a newline.
-   A path or message that merely contains the words is not an invocation.
+## What it did
 
-PreToolUse contract: the tool call arrives as JSON on stdin; a permission
-decision goes out as JSON on stdout. Exit 0 either way -- "deny" is the
-payload, not the exit code.
+Refused commands that destroy other sessions' work in a shared working tree:
+`git reset --hard`, `git clean`, whole-tree checkout/restore, `git stash`,
+whole-tree staging, `git commit -a`, `cargo fmt --all`, plus `git push`,
+adding a remote, and history rewrites. Matching stripped heredoc bodies and
+anchored to command position, so documenting a command was not running it.
+`.claude/hooks/test-guard-shared-tree.py` covers 30 cases in both directions
+and passed.
+
+## Why it went wrong
+
+Not the rules — the plumbing. Settings invoke hooks by path, and the Python
+rewrites were written with an editor tool, which does not set the executable
+bit. Every matching tool call then failed with "permission denied" (exit 126),
+so *every* Bash call in every running session broke, not just the ones the
+guard would have refused. That is fixed in git history (the mode is tracked),
+but it burned enough trust to be worth recording.
+
+Two lessons for whoever revives this:
+
+1. **`chmod +x`, and verify by executing the file the way settings does** --
+   piping into `python3 hook.py` proves the logic, not the wiring.
+2. **Running sessions re-read this file on every tool call but only read
+   settings.json at startup.** To change behaviour for a live session, edit
+   the script; editing settings alone reaches nobody until they restart.
+
+The rules themselves still hold, and `CLAUDE.md` documents them under
+"Working in parallel" -- as guidance now, which is where they started.
 """
 
-from __future__ import annotations
-
-import json
-import os
-import re
 import sys
 
-SHARED = "Other Claude sessions are editing this tree right now."
-
-# (pattern after the command-position anchor, reason). First match wins.
-RULES: list[tuple[str, str]] = [
-    (
-        r"git\s+reset\s+(?:[^|;&]*\s)?--hard",
-        f"{SHARED} Refusing 'git reset --hard': it irrecoverably deletes every "
-        "session's uncommitted work, not just yours. Revert your own files by "
-        "path, or commit what you have. See 'Working in parallel' in CLAUDE.md.",
-    ),
-    (
-        r"git\s+clean\s+-",
-        f"{SHARED} Refusing 'git clean': it deletes untracked files across all "
-        "crates, including work another session has not committed yet.",
-    ),
-    (
-        r"git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)",
-        f"{SHARED} Refusing a whole-tree checkout/restore: it discards other "
-        "sessions' edits. Name your own paths explicitly.",
-    ),
-    (
-        r"git\s+stash(?!\s+(?:list|show))",
-        f"{SHARED} Refusing 'git stash': it stashes every session's changes, "
-        "not just yours. If you need a green tree, keep working until your "
-        "crate builds -- do not stash. See CLAUDE.md.",
-    ),
-    (
-        r"git\s+add\s+(?:-A|--all|-u|\.(?:\s|$))",
-        f"{SHARED} Refusing to stage everything: it commits other sessions' "
-        "unfinished files. Stage explicit paths, e.g. "
-        "'git add crates/<your-crate> Cargo.lock'.",
-    ),
-    (
-        r"git\s+commit\s+(?:[^|;&]*\s)?(?:-a\b|--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)",
-        f"{SHARED} Refusing 'git commit -a': it commits every modified file in "
-        "the tree, including other sessions'. Stage your own paths first, then "
-        "plain 'git commit'.",
-    ),
-    (
-        r"cargo\s+fmt\s+(?:[^|;&]*\s)?(?:--all|--workspace)(?![^|;&]*--check)",
-        f"{SHARED} Refusing 'cargo fmt --all': it reformats crates another "
-        "session is mid-edit in, creating phantom diffs in their files. "
-        "Use 'cargo fmt -p <your-crate>'.",
-    ),
-    (
-        r"git\s+push",
-        "Refusing 'git push': pushing is NOT standing-authorised in this "
-        "repository -- only commits are. Nothing has been published yet and "
-        "history was rewritten to scrub personal data. Ask the user first. "
-        "See 'Git authority' in CLAUDE.md.",
-    ),
-    (
-        r"git\s+remote\s+(?:add|set-url)",
-        "Refusing to add a remote: the user has not chosen to publish this "
-        "repository yet, and history was rewritten to remove personal data. "
-        "Ask first.",
-    ),
-    (
-        r"git\s+(?:filter-repo|filter-branch|rebase)",
-        "Refusing a history rewrite: other sessions hold refs that would become "
-        "invalid, and the user must confirm the tree is quiet first. Ask before "
-        "rewriting history.",
-    ),
-]
-
-# Start of string, or just after a shell command separator.
-ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
-
-
-def strip_heredocs(command: str) -> str:
-    """Remove heredoc bodies so documenting a command is not running it."""
-    out: list[str] = []
-    lines = command.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        out.append(line)
-        m = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", line)
-        i += 1
-        if not m:
-            continue
-        marker = m.group(2)
-        # Skip the body up to and including the terminator.
-        while i < len(lines) and lines[i].strip() != marker:
-            i += 1
-        if i < len(lines):
-            i += 1
-    return "\n".join(out)
-
-
-def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
-
-    command = (payload.get("tool_input") or {}).get("command") or ""
-    if not command:
-        return 0
-
-    # Kill switch: export POSTIO_GUARD=off to disable without editing settings,
-    # which already-running sessions would not re-read.
-    if os.environ.get("POSTIO_GUARD", "").lower() in {"off", "0", "false"}:
-        return 0
-
-    haystack = strip_heredocs(command)
-
-    for pattern, reason in RULES:
-        if re.search(ANCHOR + pattern, haystack):
-            json.dump(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
-                },
-                sys.stdout,
-            )
-            return 0
-
-    return 0
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(0)
