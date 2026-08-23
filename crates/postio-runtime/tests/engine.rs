@@ -166,10 +166,110 @@ async fn a_seeded_body_is_actually_fetched() {
         "no body ever actually arrived, so this proves only that the loop \
          settles failures: {settled:?}"
     );
+    assert!(
+        settled.stored + settled.gone + settled.failed + settled.skipped >= queued,
+        "fewer bodies settled than were queued: {settled:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
+    // postio-uif. `sync_mailbox` and `resync_mailbox` were written, tested
+    // and never called, so the local store only ever held what something
+    // else had put there and a fresh account stayed empty for ever.
+    let database = test_support::memory();
+    let account =
+        postio_storage::test_support::account(&database.connection().expect("a connection"));
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .expect("the folder is created");
+        mailbox
+    };
+    let (engine, events) = engine_over(&database, account.id, server());
+
+    let summary = engine.sync(mailbox.id).await.expect("a sync pass");
+    assert!(
+        summary.inserted > 0,
+        "the server had mail and none of it arrived: {summary:?}"
+    );
+
+    let stored = {
+        let connection = database.connection().expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .count(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(mailbox.id),
+                limit: 0,
+                after: None,
+            })
+            .expect("the count reads")
+    };
     assert_eq!(
-        settled.stored + settled.gone + settled.failed + settled.skipped,
-        queued,
-        "every queued body should end in exactly one outcome: {settled:?}"
+        stored as usize, summary.inserted,
+        "the pass said it wrote rows the store does not have"
+    );
+
+    // And the list showing that folder has to be told it moved.
+    assert!(
+        announced(&events).iter().any(|event| matches!(
+            event,
+            Event::MessageListChanged { mailbox: changed } if *changed == mailbox.id
+        )),
+        "nothing told the open list its mailbox had changed"
+    );
+}
+
+#[tokio::test]
+async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
+    // The last piece of postio-26c: a sync is exactly when the set of
+    // messages missing a body changes, so it is exactly when the backfill is
+    // worth seeding again. Seeding anywhere else means fetching bodies for
+    // mail that has not arrived, or not fetching them for mail that has.
+    let database = test_support::memory();
+    let account =
+        postio_storage::test_support::account(&database.connection().expect("a connection"));
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .expect("the folder is created");
+        mailbox
+    };
+    let (engine, _events) = engine_over(&database, account.id, server());
+
+    // Nothing is queued before the mail exists.
+    assert_eq!(
+        engine
+            .backfill_progress()
+            .await
+            .expect("the engine answers")
+            .pending,
+        0
+    );
+
+    engine.sync(mailbox.id).await.expect("a sync pass");
+
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let progress = engine
+                .backfill_progress()
+                .await
+                .expect("the engine answers");
+            if progress.pending == 0 && progress.in_flight == 0 && progress.stored > 0 {
+                return progress;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the sync never seeded any body worth fetching");
+
+    assert!(
+        settled.stored > 0,
+        "the sync brought mail in and none of its bodies followed: {settled:?}"
     );
 }
 
@@ -341,6 +441,31 @@ async fn no_network_is_not_a_backoff() {
         "the reason should name the network: {}",
         error.message()
     );
+}
+
+/// An engine over `database`, for a test that builds its own store.
+fn engine_over(
+    database: &postio_storage::Database,
+    account: postio_model::ids::AccountId,
+    backend: MockBackend,
+) -> (Engine, EventStream) {
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let (sink, events) = event_channel();
+    let engine = Engine::spawn(EngineParts {
+        account,
+        database: database.clone(),
+        blobs,
+        backend: Arc::new(backend),
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        events: sink,
+        retry: Default::default(),
+        backfill: Default::default(),
+        reconnect: Default::default(),
+    })
+    .expect("the engine starts");
+    (engine, events)
 }
 
 /// A mock server holding an INBOX with mail in it.
