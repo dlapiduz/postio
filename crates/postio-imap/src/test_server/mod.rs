@@ -353,6 +353,7 @@ pub struct TestServerBuilder {
     capabilities: Vec<String>,
     mailboxes: Vec<TestMailbox>,
     quirks: BTreeSet<Quirk>,
+    idle_limit: Option<Duration>,
 }
 
 impl TestServerBuilder {
@@ -370,6 +371,7 @@ impl TestServerBuilder {
                 .collect(),
             mailboxes: Vec::new(),
             quirks: BTreeSet::new(),
+            idle_limit: None,
         }
     }
 
@@ -414,6 +416,17 @@ impl TestServerBuilder {
         self
     }
 
+    /// Hangs up on an `IDLE` that has run this long without being re-armed.
+    ///
+    /// What every server eventually does — RFC 2177 §3 allows it after 29
+    /// minutes and middle-boxes are far less patient — and the reason a
+    /// watcher has to wind `IDLE` down and issue it again. Without this the
+    /// server idles forever and a client that never re-arms looks fine.
+    pub fn idle_limit(mut self, limit: Duration) -> Self {
+        self.idle_limit = Some(limit);
+        self
+    }
+
     /// Makes the server misbehave in a particular way from the start.
     pub fn quirk(mut self, quirk: Quirk) -> Self {
         self.quirks.insert(quirk);
@@ -437,6 +450,7 @@ impl TestServerBuilder {
                 quirks: self.quirks,
                 faults: Vec::new(),
                 log: Vec::new(),
+                idle_limit: self.idle_limit,
             }),
             notify: Notify::new(),
         });

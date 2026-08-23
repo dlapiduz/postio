@@ -7,6 +7,7 @@
 //! for the length of a command.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use postio_model::{Flag, FlagSet, ModSeq, UidValidity};
@@ -136,6 +137,9 @@ pub(super) struct ServerState {
     pub(super) faults: Vec<Fault>,
     /// Every command line the server has been sent, tags included.
     pub(super) log: Vec<String>,
+    /// How long one `IDLE` may run before the server hangs up on it, as a
+    /// real server does to a client that never re-arms.
+    pub(super) idle_limit: Option<Duration>,
 }
 
 impl ServerState {

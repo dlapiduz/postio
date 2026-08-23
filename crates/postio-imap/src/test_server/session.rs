@@ -805,6 +805,10 @@ impl Session {
         }
         self.conn.write_line("+ idling").await?;
 
+        let limit = self.shared.lock().idle_limit;
+        let patience = tokio::time::sleep(limit.unwrap_or(Duration::MAX));
+        tokio::pin!(patience);
+
         loop {
             // Subscribe before looking, so a change landing between the two
             // is not slept through.
@@ -829,6 +833,9 @@ impl Session {
                     }
                 }
                 _ = &mut notified => continue,
+                // Out of patience: the connection goes, which is what a
+                // client that never re-armed deserves and never notices.
+                _ = &mut patience, if limit.is_some() => return Ok(()),
             }
         }
 
