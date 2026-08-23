@@ -47,6 +47,8 @@ SKIP_PATHS = (
     "scripts/check-no-personal-data.py",
     # The copyright line names the holder on purpose.
     "LICENSE",
+    # Hook sources and their test fixtures must name what they forbid.
+    ".claude/",
     "Design/",
     "crates/postio-gtk/data/fonts/",
     ".beads/",

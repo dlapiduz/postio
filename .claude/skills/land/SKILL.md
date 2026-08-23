@@ -8,23 +8,33 @@ description: Commit finished Postio work correctly — verify the gates for your
 The commit ritual, in order. Sessions get parts of this wrong silently — most
 often by leaving a bead `in_progress` after its work is already committed.
 
-## 1. Verify your crate is green
+## 1. Verify your crate is green — once, here
+
+This is the **only** place the gates need to run. Formatting in particular is
+not verification: run it here, not after every edit.
 
 ```bash
-cargo test -p <your-crate>
-cargo clippy -p <your-crate> --all-targets -- -D warnings
-cargo fmt -p <your-crate>
-python3 scripts/check-crate-boundaries.py
-python3 scripts/check-no-personal-data.py
+cargo fmt    -p <your-crate> \
+  && cargo clippy -p <your-crate> --all-targets -- -D warnings \
+  && cargo test   -p <your-crate> \
+  && python3 scripts/check-crate-boundaries.py \
+  && python3 scripts/check-no-personal-data.py
 ```
 
-Per-crate, not `--workspace`: another session may be mid-TDD in a crate you do
-not own, and requiring a green workspace would block you for their reasons.
-Never format the whole workspace — it rewrites files they are editing.
+One chained command, in that order: format first so clippy and the tests see
+the final bytes, and the chain stops at the first failure.
+
+**Per-crate, not `--workspace`.** A workspace test compiles and runs all nine
+crates including GTK, and serialises on the shared target directory while other
+sessions are building — it is the largest wall-clock cost in this project.
+Another session may also be mid-TDD in a crate you do not own, so a red
+workspace is usually their business, not yours. Verify your crate; let CI prove
+the workspace.
+
+Never format the whole workspace — it rewrites files others are mid-edit in.
 
 If your crate is not green, keep working. Do not reach for a stash to get a
-clean tree; that would take every session's changes, and the guard hook
-refuses it.
+clean tree; that would take every session's changes with it.
 
 ## 2. Stage explicit paths
 

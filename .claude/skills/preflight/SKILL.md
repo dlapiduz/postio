@@ -10,6 +10,12 @@ fails — a partial picture is what sends sessions chasing the wrong problem.
 
 ## 1. Gates
 
+This is the deliberate full sweep — the *only* place `--workspace` belongs.
+Do not run it as an inner loop; use `cargo test -p <crate>` while working and
+`/land` before committing. A workspace test compiles all nine crates including
+GTK and serialises on the shared target directory, so running it habitually is
+the largest wall-clock cost in this project.
+
 ```bash
 cargo build --workspace
 cargo test --workspace --no-fail-fast
@@ -22,6 +28,9 @@ python3 scripts/check-no-personal-data.py
 **Always `--no-fail-fast`.** Plain `cargo test` aborts remaining targets after
 the first failure, so one broken crate hides a thousand passing tests and the
 totals look catastrophic. This has already caused a false alarm.
+
+`cargo fmt --all --check` is read-only and safe with others working. Never drop
+the `--check` here — writing would rewrite files they are mid-edit in.
 
 `check-no-personal-data.py` redacts values by default because CI logs are
 public. Add `--reveal` locally when fixing what it finds.
