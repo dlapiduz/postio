@@ -23,5 +23,52 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git blame:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(fd:*)",
+      "Bash(sed -n:*)",
+      "Bash(wc:*)",
+      "Bash(file:*)",
+      "Bash(pkg-config:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo bench:*)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo metadata:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo add:*)",
+      "Bash(rustfmt:*)",
+      "Bash(python3 scripts/check-crate-boundaries.py:*)",
+      "Bash(python3 scripts/check-no-personal-data.py:*)",
+      "Bash(bd:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git remote:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)"
+    ]
   }
 }
