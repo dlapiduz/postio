@@ -110,6 +110,12 @@ pub fn accessible_label(row: &Row) -> String {
     if !row.seen {
         parts.push("Unread".to_string());
     }
+    if row.flagged {
+        parts.push("Flagged".to_string());
+    }
+    if row.draft {
+        parts.push("Draft".to_string());
+    }
     parts.push(format!(
         "from {}",
         row.from
@@ -126,6 +132,9 @@ pub fn accessible_label(row: &Row) -> String {
     parts.push(timestamp(row.received_at, Local::now()));
     if row.thread_count > 1 {
         parts.push(format!("{} in thread", row.thread_count));
+    }
+    if row.answered {
+        parts.push("Answered".to_string());
     }
     if row.has_attachments {
         parts.push("has an attachment".to_string());
@@ -239,6 +248,11 @@ struct Palette {
     unread_chip: gdk::RGBA,
     clip: Option<gtk::IconPaintable>,
     check: Option<gtk::IconPaintable>,
+    /// The persistent flagged/answered/draft marks, at the paperclip's size
+    /// — a status mark, not a hover target, so it stays the small one.
+    flag_mark: Option<gtk::IconPaintable>,
+    answered_mark: Option<gtk::IconPaintable>,
+    draft_mark: Option<gtk::IconPaintable>,
     /// The hover actions, in [`RowAction::ALL`] order, with the flag glyph
     /// in both of its states.
     archive: Option<gtk::IconPaintable>,
@@ -293,6 +307,9 @@ impl Palette {
             unread_chip: paint(&["postio-row-ground", "unread"]),
             clip: probe.display().pipe_icon("mail-attachment-symbolic"),
             check: probe.display().pipe_icon("object-select-symbolic"),
+            flag_mark: probe.display().pipe_icon("starred-symbolic"),
+            answered_mark: probe.display().pipe_icon("mail-replied-symbolic"),
+            draft_mark: probe.display().pipe_icon("document-edit-symbolic"),
             archive: probe.display().action_icon(RowAction::Archive.icon(false)),
             flagged: probe.display().action_icon(RowAction::Flag.icon(true)),
             unflagged: probe.display().action_icon(RowAction::Flag.icon(false)),
@@ -935,6 +952,15 @@ impl MessageRowView {
         if row.as_ref().is_some_and(|row| row.has_attachments) {
             taken += CLIP as f32 + RUN;
         }
+        if row.as_ref().is_some_and(|row| row.draft) {
+            taken += CLIP as f32 + RUN;
+        }
+        if row.as_ref().is_some_and(|row| row.answered) {
+            taken += CLIP as f32 + RUN;
+        }
+        if row.as_ref().is_some_and(|row| row.flagged) {
+            taken += CLIP as f32 + RUN;
+        }
 
         let sender = line(
             &palette.sender[tone],
@@ -1238,6 +1264,32 @@ impl MessageRowView {
             snapshot.restore();
         }
 
+        // Draft, answered, flagged: the same paperclip-sized mark, left of
+        // it in that order — `postio-apz`. A status the eye should catch in
+        // passing, not a hover target, so it is drawn at `CLIP`'s size like
+        // the attachment glyph rather than `ACTION`'s.
+        let mut mark = |present: bool, glyph: &Option<gtk::IconPaintable>| {
+            let (Some(glyph), true) = (glyph, present) else {
+                return;
+            };
+            cursor -= RUN + CLIP as f32;
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(
+                cursor,
+                top + laid.line1 - CLIP as f32 * 0.82,
+            ));
+            glyph.snapshot_symbolic(
+                snapshot,
+                CLIP as f64,
+                CLIP as f64,
+                &[palette.time[laid.tone].color],
+            );
+            snapshot.restore();
+        };
+        mark(row.draft, &palette.draft_mark);
+        mark(row.answered, &palette.answered_mark);
+        mark(row.flagged, &palette.flag_mark);
+
         text(
             &laid.sender,
             &palette.sender[laid.tone].color,
@@ -1403,6 +1455,50 @@ mod tests {
         assert!(!read.contains("Unread"), "{read}");
         assert!(!read.contains("in thread"), "{read}");
         assert!(!read.contains("attachment"), "{read}");
+    }
+
+    #[test]
+    fn flagged_answered_and_draft_each_get_a_word() {
+        // `postio-apz`: the row drew none of these. A glyph is not enough on
+        // its own — see `snapshot`'s `mark` closure for the picture half —
+        // this is the half a screen reader gets.
+        let base = Row {
+            id: MessageId::new(1),
+            thread: None,
+            from: Some(addr(Some("Lena Tomlin"), "lena@example.com")),
+            subject: Some("Re: maildir index rebuild".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            draft: false,
+            has_attachments: false,
+            thread_count: 1,
+        };
+
+        let none = accessible_label(&base);
+        assert!(!none.contains("Flagged"), "{none}");
+        assert!(!none.contains("Answered"), "{none}");
+        assert!(!none.contains("Draft"), "{none}");
+
+        let flagged = accessible_label(&Row {
+            flagged: true,
+            ..base.clone()
+        });
+        assert!(flagged.contains("Flagged"), "{flagged}");
+
+        let answered = accessible_label(&Row {
+            answered: true,
+            ..base.clone()
+        });
+        assert!(answered.contains("Answered"), "{answered}");
+
+        let draft = accessible_label(&Row {
+            draft: true,
+            ..base
+        });
+        assert!(draft.contains("Draft"), "{draft}");
     }
 
     #[test]
