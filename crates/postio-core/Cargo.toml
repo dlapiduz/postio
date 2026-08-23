@@ -12,7 +12,10 @@ async-channel = "2.5.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-config.workspace = true
 postio-model.workspace = true
+postio-imap = { workspace = true, optional = true }
+postio-smtp = { workspace = true, optional = true }
 postio-storage = { workspace = true, optional = true }
+postio-sync = { workspace = true, optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
@@ -22,11 +25,17 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time
 # `postio-core` and must not have `rusqlite` anywhere in its dependency graph
 # — `scripts/check-crate-boundaries.py` enforces exactly that. Whatever
 # assembles the running application turns this on; the view layer never does.
-runtime = ["dep:postio-storage"]
+runtime = [
+  "dep:postio-imap",
+  "dep:postio-smtp",
+  "dep:postio-storage",
+  "dep:postio-sync",
+]
 
 [dev-dependencies]
 criterion = "0.7.0"
 postio-storage = { workspace = true, features = ["test-support"] }
+postio-imap.workspace = true
 serde_json = "1.0.151"
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
