@@ -30,6 +30,9 @@ pub struct Preset {
     requires_app_password: bool,
     /// A sentence the user has to read before typing a password.
     note: Option<&'static str>,
+    /// Where to generate an app-specific password, when `requires_app_password`
+    /// is set.
+    password_help_url: Option<&'static str>,
 }
 
 /// The table. One row per provider, in display order.
@@ -44,6 +47,7 @@ static PRESETS: &[Preset] = &[Preset {
          account settings and paste it here. Your ordinary account password will \
          not work.",
     ),
+    password_help_url: Some("https://appleid.apple.com/account/manage"),
 }];
 
 impl Preset {
@@ -95,6 +99,7 @@ impl Preset {
             source: SettingsSource::Builtin,
             requires_app_password: self.requires_app_password,
             note: self.note.map(str::to_owned),
+            password_help_url: self.password_help_url.map(str::to_owned),
             display_name: Some(self.display_name.to_owned()),
         }
     }
@@ -187,6 +192,19 @@ mod tests {
         for preset in PRESETS.iter().filter(|p| p.requires_app_password) {
             let note = preset.note.expect("an app-password provider needs a note");
             assert!(note.contains("app-specific password"));
+        }
+    }
+
+    #[test]
+    fn a_provider_that_requires_an_app_password_links_to_where_to_make_one() {
+        for preset in PRESETS.iter().filter(|p| p.requires_app_password) {
+            let url = preset
+                .password_help_url
+                .expect("an app-password provider needs a help link");
+            assert!(url.starts_with("https://"));
+
+            let settings = preset.settings_for(&address_in(preset.domains[0]));
+            assert_eq!(settings.password_help_url.as_deref(), Some(url));
         }
     }
 }

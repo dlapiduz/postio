@@ -117,6 +117,10 @@ pub struct AccountSettings {
     /// A sentence for the onboarding screen, when there is something the
     /// user must know before typing a password.
     pub note: Option<String>,
+    /// Where to generate an app-specific password, when [`Self::note`] says
+    /// one is required. The onboarding screen links to this rather than
+    /// making the user go find it.
+    pub password_help_url: Option<String>,
     /// The provider's own display name, when it published one.
     pub display_name: Option<String>,
 }
