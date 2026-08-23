@@ -5,6 +5,12 @@ description: Design and build Postio's GTK4/libadwaita interface so it stays vis
 
 # GTK design for Postio
 
+**This skill is the implementation layer.** It covers how to build a surface
+correctly in GTK — tokens, traps, motion, verification. What the experience
+*should be* — which verbs exist, how states behave, whether a pattern belongs
+at all — is `/ux-architect`. Load that one first when designing something new;
+this one when building it.
+
 Postio should look like a premium application that happens to be built with
 GTK, not like "a GTK developer made an email client" (`spec.md` §19). That is a
 consistency problem more than a taste problem: the identity already exists, and
