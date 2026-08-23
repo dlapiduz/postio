@@ -186,3 +186,101 @@ async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
         answer.expect("every read comes back");
     }
 }
+
+#[tokio::test]
+async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
+    // The store remembers where each page it has read began, so the next one
+    // can seek rather than walk (postio-om2). That is only worth having if it
+    // is the *same* page: a cursor that lands one row off would show the user
+    // a duplicate or skip a message, and neither is visible until somebody
+    // counts.
+    let database = test_support::memory();
+    let report = seed_small(&database, 3);
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+
+    // A fresh store has no marks: every read walks.
+    let walked = SqliteStore::new(&database);
+    let mut cold = Vec::new();
+    for offset in (0..12).step_by(3) {
+        cold.push(page_ids(&walked, inbox, offset, 3).await);
+    }
+
+    // A store that has read them in order has a mark for each boundary.
+    let sought = SqliteStore::new(&database);
+    let mut warm = Vec::new();
+    for offset in (0..12).step_by(3) {
+        warm.push(page_ids(&sought, inbox, offset, 3).await);
+    }
+
+    assert_eq!(cold, warm, "seeking and walking disagree about the rows");
+    // And the pages really are distinct, or this proves nothing.
+    let flat: Vec<_> = warm.iter().flatten().collect();
+    let unique: std::collections::BTreeSet<_> = flat.iter().collect();
+    assert_eq!(flat.len(), unique.len(), "a page repeated a row: {warm:?}");
+}
+
+#[tokio::test]
+async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
+    // Every row shifts when mail arrives or leaves, so a remembered boundary
+    // points at the wrong one. The row count is checked on every read — it is
+    // a column lookup, not a count — and a change drops the marks.
+    //
+    // What this does *not* catch is a reorder that leaves the length alone:
+    // one message arriving and another being deleted between two reads. The
+    // cost there is one page off by a row, which is exactly what a plain
+    // `OFFSET` does in the same situation and what `page_at`'s own
+    // documentation warns about. It is not a regression, and pretending to
+    // fix it would mean a cache that has to be told about every write.
+    let database = test_support::memory();
+    let report = seed_small(&database, 5);
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    let store = SqliteStore::new(&database);
+
+    // Read two pages, so there is a boundary to be wrong about.
+    page_ids(&store, inbox, 0, 3).await;
+    page_ids(&store, inbox, 3, 3).await;
+
+    // The newest message goes away, and everything below it moves up one.
+    {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET deleted_locally = 1
+                   WHERE id = (SELECT id FROM messages WHERE mailbox_id = ?1
+                               ORDER BY received_at DESC, id DESC LIMIT 1)",
+                [inbox.get()],
+            )
+            .expect("the fixture writes");
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .recount(inbox)
+            .expect("the count is kept up to date");
+    }
+
+    let after = page_ids(&store, inbox, 3, 3).await;
+    let fresh = page_ids(&SqliteStore::new(&database), inbox, 3, 3).await;
+    assert_eq!(
+        after, fresh,
+        "a store holding stale boundaries disagreed with one reading cold"
+    );
+}
+
+/// The ids on one page.
+async fn page_ids(
+    store: &SqliteStore,
+    mailbox: postio_model::ids::MailboxId,
+    offset: u32,
+    limit: u32,
+) -> Vec<postio_model::ids::MessageId> {
+    store
+        .message_page(PageRequest {
+            scope: ListScope::Mailbox(mailbox),
+            offset,
+            limit,
+        })
+        .await
+        .expect("the page reads")
+        .rows
+        .into_iter()
+        .map(|row| row.id)
+        .collect()
+}
