@@ -108,6 +108,31 @@ Motion budget: **transitions are <= 100 ms or absent.** Pane switches and thread
 drill-in use *no* transition. Always honor `prefers-reduced-motion`. Never load a
 whole mailbox into memory — the message list is windowed over paged SQLite.
 
+### No personal data, no provider hard-coding
+
+This project is open source and its fixtures describe mailboxes, so a
+maintainer's own identity leaks in easily. Two rules, enforced by
+`scripts/check-no-personal-data.py` in CI:
+
+- **Every email address in the repository uses a reserved domain** — RFC 2606
+  `example.com`/`.net`/`.org`, or the `.test`, `.invalid`, `.example`,
+  `.localhost` TLDs. Invent the people: `Ada Lovelace <ada@example.com>`.
+  Hostnames such as `imap.example.com` are not addresses and are unaffected.
+- **Never use a real person's name or address in a fixture**, least of all the
+  maintainer's. The check reads this checkout's git identity at run time and
+  fails if it appears in a tracked file.
+
+Providers are **data, not code**. `spec.md` §3 requires provider configuration
+to be extensible rather than hard-coded, so server settings belong in a preset
+table where every provider is one row — never a named constant, a special-cased
+branch, or an identifier like `ICLOUD_IMAP_HOST`. Postio is not an iCloud
+client; iCloud is one preset among many, and the maintainer's own provider must
+not be visible in the shape of the code.
+
+Naming a provider in a comment is fine where it explains a real-world
+compatibility quirk ("some servers spell it `Sent Messages`"), as is a test
+fixture named for the *behaviour* it replays rather than the vendor.
+
 ### Architectural invariants (CI enforces these)
 
 - `postio-core` must not depend on `gtk4`/`libadwaita`. It is the UI-agnostic
