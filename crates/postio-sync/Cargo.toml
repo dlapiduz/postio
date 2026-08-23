@@ -18,8 +18,10 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # is the entire point here.
 postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
 postio-model.workspace = true
+postio-smtp.workspace = true
 postio-storage.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+secrecy = "0.10.3"
 thiserror = "2.0.20"
 
 [dev-dependencies]
