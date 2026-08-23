@@ -65,6 +65,7 @@ fn sources_contain_no_storage_or_protocol_imports() {
         include_str!("../src/message.rs"),
         include_str!("../src/mime.rs"),
         include_str!("../src/outgoing.rs"),
+        include_str!("../src/reply.rs"),
         include_str!("../src/subject.rs"),
         include_str!("../src/thread.rs"),
         include_str!("../src/contact.rs"),
