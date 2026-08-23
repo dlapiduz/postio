@@ -37,6 +37,8 @@
 //!   so every command is reachable without memorizing a key.
 //! - [`cheatsheet`] — the `?` overlay, generated from the same table, so the
 //!   key it prints is the key that is bound.
+//! - [`search`] — the `/` query bar: operators drawn as chips over the query
+//!   they were parsed from, and Backspace that pops one whole.
 //!
 //! Startup order matters: register the fonts *before* the first widget is
 //! built, then install the styles. [`app::run`] does it in that order, and is
@@ -60,6 +62,7 @@ pub mod keymap;
 pub mod list;
 pub mod palette;
 pub mod resources;
+pub mod search;
 pub mod shell;
 pub mod sidebar;
 pub mod startup;

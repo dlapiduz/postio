@@ -41,9 +41,9 @@ headerbar.postio-header button.toggle:checked {
 }
 
 /* The search field: a hairline plate, not a bevelled entry. Worn by every
-   search-shaped field — the header's and the palette's — so they read as one
-   control rather than two. A test that means a particular one scopes its
-   lookup to that widget's subtree rather than to the window. */
+   search-shaped field — the header's, the palette's, the query bar's — so
+   they read as one control rather than three. A test that means a particular
+   one scopes its lookup to that widget's subtree rather than to the window. */
 .postio-search {
   min-height: 32px;
   padding: 0 8px;
@@ -280,3 +280,40 @@ button.postio-compose {
   color: var(--postio-ink);
 }
 
+/* ── The / query bar ─────────────────────────────────────────────────
+   Over the list, not a dialog: search is primary navigation (canvas 2b).
+   No transition at all — the bar has to be typeable the instant it is
+   asked for. */
+.postio-searchbar {
+  padding: 8px 12px;
+  background-color: var(--postio-surface);
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-chips {
+  padding: 0 2px;
+}
+
+/* An operator, drawn as what it is. IBM Plex Mono, because it is syntax. */
+.postio-chip {
+  font-family: var(--postio-font-mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* Still being typed: the keyword landed, the value has not. */
+.postio-chip.partial {
+  background: none;
+  border: 1px dashed var(--postio-hairline);
+  color: var(--postio-faint);
+}
+
+/* `-from:someone` excludes rather than includes, and has to look like it. */
+.postio-chip.negated {
+  background-color: var(--postio-surface);
+  border: 1px solid var(--postio-selected-border);
+  color: var(--postio-faint);
+}
