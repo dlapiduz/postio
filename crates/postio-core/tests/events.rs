@@ -72,7 +72,9 @@ fn events_cover_the_repaint_surface() {
         Event::UndoPerformed {
             description: "Archived 12 messages".into(),
         },
-        Event::ConfigReloaded,
+        Event::ConfigReloaded {
+            changed: postio_core::ConfigChange::default(),
+        },
         Event::CommandRejected {
             command: CommandId::Undo,
             reason: "nothing to undo".into(),

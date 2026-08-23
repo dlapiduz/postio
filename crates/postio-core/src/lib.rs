@@ -54,6 +54,7 @@
 
 pub mod bridge;
 pub mod command;
+pub mod config;
 pub mod context;
 pub mod dispatch;
 pub mod event;
@@ -63,6 +64,7 @@ pub mod undo;
 
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{Command, CommandId, MessageTarget, UnknownCommand};
+pub use config::{ConfigChange, ConfigService, Keymap, SharedConfig};
 pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event};

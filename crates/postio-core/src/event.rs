@@ -180,8 +180,15 @@ pub enum Event {
     },
 
     // -- Configuration ---------------------------------------------------
-    /// `config.toml` was reloaded, so bindings, theme and accounts may differ.
-    ConfigReloaded,
+    /// `config.toml` was reloaded and something a subsystem cares about moved.
+    ///
+    /// Carries which sections changed so consumers can do only their own work:
+    /// reapplying everything on every keystroke in `$EDITOR` would be visibly
+    /// slow. A save that changes nothing emits no event at all.
+    ConfigReloaded {
+        /// The sections that moved.
+        changed: crate::config::ConfigChange,
+    },
 }
 
 #[cfg(test)]
