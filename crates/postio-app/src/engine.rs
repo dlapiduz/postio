@@ -73,6 +73,7 @@ pub fn start(
         retry: Default::default(),
         backfill: Default::default(),
         reconnect: Default::default(),
+        watch: Default::default(),
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {
