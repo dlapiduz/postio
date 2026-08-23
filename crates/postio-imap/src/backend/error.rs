@@ -123,6 +123,26 @@ pub enum BackendError {
         observed: UidValidity,
     },
 
+    /// An incremental fetch may have silently missed a delta.
+    ///
+    /// `io-imap` drops any untagged response it cannot decode rather than
+    /// failing the command that carried it (see ADR 0001) — a real failure
+    /// mode against iCloud, which has historically sent malformed FETCH
+    /// sequence numbers under QRESYNC. A `CHANGEDSINCE` fetch that observed
+    /// one or more skips completed `Ok`, but cannot be trusted as a
+    /// complete incremental pull: treat it as this instead, and resync the
+    /// mailbox from scratch rather than risk missing mail.
+    #[error(
+        "{mailbox}: {skipped} untagged response(s) io-imap could not decode were \
+         dropped during an incremental fetch; the result cannot be trusted as complete"
+    )]
+    ResyncIntegrityLost {
+        /// The mailbox the incremental fetch was against.
+        mailbox: String,
+        /// How many undecodable untagged responses were skipped during it.
+        skipped: u64,
+    },
+
     /// The server understood the command and refused it.
     #[error("the server refused {command}: {reason}")]
     Rejected {
@@ -197,7 +217,10 @@ impl BackendError {
 
     /// Whether the mailbox's cached state must be thrown away and refetched.
     pub fn requires_full_resync(&self) -> bool {
-        matches!(self, Self::UidValidityChanged { .. })
+        matches!(
+            self,
+            Self::UidValidityChanged { .. } | Self::ResyncIntegrityLost { .. }
+        )
     }
 
     /// How long the server asked us to wait, when it said so.

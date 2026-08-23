@@ -20,6 +20,7 @@ default = ["imap"]
 imap = [
     "dep:io-imap",
     "dep:io-sasl",
+    "dep:log",
     "dep:rustls",
     "dep:rustls-platform-verifier",
     "dep:tokio-rustls",
@@ -36,6 +37,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 io-imap = { version = "=0.6.0", default-features = false, features = ["client"], optional = true }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rustls-ring"] }
 io-sasl = { version = "=0.1.0", default-features = false, optional = true }
+log = { version = "0.4", features = ["std"], optional = true }
 oo7 = "0.6.0-alpha"
 pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
 postio-model.workspace = true
