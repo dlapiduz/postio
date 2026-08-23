@@ -23,6 +23,7 @@ pango = { version = "0.21.5", features = ["v1_56"] }
 pangocairo = "0.21.5"
 postio-core.workspace = true
 postio-model.workspace = true
+thiserror = "2.0.20"
 
 [build-dependencies]
 glib-build-tools = "0.21.0"
