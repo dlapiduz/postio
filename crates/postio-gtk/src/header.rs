@@ -10,8 +10,8 @@
 //! nothing. The bindings shown are the canvas' — `c` compose, `?` keys, `/`
 //! search — and become overridable when the keymap lands (E6).
 //!
-//! Nothing here is wired to a command yet; the actions arrive with the keymap
-//! and the command bus.
+//! Compose is wired to the `win.compose` action the composer installs; the
+//! rest of the actions arrive with their own beads.
 
 use adw::prelude::*;
 /// How wide the search field is allowed to get, from the canvas.
@@ -37,6 +37,8 @@ pub struct Header {
     /// The search field. The query bar with token chips replaces its innards
     /// in E7.7; this is the field the canvas draws.
     pub search: gtk::Text,
+    /// `Compose c`, wired to the `win.compose` action.
+    pub compose: gtk::Button,
 }
 
 /// Build the header bar.
@@ -66,14 +68,16 @@ pub fn build() -> Header {
     bar.set_title_widget(Some(&gtk::Label::new(None)));
 
     // Packed in reverse: pack_end works outwards from the window controls.
+    let compose = compose_button();
     bar.pack_end(&menu_button());
-    bar.pack_end(&compose_button());
+    bar.pack_end(&compose);
     bar.pack_end(&keys_button());
 
     Header {
         bar,
         sidebar_toggle,
         search,
+        compose,
     }
 }
 
@@ -144,6 +148,11 @@ fn compose_button() -> gtk::Button {
     button.add_css_class("postio-compose");
     button.set_child(Some(&content));
     button.update_property(&[gtk::accessible::Property::Label("Compose a message")]);
+    // The composer installs `win.compose` when it is mounted; naming the
+    // action here rather than taking a callback keeps the button working
+    // whether or not a composer is in the window, and keeps the mouse path
+    // and the `c` key on the one command.
+    button.set_action_name(Some("win.compose"));
     button
 }
 
