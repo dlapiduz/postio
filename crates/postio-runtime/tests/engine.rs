@@ -95,16 +95,15 @@ async fn a_drain_settles_the_rows_it_finds() {
     let message = queue_a_flag_change(&database, &report, inbox.id);
     let _ = message;
 
-    let summary = engine.drain().await.expect("a drain pass");
+    engine.drain().await.expect("a drain pass");
 
-    assert!(
-        !summary.is_empty(),
-        "the queued row was never looked at: {summary:?}"
-    );
-    let connection = database.connection().expect("a connection");
-    let still_pending = OperationQueueRepository::new(&connection)
-        .pending(report.account.id, Utc::now())
-        .expect("the queue reads");
+    // What matters is that the row is settled, not which pass settled it: the
+    // engine drains on its own when the link comes up, so this explicit one
+    // may well find the queue already empty. Before any of this existed, the
+    // row sat pending for ever.
+    let still_pending = with_store(&database, "reading the queue", |connection| {
+        OperationQueueRepository::new(connection).pending(report.account.id, Utc::now())
+    });
     assert!(
         still_pending.is_empty(),
         "the row was left pending after a drain: {still_pending:?}"
@@ -197,18 +196,9 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
         "the server had mail and none of it arrived: {summary:?}"
     );
 
-    let stored = {
-        let connection = database.connection().expect("a connection");
-        postio_storage::repository::MessageRepository::new(&connection)
-            .count(&postio_storage::repository::ListQuery {
-                scope: postio_storage::repository::ListScope::Mailbox(mailbox.id),
-                limit: 0,
-                after: None,
-            })
-            .expect("the count reads")
-    };
+    let stored = stored_in(&database, mailbox.id);
     assert_eq!(
-        stored as usize, summary.inserted,
+        stored, summary.inserted,
         "the pass said it wrote rows the store does not have"
     );
 
@@ -515,16 +505,43 @@ async fn settle(
     last
 }
 
+/// Run `work` against the store, retrying while it is locked.
+///
+/// The engine writes while these tests read and write, and an in-memory
+/// database uses SQLite's *shared cache* — where meeting a writer gives
+/// `SQLITE_LOCKED`, which `busy_timeout` does not cover, unlike the
+/// `SQLITE_BUSY` a real installation would see. A file in WAL mode never hits
+/// this; it is the price of a database that costs nothing to create, and it
+/// belongs in the tests rather than in the pragmas.
+fn with_store<T>(
+    database: &postio_storage::Database,
+    what: &str,
+    work: impl Fn(&postio_storage::PooledConnection) -> postio_storage::Result<T>,
+) -> T {
+    for _ in 0..100 {
+        let connection = database.connection().expect("a connection");
+        match work(&connection) {
+            Ok(value) => return value,
+            Err(_) => {
+                drop(connection);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
+    panic!("the store stayed locked: {what}");
+}
+
 /// How many messages the local store holds for `mailbox`.
 fn stored_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> usize {
-    let connection = database.connection().expect("a connection");
-    postio_storage::repository::MessageRepository::new(&connection)
-        .count(&postio_storage::repository::ListQuery {
-            scope: postio_storage::repository::ListScope::Mailbox(mailbox),
-            limit: 0,
-            after: None,
-        })
-        .expect("the count reads") as usize
+    with_store(database, "counting messages", |connection| {
+        postio_storage::repository::MessageRepository::new(connection)
+            .count(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(mailbox),
+                limit: 0,
+                after: None,
+            })
+            .map(|count| count as usize)
+    })
 }
 
 /// One more message, of the kind `server` holds.
@@ -626,26 +643,25 @@ fn queue_a_flag_change(
     report: &postio_storage::seed::SeedReport,
     mailbox: postio_model::ids::MailboxId,
 ) -> postio_model::ids::MessageId {
-    let connection = database.connection().expect("a connection");
-    let page = postio_storage::repository::MessageRepository::new(&connection)
-        .page(&postio_storage::repository::ListQuery {
-            scope: postio_storage::repository::ListScope::Mailbox(mailbox),
-            limit: 1,
-            after: None,
-        })
-        .expect("the inbox has mail");
-    let message = page.first().expect("at least one message").id;
-    OperationQueueRepository::new(&connection)
-        .enqueue(
+    with_store(database, "queueing a flag change", |connection| {
+        let page = postio_storage::repository::MessageRepository::new(connection).page(
+            &postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(mailbox),
+                limit: 1,
+                after: None,
+            },
+        )?;
+        let message = page.first().expect("the inbox has mail").id;
+        OperationQueueRepository::new(connection).enqueue(
             report.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
                 flags: postio_model::FlagSet::from_iter([postio_model::Flag::Seen]),
             },
             Utc::now(),
-        )
-        .expect("the row queues");
-    message
+        )?;
+        Ok(message)
+    })
 }
 
 /// What the engine announced, drained without blocking.
