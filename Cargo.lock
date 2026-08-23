@@ -56,6 +56,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-channel"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
+dependencies = [
+ "concurrent-queue",
+ "event-listener-strategy",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "async-recursion"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -223,6 +235,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "concurrent-queue"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -246,6 +267,12 @@ checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "crypto-common"
@@ -1663,9 +1690,11 @@ dependencies = [
 name = "postio-core"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "postio-model",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1686,9 +1715,11 @@ name = "postio-imap"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "io-pim-discovery",
  "oo7",
  "pimalaya-stream",
+ "postio-model",
  "serde",
  "serde-xml-rs",
  "thiserror",
@@ -1725,7 +1756,9 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "postio-model",
+ "postio-storage",
  "rusqlite",
+ "tempfile",
  "thiserror",
 ]
 
