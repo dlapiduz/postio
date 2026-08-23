@@ -201,6 +201,157 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* ── The message list's rows (canvas 1b) ─────────────────────────────
+   `crate::row` draws a row in one `snapshot()` rather than out of nested
+   boxes, because it is the most-rendered widget in the application and the
+   budget for a scroll frame is 16ms. Drawing by hand gives up the cascade,
+   so these classes exist to hand it back: the row keeps one invisible probe
+   label, sets these classes on it, and paints with the colour and font GTK
+   resolves. Nothing here is ever displayed — every rule is *read*.
+
+   That is what keeps dark, high contrast and 200% text working in a widget
+   that paints its own pixels, and it is why none of these values may move
+   into Rust. The classes ending in `-edge` and `-ground` carry a border or
+   background token in the `color` property for the same reason: `color` is
+   the one computed value a widget will tell you. */
+.postio-row-sender,
+.postio-row-subject,
+.postio-row-snippet,
+.postio-row-hint {
+  font-family: var(--postio-font-body);
+}
+
+.postio-row-sender {
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-row-sender.unread {
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+.postio-row-sender.selected {
+  color: var(--postio-selected-fg);
+}
+
+.postio-row-subject {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-row-subject.unread {
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+.postio-row-subject.selected {
+  color: var(--postio-selected-fg);
+}
+
+.postio-row-snippet {
+  font-size: 12px;
+  color: var(--postio-faint);
+}
+
+.postio-row-snippet.unread {
+  color: var(--postio-dim);
+}
+
+/* Metadata is mono — the face that makes the list read as an instrument. */
+.postio-row-time,
+.postio-row-badge {
+  font-family: var(--postio-font-mono);
+}
+
+.postio-row-time {
+  font-size: 11px;
+  color: var(--postio-faint);
+}
+
+.postio-row-time.unread {
+  color: var(--postio-dim);
+}
+
+.postio-row-badge {
+  font-size: 10px;
+  color: var(--postio-dim);
+}
+
+/* The avatar chip: Barlow Condensed, and steel once the row is unread, which
+   is what makes an unread run visible down the left edge at a glance. */
+.postio-row-avatar {
+  font-family: var(--postio-font-heading);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--postio-dim);
+}
+
+.postio-row-avatar.unread {
+  color: var(--postio-selected-accent-text);
+}
+
+.postio-row-hint {
+  font-size: 10.5px;
+  color: var(--postio-faint);
+}
+
+/* Borders and grounds, carried in `color` so the probe can report them. */
+.postio-row-edge.hairline {
+  color: var(--postio-hairline);
+}
+
+.postio-row-edge.selected {
+  color: var(--postio-selected-border);
+}
+
+.postio-row-edge.key {
+  color: var(--postio-key-border);
+}
+
+.postio-row-ground.selected {
+  color: var(--postio-selected-bg);
+}
+
+.postio-row-ground.hover {
+  color: var(--postio-hover-bg);
+}
+
+.postio-row-ground.unread {
+  color: var(--postio-selected-bg);
+}
+
+/* The list pane's own header: the folder, its unread count, the sort. */
+.postio-list-header {
+  padding: 16px 18px 12px;
+}
+
+.postio-list-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 20px;
+  color: var(--postio-ink);
+}
+
+.postio-list-meta {
+  font-family: var(--postio-font-mono);
+  font-size: 11.5px;
+  color: var(--postio-dim);
+}
+
+.postio-rows {
+  background: none;
+}
+
+.postio-rows > row {
+  background: none;
+  padding: 0;
+  border: none;
+  outline: none;
+}
+
 .postio-reader {
   background-color: var(--postio-ground);
 }
@@ -213,6 +364,10 @@ button.postio-compose {
    no such role, so severity comes from icon and weight, the same as the
    sidebar's own `.postio-status.error` reaching for `--postio-accent-text`
    rather than inventing a colour. */
+.postio-liststate {
+  background-color: var(--postio-ground);
+}
+
 .postio-liststate-icon {
   color: var(--postio-accent);
 }
