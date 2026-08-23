@@ -202,7 +202,16 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     ///
     /// With `uids`, only those are considered — the `UID EXPUNGE` of RFC 4315,
     /// which is what stops Postio from expunging a message another client
-    /// marked in the same mailbox.
+    /// marked in the same mailbox. A server without that extension cannot
+    /// honour a targeted expunge at all, and declines rather than widening it
+    /// to everything marked `\Deleted`.
+    ///
+    /// **An IMAP server reports the removals as sequence numbers**, not UIDs,
+    /// so a real backend returns an empty list here however much it removed:
+    /// turning a sequence number into a UID needs a map this layer does not
+    /// keep, and a plausible wrong UID is worse than none. Treat a successful
+    /// expunge as "resync this mailbox", and read the returned UIDs only from
+    /// implementations that genuinely know them, such as [`MockBackend`].
     async fn expunge(&self, mailbox: &str, uids: Option<&UidSet>) -> BackendResult<Vec<Uid>>;
 
     /// Uploads a message into a mailbox.

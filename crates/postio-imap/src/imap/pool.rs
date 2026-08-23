@@ -38,7 +38,7 @@ use tokio::time::Instant;
 use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::{AccountKey, SecretStore};
 
-use super::select::Generations;
+use super::selection::Generations;
 use super::{ConnectionSettings, Dispatch, ImapConnector, ImapSession};
 
 /// How many connections a pool opens by default, the watcher included.
@@ -91,7 +91,7 @@ pub const DEFAULT_WATCH_POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// before each of them would double that operation's round trips. Thirty
 /// seconds costs an interactive user at most one extra `SELECT` per mailbox
 /// per half-minute and a backfill nothing at all. See
-/// [`select`](super::select).
+/// [`selection`](super::selection).
 pub const DEFAULT_SELECTION_MAX_AGE: Duration = Duration::from_secs(30);
 
 /// What a piece of work is competing for.
