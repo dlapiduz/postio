@@ -21,14 +21,28 @@
 //! and when the parent turns up it finds the thread that was waiting for it.
 //! The alternative — searching `messages.reference_ids`, which is a
 //! space-separated list — is the mailbox scan this table exists to avoid.
+//!
+//! # What a claim cannot fix: no reference at all
+//!
+//! [`ThreadingRepository::thread`] only ever answers "where does this message
+//! go" from what the index knows *right now*. A message with no `In-Reply-To`
+//! and no `References` at all can only be placed by
+//! [`postio_model::subject::is_reply`]'s subject fallback, and if it arrives
+//! before the messages that share its subject, there is nothing to fall back
+//! to yet — it starts its own thread, alone, and nothing about inserting a
+//! *later* message ever revisits that decision.
+//! [`ThreadingRepository::reconsider`] and
+//! [`ThreadingRepository::rethread_orphans`] are the repair: re-ask the same
+//! question later, for exactly the messages that could not have gotten a
+//! better answer at insertion time. See postio-tn9.2.
 
 use postio_model::{
-    AccountId, Assignment, Message, RfcMessageId, Thread, ThreadCue, ThreadId, ThreadIndex, assign,
-    claimed_ids,
+    AccountId, Assignment, MailboxId, Message, RfcMessageId, Thread, ThreadCue, ThreadId,
+    ThreadIndex, assign, claimed_ids,
 };
 use rusqlite::{Connection, params};
 
-use super::ThreadRepository;
+use super::{MessageRepository, ThreadRepository};
 use crate::error::Result;
 
 /// Files messages into threads.
@@ -79,9 +93,25 @@ impl<'a> ThreadingRepository<'a> {
             connection: &scope,
             account_id: self.account_id,
         };
-
         let assignment = assign(&cue, &index);
-        let threads = ThreadRepository::new(&scope);
+
+        let result = self.apply(&scope, message, &cue, assignment)?;
+        scope.commit()?;
+        Ok(result)
+    }
+
+    /// The write side of [`ThreadingRepository::thread`] and
+    /// [`ThreadingRepository::reconsider`] alike: given an already-decided
+    /// [`Assignment`], create or merge threads as it requires, then file
+    /// `message` into the result and claim its ids.
+    fn apply(
+        &self,
+        connection: &Connection,
+        message: &Message,
+        cue: &ThreadCue,
+        assignment: Assignment,
+    ) -> Result<Threaded> {
+        let threads = ThreadRepository::new(connection);
 
         let (thread_id, created, merged) = match assignment {
             Assignment::New => {
@@ -97,7 +127,7 @@ impl<'a> ThreadingRepository<'a> {
                     // delete — so the other order silently drops every id the
                     // absorbed thread had claimed, and the conversation comes
                     // apart again on the next reply.
-                    self.relink(&scope, *other, into)?;
+                    self.relink(connection, *other, into)?;
                     threads.merge(into, *other)?;
                 }
                 (into, false, absorb)
@@ -105,11 +135,10 @@ impl<'a> ThreadingRepository<'a> {
         };
 
         threads.add_message(thread_id, message.id)?;
-        for id in claimed_ids(&cue) {
-            self.claim(&scope, id, thread_id)?;
+        for id in claimed_ids(cue) {
+            self.claim(connection, id, thread_id)?;
         }
 
-        scope.commit()?;
         Ok(Threaded {
             thread_id,
             created,
@@ -170,6 +199,85 @@ impl<'a> ThreadingRepository<'a> {
         };
         Ok(index.thread_of(id))
     }
+
+    /// Re-derives where `message` belongs against the index as it stands now,
+    /// and merges it into a better thread if one has since appeared.
+    ///
+    /// Only acts when `message` is the sole member of its current thread —
+    /// the signature of a subject-only orphan that started alone. A thread
+    /// with other members got them by the same rule this message did, and
+    /// moving them on a match *this* message's own cue cannot vouch for would
+    /// risk merging two threads that only coincidentally share a subject,
+    /// which is exactly what [`postio_model::threading`]'s `is_reply` guard
+    /// exists to prevent. A no-op, cheaply, whenever that guard applies, or
+    /// when re-deriving lands back on the thread `message` is already in.
+    pub fn reconsider(&self, message: &Message) -> Result<Option<Threaded>> {
+        let Some(current) = message.thread_id else {
+            return Ok(None);
+        };
+
+        let threads = ThreadRepository::new(self.connection);
+        let Some(current_thread) = threads.get(current)? else {
+            return Ok(None);
+        };
+        if current_thread.message_count != 1 {
+            return Ok(None);
+        }
+
+        let cue = ThreadCue::of(message);
+        let scope = super::Scope::open(self.connection)?;
+        // `current` was created *for* this exact message, so its own thread
+        // row necessarily matches `cue`'s subject and would answer every
+        // question `assign` asks right back with itself — a self-match, not
+        // a better one. Excluding it is what makes "nothing better than what
+        // it already has" ([`Assignment::New`]) distinguishable from "still
+        // itself".
+        let index = ExcludingIndex {
+            inner: SqlIndex {
+                connection: &scope,
+                account_id: self.account_id,
+            },
+            exclude: current,
+        };
+        let assignment = assign(&cue, &index);
+        if matches!(assignment, Assignment::New) {
+            return Ok(None);
+        }
+
+        let mut result = self.apply(&scope, message, &cue, assignment)?;
+        // This message was `current`'s only member, so `apply` (via
+        // `add_message`) just emptied it. Fold the now-empty thread away
+        // properly — claims included — rather than leaving a zero-message row
+        // behind for the thread list to have to filter out forever after.
+        self.relink(&scope, current, result.thread_id)?;
+        ThreadRepository::new(&scope).merge(result.thread_id, current)?;
+        result.merged.push(current);
+
+        scope.commit()?;
+        Ok(Some(result))
+    }
+
+    /// Runs [`reconsider`](Self::reconsider) over every message in
+    /// `mailbox_id` that carries no usable reference at all — the subject-only
+    /// orphans arrival order can strand — and returns how many moved.
+    ///
+    /// Meant to run when a mailbox's sync goes idle, not on every insert:
+    /// unlike [`ThreadingRepository::thread`], this scans, and the design this
+    /// crate follows is that adding a message never costs more than its own
+    /// reference chain. See postio-tn9.2.
+    pub fn rethread_orphans(&self, mailbox_id: MailboxId) -> Result<usize> {
+        let messages = MessageRepository::new(self.connection);
+        let mut moved = 0;
+        for id in messages.subject_only_orphans(mailbox_id)? {
+            let Some(message) = messages.get(id)? else {
+                continue;
+            };
+            if self.reconsider(&message)?.is_some() {
+                moved += 1;
+            }
+        }
+        Ok(moved)
+    }
 }
 
 /// The model's [`ThreadIndex`], over SQLite.
@@ -209,5 +317,32 @@ impl ThreadIndex for SqlIndex<'_> {
             return Vec::new();
         };
         rows.filter_map(|row| row.ok().map(ThreadId::new)).collect()
+    }
+}
+
+/// A [`ThreadIndex`] that never answers with `exclude`.
+///
+/// [`ThreadingRepository::reconsider`] asks "does anything *besides* the
+/// thread this message is already in explain it better", and a thread born
+/// from this exact message always matches its own subject — so without this,
+/// [`assign`] would find its own thread first and call the question answered.
+struct ExcludingIndex<'a> {
+    inner: SqlIndex<'a>,
+    exclude: ThreadId,
+}
+
+impl ThreadIndex for ExcludingIndex<'_> {
+    fn thread_of(&self, id: &RfcMessageId) -> Option<ThreadId> {
+        self.inner
+            .thread_of(id)
+            .filter(|found| *found != self.exclude)
+    }
+
+    fn threads_with_subject(&self, subject: &str) -> Vec<ThreadId> {
+        self.inner
+            .threads_with_subject(subject)
+            .into_iter()
+            .filter(|found| *found != self.exclude)
+            .collect()
     }
 }
