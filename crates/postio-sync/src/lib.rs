@@ -27,6 +27,10 @@
 //!   and a hard stop on a refused password.
 //! - [`initial`] enumerates a mailbox for the first time, newest message
 //!   first, so the app feels usable before the sync is done.
+//! - [`resync`] keeps an already-synced mailbox current: QRESYNC/CONDSTORE
+//!   incremental pulls, falling back to [`initial`] for a full re-enumeration
+//!   when the local state cannot answer "what changed" — most importantly
+//!   when `UIDVALIDITY` moves.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -35,6 +39,7 @@ pub mod coalesce;
 pub mod connect;
 pub mod drain;
 pub mod initial;
+pub mod resync;
 pub mod retry;
 
 pub use coalesce::{Plan, Step, coalesce};
@@ -43,4 +48,5 @@ pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
 pub use initial::{
     DEFAULT_BATCH_SIZE, Progress, Report, sync_mailbox, sync_mailbox_with_batch_size,
 };
+pub use resync::{Outcome, resync_mailbox};
 pub use retry::RetryPolicy;
