@@ -26,6 +26,8 @@
 //! the window — which happens on `activate`, after the frontend has built its
 //! own.
 
+mod actions;
+mod commands;
 mod compose;
 mod engine;
 mod feed;
@@ -35,7 +37,9 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
-use postio_core::bridge::{Bridge, EventSink, event_channel, handler_fn};
+use postio_core::bridge::{Bridge, EventSink, event_channel};
+use postio_core::dispatch::Dispatcher;
+use postio_core::state::SharedState;
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -66,14 +70,31 @@ fn main() -> glib::ExitCode {
     }
     timeline.mark(Phase::Styles);
 
-    // The runtime. Nothing is dispatched through it yet — the command bus is
-    // still `postio-agr`'s — but it owns the tokio threads every read is
-    // polled on, so it has to exist before the first one.
-    let runtime = match Bridge::new(handler_fn(|_, _| async {})) {
-        Ok((bridge, _events)) => Some(bridge),
+    // The store first: the command bus writes it, and the bus has to be built
+    // before the runtime that pumps it.
+    let store = open_store();
+
+    // What the user is looking at, as the handlers see it. `commands::mirror`
+    // brings it into step with the window in the instant before a command is
+    // sent; nothing else writes it.
+    let state = SharedState::default();
+    let bus = match &store {
+        Some((database, _)) => {
+            actions::dispatcher(actions::Actions::new(database.clone(), state.clone()))
+        }
+        // No store, so no verb can do anything. An empty bus still answers —
+        // every command comes back as "not wired up in this build" — which is
+        // a sentence on screen rather than a key that does nothing.
+        None => Dispatcher::builder().build(),
+    };
+
+    // The runtime: the tokio threads every read is polled on and every command
+    // is handled on.
+    let (runtime, replies) = match Bridge::new(bus) {
+        Ok((bridge, events)) => (Some(bridge), Some(events)),
         Err(error) => {
             eprintln!("postio: no runtime, so no mail: {error}");
-            None
+            (None, None)
         }
     };
 
@@ -84,7 +105,7 @@ fn main() -> glib::ExitCode {
     // Taken on the first `activate`. `EventStream` is not `Clone` — there is
     // one queue and exactly one reader of it — and `activate` can fire again
     // when a second launch raises the window.
-    let events = std::cell::RefCell::new(Some(events));
+    let streams = std::cell::RefCell::new(vec![Some(events), replies]);
 
     let application = app::build_with(timeline);
 
@@ -93,24 +114,34 @@ fn main() -> glib::ExitCode {
     // connected, which is the whole of the arrangement.
     let wiring = runtime
         .as_ref()
-        .and_then(|bridge| open_store(bridge, &sink));
+        .zip(store)
+        .map(|(bridge, (database, blobs))| Wiring {
+            store: Arc::new(SqliteStore::new(&database)),
+            database,
+            blobs,
+            runtime: bridge.handle(),
+            events: sink.clone(),
+            commands: bridge.commands(),
+        });
     application.connect_activate(move |application| {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
             return;
         };
         if let Some(wiring) = &wiring {
-            let feeds = feed_the_window(&window, wiring);
-            // Everything the engine has to say reaches the panes here: a
-            // mailbox the server disagreed with, a connection that dropped, a
-            // body that arrived. Awaited on the GTK main context, so what the
-            // UI does is take an event off a queue — never wait for one to be
-            // produced.
-            if let (Some(feeds), Some(events)) = (feeds, events.borrow_mut().take()) {
-                glib::spawn_future_local(async move {
-                    while let Some(event) = events.next().await {
-                        feeds.apply(&event);
-                    }
-                });
+            let Some(feeds) = feed_the_window(&window, wiring) else {
+                return;
+            };
+            // Every gesture the window produces from here on reaches a real
+            // handler. Before this line the keymap, the palette and the
+            // selection model all resolved correctly and then handed off to
+            // nothing.
+            commands::install(&window, &feeds, state.clone(), wiring.commands.clone());
+            // Everything either half has to say reaches the panes here: a
+            // mailbox the server disagreed with, a body that arrived, an
+            // archive that landed. Two queues because there are two
+            // producers — the engine and the bus — and one reader each.
+            for stream in streams.borrow_mut().iter_mut().filter_map(Option::take) {
+                commands::drain(&window, &feeds, stream);
             }
         }
     });
@@ -129,6 +160,7 @@ struct Wiring {
     store: Arc<dyn MailStore>,
     runtime: tokio::runtime::Handle,
     events: EventSink,
+    commands: postio_core::bridge::CommandSender,
 }
 
 /// Open the local store, or explain why there is none.
@@ -137,7 +169,7 @@ struct Wiring {
 /// window opens, says it has never synced, and stays usable for everything
 /// that does not need mail. A mail client that will not open is worse than one
 /// with nothing in it.
-fn open_store(bridge: &Bridge, events: &EventSink) -> Option<Wiring> {
+fn open_store() -> Option<(Database, BlobStore)> {
     let path = paths::store_path();
     let database = match Database::open(&path) {
         Ok(database) => database,
@@ -155,13 +187,7 @@ fn open_store(bridge: &Bridge, events: &EventSink) -> Option<Wiring> {
             return None;
         }
     };
-    Some(Wiring {
-        store: Arc::new(SqliteStore::new(&database)),
-        database,
-        blobs,
-        runtime: bridge.handle(),
-        events: events.clone(),
-    })
+    Some((database, blobs))
 }
 
 /// Point the window's panes at the store.
