@@ -1792,6 +1792,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "mail-builder"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c942e8a4b83f9351236c1e531ea9fa0237913d63c7fc36818430e0128a1ddf3"
+
+[[package]]
 name = "mail-parser"
 version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2345,6 +2351,7 @@ name = "postio-model"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "mail-builder",
  "mail-parser",
  "postio-model",
  "serde",
