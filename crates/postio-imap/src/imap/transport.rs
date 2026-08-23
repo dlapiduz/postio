@@ -77,6 +77,15 @@ pub enum TransportError {
         reason: String,
     },
 
+    /// The server accepted something and then said nothing.
+    #[error("{context} timed out after {after:?}")]
+    TimedOut {
+        /// What was being waited for.
+        context: String,
+        /// How long we waited.
+        after: Duration,
+    },
+
     /// The transport cannot do what the protocol asked of it.
     #[error("{0}")]
     Unsupported(String),
@@ -95,6 +104,7 @@ impl From<TransportError> for BackendError {
                 reason,
             },
             TransportError::Io { context, reason } => Self::Io { context, reason },
+            TransportError::TimedOut { context, after } => Self::TimedOut { context, after },
             TransportError::Unsupported(reason) => Self::Protocol { reason },
         }
     }
@@ -112,6 +122,33 @@ pub trait ImapStream: Send + fmt::Debug {
 
     /// Writes every byte. A short write would desynchronize the exchange.
     async fn write_all(&mut self, bytes: &[u8]) -> Result<(), TransportError>;
+
+    /// Reads whatever is available, giving up if nothing arrives for
+    /// `timeout`.
+    ///
+    /// The bound is on *silence*, never on how long an exchange takes. A
+    /// multi-megabyte attachment over a slow link needs minutes and is not a
+    /// failure; a server that accepted a command and went quiet is, and
+    /// costs one of a handful of pooled connections until something says so.
+    /// `Duration::ZERO` waits forever, which is what a watcher parked in
+    /// `IDLE` wants.
+    async fn read_within(
+        &mut self,
+        buf: &mut [u8],
+        timeout: Duration,
+        context: &str,
+    ) -> Result<usize, TransportError> {
+        if timeout.is_zero() {
+            return self.read(buf).await;
+        }
+        match tokio::time::timeout(timeout, self.read(buf)).await {
+            Ok(read) => read,
+            Err(_) => Err(TransportError::TimedOut {
+                context: context.to_owned(),
+                after: timeout,
+            }),
+        }
+    }
 
     /// Wraps this connection in TLS, the `STARTTLS` half the protocol cannot
     /// perform itself.

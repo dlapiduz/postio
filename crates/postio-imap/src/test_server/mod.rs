@@ -55,6 +55,7 @@ mod wire;
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use postio_model::{FlagSet, ModSeq, Uid, UidValidity};
@@ -151,6 +152,18 @@ pub enum Fault {
         /// The command name to fire on.
         during: String,
     },
+    /// Answer, but slowly: the response goes out in pieces, `gap` apart.
+    ///
+    /// The other half of a deadline. A client that bounds how long a command
+    /// may *take* kills this connection; one that bounds how long the server
+    /// may be *silent* keeps it, which is what a large attachment over a slow
+    /// link needs.
+    Trickle {
+        /// The command name to fire on.
+        during: String,
+        /// How long between pieces of the response.
+        gap: Duration,
+    },
     /// Answer `NO`.
     Reject {
         /// The command name to fire on.
@@ -165,6 +178,7 @@ impl Fault {
         let during = match self {
             Self::DropConnection { during }
             | Self::Stall { during }
+            | Self::Trickle { during, .. }
             | Self::Reject { during, .. } => during,
         };
         during.eq_ignore_ascii_case(command)
