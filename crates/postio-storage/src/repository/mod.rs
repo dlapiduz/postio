@@ -23,9 +23,14 @@
 
 mod accounts;
 mod mailboxes;
+mod messages;
 
 pub use accounts::{AccountRepository, IdentityRepository};
 pub use mailboxes::MailboxRepository;
+pub use messages::{
+    BodyBlobs, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope, MessageListRow,
+    MessageRepository, UpsertReport,
+};
 
 use chrono::{DateTime, Utc};
 
