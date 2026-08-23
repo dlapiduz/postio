@@ -31,6 +31,7 @@
 //! touches the network.
 
 mod dispatch;
+mod mailboxes;
 mod pool;
 mod settings;
 mod transport;
@@ -59,6 +60,7 @@ use crate::secret::Password;
 pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };
+pub use self::mailboxes::list_mailboxes;
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
