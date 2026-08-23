@@ -76,14 +76,17 @@ pub enum WatchStrategy {
 }
 
 /// How to find out which mailboxes exist and which are subscribed.
+///
+/// RFC 5258's `LIST … RETURN (SUBSCRIBED)` would collapse both into one round
+/// trip, but `io-imap` does not expose the return options, so it is not a
+/// choice this table can offer. Revisit when it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListingStrategy {
-    /// `LIST` with the RFC 5258 subscription return option: one command.
-    ListExtended,
     /// `LIST` for the folders and `LSUB` for the subscriptions, merged
-    /// locally.
+    /// locally. Two round trips.
     ListAndLsub,
-    /// `LIST` alone; every mailbox is treated as subscribed.
+    /// `LIST` alone. Every folder is reported as subscribed, because the
+    /// server was never asked otherwise.
     ListOnly,
 }
 
@@ -158,11 +161,16 @@ impl Dispatch {
     }
 
     /// How to list mailboxes.
-    pub fn listing_strategy(&self) -> ListingStrategy {
-        if self.supports(Capability::ListExtended) {
-            ListingStrategy::ListExtended
-        } else {
+    ///
+    /// The second round trip is only worth paying for when subscription state
+    /// is going to be used: `LSUB` exists to answer "which folders did the
+    /// user choose to see", and a listing that shows everything has no
+    /// question to ask.
+    pub fn listing_strategy(&self, subscribed_only: bool) -> ListingStrategy {
+        if subscribed_only {
             ListingStrategy::ListAndLsub
+        } else {
+            ListingStrategy::ListOnly
         }
     }
 
@@ -254,9 +262,19 @@ mod tests {
         );
         assert_eq!(dispatch.resync_strategy(), ResyncStrategy::FullUidScan);
         assert_eq!(dispatch.watch_strategy(), WatchStrategy::Poll);
-        assert_eq!(dispatch.listing_strategy(), ListingStrategy::ListAndLsub);
         assert!(!dispatch.reports_destination_uid());
         assert!(dispatch.extensions_to_enable().is_empty());
+    }
+
+    #[test]
+    fn lsub_is_only_paid_for_when_subscription_state_is_wanted() {
+        let dispatch = icloud();
+
+        assert_eq!(
+            dispatch.listing_strategy(true),
+            ListingStrategy::ListAndLsub
+        );
+        assert_eq!(dispatch.listing_strategy(false), ListingStrategy::ListOnly);
     }
 
     #[test]
