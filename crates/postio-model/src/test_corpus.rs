@@ -48,6 +48,12 @@
 
 use std::borrow::Cow;
 
+use chrono::{DateTime, Utc};
+
+use crate::ids::{AccountId, MailboxId};
+use crate::message::Message;
+use crate::mime;
+
 /// Path of the corpus directory, relative to the workspace root.
 ///
 /// Useful in error messages and in tests that want to walk the directory rather
@@ -258,6 +264,28 @@ impl Fixture {
     pub fn text_lossy(&self) -> Cow<'static, str> {
         String::from_utf8_lossy(self.bytes)
     }
+
+    /// Parses this fixture into the domain [`Message`], via
+    /// [`mime::parse`](crate::mime::parse).
+    ///
+    /// A thin convenience so threading, search and reader tests do not each
+    /// invoke the parser and [`ParsedMessage::into_message`](crate::mime::ParsedMessage::into_message)
+    /// by hand. `account_id` and `mailbox_id` are both `1`, and `received_at`
+    /// is a fixed sentinel: none of these fixtures came from a real mailbox,
+    /// and a caller that cares about scoping or receipt time is not using
+    /// this corpus for that.
+    pub fn parse(&self) -> Message {
+        mime::parse(self.bytes).into_message(
+            AccountId::new(1),
+            MailboxId::new(1),
+            sentinel_received_at(),
+        )
+    }
+}
+
+/// A fixed, arbitrary receive time for [`Fixture::parse`].
+fn sentinel_received_at() -> DateTime<Utc> {
+    DateTime::from_timestamp(1_700_000_000, 0).expect("a valid fixed unix timestamp")
 }
 
 macro_rules! corpus {

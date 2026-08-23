@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use postio_model::test_corpus::{self, Category};
+use postio_model::{AccountId, MailboxId, mime};
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
@@ -467,7 +468,49 @@ fn the_corpus_mentions_nothing_from_a_real_mailbox() {
     }
 }
 
+// ------------------------------------------------------ the parsed convenience
+
+#[test]
+fn every_fixture_parses_through_the_convenience_without_panicking() {
+    for fixture in test_corpus::all() {
+        let message = fixture.parse();
+        assert_eq!(message.account_id, AccountId::new(1));
+        assert_eq!(message.mailbox_id, MailboxId::new(1));
+        assert!(
+            !message.is_persisted(),
+            "{}: a fixture is never a stored row",
+            fixture.name()
+        );
+    }
+}
+
+#[test]
+fn the_convenience_agrees_with_parsing_by_hand() {
+    let fixture = test_corpus::load("plain-text-simple");
+
+    let message = fixture.parse();
+    let by_hand = mime::parse(fixture.bytes()).into_message(
+        message.account_id,
+        message.mailbox_id,
+        message.received_at,
+    );
+
+    assert_eq!(message, by_hand);
+}
+
 // ------------------------------------------------------------ documentation
+
+#[test]
+fn the_readme_documents_the_parse_convenience() {
+    let readme = corpus_dir().join("README.md");
+    let text = std::fs::read_to_string(&readme)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", readme.display()));
+    assert!(
+        text.contains("Fixture::parse"),
+        "the parsed-message convenience is undocumented in {}",
+        readme.display()
+    );
+}
 
 #[test]
 fn the_readme_documents_every_fixture() {
