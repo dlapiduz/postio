@@ -81,6 +81,23 @@ headerbar.postio-header button.toggle:checked {
   color: var(--postio-color-neutral-600);
 }
 
+/* Canvas 2b: the field wears a steel outline while it has the keyboard,
+   so the one box being *active* is unmistakable from across the window. */
+.postio-search.open {
+  border-color: var(--postio-accent);
+  box-shadow: var(--postio-shadow-md);
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}
+
+/* Shown in place of the magnifier once a prefix has chosen a mode. Mono,
+   because it is a character the user typed, not a picture. */
+.postio-search-marker {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7841rem;
+  color: var(--postio-accent);
+}
+
 .postio-search-icon {
   color: var(--postio-accent);
   -gtk-icon-size: 16px;
@@ -417,15 +434,20 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
-/* ── The Ctrl+K palette ──────────────────────────────────────────────
-   A plate floating over the workspace: the same hairline-and-surface
-   vocabulary as the search field, sized so the list reads as one object
-   rather than as a dialog. No transition — the canvas' motion budget
-   applies to an overlay as much as to a pane, and a palette that fades in
-   is a palette you type into before it is there. */
-.postio-palette {
-  margin-top: 72px;
-  min-width: 520px;
+/* ── The box's results ───────────────────────────────────────────────
+   `postio-cfd.1` folded the command palette and the query bar into one
+   box in the header; this is the plate its results hang from, directly
+   under the field. The same hairline-and-surface vocabulary as the field
+   itself, sized so the list reads as one object rather than as a dialog.
+   No transition — the canvas' motion budget applies to an overlay as much
+   as to a pane, and a plate that fades in is one you type into before it
+   is there. */
+.postio-finder {
+  /* Under the 52px header, and lined up with the field's left edge: the
+     30px sidebar toggle, the canvas' 16px gap, and 8px of header padding. */
+  margin-top: 4px;
+  margin-left: 62px;
+  min-width: 420px;
   padding: 8px;
   border: 1px solid var(--postio-hairline);
   border-radius: var(--postio-radius-md);
@@ -433,12 +455,11 @@ button.postio-compose {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.postio-palette-list {
+.postio-finder-list {
   background: none;
-  margin-top: 6px;
 }
 
-.postio-palette-row {
+.postio-finder-row {
   min-height: 34px;
   padding: 0 8px;
   border-radius: var(--postio-radius-sm);
@@ -446,22 +467,34 @@ button.postio-compose {
 
 /* The 3px accent edge the message list uses for its selected row: one
    selection idiom across the application, not two. */
-.postio-palette-row:selected {
+.postio-finder-row:selected {
   background-color: var(--postio-selected-strong-bg);
   box-shadow: inset 3px 0 var(--postio-selected-border);
   color: var(--postio-selected-fg);
 }
 
-.postio-palette-title {
+.postio-finder-title {
   font-size: 0.8863rem;
   color: var(--postio-ink);
 }
 
-.postio-palette-row:selected .postio-palette-title {
+.postio-finder-row:selected .postio-finder-title {
   color: var(--postio-selected-fg);
 }
 
-.postio-palette-empty {
+/* The key that runs it, or the folder's unread count — mono either way,
+   the same face the focused row's key hints use. */
+.postio-finder-cap {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
+.postio-finder-row:selected .postio-finder-cap {
+  color: var(--postio-selected-accent-text);
+}
+
+.postio-finder-empty {
   padding: 16px 8px;
   font-size: 0.8523rem;
   color: var(--postio-faint);

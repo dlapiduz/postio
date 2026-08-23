@@ -30,11 +30,10 @@ use postio_core::{CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
 use crate::feed::{Feeds, Folders, MailboxSource, MessageSource};
+use crate::finder::{Finder, Mode};
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
-use crate::palette::Palette;
-use crate::search::SearchBar;
 use crate::settings::SettingsPanel;
 use crate::shell::Shell;
 use crate::sidebar::{Sidebar, SyncStatus};
@@ -62,12 +61,12 @@ mod imp {
         pub sidebar: OnceCell<Sidebar>,
         pub list_state: OnceCell<ListStateView>,
         pub list: OnceCell<MessageListView>,
-        pub palette: OnceCell<Palette>,
+        pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
-        pub search: OnceCell<SearchBar>,
+
         pub settings: OnceCell<SettingsPanel>,
-        /// The pane that had the keyboard when search opened.
-        pub before_search: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
+        /// The pane that had the keyboard when the box opened.
+        pub before_finder: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -197,6 +196,23 @@ impl Window {
         // one to show is chosen when they arrive — the folder the window was
         // restored into, or the inbox. Opening into no folder at all would
         // be asking the user a question before saying hello.
+        // `#` in the box jumps to a folder, and it can only offer folders it
+        // has been told about.
+        folders.connect_loaded({
+            let finder = self.finder();
+            move |mailboxes| finder.set_mailboxes(mailboxes)
+        });
+        self.finder().connect_folder(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[strong]
+            show,
+            move |id| {
+                window.sidebar().select(id);
+                show(id);
+            }
+        ));
+
         folders.connect_loaded({
             let show = show.clone();
             let feed = feed.clone();
@@ -294,22 +310,19 @@ impl Window {
             ),
         );
 
-        // The palette floats over the workspace rather than replacing it: the
-        // canvas shows the panes still visible behind it, and a palette that
-        // blanked the window would lose the context the user is choosing in.
-        let palette = Palette::new();
-        palette.set_visible(false);
+        // The results hang under the header's field rather than replacing
+        // the workspace: the canvas shows the panes still visible behind
+        // them, and a surface that blanked the window would lose the context
+        // the user is choosing in.
+        let finder = Finder::new();
+        finder.attach(&header.search);
         let cheatsheet = CheatSheet::new();
         cheatsheet.set_visible(false);
-        let search = SearchBar::new();
-        search.set_visible(false);
-        search.set_valign(gtk::Align::Start);
         let settings = SettingsPanel::new();
         settings.set_visible(false);
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&shell));
-        overlay.add_overlay(&palette);
-        overlay.add_overlay(&search);
+        overlay.add_overlay(&finder);
         overlay.add_overlay(&cheatsheet);
         overlay.add_overlay(&settings);
 
@@ -329,9 +342,8 @@ impl Window {
         let _ = self.imp().sidebar.set(sidebar);
         let _ = self.imp().list_state.set(list_state);
         let _ = self.imp().list.set(list_view);
-        let _ = self.imp().palette.set(palette);
+        let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
-        let _ = self.imp().search.set(search);
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         self.imp().context.set(Some(Context::List));
@@ -341,36 +353,45 @@ impl Window {
 
     /// Builds the resolver from the registry defaults and starts listening.
     fn install_keyboard(&self) {
-        let (resolver, problems) =
-            Resolver::from_commands(&postio_core::Keymap::resolve(&Default::default()));
+        let keymap = postio_core::Keymap::resolve(&Default::default());
+        let (resolver, problems) = Resolver::from_commands(&keymap);
         report(&problems);
         let _ = self.imp().resolver.set(std::cell::RefCell::new(resolver));
+        // The registry's own bindings, so the box and the cheat sheet print
+        // keys from the first frame rather than from whenever `config.toml`
+        // gets around to being read. `apply_keymap` replaces them if it
+        // says something different.
+        self.finder().set_keymap(keymap.clone());
+        self.cheatsheet().set_keymap(keymap);
 
-        let palette = self.palette();
-        palette.connect_activated(glib::clone!(
+        let finder = self.finder();
+        finder.connect_command(glib::clone!(
             #[weak(rename_to = window)]
             self,
             move |id| {
-                window.close_palette();
+                window.close_finder();
                 window.dispatch(id);
             }
         ));
-        palette.connect_dismissed(glib::clone!(
+        // Arriving somewhere is the end of asking where to go, so the box
+        // gets out of the way — the same as running a command. Search is the
+        // exception: its results *are* the message list, so the field stays
+        // up with the query still in it.
+        finder.connect_folder(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move || window.close_palette()
+            move |_| window.close_finder()
+        ));
+        finder.connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.close_finder()
         ));
 
         self.cheatsheet().connect_dismissed(glib::clone!(
             #[weak(rename_to = window)]
             self,
             move || window.close_cheatsheet()
-        ));
-
-        self.search().connect_dismissed(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            move || window.close_search()
         ));
 
         self.settings().connect_dismissed(glib::clone!(
@@ -439,14 +460,13 @@ impl Window {
     /// Acts on the commands that are about the window, and passes on the rest.
     fn run(&self, id: CommandId) {
         match id {
-            CommandId::CommandPalette => self.open_palette(),
+            CommandId::CommandPalette => self.open_finder(Mode::Command),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
             CommandId::Settings => self.toggle_settings(),
-            CommandId::Search => self.open_search(),
+            CommandId::Search => self.open_finder(Mode::Search),
             // One `Esc` closes one overlay, nearest first.
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
-            CommandId::Back if self.palette().is_visible() => self.close_palette(),
-            CommandId::Back if self.search().is_visible() => self.close_search(),
+            CommandId::Back if self.finder().is_open() => self.close_finder(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
             _ => self.dispatch(id),
         }
@@ -469,13 +489,13 @@ impl Window {
     }
 
     fn key_context(&self) -> KeyContext {
-        if self.palette().is_visible() {
-            return KeyContext::Palette;
+        // The box owns the keyboard while it is open, and which of its two
+        // contexts depends on the mode: `Enter` runs a command in one and
+        // searches in the other.
+        match self.finder().context() {
+            Some(context) => KeyContext::from(context),
+            None => KeyContext::from(self.context()),
         }
-        if self.search().is_visible() {
-            return KeyContext::Search;
-        }
-        KeyContext::from(self.context())
     }
 }
 
@@ -486,10 +506,10 @@ fn report(problems: &[String]) {
 }
 
 impl Window {
-    /// The `Ctrl+K` overlay.
-    pub fn palette(&self) -> Palette {
+    /// The one box: search mail, run a command, jump to a folder.
+    pub fn finder(&self) -> Finder {
         self.imp()
-            .palette
+            .finder
             .get()
             .expect("built in constructed")
             .clone()
@@ -506,7 +526,13 @@ impl Window {
     /// something different in a thread than in the list.
     pub fn set_context(&self, context: Context) {
         self.imp().context.set(Some(context));
-        self.palette().set_context(context);
+        // The box filters its commands by the context it was opened *over*,
+        // never by the one it owns while it is open. Forwarding this while it
+        // is up would empty it the instant it appeared: `Context::Search` has
+        // no message actions in it, which is the whole point of contexts.
+        if !self.finder().is_open() {
+            self.finder().set_context(context);
+        }
     }
 
     /// Called with every command a key press resolves to.
@@ -514,20 +540,38 @@ impl Window {
         self.imp().commands.borrow_mut().push(Box::new(handler));
     }
 
-    /// Opens the palette over the workspace, filtered to the current context.
-    pub fn open_palette(&self) {
-        let palette = self.palette();
-        palette.set_context(self.context());
-        palette.set_visible(true);
-        palette.focus_search();
+    /// Opens the box in `mode`, remembering what to come back to.
+    ///
+    /// No animation and no dialog: the field is typeable the instant it has
+    /// the keyboard, which is what the canvas means by search being
+    /// navigation rather than a mode you enter.
+    pub fn open_finder(&self, mode: Mode) {
+        let finder = self.finder();
+        if !finder.is_open() {
+            self.close_cheatsheet();
+            self.close_settings();
+            // Remembered before anything moves, so `Esc` puts the keyboard
+            // back where the user left it rather than wherever the box
+            // happened to leave it.
+            self.imp()
+                .before_finder
+                .set(Some((self.context(), self.shell().focused_pane())));
+        }
+        finder.set_context(self.context());
+        finder.open(mode);
+        self.set_context(mode.context());
     }
 
-    /// Closes the palette and gives the keyboard back to the workspace.
-    pub fn close_palette(&self) {
-        let palette = self.palette();
-        palette.set_visible(false);
-        if let Some(resolver) = self.imp().resolver.get() {
-            resolver.borrow_mut().clear_pending();
+    /// Closes the box and restores the view it opened over.
+    pub fn close_finder(&self) {
+        let finder = self.finder();
+        if !finder.is_open() {
+            return;
+        }
+        finder.close();
+        if let Some((context, pane)) = self.imp().before_finder.take() {
+            self.set_context(context);
+            self.shell().set_focused_pane(pane);
         }
         self.shell().grab_focus();
     }
@@ -556,7 +600,7 @@ impl Window {
     /// Shows the cheat sheet over the workspace.
     pub fn open_cheatsheet(&self) {
         // Two overlays at once is one too many.
-        self.close_palette();
+        self.close_finder();
         let sheet = self.cheatsheet();
         sheet.set_visible(true);
         sheet.grab_focus();
@@ -565,55 +609,6 @@ impl Window {
     /// Hides the cheat sheet.
     pub fn close_cheatsheet(&self) {
         self.cheatsheet().set_visible(false);
-        self.shell().grab_focus();
-    }
-
-    /// The `/` query bar.
-    pub fn search(&self) -> SearchBar {
-        self.imp()
-            .search
-            .get()
-            .expect("built in constructed")
-            .clone()
-    }
-
-    /// Opens the query bar over the list, remembering what to come back to.
-    ///
-    /// No animation and no dialog: the bar is typeable the instant it appears,
-    /// which is what the canvas means by search being navigation rather than a
-    /// mode you enter.
-    pub fn open_search(&self) {
-        if self.search().is_visible() {
-            self.search().focus_entry();
-            return;
-        }
-        self.close_palette();
-        self.close_cheatsheet();
-
-        // Remembered before anything moves, so `Esc` puts the keyboard back
-        // where the user left it rather than wherever the bar happened to
-        // leave it.
-        self.imp()
-            .before_search
-            .set(Some((self.context(), self.shell().focused_pane())));
-
-        let bar = self.search();
-        bar.set_visible(true);
-        self.set_context(Context::Search);
-        bar.focus_entry();
-    }
-
-    /// Closes the query bar and restores the view it opened over.
-    pub fn close_search(&self) {
-        let bar = self.search();
-        if !bar.is_visible() {
-            return;
-        }
-        bar.set_visible(false);
-        if let Some((context, pane)) = self.imp().before_search.take() {
-            self.set_context(context);
-            self.shell().set_focused_pane(pane);
-        }
         self.shell().grab_focus();
     }
 
@@ -629,9 +624,8 @@ impl Window {
     /// Shows the settings panel over the workspace.
     pub fn open_settings(&self) {
         // Only one overlay at a time.
-        self.close_palette();
+        self.close_finder();
         self.close_cheatsheet();
-        self.close_search();
         self.settings().set_visible(true);
         self.settings().grab_focus();
     }
@@ -660,7 +654,7 @@ impl Window {
             let problems = resolver.borrow_mut().apply_commands(&keymap);
             report(&problems);
         }
-        self.palette().set_keymap(keymap.clone());
+        self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap);
     }
 

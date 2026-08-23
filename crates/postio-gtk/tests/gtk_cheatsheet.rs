@@ -108,14 +108,14 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
         .expect("archive");
     assert_eq!(archive.binding.as_deref(), Some("y"));
 
-    // Opening the sheet puts the palette away, and vice versa.
-    window.open_palette();
+    // Opening the sheet puts the box away, and vice versa.
+    window.open_finder(postio_gtk::finder::Mode::Command);
     settle();
     window.open_cheatsheet();
     settle();
     assert!(window.cheatsheet().is_visible());
     assert!(
-        !window.palette().is_visible(),
+        !window.finder().is_open(),
         "two overlays at once is one too many"
     );
 
