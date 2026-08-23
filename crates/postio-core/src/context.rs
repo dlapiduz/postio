@@ -143,6 +143,15 @@ impl ContextSet {
     }
 
     /// Whether the set holds no context at all.
+    /// Whether the two sets share a context.
+    ///
+    /// Two commands can carry the same binding as long as this is false: `a`
+    /// archives in the list and types a letter in the composer.
+    pub const fn intersects(self, other: ContextSet) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    /// Whether this set names no context at all.
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
