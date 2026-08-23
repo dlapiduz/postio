@@ -8,6 +8,23 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["imap"]
+
+# The io-imap-backed implementation, and everything it drags in: the protocol
+# crate, its SASL companion, and our own TLS stack. On by default.
+#
+# Turn it off and what is left is the MailBackend seam, its mock, autoconfig
+# discovery and the keyring. That is all `postio-sync` needs, and it is what
+# keeps a pre-1.0 protocol crate — and the CI rule that bans io-imap from
+# `postio-gtk` — out of everything above this one. See ADR 0001.
+imap = [
+    "dep:io-imap",
+    "dep:io-sasl",
+    "dep:rustls",
+    "dep:rustls-platform-verifier",
+    "dep:tokio-rustls",
+]
+
 # Test-only: lets `MockMailbox::corpus` seed mailboxes from the shared `.eml`
 # fixtures. Off by default so nothing in a normal build carries them; the
 # self dev-dependency below turns it on for this crate's own test suite.
@@ -16,13 +33,18 @@ test-corpus = ["postio-model/test-corpus"]
 [dependencies]
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+io-imap = { version = "=0.6.0", default-features = false, features = ["client"], optional = true }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rustls-ring"] }
+io-sasl = { version = "=0.1.0", default-features = false, optional = true }
 oo7 = "0.6.0-alpha"
 pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
 postio-model.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt", "macros", "process", "time", "sync"] }
+tokio = { version = "1.53.1", features = ["rt", "macros", "process", "time", "sync", "net", "io-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
 url = "2.5.8"
 zeroize = "1.9.0"
 
