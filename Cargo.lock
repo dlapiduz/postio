@@ -2304,6 +2304,7 @@ dependencies = [
  "ammonia",
  "async-channel",
  "chrono",
+ "criterion",
  "gio",
  "glib",
  "glib-build-tools",
@@ -2408,8 +2409,10 @@ dependencies = [
  "chrono",
  "postio-imap",
  "postio-model",
+ "postio-smtp",
  "postio-storage",
  "rusqlite",
+ "secrecy",
  "thiserror",
  "tokio",
 ]

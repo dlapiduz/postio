@@ -367,6 +367,20 @@ impl MessageList {
         self.imp().pages.borrow().values().map(Vec::len).sum()
     }
 
+    /// Which resident page holds `message`, if any.
+    ///
+    /// The cheap half of reacting to a change: a message that changed
+    /// somewhere off screen needs nothing done, and one that is on screen
+    /// costs a refetch of its page rather than of the folder.
+    pub fn page_of(&self, message: MessageId) -> Option<u32> {
+        self.imp()
+            .pages
+            .borrow()
+            .iter()
+            .find(|(_, rows)| rows.iter().any(|row| row.id() == Some(message)))
+            .map(|(page, _)| *page)
+    }
+
     /// Which pages are resident, lowest first. For tests and diagnostics.
     pub fn resident_pages(&self) -> Vec<u32> {
         let mut pages: Vec<u32> = self.imp().pages.borrow().keys().copied().collect();
