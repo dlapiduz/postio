@@ -708,14 +708,14 @@ async fn a_slow_but_progressing_fetch_is_not_killed_by_the_deadline() {
     let pool = pool_with(
         &server,
         PoolConfig {
-            command_timeout: Duration::from_millis(300),
+            command_timeout: Duration::from_millis(500),
             ..PoolConfig::default()
         },
     )
     .await;
     server.inject(Fault::Trickle {
         during: "FETCH".to_owned(),
-        gap: Duration::from_millis(50),
+        gap: Duration::from_millis(100),
     });
 
     let mut sink = VecSink::new();
@@ -734,7 +734,7 @@ async fn a_slow_but_progressing_fetch_is_not_killed_by_the_deadline() {
 
     assert_eq!(sink.as_slice(), corpus("attachment-pdf").as_slice());
     assert!(
-        started.elapsed() > Duration::from_millis(300),
+        started.elapsed() > Duration::from_millis(500),
         "the fetch outlived the deadline it never tripped"
     );
 }
@@ -1096,13 +1096,13 @@ async fn idle_re_arms_before_the_server_gets_impatient() {
     // simply stops appearing.
     let server = TestServer::builder()
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
-        .idle_limit(Duration::from_millis(150))
+        .idle_limit(Duration::from_millis(500))
         .start()
         .await;
     let pool = pool_with(
         &server,
         PoolConfig {
-            watch_refresh: Duration::from_millis(50),
+            watch_refresh: Duration::from_millis(100),
             ..PoolConfig::default()
         },
     )
@@ -1112,8 +1112,10 @@ async fn idle_re_arms_before_the_server_gets_impatient() {
     let (events, _) = tokio::join!(
         idle(&pool, "INBOX", Duration::from_secs(5), &token),
         async {
-            // Well past the point where a single IDLE would have been dropped.
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            // Well past the point where a single IDLE would have been
+            // dropped, and far enough from the refresh interval that a
+            // loaded machine cannot blur the two.
+            tokio::time::sleep(Duration::from_millis(1_200)).await;
             server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
         }
     );
