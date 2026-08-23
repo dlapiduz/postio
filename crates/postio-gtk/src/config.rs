@@ -71,6 +71,7 @@ pub fn install_at(window: &Window, path: &Path) {
     report(service.status().errors());
     window.apply_keymap(service.keymap().clone());
     window.apply_ui(&service.config().ui);
+    window.list().set_density(service.config().ui.density);
     window.settings().load(path);
 
     window.connect_command({
@@ -118,6 +119,7 @@ pub fn install_at(window: &Window, path: &Path) {
             }
             if update.changed.ui {
                 window.apply_ui(&service.config().ui);
+                window.list().set_density(service.config().ui.density);
             }
             // Whichever save this was — the panel's own debounced write, or
             // `$EDITOR`'s — a file that loads without error is what "Revert
