@@ -1,0 +1,51 @@
+Message-ID: <20260305T090000.pgpsigned@example.org>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Jonas Vek <jonas.vek@example.org>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: [harbour-dev] Signed: interlock state table, revision D
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="=_pgp_sig_ab19"
+
+--=_pgp_sig_ab19
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+The state table as agreed, so it is on the record and signed.
+
+  OPEN      -> CLOSING   on tide-high or manual
+  CLOSING   -> CLOSED    on limit-switch
+  CLOSING   -> OPEN      on obstruction (reader stays disabled)
+  CLOSED    -> OPENING   on tide-low and lamps-lit
+  OPENING   -> OPEN      on limit-switch
+
+The signature covers the part above exactly as transmitted, including
+its headers and its transfer encoding. Canonicalization mistakes here
+are the classic reason a signature that is fine reports as broken.
+
+Jonas
+
+--=_pgp_sig_ab19
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: OpenPGP digital signature
+Content-Disposition: attachment; filename="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+JVBERi0xLjcKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyA+PgplbmRv
+YmoKe7ZM7iYjdY9GhNAcD51UJQ8+Sfopa9urURzSCEt0DaFoFwvGOIqHh2GxBrRr
+ouLdCWgeUn/+FSMlsdogEe/P2Q9FzZ5rkuB/byp4TByEkJUwvSWqLX8Fm0OszTho
+aqERVp/ydhs+YHdt/YTkP8c9TVMQwAJ8Lo0TfoALUG/XYUkFztpOJernb2ZijHxC
+q8kFeUJNWgJoi4sZifRoWKTwgURH5SZb0lVnYz3vFB2vE708vS2yCiThA1mU6IBW
+Pi65Rsxy/l6Kil8boAysAAn9dUz4wQpod217RldHmAKJ+/Es6ePWcIVmV0xFRURr
+MWYtJPhnYkUQEPMb83GwMWs4KQ55l640kMlPQRX43D5WLeVwy4C6Ubqra2x3xsg0
+QMNhOSDuhl1Wk0cOpod0MeU0nSMNbRJx3xzjcV6m4A1lfZkd0UheTNykP3u3UQxD
+B1pVOmWMalIBRVsNDnH4E7BG0W5IBTYkBNw3GrS1pA8hfw03Bz7Cb0EE03xZiBAF
+8/8Jao6FDkINGy8TNxU8H1SCxUAx5BoO2jtLN/5JKA5/hkFeeifmNA9BJxuCz9Qj
+/UV9ebDcciWkyMMGJxVANp28eU8sTb4UgS4fIghFbCA0pzUJW4fKL5SNOzvqTFhK
+FYGxWJJWllq0whcm49YEBU+H7UyVRiJ3OWizLspOcAp0cmFpbGVyCjw8IC9TaXpl
+IDEgPj4Kc3RhcnR4cmVmCjAKJSVFT0YK
+=Xq7X
+-----END PGP SIGNATURE-----
+
+--=_pgp_sig_ab19--

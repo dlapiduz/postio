@@ -1,0 +1,31 @@
+Return-Path: <harbour-dev-bounces@lists.example.org>
+Delivered-To: quinn.abara@example.net
+Message-ID: <harbour-dev.20260302T131500.e5@lists.example.org>
+Date: Mon, 02 Mar 2026 13:15:00 +0000
+From: Jonas Vek <jonas.vek@example.org>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: Re: [harbour-dev] Tide gate interlock: proposal for revision D
+In-Reply-To: <harbour-dev.20260302T114930.d4@lists.example.org>
+Sender: harbour-dev-bounces@lists.example.org
+List-Id: Harbour redevelopment engineering <harbour-dev.lists.example.org>
+List-Help: <mailto:harbour-dev-request@lists.example.org?subject=help>
+List-Post: <mailto:harbour-dev@lists.example.org>
+List-Subscribe: <https://lists.example.org/harbour-dev/join>,
+	<mailto:harbour-dev-join@lists.example.org>
+List-Unsubscribe: <https://lists.example.org/harbour-dev/leave>,
+	<mailto:harbour-dev-leave@lists.example.org>
+List-Archive: <https://lists.example.org/archives/harbour-dev>
+Precedence: list
+X-Mailman-Version: 2.1.39
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Sent from a client that emits In-Reply-To and no References at all, which
+is the single most common way real threads arrive half-linked. A threading
+pass that only reads References will drop this message out of the tree.
+
+For what it is worth: reading the contactor is fine, but it is a fact
+about lamps, not about gates, and we will regret conflating them.
+
+Jonas

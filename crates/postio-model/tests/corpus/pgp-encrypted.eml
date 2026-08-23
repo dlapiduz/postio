@@ -1,0 +1,45 @@
+Message-ID: <20260305T101500.pgpencrypted@example.org>
+Date: Thu, 05 Mar 2026 10:15:00 +0000
+From: Jonas Vek <jonas.vek@example.org>
+To: Ada Norwood <ada.norwood@example.com>
+Subject: [encrypted] Commissioning credentials
+MIME-Version: 1.0
+Content-Type: multipart/encrypted;
+	protocol="application/pgp-encrypted"; boundary="=_pgp_enc_5d02"
+
+--=_pgp_enc_5d02
+Content-Type: application/pgp-encrypted
+Content-Description: PGP/MIME version identification
+
+Version: 1
+
+--=_pgp_enc_5d02
+Content-Type: application/octet-stream; name="encrypted.asc"
+Content-Description: OpenPGP encrypted message
+Content-Disposition: inline; filename="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+
+JVBERi0xLjcKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyA+PgplbmRv
+YmoKaE1oFBIjmL0w386yD/FuAzKi8YB99gO5cPgj/gkS518yBaWsU+oidWyuggoP
+qJp7P/1wmCTHcPF4urTWfhxjV0Sk/kRsUSstK4VIYgGZ3fNtFbqwJUJNKSdziK5k
+amZPXJPR3CEJkuU984G6IhEYa0R6L8gfRXhhN0f/hiEm0EcO5oB0YQA5nUsUjhIu
+9injCCUv4DOr0pkVqXleGNeBPzLdagwv3f9VFg/Nan9M8lsy/Rr4J8w70QDVVjY+
+3lk3e2TupAGHxA1zmJ/CCrVR0ypUURB4+ZQJVVT2DhT5OC9AlW48BZ5nxW9uZRpg
+6yhLH2kyKGACu0ELfbjmGsH+J3kzSNRi/sp9Idx9chFGVcMg5h5ARLKReWTw/r4t
+LosfZC7ebGNBzDU1OkjKAjq6O1xhdVghT/axShwnllYQvxdiJI8EDjxM7RtrJyI4
+2DWzD92XcFYdyulXuJNuC5Z6D37cupw1fyylc154ehBKqCsrSOSIbNruIRxLokZf
+yZwHKsvBNG/XS10ej5zSYVnxoyH9vKBMQkBZBaa0HiAQBP8kkgLMBM2JFQaF9CoZ
+6fIbbEJ/uFuKoZF+Zyj2ZKuU9xJ732RIJsXNElTegkR6iZM4yY3QFebxyTt2YM4Q
+OivvTAG2/GVj4YVMG7vaf6eYC04xRugOBhEBOYm7pj81qedTR+mUG0G8PTaF7DJl
+qP2DHIQLAGGS3zlqopl+J3Pu336e1yxnOTX1UkrPimPSmft+uDoYHLQ8cROOWlZn
+ptrXUgLfxCD/Lq1TrcXiAhRNcywwNDANjQipWWZeLkbcTc8InGNcBgSGZQf+Lzoa
+effrWjpZSAe8I+F/EAUGY/4nx04/wfQ09h0daxdrkgCreWMNkQlgF9xuGVK8rt5V
+Uki/KO1bjBk80tVs4NrqGWyx2xvapHgnBMdRS2m7tjf6kLcSUZAkRn2HjWbN3UJi
+HYFTXSmKkA5ID4lWYIuOL3Tfr0FEv7xEGRtFQV3Smmg5x8sNfBuoGjUmwVS2fmZV
+GxWnI0tKVEisbf1JnBryMNllQ148t8B+Vuz5SMz0PhejEp8GFY/sZZBftQp0cmFp
+bGVyCjw8IC9TaXplIDEgPj4Kc3RhcnR4cmVmCjAKJSVFT0YK
+=9dQ2
+-----END PGP MESSAGE-----
+
+--=_pgp_enc_5d02--

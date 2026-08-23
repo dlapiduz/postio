@@ -1,0 +1,36 @@
+Message-ID: <20260214T083000.alternative@example.com>
+Date: Sat, 14 Feb 2026 08:30:00 +0000
+From: Ada Norwood <ada.norwood@example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Two views of the same short note
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_alt_1cb4f0e2a7"
+
+This is a multi-part message in MIME format. Clients that understand MIME
+never show this preamble.
+
+--=_alt_1cb4f0e2a7
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+The plain part says the meeting moved to 11:00 and the room is B2.
+
+That is the whole message. A reader that prefers text/plain should show
+exactly this and nothing else.
+
+--=_alt_1cb4f0e2a7
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html>
+  <body style=3D"font-family: Barlow, sans-serif; color: #1c2126;">
+    <p>The <strong>HTML part</strong> says the meeting moved to
+      <em>11:00</em> and the room is <code>B2</code>.</p>
+    <p style=3D"color: #5980a6;">A reader that prefers text/html should show
+      this part and never both.</p>
+  </body>
+</html>
+
+--=_alt_1cb4f0e2a7--
+
+This epilogue is after the closing boundary and must be discarded.

@@ -1,0 +1,23 @@
+Message-ID: <20260304T093000.malformed@example.com>
+Date: Not A Real Date At All
+From: broken.from@example.com <broken.from@example.com>>
+To: Quinn Abara <quinn.abara@example.net>, , <>, "unclosed quote <x@example.com>
+Subject:No space after the colon
+Subject: A second, duplicate Subject header
+This-Line-Has-No-Colon-At-All
+X-Empty-Value:
+: no field name before the colon
+X-Duplicate: first
+X-Duplicate: second
+X-Control-Chars: value with a vertical tab  and a form feed  inside
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii; boundary=
+Content-Transfer-Encoding: 7bit
+Content-Length: 99999
+
+Every line of the header block above is wrong in a different way, and a
+parser is expected to recover from all of them: keep what it can parse,
+discard what it cannot, and never fail the message. Note in particular
+the duplicate Subject (the first occurrence wins), the unparseable Date
+(fall back to the Received date or to the internal date), and the empty
+boundary parameter on a non-multipart Content-Type.

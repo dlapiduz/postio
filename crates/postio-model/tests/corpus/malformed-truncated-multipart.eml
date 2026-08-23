@@ -1,0 +1,24 @@
+Message-ID: <20260304T111500.truncated@example.com>
+Date: Wed, 04 Mar 2026 11:15:00 +0000
+From: Site Office <site-office@example.com>
+To: Ada Norwood <ada.norwood@example.com>
+Subject: Truncated multipart (delivery was cut short)
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_trunc_c4"
+
+--=_trunc_c4
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+The first part is complete and must still be readable.
+
+--=_trunc_c4
+Content-Type: application/octet-stream; name="survey-part.bin"
+Content-Disposition: attachment; filename="survey-part.bin"
+Content-Transfer-Encoding: base64
+
+TmluZXR5IHBlcmNlbnQgb2YgdGhpcyBhdHRhY2htZW50IGFycml2ZWQgYW5kIHRoZW4gdGhl
+IGNvbm5lY3Rpb24gZHJvcHBlZC4gVGhlcmUgaXMgbm8gY2xvc2luZyBib3VuZGFyeSBhZnRl
+ciB0aGlzIHBhcnQ7IHRoZSBtZXNzYWdlIGp1c3Qgc3RvcHMuIEEgcGFyc2VyIG11c3Qgbm90
+IGhhbmcgb3IgcGFuaWMsIGFuZCBpdCBtdXN0IHN0aWxsIHN1cmZhY2UgdGhlIGZpcnN0IHBh
+cnQgdG8gdGhlIHJlYWRlciwgZmxhZ2dpbmcgdGhlIHJlc3Q

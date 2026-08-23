@@ -1,0 +1,57 @@
+Message-ID: <20260217T091011.nested@example.com>
+Date: Tue, 17 Feb 2026 09:10:11 +0000
+From: Ada Norwood <ada.norwood@example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Layout draft (three levels of MIME)
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_outer_mixed_3a"
+
+--=_outer_mixed_3a
+Content-Type: multipart/alternative; boundary="=_middle_alt_7c"
+
+--=_middle_alt_7c
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Draft attached. The plain alternative is inside the alternative part,
+which is itself the first part of the mixed container.
+
+--=_middle_alt_7c
+Content-Type: multipart/related; boundary="=_inner_rel_f1"
+
+--=_inner_rel_f1
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+<p>Draft attached. The marker below lives in the related part:</p>
+<p><img src="cid:marker.f1@example.com" width="8" height="8" alt="" /></p>
+</body></html>
+
+--=_inner_rel_f1
+Content-Type: image/png; name="marker.png"
+Content-ID: <marker.f1@example.com>
+Content-Disposition: inline; filename="marker.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAA00lEQVR4nAHIADf/AKnILE/S9cGo
+ior++wE7GBepcRnDVgCP1wBa8MSsa60GvuLUUnN4VTBRFanV5y4Xos8AxZRcfGNlXUg6lZzrRZpI
+VNDhx64GrxzHAD4S9OyaHSCkkva+Y6NqYD27GaB33ozdvwBEzIzl79W4M+o7ltu4JXiitFHdpLZS
+xbcABiEkjUSNF1ZCRAZTFiuQFpyJSJSO/rSvANpwvMN4RT1rmgvsyzvcqKhTwXanZmqKpwDGG1Sl
+av210/IrKkMTmMBiuflJPT7MJ5/fG2LQODyDAAAAAABJRU5ErkJggg==
+
+--=_inner_rel_f1--
+
+--=_middle_alt_7c--
+
+--=_outer_mixed_3a
+Content-Type: text/plain; charset=us-ascii; name="layout-notes.txt"
+Content-Disposition: attachment; filename="layout-notes.txt"
+Content-Transfer-Encoding: 7bit
+
+North entrance, revision C.
+- Reader moved 400mm toward the hinge side.
+- Second reader retained.
+- Signage still unresolved.
+
+--=_outer_mixed_3a--

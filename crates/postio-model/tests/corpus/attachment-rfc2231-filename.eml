@@ -1,0 +1,50 @@
+Message-ID: <20260219T112233.rfc2231@example.com>
+Date: Thu, 19 Feb 2026 11:22:33 +0000
+From: "Bergstrom, Tove" <tove.bergstrom@example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Filename parameter torture
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_mixed_2231_51ac"
+
+--=_mixed_2231_51ac
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Three attachments, three different ways of spelling a filename:
+RFC 2231 continuation, RFC 2231 with charset and language, and the old
+RFC 2047 encoded-word abuse that some clients still emit.
+
+--=_mixed_2231_51ac
+Content-Type: application/octet-stream;
+	name*0*=utf-8''%C3%85ngstr%C3%B6m%20site%20survey%20;
+	name*1*=%E2%80%94%20revision%20C%20;
+	name*2*=(final).bin
+Content-Disposition: attachment;
+	filename*0*=utf-8''%C3%85ngstr%C3%B6m%20site%20survey%20;
+	filename*1*=%E2%80%94%20revision%20C%20;
+	filename*2*=(final).bin
+Content-Transfer-Encoding: base64
+
+Y29udGludWF0aW9uIHBhcmFtZXRlciBwYXlsb2FkXG5jb250aW51YXRpb24gcGFyYW1ldGVyIHBh
+eWxvYWRcbmNvbnRpbnVhdGlvbiBwYXJhbWV0ZXIgcGF5bG9hZFxuY29udGludWF0aW9uIHBhcmFt
+ZXRlciBwYXlsb2FkXG5jb250aW51YXRpb24gcGFyYW1ldGVyIHBheWxvYWRcbmNvbnRpbnVhdGlv
+biBwYXJhbWV0ZXIgcGF5bG9hZFxuY29udGludWF0aW9uIHBhcmFtZXRlciBwYXlsb2FkXG5jb250
+aW51YXRpb24gcGFyYW1ldGVyIHBheWxvYWRcbg==
+
+--=_mixed_2231_51ac
+Content-Type: text/plain; charset=iso-8859-1
+Content-Disposition: attachment;
+	filename*=iso-8859-1'sv'r%E4kneskap.txt
+Content-Transfer-Encoding: 7bit
+
+Charset-and-language filename parameter, single segment.
+
+--=_mixed_2231_51ac
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment;
+	filename="=?utf-8?B?bcOlbmFkc3JhcHBvcnQudHh0?="
+Content-Transfer-Encoding: 7bit
+
+Encoded-word inside a filename parameter. Not legal, widely emitted.
+
+--=_mixed_2231_51ac--

@@ -1,0 +1,32 @@
+Return-Path: <harbour-dev-bounces@lists.example.org>
+Delivered-To: quinn.abara@example.net
+Message-ID: <harbour-dev.20260302T101207.c3@lists.example.org>
+Date: Mon, 02 Mar 2026 10:12:07 +0000
+From: "Bergstrom, Tove" <tove.bergstrom@example.com>
+To: Harbour redevelopment engineering <harbour-dev@lists.example.org>
+Subject: Re: [harbour-dev] Tide gate interlock: proposal for revision D
+In-Reply-To: <harbour-dev.20260302T081200.a1@lists.example.org>
+References: <harbour-dev.20260302T081200.a1@lists.example.org>
+Sender: harbour-dev-bounces@lists.example.org
+List-Id: Harbour redevelopment engineering <harbour-dev.lists.example.org>
+List-Help: <mailto:harbour-dev-request@lists.example.org?subject=help>
+List-Post: <mailto:harbour-dev@lists.example.org>
+List-Subscribe: <https://lists.example.org/harbour-dev/join>,
+	<mailto:harbour-dev-join@lists.example.org>
+List-Unsubscribe: <https://lists.example.org/harbour-dev/leave>,
+	<mailto:harbour-dev-leave@lists.example.org>
+List-Archive: <https://lists.example.org/archives/harbour-dev>
+Precedence: list
+X-Mailman-Version: 2.1.39
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Replying to the root rather than to Quinn, so this is a sibling and not
+a grandchild — worth getting right in the thread view.
+
+(1) is uncontroversial. (3) I would like to write down properly this
+time, because "wired directly, as now" is doing a lot of work in that
+sentence.
+
+Tove

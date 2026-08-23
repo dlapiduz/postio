@@ -1,0 +1,22 @@
+Message-ID: <20260220T120000.utf7@example.org>
+Date: Fri, 20 Feb 2026 12:00:00 +0000
+From: Legacy Gateway <gateway@relay.example.org>
+To: Ada Norwood <ada.norwood@example.com>
+Subject: =?UTF-7?Q?UTF-7_test:_M+APg-ller_and_+ZeVetQ-?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-7
+Content-Transfer-Encoding: 7bit
+X-Original-Mailbox: INBOX.Arkiv.M+AOQ-rz
+X-Gateway-Note: mailbox name above is IMAP modified UTF-7
+
+Hello Ada,
+
+This message is encoded as UTF-7, which almost nothing sends any more
+but which IMAP still uses for mailbox names. The next line is the
+interesting part:
+
+  M+APg-ller, Gr+APwA3w-e, +ZeVnLIqe, and a literal plus sign: +-
+
+If a decoder mishandles UTF-7 it usually produces the raw +-AOk- style
+escapes instead of letters, which is exactly the failure worth testing.
+

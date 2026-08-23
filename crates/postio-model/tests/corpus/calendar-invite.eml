@@ -1,0 +1,102 @@
+Message-ID: <20260309T081500.invite@example.com>
+Date: Mon, 09 Mar 2026 08:15:00 +0000
+From: "Bergstrom, Tove" <tove.bergstrom@example.com>
+To: Ada Norwood <ada.norwood@example.com>, Quinn Abara <quinn.abara@example.net>
+Subject: Invitation: Interlock revision D sign-off @ Thu 12 Mar 2026 14:00
+	(Europe/Stockholm)
+MIME-Version: 1.0
+Content-Class: urn:content-classes:calendarmessage
+Content-Type: multipart/mixed; boundary="=_cal_outer_11"
+
+--=_cal_outer_11
+Content-Type: multipart/alternative; boundary="=_cal_alt_22"
+
+--=_cal_alt_22
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Interlock revision D sign-off
+Thursday 12 March 2026, 14:00-15:00 (Europe/Stockholm)
+Quay office, room B2
+
+--=_cal_alt_22
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<html><body><h3>Interlock revision D sign-off</h3>
+<p><strong>When:</strong> Thu 12 Mar 2026 14:00-15:00 (Europe/Stockholm)<br />
+<strong>Where:</strong> Quay office, room B2</p></body></html>
+
+--=_cal_alt_22
+Content-Type: text/calendar; charset=utf-8; method=REQUEST
+Content-Transfer-Encoding: 7bit
+
+BEGIN:VCALENDAR
+PRODID:-//Example Corp//Harbour Scheduler 3.2//EN
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:REQUEST
+BEGIN:VTIMEZONE
+TZID:Europe/Stockholm
+BEGIN:STANDARD
+DTSTART:19701025T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:19700329T020000
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:9c31f0aa-4d2e-4f77-9a41-6b0d2c8e5a10@example.com
+DTSTAMP:20260309T081500Z
+DTSTART;TZID=Europe/Stockholm:20260312T140000
+DTEND;TZID=Europe/Stockholm:20260312T150000
+SUMMARY:Interlock revision D sign-off
+LOCATION:Quay office\, room B2
+DESCRIPTION:Thirty minutes on the state table\, thirty on the manual\n
+ override wiring. Bring the signed copy.
+ORGANIZER;CN=Bergstrom\, Tove:mailto:tove.bergstrom@example.com
+ATTENDEE;CN=Ada Norwood;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE
+ :mailto:ada.norwood@example.com
+ATTENDEE;CN=Quinn Abara;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE
+ :mailto:quinn.abara@example.net
+SEQUENCE:0
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+END:VEVENT
+END:VCALENDAR
+
+--=_cal_alt_22--
+
+--=_cal_outer_11
+Content-Type: application/ics; name="invite.ics"
+Content-Disposition: attachment; filename="invite.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSClBST0RJRDotLy9FeGFtcGxlIENvcnAvL0hhcmJvdXIgU2NoZWR1bGVy
+IDMuMi8vRU4KVkVSU0lPTjoyLjAKQ0FMU0NBTEU6R1JFR09SSUFOCk1FVEhPRDpSRVFVRVNUCkJF
+R0lOOlZUSU1FWk9ORQpUWklEOkV1cm9wZS9TdG9ja2hvbG0KQkVHSU46U1RBTkRBUkQKRFRTVEFS
+VDoxOTcwMTAyNVQwMzAwMDAKVFpPRkZTRVRGUk9NOiswMjAwClRaT0ZGU0VUVE86KzAxMDAKUlJV
+TEU6RlJFUT1ZRUFSTFk7QllEQVk9LTFTVTtCWU1PTlRIPTEwCkVORDpTVEFOREFSRApCRUdJTjpE
+QVlMSUdIVApEVFNUQVJUOjE5NzAwMzI5VDAyMDAwMApUWk9GRlNFVEZST006KzAxMDAKVFpPRkZT
+RVRUTzorMDIwMApSUlVMRTpGUkVRPVlFQVJMWTtCWURBWT0tMVNVO0JZTU9OVEg9MwpFTkQ6REFZ
+TElHSFQKRU5EOlZUSU1FWk9ORQpCRUdJTjpWRVZFTlQKVUlEOjljMzFmMGFhLTRkMmUtNGY3Ny05
+YTQxLTZiMGQyYzhlNWExMEBleGFtcGxlLmNvbQpEVFNUQU1QOjIwMjYwMzA5VDA4MTUwMFoKRFRT
+VEFSVDtUWklEPUV1cm9wZS9TdG9ja2hvbG06MjAyNjAzMTJUMTQwMDAwCkRURU5EO1RaSUQ9RXVy
+b3BlL1N0b2NraG9sbToyMDI2MDMxMlQxNTAwMDAKU1VNTUFSWTpJbnRlcmxvY2sgcmV2aXNpb24g
+RCBzaWduLW9mZgpMT0NBVElPTjpRdWF5IG9mZmljZVwsIHJvb20gQjIKREVTQ1JJUFRJT046VGhp
+cnR5IG1pbnV0ZXMgb24gdGhlIHN0YXRlIHRhYmxlXCwgdGhpcnR5IG9uIHRoZSBtYW51YWxcbgog
+b3ZlcnJpZGUgd2lyaW5nLiBCcmluZyB0aGUgc2lnbmVkIGNvcHkuCk9SR0FOSVpFUjtDTj1CZXJn
+c3Ryb21cLCBUb3ZlOm1haWx0bzp0b3ZlLmJlcmdzdHJvbUBleGFtcGxlLmNvbQpBVFRFTkRFRTtD
+Tj1BZGEgTm9yd29vZDtST0xFPVJFUS1QQVJUSUNJUEFOVDtQQVJUU1RBVD1ORUVEUy1BQ1RJT047
+UlNWUD1UUlVFCiA6bWFpbHRvOmFkYS5ub3J3b29kQGV4YW1wbGUuY29tCkFUVEVOREVFO0NOPVF1
+aW5uIEFiYXJhO1JPTEU9UkVRLVBBUlRJQ0lQQU5UO1BBUlRTVEFUPU5FRURTLUFDVElPTjtSU1ZQ
+PVRSVUUKIDptYWlsdG86cXVpbm4uYWJhcmFAZXhhbXBsZS5uZXQKU0VRVUVOQ0U6MApTVEFUVVM6
+Q09ORklSTUVEClRSQU5TUDpPUEFRVUUKRU5EOlZFVkVOVApFTkQ6VkNBTEVOREFSCg==
+
+--=_cal_outer_11--

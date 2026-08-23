@@ -1,0 +1,9 @@
+Message-ID: <20260211T070000.headersonly@example.com>
+Date: Wed, 11 Feb 2026 07:00:00 +0000
+From: Automated Reports <reports@builds.example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Nightly build 4412: no changes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+X-Report-Status: unchanged

@@ -1,0 +1,15 @@
+Message-ID: <20260220T140000.mislabeled@example.com>
+Date: Fri, 20 Feb 2026 14:00:00 +0000
+From: Marketing Desk <desk@example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Smart quotes that arent latin-1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=iso-8859-1
+Content-Transfer-Encoding: 8bit
+
+The header says iso-8859-1, but the body is really windows-1252: the
+bytes below fall in the C1 control range that latin-1 leaves undefined.
+
+“Curly quotes”, an em dash — like this, an ellipsis…, a bullet • and a
+trademark™. Strict latin-1 decoding turns these into control characters;
+every real client silently treats iso-8859-1 as windows-1252 instead.

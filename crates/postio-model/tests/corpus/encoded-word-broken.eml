@@ -1,0 +1,16 @@
+Message-ID: <20260221T101010.encodedword.broken@example.com>
+Date: Sat, 21 Feb 2026 10:10:10 +0000
+From: =?utf-8?Q?Unterminated_Name <broken.from@example.com>
+To: =?x-unknown-charset?Q?Mystery_Charset?= <mystery@example.com>,
+	=?utf-8?B?bm90IHZhbGlkIGJhc2U2NCEhIQ?= <badb64@example.com>
+Subject: =?utf-8?Q?Half_encoded =?utf-8?B?4paIIHRydW5jYXRlZA?=
+X-Weird-Header: =?utf-8?Z?unknown_encoding_letter?=
+X-Very-Long-Encoded: =?utf-8?Q?this_encoded_word_is_far_longer_than_the_seventy_five_character_limit_that_RFC_2047_imposes_on_a_single_encoded_word_and_must_still_not_crash_anything?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Every encoded word in the headers above is broken in a different way:
+unterminated, unknown charset, invalid base64 payload, an unknown
+encoding letter, and one that violates the 75-character limit. A decoder
+must degrade to showing the raw text rather than failing the message.

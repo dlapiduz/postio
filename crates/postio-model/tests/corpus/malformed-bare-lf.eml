@@ -1,0 +1,25 @@
+Message-ID: <20260304T101500.barelf@example.com>
+Date: Wed, 04 Mar 2026 10:15:00 +0000
+From: Old Unix Tool <cron@tools.example.com>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Bare LF line endings, no CR anywhere
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_barelf_7f"
+
+--=_barelf_7f
+Content-Type: text/plain; charset=us-ascii
+
+This entire file uses bare LF rather than CRLF, including the boundary
+delimiters. Anything written against a strict CRLF reading of RFC 5322
+will fail to find the body, or fail to find the boundary, or both.
+
+Local tools that append to mbox files produce this constantly.
+
+--=_barelf_7f
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: attachment; filename="cron.log"
+
+00:15 job started
+00:15 job finished
+
+--=_barelf_7f--
