@@ -33,6 +33,7 @@
 //!   mailbox is never loaded into memory.
 //! - [`keymap`] — the resolver behind every key press: sequences like `g g`,
 //!   per-context meanings for `Esc`, and the rule that typing always wins.
+//! - [`reader`] — the reading pane: a hardened `WebView` for message bodies.
 //! - [`palette`] — the `Ctrl+K` overlay, generated from the command registry
 //!   so every command is reachable without memorizing a key.
 //! - [`cheatsheet`] — the `?` overlay, generated from the same table, so the
@@ -64,6 +65,7 @@ pub mod header;
 pub mod keymap;
 pub mod list;
 pub mod palette;
+pub mod reader;
 pub mod resources;
 pub mod search;
 pub mod shell;
