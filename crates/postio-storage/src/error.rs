@@ -22,6 +22,22 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// A blob key is not a digest of the right shape. Nothing is looked up:
+    /// an id from a corrupt row must not be able to name a path of its own
+    /// choosing.
+    #[error("`{id}` is not a valid blob key")]
+    InvalidBlobId {
+        /// The offending key.
+        id: String,
+    },
+
+    /// The blob store has no blob under this key.
+    #[error("no blob stored under `{id}`")]
+    BlobNotFound {
+        /// The key that was looked up.
+        id: String,
+    },
+
     /// A migration's SQL failed. That migration was rolled back whole and the
     /// database is still at the last version that committed.
     #[error("migration {version} ({name}) failed: {source}")]
