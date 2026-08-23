@@ -49,6 +49,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
+use postio_core::{Context, ContextSet, registry};
 
 /// How long a half-typed sequence stays pending before it is forgotten.
 ///
@@ -513,6 +514,25 @@ impl KeyContext {
     }
 }
 
+impl From<Context> for KeyContext {
+    /// The runtime's context, as the resolver names it.
+    ///
+    /// One-to-one. [`KeyContext::Global`] has no counterpart on purpose: core
+    /// spells "everywhere" as `ContextSet::ANY` over the six real contexts,
+    /// and collapsing that to a single fallback entry is
+    /// [`Keymap::from_commands`]'s job, not a variant core has to carry.
+    fn from(context: Context) -> Self {
+        match context {
+            Context::List => Self::List,
+            Context::Thread => Self::Thread,
+            Context::Reader => Self::Reader,
+            Context::Composer => Self::Composer,
+            Context::Search => Self::Search,
+            Context::Palette => Self::Palette,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The table
 // ---------------------------------------------------------------------------
@@ -588,6 +608,46 @@ impl Keymap {
             .collect()
     }
 
+    /// Builds the whole binding table from the command registry.
+    ///
+    /// This is where the canvas's default binding set becomes something the
+    /// resolver can act on. `commands` is [`postio_core::Keymap`], which has
+    /// already resolved `[keys]` overrides onto the registry and dropped
+    /// collisions — so the defaults live in the registry as data, exactly once,
+    /// and the user's file wins before this is ever called.
+    ///
+    /// A command reachable in every context is bound once in
+    /// [`KeyContext::Global`] rather than six times, so a fallback context can
+    /// still claim the key for something more specific.
+    ///
+    /// Returns the table and whatever could not be parsed. A binding this build
+    /// cannot read costs its command a key and is reported; it never stops the
+    /// application, which would leave the user with no way to fix it.
+    pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
+        let mut keymap = Self::new();
+        let mut problems = Vec::new();
+
+        for spec in registry::all() {
+            for binding in commands.bindings(spec.id) {
+                let contexts: Vec<KeyContext> = if spec.contexts == ContextSet::ANY {
+                    vec![KeyContext::Global]
+                } else {
+                    spec.contexts.iter().map(KeyContext::from).collect()
+                };
+                for context in contexts {
+                    if let Err(error) = keymap.bind(context, binding, spec.id.as_str()) {
+                        problems.push(format!(
+                            "`{binding}` cannot be used for `{}`: {error}",
+                            spec.id
+                        ));
+                    }
+                }
+            }
+        }
+
+        (keymap, problems)
+    }
+
     fn lookup(&self, context: KeyContext, pressed: &[Chord], in_text_entry: bool) -> Match<'_> {
         let mut prefix = false;
         for candidate in context.chain() {
@@ -660,6 +720,24 @@ impl Resolver {
             pending: Vec::new(),
             expires_at: None,
         }
+    }
+
+    /// A resolver over the registry defaults with `[keys]` already applied.
+    ///
+    /// The companion to [`Keymap::from_commands`], returning whatever could
+    /// not be honoured so the caller can put it on the settings validity line.
+    pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
+        let (keymap, problems) = Keymap::from_commands(commands);
+        (Self::new(keymap), Self::all_problems(commands, problems))
+    }
+
+    fn all_problems(
+        commands: &postio_core::Keymap,
+        mut parse_problems: Vec<String>,
+    ) -> Vec<String> {
+        let mut problems = commands.problems().to_vec();
+        problems.append(&mut parse_problems);
+        problems
     }
 
     /// Wraps a keymap with a different pending-sequence timeout.
