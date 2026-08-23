@@ -185,6 +185,27 @@ pub struct BodyBlobs {
     pub headers: Option<BlobId>,
 }
 
+/// One message still missing all or part of its body.
+///
+/// Everything the backfill scheduler needs to turn a row into a fetch: which
+/// message, the mailbox path to ask the server for it under, and the sort key
+/// it queues by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackfillCandidate {
+    /// The local row.
+    pub message_id: MessageId,
+    /// The mailbox it is in.
+    pub mailbox_id: MailboxId,
+    /// That mailbox's path on the server, for the `FETCH` the backend issues.
+    pub mailbox_path: String,
+    /// The server's identifier for the message.
+    pub uid: Uid,
+    /// `RFC822.SIZE`, as the header fetch reported it.
+    pub size: u64,
+    /// When the server received it. The backlog's sort key.
+    pub received_at: DateTime<Utc>,
+}
+
 /// Reads and writes [`Message`] rows.
 #[derive(Debug)]
 pub struct MessageRepository<'a> {
@@ -557,6 +578,65 @@ impl<'a> MessageRepository<'a> {
         }
         Ok(())
     }
+
+    /// Messages in `mailbox_id` still missing all or part of their body,
+    /// newest first and windowed to `limit` — what a cold start, or a resync
+    /// that just finished, seeds the backfill scheduler with.
+    ///
+    /// Scoped to one mailbox because that is how the caller always has this
+    /// question: `postio-sync`'s initial and incremental syncs are already
+    /// mailbox at a time, and `idx_messages_body_state` is a partial index on
+    /// exactly `(mailbox_id, received_at DESC) WHERE body_state <> 'full'`, so
+    /// this is a seek, never a scan.
+    ///
+    /// A message with no `UID` yet is not a candidate: there is nothing to
+    /// issue a `FETCH` against until the server has assigned one.
+    pub fn needing_backfill(
+        &self,
+        mailbox_id: MailboxId,
+        limit: u32,
+    ) -> Result<Vec<BackfillCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+                    mailboxes.path
+               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+              WHERE messages.mailbox_id = ?1
+                AND messages.body_state <> 'full'
+                AND messages.uid IS NOT NULL
+                AND messages.deleted_locally = 0
+              ORDER BY messages.received_at DESC
+              LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![mailbox_id.get(), limit], |row| {
+            read_backfill_candidate(row, mailbox_id)
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// One message's backfill candidate, if it still needs (part of) its body.
+    ///
+    /// For the interactive lane: the reading pane knows only which message was
+    /// opened, not which mailbox it lives in or what the server calls it, so
+    /// this looks both up rather than asking the caller to already know them.
+    /// `None` covers both "already has a full body" and "not there any more" —
+    /// either way there is nothing to fetch.
+    pub fn backfill_candidate(&self, message_id: MessageId) -> Result<Option<BackfillCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+                    mailboxes.path, messages.mailbox_id
+               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+              WHERE messages.id = ?1
+                AND messages.body_state <> 'full'
+                AND messages.uid IS NOT NULL
+                AND messages.deleted_locally = 0",
+        )?;
+        let mut rows = statement.query([message_id.get()])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let mailbox_id = MailboxId::new(row.get(5)?);
+        Ok(Some(read_backfill_candidate(row, mailbox_id)?))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -831,6 +911,24 @@ fn find_by_uid(
     Ok(match rows.next()? {
         Some(row) => Some(MessageId::new(row.get(0)?)),
         None => None,
+    })
+}
+
+/// Reads a [`BackfillCandidate`] from a row of `(id, uid, size, received_at,
+/// mailbox_path)`, in that order — the shared column shape of
+/// [`MessageRepository::needing_backfill`] and
+/// [`MessageRepository::backfill_candidate`].
+fn read_backfill_candidate(
+    row: &Row<'_>,
+    mailbox_id: MailboxId,
+) -> rusqlite::Result<BackfillCandidate> {
+    Ok(BackfillCandidate {
+        message_id: MessageId::new(row.get(0)?),
+        mailbox_id,
+        uid: Uid::new(row.get::<_, i64>(1)? as u32),
+        size: row.get::<_, i64>(2)? as u64,
+        received_at: from_millis(row.get(3)?),
+        mailbox_path: row.get(4)?,
     })
 }
 

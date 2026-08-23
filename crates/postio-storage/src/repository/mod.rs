@@ -49,8 +49,8 @@ pub use threads::{
 };
 
 pub use messages::{
-    BodyBlobs, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope, MessageListRow,
-    MessageRepository, UpsertReport,
+    BackfillCandidate, BodyBlobs, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,
+    MessageListRow, MessageRepository, UpsertReport,
 };
 
 use chrono::{DateTime, Utc};
