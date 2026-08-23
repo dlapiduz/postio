@@ -44,7 +44,7 @@ impl<'a> MailboxRepository<'a> {
     /// Inserts a mailbox and its sync-state row, assigning its id.
     pub fn create(&self, mailbox: &mut Mailbox) -> Result<MailboxId> {
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
 
         transaction.execute(
             "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
@@ -82,7 +82,7 @@ impl<'a> MailboxRepository<'a> {
     pub fn update(&self, mailbox: &Mailbox) -> Result<()> {
         let id = require_persisted(mailbox.id.get(), "mailbox")?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
 
         let changed = transaction.execute(
             "UPDATE mailboxes

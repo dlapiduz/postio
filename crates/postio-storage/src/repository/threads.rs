@@ -250,7 +250,7 @@ impl<'a> ThreadRepository<'a> {
     /// abandoned thread that still claims the message would show a count the
     /// drill-in cannot produce.
     pub fn add_message(&self, thread_id: ThreadId, message_id: MessageId) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         let previous = thread_of(&transaction, message_id)?;
 
         let changed = transaction.execute(
@@ -274,7 +274,7 @@ impl<'a> ThreadRepository<'a> {
 
     /// Takes a message out of whatever thread it is in.
     pub fn remove_message(&self, message_id: MessageId) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         let previous = thread_of(&transaction, message_id)?;
         transaction.execute(
             "UPDATE messages SET thread_id = NULL WHERE id = ?1",
@@ -301,7 +301,7 @@ impl<'a> ThreadRepository<'a> {
         if keep == absorb {
             return self.recompute(keep);
         }
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::open(self.connection)?;
         transaction.execute(
             "UPDATE messages SET thread_id = ?1 WHERE thread_id = ?2",
             params![keep.get(), absorb.get()],
