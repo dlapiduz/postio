@@ -34,7 +34,7 @@ fn events_cover_the_repaint_surface() {
             message: MessageId::new(3),
         },
         Event::SelectionChanged {
-            messages: vec![MessageId::new(3)],
+            selection: postio_core::state::Selection::These(vec![MessageId::new(3)]),
         },
         Event::ContextChanged {
             context: Context::Reader,

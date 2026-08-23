@@ -20,7 +20,10 @@ fn message(id: i64) -> MessageId {
 }
 
 fn selection(state: &AppState) -> (Vec<MessageId>, Option<MessageId>) {
-    (state.selection().to_vec(), state.focus())
+    (
+        state.selection().ids().unwrap_or_default().to_vec(),
+        state.focus(),
+    )
 }
 
 /// A state parked in the inbox with three messages selected and the middle one
@@ -72,7 +75,9 @@ fn switching_mailboxes_drops_a_selection_that_is_no_longer_visible() {
     assert!(state.selection().is_empty());
     assert_eq!(state.focus(), None);
     assert!(
-        events.contains(&Event::SelectionChanged { messages: vec![] }),
+        events.contains(&Event::SelectionChanged {
+            selection: postio_core::state::Selection::default()
+        }),
         "{events:?}"
     );
 }
@@ -124,7 +129,7 @@ fn drilling_into_a_thread_and_back_restores_the_exact_position() {
     assert_eq!(selection(&state), before, "the position came back exactly");
     assert!(
         back.contains(&Event::SelectionChanged {
-            messages: before.0.clone()
+            selection: postio_core::state::Selection::These(before.0.clone())
         }),
         "{back:?}"
     );

@@ -274,7 +274,9 @@ fn mail_dispatcher(mail: Arc<FakeMail>) -> Dispatcher {
                     return Err(CommandError::rejected("nothing focused"));
                 };
                 *mail.selection.lock().unwrap() = vec![id];
-                invocation.emit(Event::SelectionChanged { messages: vec![id] });
+                invocation.emit(Event::SelectionChanged {
+                    selection: postio_core::state::Selection::These(vec![id]),
+                });
                 Ok(())
             }
         })

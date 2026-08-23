@@ -61,51 +61,68 @@ impl Keymap {
     /// loses its key and stays reachable from the palette.
     pub fn resolve(overrides: &KeyBindings) -> Self {
         let mut keymap = Keymap::default();
-        // Registry order decides who wins a collision, so the resolution is
+        for spec in registry::all() {
+            keymap.bindings.insert(spec.id, Vec::new());
+        }
+
+        // Two passes, because an explicit `[keys]` entry outranks a built-in
+        // default. One pass would give a contested key to whichever command
+        // the registry happens to list first, so adding a command with a
+        // popular default could quietly take a key the user had already asked
+        // for — and which of the two won would depend on the order of a table
+        // they have never seen. A default is a suggestion; an override is not.
+        //
+        // Within each pass, registry order decides, so the result is
         // deterministic rather than dependent on map iteration order.
         for spec in registry::all() {
-            let mut chosen = Vec::new();
-            let custom = overrides.overrides().get(spec.id.as_str());
-
-            let primary = match custom {
-                Some(binding) if keys::binding_problem(binding).is_some() => {
-                    let problem = keys::binding_problem(binding).expect("just checked");
-                    keymap.problems.push(format!(
-                        "`{}` is not usable as the binding for `{}`: {problem}",
-                        binding, spec.id
-                    ));
-                    spec.default_binding.to_string()
-                }
-                Some(binding) => binding.trim().to_string(),
-                None => spec.default_binding.to_string(),
+            let Some(binding) = overrides.overrides().get(spec.id.as_str()) else {
+                continue;
             };
-
-            if let Some(taken) = keymap.holder_of(&primary, spec.contexts) {
+            if let Some(problem) = keys::binding_problem(binding) {
                 keymap.problems.push(format!(
-                    "`{primary}` is already bound to `{taken}`, so `{}` keeps `{}`",
+                    "`{}` is not usable as the binding for `{}`: {problem}",
+                    binding, spec.id
+                ));
+                continue;
+            }
+            let binding = binding.trim().to_string();
+            if let Some(taken) = keymap.holder_of(&binding, spec.contexts) {
+                keymap.problems.push(format!(
+                    "`{binding}` is already bound to `{taken}`, so `{}` keeps `{}`",
                     spec.id, spec.default_binding
                 ));
-                // Fall back to the built-in binding, unless that is taken too —
-                // in which case the command is palette-only rather than
-                // shadowing someone else's key.
-                if primary != spec.default_binding
-                    && keymap
-                        .holder_of(spec.default_binding, spec.contexts)
-                        .is_none()
-                {
-                    chosen.push(spec.default_binding.to_string());
-                }
-            } else {
-                chosen.push(primary);
+                continue;
             }
+            keymap.claim(spec.id, binding);
+        }
 
+        for spec in registry::all() {
+            if keymap.binding(spec.id).is_some() {
+                continue;
+            }
+            let default = spec.default_binding.to_string();
+            if let Some(taken) = keymap.holder_of(&default, spec.contexts) {
+                // Palette-only rather than shadowing someone else's key. Said
+                // out loud, because a command that quietly lost its key is a
+                // command the user will press and be ignored by.
+                keymap.problems.push(format!(
+                    "`{default}` is already bound to `{taken}`, so `{}` has no key \
+                     and stays reachable from the palette",
+                    spec.id
+                ));
+                continue;
+            }
+            keymap.claim(spec.id, default);
+        }
+
+        // Alternates last, and only where nothing else wanted them: a second
+        // way to reach a command must never cost another command its first.
+        for spec in registry::all() {
             for alternate in spec.alternate_bindings {
                 if keymap.holder_of(alternate, spec.contexts).is_none() {
-                    chosen.push((*alternate).to_string());
+                    keymap.claim(spec.id, (*alternate).to_string());
                 }
             }
-
-            keymap.bindings.insert(spec.id, chosen);
         }
 
         for command in overrides.overrides().keys() {
@@ -151,6 +168,11 @@ impl Keymap {
     /// What could not be honoured, phrased for the settings validity line.
     pub fn problems(&self) -> &[String] {
         &self.problems
+    }
+
+    /// Give `command` a binding, after the caller has checked it is free.
+    fn claim(&mut self, command: CommandId, binding: String) {
+        self.bindings.entry(command).or_default().push(binding);
     }
 
     fn holder_of(&self, binding: &str, contexts: ContextSet) -> Option<CommandId> {
