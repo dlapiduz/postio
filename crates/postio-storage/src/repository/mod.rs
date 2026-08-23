@@ -22,11 +22,15 @@
 //!   constraints then enforce.
 
 mod accounts;
+mod contacts;
+mod drafts;
 mod mailboxes;
 mod messages;
 mod threads;
 
 pub use accounts::{AccountRepository, IdentityRepository};
+pub use contacts::ContactRepository;
+pub use drafts::DraftRepository;
 pub use mailboxes::MailboxRepository;
 pub use threads::{
     DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadListQuery, ThreadListRow, ThreadOrder,
