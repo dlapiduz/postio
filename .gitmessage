@@ -1,0 +1,17 @@
+# <type>(<scope>): <summary>
+#
+# ── Subject ────────────────────────────────────────────────────────────
+# type:    feat fix docs test refactor perf chore ci build revert
+# scope:   crate without the postio- prefix (model, storage, search,
+#          config, imap, smtp, sync, core, gtk) or: workspace, ci, docs
+# summary: imperative mood, lower case, no trailing period, <= 50 chars
+#          "add draft autosave"  not  "Added draft autosave."
+#
+# ── Body (optional, wrap at 72) ────────────────────────────────────────
+# Explain WHY, not what — the diff already says what. Worth writing when
+# the change encodes a decision, a trade-off, or a non-obvious constraint.
+#
+# ── Footer ─────────────────────────────────────────────────────────────
+# Refs: postio-abc            (always — every commit belongs to a bead)
+# Closes: postio-abc          (when this commit completes the bead)
+# BREAKING CHANGE: <what and what to do about it>
