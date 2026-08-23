@@ -106,9 +106,11 @@ pub fn build(
     if let Some(cc) = recipient_list(&draft.cc) {
         builder = builder.cc(cc);
     }
-    if let Some(bcc) = recipient_list(&draft.bcc) {
-        builder = builder.bcc(bcc);
-    }
+    // Deliberately no Bcc header: whatever bytes DATA carries go to every
+    // envelope recipient as-is, so writing one here would hand every To/Cc
+    // recipient the bcc'd list — the opposite of what Bcc means. A bcc'd
+    // address is still a `RCPT TO` the caller adds to the envelope; it is
+    // just never inside the message itself. See `postio-sync`'s send path.
     if let Some(text) = &draft.body.text {
         builder = builder.text_body(text.clone());
     }
@@ -247,15 +249,31 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_reply_to_and_bcc_come_through() {
+    fn an_explicit_reply_to_comes_through() {
         let mut ada = identity("ada@example.com");
         ada.reply_to = Some(EmailAddress::new(None::<String>, "replies@example.org"));
+
+        let parsed = mime::parse(&build(&draft(), &ada, &[], None).raw);
+        assert_eq!(parsed.reply_to[0].address, "replies@example.org");
+    }
+
+    #[test]
+    fn bcc_recipients_never_appear_in_the_sent_bytes() {
+        let ada = identity("ada@example.com");
         let mut draft = draft();
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
 
-        let parsed = mime::parse(&build(&draft, &ada, &[], None).raw);
-        assert_eq!(parsed.reply_to[0].address, "replies@example.org");
-        assert_eq!(parsed.bcc[0].address, "quiet@example.com");
+        let built = build(&draft, &ada, &[], None);
+        let parsed = mime::parse(&built.raw);
+
+        assert!(
+            parsed.bcc.is_empty(),
+            "a Bcc header would hand every To/Cc recipient the bcc'd list"
+        );
+        assert!(
+            !String::from_utf8_lossy(&built.raw).contains("quiet@example.com"),
+            "the bcc'd address must not appear in the message at all, only in the envelope"
+        );
     }
 
     #[test]
