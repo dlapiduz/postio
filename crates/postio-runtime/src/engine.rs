@@ -43,9 +43,11 @@ use postio_smtp::transport::SmtpConnector;
 use postio_storage::{BlobStore, Database, Pool};
 use postio_sync::status::StatusTracker;
 use postio_sync::{
-    Backfill, BackfillPolicy, Drainer, ReconnectPolicy, RetryPolicy, SmtpContext, Supervisor,
-    SyncError, SyncStatus, backfill,
+    Backfill, BackfillPolicy, BackfillProgress, Drainer, ReconnectPolicy, RetryPolicy, SmtpContext,
+    Supervisor, SyncError, SyncStatus, backfill,
 };
+// The crate root's `Outcome` is the *resync* one; a body has its own.
+use postio_sync::backfill::Outcome;
 
 /// What the connection is doing, and what the operating system says about the
 /// network.
@@ -169,6 +171,10 @@ enum Job {
     LinkState {
         reply: tokio::sync::oneshot::Sender<Link>,
     },
+    /// How far the backfill has got.
+    BackfillProgress {
+        reply: tokio::sync::oneshot::Sender<BackfillProgress>,
+    },
     SeedBackfill {
         mailbox: MailboxId,
         limit: u32,
@@ -196,6 +202,7 @@ impl fmt::Debug for Job {
             Job::RetryNow { .. } => formatter.write_str("RetryNow"),
             Job::SetNetwork { state, .. } => write!(formatter, "SetNetwork({state:?})"),
             Job::LinkState { .. } => formatter.write_str("LinkState"),
+            Job::BackfillProgress { .. } => formatter.write_str("BackfillProgress"),
             Job::SeedBackfill { mailbox, .. } => write!(formatter, "SeedBackfill({mailbox})"),
             Job::RequestBody { message, .. } => write!(formatter, "RequestBody({message})"),
         }
@@ -251,6 +258,15 @@ impl Engine {
     /// What the link is doing right now.
     pub async fn link(&self) -> Result<Link, EngineError> {
         self.tell(|reply| Job::LinkState { reply }).await
+    }
+
+    /// What the backfill has done and has left to do.
+    ///
+    /// Every message that has entered the queue is in exactly one of these
+    /// counts, which is what lets a progress display add up rather than
+    /// drift.
+    pub async fn backfill_progress(&self) -> Result<BackfillProgress, EngineError> {
+        self.tell(|reply| Job::BackfillProgress { reply }).await
     }
 
     /// Queue up to `limit` bodies worth having for `mailbox`.
@@ -339,6 +355,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             backfill: Backfill::new(parts.backfill),
             supervisor: Supervisor::new(parts.reconnect),
             status: StatusTracker::new(),
+            online: false,
         };
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
         // The first tick fires immediately; skipping it would leave the link
@@ -360,6 +377,24 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                     announce_link(&parts, &mut state, moved);
                 }
             }
+
+            // Whatever the link just did, act on it before anything else: a
+            // queue that has been waiting for a connection should go out the
+            // moment there is one, not on the next thing the user happens to
+            // do.
+            if came_up(&mut state) {
+                let outcome = drain(&parts, &pool, &mut state).await;
+                announce_drain(&parts.events, &outcome);
+            }
+
+            // Then fetch bodies, but only while nothing else is asking. One
+            // at a time and the inbox checked between each, so the longest a
+            // user waits behind the backfill is the one body already on the
+            // wire.
+            while inbox.is_empty()
+                && state.supervisor.link().is_online()
+                && pump_body(&parts, &pool, &mut state).await
+            {}
         }
     });
 }
@@ -369,6 +404,73 @@ struct State {
     backfill: Backfill,
     supervisor: Supervisor,
     status: StatusTracker,
+    /// Whether the link was up last time anything looked.
+    ///
+    /// Only the *transition* is interesting: a connection that has been up
+    /// for an hour is not a reason to drain again.
+    online: bool,
+}
+
+/// Whether the link has come up since this was last asked.
+fn came_up(state: &mut State) -> bool {
+    let online = state.supervisor.link().is_online();
+    let transition = online && !state.online;
+    state.online = online;
+    transition
+}
+
+/// Fetch one queued body, if there is one and it is worth doing now.
+///
+/// Returns whether it did anything, so the caller can keep going until the
+/// queue is empty. One body per call on purpose: `Backfill::next_body` hands
+/// out one at a time and holds it until `finished` reports it, which is what
+/// bounds how long anything else can be stuck behind the backfill.
+async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool {
+    let Some(claim) = state.backfill.next_body() else {
+        return false;
+    };
+    let message = claim.request.message;
+
+    let connection = match pool.get() {
+        Ok(connection) => connection,
+        Err(error) => {
+            // Report it settled rather than leaving it in flight for ever:
+            // a claim nobody finishes is a queue that never drains.
+            state.backfill.finished(
+                message,
+                Outcome::Failed {
+                    reason: error.to_string(),
+                },
+            );
+            return false;
+        }
+    };
+
+    let outcome = backfill::fetch_body(
+        &connection,
+        &parts.blobs,
+        parts.backend.as_ref(),
+        &claim.request,
+        &claim.cancel,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        if let SyncError::Backend(backend) = &error {
+            let moved = state.supervisor.observe(backend, Utc::now());
+            announce_link(parts, state, moved);
+        }
+        Outcome::Failed {
+            reason: error.to_string(),
+        }
+    });
+
+    // The reading pane is waiting on exactly this for whatever the user just
+    // opened, so it is worth saying the moment the bytes are local.
+    if matches!(outcome, Outcome::Stored { .. }) {
+        parts.events.emit(Event::BodyLoaded { message });
+    }
+    state.backfill.finished(message, outcome);
+    true
 }
 
 async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
@@ -411,6 +513,9 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
         }
         Job::LinkState { reply } => {
             let _ = reply.send(state.supervisor.link().clone());
+        }
+        Job::BackfillProgress { reply } => {
+            let _ = reply.send(state.backfill.progress());
         }
     }
 }
