@@ -64,7 +64,7 @@ impl ErrorKind {
 pub struct ValidationError {
     /// What kind of problem this is.
     pub kind: ErrorKind,
-    /// Dotted path of the setting at fault, e.g. `accounts.icloud.imap.host`.
+    /// Dotted path of the setting at fault, e.g. `accounts.personal.imap.host`.
     pub path: String,
     /// One-based line in `config.toml`.
     pub line: usize,
@@ -558,7 +558,7 @@ mod tests {
     fn addresses_are_checked_loosely() {
         assert!(looks_like_an_address("ada@example.com"));
         assert!(looks_like_an_address("postmaster@localhost"));
-        assert!(!looks_like_an_address("person-at-icloud"));
+        assert!(!looks_like_an_address("ada-at-example"));
         assert!(!looks_like_an_address("@example.com"));
         assert!(!looks_like_an_address("person@"));
         assert!(!looks_like_an_address("two ada@example.com"));

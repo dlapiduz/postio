@@ -134,34 +134,34 @@ fn resolved_bindings_merge_defaults_and_overrides() {
 // -------------------------------------------------------------- [accounts] --
 
 const ICLOUD: &str = r#"
-[accounts.icloud]
+[accounts.personal]
 email = "ada@example.com"
 display_name = "Person"
 default = true
 
-[accounts.icloud.imap]
-host = "imap.mail.me.com"
+[accounts.personal.imap]
+host = "imap.example.com"
 port = 993
 security = "implicit-tls"
 
-[accounts.icloud.smtp]
-host = "smtp.mail.me.com"
+[accounts.personal.smtp]
+host = "smtp.example.com"
 port = 465
 security = "implicit-tls"
 "#;
 
 #[test]
-fn parses_the_icloud_account() {
+fn parses_the_personal_account() {
     let cfg = Config::from_toml_str(ICLOUD).unwrap();
-    let acct = cfg.account("icloud").expect("account by table key");
-    assert_eq!(acct.id, "icloud", "the table key becomes the account id");
+    let acct = cfg.account("personal").expect("account by table key");
+    assert_eq!(acct.id, "personal", "the table key becomes the account id");
     assert_eq!(acct.email, "ada@example.com");
     assert_eq!(acct.display_name.as_deref(), Some("Person"));
     assert!(acct.is_default);
-    assert_eq!(acct.imap.host, "imap.mail.me.com");
+    assert_eq!(acct.imap.host, "imap.example.com");
     assert_eq!(acct.imap.port, 993);
     assert_eq!(acct.imap.security, MailSecurity::ImplicitTls);
-    assert_eq!(acct.smtp.host, "smtp.mail.me.com");
+    assert_eq!(acct.smtp.host, "smtp.example.com");
     assert_eq!(acct.smtp.port, 465);
     assert_eq!(acct.smtp.security, MailSecurity::ImplicitTls);
 }
@@ -213,22 +213,22 @@ fn security_spellings_are_forgiving() {
 #[test]
 fn the_keyring_entry_is_derived_when_absent() {
     let cfg = Config::from_toml_str(ICLOUD).unwrap();
-    let acct = cfg.account("icloud").unwrap();
-    assert_eq!(acct.imap_keyring_entry(), "postio:icloud:imap");
-    assert_eq!(acct.smtp_keyring_entry(), "postio:icloud:smtp");
+    let acct = cfg.account("personal").unwrap();
+    assert_eq!(acct.imap_keyring_entry(), "postio:personal:imap");
+    assert_eq!(acct.smtp_keyring_entry(), "postio:personal:smtp");
 }
 
 #[test]
 fn an_explicit_keyring_entry_is_honored() {
     let cfg = Config::from_toml_str(
         r#"
-        [accounts.icloud.imap]
+        [accounts.personal.imap]
         keyring_entry = "my-own-entry"
         "#,
     )
     .unwrap();
     assert_eq!(
-        cfg.account("icloud").unwrap().imap_keyring_entry(),
+        cfg.account("personal").unwrap().imap_keyring_entry(),
         "my-own-entry"
     );
 }
@@ -236,7 +236,7 @@ fn an_explicit_keyring_entry_is_honored() {
 #[test]
 fn the_default_account_is_the_flagged_one_then_the_first() {
     let cfg = Config::from_toml_str(ICLOUD).unwrap();
-    assert_eq!(cfg.default_account().unwrap().id, "icloud");
+    assert_eq!(cfg.default_account().unwrap().id, "personal");
 
     let cfg = Config::from_toml_str(
         r#"
@@ -327,12 +327,12 @@ summarize = "g s"
 [sync]
 sync_future = ["a", "b"]
 
-[accounts.icloud]
+[accounts.personal]
 email = "ada@example.com"
 account_future = { nested = true }
 
-[accounts.icloud.imap]
-host = "imap.mail.me.com"
+[accounts.personal.imap]
+host = "imap.example.com"
 imap_future = "kept"
 
 [filters.needs-reply]
@@ -371,7 +371,7 @@ fn loads_from_a_real_file_and_saves_back() {
     std::fs::write(&path, ICLOUD).unwrap();
 
     let cfg = Config::load_from_path(&path).unwrap();
-    assert_eq!(cfg.account("icloud").unwrap().imap.port, 993);
+    assert_eq!(cfg.account("personal").unwrap().imap.port, 993);
 
     let reread = Config::from_toml_str(&cfg.to_toml_string().unwrap()).unwrap();
     assert_eq!(reread, cfg);

@@ -92,7 +92,7 @@ impl SourceMap {
     /// finally to the top of the file.
     ///
     /// The fallback is what lets "this account has no email" point at the
-    /// `[accounts.icloud]` header: the key the user needs to add is not in the
+    /// `[accounts.personal]` header: the key the user needs to add is not in the
     /// file yet, but the table it belongs to is.
     pub(crate) fn locate_key(&self, path: &str) -> (usize, usize) {
         self.locate(path, |(key, _)| *key)
@@ -145,7 +145,7 @@ fn walk(table: &DeTable<'_>, prefix: &str, out: &mut BTreeMap<String, (usize, us
 mod tests {
     use super::*;
 
-    const TEXT: &str = "[ui]\ndensity = \"compact\"\n\n[accounts.icloud.imap]\nhost = \"h\"\n";
+    const TEXT: &str = "[ui]\ndensity = \"compact\"\n\n[accounts.personal.imap]\nhost = \"h\"\n";
 
     #[test]
     fn keys_and_values_get_separate_positions() {
@@ -157,14 +157,14 @@ mod tests {
     #[test]
     fn a_nested_header_is_reachable_by_its_dotted_path() {
         let map = SourceMap::parse(TEXT).unwrap();
-        assert_eq!(map.locate_key("accounts.icloud.imap.host"), (5, 1));
-        assert_eq!(map.locate_key("accounts.icloud.imap").0, 4);
+        assert_eq!(map.locate_key("accounts.personal.imap.host"), (5, 1));
+        assert_eq!(map.locate_key("accounts.personal.imap").0, 4);
     }
 
     #[test]
     fn a_missing_key_falls_back_to_its_table() {
         let map = SourceMap::parse(TEXT).unwrap();
-        assert_eq!(map.locate_key("accounts.icloud.imap.port").0, 4);
+        assert_eq!(map.locate_key("accounts.personal.imap.port").0, 4);
         assert_eq!(map.locate_key("nothing.like.this"), (1, 1));
     }
 
