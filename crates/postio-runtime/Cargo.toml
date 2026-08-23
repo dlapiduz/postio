@@ -19,6 +19,11 @@ postio-sync.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
+criterion = "0.7.0"
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+[[bench]]
+name = "store_reads"
+harness = false
