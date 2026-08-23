@@ -44,13 +44,17 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use gtk::glib;
 use gtk::prelude::*;
-use postio_core::Event;
-use postio_model::ids::MailboxId;
+use postio_core::{ConnectionState, Event};
+use postio_model::ids::{AccountId, MailboxId};
+use postio_model::mailbox::Mailbox;
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
+use crate::sidebar::SyncStatus;
 
 /// One page of a mailbox, as the runtime answered it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,5 +288,479 @@ impl Feed {
         // reload has to ask once itself or an emptied mailbox would keep
         // showing the rows it used to have.
         self.0.clone().request(0);
+    }
+}
+
+// ── The sidebar ──────────────────────────────────────────────────────────
+
+/// The answer to a request for an account's folders.
+pub type MailboxFuture = Pin<Box<dyn Future<Output = Result<Vec<Mailbox>, String>>>>;
+
+/// Where the sidebar's folders come from.
+///
+/// The same crossing as [`MessageSource`], for the same reason: the mailbox
+/// repository is on the other side of a crate boundary this crate may not
+/// cross. `Mailbox` itself is a `postio-model` type, so unlike the message
+/// list there is nothing to map — the sidebar shows the domain's own record.
+pub trait MailboxSource {
+    /// Read `account`'s folders, with their counts as of now.
+    fn mailboxes(&self, account: AccountId) -> MailboxFuture;
+}
+
+/// The status line, folded out of the runtime's events.
+///
+/// Pure, and separate from the widget, because "what does the status line
+/// say when the connection drops mid-resync" is a question worth answering
+/// without a display in the loop.
+///
+/// # Where the failure reason comes from
+///
+/// [`ConnectionState::Failing`] carries no reason of its own — deliberately,
+/// so `postio-core` need not change when the sync engine's state machine
+/// does. The reason travels beside it as [`Event::Error`], so the tracker
+/// keeps the last one it saw and promotes it the moment the connection
+/// starts failing. Leaving that state clears it: a reason that outlived the
+/// failure it explained would be worse than none.
+#[derive(Clone, Debug, Default)]
+pub struct SyncTracker {
+    status: SyncStatus,
+    /// The last error seen, waiting to explain a failure that may not come.
+    reason: Option<String>,
+}
+
+impl SyncTracker {
+    /// A tracker that has heard nothing yet: offline, never synced.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// What the status line should say.
+    pub fn status(&self) -> &SyncStatus {
+        &self.status
+    }
+
+    /// Fold `event` in. Returns whether the status line changed.
+    pub fn apply(&mut self, event: &Event) -> bool {
+        let before = self.status.clone();
+        match event {
+            Event::ConnectionChanged { state, .. } => {
+                self.status.state = *state;
+                if *state == ConnectionState::Failing {
+                    self.status.detail = self.reason.clone();
+                } else {
+                    // Connected, connecting or deliberately offline: whatever
+                    // went wrong before is no longer what is happening.
+                    self.status.detail = None;
+                    self.reason = None;
+                }
+                // A resync's progress belongs to the connection that was
+                // making it.
+                if *state != ConnectionState::Online {
+                    self.status.progress = None;
+                }
+            }
+            Event::SyncProgress { done, total, .. } => {
+                self.status.progress = Some((*done, *total));
+                // A resync that reached its own total is a sync that
+                // finished, and that is when "last sync" moved.
+                if done >= total {
+                    self.status.last_sync = Some(Instant::now());
+                    self.status.progress = None;
+                }
+            }
+            Event::Error { message } => {
+                self.reason = Some(message.clone());
+                if self.status.state == ConnectionState::Failing {
+                    self.status.detail = Some(message.clone());
+                }
+            }
+            _ => return false,
+        }
+        self.status != before
+    }
+
+    /// Record when this account last completed a sync, from its folders.
+    ///
+    /// [`SyncStatus::last_sync`] is an [`Instant`] on purpose: the line shows
+    /// an *age*, and an age that jumped when the system clock was corrected
+    /// would be worse than no age at all. The stored time is wall-clock, so
+    /// the conversion happens here, once, at the boundary.
+    pub fn note_last_sync(&mut self, mailboxes: &[Mailbox]) -> bool {
+        let Some(latest) = mailboxes.iter().filter_map(|m| m.last_synced_at).max() else {
+            return false;
+        };
+        let converted = to_instant(latest, Utc::now(), Instant::now());
+        if converted.is_some() && self.status.last_sync.is_none() {
+            self.status.last_sync = converted;
+            return true;
+        }
+        false
+    }
+}
+
+/// A wall-clock time as a point on the monotonic clock, relative to `now`.
+///
+/// `None` for a time in the future or further back than the process has been
+/// running: neither can be expressed as an `Instant`, and inventing one would
+/// put a fabricated age on the status line.
+pub fn to_instant(at: DateTime<Utc>, now: DateTime<Utc>, monotonic: Instant) -> Option<Instant> {
+    let age = now.signed_duration_since(at).to_std().ok()?;
+    monotonic.checked_sub(age)
+}
+
+/// What to call when the status line moves.
+type StatusHandler = Box<dyn Fn(&SyncStatus)>;
+
+/// What to call when the folders have been read.
+type LoadedHandler = Box<dyn Fn(&[Mailbox])>;
+
+struct FolderInner {
+    sidebar: crate::sidebar::Sidebar,
+    source: Rc<dyn MailboxSource>,
+    account: Cell<Option<AccountId>>,
+    /// The folders as last read, so picking one can name it without
+    /// another round trip.
+    mailboxes: RefCell<Vec<Mailbox>>,
+    tracker: RefCell<SyncTracker>,
+    generation: Cell<u64>,
+    /// Whether a reload is already queued for this turn of the main loop.
+    queued: Cell<bool>,
+    statuses: RefCell<Vec<StatusHandler>>,
+    loaded: RefCell<Vec<LoadedHandler>>,
+    errors: RefCell<Vec<ErrorHandler>>,
+}
+
+impl FolderInner {
+    fn reload_now(self: Rc<Self>) {
+        let Some(account) = self.account.get() else {
+            return;
+        };
+        let generation = self.generation.get();
+        let future = self.source.mailboxes(account);
+        glib::spawn_future_local(async move {
+            match future.await {
+                Ok(mailboxes) => self.arrived(generation, mailboxes),
+                Err(message) => {
+                    if generation == self.generation.get() {
+                        for handler in self.errors.borrow().iter() {
+                            handler(message.clone());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn arrived(&self, generation: u64, mailboxes: Vec<Mailbox>) {
+        if generation != self.generation.get() {
+            return;
+        }
+        self.sidebar.set_mailboxes(&mailboxes);
+        let moved = self.tracker.borrow_mut().note_last_sync(&mailboxes);
+        *self.mailboxes.borrow_mut() = mailboxes;
+        if moved {
+            self.publish();
+        }
+        let mailboxes = self.mailboxes.borrow().clone();
+        for handler in self.loaded.borrow().iter() {
+            handler(&mailboxes);
+        }
+    }
+
+    fn publish(&self) {
+        let status = self.tracker.borrow().status().clone();
+        self.sidebar.set_status(status.clone());
+        for handler in self.statuses.borrow().iter() {
+            handler(&status);
+        }
+    }
+}
+
+/// The sidebar, fed.
+///
+/// Owns the account's folders and the status line, and keeps both in step
+/// with the runtime.
+#[derive(Clone)]
+pub struct Folders(Rc<FolderInner>);
+
+impl Folders {
+    /// Feed `sidebar` from `source`. Shows nothing until [`open`](Self::open).
+    pub fn new(sidebar: &crate::sidebar::Sidebar, source: Rc<dyn MailboxSource>) -> Self {
+        let folders = Folders(Rc::new(FolderInner {
+            sidebar: sidebar.clone(),
+            source,
+            account: Cell::new(None),
+            mailboxes: RefCell::new(Vec::new()),
+            tracker: RefCell::new(SyncTracker::new()),
+            generation: Cell::new(0),
+            queued: Cell::new(false),
+            statuses: RefCell::new(Vec::new()),
+            loaded: RefCell::new(Vec::new()),
+            errors: RefCell::new(Vec::new()),
+        }));
+        // Offline, never synced — which is the truth until something says
+        // otherwise, and is what the sidebar should say meanwhile.
+        folders.0.publish();
+        folders
+    }
+
+    /// Show `account`'s folders, with `address` as the kicker.
+    pub fn open(&self, account: AccountId, address: &str) {
+        let inner = &self.0;
+        inner.generation.set(inner.generation.get() + 1);
+        inner.account.set(Some(account));
+        inner.sidebar.set_account(address);
+        inner.clone().reload_now();
+    }
+
+    /// The folders as last read.
+    pub fn mailboxes(&self) -> Vec<Mailbox> {
+        self.0.mailboxes.borrow().clone()
+    }
+
+    /// One folder by id, if it has been read.
+    pub fn mailbox(&self, id: MailboxId) -> Option<Mailbox> {
+        self.0
+            .mailboxes
+            .borrow()
+            .iter()
+            .find(|mailbox| mailbox.id == id)
+            .cloned()
+    }
+
+    /// Where the account stands with its server, right now.
+    pub fn status(&self) -> SyncStatus {
+        self.0.tracker.borrow().status().clone()
+    }
+
+    /// Called whenever the status line moves — for the list pane's own
+    /// named states, which read the same status the sidebar does.
+    pub fn connect_status(&self, handler: impl Fn(&SyncStatus) + 'static) {
+        self.0.statuses.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called every time the folders have been read.
+    ///
+    /// How the window knows which mailbox to open on startup: the folders
+    /// are not there yet when [`open`](Self::open) returns.
+    pub fn connect_loaded(&self, handler: impl Fn(&[Mailbox]) + 'static) {
+        self.0.loaded.borrow_mut().push(Box::new(handler));
+    }
+
+    /// The folder to show when nothing has been picked yet.
+    ///
+    /// The inbox, or the first folder there is. A mail client that opens
+    /// into no folder has asked the user a question before saying hello.
+    pub fn default_mailbox(&self) -> Option<MailboxId> {
+        let mailboxes = self.0.mailboxes.borrow();
+        mailboxes
+            .iter()
+            .find(|mailbox| mailbox.role == postio_model::mailbox::MailboxRole::Inbox)
+            .or_else(|| mailboxes.first())
+            .map(|mailbox| mailbox.id)
+    }
+
+    /// Called when the folders cannot be read.
+    pub fn connect_error(&self, handler: impl Fn(String) + 'static) {
+        self.0.errors.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Apply one runtime event to the sidebar.
+    pub fn apply(&self, event: &Event) {
+        let inner = &self.0;
+        if inner.tracker.borrow_mut().apply(event) {
+            inner.publish();
+        }
+        let ours = |account: &AccountId| inner.account.get() == Some(*account);
+        match event {
+            // The tree itself moved: renamed, created, unsubscribed.
+            Event::MailboxesChanged { account } if ours(account) => self.reload(),
+            // Counts move with read state and with mail arriving or leaving.
+            // Which mailbox is irrelevant — the sidebar shows all of them.
+            Event::MessagesChanged { .. }
+            | Event::MessagesRemoved { .. }
+            | Event::NewMail { .. }
+            | Event::MessageListChanged { .. } => self.reload(),
+            _ => {}
+        }
+    }
+
+    /// Read the folders again, at most once per turn of the main loop.
+    ///
+    /// Coalesced on purpose: a resync emits `MessagesChanged` in bursts, and
+    /// a sidebar that re-read every folder's counts per event would spend a
+    /// sync hammering the database to draw the same numbers.
+    pub fn reload(&self) {
+        let inner = &self.0;
+        if inner.account.get().is_none() || inner.queued.replace(true) {
+            return;
+        }
+        let inner = inner.clone();
+        glib::idle_add_local_once(move || {
+            inner.queued.set(false);
+            inner.reload_now();
+        });
+    }
+}
+
+/// Both panes, fed from the same runtime.
+///
+/// The one thing whoever assembles the application has to hold: hand it
+/// every [`Event`] and the sidebar, the status line and the message list all
+/// stay in step.
+#[derive(Clone)]
+pub struct Feeds {
+    /// The message list.
+    pub messages: Feed,
+    /// The folders and the status line.
+    pub folders: Folders,
+}
+
+impl Feeds {
+    /// Apply one event to everything that cares about it.
+    pub fn apply(&self, event: &Event) {
+        self.messages.apply(event);
+        self.folders.apply(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postio_model::mailbox::MailboxRole;
+
+    fn account() -> AccountId {
+        AccountId::new(1)
+    }
+
+    fn connection(state: ConnectionState) -> Event {
+        Event::ConnectionChanged {
+            account: account(),
+            state,
+        }
+    }
+
+    #[test]
+    fn the_status_line_follows_a_connection_all_the_way_round() {
+        let mut tracker = SyncTracker::new();
+        assert_eq!(tracker.status().state, ConnectionState::Offline);
+        assert_eq!(tracker.status().last_sync, None);
+
+        assert!(tracker.apply(&connection(ConnectionState::Connecting)));
+        assert_eq!(tracker.status().state, ConnectionState::Connecting);
+
+        assert!(tracker.apply(&connection(ConnectionState::Online)));
+        assert!(tracker.apply(&Event::SyncProgress {
+            account: account(),
+            done: 40,
+            total: 100,
+        }));
+        assert_eq!(tracker.status().progress, Some((40, 100)));
+
+        // A resync that reaches its own total is a sync that finished.
+        assert!(tracker.apply(&Event::SyncProgress {
+            account: account(),
+            done: 100,
+            total: 100,
+        }));
+        assert_eq!(tracker.status().progress, None);
+        assert!(tracker.status().last_sync.is_some());
+    }
+
+    #[test]
+    fn a_failing_connection_carries_the_reason_it_was_given() {
+        let mut tracker = SyncTracker::new();
+        // The reason arrives beside the state change, not inside it.
+        tracker.apply(&Event::Error {
+            message: "the server rejected the password".to_string(),
+        });
+        tracker.apply(&connection(ConnectionState::Failing));
+        assert_eq!(
+            tracker.status().detail.as_deref(),
+            Some("the server rejected the password")
+        );
+
+        // And an error that arrives while already failing replaces it.
+        tracker.apply(&Event::Error {
+            message: "the certificate expired".to_string(),
+        });
+        assert_eq!(
+            tracker.status().detail.as_deref(),
+            Some("the certificate expired")
+        );
+
+        // Recovering clears it: a reason that outlived its failure is worse
+        // than no reason.
+        tracker.apply(&connection(ConnectionState::Online));
+        assert_eq!(tracker.status().detail, None);
+
+        // And it does not come back on the next unrelated failure.
+        tracker.apply(&connection(ConnectionState::Failing));
+        assert_eq!(tracker.status().detail, None);
+    }
+
+    #[test]
+    fn a_dropped_connection_stops_reporting_progress_it_is_not_making() {
+        let mut tracker = SyncTracker::new();
+        tracker.apply(&connection(ConnectionState::Online));
+        tracker.apply(&Event::SyncProgress {
+            account: account(),
+            done: 3,
+            total: 90,
+        });
+        tracker.apply(&connection(ConnectionState::Offline));
+        assert_eq!(tracker.status().progress, None, "syncing 3% while offline");
+    }
+
+    #[test]
+    fn events_the_status_line_is_not_about_change_nothing() {
+        let mut tracker = SyncTracker::new();
+        assert!(!tracker.apply(&Event::MailboxesChanged { account: account() }));
+        assert!(!tracker.apply(&Event::BodyLoaded {
+            message: postio_model::ids::MessageId::new(1),
+        }));
+    }
+
+    #[test]
+    fn the_last_sync_age_comes_off_the_monotonic_clock() {
+        let now = Utc::now();
+        let monotonic = Instant::now();
+
+        // An hour ago is an hour ago, whatever the wall clock does next.
+        let hour = to_instant(now - chrono::Duration::hours(1), now, monotonic)
+            .expect("an hour is expressible");
+        assert!((monotonic.duration_since(hour).as_secs() as i64 - 3600).abs() <= 1);
+
+        // A time in the future is not an age, and is refused rather than
+        // turned into one.
+        assert_eq!(
+            to_instant(now + chrono::Duration::hours(1), now, monotonic),
+            None
+        );
+    }
+
+    #[test]
+    fn folders_report_when_the_account_last_synced() {
+        let synced = |id: i64, at: Option<DateTime<Utc>>| {
+            let mut mailbox = Mailbox::new(account(), "INBOX", Some('/'));
+            mailbox.id = MailboxId::new(id);
+            mailbox.role = MailboxRole::Inbox;
+            mailbox.last_synced_at = at;
+            mailbox
+        };
+        let now = Utc::now();
+
+        let mut tracker = SyncTracker::new();
+        assert!(!tracker.note_last_sync(&[synced(1, None)]), "never synced");
+        assert_eq!(tracker.status().last_sync, None);
+
+        // The newest of them wins: one stale folder does not make the
+        // account look stale.
+        assert!(tracker.note_last_sync(&[
+            synced(1, Some(now - chrono::Duration::days(2))),
+            synced(2, Some(now - chrono::Duration::seconds(12))),
+        ]));
+        let age = Instant::now().saturating_duration_since(tracker.status().last_sync.unwrap());
+        assert!(age.as_secs() <= 13, "the age came out as {age:?}");
     }
 }
