@@ -331,6 +331,7 @@ reconstructing the commands:
 | `/preflight` | Checking the real state of the tree, or when it looks broken |
 | `/land` | A bead is done: gates, staging, message, `bd close` |
 | `/add-fixture` | Adding `.eml` test mail to the corpus |
+| `/gtk-design` | Writing or restyling any widget, CSS, or screen |
 
 A `PreToolUse` hook (`.claude/hooks/guard-shared-tree.py`) refuses the
 destructive commands listed below rather than trusting anyone to have read this
