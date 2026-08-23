@@ -7,11 +7,19 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Test-only: lets `MockMailbox::corpus` seed mailboxes from the shared `.eml`
+# fixtures. Off by default so nothing in a normal build carries them; the
+# self dev-dependency below turns it on for this crate's own test suite.
+test-corpus = ["postio-model/test-corpus"]
+
 [dependencies]
 async-trait = "0.1.92"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rustls-ring"] }
 oo7 = "0.6.0-alpha"
 pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+postio-model.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "macros", "process", "time", "sync"] }
@@ -19,6 +27,8 @@ url = "2.5.8"
 zeroize = "1.9.0"
 
 [dev-dependencies]
+postio-imap = { path = ".", features = ["test-corpus"] }
+postio-model = { path = "../postio-model", features = ["test-corpus"] }
 serde-xml-rs = "0.8"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
 toml = "1.1.4"

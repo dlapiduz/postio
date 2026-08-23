@@ -1,0 +1,233 @@
+//! `MailBackend`: the seam between Postio and a mail server.
+//!
+//! Everything above this trait — the sync engine, the runtime, the UI — speaks
+//! domain types and knows nothing about IMAP. Everything below it is one
+//! protocol's problem. That is not a stylistic preference: `io-imap` is
+//! pre-1.0 and published six minor releases in eleven weeks, one of which
+//! broke nearly every public signature. ADR 0001 makes the boundary a hard
+//! requirement, and this module is where it is drawn.
+//!
+//! # The rules
+//!
+//! 1. **No protocol type crosses this line.** Not in an argument, not in a
+//!    return value, not in an error. A test in `tests/backend.rs` reads the
+//!    sources in this directory and fails if one names `io_imap`.
+//! 2. **Capabilities are detected, never assumed.** Everything that depends on
+//!    an extension goes through [`Capabilities::require`], and the set comes
+//!    from the list read *after* authentication. iCloud advertises neither
+//!    CONDSTORE nor QRESYNC nor IDLE nor UIDPLUS before login.
+//! 3. **The caller owns batching and cancellation.** [`UidSet::chunks`] splits
+//!    a large fetch; a [`CancelToken`] stops one. A backend never decides to
+//!    hold ten thousand messages in memory on the caller's behalf.
+//! 4. **Bytes stream.** Bodies and attachments go to a [`BodySink`], never
+//!    into a returned buffer.
+//!
+//! # Testing against it
+//!
+//! [`MockBackend`] is an in-memory implementation with injectable faults and
+//! latency. It is not `#[cfg(test)]`: `postio-sync` is developed against it,
+//! and the whole sync engine can therefore be built and tested with no server
+//! and no network at all.
+//!
+//! ```
+//! # use postio_imap::backend::{MailBackend, MailboxFilter, MockBackend};
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let backend = MockBackend::new();
+//! let capabilities = backend.connect().await?;
+//! let mailboxes = backend.list_mailboxes(&MailboxFilter::all()).await?;
+//!
+//! assert!(capabilities.supports_incremental_sync());
+//! assert_eq!(mailboxes[0].path, "INBOX");
+//! # Ok(())
+//! # }
+//! ```
+
+mod capability;
+mod error;
+mod message;
+mod mock;
+mod sink;
+mod uid_set;
+
+use std::fmt;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use postio_model::{ModSeq, Uid};
+
+use crate::cancel::CancelToken;
+
+pub use self::capability::{Capabilities, Capability};
+pub use self::error::{BackendError, BackendResult};
+pub use self::message::{
+    AppendMessage, BodyPart, BodyStructure, Envelope, FetchedBody, FetchedMessage, FlagChange,
+    FlagUpdate, MailboxEvent, MailboxFilter, MailboxStatus, MailboxSummary, PartNode, SelectMode,
+    UidMapping,
+};
+pub use self::mock::{Fault, MockBackend, MockBackendBuilder, MockMailbox, MockMessage};
+pub use self::sink::{BodySink, CountingSink, VecSink};
+pub use self::uid_set::UidSet;
+
+/// Re-exported so a caller can describe a MIME part without also depending on
+/// `postio-model` directly.
+pub use postio_model::Disposition;
+
+/// A mail server, as the rest of Postio sees one.
+///
+/// Implementations are shared across tasks (`Arc<dyn MailBackend>`) and every
+/// method takes `&self`: connection state, pooling and serialization are the
+/// backend's problem, not the caller's. A caller that wants two fetches at
+/// once simply issues two.
+///
+/// # Errors
+///
+/// Callers branch on [`BackendError::is_transient`],
+/// [`is_authentication_failure`](BackendError::is_authentication_failure) and
+/// [`requires_full_resync`](BackendError::requires_full_resync) — never on the
+/// variant — so that adding a variant cannot silently change how existing code
+/// retries.
+///
+/// # Adding a protocol
+///
+/// This trait is the porting surface. A JMAP or Exchange backend implements
+/// these methods and nothing above `postio-sync` changes. The concepts that
+/// look IMAP-shaped are the ones every mail protocol has under some name:
+/// a folder, a server-assigned message id ([`Uid`]), a generation counter that
+/// invalidates them ([`UidValidity`](postio_model::UidValidity)), and a change
+/// counter ([`ModSeq`]). A protocol without one reports `None` and the sync
+/// engine falls back to comparing listings.
+#[async_trait]
+pub trait MailBackend: Send + Sync + fmt::Debug {
+    /// Short name of this backend, for diagnostics.
+    fn describe(&self) -> &'static str;
+
+    /// Opens a session and authenticates.
+    ///
+    /// Returns the capability set observed **after** authentication. An empty
+    /// set is [`BackendError::EmptyCapabilities`], never a silent downgrade:
+    /// see ADR 0001, Q3.
+    async fn connect(&self) -> BackendResult<Capabilities>;
+
+    /// Closes the session. Closing an already-closed backend succeeds.
+    async fn disconnect(&self) -> BackendResult<()>;
+
+    /// The capability set from the current session.
+    async fn capabilities(&self) -> BackendResult<Capabilities>;
+
+    /// Lists mailboxes, resolving each one's role at the edge.
+    async fn list_mailboxes(&self, filter: &MailboxFilter) -> BackendResult<Vec<MailboxSummary>>;
+
+    /// Opens a mailbox and reports its state.
+    async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus>;
+
+    /// Reports a mailbox's state without opening it.
+    ///
+    /// This is the cheap per-mailbox change check for every folder that is not
+    /// the one being watched.
+    async fn status(&self, path: &str) -> BackendResult<MailboxStatus>;
+
+    /// Fetches metadata — envelope, structure, flags, size — for `uids`.
+    ///
+    /// No body bytes are downloaded. With `changed_since`, only messages whose
+    /// modification sequence is *greater than* it are returned, which is what
+    /// makes an incremental flag pull cheap.
+    ///
+    /// The caller is expected to have split large sets with
+    /// [`UidSet::chunks`]: this returns everything it fetched at once, and a
+    /// ten-thousand-message set fetched in one call is a ten-thousand-message
+    /// allocation.
+    async fn fetch_headers(
+        &self,
+        mailbox: &str,
+        uids: &UidSet,
+        changed_since: Option<ModSeq>,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<FetchedMessage>>;
+
+    /// Streams one part of one message into `sink`.
+    ///
+    /// The sink sees the bytes as they arrive and is the only place they exist
+    /// in full. On failure or cancellation, [`BodySink::finish`] is *not*
+    /// called and whatever reached the sink must be discarded.
+    async fn fetch_part(
+        &self,
+        mailbox: &str,
+        uid: Uid,
+        part: &BodyPart,
+        sink: &mut dyn BodySink,
+        cancel: &CancelToken,
+    ) -> BackendResult<FetchedBody>;
+
+    /// Streams a whole message into `sink`.
+    async fn fetch_body(
+        &self,
+        mailbox: &str,
+        uid: Uid,
+        sink: &mut dyn BodySink,
+        cancel: &CancelToken,
+    ) -> BackendResult<FetchedBody> {
+        self.fetch_part(mailbox, uid, &BodyPart::Whole, sink, cancel)
+            .await
+    }
+
+    /// Changes flags on `uids` and reports what they are now.
+    async fn store_flags(
+        &self,
+        mailbox: &str,
+        uids: &UidSet,
+        change: &FlagChange,
+    ) -> BackendResult<Vec<FlagUpdate>>;
+
+    /// Moves messages between mailboxes.
+    ///
+    /// The returned mapping is empty unless the server speaks
+    /// [`Capability::UidPlus`]; without it the destination UIDs have to be
+    /// found by searching, which is the caller's decision to make.
+    async fn move_messages(
+        &self,
+        from: &str,
+        uids: &UidSet,
+        to: &str,
+    ) -> BackendResult<Vec<UidMapping>>;
+
+    /// Copies messages between mailboxes, leaving the source intact.
+    async fn copy_messages(
+        &self,
+        from: &str,
+        uids: &UidSet,
+        to: &str,
+    ) -> BackendResult<Vec<UidMapping>>;
+
+    /// Expunges messages marked `\Deleted`, and reports which went.
+    ///
+    /// With `uids`, only those are considered — the `UID EXPUNGE` of RFC 4315,
+    /// which is what stops Postio from expunging a message another client
+    /// marked in the same mailbox.
+    async fn expunge(&self, mailbox: &str, uids: Option<&UidSet>) -> BackendResult<Vec<Uid>>;
+
+    /// Uploads a message into a mailbox.
+    ///
+    /// Returns where it landed when the server speaks
+    /// [`Capability::UidPlus`], and `None` otherwise.
+    async fn append(
+        &self,
+        mailbox: &str,
+        message: &AppendMessage,
+    ) -> BackendResult<Option<UidMapping>>;
+
+    /// Waits for the server to say something about `mailbox`.
+    ///
+    /// Returns as soon as anything arrives, when `timeout` elapses, or when
+    /// `cancel` fires — the last two with an empty vector, because "nothing
+    /// happened" is not a failure.
+    ///
+    /// The events are deliberately raw. They say *that* the mailbox changed,
+    /// not what it now contains; the correct response is a resync pull, not
+    /// applying them as a diff.
+    async fn idle(
+        &self,
+        mailbox: &str,
+        timeout: Duration,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<MailboxEvent>>;
+}
