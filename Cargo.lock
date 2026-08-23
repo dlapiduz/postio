@@ -2282,8 +2282,10 @@ dependencies = [
  "libadwaita",
  "postio-core",
  "postio-gtk",
+ "postio-imap",
  "postio-model",
  "postio-runtime",
+ "postio-smtp",
  "postio-storage",
  "tokio",
 ]

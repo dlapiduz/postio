@@ -26,6 +26,7 @@
 //! the window — which happens on `activate`, after the frontend has built its
 //! own.
 
+mod engine;
 mod feed;
 mod paths;
 
@@ -33,13 +34,13 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
-use postio_core::bridge::{Bridge, handler_fn};
+use postio_core::bridge::{Bridge, EventSink, event_channel, handler_fn};
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_runtime::store::{MailStore, SqliteStore};
-use postio_storage::Database;
 use postio_storage::repository::AccountRepository;
+use postio_storage::{BlobStore, Database};
 
 fn main() -> glib::ExitCode {
     let timeline = Timeline::start();
@@ -75,18 +76,41 @@ fn main() -> glib::ExitCode {
         }
     };
 
+    // The engine's own channel. `Bridge` hands its sink to command handlers
+    // and keeps the stream; the engine is not a command handler, so it gets
+    // one of its own and the UI drains it on the main context.
+    let (sink, events) = event_channel();
+    // Taken on the first `activate`. `EventStream` is not `Clone` — there is
+    // one queue and exactly one reader of it — and `activate` can fire again
+    // when a second launch raises the window.
+    let events = std::cell::RefCell::new(Some(events));
+
     let application = app::build_with(timeline);
 
     // Connected *after* the frontend's own handler, so the window it makes is
     // already there to be fed. Signal handlers run in the order they were
     // connected, which is the whole of the arrangement.
-    let wiring = runtime.as_ref().and_then(open_store);
+    let wiring = runtime
+        .as_ref()
+        .and_then(|bridge| open_store(bridge, &sink));
     application.connect_activate(move |application| {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
             return;
         };
         if let Some(wiring) = &wiring {
-            feed_the_window(&window, wiring);
+            let feeds = feed_the_window(&window, wiring);
+            // Everything the engine has to say reaches the panes here: a
+            // mailbox the server disagreed with, a connection that dropped, a
+            // body that arrived. Awaited on the GTK main context, so what the
+            // UI does is take an event off a queue — never wait for one to be
+            // produced.
+            if let (Some(feeds), Some(events)) = (feeds, events.borrow_mut().take()) {
+                glib::spawn_future_local(async move {
+                    while let Some(event) = events.next().await {
+                        feeds.apply(&event);
+                    }
+                });
+            }
         }
     });
 
@@ -100,8 +124,10 @@ fn main() -> glib::ExitCode {
 /// What the frontend needs, once there is a store to give it.
 struct Wiring {
     database: Database,
+    blobs: BlobStore,
     store: Arc<dyn MailStore>,
     runtime: tokio::runtime::Handle,
+    events: EventSink,
 }
 
 /// Open the local store, or explain why there is none.
@@ -110,7 +136,7 @@ struct Wiring {
 /// window opens, says it has never synced, and stays usable for everything
 /// that does not need mail. A mail client that will not open is worse than one
 /// with nothing in it.
-fn open_store(bridge: &Bridge) -> Option<Wiring> {
+fn open_store(bridge: &Bridge, events: &EventSink) -> Option<Wiring> {
     let path = paths::store_path();
     let database = match Database::open(&path) {
         Ok(database) => database,
@@ -119,10 +145,21 @@ fn open_store(bridge: &Bridge) -> Option<Wiring> {
             return None;
         }
     };
+    // Beside the database, not inside it: bodies and attachments are
+    // content-addressed files, and SQLite holds the key and the metadata.
+    let blobs = match BlobStore::open(path.with_file_name("blobs")) {
+        Ok(blobs) => blobs,
+        Err(error) => {
+            eprintln!("postio: cannot open the blob store: {error}");
+            return None;
+        }
+    };
     Some(Wiring {
         store: Arc::new(SqliteStore::new(&database)),
         database,
+        blobs,
         runtime: bridge.handle(),
+        events: events.clone(),
     })
 }
 
@@ -132,22 +169,68 @@ fn open_store(bridge: &Bridge) -> Option<Wiring> {
 /// — offline, never synced, no folders — and inventing an account to fill it
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
-fn feed_the_window(window: &Window, wiring: &Wiring) {
-    let Some(account) = first_account(&wiring.database) else {
-        return;
-    };
+fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed::Feeds> {
+    let account = first_account(&wiring.database)?;
+
+    // The engine is started before the panes are fed, so that the first
+    // thing it does — bring the link up, drain whatever the last session
+    // left queued — is already under way while the list is drawing.
+    if let Some(sync) = engine::start(
+        &account,
+        &wiring.database,
+        wiring.blobs.clone(),
+        wiring.events.clone(),
+    ) {
+        // Leaked for the same reason the feeds are: it lives as long as the
+        // process, and dropping it at exit would stop the engine a moment
+        // before the process ends anyway.
+        let sync: &'static _ = Box::leak(Box::new(sync));
+        seed_the_backfill(sync, wiring);
+    }
+
     let sources = feed::Sources::new(wiring.store.clone(), wiring.runtime.clone());
-    // Leaked deliberately: the feeds live as long as the window, the window
-    // lives as long as the process, and a handle threaded through `activate`
-    // only to be dropped at exit would be ceremony for a process that is
-    // ending anyway.
-    Box::leak(Box::new(window.install_feeds(
+    Some(window.install_feeds(
         account.id,
         account.address.address.as_str(),
         sources.clone(),
         sources,
-    )));
+    ))
 }
+
+/// Ask for the bodies worth having, one mailbox at a time.
+///
+/// At startup, because a session that ended with mail unread should not have
+/// to fetch it again on the wire when the user opens it. `postio-26c` also
+/// wants this run again whenever a sync finishes; nothing emits that yet.
+fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
+    let Ok(connection) = wiring.database.connection() else {
+        return;
+    };
+    let Some(account) = first_account(&wiring.database) else {
+        return;
+    };
+    let Ok(mailboxes) = postio_storage::repository::MailboxRepository::new(&connection)
+        .list_for_account(account.id)
+    else {
+        return;
+    };
+    drop(connection);
+
+    for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
+        wiring.runtime.spawn(async move {
+            if let Err(error) = sync.seed_backfill(mailbox.id, BACKFILL_PER_MAILBOX).await {
+                eprintln!("postio: {}: {error}", mailbox.path);
+            }
+        });
+    }
+}
+
+/// How many bodies to queue per mailbox at startup.
+///
+/// A cap rather than the whole folder: the point is that what the user is
+/// likely to open next is already local, not that a 40,000-message archive
+/// downloads itself on first run.
+const BACKFILL_PER_MAILBOX: u32 = 200;
 
 /// The account to open, if the store holds one.
 ///
