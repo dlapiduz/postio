@@ -72,14 +72,42 @@ instructions:
 
 ## Build & Test
 
+**Work per-crate. Reach for `--workspace` deliberately, not by habit.**
+
 ```bash
-cargo build --workspace
-cargo test  --workspace          # must never touch the network
-cargo test  --workspace -- --ignored   # live iCloud tests; needs POSTIO_TEST_* env
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all
-cargo bench                      # perf budgets; see below
+cargo test   -p <crate>                              # the inner loop
+cargo clippy -p <crate> --all-targets -- -D warnings # before committing
+cargo fmt    -p <crate>                              # ONCE, before committing
 ```
+
+Occasional, not per-edit:
+
+```bash
+cargo test --workspace --no-fail-fast   # full picture; see the note below
+cargo bench                             # perf budgets
+cargo test -p <crate> -- --ignored      # live iCloud; needs POSTIO_TEST_* env
+```
+
+Three things measured across ~2000 tool calls in this project, which is why
+the defaults above are what they are:
+
+- **Roughly 30% of all tool calls were re-running a gate.** `cargo test` ran
+  258 times, `cargo fmt` 177, `clippy` 92, `build` 68. Gates are cheap to type
+  and expensive to run, so they get run reflexively.
+- **`cargo fmt` was the single most-run gate.** It is not verification -- it is
+  a formatter. Run it once before you commit, not after every edit.
+- **`cargo test --workspace` compiles and runs all nine crates, including GTK.**
+  With several sessions active it also serialises on the shared target
+  directory, so a habitual workspace test is the largest wall-clock cost in the
+  build. Verify your own crate; let CI prove the workspace.
+
+Always pass `--no-fail-fast` to a workspace test. Plain `cargo test` aborts
+remaining targets after the first failure, so one broken crate hides a thousand
+passing tests and the totals look catastrophic. This has already caused a false
+alarm.
+
+Never `cargo fmt --all` while others are working -- it rewrites files they are
+mid-edit in. `--check` is read-only and safe.
 
 System dependencies (Fedora 40+; this box is Fedora 44 / GNOME 50 / Wayland):
 
@@ -107,6 +135,9 @@ sqlite3 3.51.2, libsecret-1 0.21.7, glib-2.0 2.88.3.
 preference — it is how this repository is built, and it applies to every crate.
 
 - A bead is not done until its acceptance criteria are covered by tests.
+- Verify with `cargo test -p <your-crate>` while working, and run the full
+  gate chain once in `/land` before committing. See **Build & Test** above
+  for why the inner loop is per-crate.
 - `postio-model`, `postio-storage`, `postio-search`, `postio-config` and the sync
   reconciliation logic are pure logic and must have thorough unit coverage.
 - Protocol code is tested against the `MailBackend` mock and the `.eml` corpus in
