@@ -138,6 +138,73 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
 }
 
 #[tokio::test]
+async fn a_message_the_change_feed_never_mentions_still_arrives() {
+    let backend = server_with_messages(2).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    // A delivery whose `MODSEQ` does not exceed the `HIGHESTMODSEQ` we hold,
+    // so `CHANGEDSINCE` — which is strictly greater-than — will not report it.
+    // RFC 7162 §3.1.2.1 says this cannot happen; servers say otherwise, and a
+    // message that never appears is the worst failure a mail client has.
+    backend
+        .append(INBOX, &postio_imap::backend::AppendMessage::new(note(3)))
+        .await
+        .expect("deliver");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    match outcome {
+        Outcome::Incremental { changed, vanished } => {
+            assert_eq!(changed, 1, "UIDNEXT moved, so the gap was fetched");
+            assert_eq!(vanished, 0);
+        }
+        other => panic!("expected an incremental resync, got {other:?}"),
+    }
+    assert_eq!(
+        known_uids(&connection, &inbox),
+        vec![1, 2, 3],
+        "UIDNEXT is the second witness for an arrival, and it cannot be wrong \
+         without the server being incoherent"
+    );
+}
+
+#[tokio::test]
+async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
+    let backend = server_with_messages(2).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    // A flag change *is* reported by the change feed, and moves no UIDs.
+    backend
+        .store_flags(
+            INBOX,
+            &UidSet::single(Uid::new(1)),
+            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+        )
+        .await
+        .expect("flag");
+
+    let before = backend.calls();
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert_eq!(
+        backend.calls() - before,
+        2,
+        "one SELECT and one FETCH: when the change feed accounts for UIDNEXT \
+         there is no gap left to ask about"
+    );
+}
+
+#[tokio::test]
 async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
     let backend = server_with_messages(2).await;
     let database = test_support::memory();

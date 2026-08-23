@@ -32,10 +32,12 @@
 //! from counting, and only pays for the expensive half of that when the
 //! count says it must:
 //!
-//! 1. `CHANGEDSINCE` finds every message that is new or changed. New
-//!    messages are always caught by it: a message cannot exist before the
-//!    `MODSEQ` it was created at, and that is always greater than whatever
-//!    `since` this pass holds.
+//! 1. `CHANGEDSINCE` finds every message that is new or changed. On a
+//!    conforming server new messages are always caught by it: a message
+//!    cannot exist before the `MODSEQ` it was created at, and RFC 7162
+//!    §3.1.2.1 requires that to exceed the mailbox's previous
+//!    `HIGHESTMODSEQ`. See "Arrivals" below for what happens when a server
+//!    does not manage that.
 //! 2. If `known + newly_arrived` equals what `SELECT` just reported the
 //!    mailbox holds, nothing vanished — the arithmetic is exact, not a
 //!    heuristic, so a simultaneous arrival-and-deletion that happens to leave
@@ -45,6 +47,22 @@
 //! 3. When the count disagrees, and only then, every previously known UID is
 //!    re-fetched with no `CHANGEDSINCE` filter; whichever ones the server no
 //!    longer answers for are gone and are deleted locally.
+//!
+//! # Arrivals, from `UIDNEXT` rather than from the change feed
+//!
+//! Step 1 above rests on the server assigning every new message a `MODSEQ`
+//! above the `HIGHESTMODSEQ` we last recorded. That is what the RFC requires
+//! and it is not something to bet the inbox on: a message the change feed
+//! never mentions is a message that never appears, with no error anywhere, and
+//! "new mail stopped arriving" is the single worst way for a mail client to
+//! fail.
+//!
+//! So arrivals have a second, independent witness — `UIDNEXT`, which means
+//! exactly "UIDs below this have been handed out" and cannot be wrong without
+//! the server being incoherent. When it has moved past what the change feed
+//! accounted for, the gap is fetched directly. The check costs nothing on a
+//! conforming server: the change feed already reported those UIDs, so the
+//! range is empty and no second `FETCH` is issued.
 
 use std::collections::BTreeSet;
 
@@ -114,8 +132,16 @@ pub async fn resync_mailbox(
             Ok(Outcome::Full { reason, report })
         }
         ResyncPlan::Incremental { since } => {
-            let outcome =
-                incremental(connection, backend, mailbox, &selected, since, cancel).await?;
+            let outcome = incremental(
+                connection,
+                backend,
+                mailbox,
+                &selected,
+                since,
+                previous.uid_next,
+                cancel,
+            )
+            .await?;
             sync_state.observe(mailbox.id, &reported, Utc::now())?;
             Ok(outcome)
         }
@@ -129,13 +155,14 @@ pub async fn resync_mailbox(
 /// Fetches what changed since `since`, and reconciles what vanished.
 ///
 /// See the module docs for why vanish detection is conditional on the
-/// arithmetic rather than always run.
+/// arithmetic rather than always run, and why arrivals get a second witness.
 async fn incremental(
     connection: &Connection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     selected: &ServerStatus,
     since: postio_model::ModSeq,
+    previous_uid_next: Option<Uid>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -143,9 +170,22 @@ async fn incremental(
     let known_set: UidSet = known.iter().copied().collect();
     let known_count = known.len() as u32;
 
-    let changed = backend
+    let mut changed = backend
         .fetch_headers(&mailbox.path, &UidSet::all(), Some(since), cancel)
         .await?;
+
+    if let Some(floor) = unaccounted_arrivals(&changed, selected, previous_uid_next) {
+        let arrivals = backend
+            .fetch_headers(
+                &mailbox.path,
+                &UidSet::from_uid_onwards(floor),
+                None,
+                cancel,
+            )
+            .await?;
+        changed.extend(arrivals);
+    }
+
     let newly_arrived = changed
         .iter()
         .filter(|message| !known_set.contains(message.uid))
@@ -190,6 +230,28 @@ async fn incremental(
         changed: changed_count,
         vanished: vanished_count,
     })
+}
+
+/// The first UID of the range `UIDNEXT` says exists and the change feed did
+/// not report, or `None` when the two agree.
+///
+/// The floor is one past the highest UID the feed *did* report rather than the
+/// last `UIDNEXT` we recorded, so a feed that accounted for the arrivals — the
+/// conforming case, and the common one — produces an empty range and no second
+/// round trip.
+fn unaccounted_arrivals(
+    reported: &[postio_imap::backend::FetchedMessage],
+    selected: &ServerStatus,
+    previous_uid_next: Option<Uid>,
+) -> Option<Uid> {
+    let previous = previous_uid_next?;
+    let highest = reported
+        .iter()
+        .map(|message| message.uid.get())
+        .max()
+        .unwrap_or(0);
+    let floor = previous.get().max(highest.saturating_add(1));
+    (floor < selected.uid_next.get()).then(|| Uid::new(floor))
 }
 
 /// Removes every locally known message under `uid_validity`.
