@@ -299,6 +299,18 @@ impl MailboxState {
         uid
     }
 
+    /// Adds a message that is *arriving now*, rather than being seeded.
+    ///
+    /// RFC 7162 §3.1.2.1 requires a new message's MODSEQ to be strictly
+    /// greater than the mailbox's previous HIGHESTMODSEQ, so the counter moves
+    /// before the message is stamped with it. Push first and a
+    /// `FETCH (CHANGEDSINCE <the value observed a moment ago>)` — which is
+    /// strictly greater-than — would never report the arrival at all.
+    fn push_arriving(&mut self, message: MockMessage) -> u32 {
+        self.bump_mod_seq();
+        self.push(message)
+    }
+
     fn bump_mod_seq(&mut self) -> u64 {
         self.highest_mod_seq += 1;
         self.highest_mod_seq
@@ -920,8 +932,7 @@ impl MailBackend for MockBackend {
                 internal_date: message.internal_date,
                 structure: None,
             };
-            let uid = folder.push(seed);
-            folder.bump_mod_seq();
+            let uid = folder.push_arriving(seed);
             let uid_validity = folder.uid_validity;
             let count = folder.messages.len() as u32;
 
@@ -1004,7 +1015,7 @@ impl MockBackend {
         let mut mapping = Vec::new();
         for message in &moving {
             let folder = &mut state.mailboxes[destination];
-            let uid = folder.push(MockMessage {
+            let uid = folder.push_arriving(MockMessage {
                 raw: message.raw.clone(),
                 flags: message.flags.clone(),
                 internal_date: Some(message.internal_date),
@@ -1018,7 +1029,6 @@ impl MockBackend {
         }
 
         let count = state.mailboxes[destination].messages.len() as u32;
-        state.mailboxes[destination].bump_mod_seq();
         self.announce(&mut state, destination, MailboxEvent::Exists { count });
 
         if remove_source {
