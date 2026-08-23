@@ -348,6 +348,20 @@ the normal state of this project, not an exception. Several sessions work
 different crates at the same time, in the *same* working tree, on the *same*
 branch, sharing one git index and one cargo target directory.
 
+### Keep going
+
+**Finishing a bead is not finishing a session.** Nobody is watching, and a
+session that stops with work available has wasted the rest of its context. When
+you close a bead, run `/next`: it finds unclaimed, unblocked work inside your
+lane and continues.
+
+Record rather than stop. Work the bead revealed becomes a `bd create`; a
+decision future sessions should follow becomes a `bd remember`; a bead you
+cannot finish gets committed as work-in-progress, un-claimed, with the
+remaining criterion in its notes. Stop only when `bd ready` has nothing in your
+lane, when a decision is genuinely the user's, or when context is nearly gone —
+and land your work before you do.
+
 ### Tooling
 
 Four project skills encode the routines below — use them rather than
@@ -358,6 +372,7 @@ reconstructing the commands:
 | `/lanes` | Starting up: who else is here, what is safe to claim |
 | `/preflight` | Checking the real state of the tree, or when it looks broken |
 | `/land` | A bead is done: gates, staging, message, `bd close` |
+| `/next` | A bead is done and you need the next one — run it, don't wait |
 | `/add-fixture` | Adding `.eml` test mail to the corpus |
 | `/ux-architect` | Designing any surface, flow, or interaction — hold the experience coherent |
 | `/gtk-design` | Building it: tokens, GTK traps, motion, render-to-PNG |
