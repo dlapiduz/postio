@@ -1,0 +1,320 @@
+/* GENERATED FILE — do not edit by hand.
+ *
+ * Source : Design/_ds/industry-b0b46d6e-4b0c-403e-a94f-85bdc36b6c2f/styles.css
+ * Emitted by: crates/postio-gtk/build.rs via crates/postio-gtk/src/tokens.rs
+ * Regenerate: cargo build -p postio-gtk
+ *
+ * Retune the design system's :root block and every value below follows.
+ * The Industry identity is kept — Barlow Condensed / Barlow / IBM Plex Mono,
+ * the steel accent, hairline dividers, airy rows. Its wireframe chrome is not:
+ * no blueprint corner registration marks, no transparent line-drawing cards.
+ */
+
+/* ── Industry tokens ─────────────────────────────────────────────────
+   Straight from the source :root, one `--postio-` prefixed variable each.
+   Scheme-independent: these are the raw material, not the roles. */
+:root {
+  --postio-color-bg: #f2f2f3;
+  --postio-color-surface: #e9e9ea;
+  --postio-color-text: #1d1f20;
+  --postio-color-accent: #5980a6;
+  --postio-color-accent-2: #728fab;
+  --postio-color-divider: rgba(29, 31, 32, 0.16);
+  --postio-color-neutral-100: #f5f5f8;
+  --postio-color-neutral-200: #e7e7ea;
+  --postio-color-neutral-300: #d4d4d7;
+  --postio-color-neutral-400: #b7b7ba;
+  --postio-color-neutral-500: #98989b;
+  --postio-color-neutral-600: #7a7a7d;
+  --postio-color-neutral-700: #5d5d60;
+  --postio-color-neutral-800: #424244;
+  --postio-color-neutral-900: #2b2b2d;
+  --postio-color-accent-100: #eef6ff;
+  --postio-color-accent-200: #d6ebff;
+  --postio-color-accent-300: #b5d9fd;
+  --postio-color-accent-400: #94bce3;
+  --postio-color-accent-500: #749dc4;
+  --postio-color-accent-600: #597ea3;
+  --postio-color-accent-700: #416180;
+  --postio-color-accent-800: #2c455d;
+  --postio-color-accent-900: #1d2d3d;
+  --postio-color-accent-2-100: #eef6ff;
+  --postio-color-accent-2-200: #d6ebff;
+  --postio-color-accent-2-300: #bdd8f2;
+  --postio-color-accent-2-400: #9ebbd8;
+  --postio-color-accent-2-500: #7e9cb8;
+  --postio-color-accent-2-600: #627d98;
+  --postio-color-accent-2-700: #486077;
+  --postio-color-accent-2-800: #314457;
+  --postio-color-accent-2-900: #1f2d3a;
+  --postio-font-heading: "Barlow Condensed", sans-serif;
+  --postio-font-heading-weight: 600;
+  --postio-font-body: "Barlow", sans-serif;
+  --postio-space-1: 3.4px;
+  --postio-space-2: 6.8px;
+  --postio-space-3: 10.2px;
+  --postio-space-4: 13.6px;
+  --postio-space-6: 20.4px;
+  --postio-space-8: 27.2px;
+  --postio-radius-sm: 2px;
+  --postio-radius-md: 4px;
+  --postio-radius-lg: 7px;
+  --postio-shadow-sm: 0 1px 2px rgba(43, 43, 45, 0.14);
+  --postio-shadow-md: 0 3px 10px rgba(43, 43, 45, 0.16);
+  --postio-shadow-lg: 0 12px 32px rgba(43, 43, 45, 0.22);
+
+  /* Postio's own: the Industry system has no monospace role, but the mail
+     canvas sets counts, key hints and metadata in IBM Plex Mono. */
+  --postio-font-mono: "IBM Plex Mono", monospace;
+}
+
+/* ── Roles — light ───────────────────────────────────────────────────
+   Semantic names the widgets use, then the libadwaita named colours so
+   stock GTK widgets sit on the Industry ground instead of Adwaita's. */
+:root {
+
+  /* Ground and ink */
+  --postio-ground: var(--postio-color-bg);
+  --postio-surface: var(--postio-color-surface);
+  --postio-ink: var(--postio-color-text);
+  --postio-ink-secondary: rgba(29, 31, 32, 0.8);
+  --postio-dim: rgba(29, 31, 32, 0.55);
+  --postio-faint: rgba(29, 31, 32, 0.45);
+
+  /* Hairlines — the only edge this design draws */
+  --postio-hairline: var(--postio-color-divider);
+  --postio-hairline-strong: var(--postio-color-neutral-400);
+
+  /* Steel */
+  --postio-accent: var(--postio-color-accent);
+  --postio-accent-fg: var(--postio-color-bg);
+  --postio-accent-hover: var(--postio-color-accent-600);
+  --postio-accent-active: var(--postio-color-accent-700);
+  --postio-accent-text: var(--postio-color-accent-700);
+
+  /* Row states — airy rows, a 3px steel edge when selected */
+  --postio-selected-bg: rgba(89, 128, 166, 0.12);
+  --postio-selected-strong-bg: rgba(89, 128, 166, 0.14);
+  --postio-selected-border: var(--postio-color-accent);
+  --postio-selected-fg: var(--postio-color-text);
+  --postio-selected-accent-text: var(--postio-color-accent-800);
+  --postio-hover-bg: rgba(29, 31, 32, 0.04);
+  --postio-active-bg: rgba(29, 31, 32, 0.08);
+
+  /* Key hints */
+  --postio-key-fg: var(--postio-color-neutral-500);
+  --postio-key-border: var(--postio-color-neutral-300);
+
+  /* libadwaita named colours */
+  --window-bg-color: var(--postio-color-bg);
+  --window-fg-color: var(--postio-color-text);
+  --view-bg-color: var(--postio-color-bg);
+  --view-fg-color: var(--postio-color-text);
+  --headerbar-bg-color: var(--postio-color-bg);
+  --headerbar-fg-color: var(--postio-color-text);
+  --headerbar-border-color: var(--postio-color-divider);
+  --headerbar-backdrop-color: var(--postio-color-surface);
+  --headerbar-shade-color: var(--postio-color-divider);
+  --headerbar-darker-shade-color: var(--postio-color-divider);
+  --sidebar-bg-color: var(--postio-color-bg);
+  --sidebar-fg-color: var(--postio-color-text);
+  --sidebar-backdrop-color: var(--postio-color-surface);
+  --sidebar-border-color: var(--postio-color-divider);
+  --sidebar-shade-color: var(--postio-color-divider);
+  --secondary-sidebar-bg-color: var(--postio-color-surface);
+  --secondary-sidebar-fg-color: var(--postio-color-text);
+  --secondary-sidebar-backdrop-color: var(--postio-color-surface);
+  --secondary-sidebar-border-color: var(--postio-color-divider);
+  --secondary-sidebar-shade-color: var(--postio-color-divider);
+  --card-bg-color: var(--postio-color-surface);
+  --card-fg-color: var(--postio-color-text);
+  --card-shade-color: var(--postio-color-divider);
+  --dialog-bg-color: var(--postio-color-surface);
+  --dialog-fg-color: var(--postio-color-text);
+  --popover-bg-color: var(--postio-color-surface);
+  --popover-fg-color: var(--postio-color-text);
+  --popover-shade-color: var(--postio-color-divider);
+  --thumbnail-bg-color: var(--postio-color-surface);
+  --thumbnail-fg-color: var(--postio-color-text);
+  --overview-bg-color: var(--postio-color-surface);
+  --overview-fg-color: var(--postio-color-text);
+  --shade-color: var(--postio-color-divider);
+  --scrollbar-outline-color: var(--postio-color-bg);
+  --accent-bg-color: var(--postio-color-accent);
+  --accent-fg-color: var(--postio-color-bg);
+}
+
+/* ── Roles — dark ────────────────────────────────────────────────────
+   Canvas 3c: the board sits on the neutral deep step, the selected row on
+   the accent's deep step, steel goes light-on-dark (accent-400 fills,
+   accent-300 text) and the hairlines LIFT to neutral-700 rather than
+   darkening. `--accent-color` is left to libadwaita, which derives the
+   standalone step from `--accent-bg-color` per scheme. */
+:root.postio-dark {
+
+  /* Ground and ink */
+  --postio-ground: var(--postio-color-neutral-900);
+  --postio-surface: var(--postio-color-neutral-800);
+  --postio-ink: var(--postio-color-neutral-100);
+  --postio-ink-secondary: var(--postio-color-neutral-200);
+  --postio-dim: var(--postio-color-neutral-400);
+  --postio-faint: var(--postio-color-neutral-500);
+
+  /* Hairlines lift instead of darkening */
+  --postio-hairline: var(--postio-color-neutral-700);
+  --postio-hairline-strong: var(--postio-color-neutral-600);
+
+  /* Steel, light-on-dark */
+  --postio-accent: var(--postio-color-accent-400);
+  --postio-accent-fg: var(--postio-color-neutral-900);
+  --postio-accent-hover: var(--postio-color-accent-300);
+  --postio-accent-active: var(--postio-color-accent-500);
+  --postio-accent-text: var(--postio-color-accent-300);
+
+  /* Row states — the selected row takes the accent's deep step */
+  --postio-selected-bg: var(--postio-color-accent-900);
+  --postio-selected-strong-bg: var(--postio-color-accent-900);
+  --postio-selected-border: var(--postio-color-accent-400);
+  --postio-selected-fg: var(--postio-color-neutral-100);
+  --postio-selected-accent-text: var(--postio-color-accent-300);
+  --postio-hover-bg: rgba(245, 245, 248, 0.06);
+  --postio-active-bg: rgba(245, 245, 248, 0.1);
+
+  /* Key hints */
+  --postio-key-fg: var(--postio-color-neutral-400);
+  --postio-key-border: var(--postio-color-neutral-600);
+
+  /* Elevation on a dark ground is ambient darkness, not ink tint */
+  --postio-shadow-sm: 0 1px 2px rgba(43, 43, 45, 0.31);
+  --postio-shadow-md: 0 3px 10px rgba(43, 43, 45, 0.35);
+  --postio-shadow-lg: 0 12px 32px rgba(43, 43, 45, 0.48);
+
+  /* libadwaita named colours */
+  --window-bg-color: var(--postio-color-neutral-900);
+  --window-fg-color: var(--postio-color-neutral-100);
+  --view-bg-color: var(--postio-color-neutral-900);
+  --view-fg-color: var(--postio-color-neutral-100);
+  --headerbar-bg-color: var(--postio-color-neutral-900);
+  --headerbar-fg-color: var(--postio-color-neutral-100);
+  --headerbar-border-color: var(--postio-color-neutral-700);
+  --headerbar-backdrop-color: var(--postio-color-neutral-900);
+  --headerbar-shade-color: var(--postio-color-neutral-700);
+  --headerbar-darker-shade-color: var(--postio-color-neutral-700);
+  --sidebar-bg-color: var(--postio-color-neutral-900);
+  --sidebar-fg-color: var(--postio-color-neutral-100);
+  --sidebar-backdrop-color: var(--postio-color-neutral-900);
+  --sidebar-border-color: var(--postio-color-neutral-700);
+  --sidebar-shade-color: var(--postio-color-neutral-700);
+  --secondary-sidebar-bg-color: var(--postio-color-neutral-800);
+  --secondary-sidebar-fg-color: var(--postio-color-neutral-100);
+  --secondary-sidebar-backdrop-color: var(--postio-color-neutral-900);
+  --secondary-sidebar-border-color: var(--postio-color-neutral-700);
+  --secondary-sidebar-shade-color: var(--postio-color-neutral-700);
+  --card-bg-color: var(--postio-color-neutral-800);
+  --card-fg-color: var(--postio-color-neutral-100);
+  --card-shade-color: var(--postio-color-neutral-700);
+  --dialog-bg-color: var(--postio-color-neutral-800);
+  --dialog-fg-color: var(--postio-color-neutral-100);
+  --popover-bg-color: var(--postio-color-neutral-800);
+  --popover-fg-color: var(--postio-color-neutral-100);
+  --popover-shade-color: var(--postio-color-neutral-700);
+  --thumbnail-bg-color: var(--postio-color-neutral-800);
+  --thumbnail-fg-color: var(--postio-color-neutral-100);
+  --overview-bg-color: var(--postio-color-neutral-800);
+  --overview-fg-color: var(--postio-color-neutral-100);
+  --shade-color: var(--postio-color-neutral-700);
+  --scrollbar-outline-color: var(--postio-color-neutral-900);
+  --accent-bg-color: var(--postio-color-accent-400);
+  --accent-fg-color: var(--postio-color-neutral-900);
+}
+
+/* ── Roles — high contrast ───────────────────────────────────────────
+   Only the things that carry meaning at low contrast move: hairlines
+   gain weight, dimmed text comes back up, accent text drops to a deeper
+   ramp step. The ground and the identity stay put. */
+:root.postio-hc {
+  --postio-hairline: var(--postio-color-neutral-400);
+  --postio-hairline-strong: var(--postio-color-neutral-600);
+  --postio-dim: rgba(29, 31, 32, 0.9);
+  --postio-faint: rgba(29, 31, 32, 0.8);
+  --postio-accent-text: var(--postio-color-accent-800);
+  --postio-selected-bg: rgba(89, 128, 166, 0.2);
+  --postio-selected-strong-bg: rgba(89, 128, 166, 0.24);
+  --postio-selected-accent-text: var(--postio-color-accent-900);
+  --postio-key-fg: var(--postio-color-neutral-700);
+  --postio-key-border: var(--postio-color-neutral-500);
+  --headerbar-border-color: var(--postio-color-neutral-400);
+  --sidebar-border-color: var(--postio-color-neutral-400);
+  --secondary-sidebar-border-color: var(--postio-color-neutral-400);
+  --card-shade-color: var(--postio-color-neutral-400);
+  --shade-color: var(--postio-color-neutral-400);
+  --accent-bg-color: var(--postio-color-accent-700);
+}
+
+:root.postio-dark.postio-hc {
+  --postio-hairline: var(--postio-color-neutral-500);
+  --postio-hairline-strong: var(--postio-color-neutral-400);
+  --postio-dim: var(--postio-color-neutral-200);
+  --postio-faint: var(--postio-color-neutral-300);
+  --postio-accent-text: var(--postio-color-accent-200);
+  --postio-selected-bg: var(--postio-color-accent-800);
+  --postio-selected-strong-bg: var(--postio-color-accent-800);
+  --postio-selected-accent-text: var(--postio-color-accent-200);
+  --postio-key-fg: var(--postio-color-neutral-200);
+  --postio-key-border: var(--postio-color-neutral-400);
+  --headerbar-border-color: var(--postio-color-neutral-500);
+  --sidebar-border-color: var(--postio-color-neutral-500);
+  --secondary-sidebar-border-color: var(--postio-color-neutral-500);
+  --card-shade-color: var(--postio-color-neutral-500);
+  --shade-color: var(--postio-color-neutral-500);
+  --accent-bg-color: var(--postio-color-accent-300);
+}
+
+/* ── Type roles ──────────────────────────────────────────────────────
+   Barlow Condensed headings over Barlow body, IBM Plex Mono for counts,
+   key hints and metadata. The faces ship in the GResource bundle and are
+   registered at startup (see `crate::fonts`), so none of this depends on
+   a system font installation. */
+:root {
+  font-family: var(--postio-font-body);
+}
+
+.postio-heading,
+.postio-title,
+.postio-kicker {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+}
+
+.postio-kicker {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--postio-faint);
+}
+
+.postio-mono,
+.postio-count,
+.postio-meta,
+.postio-key {
+  font-family: var(--postio-font-mono);
+}
+
+.postio-meta {
+  color: var(--postio-dim);
+}
+
+/* A key hint: the mnemonic shown on the focused row, never a decoration. */
+.postio-key {
+  color: var(--postio-key-fg);
+  border: 1px solid var(--postio-key-border);
+  border-radius: var(--postio-radius-sm);
+  padding: 1px 4px;
+}
+
+/* A hairline divider — the Industry rule, one device-pixel of ink. */
+.postio-hairline {
+  background-color: var(--postio-hairline);
+  min-width: 1px;
+  min-height: 1px;
+}
