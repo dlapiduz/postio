@@ -24,7 +24,8 @@ In CI, set POSTIO_DENY_NAMES from a repository secret; a runner's git config
 is the bot's, not a maintainer's, so the git fallback no-ops there. GitHub
 masks secret values in logs, which is a second layer under the redaction.
 
-Run: python3 scripts/check-no-personal-data.py [--reveal]
+Run: python3 scripts/check-no-personal-data.py [--reveal] [path ...]
+     Paths narrow the scan; without them every tracked file is checked.
 """
 
 from __future__ import annotations
@@ -34,9 +35,15 @@ import re
 import subprocess
 import sys
 
+# A domain is reserved if any label is exactly "example" -- which covers
+# example.com, example.co.uk and mail.example.org alike -- or if the TLD is one
+# of the reserved ones. Requiring "example.com" specifically flagged perfectly
+# good ccTLD-shaped fixtures, and pushed one session into weakening an address
+# parser's test data to satisfy this check. A guard that degrades tests is
+# worse than no guard.
 RESERVED = re.compile(
-    r"@(?:[A-Za-z0-9-]+\.)*(?:example\.(?:com|net|org)"
-    r"|(?:[A-Za-z0-9-]+\.)?(?:test|invalid|example|localhost))$",
+    r"@(?:[A-Za-z0-9-]+\.)*example(?:\.[A-Za-z0-9-]+)*$"
+    r"|@(?:[A-Za-z0-9-]+\.)*(?:test|invalid|localhost)$",
     re.IGNORECASE,
 )
 ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -59,10 +66,16 @@ ALLOW_EXACT = {
 }
 
 
-def tracked_files() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, check=True
-    ).stdout
+def tracked_files(scopes: list[str]) -> list[str]:
+    """Tracked files, optionally narrowed to the given path prefixes.
+
+    Scoping matters in this repository: several sessions share one working
+    tree, so an unscoped run fails on somebody else's uncommitted edits and
+    tells you nothing about your own work. `/land` passes the crate it owns;
+    CI passes nothing and checks everything.
+    """
+    cmd = ["git", "ls-files"] + (scopes or [])
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     return [p for p in out.splitlines() if not p.startswith(SKIP_PATHS)]
 
 
@@ -90,10 +103,11 @@ def denied_names() -> list[tuple[str, str]]:
 
 def main() -> int:
     reveal = "--reveal" in sys.argv
+    scopes = [a for a in sys.argv[1:] if not a.startswith("-")]
     failures: list[str] = []
     identity = denied_names()
 
-    for path in tracked_files():
+    for path in tracked_files(scopes):
         try:
             text = open(path, encoding="utf-8", errors="ignore").read()
         except OSError:

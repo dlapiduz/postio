@@ -18,11 +18,16 @@ cargo fmt    -p <your-crate> \
   && cargo clippy -p <your-crate> --all-targets -- -D warnings \
   && cargo test   -p <your-crate> \
   && python3 scripts/check-crate-boundaries.py \
-  && python3 scripts/check-no-personal-data.py
+  && python3 scripts/check-no-personal-data.py crates/<your-crate>
 ```
 
 One chained command, in that order: format first so clippy and the tests see
 the final bytes, and the chain stops at the first failure.
+
+**Pass your crate path to the personal-data check.** Unscoped it scans every
+tracked file, so in a shared tree it fails on another session's uncommitted
+edits and tells you nothing about your own work. CI runs it unscoped; you
+should not.
 
 **Per-crate, not `--workspace`.** A workspace test compiles and runs all nine
 crates including GTK, and serialises on the shared target directory while other
