@@ -56,8 +56,18 @@ clean tree; that would take every session's changes with it.
 git add crates/<your-crate> Cargo.lock
 ```
 
-Never stage everything — three other sessions have unfinished files in this
-tree, and the guard hook refuses whole-tree staging. `Cargo.lock` churns
+Never stage everything — other sessions have unfinished files in this tree.
+
+**And never `git commit -- <path>`.** That form bypasses the index and commits
+the *working tree* version of those paths, so anything you had half-written in
+them goes in too. A session did exactly this and produced an intermediate
+commit that would not build in isolation. Stage first, then commit with no
+pathspec:
+
+```bash
+git add crates/<your-crate> Cargo.lock
+git commit          # no -- <path>, no -a
+``` `Cargo.lock` churns
 constantly and is a resolved superset; staging it alongside your crate is
 expected and merges fine.
 
