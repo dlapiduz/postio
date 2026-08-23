@@ -1,0 +1,816 @@
+//! The message repository, and the windowed paging query the list depends on.
+//!
+//! Written before the repository existed. The bead's acceptance criteria are
+//! "paging over a 100k-message fixture stays flat in time and memory", "the
+//! sort key is stable across inserts (no row skipping while paging)" and a
+//! recorded benchmark; the first two have tests here, and
+//! `the_message_list_plan_never_sorts` is the structural half of the first.
+
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, TimeZone, Utc};
+use rusqlite::Connection;
+
+use postio_model::{
+    Attachment, BodyState, Disposition, EmailAddress, Flag, FlagSet, MailboxId, Message, MessageId,
+    ModSeq, RfcMessageId, ThreadId, Uid, UidValidity,
+};
+use postio_storage::repository::{BodyBlobs, FlagSource, ListCursor, ListQuery, MessageRepository};
+use postio_storage::test_support;
+
+fn at(seconds: i64) -> DateTime<Utc> {
+    Utc.timestamp_opt(1_770_000_000 + seconds, 0)
+        .single()
+        .unwrap()
+}
+
+/// A message with enough on it to be worth round-tripping.
+fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
+    let mut message = Message::new(account, mailbox, at(seconds));
+    message.rfc_message_id = Some(RfcMessageId::new(format!("<m{seconds}@example.com>")));
+    message.in_reply_to = Some(RfcMessageId::new("<parent@example.com>"));
+    message.references = vec![
+        RfcMessageId::new("<root@example.com>"),
+        RfcMessageId::new("<parent@example.com>"),
+    ];
+    message.from = vec![EmailAddress::new(Some("Ada Norwood"), "ada@example.com")];
+    message.to = vec![
+        EmailAddress::new(Some("Quinn Abara"), "quinn@example.net"),
+        EmailAddress::new(None::<String>, "list@example.org"),
+    ];
+    message.cc = vec![EmailAddress::new(None::<String>, "cc@example.com")];
+    message.subject = Some(format!("Re: Subject {seconds}"));
+    message.date = Some(at(seconds - 10));
+    message.preview = Some("A short snippet".to_owned());
+    message.size = 4_096;
+    message.flags = [Flag::Seen, Flag::Keyword("Work".to_owned())]
+        .into_iter()
+        .collect();
+    message.server.uid = Some(Uid::new(seconds as u32 + 1));
+    message.server.uid_validity = Some(UidValidity::new(99));
+    message.server.mod_seq = Some(ModSeq::new(12_345));
+    message.sync.body_state = BodyState::HeadersOnly;
+    message
+}
+
+// ---------------------------------------------------------------------------
+// Create, read, update, delete
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_message_round_trips_with_its_recipients_and_attachments() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 100);
+    let mut attachment = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 2_048);
+    attachment.filename = Some("layout.pdf".to_owned());
+    attachment.part_id = Some("2".to_owned());
+    attachment.disposition = Disposition::Attachment;
+    let mut inline = Attachment::new(MessageId::UNASSIGNED, "image/png", 512);
+    inline.disposition = Disposition::Inline;
+    inline.content_id = Some("logo@example.com".to_owned());
+    message.attachments = vec![attachment, inline];
+
+    let id = messages.create(&mut message).expect("create");
+
+    assert!(id.is_assigned());
+    for attachment in &message.attachments {
+        assert!(attachment.id.is_assigned(), "attachments get ids too");
+        assert_eq!(attachment.message_id, id);
+    }
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.rfc_message_id, message.rfc_message_id);
+    assert_eq!(stored.in_reply_to, message.in_reply_to);
+    assert_eq!(stored.references, message.references);
+    assert_eq!(stored.from, message.from);
+    assert_eq!(stored.to, message.to, "recipient order is header order");
+    assert_eq!(stored.cc, message.cc);
+    assert_eq!(stored.subject, message.subject);
+    assert_eq!(stored.date, message.date);
+    assert_eq!(stored.received_at, message.received_at);
+    assert_eq!(stored.preview, message.preview);
+    assert_eq!(stored.size, 4_096);
+    assert_eq!(stored.flags, message.flags);
+    assert_eq!(stored.attachments, message.attachments);
+    assert!(stored.has_attachments());
+    assert_eq!(stored.server, message.server);
+    assert_eq!(stored.sync.body_state, BodyState::HeadersOnly);
+}
+
+#[test]
+fn flags_are_denormalized_so_the_list_never_parses_a_string() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 1);
+    message.flags = [Flag::Seen, Flag::Flagged, Flag::Answered, Flag::Recent]
+        .into_iter()
+        .collect();
+    let id = messages.create(&mut message).expect("create");
+
+    let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) = connection
+        .query_row(
+            "SELECT flags, seen, flagged, answered, draft FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("read the raw row");
+
+    assert!(seen && flagged && answered && !draft);
+    assert!(
+        !flags.contains("Recent"),
+        "\\Recent is per-session and must never be persisted: {flags:?}"
+    );
+    assert_eq!(flags, "\\Seen \\Answered \\Flagged", "canonical order");
+    assert!(
+        !messages
+            .get(id)
+            .expect("get")
+            .expect("the message")
+            .flags
+            .contains(&Flag::Recent)
+    );
+}
+
+#[test]
+fn updating_a_message_replaces_its_recipients_rather_than_appending() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 2);
+    let id = messages.create(&mut message).expect("create");
+
+    message.to = vec![EmailAddress::new(None::<String>, "only@example.com")];
+    message.subject = Some("Rewritten".to_owned());
+    message.attachments.clear();
+    messages.update(&mut message).expect("update");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.to.len(), 1);
+    assert_eq!(stored.subject.as_deref(), Some("Rewritten"));
+
+    let recipients: i64 = connection
+        .query_row("SELECT count(*) FROM recipients", [], |row| row.get(0))
+        .expect("count");
+    assert_eq!(recipients, 3, "from + to + cc, with no leftovers");
+}
+
+#[test]
+fn deleting_messages_takes_their_recipients_and_attachments() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut first = a_message(inbox, account.id, 3);
+    let mut second = a_message(inbox, account.id, 4);
+    let first_id = messages.create(&mut first).expect("create");
+    let second_id = messages.create(&mut second).expect("create");
+
+    assert_eq!(messages.delete(&[first_id, second_id]).expect("delete"), 2);
+    assert!(messages.get(first_id).expect("get").is_none());
+
+    for table in ["messages", "recipients", "attachments"] {
+        let remaining: i64 = connection
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("count");
+        assert_eq!(remaining, 0, "{table}");
+    }
+    assert_eq!(
+        messages.delete(&[first_id]).expect("delete again"),
+        0,
+        "deleting what is gone is zero, not an error"
+    );
+}
+
+#[test]
+fn the_body_and_headers_live_in_the_blob_store_and_the_row_holds_the_keys() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 5);
+    message.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
+    let id = messages.create(&mut message).expect("create");
+
+    assert_eq!(
+        messages.body_blobs(id).expect("blobs").expect("the row"),
+        BodyBlobs::default(),
+        "nothing has been downloaded yet"
+    );
+
+    let blobs = BodyBlobs {
+        text: Some(postio_model::BlobId::new("b".repeat(64))),
+        html: Some(postio_model::BlobId::new("c".repeat(64))),
+        headers: Some(postio_model::BlobId::new("d".repeat(64))),
+    };
+    messages
+        .set_body_blobs(id, &blobs, BodyState::Full)
+        .expect("set");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(messages.body_blobs(id).expect("blobs"), Some(blobs));
+    assert_eq!(stored.raw_blob_id, message.raw_blob_id);
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+    assert!(
+        stored.body.is_empty() && stored.headers.is_empty(),
+        "the bytes themselves are the blob store's, not SQLite's"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Batch upsert, the shape sync writes in
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut batch = vec![
+        a_message(inbox, account.id, 10),
+        a_message(inbox, account.id, 11),
+    ];
+    let report = messages.upsert_batch(&mut batch).expect("first upsert");
+    assert_eq!(report.inserted, 2);
+    assert_eq!(report.updated, 0);
+    let ids: Vec<MessageId> = batch.iter().map(|message| message.id).collect();
+    assert!(ids.iter().copied().all(MessageId::is_assigned));
+
+    // The same UIDs come back with a flag change, plus one genuinely new one.
+    let mut again = vec![
+        a_message(inbox, account.id, 10),
+        a_message(inbox, account.id, 11),
+        a_message(inbox, account.id, 12),
+    ];
+    again[0].flags = [Flag::Seen, Flag::Flagged].into_iter().collect();
+    let report = messages.upsert_batch(&mut again).expect("second upsert");
+
+    assert_eq!(report.inserted, 1);
+    assert_eq!(report.updated, 2);
+    assert_eq!(
+        again[0].id, ids[0],
+        "a message keeps its local id across a resync, so the UI's selection survives"
+    );
+
+    let total: i64 = connection
+        .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
+        .expect("count");
+    assert_eq!(total, 3, "no duplicates");
+    assert!(
+        messages
+            .get(ids[0])
+            .expect("get")
+            .expect("the message")
+            .flags
+            .is_flagged()
+    );
+}
+
+#[test]
+fn a_locally_composed_message_with_no_uid_is_never_matched_by_upsert() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut first = a_message(inbox, account.id, 20);
+    first.server = Default::default();
+    let mut second = a_message(inbox, account.id, 21);
+    second.server = Default::default();
+
+    let mut batch = vec![first, second];
+    let report = messages.upsert_batch(&mut batch).expect("upsert");
+
+    assert_eq!(
+        report.inserted, 2,
+        "with no server identity there is nothing to match on"
+    );
+    assert_ne!(batch[0].id, batch[1].id);
+}
+
+// ---------------------------------------------------------------------------
+// Lookups
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_message_can_be_found_by_its_server_uid() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 30);
+    let id = messages.create(&mut message).expect("create");
+    let uid = message.server.uid.unwrap();
+    let validity = message.server.uid_validity.unwrap();
+
+    assert_eq!(
+        messages
+            .by_uid(inbox, validity, uid)
+            .expect("by uid")
+            .map(|message| message.id),
+        Some(id)
+    );
+    assert!(
+        messages
+            .by_uid(inbox, UidValidity::new(100), uid)
+            .expect("by uid")
+            .is_none(),
+        "a UID means nothing under a different UIDVALIDITY"
+    );
+    assert_eq!(messages.uids_in(inbox, validity).expect("uids"), vec![uid]);
+    assert!(
+        messages
+            .uids_in(inbox, UidValidity::new(100))
+            .expect("uids")
+            .is_empty()
+    );
+}
+
+#[test]
+fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let shared = RfcMessageId::new("<shared@example.com>");
+    let mut first = a_message(inbox, account.id, 40);
+    first.rfc_message_id = Some(shared.clone());
+    let mut second = a_message(inbox, account.id, 41);
+    second.rfc_message_id = Some(shared.clone());
+    let first_id = messages.create(&mut first).expect("create");
+    let second_id = messages.create(&mut second).expect("create");
+
+    let found = messages
+        .ids_by_rfc_message_id(account.id, &shared)
+        .expect("lookup");
+
+    assert_eq!(
+        found,
+        vec![first_id, second_id],
+        "a Message-ID is not unique in the wild; the corpus has a fixture that reuses one"
+    );
+    assert!(
+        messages
+            .ids_by_rfc_message_id(account.id, &RfcMessageId::new("nothing@example.com"))
+            .expect("lookup")
+            .is_empty()
+    );
+    assert_eq!(
+        messages
+            .ids_by_rfc_message_id(account.id, &RfcMessageId::new("<SHARED@EXAMPLE.COM>"))
+            .expect("lookup"),
+        vec![first_id, second_id],
+        "Message-IDs compare case-insensitively, the way threading needs"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Flags, moves, local delete
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 50);
+    let id = messages.create(&mut message).expect("create");
+
+    let mut flags = FlagSet::new();
+    flags.insert(Flag::Flagged);
+    messages
+        .set_flags(id, &flags, FlagSource::Local)
+        .expect("local change");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert!(stored.flags.is_flagged() && !stored.flags.is_seen());
+    assert!(
+        stored.sync.flags_dirty,
+        "a local change is ahead of the server until it is pushed"
+    );
+
+    messages
+        .set_flags(id, &flags, FlagSource::Server)
+        .expect("server change");
+    assert!(
+        !messages
+            .get(id)
+            .expect("get")
+            .expect("the message")
+            .sync
+            .flags_dirty,
+        "what the server told us is by definition not ahead of it"
+    );
+}
+
+#[test]
+fn moving_a_message_drops_the_uid_it_had_in_the_old_mailbox() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 60);
+    let id = messages.create(&mut message).expect("create");
+
+    assert_eq!(messages.move_to(&[id], archive.id).expect("move"), 1);
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.mailbox_id, archive.id);
+    assert_eq!(
+        stored.server.uid, None,
+        "a UID belongs to the mailbox it was issued in"
+    );
+    assert_eq!(stored.server.uid_validity, None);
+    assert!(
+        stored.sync.has_pending_operations,
+        "the move still has to be pushed"
+    );
+}
+
+#[test]
+fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 70);
+    let id = messages.create(&mut message).expect("create");
+
+    assert_eq!(messages.set_deleted_locally(&[id], true).expect("hide"), 1);
+    assert!(
+        messages
+            .page(&ListQuery::mailbox(inbox))
+            .expect("page")
+            .is_empty(),
+        "the list hides it the instant the user presses the key"
+    );
+    assert!(
+        messages.get(id).expect("get").is_some(),
+        "but undo has to be able to bring it back"
+    );
+
+    messages.set_deleted_locally(&[id], false).expect("undo");
+    assert_eq!(
+        messages
+            .page(&ListQuery::mailbox(inbox))
+            .expect("page")
+            .len(),
+        1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The windowed list query
+// ---------------------------------------------------------------------------
+
+/// Inserts `count` messages straight into the table, newest last.
+///
+/// Raw SQL and one statement: this is the fixture for the paging tests, and
+/// building it through the repository would make them a test of insert speed.
+fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
+    connection
+        .execute(
+            "WITH RECURSIVE seq(n) AS (
+                 SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ?2
+             )
+             INSERT INTO messages (account_id, mailbox_id, received_at, subject, preview,
+                                   flags, seen, flagged, size)
+             SELECT (SELECT account_id FROM mailboxes WHERE id = ?1), ?1,
+                    1770000000000 + n * 1000, 'Subject ' || n, 'Preview ' || n,
+                    '', n % 2, n % 7 = 0, 1024
+               FROM seq",
+            rusqlite::params![mailbox.get(), count],
+        )
+        .expect("seed messages");
+    connection
+        .execute(
+            "INSERT INTO recipients (message_id, kind, position, name, address,
+                                     address_normalized)
+             SELECT id, 'from', 0, 'Sender ' || id, 'sender' || id || '@example.com',
+                    'sender' || id || '@example.com'
+               FROM messages WHERE mailbox_id = ?1",
+            [mailbox.get()],
+        )
+        .expect("seed senders");
+}
+
+#[test]
+fn a_page_is_newest_first_and_no_longer_than_the_window() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection);
+    seed(&connection, inbox, 10);
+    let messages = MessageRepository::new(&connection);
+
+    let page = messages
+        .page(&ListQuery::mailbox(inbox).limit(4))
+        .expect("page");
+
+    assert_eq!(page.len(), 4);
+    assert_eq!(page[0].subject.as_deref(), Some("Subject 10"));
+    assert_eq!(page[3].subject.as_deref(), Some("Subject 7"));
+    assert!(
+        page[0].received_at > page[1].received_at,
+        "newest first, always"
+    );
+    assert_eq!(
+        page[0].from.as_ref().map(|from| from.display()),
+        Some("Sender 10"),
+        "the row carries its sender without a second query per row"
+    );
+    assert_eq!(page[0].preview.as_deref(), Some("Preview 10"));
+    assert!(!page[0].seen, "message 10 is odd, so unread");
+}
+
+#[test]
+fn paging_with_a_cursor_walks_the_whole_mailbox_exactly_once() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection);
+    seed(&connection, inbox, 250);
+    let messages = MessageRepository::new(&connection);
+
+    let mut seen: Vec<MessageId> = Vec::new();
+    let mut cursor: Option<ListCursor> = None;
+    loop {
+        let mut query = ListQuery::mailbox(inbox).limit(40);
+        if let Some(cursor) = cursor {
+            query = query.after(cursor);
+        }
+        let page = messages.page(&query).expect("page");
+        if page.is_empty() {
+            break;
+        }
+        cursor = page.last().map(|row| row.cursor());
+        seen.extend(page.iter().map(|row| row.id));
+    }
+
+    assert_eq!(seen.len(), 250, "every message, once");
+    let mut unique = seen.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), 250, "and none of them twice");
+}
+
+#[test]
+fn a_message_arriving_mid_scroll_does_not_make_the_list_skip_a_row() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    seed(&connection, inbox, 100);
+    let messages = MessageRepository::new(&connection);
+
+    let first = messages
+        .page(&ListQuery::mailbox(inbox).limit(10))
+        .expect("first page");
+    let cursor = first.last().expect("a row").cursor();
+
+    // IDLE delivers a new message at the top while the user is still scrolling.
+    let mut arrival = a_message(inbox, account.id, 1_000_000);
+    messages.create(&mut arrival).expect("create");
+
+    let second = messages
+        .page(&ListQuery::mailbox(inbox).limit(10).after(cursor))
+        .expect("second page");
+
+    assert_eq!(
+        second[0].subject.as_deref(),
+        Some("Subject 90"),
+        "the cursor is the sort key, so the next page continues where the last ended"
+    );
+    let overlap = first
+        .iter()
+        .any(|row| second.iter().any(|other| other.id == row.id));
+    assert!(!overlap, "and nothing is shown twice");
+}
+
+#[test]
+fn paging_by_offset_is_available_for_a_windowed_list_model() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection);
+    seed(&connection, inbox, 100);
+    let messages = MessageRepository::new(&connection);
+
+    let page = messages
+        .page_at(&ListQuery::mailbox(inbox).limit(5), 20)
+        .expect("page at an offset");
+
+    assert_eq!(page.len(), 5);
+    assert_eq!(
+        page[0].subject.as_deref(),
+        Some("Subject 80"),
+        "row 21 counting from the newest"
+    );
+    assert_eq!(
+        messages.count(&ListQuery::mailbox(inbox)).expect("count"),
+        100
+    );
+}
+
+#[test]
+fn the_list_can_be_scoped_to_an_account_or_to_flagged_messages() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    seed(&connection, inbox, 10);
+    seed(&connection, archive.id, 10);
+    let messages = MessageRepository::new(&connection);
+
+    assert_eq!(
+        messages.count(&ListQuery::mailbox(inbox)).expect("count"),
+        10
+    );
+    assert_eq!(
+        messages
+            .count(&ListQuery::account(account.id))
+            .expect("count"),
+        20,
+        "the unified view spans mailboxes"
+    );
+    assert_eq!(
+        messages
+            .count(&ListQuery::flagged(account.id))
+            .expect("count"),
+        2,
+        "every seventh message, in each of the two mailboxes"
+    );
+    assert!(
+        messages
+            .page(&ListQuery::flagged(account.id))
+            .expect("page")
+            .iter()
+            .all(|row| row.flagged)
+    );
+}
+
+#[test]
+fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_second_query() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 80);
+    let id = messages.create(&mut message).expect("create");
+    connection
+        .execute(
+            "INSERT INTO threads (id, account_id) VALUES (1, ?1)",
+            [account.id.get()],
+        )
+        .expect("a thread");
+    messages
+        .set_thread(id, Some(ThreadId::new(1)))
+        .expect("assign");
+
+    let page = messages.page(&ListQuery::mailbox(inbox)).expect("page");
+    assert_eq!(page[0].thread_id, Some(ThreadId::new(1)));
+    assert_eq!(
+        messages
+            .get(id)
+            .expect("get")
+            .expect("the message")
+            .thread_id,
+        Some(ThreadId::new(1))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Acceptance: flat in time and memory over a large mailbox
+// ---------------------------------------------------------------------------
+
+/// Whether a plan resolves through an index rather than a scan or a sort.
+fn plan_of(connection: &Connection, sql: &str) -> String {
+    let mut statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
+    // The list query is parameterised; the planner does not care what the
+    // values are, only that there are the right number of them.
+    let arguments = vec![1i64; statement.parameter_count()];
+    let rows = statement
+        .query_map(rusqlite::params_from_iter(arguments), |row| {
+            row.get::<_, String>(3)
+        })
+        .expect("plan")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect");
+    rows.join("\n")
+}
+
+#[test]
+fn the_message_list_plan_never_sorts() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    for (label, query) in [
+        ("mailbox", ListQuery::mailbox(inbox)),
+        (
+            "account",
+            ListQuery::account(postio_model::AccountId::new(1)),
+        ),
+        (
+            "flagged",
+            ListQuery::flagged(postio_model::AccountId::new(1)),
+        ),
+    ] {
+        for (kind, sql) in [
+            ("first page", messages.explain(&query)),
+            (
+                "cursor page",
+                messages.explain(&query.clone().after(ListCursor {
+                    received_at: at(0),
+                    id: MessageId::new(1),
+                })),
+            ),
+        ] {
+            let plan = plan_of(&connection, &sql);
+            assert!(
+                !plan.contains("TEMP B-TREE"),
+                "{label} / {kind}: the list must never sort at query time:\n{plan}"
+            );
+            assert!(
+                !plan.contains("SCAN messages"),
+                "{label} / {kind}: the list must never scan the table:\n{plan}"
+            );
+            assert!(
+                plan.contains("USING INDEX") || plan.contains("USING COVERING INDEX"),
+                "{label} / {kind}: expected an index, got:\n{plan}"
+            );
+        }
+    }
+}
+
+#[test]
+fn paging_stays_flat_over_a_hundred_thousand_messages() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection);
+    seed(&connection, inbox, 100_000);
+    let messages = MessageRepository::new(&connection);
+
+    let query = ListQuery::mailbox(inbox).limit(50);
+    let time = |query: &ListQuery| -> (Duration, Vec<_>) {
+        let start = Instant::now();
+        let page = messages.page(query).expect("page");
+        (start.elapsed(), page)
+    };
+
+    let (first_duration, first) = time(&query);
+    assert_eq!(first.len(), 50, "a page is a window, never the mailbox");
+
+    // Walk to the far end of the mailbox and time a page there.
+    let mut cursor = first.last().expect("a row").cursor();
+    let mut pages = 1;
+    while pages < 1_900 {
+        let page = messages.page(&query.clone().after(cursor)).expect("page");
+        let Some(last) = page.last() else { break };
+        cursor = last.cursor();
+        pages += 1;
+    }
+
+    let (deep_duration, deep) = time(&query.clone().after(cursor));
+    assert_eq!(deep.len(), 50, "still a full window, 95000 rows in");
+    assert!(
+        deep_duration < first_duration * 5 + Duration::from_millis(3),
+        "keyset paging is a seek, not a skip: first {first_duration:?}, deep {deep_duration:?}"
+    );
+
+    // And the whole mailbox is never materialized: the only way to see every
+    // row is to ask for one window at a time.
+    assert_eq!(
+        messages.count(&ListQuery::mailbox(inbox)).expect("count"),
+        100_000
+    );
+}
