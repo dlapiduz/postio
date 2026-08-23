@@ -75,6 +75,10 @@ mod imp {
         /// `Header` has no other reader today, so only the button is worth
         /// keeping rather than the whole struct.
         pub compose_button: OnceCell<gtk::Button>,
+        /// *Archived 12 messages — Undo.* Built alongside the rest of the
+        /// window rather than lazily: every window needs somewhere to put
+        /// this, the same way every window needs a header.
+        pub toast: OnceCell<crate::toast::Toast>,
 
         pub settings: OnceCell<SettingsPanel>,
         /// The pane that had the keyboard when the box opened.
@@ -167,6 +171,25 @@ impl Window {
     /// observes.
     pub fn compose_button(&self) -> Option<gtk::Button> {
         self.imp().compose_button.get().cloned()
+    }
+
+    /// *Archived 12 messages — Undo.* Whoever applies a
+    /// [`postio_core::Command`] and gets back an undoable
+    /// [`postio_core::Event::ActionCompleted`] calls this with it; `u` and
+    /// the toast's own button both end up at `win.undo`, which reaches
+    /// [`Window::connect_command`] the same way the keyboard does.
+    pub fn show_action_completed(&self, description: &str, undoable: bool) {
+        if let Some(toast) = self.imp().toast.get() {
+            toast.show_action_completed(description, undoable);
+        }
+    }
+
+    /// *Archived 12 messages, undone.* What `u` (or the toast's button)
+    /// leaves on screen once it has run.
+    pub fn show_undo_performed(&self, description: &str) {
+        if let Some(toast) = self.imp().toast.get() {
+            toast.show_undo_performed(description);
+        }
     }
 
     /// The list pane's placeholder for inbox zero, offline and sync failure.
@@ -399,7 +422,20 @@ impl Window {
         let layout = adw::ToolbarView::new();
         layout.add_top_bar(&header.bar);
         layout.set_content(Some(&overlay));
-        self.set_content(Some(&layout));
+
+        // Outermost: a toast has to float over the header and the panes
+        // alike, not just over whichever pane happened to trigger it.
+        let toast = crate::toast::Toast::new();
+        toast.overlay().set_child(Some(&layout));
+        self.set_content(Some(toast.overlay()));
+
+        let undo = gio::SimpleAction::new("undo", None);
+        undo.connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_, _| window.dispatch(CommandId::Undo)
+        ));
+        self.add_action(&undo);
 
         // Breakpoints only fire once the window has a size, so the restored
         // state goes on first and the breakpoints correct it if it does not
@@ -417,6 +453,7 @@ impl Window {
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         let _ = self.imp().compose_button.set(header.compose.clone());
+        let _ = self.imp().toast.set(toast);
         self.imp().context.set(Some(Context::List));
 
         self.install_keyboard();
