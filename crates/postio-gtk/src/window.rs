@@ -28,6 +28,7 @@ use gtk::glib;
 
 use postio_core::{CommandId, Context};
 
+use crate::cheatsheet::CheatSheet;
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::palette::Palette;
 use crate::shell::Shell;
@@ -55,6 +56,7 @@ mod imp {
         pub shell: OnceCell<Shell>,
         pub sidebar: OnceCell<Sidebar>,
         pub palette: OnceCell<Palette>,
+        pub cheatsheet: OnceCell<CheatSheet>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -155,9 +157,12 @@ impl Window {
         // blanked the window would lose the context the user is choosing in.
         let palette = Palette::new();
         palette.set_visible(false);
+        let cheatsheet = CheatSheet::new();
+        cheatsheet.set_visible(false);
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&shell));
         overlay.add_overlay(&palette);
+        overlay.add_overlay(&cheatsheet);
 
         let layout = adw::ToolbarView::new();
         layout.add_top_bar(&header.bar);
@@ -174,6 +179,7 @@ impl Window {
         let _ = self.imp().shell.set(shell);
         let _ = self.imp().sidebar.set(sidebar);
         let _ = self.imp().palette.set(palette);
+        let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().overlay.set(overlay);
         self.imp().context.set(Some(Context::List));
 
@@ -200,6 +206,12 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move || window.close_palette()
+        ));
+
+        self.cheatsheet().connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.close_cheatsheet()
         ));
 
         // Capture, not bubble: a single-key binding has to be seen before the
@@ -263,6 +275,9 @@ impl Window {
     fn run(&self, id: CommandId) {
         match id {
             CommandId::CommandPalette => self.open_palette(),
+            CommandId::CheatSheet => self.toggle_cheatsheet(),
+            // One `Esc` closes one overlay, nearest first.
+            CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.palette().is_visible() => self.close_palette(),
             _ => self.dispatch(id),
         }
@@ -345,16 +360,53 @@ impl Window {
         self.shell().grab_focus();
     }
 
+    /// The `?` overlay.
+    pub fn cheatsheet(&self) -> CheatSheet {
+        self.imp()
+            .cheatsheet
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
+    /// Shows the cheat sheet, or hides it if it is already up.
+    ///
+    /// Toggling rather than only opening: `?` is what the user pressed to get
+    /// here, and a sheet its own key cannot close is one people get stuck in.
+    pub fn toggle_cheatsheet(&self) {
+        if self.cheatsheet().is_visible() {
+            self.close_cheatsheet();
+        } else {
+            self.open_cheatsheet();
+        }
+    }
+
+    /// Shows the cheat sheet over the workspace.
+    pub fn open_cheatsheet(&self) {
+        // Two overlays at once is one too many.
+        self.close_palette();
+        let sheet = self.cheatsheet();
+        sheet.set_visible(true);
+        sheet.grab_focus();
+    }
+
+    /// Hides the cheat sheet.
+    pub fn close_cheatsheet(&self) {
+        self.cheatsheet().set_visible(false);
+        self.shell().grab_focus();
+    }
+
     /// Rebuilds the keymap after `config.toml` changed, without a restart.
     ///
     /// Everything downstream follows from this one call: the resolver reparses
-    /// its chords, and the palette reprints its keys.
+    /// its chords, and the palette and the cheat sheet reprint their keys.
     pub fn apply_keymap(&self, keymap: postio_core::Keymap) {
         if let Some(resolver) = self.imp().resolver.get() {
             let problems = resolver.borrow_mut().apply_commands(&keymap);
             report(&problems);
         }
-        self.palette().set_keymap(keymap);
+        self.palette().set_keymap(keymap.clone());
+        self.cheatsheet().set_keymap(keymap);
     }
 
     /// Reopen where the last session left off.
