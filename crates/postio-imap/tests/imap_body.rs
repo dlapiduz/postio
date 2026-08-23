@@ -137,6 +137,54 @@ async fn a_part_smaller_than_one_window_finishes_in_one_round_trip() {
 }
 
 #[tokio::test]
+async fn a_whole_message_larger_than_one_window_still_costs_one_round_trip() {
+    // BodyPart::Whole drives io-imap's real streaming FETCH coroutine
+    // (BODY.PEEK[]) instead of the windowed partial-fetch loop the other
+    // BodyPart variants use, so a message several windows large must still
+    // be exactly one UID FETCH — proving the windowing loop was bypassed,
+    // not just that the bytes eventually arrived.
+    let len = u32::try_from(WINDOW * 3 + 17).unwrap();
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply())
+            .on_generated(
+                "FETCH",
+                "* 1 FETCH (BODY[] {",
+                len,
+                ")\n{tag} OK FETCH completed",
+            ),
+    );
+    let pool = pool_over(connector.clone()).await;
+    let mut sink = VecSink::new();
+
+    let result = fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(101),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.bytes_written, u64::from(len));
+    assert_eq!(sink.len(), len as usize);
+    assert!(sink.is_finished());
+    assert_eq!(
+        connector
+            .log()
+            .commands()
+            .iter()
+            .filter(|command| command.contains("FETCH"))
+            .count(),
+        1,
+        "a whole-message fetch must cost exactly one round trip regardless of size"
+    );
+}
+
+#[tokio::test]
 async fn headers_and_text_ask_for_their_own_named_sections() {
     let connector = ScriptedConnector::new(
         ImapScript::extensions_hidden_until_login()
