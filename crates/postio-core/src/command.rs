@@ -1,0 +1,459 @@
+//! Commands: the one way anything happens in Postio.
+//!
+//! The frontend never mutates state directly. It sends a [`Command`] down and
+//! reacts to [`Event`](crate::Event)s coming up, which is what keeps a second
+//! frontend possible and what lets the keymap, the `Ctrl+K` palette, the `?`
+//! cheat sheet and the right-click menu all be generated from one table.
+//!
+//! # Ids are a file format
+//!
+//! [`CommandId`] is a stable string, not an integer: `[keys]` in `config.toml`
+//! refers to commands by id, so renaming one silently breaks a user's
+//! configuration. The strings here are the same vocabulary
+//! `postio-config`'s `DEFAULT_BINDINGS` uses, and a test in
+//! `tests/command_registry.rs` holds the two together.
+//!
+//! # Ids versus commands
+//!
+//! A [`CommandId`] names *what can be done* and is what the registry, the
+//! keymap and the palette deal in. A [`Command`] is *one invocation*, and may
+//! carry a target or a payload the id cannot express. `Command::default_for`
+//! turns an id into the invocation a keystroke or a palette row implies, with
+//! the payload left for app state to resolve.
+
+use std::fmt;
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use postio_model::{DraftId, LabelId, MailboxId, MessageId, ThreadId};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+macro_rules! command_ids {
+    ($( $(#[$doc:meta])* $variant:ident => $id:literal ),+ $(,)?) => {
+        /// The stable identifier of a command.
+        ///
+        /// Serializes as its string id, so a `[keys]` entry, a palette row and a
+        /// log line all spell a command the same way.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum CommandId {
+            $( $(#[$doc])* $variant, )+
+        }
+
+        impl CommandId {
+            /// Every command id, in the order the cheat sheet and palette list
+            /// them: navigation, message actions, search, compose, view.
+            pub const ALL: &'static [CommandId] = &[ $( CommandId::$variant, )+ ];
+
+            /// The stable string id, as `[keys]` in `config.toml` spells it.
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $( CommandId::$variant => $id, )+
+                }
+            }
+        }
+    };
+}
+
+command_ids! {
+    /// Move the selection to the next message.
+    NextMessage => "next_message",
+    /// Move the selection to the previous message.
+    PrevMessage => "prev_message",
+    /// Jump to the first message in the list.
+    FirstMessage => "first_message",
+    /// Jump to the last message in the list.
+    LastMessage => "last_message",
+    /// Open the focused message in the reading pane.
+    OpenMessage => "open_message",
+    /// Step back to the previous view without leaving the keyboard.
+    PrevView => "prev_view",
+    /// Leave the current overlay, search or composer.
+    Back => "back",
+    /// Show the whole thread the focused message belongs to.
+    Thread => "thread",
+    /// Reply to the sender.
+    Reply => "reply",
+    /// Reply to everyone on the message.
+    ReplyAll => "reply_all",
+    /// Forward the message.
+    Forward => "forward",
+    /// Archive the selection.
+    Archive => "archive",
+    /// Archive every message in the thread.
+    ArchiveThread => "archive_thread",
+    /// Move the selection to the trash.
+    Delete => "delete",
+    /// Move the selection to another mailbox.
+    Move => "move",
+    /// Toggle the flagged state of the selection.
+    Flag => "flag",
+    /// Toggle the unread state of the selection.
+    MarkUnread => "mark_unread",
+    /// Attach a label to the selection.
+    AddLabel => "add_label",
+    /// Focus the search field.
+    Search => "search",
+    /// Start a new message.
+    Compose => "compose",
+    /// Send what is in the composer.
+    Send => "send",
+    /// Save the composer's contents as a draft.
+    SaveDraft => "save_draft",
+    /// Throw away the draft in the composer.
+    DiscardDraft => "discard_draft",
+    /// Attach a file to the draft.
+    AttachFile => "attach_file",
+    /// Undo the last undoable action.
+    Undo => "undo",
+    /// Open the command palette.
+    CommandPalette => "command_palette",
+    /// Show the keyboard cheat sheet.
+    CheatSheet => "cheat_sheet",
+    /// Open `config.toml` in the user's editor.
+    EditConfig => "edit_config",
+    /// Show or hide the sidebar.
+    ToggleSidebar => "toggle_sidebar",
+    /// Ask the sync engine to check for new mail now.
+    Refresh => "refresh",
+}
+
+impl fmt::Display for CommandId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The error from parsing a string that names no known command.
+///
+/// A `[keys]` entry for a command this build does not know is a warning, never
+/// a hard failure — the config layer keeps the line so a downgrade and upgrade
+/// round trip does not eat it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownCommand(String);
+
+impl UnknownCommand {
+    /// The text that named no command.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UnknownCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown command `{}`", self.0)
+    }
+}
+
+impl std::error::Error for UnknownCommand {}
+
+impl FromStr for CommandId {
+    type Err = UnknownCommand;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        CommandId::ALL
+            .iter()
+            .copied()
+            .find(|id| id.as_str() == text)
+            .ok_or_else(|| UnknownCommand(text.to_owned()))
+    }
+}
+
+impl Serialize for CommandId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CommandId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// What a message action applies to.
+///
+/// A keystroke knows it means "archive", not *which* rows are selected, so the
+/// common case is [`MessageTarget::Selection`] and app state resolves it. The
+/// palette, the context menu and undo replay name their messages explicitly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageTarget {
+    /// Whatever the user has selected right now; resolved by app state.
+    #[default]
+    Selection,
+    /// These messages specifically.
+    Messages(Vec<MessageId>),
+    /// Every message in this thread.
+    Thread(ThreadId),
+}
+
+/// One invocation of a command.
+///
+/// Payload fields that a keystroke cannot supply are `Option`al: `None` means
+/// "ask the user" — [`Command::Move`] with no mailbox opens the mailbox picker,
+/// [`Command::Search`] with no query focuses the search field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Command {
+    // -- Navigation ------------------------------------------------------
+    /// Select the next message.
+    NextMessage,
+    /// Select the previous message.
+    PrevMessage,
+    /// Select the first message.
+    FirstMessage,
+    /// Select the last message.
+    LastMessage,
+    /// Open a message, or the focused one when `message` is `None`.
+    OpenMessage {
+        /// The message to open; `None` means the focused row.
+        message: Option<MessageId>,
+    },
+    /// Return to the previous view.
+    PrevView,
+    /// Leave the current overlay, search or composer.
+    Back,
+    /// Show a thread, or the focused message's thread when `thread` is `None`.
+    Thread {
+        /// The thread to show; `None` means the focused message's thread.
+        thread: Option<ThreadId>,
+    },
+
+    // -- Message actions -------------------------------------------------
+    /// Reply to the sender.
+    Reply {
+        /// The message to reply to; `None` means the focused message.
+        message: Option<MessageId>,
+    },
+    /// Reply to everyone.
+    ReplyAll {
+        /// The message to reply to; `None` means the focused message.
+        message: Option<MessageId>,
+    },
+    /// Forward a message.
+    Forward {
+        /// The message to forward; `None` means the focused message.
+        message: Option<MessageId>,
+    },
+    /// Archive messages.
+    Archive {
+        /// What to archive.
+        target: MessageTarget,
+    },
+    /// Archive a whole thread.
+    ArchiveThread {
+        /// The thread to archive; `None` means the focused message's thread.
+        thread: Option<ThreadId>,
+    },
+    /// Move messages to the trash.
+    Delete {
+        /// What to delete.
+        target: MessageTarget,
+    },
+    /// Move messages to another mailbox.
+    Move {
+        /// What to move.
+        target: MessageTarget,
+        /// The destination; `None` opens the mailbox picker.
+        to: Option<MailboxId>,
+    },
+    /// Set or toggle the flagged state.
+    Flag {
+        /// What to flag.
+        target: MessageTarget,
+        /// The state to set; `None` toggles.
+        flagged: Option<bool>,
+    },
+    /// Set or toggle the unread state.
+    MarkUnread {
+        /// What to mark.
+        target: MessageTarget,
+        /// The state to set; `None` toggles.
+        unread: Option<bool>,
+    },
+    /// Attach a label.
+    AddLabel {
+        /// What to label.
+        target: MessageTarget,
+        /// The label; `None` opens the label picker.
+        label: Option<LabelId>,
+    },
+
+    // -- Search ----------------------------------------------------------
+    /// Search, or focus the search field when `query` is `None`.
+    Search {
+        /// The query to run; `None` focuses the empty search field.
+        query: Option<String>,
+    },
+
+    // -- Compose ---------------------------------------------------------
+    /// Start a new message, optionally from an existing draft.
+    Compose {
+        /// A draft to resume; `None` starts an empty one.
+        draft: Option<DraftId>,
+    },
+    /// Send the composer's message.
+    Send,
+    /// Save the composer's message as a draft.
+    SaveDraft,
+    /// Throw away the composer's draft.
+    DiscardDraft,
+    /// Attach a file to the draft.
+    AttachFile {
+        /// The file; `None` opens the file chooser.
+        path: Option<PathBuf>,
+    },
+
+    // -- View and application --------------------------------------------
+    /// Undo the last undoable action.
+    Undo,
+    /// Open the command palette.
+    CommandPalette,
+    /// Show the keyboard cheat sheet.
+    CheatSheet,
+    /// Open `config.toml` in the user's editor.
+    EditConfig,
+    /// Show or hide the sidebar.
+    ToggleSidebar,
+    /// Check for new mail now.
+    Refresh,
+}
+
+impl Command {
+    /// The registry id this invocation belongs to.
+    pub fn id(&self) -> CommandId {
+        match self {
+            Command::NextMessage => CommandId::NextMessage,
+            Command::PrevMessage => CommandId::PrevMessage,
+            Command::FirstMessage => CommandId::FirstMessage,
+            Command::LastMessage => CommandId::LastMessage,
+            Command::OpenMessage { .. } => CommandId::OpenMessage,
+            Command::PrevView => CommandId::PrevView,
+            Command::Back => CommandId::Back,
+            Command::Thread { .. } => CommandId::Thread,
+            Command::Reply { .. } => CommandId::Reply,
+            Command::ReplyAll { .. } => CommandId::ReplyAll,
+            Command::Forward { .. } => CommandId::Forward,
+            Command::Archive { .. } => CommandId::Archive,
+            Command::ArchiveThread { .. } => CommandId::ArchiveThread,
+            Command::Delete { .. } => CommandId::Delete,
+            Command::Move { .. } => CommandId::Move,
+            Command::Flag { .. } => CommandId::Flag,
+            Command::MarkUnread { .. } => CommandId::MarkUnread,
+            Command::AddLabel { .. } => CommandId::AddLabel,
+            Command::Search { .. } => CommandId::Search,
+            Command::Compose { .. } => CommandId::Compose,
+            Command::Send => CommandId::Send,
+            Command::SaveDraft => CommandId::SaveDraft,
+            Command::DiscardDraft => CommandId::DiscardDraft,
+            Command::AttachFile { .. } => CommandId::AttachFile,
+            Command::Undo => CommandId::Undo,
+            Command::CommandPalette => CommandId::CommandPalette,
+            Command::CheatSheet => CommandId::CheatSheet,
+            Command::EditConfig => CommandId::EditConfig,
+            Command::ToggleSidebar => CommandId::ToggleSidebar,
+            Command::Refresh => CommandId::Refresh,
+        }
+    }
+
+    /// The invocation a keystroke or a palette row implies: it targets the
+    /// current selection and leaves every choice for app state to resolve.
+    ///
+    /// This is what makes one registry able to feed both the keymap and the
+    /// palette — neither has to know a command's payload shape.
+    pub fn default_for(id: CommandId) -> Command {
+        match id {
+            CommandId::NextMessage => Command::NextMessage,
+            CommandId::PrevMessage => Command::PrevMessage,
+            CommandId::FirstMessage => Command::FirstMessage,
+            CommandId::LastMessage => Command::LastMessage,
+            CommandId::OpenMessage => Command::OpenMessage { message: None },
+            CommandId::PrevView => Command::PrevView,
+            CommandId::Back => Command::Back,
+            CommandId::Thread => Command::Thread { thread: None },
+            CommandId::Reply => Command::Reply { message: None },
+            CommandId::ReplyAll => Command::ReplyAll { message: None },
+            CommandId::Forward => Command::Forward { message: None },
+            CommandId::Archive => Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            CommandId::ArchiveThread => Command::ArchiveThread { thread: None },
+            CommandId::Delete => Command::Delete {
+                target: MessageTarget::Selection,
+            },
+            CommandId::Move => Command::Move {
+                target: MessageTarget::Selection,
+                to: None,
+            },
+            CommandId::Flag => Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: None,
+            },
+            CommandId::MarkUnread => Command::MarkUnread {
+                target: MessageTarget::Selection,
+                unread: None,
+            },
+            CommandId::AddLabel => Command::AddLabel {
+                target: MessageTarget::Selection,
+                label: None,
+            },
+            CommandId::Search => Command::Search { query: None },
+            CommandId::Compose => Command::Compose { draft: None },
+            CommandId::Send => Command::Send,
+            CommandId::SaveDraft => Command::SaveDraft,
+            CommandId::DiscardDraft => Command::DiscardDraft,
+            CommandId::AttachFile => Command::AttachFile { path: None },
+            CommandId::Undo => Command::Undo,
+            CommandId::CommandPalette => Command::CommandPalette,
+            CommandId::CheatSheet => Command::CheatSheet,
+            CommandId::EditConfig => Command::EditConfig,
+            CommandId::ToggleSidebar => Command::ToggleSidebar,
+            CommandId::Refresh => Command::Refresh,
+        }
+    }
+
+    /// Whether this command destroys something the user would have to rebuild
+    /// by hand. Destructive commands always carry a
+    /// [`Recovery`](crate::Recovery) — see [`crate::registry`].
+    pub fn is_destructive(&self) -> bool {
+        crate::registry::get(self.id()).destructive
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_snake_case_and_stable() {
+        for id in CommandId::ALL {
+            let text = id.as_str();
+            assert!(
+                text.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()),
+                "`{text}` is not a stable snake_case id"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_id_reports_what_it_saw() {
+        let error = "summarize".parse::<CommandId>().unwrap_err();
+        assert_eq!(error.as_str(), "summarize");
+        assert!(error.to_string().contains("summarize"));
+    }
+
+    #[test]
+    fn a_targeted_command_keeps_its_target() {
+        let command = Command::Move {
+            target: MessageTarget::Thread(ThreadId::new(3)),
+            to: Some(MailboxId::new(9)),
+        };
+        assert_eq!(command.id(), CommandId::Move);
+        assert_ne!(command, Command::default_for(CommandId::Move));
+    }
+
+    #[test]
+    fn the_default_target_is_the_selection() {
+        assert_eq!(MessageTarget::default(), MessageTarget::Selection);
+    }
+}
