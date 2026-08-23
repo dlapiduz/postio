@@ -24,6 +24,29 @@ pub enum DraftKind {
     Forward,
 }
 
+impl DraftKind {
+    /// A stable lowercase identifier, for storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Reply => "reply",
+            Self::ReplyAll => "reply_all",
+            Self::Forward => "forward",
+        }
+    }
+
+    /// The inverse of [`DraftKind::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "new" => Some(Self::New),
+            "reply" => Some(Self::Reply),
+            "reply_all" => Some(Self::ReplyAll),
+            "forward" => Some(Self::Forward),
+            _ => None,
+        }
+    }
+}
+
 /// Where a draft is in its life cycle.
 ///
 /// Sending is local-first like everything else: the draft goes to
@@ -41,6 +64,31 @@ pub enum DraftState {
     Sent,
     /// Submission failed; the draft is editable again.
     Failed,
+}
+
+impl DraftState {
+    /// A stable lowercase identifier, for storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Editing => "editing",
+            Self::Queued => "queued",
+            Self::Sending => "sending",
+            Self::Sent => "sent",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// The inverse of [`DraftState::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "editing" => Some(Self::Editing),
+            "queued" => Some(Self::Queued),
+            "sending" => Some(Self::Sending),
+            "sent" => Some(Self::Sent),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
 }
 
 /// A message being composed.
@@ -122,5 +170,33 @@ impl Draft {
     /// Every recipient across `To`, `Cc` and `Bcc`.
     pub fn all_recipients(&self) -> impl Iterator<Item = &EmailAddress> {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draft_kinds_and_states_round_trip_through_their_stored_identifiers() {
+        for kind in [
+            DraftKind::New,
+            DraftKind::Reply,
+            DraftKind::ReplyAll,
+            DraftKind::Forward,
+        ] {
+            assert_eq!(DraftKind::from_name(kind.as_str()), Some(kind));
+        }
+        for state in [
+            DraftState::Editing,
+            DraftState::Queued,
+            DraftState::Sending,
+            DraftState::Sent,
+            DraftState::Failed,
+        ] {
+            assert_eq!(DraftState::from_name(state.as_str()), Some(state));
+        }
+        assert_eq!(DraftKind::from_name("reply-all"), None);
+        assert_eq!(DraftState::from_name("draft"), None);
     }
 }
