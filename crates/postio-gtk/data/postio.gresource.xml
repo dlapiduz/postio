@@ -17,6 +17,10 @@
     <!-- Generated from the Industry design system by build.rs. -->
     <file compressed="true">tokens.css</file>
 
+    <!-- The application icon, in the directory layout GtkIconTheme expects
+         under a resource path: <path>/<size>/<context>/<name>.svg. -->
+    <file compressed="true">icons/scalable/apps/dev.postio.Postio.svg</file>
+
     <!-- Barlow — body text. -->
     <file>fonts/barlow/Barlow-Regular.ttf</file>
     <file>fonts/barlow/Barlow-Medium.ttf</file>

@@ -14,6 +14,10 @@ pub const TOKENS_CSS: &str = "/dev/postio/Postio/tokens.css";
 /// The directory holding the vendored font families, each next to its licence.
 pub const FONTS: &str = "/dev/postio/Postio/fonts";
 
+/// The bundled icon theme, laid out the way `GtkIconTheme` expects a resource
+/// path to be: `<size>/<context>/<name>.svg` beneath this directory.
+pub const ICONS: &str = "/dev/postio/Postio/icons";
+
 static REGISTERED: OnceLock<()> = OnceLock::new();
 
 const BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/postio.gresource"));
