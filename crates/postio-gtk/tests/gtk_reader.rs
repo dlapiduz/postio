@@ -1,5 +1,5 @@
-//! The reading pane on a real display: `postio-lu6`, against the corpus
-//! fixtures it exists for.
+//! The reading pane on a real display: `postio-lu6` and `postio-1bz`,
+//! against the corpus fixtures they exist for.
 //!
 //! One test function, for the reason `gtk_shell.rs` gives — GTK is
 //! single-threaded and initialised once. Skips without a display. The
@@ -87,6 +87,21 @@ fn the_reader_renders_and_hardens_the_corpus() {
 
     let tracking = test_corpus::load("html-tracking-pixel-remote-images");
     let parsed = postio_model::mime::parse(tracking.bytes());
+    let finished = track_load_finished(&reader);
+    reader.render(&parsed.body, RemoteImages::Blocked);
+    wait_for(&finished, Duration::from_secs(5));
+
+    // ── quoted-text folding: the corpus's flowed reply ─────────────────────
+    let flowed = test_corpus::load("plain-text-flowed-reply");
+    let parsed = postio_model::mime::parse(flowed.bytes());
+    assert!(
+        parsed
+            .body
+            .text
+            .as_deref()
+            .is_some_and(|text| text.contains('>')),
+        "sanity: the fixture actually has a quote marker"
+    );
     let finished = track_load_finished(&reader);
     reader.render(&parsed.body, RemoteImages::Blocked);
     wait_for(&finished, Duration::from_secs(5));
