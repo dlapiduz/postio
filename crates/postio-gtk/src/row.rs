@@ -42,16 +42,40 @@ use adw::subclass::prelude::*;
 use chrono::{DateTime, Datelike, Local, Utc};
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
+use postio_core::{CommandId, Keymap};
 use postio_model::address::EmailAddress;
 
 use crate::list::Row;
 
-/// The key hints the focused row reveals, in canvas order.
-///
-/// Each key here is a live `postio_core::CommandId` with its own binding and
-/// palette entry; the row only points at them. `postio-cpk` takes them from
-/// the live keymap so a rebound key still reads correctly.
-pub const HINTS: [(&str, &str); 3] = [("e", "reply"), ("a", "archive"), ("t", "thread")];
+/// The commands the focused row hints at, and the labels the canvas gives
+/// them — canvas order, not registry order.
+const HINT_COMMANDS: [(CommandId, &str); 3] = [
+    (CommandId::Reply, "reply"),
+    (CommandId::Archive, "archive"),
+    (CommandId::Thread, "thread"),
+];
+
+/// The hints for a keymap: each [`HINT_COMMANDS`] entry paired with the key it
+/// is bound to right now, dropping any that lost their key to a conflicting
+/// override — a hint naming a key that does not run it would teach the wrong
+/// keyboard.
+fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
+    HINT_COMMANDS
+        .iter()
+        .filter_map(|(command, label)| {
+            keymap
+                .binding(*command)
+                .map(|key| (key.to_string(), *label))
+        })
+        .collect()
+}
+
+/// The registry's own bindings, so a row built with no keymap yet — every
+/// widget test, and the first frame before `postio-gtk::config` reads
+/// `config.toml` — still reads correctly rather than blank.
+fn default_hints() -> Vec<(String, &'static str)> {
+    hints_for(&Keymap::resolve(&Default::default()))
+}
 
 /// The initials the avatar chip shows for `from`.
 ///
@@ -447,6 +471,10 @@ mod imp {
     pub struct MessageRowView {
         pub(super) row: RefCell<Option<Row>>,
         pub(super) density: Cell<Density>,
+        /// The focused row's key hints — key and label, canvas order.
+        /// Generated from the live keymap so a rebound key still reads
+        /// correctly; see `postio-cpk`.
+        pub(super) hints: RefCell<Vec<(String, &'static str)>>,
         pub(super) first: Cell<bool>,
         /// Whether an action would hit this row.
         pub(super) selected: Cell<bool>,
@@ -491,6 +519,7 @@ mod imp {
             MessageRowView {
                 row: RefCell::new(None),
                 density: Cell::new(Density::default()),
+                hints: RefCell::new(default_hints()),
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 cursor: Cell::new(false),
@@ -702,6 +731,28 @@ impl MessageRowView {
     /// The density currently in force.
     pub fn density(&self) -> Density {
         self.imp().density.get()
+    }
+
+    /// The key and label pairs the focused row would reveal right now.
+    ///
+    /// Public for the same reason [`Self::spoken`] is: a hint the row draws
+    /// but nothing can read back is a hint nothing can prove correct.
+    pub fn hints(&self) -> Vec<(String, &'static str)> {
+        self.imp().hints.borrow().clone()
+    }
+
+    /// Regenerate the focused row's key hints from the live keymap.
+    ///
+    /// A rebind changes what the hints say without a restart, the same
+    /// promise `postio-gtk::config` already keeps for the resolver, the
+    /// palette and the cheat sheet.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        let hints = hints_for(keymap);
+        if *self.imp().hints.borrow() != hints {
+            self.imp().hints.replace(hints);
+            self.imp().laid.replace(None);
+            self.queue_resize();
+        }
     }
 
     /// Mark the row as part of the selection — what an action will hit.
@@ -1004,7 +1055,9 @@ impl MessageRowView {
         // Key hints are the focused row's alone: the app teaches its own
         // keyboard without the list carrying the clutter on every line.
         let hints = if focused {
-            HINTS
+            self.imp()
+                .hints
+                .borrow()
                 .iter()
                 .map(|(key, label)| (line(&palette.key, key), line(&palette.hint, label)))
                 .collect()
@@ -1408,6 +1461,53 @@ mod tests {
         );
         assert!(airy.pad_y > comfortable.pad_y && comfortable.pad_y > compact.pad_y);
         assert!(airy.avatar > compact.avatar);
+    }
+
+    #[test]
+    fn hints_read_the_live_keymap_not_a_hard_coded_key() {
+        let defaults = default_hints();
+        assert_eq!(
+            defaults,
+            vec![
+                ("e".to_string(), "reply"),
+                ("a".to_string(), "archive"),
+                ("t".to_string(), "thread"),
+            ],
+            "the registry's own bindings, canvas order"
+        );
+
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("archive".to_string(), "x".to_string());
+        let rebound = hints_for(&Keymap::resolve(&overrides));
+        assert_eq!(
+            rebound,
+            vec![
+                ("e".to_string(), "reply"),
+                ("x".to_string(), "archive"),
+                ("t".to_string(), "thread"),
+            ],
+            "a rebind in [keys] must reach the hint, not just the resolver"
+        );
+    }
+
+    #[test]
+    fn a_command_that_lost_its_key_drops_its_hint_rather_than_naming_the_wrong_one() {
+        // Taking `a` for something else in the same context leaves Archive
+        // with no key at all — reachable only from the palette. A hint that
+        // kept printing "a archive" here would be teaching a key that does
+        // something else.
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("forward".to_string(), "a".to_string());
+        let hints = hints_for(&Keymap::resolve(&overrides));
+        assert_eq!(
+            hints,
+            vec![("e".to_string(), "reply"), ("t".to_string(), "thread")],
+            "archive lost its key to forward, so its hint disappears rather than lying"
+        );
     }
 
     #[test]

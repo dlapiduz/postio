@@ -222,6 +222,22 @@ fn editing_config_toml_rebinds_the_running_window() {
         "switching density again never reached the list"
     );
 
+    // ── `[keys]` reaches the list's own keymap too, not just the resolver ──
+    assert_eq!(
+        window.list().keymap().binding(CommandId::Archive),
+        Some("q"),
+        "the list should already carry the rebind from earlier in this test"
+    );
+    std::fs::write(
+        &path,
+        "[keys]\narchive = \"z\"\n\n[ui]\ndensity = \"comfortable\"\n",
+    )
+    .unwrap();
+    assert!(
+        wait_until(|| window.list().keymap().binding(CommandId::Archive) == Some("z")),
+        "the rebind never reached the list's keymap, so a row's hint would lie"
+    );
+
     window.close();
     settle();
     let _ = std::fs::remove_dir_all(&root);
