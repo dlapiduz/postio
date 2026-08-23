@@ -34,10 +34,10 @@ use std::sync::Arc;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 use postio_core::bridge::{Bridge, handler_fn};
-use postio_core::store::{MailStore, SqliteStore};
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
+use postio_runtime::store::{MailStore, SqliteStore};
 use postio_storage::Database;
 use postio_storage::repository::AccountRepository;
 

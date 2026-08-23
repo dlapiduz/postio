@@ -57,8 +57,8 @@ use postio_sync::{
 /// `postio-gtk` cannot enable.
 pub use postio_sync::{Blocker, Link, NetworkState};
 
-use crate::Event;
-use crate::bridge::EventSink;
+use postio_core::Event;
+use postio_core::bridge::EventSink;
 
 /// What one drain pass did.
 ///
@@ -497,10 +497,12 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
     };
     let status = state.status.on_link(&link);
     let connection = match &status {
-        SyncStatus::Offline => crate::ConnectionState::Offline,
-        SyncStatus::Connecting => crate::ConnectionState::Connecting,
-        SyncStatus::Idle { .. } | SyncStatus::Syncing { .. } => crate::ConnectionState::Online,
-        SyncStatus::Error { .. } => crate::ConnectionState::Failing,
+        SyncStatus::Offline => postio_core::ConnectionState::Offline,
+        SyncStatus::Connecting => postio_core::ConnectionState::Connecting,
+        SyncStatus::Idle { .. } | SyncStatus::Syncing { .. } => {
+            postio_core::ConnectionState::Online
+        }
+        SyncStatus::Error { .. } => postio_core::ConnectionState::Failing,
     };
     parts.events.emit(Event::ConnectionChanged {
         account: parts.account,

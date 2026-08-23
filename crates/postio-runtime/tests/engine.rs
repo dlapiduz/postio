@@ -1,8 +1,6 @@
-#![cfg(feature = "runtime")]
 //! The sync engine, against a mock server.
 //!
-//! Skipped without the `runtime` feature, for the reason `tests/store.rs`
-//! gives. Nothing here touches the network: the backend is
+//! Nothing here touches the network: the backend is
 //! `postio_imap::backend::MockBackend`, and no SMTP transport is given, so
 //! nothing is ever dialled.
 
@@ -11,10 +9,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_core::runtime::{Engine, EngineParts, Link, NetworkState};
 use postio_imap::backend::{Fault, MockBackend};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
+use postio_runtime::engine::{Engine, EngineParts, Link, NetworkState};
 use postio_storage::repository::OperationQueueRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};

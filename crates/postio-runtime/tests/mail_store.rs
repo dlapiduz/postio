@@ -2,19 +2,19 @@
 //!
 //! [`MailStore`] is what a frontend holds, and the whole point of it being a
 //! trait is that neither side needs the other's dependencies: this file
-//! answers from a table, compiles without the `runtime` feature, and is
-//! therefore the part of the boundary CI exercises on every run.
+//! answers from a table rather than a database, which is what any frontend
+//! or test can do.
 //!
 //! Nothing here touches the network.
 
 use std::sync::Mutex;
 
 use chrono::{TimeZone, Utc};
-use postio_core::store::{
-    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
-};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
+use postio_runtime::store::{
+    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
+};
 
 const ACCOUNT: i64 = 1;
 const INBOX: i64 = 1;
