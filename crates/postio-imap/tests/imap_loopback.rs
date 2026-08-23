@@ -1,0 +1,694 @@
+//! The real client stack against a real socket.
+//!
+//! Every other test in this crate replays a transcript ([`ImapScript`]) or
+//! stops at the `MailBackend` seam ([`MockBackend`](postio_imap::backend::MockBackend)).
+//! Neither exercises `io-imap`: the script cannot answer a command nobody
+//! wrote down, and the mock sits above the protocol entirely. `io-imap` is
+//! pre-1.0 and shipped six minor releases in eleven weeks (ADR 0001), so it
+//! is the layer most likely to regress under us and the one nothing was
+//! watching.
+//!
+//! These tests drive `ConnectionPool` — real sockets, real `io-imap`, real
+//! session and auth path — against [`TestServer`], an in-process IMAP server
+//! on an ephemeral loopback port. Nothing here touches the network.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use io_imap::client::ImapClientAsync;
+use io_imap::types::core::Vec1;
+use io_imap::types::extensions::enable::CapabilityEnable;
+use postio_imap::backend::{BackendError, BodyPart, Capability, MailboxFilter, UidSet, VecSink};
+use postio_imap::cancel::CancelToken;
+use postio_imap::imap::{
+    ConnectionPool, PoolConfig, Priority, RustlsConnector, fetch_headers, fetch_part,
+    list_mailboxes,
+};
+use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_imap::test_server::{Fault, Quirk, TestMailbox, TestMessage, TestServer};
+use postio_model::{Flag, FlagSet, ModSeq, Uid, UidValidity};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
+
+/// A server shaped like the account this project targets: a provider that
+/// hides its extensions until you log in and names no special-use folders.
+async fn server() -> TestServer {
+    TestServer::builder()
+        .mailbox(
+            TestMailbox::new("INBOX")
+                .uid_validity(UidValidity::new(4_242))
+                .highest_mod_seq(ModSeq::new(900))
+                .corpus(SEEDED),
+        )
+        .mailbox(TestMailbox::new("Archive"))
+        .mailbox(TestMailbox::new("Sent Messages"))
+        .start()
+        .await
+}
+
+async fn pool_for(server: &TestServer) -> ConnectionPool {
+    let store = MemorySecretStore::new();
+    let key = AccountKey::new(server.account());
+    store
+        .store(&key, &Password::new(server.password()))
+        .await
+        .expect("seed the keyring");
+
+    ConnectionPool::new(
+        server.settings(),
+        key,
+        Arc::new(store),
+        Arc::new(RustlsConnector::new().expect("a connector")),
+        PoolConfig::default(),
+    )
+}
+
+fn cancel() -> CancelToken {
+    CancelToken::new()
+}
+
+// ---------------------------------------------------------------------------
+// The stack, end to end
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_client_stack_lists_folders_and_fetches_headers_over_a_socket() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let mailboxes = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
+        .await
+        .unwrap();
+    let paths: Vec<&str> = mailboxes
+        .iter()
+        .map(|mailbox| mailbox.path.as_str())
+        .collect();
+    assert_eq!(paths, ["INBOX", "Archive", "Sent Messages"]);
+
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        None,
+        Priority::Interactive,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(messages.len(), 3);
+    let first = &messages[0];
+    assert_eq!(first.uid, Uid::new(1));
+    assert_eq!(first.uid_validity, UidValidity::new(4_242));
+    assert_eq!(first.size, corpus("plain-text-simple").len() as u64);
+
+    let envelope = first.envelope.as_ref().expect("an envelope");
+    assert_eq!(
+        envelope.subject.as_deref(),
+        Some("Tuesday walkthrough notes")
+    );
+    assert_eq!(envelope.from[0].address, "ada.norwood@example.com");
+
+    // BODYSTRUCTURE, round-tripped through the wire and back into the model:
+    // the multipart tree, its section numbers, and the filename an attachment
+    // is offered under. None of that is reachable from a mock that takes a
+    // structure as given.
+    let structure = messages[1]
+        .structure
+        .as_ref()
+        .expect("attachment-pdf is a multipart");
+    assert_eq!(structure.text_part().map(|part| part.section()), Some("1"));
+    let attachments: Vec<&str> = structure
+        .attachments()
+        .filter_map(|part| part.filename())
+        .collect();
+    assert_eq!(attachments, ["layout-rev-c.pdf", "checksums.txt"]);
+    assert_eq!(
+        structure
+            .attachments()
+            .next()
+            .map(|part| part.mime_type().to_owned()),
+        Some("application/pdf".to_owned())
+    );
+
+    // The extensions this provider hides until login are the ones every fast
+    // path is gated on — ADR 0001, Q3.
+    let capabilities = pool.capabilities().expect("a session was opened");
+    assert!(capabilities.supports_incremental_sync());
+    assert!(capabilities.contains(Capability::UidPlus));
+}
+
+#[tokio::test]
+async fn a_whole_body_streams_off_the_socket_byte_for_byte() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let mut sink = VecSink::new();
+
+    let fetched = fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(2),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    let expected = corpus("attachment-pdf");
+    assert_eq!(fetched.bytes_written, expected.len() as u64);
+    assert_eq!(sink.as_slice(), expected.as_slice());
+    assert!(sink.is_finished());
+}
+
+#[tokio::test]
+async fn one_mime_section_is_fetched_without_the_rest_of_the_message() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let mut sink = VecSink::new();
+
+    fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(2),
+        &BodyPart::Section("1".to_owned()),
+        &mut sink,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    // Section 1 of a multipart is its first part's *content*: no message
+    // headers, no MIME headers of its own, and nothing of the part after it.
+    let whole = String::from_utf8(corpus("attachment-pdf")).expect("a utf-8 fixture");
+    let section = String::from_utf8(sink.into_inner()).expect("the text part is utf-8");
+
+    assert!(section.starts_with("Signed and attached."), "{section:?}");
+    assert!(whole.contains(&section));
+    assert!(!section.contains("=_mixed_pdf"), "the boundary leaked in");
+    assert!(!section.contains("Content-Type"));
+}
+
+// ---------------------------------------------------------------------------
+// Incremental sync
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_changedsince_fetch_returns_only_what_moved() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let floor = ModSeq::new(server.highest_mod_seq("INBOX"));
+
+    server.set_flags("INBOX", Uid::new(2), FlagSet::from_iter([Flag::Seen]));
+
+    let changed = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        Some(floor),
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    let uids: Vec<u32> = changed.iter().map(|message| message.uid.get()).collect();
+    assert_eq!(uids, [2]);
+    assert!(changed[0].flags.is_seen());
+    assert!(changed[0].mod_seq > Some(floor));
+}
+
+#[tokio::test]
+async fn a_delivery_is_visible_to_the_next_changedsince_fetch() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let floor = ModSeq::new(server.highest_mod_seq("INBOX"));
+
+    let uid = server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"));
+
+    let changed = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        Some(floor),
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    let uids: Vec<u32> = changed.iter().map(|message| message.uid.get()).collect();
+    assert_eq!(uids, [uid.get()]);
+}
+
+#[tokio::test]
+async fn a_uidvalidity_bump_is_observed_on_the_next_select() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let before = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::single(Uid::new(1)),
+        None,
+        Priority::Interactive,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(before[0].uid_validity, UidValidity::new(4_242));
+
+    // The mailbox is renumbered under us, as a server that restored from
+    // backup does. Nothing about the UIDs we hold is valid any more.
+    server.set_uid_validity("INBOX", UidValidity::new(9_001));
+
+    // Another mailbox in between, so the session's cached SELECT cannot
+    // answer from what it already knew.
+    let _ = fetch_headers(
+        &pool,
+        "Archive",
+        &UidSet::all(),
+        None,
+        Priority::Interactive,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    let after = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::single(Uid::new(1)),
+        None,
+        Priority::Interactive,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(after[0].uid_validity, UidValidity::new(9_001));
+}
+
+#[tokio::test]
+async fn a_qresync_select_reports_the_changes_and_the_vanishes_together() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let baseline = ModSeq::new(server.highest_mod_seq("INBOX"));
+    server.set_flags("INBOX", Uid::new(1), FlagSet::from_iter([Flag::Flagged]));
+    server.vanish("INBOX", Uid::new(3));
+
+    let mut session = pool.acquire(Priority::Background).await.unwrap();
+    let data = session
+        .select_qresync(
+            io_imap::types::mailbox::Mailbox::try_from("INBOX").unwrap(),
+            std::num::NonZeroU32::new(4_242).unwrap(),
+            baseline.get(),
+            &[io_imap::types::response::Capability::QResync],
+        )
+        .await
+        .unwrap();
+
+    let vanished: Vec<u32> = data.vanished_earlier.iter().map(|uid| uid.get()).collect();
+    assert_eq!(vanished, [3]);
+    assert_eq!(data.changed.len(), 1);
+    assert!(data.highest_mod_seq.unwrap() > baseline.get());
+}
+
+#[tokio::test]
+async fn a_server_without_condstore_refuses_the_incremental_path_rather_than_guessing() {
+    // Every extension is optional and Postio will meet servers without this
+    // one. The capability list is the only thing the choice may be made from,
+    // so dropping CONDSTORE here has to surface as a refusal, not as a fetch
+    // that quietly returns everything.
+    let server = TestServer::builder()
+        .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "ENABLE"])
+        .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
+        .start()
+        .await;
+    let pool = pool_for(&server).await;
+
+    let error = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        Some(ModSeq::new(1)),
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        BackendError::Unsupported {
+            capability: Capability::CondStore
+        }
+    ));
+
+    // The floor path still works, and reports no modification sequence
+    // because the server never offered one.
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        None,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].mod_seq, None);
+}
+
+#[tokio::test]
+async fn a_subscribed_only_listing_asks_the_server_which_folders_those_are() {
+    let server = TestServer::builder()
+        .mailbox(TestMailbox::new("INBOX"))
+        .mailbox(TestMailbox::new("Archive").subscribed(false))
+        .start()
+        .await;
+    let pool = pool_for(&server).await;
+
+    let all = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
+        .await
+        .unwrap();
+    let subscribed = list_mailboxes(&pool, &MailboxFilter::subscribed(), Priority::Interactive)
+        .await
+        .unwrap();
+
+    assert_eq!(all.len(), 2);
+    let paths: Vec<&str> = subscribed
+        .iter()
+        .map(|mailbox| mailbox.path.as_str())
+        .collect();
+    assert_eq!(paths, ["INBOX"]);
+    assert!(
+        server
+            .commands()
+            .iter()
+            .any(|command| command.contains("LSUB")),
+        "the subscribed listing has to ask: {:?}",
+        server.commands()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The lies a real server tells
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_malformed_fetch_sequence_number_fails_the_resync_rather_than_losing_mail() {
+    // At least one mainstream provider has shipped `* -1 FETCH (…)` under
+    // QRESYNC. `io-imap` skips an untagged line it cannot decode and completes
+    // the command `Ok` (ADR 0001, iCloud hazard 2), so the pull looks complete
+    // while a message's flags silently never arrived.
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let floor = ModSeq::new(server.highest_mod_seq("INBOX"));
+
+    server.set_flags("INBOX", Uid::new(2), FlagSet::from_iter([Flag::Seen]));
+    server.quirk(Quirk::MalformedFetchSequenceNumber);
+
+    let error = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        Some(floor),
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, BackendError::ResyncIntegrityLost { .. }));
+    assert!(error.requires_full_resync());
+}
+
+#[tokio::test]
+async fn a_connection_dropped_mid_fetch_is_a_transient_error() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    server.inject(Fault::DropConnection {
+        during: "FETCH".to_owned(),
+    });
+
+    let mut sink = VecSink::new();
+    let error = fetch_part(
+        &pool,
+        "INBOX",
+        Uid::new(1),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Background,
+        &cancel(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.is_transient(), "{error}");
+    assert!(!sink.is_finished(), "a torn fetch never finishes its sink");
+}
+
+#[tokio::test]
+async fn a_missing_enabled_echo_is_success_not_a_downgrade() {
+    // RFC 5161 §3.1 requires the untagged `* ENABLED` line. At least one
+    // mainstream provider has omitted it; gating QRESYNC on the echo rather
+    // than on the post-auth capability list is how a client silently
+    // degrades to full resync forever. ADR 0001, hazard 1.
+    let server = TestServer::builder()
+        .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
+        .quirk(Quirk::OmitEnabledEcho)
+        .start()
+        .await;
+    let pool = pool_for(&server).await;
+
+    let mut session = pool.acquire(Priority::Background).await.unwrap();
+    let echoed = session
+        .enable(Vec1::from(CapabilityEnable::CondStore))
+        .await
+        .unwrap();
+
+    assert!(echoed.is_none(), "no echo, and no error either");
+    assert!(session.capabilities().contains(Capability::QResync));
+}
+
+#[tokio::test]
+async fn a_stalled_server_leaves_the_command_outstanding() {
+    // Postio has no per-command deadline yet: a server that accepts a command
+    // and never answers holds the connection open until the pool's own
+    // timeouts fire. This pins that down rather than pretending otherwise.
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    server.inject(Fault::Stall {
+        during: "FETCH".to_owned(),
+    });
+
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(250),
+        fetch_headers(
+            &pool,
+            "INBOX",
+            &UidSet::all(),
+            None,
+            Priority::Background,
+            &cancel(),
+        ),
+    )
+    .await;
+
+    assert!(outcome.is_err(), "the fetch should still be waiting");
+}
+
+// ---------------------------------------------------------------------------
+// Mutating commands
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_store_a_move_and_an_expunge_change_the_server() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let mut session = pool.acquire(Priority::Background).await.unwrap();
+
+    session
+        .select(
+            io_imap::types::mailbox::Mailbox::try_from("INBOX").unwrap(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+    session
+        .store(
+            io_imap::types::sequence::SequenceSet::try_from("1").unwrap(),
+            io_imap::types::flag::StoreType::Add,
+            vec![io_imap::types::flag::Flag::Deleted],
+            io_imap::rfc3501::store::ImapMessageStoreOptions { uid: true },
+        )
+        .await
+        .unwrap();
+    assert!(server.flags("INBOX", Uid::new(1)).is_deleted());
+
+    session
+        .copy(
+            io_imap::types::sequence::SequenceSet::try_from("2").unwrap(),
+            io_imap::types::mailbox::Mailbox::try_from("Archive").unwrap(),
+            io_imap::rfc3501::copy::ImapMessageCopyOptions { uid: true },
+        )
+        .await
+        .unwrap();
+    assert_eq!(server.uids("Archive"), vec![Uid::new(1)]);
+
+    let expunged = session
+        .uid_expunge(io_imap::types::sequence::SequenceSet::try_from("1").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(expunged.len(), 1);
+    assert_eq!(server.uids("INBOX"), vec![Uid::new(2), Uid::new(3)]);
+}
+
+#[tokio::test]
+async fn an_appended_message_lands_with_the_uid_the_server_reports() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+    let mut session = pool.acquire(Priority::Background).await.unwrap();
+
+    session
+        .append(
+            io_imap::types::mailbox::Mailbox::try_from("Archive").unwrap(),
+            b"Subject: a draft\r\n\r\nnot sent yet\r\n",
+            io_imap::rfc3501::append::ImapMessageAppendOptions {
+                flags: vec![io_imap::types::flag::Flag::Draft],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(server.uids("Archive"), vec![Uid::new(1)]);
+    assert!(server.flags("Archive", Uid::new(1)).is_draft());
+}
+
+// ---------------------------------------------------------------------------
+// IDLE
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn idle_wakes_when_mail_is_delivered() {
+    // Postio's client stack has no IDLE path yet — `io-imap`'s IDLE coroutine
+    // has its own yield vocabulary and needs wiring `postio-imap` does not
+    // have. So this drives the server directly, which is what proves the
+    // wake-up is there to be wired to.
+    let server = server().await;
+    let mut raw = RawClient::connect(&server).await;
+
+    raw.command("a1 LOGIN {user} {password}").await;
+    raw.command("a2 SELECT \"INBOX\"").await;
+    raw.send("a3 IDLE\r\n").await;
+    raw.expect_prefix("+").await;
+
+    server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"));
+
+    let line = raw.expect_prefix("*").await;
+    assert!(line.contains("EXISTS"), "{line}");
+
+    raw.send("DONE\r\n").await;
+    let done = raw.expect_prefix("a3").await;
+    assert!(done.contains("OK"), "{done}");
+}
+
+#[tokio::test]
+async fn a_command_the_server_does_not_implement_is_refused_loudly() {
+    let server = server().await;
+    let mut raw = RawClient::connect(&server).await;
+
+    raw.command("a1 LOGIN {user} {password}").await;
+    raw.send("a2 GETQUOTAROOT INBOX\r\n").await;
+
+    let reply = raw.expect_prefix("a2").await;
+    assert!(reply.starts_with("a2 BAD"), "{reply}");
+}
+
+// ---------------------------------------------------------------------------
+// A hand-written client, for the commands `postio-imap` cannot issue yet
+// ---------------------------------------------------------------------------
+
+struct RawClient {
+    stream: tokio::net::TcpStream,
+    buffer: Vec<u8>,
+    account: String,
+    password: String,
+}
+
+impl RawClient {
+    async fn connect(server: &TestServer) -> Self {
+        let stream = tokio::net::TcpStream::connect(server.addr())
+            .await
+            .expect("connect to the test server");
+        let mut client = Self {
+            stream,
+            buffer: Vec::new(),
+            account: server.account().to_owned(),
+            password: server.password().to_owned(),
+        };
+        client.expect_prefix("*").await;
+        client
+    }
+
+    async fn send(&mut self, text: &str) {
+        use tokio::io::AsyncWriteExt;
+        let text = text
+            .replace("{user}", &self.account)
+            .replace("{password}", &self.password);
+        self.stream
+            .write_all(text.as_bytes())
+            .await
+            .expect("write to the test server");
+    }
+
+    /// Sends a command and reads until its tagged response.
+    async fn command(&mut self, text: &str) {
+        let tag = text.split(' ').next().unwrap().to_owned();
+        self.send(&format!("{text}\r\n")).await;
+        let reply = self.expect_prefix(&tag).await;
+        assert!(reply.contains(" OK"), "{reply}");
+    }
+
+    /// Reads lines until one starts with `prefix`, and returns it.
+    async fn expect_prefix(&mut self, prefix: &str) -> String {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let line = tokio::time::timeout_at(deadline, self.read_line())
+                .await
+                .unwrap_or_else(|_| panic!("timed out waiting for a line starting {prefix:?}"));
+            if line.starts_with(prefix) {
+                return line;
+            }
+        }
+    }
+
+    async fn read_line(&mut self) -> String {
+        use tokio::io::AsyncReadExt;
+        loop {
+            if let Some(end) = self.buffer.windows(2).position(|window| window == b"\r\n") {
+                let line = String::from_utf8_lossy(&self.buffer[..end]).into_owned();
+                self.buffer.drain(..end + 2);
+                return line;
+            }
+            let mut chunk = [0u8; 4096];
+            let read = self.stream.read(&mut chunk).await.expect("read");
+            assert!(read > 0, "the server closed the connection");
+            self.buffer.extend_from_slice(&chunk[..read]);
+        }
+    }
+}
+
+fn corpus(name: &str) -> Vec<u8> {
+    postio_model::test_corpus::load(name).bytes().to_vec()
+}

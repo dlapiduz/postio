@@ -23,6 +23,13 @@
 //! the crate is the seam, the mock, discovery and the keyring — which is all
 //! `postio-sync` needs, and keeps the protocol crate out of its graph.
 //!
+//! `test-server` (off) compiles `test_server`, an in-process IMAP server on
+//! a loopback port that the real client stack can be pointed at. It is what
+//! puts `io-imap` itself under test — the mock sits above the protocol and a
+//! scripted transcript cannot answer a sequence nobody wrote down — and it is
+//! where the lies a real provider tells are reproduced on demand. `test-corpus`
+//! (off) hands the `.eml` fixtures to both it and the mock.
+//!
 //! # Live tests
 //!
 //! `cargo test -p postio-imap` never touches the network: every live-server
@@ -58,3 +65,5 @@ pub mod discovery;
 #[cfg(feature = "imap")]
 pub mod imap;
 pub mod secret;
+#[cfg(feature = "test-server")]
+pub mod test_server;
