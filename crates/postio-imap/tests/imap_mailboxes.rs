@@ -1,20 +1,21 @@
 //! Folder discovery: `SPECIAL-USE` where a server offers it, the provider
 //! name table where it does not, and hierarchy either way.
 //!
-//! The three transcripts below are the naming this has to survive. iCloud
-//! advertises no `SPECIAL-USE` at all and spells things its own way; Gmail
-//! advertises everything but buries it under `[Gmail]/`; Fastmail is the
-//! well-behaved case. All three are replayed with no socket.
+//! The three transcripts below are the naming this has to survive: a server
+//! that advertises no `SPECIAL-USE` at all and spells things its own way, one
+//! that advertises everything but buries it under a container folder, and the
+//! well-behaved case where names and attributes agree. All replayed with no
+//! socket.
 
 use std::sync::Arc;
 
 use postio_imap::backend::{MailboxFilter, MailboxSummary};
 use postio_imap::imap::{
-    ConnectionPool, ConnectionSettings, ImapScript, PoolConfig, Priority, RustlsConnector,
-    ScriptedConnector, list_mailboxes,
+    ConnectionPool, ConnectionSettings, IMAPS_PORT, ImapScript, PoolConfig, Priority,
+    RustlsConnector, ScriptedConnector, list_mailboxes,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_model::MailboxRole;
+use postio_model::{MailboxRole, TransportSecurity};
 
 const ACCOUNT: &str = "someone@example.com";
 
@@ -27,7 +28,12 @@ async fn pool_over(connector: ScriptedConnector) -> ConnectionPool {
         .expect("seed the keyring");
 
     ConnectionPool::new(
-        ConnectionSettings::icloud(ACCOUNT),
+        ConnectionSettings::new(
+            "imap.example.com",
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            ACCOUNT,
+        ),
         key,
         Arc::new(store),
         Arc::new(connector),
@@ -54,12 +60,13 @@ fn role_of(mailboxes: &[MailboxSummary], path: &str) -> MailboxRole {
 }
 
 // ---------------------------------------------------------------------------
-// iCloud: no SPECIAL-USE at all
+// A server with no SPECIAL-USE at all
 // ---------------------------------------------------------------------------
 
-/// What `imap.mail.me.com` actually returns: no role attributes anywhere, and
-/// its own spellings for sent and trash.
-fn icloud_listing() -> String {
+/// A server that returns no role attributes at all, and spells sent and trash
+/// its own way. At least one mainstream provider behaves exactly like this,
+/// which is why the name table is not optional.
+fn listing_without_special_use() -> String {
     listing(&[
         ("\\HasNoChildren", "INBOX"),
         ("\\HasNoChildren", "Archive"),
@@ -73,9 +80,11 @@ fn icloud_listing() -> String {
 }
 
 #[tokio::test]
-async fn icloud_folders_map_to_roles_with_no_special_use_at_all() {
-    let connector =
-        ScriptedConnector::new(ImapScript::icloud().on("LIST", icloud_listing().as_str()));
+async fn folders_map_to_roles_when_the_server_advertises_no_special_use() {
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("LIST", listing_without_special_use().as_str()),
+    );
     let pool = pool_over(connector).await;
 
     let mailboxes = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
@@ -94,8 +103,10 @@ async fn icloud_folders_map_to_roles_with_no_special_use_at_all() {
 
 #[tokio::test]
 async fn the_inbox_comes_first_and_the_rest_are_ordered_predictably() {
-    let connector =
-        ScriptedConnector::new(ImapScript::icloud().on("LIST", icloud_listing().as_str()));
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("LIST", listing_without_special_use().as_str()),
+    );
     let pool = pool_over(connector).await;
 
     let paths: Vec<String> = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
@@ -130,7 +141,7 @@ async fn nested_folders_keep_their_hierarchy() {
         ("\\HasNoChildren", "Projects/Postio/Design"),
     ]);
     let pool = pool_over(ScriptedConnector::new(
-        ImapScript::icloud().on("LIST", deep.as_str()),
+        ImapScript::extensions_hidden_until_login().on("LIST", deep.as_str()),
     ))
     .await;
 
@@ -168,7 +179,7 @@ async fn a_noselect_folder_is_reported_as_unable_to_hold_messages() {
         ("\\HasNoChildren", "Projects/Postio"),
     ]);
     let pool = pool_over(ScriptedConnector::new(
-        ImapScript::icloud().on("LIST", rows.as_str()),
+        ImapScript::extensions_hidden_until_login().on("LIST", rows.as_str()),
     ))
     .await;
 
@@ -185,25 +196,26 @@ async fn a_noselect_folder_is_reported_as_unable_to_hold_messages() {
 }
 
 // ---------------------------------------------------------------------------
-// Gmail and Fastmail
+// Servers that do advertise SPECIAL-USE
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn gmail_roles_come_from_the_attributes_it_does_advertise() {
-    // Gmail's names would mostly resolve on their own, but `[Gmail]/All Mail`
-    // is the archive and nothing about that name says so.
+async fn roles_come_from_the_attributes_a_server_does_advertise() {
+    // Most of these names would resolve on their own, but `[Container]/All Mail`
+    // is the archive and nothing about that name says so — only the attribute
+    // does.
     let rows = listing(&[
         ("\\HasNoChildren", "INBOX"),
-        ("\\Noselect \\HasChildren", "[Gmail]"),
-        ("\\All \\HasNoChildren \\Archive", "[Gmail]/All Mail"),
-        ("\\Drafts \\HasNoChildren", "[Gmail]/Drafts"),
-        ("\\HasNoChildren \\Sent", "[Gmail]/Sent Mail"),
-        ("\\HasNoChildren \\Junk", "[Gmail]/Spam"),
-        ("\\Flagged \\HasNoChildren", "[Gmail]/Starred"),
-        ("\\HasNoChildren \\Trash", "[Gmail]/Trash"),
+        ("\\Noselect \\HasChildren", "[Container]"),
+        ("\\All \\HasNoChildren \\Archive", "[Container]/All Mail"),
+        ("\\Drafts \\HasNoChildren", "[Container]/Drafts"),
+        ("\\HasNoChildren \\Sent", "[Container]/Sent Mail"),
+        ("\\HasNoChildren \\Junk", "[Container]/Spam"),
+        ("\\Flagged \\HasNoChildren", "[Container]/Starred"),
+        ("\\HasNoChildren \\Trash", "[Container]/Trash"),
     ]);
     let pool = pool_over(ScriptedConnector::new(
-        ImapScript::icloud().on("LIST", rows.as_str()),
+        ImapScript::extensions_hidden_until_login().on("LIST", rows.as_str()),
     ))
     .await;
 
@@ -213,19 +225,28 @@ async fn gmail_roles_come_from_the_attributes_it_does_advertise() {
 
     assert_eq!(role_of(&mailboxes, "INBOX"), MailboxRole::Inbox);
     assert_eq!(
-        role_of(&mailboxes, "[Gmail]/All Mail"),
+        role_of(&mailboxes, "[Container]/All Mail"),
         MailboxRole::Archive
     );
-    assert_eq!(role_of(&mailboxes, "[Gmail]/Sent Mail"), MailboxRole::Sent);
-    assert_eq!(role_of(&mailboxes, "[Gmail]/Spam"), MailboxRole::Junk);
-    assert_eq!(role_of(&mailboxes, "[Gmail]/Trash"), MailboxRole::Trash);
-    assert_eq!(role_of(&mailboxes, "[Gmail]/Starred"), MailboxRole::Flagged);
-    assert_eq!(role_of(&mailboxes, "[Gmail]/Drafts"), MailboxRole::Drafts);
-    assert_eq!(role_of(&mailboxes, "[Gmail]"), MailboxRole::Regular);
+    assert_eq!(
+        role_of(&mailboxes, "[Container]/Sent Mail"),
+        MailboxRole::Sent
+    );
+    assert_eq!(role_of(&mailboxes, "[Container]/Spam"), MailboxRole::Junk);
+    assert_eq!(role_of(&mailboxes, "[Container]/Trash"), MailboxRole::Trash);
+    assert_eq!(
+        role_of(&mailboxes, "[Container]/Starred"),
+        MailboxRole::Flagged
+    );
+    assert_eq!(
+        role_of(&mailboxes, "[Container]/Drafts"),
+        MailboxRole::Drafts
+    );
+    assert_eq!(role_of(&mailboxes, "[Container]"), MailboxRole::Regular);
 }
 
 #[tokio::test]
-async fn fastmail_names_and_attributes_agree() {
+async fn names_and_attributes_agreeing_is_the_easy_case() {
     let rows = listing(&[
         ("\\HasNoChildren", "INBOX"),
         ("\\Archive \\HasNoChildren", "Archive"),
@@ -236,7 +257,7 @@ async fn fastmail_names_and_attributes_agree() {
         ("\\HasNoChildren", "Notes"),
     ]);
     let pool = pool_over(ScriptedConnector::new(
-        ImapScript::icloud().on("LIST", rows.as_str()),
+        ImapScript::extensions_hidden_until_login().on("LIST", rows.as_str()),
     ))
     .await;
 
@@ -261,7 +282,7 @@ async fn a_user_folder_that_merely_looks_special_does_not_take_the_role() {
         ("\\HasNoChildren", "Deleted Messages"),
     ]);
     let pool = pool_over(ScriptedConnector::new(
-        ImapScript::icloud().on("LIST", rows.as_str()),
+        ImapScript::extensions_hidden_until_login().on("LIST", rows.as_str()),
     ))
     .await;
 
@@ -297,8 +318,10 @@ async fn a_user_folder_that_merely_looks_special_does_not_take_the_role() {
 
 #[tokio::test]
 async fn listing_everything_costs_one_round_trip_and_asks_no_lsub() {
-    let connector =
-        ScriptedConnector::new(ImapScript::icloud().on("LIST", icloud_listing().as_str()));
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("LIST", listing_without_special_use().as_str()),
+    );
     let pool = pool_over(connector.clone()).await;
 
     let mailboxes = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
@@ -318,12 +341,12 @@ async fn listing_everything_costs_one_round_trip_and_asks_no_lsub() {
 
 #[tokio::test]
 async fn asking_for_subscribed_folders_merges_lsub_and_drops_the_rest() {
-    let script = ImapScript::icloud()
+    let script = ImapScript::extensions_hidden_until_login()
         .on(
             "LSUB",
             "* LSUB () \"/\" \"INBOX\"\n* LSUB () \"/\" \"Sent Messages\"\n{tag} OK LSUB completed",
         )
-        .on("LIST", icloud_listing().as_str());
+        .on("LIST", listing_without_special_use().as_str());
     let pool = pool_over(ScriptedConnector::new(script)).await;
 
     let subscribed = list_mailboxes(&pool, &MailboxFilter::subscribed(), Priority::Interactive)
@@ -342,7 +365,8 @@ async fn asking_for_subscribed_folders_merges_lsub_and_drops_the_rest() {
 #[tokio::test]
 async fn a_rejected_list_is_reported_rather_than_returning_no_folders() {
     let connector = ScriptedConnector::new(
-        ImapScript::icloud().on("LIST", "{tag} NO [SERVERBUG] cannot list right now"),
+        ImapScript::extensions_hidden_until_login()
+            .on("LIST", "{tag} NO [SERVERBUG] cannot list right now"),
     );
     let pool = pool_over(connector).await;
 
@@ -359,7 +383,7 @@ async fn a_rejected_list_is_reported_rather_than_returning_no_folders() {
 
 #[tokio::test]
 #[ignore = "talks to a live IMAP server; set POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD"]
-async fn live_icloud_folders_map_to_the_right_roles() {
+async fn live_server_folders_map_to_the_right_roles() {
     let user = std::env::var("POSTIO_TEST_IMAP_USER").expect("POSTIO_TEST_IMAP_USER");
     let secret = std::env::var("POSTIO_TEST_IMAP_PASSWORD").expect("POSTIO_TEST_IMAP_PASSWORD");
 
@@ -368,7 +392,14 @@ async fn live_icloud_folders_map_to_the_right_roles() {
     store.store(&key, &Password::new(secret)).await.unwrap();
 
     let pool = ConnectionPool::new(
-        ConnectionSettings::icloud(&user),
+        ConnectionSettings::preset_for(&user).unwrap_or_else(|| {
+            ConnectionSettings::new(
+                std::env::var("POSTIO_TEST_IMAP_HOST").expect("POSTIO_TEST_IMAP_HOST"),
+                IMAPS_PORT,
+                TransportSecurity::Tls,
+                &user,
+            )
+        }),
         key,
         Arc::new(store),
         Arc::new(RustlsConnector::new().expect("TLS configuration")),

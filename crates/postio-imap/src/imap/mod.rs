@@ -65,9 +65,7 @@ pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
 };
-pub use self::settings::{
-    ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, ICLOUD_IMAP_HOST, IMAP_PORT, IMAPS_PORT,
-};
+pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
 pub use self::transport::{
     ConnectionLog, ImapConnector, ImapScript, ImapStream, RustlsConnector, ScriptedConnector,
     TransportError,
@@ -429,7 +427,7 @@ mod tests {
             WireCapability::Move,
         ];
 
-        let capabilities = post_auth_capabilities("imap.mail.me.com", &advertised).unwrap();
+        let capabilities = post_auth_capabilities("imap.example.com", &advertised).unwrap();
 
         assert!(capabilities.supports_incremental_sync());
         assert!(capabilities.contains(Capability::Idle));
@@ -442,16 +440,21 @@ mod tests {
         // ADR 0001 rule 1: io-imap returns Ok(vec![]) rather than failing when
         // the capability round trip was skipped, and every gate downstream
         // would read that as "supports nothing".
-        let error = post_auth_capabilities("imap.mail.me.com", &[]).unwrap_err();
+        let error = post_auth_capabilities("imap.example.com", &[]).unwrap_err();
 
         assert!(matches!(error, BackendError::EmptyCapabilities { .. }));
-        assert!(error.to_string().contains("imap.mail.me.com"));
+        assert!(error.to_string().contains("imap.example.com"));
         assert!(!error.is_transient());
     }
 
     #[test]
     fn a_rejected_password_is_an_authentication_failure_not_a_retry() {
-        let settings = ConnectionSettings::icloud("someone@example.com");
+        let settings = ConnectionSettings::new(
+            "imap.example.com",
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            "someone@example.com",
+        );
         let error = map_open_error(
             &settings,
             ImapSessionOpenError::AuthPlain(ImapAuthPlainError::No(
@@ -481,7 +484,12 @@ mod tests {
 
     #[test]
     fn a_broken_exchange_is_not_mistaken_for_bad_credentials() {
-        let settings = ConnectionSettings::icloud("someone@example.com");
+        let settings = ConnectionSettings::new(
+            "imap.example.com",
+            IMAPS_PORT,
+            TransportSecurity::Tls,
+            "someone@example.com",
+        );
         let error = map_open_error(
             &settings,
             ImapSessionOpenError::AuthPlain(ImapAuthPlainError::MissingTagged),

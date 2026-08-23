@@ -23,8 +23,9 @@ use postio_model::{
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// The capability list iCloud is documented to advertise *after* login.
-const ICLOUD: [&str; 8] = [
+/// A capability list of the shape a mainstream provider advertises *after*
+/// login, unknown extension included.
+const EXTENSION_RICH: [&str; 8] = [
     "IMAP4rev1",
     "CONDSTORE",
     "ENABLE",
@@ -32,7 +33,7 @@ const ICLOUD: [&str; 8] = [
     "IDLE",
     "UIDPLUS",
     "MOVE",
-    "X-APPLEPUSHSERVICE",
+    "X-VENDOR-PUSH",
 ];
 
 fn uids(values: impl IntoIterator<Item = u32>) -> UidSet {
@@ -40,9 +41,9 @@ fn uids(values: impl IntoIterator<Item = u32>) -> UidSet {
 }
 
 /// A backend shaped like the account this project targets.
-fn icloud() -> MockBackend {
+fn server() -> MockBackend {
     MockBackend::builder()
-        .capabilities(ICLOUD)
+        .capabilities(EXTENSION_RICH)
         .mailbox(
             MockMailbox::new("INBOX")
                 .uid_validity(UidValidity::new(4_242))
@@ -57,7 +58,7 @@ fn icloud() -> MockBackend {
 }
 
 async fn connected() -> MockBackend {
-    let backend = icloud();
+    let backend = server();
     backend.connect().await.expect("connect");
     backend
 }
@@ -156,15 +157,11 @@ fn capability_names_are_matched_case_insensitively() {
 
 #[test]
 fn an_unrecognized_capability_is_kept_verbatim_not_dropped() {
-    let capabilities = Capabilities::from_names(ICLOUD);
+    let capabilities = Capabilities::from_names(EXTENSION_RICH);
 
-    assert!(capabilities.has_name("X-APPLEPUSHSERVICE"));
-    assert!(capabilities.has_name("x-applepushservice"));
-    assert!(
-        capabilities
-            .names()
-            .contains(&"X-APPLEPUSHSERVICE".to_owned())
-    );
+    assert!(capabilities.has_name("X-VENDOR-PUSH"));
+    assert!(capabilities.has_name("x-vendor-push"));
+    assert!(capabilities.names().contains(&"X-VENDOR-PUSH".to_owned()));
 }
 
 #[test]
@@ -179,7 +176,7 @@ fn requiring_an_absent_capability_names_it() {
 
 #[test]
 fn incremental_sync_needs_both_condstore_and_qresync() {
-    assert!(Capabilities::from_names(ICLOUD).supports_incremental_sync());
+    assert!(Capabilities::from_names(EXTENSION_RICH).supports_incremental_sync());
     assert!(!Capabilities::from_names(["IMAP4rev1", "CONDSTORE"]).supports_incremental_sync());
     assert!(!Capabilities::from_names(["IMAP4rev1", "QRESYNC"]).supports_incremental_sync());
 }
@@ -225,7 +222,7 @@ fn a_uidvalidity_change_demands_a_full_resync() {
 #[tokio::test]
 async fn the_backend_is_usable_behind_a_trait_object() {
     // postio-sync holds one of these and knows nothing about IMAP.
-    let backend: Arc<dyn MailBackend> = Arc::new(icloud());
+    let backend: Arc<dyn MailBackend> = Arc::new(server());
 
     let capabilities = backend.connect().await.unwrap();
 
@@ -271,7 +268,7 @@ fn no_io_imap_type_reaches_the_seam() {
 
 #[tokio::test]
 async fn capabilities_are_only_available_once_connected() {
-    let backend = icloud();
+    let backend = server();
 
     let error = backend
         .list_mailboxes(&MailboxFilter::all())
@@ -463,7 +460,7 @@ async fn fetching_a_body_streams_into_the_sink_rather_than_returning_bytes() {
 #[tokio::test]
 async fn a_large_body_arrives_in_chunks_so_nothing_buffers_it_whole() {
     let backend = MockBackend::builder()
-        .capabilities(ICLOUD)
+        .capabilities(EXTENSION_RICH)
         .mailbox(MockMailbox::new("INBOX").corpus(["attachment-large"]))
         .chunk_size(8 * 1024)
         .build();
@@ -831,7 +828,7 @@ async fn a_fault_can_be_scheduled_so_retry_paths_are_testable() {
 
 #[tokio::test]
 async fn authentication_failure_is_injectable_at_connect() {
-    let backend = icloud();
+    let backend = server();
     backend.inject(Fault::AuthFailed);
 
     let error = backend.connect().await.unwrap_err();
