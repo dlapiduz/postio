@@ -31,6 +31,22 @@ DENY = [
     # Learned since this guard was last live:
     "cargo fmt -p postio-gtk",
     "cargo fmt -p postio-core",
+    # postio-0uv0: a rustfmt whose file list is derived from an UNSCOPED git
+    # query writes to every session's dirty files. This is not a hypothetical
+    # -- it is what /land told people to run, and a session ran it over 272
+    # lines of someone else's loose work.
+    "rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs')",
+    "rustfmt --edition 2024 $(git diff --name-only HEAD)",
+    # The exact command /land carried before 10f5a6f.
+    "rustfmt --edition 2024 $(git diff --name-only HEAD -- \"*.rs\"; git ls-files --others --exclude-standard -- \"*.rs\")",
+    "git status --porcelain | awk '{print $2}' | xargs rustfmt --edition 2024",
+    "git ls-files --others --exclude-standard -- '*.rs' | xargs -r rustfmt",
+    "git diff --name-only HEAD | xargs rustfmt --edition 2024",
+    # Same hazard, different listing tool.
+    "rustfmt --edition 2024 $(find crates -name '*.rs')",
+    # Scoped to `crates/` is not scoped -- that is every crate, which is the
+    # bug wearing a pathspec.
+    "rustfmt --edition 2024 $(git diff --name-only HEAD -- 'crates/')",
 ]
 
 ALLOW = [
@@ -62,12 +78,34 @@ ALLOW = [
     "cargo fmt -p postio-gtk --check",
     "cargo fmt --all --check",
     "rustfmt --edition 2024 crates/postio-core/src/lib.rs",
-    "rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs')",
     "git commit -m 'feat: handle -- in the parser'",
     # A later line must not be read as flags of an earlier command.
     'git add CLAUDE.md && git commit -q -m "docs: x"\ncargo fmt --all --check',
     "git commit -m 'docs: x'\ngit add crates/postio-core\ncargo fmt --all --check",
     "cargo fmt -p postio-core --check\ngit commit -m 'x'",
+    # postio-0uv0: the forms /land now documents must all survive. The
+    # pathspec that scopes them is QUOTED, and the guard blanks quoted spans
+    # before matching -- so a rule that looked for the crate name in the
+    # stripped haystack would refuse every correct command. It has to read the
+    # raw text for scope.
+    "{ git diff --name-only --diff-filter=d HEAD -- 'crates/postio-core/*.rs'\n"
+    "  git ls-files --others --exclude-standard  -- 'crates/postio-core/*.rs'\n"
+    "} | xargs -r rustfmt --edition 2024",
+    # A bead that spans crates names each one; still scoped.
+    "{ git diff --name-only --diff-filter=d HEAD -- 'crates/postio-core/*.rs' 'crates/postio-gtk/*.rs'\n"
+    "} | xargs -r rustfmt --edition 2024",
+    "git status --porcelain -- crates/postio-core | awk '{print $NF}' | xargs -r rustfmt --edition 2024",
+    # Double quotes scope just as well as single.
+    'rustfmt --edition 2024 $(git diff --name-only HEAD -- "crates/postio-gtk/*.rs")',
+    # Naming the files by hand is the safest form and must never be refused.
+    "rustfmt --edition 2024 crates/postio-core/src/action.rs crates/postio-core/src/config.rs",
+    # Read-only: --check writes nothing, so an unscoped list is harmless.
+    "rustfmt --check --edition 2024 $(git diff --name-only HEAD -- '*.rs')",
+    # Listing without formatting is not formatting.
+    "git diff --name-only HEAD -- '*.rs'",
+    "git status --porcelain",
+    # Documenting the forbidden form must not be running it.
+    "cat > doc.md <<'EOF'\nNever run rustfmt $(git diff --name-only HEAD) here.\nEOF",
 ]
 
 
