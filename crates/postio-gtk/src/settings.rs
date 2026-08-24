@@ -67,6 +67,13 @@ pub const NAV_WIDTH: i32 = 150;
 /// How tall the body (nav plus text) is, from canvas 3f.
 pub const BODY_HEIGHT: i32 = 330;
 
+/// What the settings panel calls the file it is showing, for a screen
+/// reader. One constant because two widgets announce it — the text view and
+/// the scroll region around it, which is a tab stop of its own — and a
+/// region that disagrees with its content about what it holds is worse than
+/// one that repeats it.
+const FILE_NAME: &str = "config.toml";
+
 // ---------------------------------------------------------------------------
 // Sections — pure, no GTK
 // ---------------------------------------------------------------------------
@@ -565,6 +572,11 @@ impl SettingsPanel {
         nav_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         nav_scroller.add_css_class("postio-settings-nav");
         nav_scroller.set_size_request(NAV_WIDTH, -1);
+        // A scroll area takes the keyboard so it can be scrolled with one,
+        // which means Tab stops here and a screen reader has to have
+        // something to say. The rows inside are named individually; this
+        // names the region they sit in.
+        nav_scroller.update_property(&[gtk::accessible::Property::Label("Settings sections")]);
 
         imp.view.set_buffer(Some(&imp.buffer));
         imp.view.set_monospace(true);
@@ -573,12 +585,16 @@ impl SettingsPanel {
         imp.view.set_left_margin(4);
         imp.view.add_css_class("postio-settings-view");
         imp.view
-            .update_property(&[gtk::accessible::Property::Label("config.toml")]);
+            .update_property(&[gtk::accessible::Property::Label(FILE_NAME)]);
 
         let view_scroller = gtk::ScrolledWindow::new();
         view_scroller.set_child(Some(&imp.view));
         view_scroller.set_hexpand(true);
         view_scroller.set_vexpand(true);
+        // A scroll area takes the keyboard so it can be scrolled with one, so
+        // Tab stops here before it reaches the text and a screen reader needs
+        // something to say at that stop.
+        view_scroller.update_property(&[gtk::accessible::Property::Label(FILE_NAME)]);
 
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         body.add_css_class("postio-settings-body");
