@@ -97,6 +97,11 @@ mod imp {
         /// The mailbox in view, so opening another one drops a selection that
         /// was about the last.
         pub(super) mailbox: RefCell<String>,
+        /// What `meta` is currently saying, as a number rather than a
+        /// sentence. Kept so that whatever replaces the header — a result
+        /// count, a thread — can put the folder's own back afterwards
+        /// without having to re-read the sidebar.
+        pub(super) unread: std::cell::Cell<u32>,
     }
 
     impl Default for MessageListView {
@@ -121,6 +126,7 @@ mod imp {
                 show_actions: Rc::new(Cell::new(true)),
                 keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
                 mailbox: RefCell::new(String::new()),
+                unread: std::cell::Cell::new(0),
             }
         }
     }
@@ -246,6 +252,7 @@ impl MessageListView {
             self.imp().anchor.set(None);
             self.imp().selected.clear();
         }
+        imp.unread.set(unread);
         imp.title.set_text(name);
         imp.meta.set_text(&match unread {
             0 => String::new(),
@@ -288,6 +295,15 @@ impl MessageListView {
             widget = current.parent();
         }
         None
+    }
+
+    /// The unread count the header is currently showing.
+    ///
+    /// The other half of [`mailbox_name`](Self::mailbox_name): together they
+    /// are exactly what [`set_mailbox`](Self::set_mailbox) needs, so a
+    /// surface that takes the header over can hand it back unchanged.
+    pub fn unread(&self) -> u32 {
+        self.imp().unread.get()
     }
 
     /// What the list column is currently calling its mailbox.

@@ -853,6 +853,20 @@ impl Finder {
         handlers.iter().any(|handler| handler())
     }
 
+    /// What `Escape` does: dismiss the box.
+    ///
+    /// Public for the same reason [`press_tab`](Self::press_tab) is — GTK4
+    /// gives no supported way to synthesize a key event, and `Escape` is now
+    /// load-bearing rather than cosmetic: it is what puts the message list
+    /// back on the folder after a search, so it needs to be drivable in a
+    /// test that asserts the list came back.
+    ///
+    /// Distinct from [`close`](Self::close), which empties the box without
+    /// telling anyone. Dismissing is the *gesture*; closing is the state.
+    pub fn press_escape(&self) {
+        self.dismiss();
+    }
+
     // -- internals ----------------------------------------------------------
 
     fn dismiss(&self) {

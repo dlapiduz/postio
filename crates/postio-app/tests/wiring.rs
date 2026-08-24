@@ -91,7 +91,9 @@ fn a_window_over_a_populated_store_lists_its_mail() {
     while glib::MainContext::default().iteration(false) {}
 
     // ── the same call `run` makes ───────────────────────────────────────
-    let feeds = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let feeds = feed_the_window(&window, &wiring)
+        .expect("the seeded store has an account")
+        .feeds;
     let _ = feeds;
 
     // ── the folders reached the sidebar ─────────────────────────────────

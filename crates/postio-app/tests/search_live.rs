@@ -99,7 +99,12 @@ fn a_real_account_answers_a_real_query() {
     window.present();
     while glib::MainContext::default().iteration(false) {}
 
-    let view = postio_app::search::install(&window, &wiring).expect("the store has an account");
+    // Through the composition root, so this drives one install rather than a
+    // second `View` racing the one `feed_the_window` already made.
+    let view = postio_app::feed_the_window(&window, &wiring)
+        .expect("the store has an account")
+        .search
+        .expect("search installed");
 
     let finder = window.finder();
     finder.open(Mode::Search);

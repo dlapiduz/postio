@@ -234,7 +234,7 @@ fn open_account(
     notifier: &notifications::Notifier,
 ) {
     start_syncing(window, wiring);
-    let Some(feeds) = feed_the_window(window, wiring) else {
+    let Some(Wired { feeds, .. }) = feed_the_window(window, wiring) else {
         return;
     };
     // Every gesture the window produces from here on reaches a real handler.
@@ -358,13 +358,33 @@ pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// Everything `feed_the_window` wires up, for whoever has to drive it.
+///
+/// The `View` is handed back rather than only leaked because it is the far
+/// side of the search: the preview, the scope column and the refine chips all
+/// hang off it, and a caller that wants to *check* any of them would otherwise
+/// have to call `search::install` a second time. Two installs put two handlers
+/// on the box's `connect_run`, the query answers into the view the caller
+/// cannot see, and every search surface reads empty — which cost this bead an
+/// afternoon of chasing a wiring bug that was not there.
+pub struct Wired {
+    /// The message list, the folders and the status line.
+    pub feeds: postio_gtk::feed::Feeds,
+    /// The search surfaces, or `None` when search could not be installed.
+    ///
+    /// `'static` because it is leaked: these live as long as the window, and
+    /// dropping the `View` unhooks the handlers a moment after they are
+    /// connected.
+    pub search: Option<&'static postio_gtk::search::View>,
+}
+
 /// Point the window's panes at the store.
 ///
 /// Silent when there is no account yet: the sidebar already says what is true
 /// — offline, never synced, no folders — and inventing an account to fill it
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
-pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed::Feeds> {
+pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     let Some(account) = first_account(&wiring.database) else {
         tracing::info!(
             "no account configured; opening empty (see the provision example, or postio-hiy)"
@@ -405,11 +425,9 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::f
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    if let Some(view) = search::install(window, wiring) {
-        Box::leak(Box::new(view));
-    }
+    let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
-    Some(feeds)
+    Some(Wired { feeds, search })
 }
 
 /// Bring the account's connection up and keep it up.

@@ -112,7 +112,9 @@ fn pressing_a_archives_the_row_in_the_database() {
     window.present();
     while glib::MainContext::default().iteration(false) {}
 
-    let feeds = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let feeds = feed_the_window(&window, &wiring)
+        .expect("the seeded store has an account")
+        .feeds;
     commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
     let list = window.list();

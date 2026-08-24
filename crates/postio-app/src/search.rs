@@ -44,6 +44,7 @@ use std::rc::Rc;
 use gtk::glib;
 use postio_core::bridge::CommandSender;
 use postio_core::{Command, Event};
+use postio_gtk::feed::Feeds;
 use postio_gtk::finder::Finder;
 use postio_gtk::search::{Outcome, View};
 use postio_gtk::window::Window;
@@ -70,13 +71,22 @@ const HIT_LIMIT: u32 = 200;
 /// `None` when the store holds no account: there is nothing to search, and the
 /// box says so by finding nothing rather than by being wired to an account
 /// that does not exist.
-pub fn install(window: &Window, wiring: &Wiring) -> Option<View> {
+/// `feeds` is what makes the results reach the message list. It is not
+/// optional in the running application — `feed_the_window` builds both — and
+/// is taken by reference here rather than found, because which `Feeds` a
+/// window has is the composition root's business, the same as the source.
+pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> {
     let account = crate::first_account(&wiring.database)?;
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
 
+    // The hits the surfaces are drawn from, shared between the run that
+    // produces them and the cursor that walks them.
+    let held: Held = Rc::new(std::cell::RefCell::new(None));
+
     install_preview(&view, wiring);
-    install_run(&view, &finder, account.id, wiring);
+    install_run(&view, &finder, account.id, wiring, held.clone());
+    install_results(window, feeds, &view, held, wiring);
     load_contacts(&finder, account.id, wiring);
 
     Some(view)
@@ -110,7 +120,7 @@ where
 type Answer<T> = async_channel::Receiver<Option<T>>;
 
 /// Run a search when the box says a query is due.
-fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring) {
+fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring, held: Held) {
     let Some(live) = finder.live() else {
         // The readout is built by `Finder::attach`, which the window does
         // before this runs. If it is ever missing, search silently does
@@ -145,6 +155,7 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
                 let blobs = blobs.clone();
                 let runtime = runtime.clone();
                 let events = events.clone();
+                let held = held.clone();
                 async move {
                     let Ok(Some(results)) = hits.recv().await else {
                         return;
@@ -169,8 +180,19 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
                         // is about a question nobody is asking.
                         return;
                     }
-                    announce(&events, &query, &results);
+                    // Held before it is announced: the event puts the hits in
+                    // the list, which moves the cursor, which looks them up
+                    // here. Announcing first would race the cursor against the
+                    // results it is a cursor into.
                     focus(&view, &results, &database, &blobs, &runtime);
+                    held.replace(Some(results));
+                    // Scoped, so the borrow is gone before `facets` runs:
+                    // nothing downstream needs `held` today, and a borrow
+                    // left open across two calls is a `borrow_mut` panic
+                    // waiting for whoever edits this next.
+                    if let Some(results) = held.borrow().as_ref() {
+                        announce(&events, &query, results);
+                    }
                     facets(
                         &view, &live, sequence, account, &query, scope, &database, &runtime,
                     );
@@ -264,13 +286,22 @@ fn total_in_scope(facets: &Facets, scope: Scope) -> u64 {
         .unwrap_or_default()
 }
 
+/// The hits the surfaces are currently drawn from.
+///
+/// Held because the cursor moving through the list arrives as a `MessageId`
+/// and [`View::set_focused`] wants the whole `SearchHit` — the snippet, the
+/// sender and the mailbox all come from the index, not from the row. At most
+/// `HIT_LIMIT` of them, so the lookup is a scan and does not need to be
+/// anything cleverer.
+type Held = Rc<std::cell::RefCell<Option<SearchResults>>>;
+
 /// Preview the best match, and fetch its body.
 ///
-/// The top hit rather than a cursor, because nothing walks the results yet:
-/// `Event::SearchResults` has no consumer, so the hits do not reach the
-/// message list and there is no focus to follow. Previewing the best match is
-/// what the canvas draws for a query just typed, and the same call is what a
-/// moving cursor will drive when there is one.
+/// The best match is what the canvas draws for a query just typed, and it is
+/// where the list's cursor lands — so this paints the first frame and
+/// [`follow_cursor`] takes over from the next keystroke on. Both go through
+/// [`preview`], so there is one path to the pane rather than two that can
+/// disagree.
 fn focus(
     view: &View,
     results: &SearchResults,
@@ -282,6 +313,17 @@ fn focus(
     let Some(hit) = results.hits.first() else {
         return;
     };
+    preview(view, hit, database, blobs, runtime);
+}
+
+/// Draw `hit`'s body into the preview.
+fn preview(
+    view: &View,
+    hit: &postio_search::SearchHit,
+    database: &Database,
+    blobs: &BlobStore,
+    runtime: &tokio::runtime::Handle,
+) {
     // The snippet is already on screen — highlighted, from the index — so this
     // is the body arriving under it rather than the pane waiting on a blob
     // read to show anything at all.
@@ -311,17 +353,122 @@ fn focus(
 
 /// Say what the search found, for anything that draws results.
 ///
-/// Nothing consumes this yet — the message list has no seam for search hits,
-/// which is `postio-gtk`'s to add — so this is the contract being kept rather
-/// than a repaint being caused. It is emitted anyway because the alternative
-/// is a consumer landing later against an event that was never sent, which is
-/// the same shape of gap in the other direction.
+/// This is what puts the hits in the message list. `Feed::apply` handles it by
+/// calling `show_results`, so the ids go out once here and the list, its count
+/// and its paging all follow from that — no second path, and no call from this
+/// module into a widget.
+///
+/// Broadcast rather than a direct call on purpose: every route to a search —
+/// the box, a saved query, a command — lands in one place, and the list is not
+/// the only thing that may want to know.
 fn announce(events: &postio_core::bridge::EventSink, query: &ParsedQuery, results: &SearchResults) {
     events.emit(Event::SearchResults {
         query: query.input().to_owned(),
         messages: results.hits.iter().map(|hit| hit.message_id).collect(),
         took: results.elapsed,
     });
+}
+
+/// Join the result list to the surfaces around it.
+///
+/// Three things that hits reaching the list does not do on its own, all of
+/// them this crate's because each needs both halves — the `Feeds` that owns
+/// the list and the `View` that owns the preview:
+///
+/// * the column header counts results rather than naming a folder,
+/// * the cursor moving through them moves the preview,
+/// * `Esc` puts the mailbox back, where it was.
+fn install_results(window: &Window, feeds: &Feeds, view: &View, held: Held, wiring: &Wiring) {
+    let list = window.list();
+    let finder = window.finder();
+
+    // What the header and the scroller were showing before the results took
+    // the list, so `Esc` can put both back. Captured on the way *in* rather
+    // than read on the way out: by then the list is the result set, and its
+    // offset is the one the user scrolled through the hits to.
+    let restore: Rc<std::cell::RefCell<Option<(String, u32, f64)>>> =
+        Rc::new(std::cell::RefCell::new(None));
+
+    feeds.messages.connect_results({
+        let list = list.clone();
+        let restore = restore.clone();
+        move |count| {
+            // Only the first result set of a search remembers. Retyping
+            // without leaving replaces the hits, and recording *those* as the
+            // thing to go back to is how `Esc` ends up returning to a search.
+            if restore.borrow().is_none() {
+                restore.replace(Some((
+                    list.mailbox_name(),
+                    list.unread(),
+                    list.scroll_offset(),
+                )));
+            }
+            // Canvas 2b: the column says what it is showing. "14 results",
+            // not the folder it has stopped listing.
+            list.set_mailbox(&results_label(count), 0);
+        }
+    });
+
+    // The preview follows the keyboard. `set_focused` wants the whole hit —
+    // the snippet and the sender come from the index, not from the row — so
+    // the cursor's id is looked up in the results the run held.
+    list.cursor().connect_selected_notify({
+        let list = list.clone();
+        let view = view.clone();
+        let feeds = feeds.clone();
+        let database = wiring.database.clone();
+        let blobs = wiring.blobs.clone();
+        let runtime = wiring.runtime.clone();
+        move |_| {
+            if !feeds.messages.showing_results() {
+                return;
+            }
+            let Some(id) = list.cursor_id() else {
+                return;
+            };
+            let held = held.borrow();
+            let Some(hit) = held
+                .as_ref()
+                .and_then(|results| results.hits.iter().find(|hit| hit.message_id == id))
+            else {
+                return;
+            };
+            view.set_focused(Some(hit));
+            preview(&view, hit, &database, &blobs, &runtime);
+        }
+    });
+
+    // `Esc`. The box is dismissed and the folder comes back, because the
+    // results are what the box put there.
+    finder.connect_dismissed({
+        let list = list.clone();
+        let feeds = feeds.clone();
+        move || {
+            if !feeds.messages.close_results() {
+                return;
+            }
+            let Some((name, unread, offset)) = restore.replace(None) else {
+                return;
+            };
+            list.set_mailbox(&name, unread);
+            // After the count is back, not before: `close_results` puts the
+            // list at the mailbox's length in the same turn, and an offset
+            // set against a scroller still the result set's height would be
+            // clamped to the wrong place.
+            list.set_scroll_offset(offset);
+        }
+    });
+}
+
+/// What the list column calls a result set.
+///
+/// Singular is worth the branch: "1 results" is the kind of thing that makes
+/// an interface feel unfinished, and this sits at the top of the pane.
+fn results_label(count: u32) -> String {
+    match count {
+        1 => "1 result".to_string(),
+        count => format!("{count} results"),
+    }
 }
 
 /// Resolve `cid:` parts, and open what the preview asks to open.
