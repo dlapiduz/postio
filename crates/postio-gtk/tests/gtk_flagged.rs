@@ -127,7 +127,9 @@ fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
         store.clone(),
     );
     let _ = &feeds;
-    pump();
+    // The folder read crosses to the source and back, so wait for the row to
+    // exist rather than for a number of frames.
+    pump_until(|| labels(&window).len() == 4);
 
     // ── it is in the sidebar, where the canvas puts it ───────────────────
     assert_eq!(
@@ -145,7 +147,7 @@ fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     // ── opening it lists the flagged mail ────────────────────────────────
     store.asked.borrow_mut().clear();
     click_folder(&window, "Flagged");
-    pump();
+    pump_until(|| window.list().model().n_items() == 7);
 
     assert_eq!(
         store.asked.borrow().first(),
@@ -172,7 +174,7 @@ fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     // ── a real folder still works the way it did ─────────────────────────
     store.asked.borrow_mut().clear();
     click_folder(&window, "Inbox");
-    pump();
+    pump_until(|| feeds.messages.mailbox() == Some(MailboxId::new(INBOX)));
 
     assert_eq!(
         store.asked.borrow().first(),
@@ -262,9 +264,25 @@ fn walk(widget: &gtk::Widget, visit: &mut impl FnMut(&gtk::Widget)) {
     }
 }
 
-fn pump() {
+/// Drive the main loop until `done`, or give up after a deadline.
+///
+/// A fixed number of frames is a bet that the work will have finished by the
+/// time the test looks. The page read here crosses to a source and back
+/// through `glib::spawn_future_local`, so with several sessions building the
+/// bet loses and the value read is stale rather than wrong — which is
+/// `postio-1ff` and `postio-mdu1`, both of which were exactly this.
+///
+/// A genuine regression still fails: the deadline runs out and the assertion
+/// after this call reports the real values. A slow machine only makes it
+/// slower, which is the difference between strict and flaky.
+fn pump_until(done: impl Fn() -> bool) {
     let context = glib::MainContext::default();
-    for _ in 0..60 {
-        while context.iteration(false) {}
+    let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(5), || {
+        glib::ControlFlow::Continue
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
+    while !done() && std::time::Instant::now() < deadline {
+        context.iteration(true);
     }
+    heartbeat.remove();
 }
