@@ -244,6 +244,25 @@ waiting for and one is finished. `compose.rs::load_body_or_reason` reads
 `load_body` keeps its old shape beside it, because the reply path genuinely
 does not care: quoting nothing is the right degraded behaviour there.
 
+**"Is this surface open" and "does it have the keyboard" are different
+questions, and conflating them silently kills keybindings.** `Window::key_context`
+asked `Finder::is_open()`, which was right until search began deliberately
+leaving the field up after a query — from then on the resolver stayed pinned
+to `Search` while the user was back in the message list, and every bare key
+was dropped for the rest of the session with nothing logged. That is #73,
+reported as "single-key bindings stop working, seemingly at random". Any
+surface that can stay open while the keyboard is elsewhere has to be asked
+the second question.
+
+**`is_focus()` is not `has_focus()`.** `has_focus` additionally requires the
+toplevel to be the *active* window, so it is false whenever the user has
+alt-tabbed away — and always false under a headless compositor, where no
+window is ever active. When the question is "which widget is the keyboard on
+in this window", use `is_focus()`, or `GtkWindowExt::focus(window)`. This has
+now cost time twice: once in #73, and once trying to prove a focus ring was
+drawn (#90).
+
+
 **`GtkListView` read-ahead is ~205 rows, not a screenful.** Measured against
 GTK 4.22.4: 50 items → 50 rows, 200 → 200, 1000 → 205, 5000 → 205. This is why
 a 200-item test model looks exactly like "recycling is broken" — the model is
