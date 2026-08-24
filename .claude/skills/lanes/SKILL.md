@@ -1,70 +1,69 @@
 ---
 name: lanes
-description: Report which Postio crates other Claude sessions are currently working, what beads are claimed, whether any claim is stale, and therefore what is safe to pick up. Use at the start of a session, before claiming a bead, and before touching a crate outside your lane.
+description: Report who else is working this repository right now — which issues are claimed, which worktrees exist, which branches and PRs are open, and whether any claim is stale. Use at the start of a session, and before assuming an issue is free.
 ---
 
 # Lanes
 
-Several sessions work this repository at once, in the same working tree. This
-answers "who else is here, and what can I safely take".
+Several sessions work this repository at once. Each takes a GitHub issue and
+gets a private worktree, so they no longer collide in one tree — but they do
+still share a machine, a target directory, and an issue tracker. This answers
+"who else is here, and what can I safely take".
 
 ## 1. What is claimed
 
 ```bash
-bd list --status=in_progress
+gh issue list --label in-progress --json number,title,assignees \
+  --jq '.[] | "#\(.number) \(.title)"'
+git worktree list
 ```
 
-Each row is a bead someone is working — or was working when their session was
-cut off. Leave them alone unless you can demonstrate the work is committed.
+An issue labelled `in-progress` with a worktree under
+`~/src/postio-worktrees/issue-<n>` is someone's live work. Leave it alone.
 
-## 2. Which crates are hot
+**An issue labelled `in-progress` with no worktree and no branch is a stale
+claim** — a session that was cut off mid-task. Release it:
 
 ```bash
-git status --porcelain | awk '{print $2}' | cut -d/ -f1-2 | sort | uniq -c | sort -rn
+scripts/issue-release.sh --stale        # sweeps every claim whose worktree is gone
 ```
 
-Uncommitted files mean an active or interrupted session. A crate with dirty
-files is a crate to stay out of.
-
-## 3. Recent activity
+## 2. What is in flight but not merged
 
 ```bash
-git log --oneline -15
+gh pr list --json number,title,headRefName,isDraft \
+  --jq '.[] | "#\(.number) \(.headRefName) \(.title)"'
 ```
 
-Commit scopes show which lanes have been moving. A crate committed to minutes
-ago probably still has someone in it.
+A branch with an open PR is finished work waiting on review, not abandoned
+work. Do not restart it.
 
-## 4. Stale claims
+## 3. Is the machine busy
 
-A bead `in_progress` whose work is already committed means a session died
-before it could close the bead. Check each claimed bead against the log:
+This is the part the worktrees did *not* fix. Every session shares one target
+directory and cargo serialises on it, so builds queue rather than parallelise.
 
 ```bash
-git log --oneline --all -- crates/<crate-the-bead-touches>
+uptime                      # load average against 8 cores
+pgrep -a "rustc|cargo" | head
+scripts/test-headless.sh --status
 ```
 
-If the implementation exists and the tests pass, the bead can be closed. Say
-which ones qualify rather than closing someone's live work.
+Four concurrent release builds is what put this box into swap. If the load
+average is already above ~8, wait rather than starting a build — and never run
+`scripts/run-isolated.sh` while others are building, since it links `--release`
+in a target directory of its own.
 
-## 5. What is actually available
+## 4. What is free
 
 ```bash
-bd ready
+scripts/issue-claim.sh --dry-run
 ```
 
-Ignore `[epic]` rows — they are containers, not work. A leaf task in a crate
-that is clean and unclaimed is safe to take.
+It applies the real rules — open, `ready`, unassigned, nothing still-open
+blocking it — and names what it would take, highest priority first, without
+taking it.
 
-## 6. Report
-
-State which crates are occupied, which beads are claimed, which claims look
-stale, and name the specific beads this session can safely start. If the only
-available work sits in an occupied crate, say so plainly rather than
-suggesting a collision.
-
-The crate split is deliberately disjoint so lanes do not collide:
-`postio-model`, `postio-storage`, `postio-search`, `postio-config`,
-`postio-imap`, `postio-smtp`, `postio-sync`, `postio-core`, `postio-gtk`. If a
-bead genuinely needs a crate another session owns, note it in the bead rather
-than editing across the boundary.
+If that says there is nothing, **there is nothing**. Say so and stop. An issue
+without the `ready` label has not been triaged as agent-work, and an `epic`,
+`icebox` or `needs-architecture` issue is deliberately not yours to start.
