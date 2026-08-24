@@ -179,6 +179,17 @@ jobs:
         # rots silently, so its own failure modes are exercised too.
         run: python3 scripts/test-check-no-silent-tracking.py
 
+      - name: Prove the CI-expectation predicate answers both ways
+        # It decides whether issue-land.sh may merge without seeing a check.
+        # Wrong one way it costs a re-run; wrong the other it merges code CI
+        # never looked at, which is what happened on #135. See #139.
+        run: python3 scripts/test-ci-expected-workflows.py
+
+      - name: Prove the check-wait refuses to merge when a check never appears
+        # Drives scripts/wait-for-checks.sh against a stubbed `gh`, including
+        # the registration race in both directions.
+        run: python3 scripts/test-wait-for-checks.py
+
       - name: Prove the runtime-crossing check catches the bug it exists for
         # Its first case is the 0.1.0 defect verbatim in shape. A guard that
         # would not have caught the fault it was written for is worth nothing.
