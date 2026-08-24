@@ -37,6 +37,7 @@
 
 use std::process::ExitCode;
 
+use postio_app::paths::store_path;
 use postio_imap::secret::{AccountKey, KeyringSecretStore, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
@@ -44,27 +45,6 @@ use postio_model::{Account, EmailAddress, Identity};
 use postio_storage::Database;
 use postio_storage::repository::AccountRepository;
 
-/// Where the store lives.
-///
-/// Duplicated from `postio-app/src/paths.rs` because that crate is a binary
-/// with no lib target, so an example cannot import it. Keep the two in step —
-/// or give postio-app a lib target and delete this.
-fn store_path() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| std::path::PathBuf::from(home).join(".local").join("share"))
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    base.join("postio").join("postio.db")
-}
-
-/// Providers whose settings we know, so the common case needs no flags.
-///
-/// This is a convenience for provisioning, not the provider table: `spec.md`
-/// §3 wants presets to be data rather than code, and the autoconfig probe
-/// (`postio-pco`) is what discovers a server properly.
 fn known(domain: &str) -> Option<(&'static str, u16, &'static str, u16)> {
     match domain {
         "icloud.com" | "me.com" | "mac.com" => {
