@@ -1,6 +1,6 @@
 //! Desktop notifications for new mail.
 //!
-//! [`Event::NewMail`] existed with a doc comment naming it "the trigger for a
+//! `Event::NewMail` existed with a doc comment naming it "the trigger for a
 //! desktop notification", was already consumed by `postio_gtk::feed` for the
 //! insert-at-top scroll behaviour, and nothing ever turned it into a
 //! notification (`postio-du6`, another `postio-bl2` instance). This module
@@ -8,7 +8,7 @@
 //!
 //! # Through `gio::Notification`, not a lower-level portal call
 //!
-//! [`gio::Application::send_notification`] is the GNOME-idiomatic path
+//! `gio::Application::send_notification` is the GNOME-idiomatic path
 //! rather than talking to `org.freedesktop.portal.Notification` directly: on
 //! a sandboxed build it already goes through that portal without this module
 //! needing to know, and either way it is the desktop shell — not this
@@ -18,7 +18,7 @@
 //! # Coalescing
 //!
 //! Every notification for one mailbox reuses the same id
-//! (`"new-mail-<mailbox>"`), which is what [`gio::Application::send_notification`]
+//! (`"new-mail-<mailbox>"`), which is what `gio::Application::send_notification`
 //! treats as "replace the one already showing" rather than "queue another
 //! popup beside it" — so several `IDLE` wake-ups in a row settle into the one
 //! notification on screen actually saying, rather than a burst of them.
@@ -27,7 +27,7 @@
 //!
 //! Presents the window. It does not yet switch to the mailbox the mail
 //! landed in or select the message: `postio-gtk` has no call that does
-//! either from outside a click on an already-visible row — [`window.list()`]'s
+//! either from outside a click on an already-visible row — `window.list()`'s
 //! activation is the reverse direction, a signal the list emits, not
 //! something this module can drive. Filed as `postio-du6`'s own follow-up
 //! rather than guessed at here.
@@ -76,7 +76,7 @@ pub fn config_at(path: &std::path::Path) -> SyncConfig {
         .unwrap_or_default()
 }
 
-/// Everything [`notify`] needs that does not change per call.
+/// Everything `notify` needs that does not change per call.
 #[derive(Clone)]
 pub struct Notifier {
     database: Database,

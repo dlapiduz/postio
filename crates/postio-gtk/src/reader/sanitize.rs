@@ -9,7 +9,7 @@
 //! [`ammonia`] does most of the work from its own defaults: `<script>` and
 //! `<style>` are removed tag-and-contents, every `on*` handler is dropped, and
 //! the `style` attribute is not in its generic allow-list — a sender's CSS
-//! never competes with [Postio's injected stylesheet](super::view::DOCUMENT_TEMPLATE).
+//! never competes with Postio's injected stylesheet (`view::DOCUMENT_TEMPLATE`).
 //! What this module adds on top:
 //!
 //! * `<iframe>`, `<object>`, `<embed>`, `<svg>`, `<math>` and `<noscript>` are

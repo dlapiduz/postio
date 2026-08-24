@@ -11,7 +11,7 @@
 //! * **Every entity type gets its own id type.** A `MailboxId` can never be
 //!   passed where a `MessageId` is expected; the compiler enforces it.
 //! * **`0` means "not yet assigned".** A value built in memory but not yet
-//!   written to the database carries [`Self::UNASSIGNED`]; storage replaces it
+//!   written to the database carries `Self::UNASSIGNED`; storage replaces it
 //!   with the assigned row id on insert. Assigned ids are always `> 0`. Use
 //!   `is_assigned()` rather than comparing against a literal.
 //! * **Ids serialize transparently** as their inner scalar, so a serialized
