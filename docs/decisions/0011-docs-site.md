@@ -9,8 +9,9 @@
   Generated pages are produced by **tests that fail when the file on disk is
   stale** — the mechanism `docs/keybindings.md` already uses — so the site
   build compiles nothing and CI, not the deploy, is what keeps the references
-  honest. The narrative is **written for users and is not a copy of
-  `spec.md`.**
+  honest. `spec.md` is **retired into [`docs/PRODUCT.md`](../PRODUCT.md)**,
+  which keeps its section numbers so the ~80 citations in the codebase stay
+  valid, and the site draws its narrative from there rather than from a fork.
 
 ---
 
@@ -119,26 +120,50 @@ per command id, so it renders from `registry::all()` and points at
 
 ---
 
-## Q4 — The narrative, and what "kept in sync with `spec.md`" has to mean
+## Q4 — The narrative, and the retirement of `spec.md`
 
 The issue asks that narrative content be *"drawn from `spec.md`, kept in sync
 rather than forked into a second copy"*. Taken literally that produces two
 documents that drift, because "kept in sync" is a habit and habits are the thing
 generation exists to replace.
 
-**Decision: they are different documents for different readers, and the
-overlap is removed rather than synchronised.**
+**Decision: `spec.md` is retired into [`docs/PRODUCT.md`](../PRODUCT.md), and
+the docs site draws its narrative from there rather than from a second copy.**
 
-- `spec.md` is the **contributor's** document: what to build and why, decisions
-  and their reasons, open questions. It stays.
-- The docs site is the **user's** document: what Postio does, how to install it,
-  what the keys are, what the config options mean, what the privacy posture
-  is — written in the second person, with screenshots.
+> **Amended 2026-08-24, by the maintainer.** This ADR first decided that
+> `spec.md` stayed as the contributor's document, with the site authoritative on
+> *behaviour* and `spec.md` linking to it. The maintainer's instruction was
+> blunter and better: no duplication, retire the spec. What follows is the
+> amended decision; the original is recorded in "Alternatives" because it is
+> the obvious answer and its costs are worth being visible.
 
-Where they would overlap on *behaviour* — what `a` does, what gets blocked in
-the reader, how sync behaves offline — the site is authoritative and `spec.md`
-links to it. That is one source per fact, which is the same rule §2 applies to
-the command surfaces.
+`spec.md` was the original brief — 827 lines, no headings, written before any of
+this existed. Most of it had been overtaken:
+
+| Overtaken by | What it was |
+|---|---|
+| `ARCHITECTURE.md` | §22's crate diagram, which no longer describes the workspace |
+| `docs/keybindings.md` | §8's bindings, which the design canvas had already replaced |
+| ADRs 0003/0004, 0009 | §10's compose window, §13's AI subsystem sketch |
+| CLAUDE.md, the benches | §18's budgets, restated in three places |
+| the roadmap project | §24's post-v1 list |
+
+What survives is genuinely product-level and had no other home: the vision and
+the principles, the scope cut, the accessibility and privacy commitments, and
+the workflow in §25 that all of it exists to serve.
+
+**`PRODUCT.md` keeps `spec.md`'s section numbers.** About eighty doc comments
+and tests cite `spec.md §18` or `spec.md §8`, and those citations are how a
+constraint stays attached to the code that honours it. Renumbering would have
+made the migration a judgement call per site instead of a rename, and would have
+broken the habit of citing a section at all. Sections whose content now lives
+elsewhere became one-paragraph pointers rather than being deleted, so every
+citation still lands somewhere real and says where to go next.
+
+**So the site's narrative source is `PRODUCT.md`**, not a fork of it. Where the
+site needs second-person user prose that `PRODUCT.md` does not carry — install
+steps, an FAQ — that prose is written once, on the site, and `PRODUCT.md` does
+not restate it. One fact, one home, in both directions.
 
 Sections, matching the issue: what Postio is · install · keyboard reference
 (generated) · `config.toml` reference (generated) · how sync works · privacy and
@@ -185,9 +210,17 @@ critical path of a PR.
 **Jekyll, because it is what Pages does by default.** Adds Ruby to a Rust
 project's toolchain for no capability gained here.
 
-**Generate the whole site from `spec.md`.** Would produce a spec with a
-stylesheet. The reader who needs this site is not the reader `spec.md` was
-written for, and Q4's separation is the point rather than a compromise.
+**Keep `spec.md` as the contributor's document, with the site authoritative on
+behaviour.** This ADR's original decision, superseded by the amendment in Q4.
+It is the obvious answer and its cost is exactly what the amendment refuses:
+two documents describing one product, kept aligned by nobody in particular, in
+a repository whose central design principle is that one table beats three
+hand-maintained lists.
+
+**Generate the whole site from `PRODUCT.md` alone.** Would produce a
+specification with a stylesheet. The reader deciding whether to try Postio is
+not the reader `PRODUCT.md` is written for — hence the second-person prose that
+lives only on the site.
 
 **Generate the references at deploy time by running the tests.** Removes the
 checked-in copies, and with them the review-time drift check and the readable
@@ -207,6 +240,7 @@ prevent, and what §2 already rules out for every other command surface.
   following `keybindings_doc.rs` exactly, including `POSTIO_UPDATE_DOCS=1`.
 - `docs/keybindings.md` is included into the book unchanged; it keeps its
   banner and its generator.
-- `spec.md` loses its behavioural duplication and gains links.
+- `spec.md` is deleted; `docs/PRODUCT.md` replaces it, keeping its section
+  numbering. Every `spec.md §N` citation in the tree is retargeted.
 - Every future user-visible surface inherits an obligation: if it has a
   reference, the reference is generated and its generator is a test.
