@@ -784,6 +784,61 @@ the Drafts folder lists other clients' drafts only. That is #166, and it is the
 deliberate other half of this decision rather than an oversight.
 
 
+**A draft's place in the Drafts folder is a `messages` row the composer
+writes.** #51 stopped the synced copy of a draft becoming a second message row;
+what that left was a Drafts folder listing other clients' drafts and nothing
+else, and a sidebar badge — which reads the mailbox's cached count of message
+rows — saying 0 while the composer held one. #166.
+
+`DraftRepository::save` therefore maintains a row in the account's Drafts
+mailbox, linked by `drafts.message_id`, and `delete` removes it. `delete` is
+the single exit both discard and send go through (`postio-sync::send` finishes
+there), which is why it is the one place that has to remember.
+
+Two designs were rejected, and both look cheaper:
+
+- **Keeping the synced copy and routing its activation to the composer.** A
+  draft has no server copy until an append has round-tripped, so the folder
+  would list your draft only *after* a network exchange. `docs/PRODUCT.md` §18
+  and the local-first rule both forbid exactly that. The mirror row is written
+  in the same transaction as the draft, offline and always.
+- **Making the list's row identity a sum type over `MessageId | DraftId`.**
+  That reaches `ListCursor`, `MessageSummary`, the selection model and every
+  `CommandId` target — the hottest path in the application — to solve a problem
+  one nullable column solves.
+
+`set_server_copy` attaches the UID to that row rather than creating one, and
+its stray-row delete has to run **first**: `messages` is unique on
+`(mailbox_id, uid_validity, uid)`, so attaching while a duplicate holds the
+same identity is a constraint violation rather than a duplicate.
+
+`load_body_or_reason` answers a draft's row from the draft's own inline body.
+The row has no blob and never will — the composer's buffer is inline TEXT
+precisely so a content-addressed store does not take one immutable blob per
+keystroke — so reading the row would say "still downloading" about words the
+user is looking at in another pane.
+
+**`Composer::resume` is the exception to one-composition-at-a-time, and it is
+allowed to be.** `open` refuses to replace a retained draft, because `c` a
+second time means "show me the draft". `resume` takes a draft the user named
+out of a folder, so it replaces — safely, because the draft it replaces is
+autosaved and is itself a row in that folder now. It flushes the pending
+autosave first: the debounce would otherwise fire against the draft that
+replaced it, writing one draft's words onto another's row.
+
+**`Return` on a list row cannot be tested through `Window::handle_key`.**
+Activation reaches `connect_activated` through `GtkListView`'s own
+`list.activate-item` action, which needs the view to hold the keyboard;
+`handle_key` goes through the keymap and never touches the widget. That is why
+`ListPane::test_activate_cursor` invokes the action rather than calling the
+handlers — a wiring that came loose between the action and the signal still
+has to show. `crates/postio-app/tests/resume_draft.rs` is the worked example.
+
+Similarly, `Sidebar::select` is documented as selecting "without reporting it
+back as a user action", so a test that uses it changes the sidebar and leaves
+the list showing the previous folder. Click the row instead.
+
+
 ## Testing infrastructure
 
 **A test that skips when there is no display reports success, and CI had no

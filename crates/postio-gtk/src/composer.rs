@@ -538,6 +538,47 @@ impl Composer {
         }
     }
 
+    /// Put *this* draft in the composer, replacing whatever it was holding.
+    ///
+    /// [`open`](Self::open) deliberately refuses to replace a retained draft —
+    /// `c` a second time means "show me the draft", never "start another",
+    /// which is the one-composition-at-a-time rule. Resuming is a different
+    /// request: a draft the user named, picked out of the Drafts folder. It
+    /// has to replace, and it may, because a retained draft is autosaved and
+    /// — since #166 — is itself a row in that folder. Swapping to another
+    /// draft and back loses nothing.
+    ///
+    /// Whatever was pending is flushed first. The autosave is debounced, so a
+    /// draft swapped away from a moment after an edit has that edit sitting in
+    /// a timer, and the timer would otherwise fire against the draft that
+    /// replaced it — writing one draft's words onto another's row.
+    ///
+    /// Asking for the draft already in the composer is a no-op that puts the
+    /// keyboard back, exactly as [`open`](Self::open) is.
+    pub fn resume(&self, draft: Draft) {
+        if self.is_open() && self.imp().draft.borrow().id == draft.id {
+            if let Some(host) = self.detached_window() {
+                host.present();
+            }
+            self.focus_first();
+            return;
+        }
+        // Before `fill`, which cancels the timer: a pending edit belongs to
+        // the draft on its way out.
+        if self.is_open() {
+            self.save();
+        }
+        self.fill(draft);
+        self.set_status(UNSAVED);
+        self.take_pane();
+        self.set_visible(true);
+        self.focus_first();
+
+        for handler in self.imp().opened.borrow().iter() {
+            handler();
+        }
+    }
+
     /// Whether the composer is on screen.
     pub fn is_open(&self) -> bool {
         self.is_visible()
@@ -1925,6 +1966,12 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_set_subject(&self, text: &str) {
         self.imp().subject.set_text(text);
+    }
+
+    /// What the subject field is showing. Not meant for anything but tests.
+    #[doc(hidden)]
+    pub fn test_subject(&self) -> String {
+        self.imp().subject.text().to_string()
     }
 
     /// Where the cursor is in the body, as a character offset.
