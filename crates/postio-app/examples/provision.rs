@@ -103,24 +103,43 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let (imap_host, imap_port, smtp_host, smtp_port) = match known(&domain) {
-        Some(settings) => settings,
+    // Explicit settings win over the table, so a custom domain works without
+    // teaching the table about it. postio-hiy will run the real autoconfig
+    // probe instead; this helper is not the place to reimplement it.
+    let preset = known(&domain);
+    let imap_host = match env("POSTIO_IMAP_HOST").or_else(|| preset.map(|p| p.0.to_owned())) {
+        Some(host) => host,
         None => {
             eprintln!(
-                "postio: no built-in settings for {domain}.\n\
-                 This helper only knows a few providers; the autoconfig probe \
-                 in postio-imap is what discovers the rest, and postio-hiy is \
-                 the screen that will use it."
+                "postio: no built-in settings for {domain}, so the servers must be given:\n\
+                 \x20   export POSTIO_IMAP_HOST='imap.example.com'\n\
+                 \x20   export POSTIO_SMTP_HOST='smtp.example.com'\n\
+                 \x20   export POSTIO_USERNAME='...'   # if login differs from the address\n\
+                 \n\
+                 For an iCloud custom domain those are imap.mail.me.com and \
+                 smtp.mail.me.com, with POSTIO_USERNAME set to the Apple ID \
+                 address rather than the custom one."
             );
             return ExitCode::FAILURE;
         }
     };
+    let smtp_host = env("POSTIO_SMTP_HOST")
+        .or_else(|| preset.map(|p| p.2.to_owned()))
+        .unwrap_or_else(|| imap_host.replacen("imap.", "smtp.", 1));
+    let port = |name: &str, fallback: u16| {
+        env(name).and_then(|v| v.parse().ok()).unwrap_or(fallback)
+    };
+    let imap_port = port("POSTIO_IMAP_PORT", preset.map_or(993, |p| p.1));
+    let smtp_port = port("POSTIO_SMTP_PORT", preset.map_or(465, |p| p.3));
+    // Login name, when it is not the address mail arrives at.
+    let username = env("POSTIO_USERNAME").unwrap_or_else(|| address.clone());
 
     let store_path = store_path();
     println!("store:   {}", store_path.display());
     println!("address: {address}");
     println!("imap:    {imap_host}:{imap_port} (implicit TLS)");
     println!("smtp:    {smtp_host}:{smtp_port} (implicit TLS)");
+    println!("login:   {username}");
 
     if let Some(parent) = store_path.parent() {
         if let Err(error) = std::fs::create_dir_all(parent) {
@@ -159,12 +178,14 @@ fn main() -> ExitCode {
 
     let email = EmailAddress::new(None::<String>, address.clone());
     let mut account = Account::new(address.clone(), email.clone());
-    account.incoming.host = imap_host.to_owned();
+    account.incoming.host = imap_host.clone();
     account.incoming.port = imap_port;
     account.incoming.security = TransportSecurity::Tls;
-    account.outgoing.host = smtp_host.to_owned();
+    account.outgoing.host = smtp_host.clone();
     account.outgoing.port = smtp_port;
     account.outgoing.security = TransportSecurity::Tls;
+    account.incoming.username = username.clone();
+    account.outgoing.username = username;
     account.auth = AuthMethod::Password;
     let mut identity = Identity::new(AccountId::UNASSIGNED, email);
     identity.is_default = true;
