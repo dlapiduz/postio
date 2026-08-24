@@ -82,20 +82,28 @@ already put whitespace churn into somebody else's diff. Use
 The guard hook refuses a file list produced by an unscoped `git diff`, which
 reaches every crate anyone has edited. The `--check` forms are read-only and safe.
 
-**GTK tests belong on their own display.** `postio-gtk` has about twenty test
-binaries that call `window.present()`, and on a live session every one of them
-throws a window onto the maintainer's desktop and steals focus mid-keystroke.
-Run them through a headless compositor instead:
+**Tests are headless by default.** `postio-gtk` has about twenty test binaries
+that call `window.present()`, and on a live session every one of them threw a
+window onto the maintainer's desktop and stole focus mid-keystroke — one left
+a save dialog behind that outlived the run. `.cargo/config.toml` sets a
+`runner`, so plain `cargo test` puts every test binary on a compositor of its
+own and nobody has to remember a wrapper:
 
 ```bash
-scripts/test-headless.sh cargo test -p postio-gtk
-scripts/test-headless.sh --stop            # when you are done for the day
+cargo test -p postio-gtk                   # already headless
+POSTIO_HEADLESS=0 cargo test -p postio-gtk # watch it instead
+scripts/test-headless.sh --stop            # shut the compositor down
 ```
 
-It starts `mutter --headless` on a display of its own and reuses it. mutter
-rather than Xvfb because it is GNOME's own compositor and already installed, so
-the tests keep running on Wayland against the thing the application targets
-instead of under XWayland.
+mutter rather than Xvfb because it is GNOME's own compositor and already
+installed, so tests keep running on Wayland against the thing the application
+targets instead of under XWayland.
+
+The runner fails open — no mutter, no `XDG_RUNTIME_DIR`, or a compositor that
+will not start, and it execs the binary unchanged, so a broken runner is never
+a broken suite. It also fronts `cargo run`; use `scripts/run-isolated.sh` for
+the application, which executes the built binary directly and never goes
+through it.
 
 It is also *faster* than the real session, which is not free: a headless run
 finishes `gtk_accessibility` in 0.40s against 1.44s on the live display, and
