@@ -58,7 +58,7 @@ use crate::test_support;
 pub struct SeedReport {
     /// The account every mailbox and message belongs to.
     pub account: Account,
-    /// The folders created, with their final (recounted) [`MailboxCounts`].
+    /// The folders created, with the counts the inserts produced.
     ///
     /// [`MailboxCounts`]: postio_model::MailboxCounts
     pub mailboxes: Vec<Mailbox>,
@@ -141,7 +141,7 @@ pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
     }
 
     SeedReport {
-        mailboxes: recount_folders(&connection, &account),
+        mailboxes: load_folders(&connection, &account),
         account,
         message_count,
     }
@@ -184,7 +184,7 @@ pub fn seed_large(database: &Database, seed: u64, message_count: usize) -> SeedR
     }
 
     SeedReport {
-        mailboxes: recount_folders(&connection, &account),
+        mailboxes: load_folders(&connection, &account),
         account,
         message_count: inserted,
     }
@@ -197,18 +197,22 @@ fn create_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
         .collect()
 }
 
-/// Recomputes and reloads every folder's cached counts.
+/// Reloads every folder, with whatever counts the inserts left behind.
 ///
-/// [`MailboxRepository::create`] leaves a folder at zero, and nothing else
-/// updates it as messages are inserted directly — a real sync updates counts
-/// as part of filing each message, but a seed writes far more of them at once,
-/// so it is cheaper to insert first and total the mailbox once at the end.
-fn recount_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
-    let repository = MailboxRepository::new(connection);
-    repository
-        .recount_account(account.id)
-        .expect("recount seeded mailboxes");
-    repository
+/// It used to call [`MailboxRepository::recount_account`] here, and that one
+/// line hid a shipped bug for the life of the project. A seeded store came
+/// out with correct cached counts; a real one did not, because nothing
+/// maintained them — so the message list drew rows from every fixture and
+/// nothing from a live account, and no test could tell.
+///
+/// A fixture must not supply by hand what the application is supposed to
+/// produce. Counts now come from migration 0003's triggers, which is the same
+/// mechanism a real sync goes through, so a seeded store is only listable if
+/// the production path works. If these counts are ever wrong again, that is a
+/// bug in the triggers and it should be found here rather than papered over.
+/// See `postio-bl2`.
+fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
+    MailboxRepository::new(connection)
         .list_for_account(account.id)
         .expect("reload seeded mailboxes")
 }
