@@ -105,6 +105,18 @@ pub enum Status {
     Connecting,
     /// It did not work, and this says why in words the user can act on.
     Failed(String),
+    /// The account is configured; its password is not.
+    ///
+    /// Not a first run. The composition root reaches this when the store
+    /// holds an account the keyring will not give up a password for — a
+    /// credential write that failed, a keyring that was reset, an item
+    /// somebody deleted. The address and the servers are already known, so
+    /// the screen arrives filled in and asks for the one thing missing.
+    ///
+    /// It carries the servers rather than reading them back off the form
+    /// because the form is empty until something fills it, and the thing
+    /// that knows them is the account row.
+    Reauthenticate(Settings),
     /// The account exists and the password is in the keyring.
     Saved,
 }
@@ -113,6 +125,21 @@ impl Status {
     /// Whether the screen is waiting on something and should not be touched.
     pub fn is_busy(&self) -> bool {
         matches!(self, Status::Probing | Status::Connecting)
+    }
+
+    /// The sentence under the form, when this state owes the user one.
+    ///
+    /// Pure, and public, so what the screen *says* can be checked without a
+    /// display — the rendering needs one, the wording does not.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Status::Failed(reason) => Some(reason),
+            Status::Reauthenticate(_) => Some(
+                "Postio has no password for this account. Sign in again and it \
+                 will go back into the keyring.",
+            ),
+            _ => None,
+        }
     }
 }
 
@@ -234,6 +261,7 @@ impl Onboarding {
         // Filling the manual fields from a probe is the widget writing its
         // own form, not the user editing it.
         if let Status::Found(settings)
+        | Status::Reauthenticate(settings)
         | Status::Manual {
             suggestion: Some(settings),
         } = &status
@@ -256,7 +284,7 @@ impl Onboarding {
         let port =
             |entry: &gtk::Entry, fallback: u16| entry.text().trim().parse().unwrap_or(fallback);
         let found = match &*imp.status.borrow() {
-            Status::Found(settings) => Some(settings.clone()),
+            Status::Found(settings) | Status::Reauthenticate(settings) => Some(settings.clone()),
             Status::Manual {
                 suggestion: Some(settings),
             } => Some(settings.clone()),
@@ -308,6 +336,16 @@ impl Onboarding {
     /// Put the keyboard where the user starts.
     pub fn focus_address(&self) {
         self.imp().address.grab_focus();
+    }
+
+    /// Put the keyboard where a *repair* starts.
+    ///
+    /// [`Status::Reauthenticate`] arrives with the address already filled in
+    /// and one field still empty. Landing the cursor in the address anyway
+    /// would ask the user to find the field themselves, on a screen that
+    /// looks finished.
+    pub fn focus_password(&self) {
+        self.imp().password.grab_focus();
     }
 
     /// Called when the address is committed and wants probing.
@@ -427,6 +465,16 @@ impl Onboarding {
                 },
                 "dialog-warning-symbolic",
             ),
+            // Named for what it is, so a repair does not read as a fresh
+            // first run: the account is there, and only the password is not.
+            Status::Reauthenticate(_) => (
+                true,
+                match domain_of(&self.address()).as_str() {
+                    "" => "Sign in again".to_owned(),
+                    domain => format!("Sign in again to {domain}"),
+                },
+                "dialog-password-symbolic",
+            ),
             Status::Saved => (true, "Account added".to_owned(), "object-select-symbolic"),
         };
         imp.card.set_visible(card);
@@ -481,10 +529,9 @@ impl Onboarding {
                 "Connect"
             });
 
-        imp.status_line
-            .set_visible(matches!(status, Status::Failed(_)));
-        if let Status::Failed(reason) = &status {
-            imp.status_line.set_text(reason);
+        imp.status_line.set_visible(status.message().is_some());
+        if let Some(message) = status.message() {
+            imp.status_line.set_text(message);
         }
         self.update_property(&[gtk::accessible::Property::Label(&heading)]);
     }
@@ -790,6 +837,38 @@ mod tests {
     }
 
     #[test]
+    fn a_repair_says_which_of_the_two_things_is_missing() {
+        // The account is already configured, so a screen that only said
+        // "add account" would be asking a question the user cannot answer:
+        // what is wrong, and why now.
+        let repair = Status::Reauthenticate(Settings::default());
+        let message = repair.message().expect("a repair owes the user a sentence");
+        assert!(
+            message.to_lowercase().contains("password"),
+            "the one missing thing has to be named: {message}"
+        );
+        assert!(
+            message.to_lowercase().contains("keyring"),
+            "and where it goes, so the user knows what signing in again does: {message}"
+        );
+    }
+
+    #[test]
+    fn the_settled_states_that_owe_no_sentence_say_nothing() {
+        for quiet in [
+            Status::Idle,
+            Status::Probing,
+            Status::Found(Settings::default()),
+            Status::Manual { suggestion: None },
+            Status::Connecting,
+            Status::Saved,
+        ] {
+            assert_eq!(quiet.message(), None, "{quiet:?}");
+        }
+        assert_eq!(Status::Failed("nope".to_owned()).message(), Some("nope"));
+    }
+
+    #[test]
     fn only_the_waiting_states_are_busy() {
         assert!(Status::Probing.is_busy());
         assert!(Status::Connecting.is_busy());
@@ -798,6 +877,7 @@ mod tests {
             Status::Found(Settings::default()),
             Status::Manual { suggestion: None },
             Status::Failed("no".to_owned()),
+            Status::Reauthenticate(Settings::default()),
             Status::Saved,
         ] {
             assert!(!settled.is_busy(), "{settled:?}");
