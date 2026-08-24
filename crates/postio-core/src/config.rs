@@ -31,7 +31,7 @@ use postio_config::watch::{ConfigWatcher, WatchOptions};
 use postio_config::{Config, ConfigError, KeyBindings, keys};
 
 use crate::bridge::EventSink;
-use crate::{CommandId, Context, ContextSet, Event, registry};
+use crate::{ActionId, Context, ContextSet, Event, registry};
 
 /// Which sections of the configuration moved.
 ///
@@ -48,7 +48,7 @@ pub type ConfigChange = ConfigChanged;
 /// accelerator is `postio-gtk`'s job, and core must not learn about GDK.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Keymap {
-    bindings: BTreeMap<CommandId, Vec<String>>,
+    bindings: BTreeMap<ActionId, Vec<String>>,
     problems: Vec<String>,
 }
 
@@ -61,8 +61,17 @@ impl Keymap {
     /// loses its key and stays reachable from the palette.
     pub fn resolve(overrides: &KeyBindings) -> Self {
         let mut keymap = Keymap::default();
-        for spec in registry::all() {
+        for spec in registry::every_action() {
             keymap.bindings.insert(spec.id, Vec::new());
+        }
+        // Every id `[keys]` names that parses, whether or not a command exists
+        // for it yet. This is what makes a binding written before its
+        // extension loads survive: the id is bound now and starts reaching a
+        // command the moment one registers. See the `ActionId` module note.
+        for command in overrides.overrides().keys() {
+            if let Ok(action) = command.parse::<ActionId>() {
+                keymap.bindings.entry(action).or_default();
+            }
         }
 
         // Two passes, because an explicit `[keys]` entry outranks a built-in
@@ -74,33 +83,35 @@ impl Keymap {
         //
         // Within each pass, registry order decides, so the result is
         // deterministic rather than dependent on map iteration order.
-        for spec in registry::all() {
-            let Some(binding) = overrides.overrides().get(spec.id.as_str()) else {
+        for spec in keymap.known_actions() {
+            let Some(binding) = overrides.overrides().get(spec.as_str()).cloned() else {
                 continue;
             };
+            let binding = binding.as_str();
+            let contexts = keymap.contexts_of(spec);
             if let Some(problem) = keys::binding_problem(binding) {
                 keymap.problems.push(format!(
-                    "`{}` is not usable as the binding for `{}`: {problem}",
-                    binding, spec.id
+                    "`{binding}` is not usable as the binding for `{spec}`: {problem}"
                 ));
                 continue;
             }
             let binding = binding.trim().to_string();
-            if let Some(taken) = keymap.holder_of(&binding, spec.contexts) {
+            if let Some(taken) = keymap.holder_of(&binding, contexts) {
                 keymap.problems.push(format!(
-                    "`{binding}` is already bound to `{taken}`, so `{}` keeps `{}`",
-                    spec.id, spec.default_binding
+                    "`{binding}` is already bound to `{taken}`, so `{spec}` keeps its default"
                 ));
                 continue;
             }
-            keymap.claim(spec.id, binding);
+            keymap.claim(spec, binding);
         }
 
-        for spec in registry::all() {
+        for spec in registry::every_action() {
             if keymap.binding(spec.id).is_some() {
                 continue;
             }
-            let default = spec.default_binding.to_string();
+            let Some(default) = spec.default_binding.map(str::to_string) else {
+                continue;
+            };
             if let Some(taken) = keymap.holder_of(&default, spec.contexts) {
                 // Palette-only rather than shadowing someone else's key. Said
                 // out loud, because a command that quietly lost its key is a
@@ -117,7 +128,7 @@ impl Keymap {
 
         // Alternates last, and only where nothing else wanted them: a second
         // way to reach a command must never cost another command its first.
-        for spec in registry::all() {
+        for spec in registry::every_action() {
             for alternate in spec.alternate_bindings {
                 if keymap.holder_of(alternate, spec.contexts).is_none() {
                     keymap.claim(spec.id, (*alternate).to_string());
@@ -126,7 +137,11 @@ impl Keymap {
         }
 
         for command in overrides.overrides().keys() {
-            if command.parse::<CommandId>().is_err() {
+            // An id that does not parse at all is worth reporting. An
+            // extension id that parses but has not registered yet is not: it
+            // is the expected state at startup, and warning about it would
+            // train the user to ignore the validity line.
+            if command.parse::<ActionId>().is_err() {
                 // Not fatal on purpose: a binding written by a newer Postio
                 // survives a downgrade and an upgrade round trip.
                 keymap
@@ -138,25 +153,52 @@ impl Keymap {
         keymap
     }
 
+    /// Every action the keymap holds a row for, in resolution order.
+    ///
+    /// Registered commands first in registry order, then any id `[keys]`
+    /// named that nothing has registered — the latter cannot be ordered by a
+    /// registry that has never seen them.
+    fn known_actions(&self) -> Vec<ActionId> {
+        self.bindings.keys().copied().collect()
+    }
+
+    /// The contexts an action applies in.
+    ///
+    /// [`ContextSet::ANY`] for an extension id nothing has registered yet.
+    /// Conservative on purpose and in the user's favour: an explicit `[keys]`
+    /// entry outranks a built-in default (see the two-pass note above), so an
+    /// id whose contexts are not yet known must be assumed to overlap rather
+    /// than assumed harmless — otherwise a built-in would quietly claim the
+    /// same key and the user's binding would be the one that lost.
+    fn contexts_of(&self, action: ActionId) -> ContextSet {
+        registry::spec(action)
+            .map(|spec| spec.contexts)
+            .unwrap_or(ContextSet::ANY)
+    }
+
     /// The primary binding for a command, if it has one.
-    pub fn binding(&self, command: CommandId) -> Option<&str> {
+    ///
+    /// Takes anything that names an action, so the many call sites that pass a
+    /// built-in `CommandId` read exactly as they did before the vocabulary
+    /// widened.
+    pub fn binding(&self, command: impl Into<ActionId>) -> Option<&str> {
         self.bindings
-            .get(&command)
+            .get(&command.into())
             .and_then(|bindings| bindings.first())
             .map(String::as_str)
     }
 
     /// Every binding for a command, the primary first.
-    pub fn bindings(&self, command: CommandId) -> &[String] {
+    pub fn bindings(&self, command: impl Into<ActionId>) -> &[String] {
         self.bindings
-            .get(&command)
+            .get(&command.into())
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
 
     /// The command a key reaches in a context, if any.
-    pub fn command_for(&self, context: Context, binding: &str) -> Option<CommandId> {
-        registry::for_context(context)
+    pub fn command_for(&self, context: Context, binding: &str) -> Option<ActionId> {
+        registry::reachable(context)
             .find(|spec| {
                 self.bindings(spec.id)
                     .iter()
@@ -171,13 +213,13 @@ impl Keymap {
     }
 
     /// Give `command` a binding, after the caller has checked it is free.
-    fn claim(&mut self, command: CommandId, binding: String) {
+    fn claim(&mut self, command: ActionId, binding: String) {
         self.bindings.entry(command).or_default().push(binding);
     }
 
-    fn holder_of(&self, binding: &str, contexts: ContextSet) -> Option<CommandId> {
+    fn holder_of(&self, binding: &str, contexts: ContextSet) -> Option<ActionId> {
         self.bindings.iter().find_map(|(command, bindings)| {
-            let overlaps = registry::get(*command).contexts.intersects(contexts);
+            let overlaps = self.contexts_of(*command).intersects(contexts);
             let matches = bindings.iter().any(|candidate| candidate == binding);
             (overlaps && matches).then_some(*command)
         })

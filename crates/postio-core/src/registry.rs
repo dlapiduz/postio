@@ -22,6 +22,10 @@
 //! machine-checkable rather than a review habit: a destructive command with no
 //! [`Recovery`] fails the test suite.
 
+use std::fmt;
+use std::sync::{OnceLock, RwLock};
+
+use crate::action::{ActionId, ExtId};
 use crate::command::CommandId;
 use crate::context::{Context, ContextSet};
 
@@ -503,6 +507,252 @@ pub fn get(id: CommandId) -> &'static CommandSpec {
 /// `[keys]` are applied on top of this, not here.
 pub fn lookup_binding(context: Context, binding: &str) -> Option<&'static CommandSpec> {
     for_context(context).find(|spec| spec.bindings().any(|candidate| candidate == binding))
+}
+
+// ---------------------------------------------------------------------------
+// Extension commands
+// ---------------------------------------------------------------------------
+
+/// A command an extension asks the registry to add.
+///
+/// The owned counterpart of [`CommandSpec`], because nothing about a command
+/// loaded at runtime is `'static` at the call site. `destructive` and
+/// `recovery` are mandatory rather than defaulted for the reason
+/// [`register`] rejects the bad pair: an unrecoverable action nobody typed is
+/// the failure this registry exists to prevent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtCommand {
+    /// The namespaced id: `"mcp:summarise-thread"`.
+    pub id: String,
+    /// The title the palette and cheat sheet show.
+    pub title: String,
+    /// The binding to ask for, in the same untyped syntax `[keys]` uses.
+    /// `None` means palette-only, which is a perfectly good answer.
+    pub default_binding: Option<String>,
+    /// Secondary bindings, as [`CommandSpec::alternate_bindings`].
+    pub alternate_bindings: Vec<String>,
+    /// The contexts this command is meaningful in.
+    pub contexts: ContextSet,
+    /// Whether it destroys something the user would have to rebuild.
+    pub destructive: bool,
+    /// How the user gets back. Never [`Recovery::None`] when `destructive`.
+    pub recovery: Recovery,
+}
+
+/// Why a registration was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationError {
+    /// `destructive` with [`Recovery::None`].
+    ///
+    /// The invariant `tests/command_registry.rs` asserts over the built-in
+    /// table, moved into the door because a table that grows at runtime
+    /// cannot be checked by a test over its literal.
+    UnrecoverableDestructive,
+    /// The id is not `namespace:name`, or it collides with the built-in
+    /// vocabulary, which never contains the separator.
+    NotNamespaced,
+    /// Something already registered that id. Two commands with one id is the
+    /// same wiring bug as two handlers for one id.
+    AlreadyRegistered,
+}
+
+impl fmt::Display for RegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RegistrationError::UnrecoverableDestructive => {
+                f.write_str("a destructive command must offer undo or confirmation")
+            }
+            RegistrationError::NotNamespaced => {
+                f.write_str("an extension command id must be `namespace:name`")
+            }
+            RegistrationError::AlreadyRegistered => {
+                f.write_str("that command id is already registered")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RegistrationError {}
+
+/// One registered extension command, with its strings leaked to `'static`.
+///
+/// Leaked rather than `Cow`: see `docs/decisions/0002`. It keeps
+/// [`CommandSpec`] `Copy` and untouched, and registrations are append-only and
+/// bounded by the number of extensions loaded, so their strings have exactly
+/// the lifetime of the ids they sit beside.
+#[derive(Debug, Clone, Copy)]
+struct ExtSpec {
+    id: ExtId,
+    title: &'static str,
+    default_binding: Option<&'static str>,
+    alternate_bindings: &'static [&'static str],
+    contexts: ContextSet,
+    destructive: bool,
+    recovery: Recovery,
+}
+
+fn extensions() -> &'static RwLock<Vec<ExtSpec>> {
+    static EXTENSIONS: OnceLock<RwLock<Vec<ExtSpec>>> = OnceLock::new();
+    EXTENSIONS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+fn read_extensions() -> std::sync::RwLockReadGuard<'static, Vec<ExtSpec>> {
+    extensions()
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+/// Add a command to the vocabulary at runtime.
+///
+/// This is the whole extension door: MCP tools, AI actions and anything else
+/// loaded after compilation come through here and are thereafter reachable
+/// from the palette, the cheat sheet and `[keys]` on the same footing as a
+/// built-in. `ARCHITECTURE.md` §2 — a command that is not in the registry
+/// does not exist — is why an extension mechanism must register rather than
+/// bypass.
+///
+/// # Errors
+///
+/// See [`RegistrationError`]. All three are wiring bugs in the caller rather
+/// than conditions to handle at runtime, but they are returned rather than
+/// panicked because the caller may be loading somebody else's plugin.
+pub fn register(command: ExtCommand) -> Result<ExtId, RegistrationError> {
+    if command.destructive && command.recovery == Recovery::None {
+        return Err(RegistrationError::UnrecoverableDestructive);
+    }
+    let id = ExtId::intern(&command.id).ok_or(RegistrationError::NotNamespaced)?;
+
+    let mut registered = extensions()
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    if registered.iter().any(|spec| spec.id == id) {
+        return Err(RegistrationError::AlreadyRegistered);
+    }
+    let alternates: Vec<&'static str> = command
+        .alternate_bindings
+        .into_iter()
+        .map(|binding| &*Box::leak(binding.into_boxed_str()))
+        .collect();
+    registered.push(ExtSpec {
+        id,
+        title: Box::leak(command.title.into_boxed_str()),
+        default_binding: command
+            .default_binding
+            .map(|binding| &*Box::leak(binding.into_boxed_str())),
+        alternate_bindings: Box::leak(alternates.into_boxed_slice()),
+        contexts: command.contexts,
+        destructive: command.destructive,
+        recovery: command.recovery,
+    });
+    Ok(id)
+}
+
+/// One row of the merged vocabulary: a built-in or a registered extension.
+///
+/// `Copy`, and every field `&'static`, so this behaves like the
+/// [`CommandSpec`] it generalises and costs nothing to hand around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionSpec {
+    /// The stable id.
+    pub id: ActionId,
+    /// The human-readable title, as the palette and cheat sheet show it.
+    pub title: &'static str,
+    /// The binding asked for, or `None` for palette-only.
+    pub default_binding: Option<&'static str>,
+    /// Secondary bindings for the same command.
+    pub alternate_bindings: &'static [&'static str],
+    /// The contexts this command is meaningful in.
+    pub contexts: ContextSet,
+    /// Whether it destroys something the user would have to rebuild.
+    pub destructive: bool,
+    /// How the user gets back.
+    pub recovery: Recovery,
+}
+
+impl ActionSpec {
+    /// The context predicate: whether this command is reachable in `context`.
+    pub fn available_in(&self, context: Context) -> bool {
+        self.contexts.contains(context)
+    }
+
+    /// Every binding for this command, the default first.
+    pub fn bindings(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.default_binding
+            .into_iter()
+            .chain(self.alternate_bindings.iter().copied())
+    }
+}
+
+impl From<&'static CommandSpec> for ActionSpec {
+    fn from(spec: &'static CommandSpec) -> Self {
+        ActionSpec {
+            id: ActionId::Builtin(spec.id),
+            title: spec.title,
+            default_binding: Some(spec.default_binding),
+            alternate_bindings: spec.alternate_bindings,
+            contexts: spec.contexts,
+            destructive: spec.destructive,
+            recovery: spec.recovery,
+        }
+    }
+}
+
+impl From<ExtSpec> for ActionSpec {
+    fn from(spec: ExtSpec) -> Self {
+        ActionSpec {
+            id: ActionId::Ext(spec.id),
+            title: spec.title,
+            default_binding: spec.default_binding,
+            alternate_bindings: spec.alternate_bindings,
+            contexts: spec.contexts,
+            destructive: spec.destructive,
+            recovery: spec.recovery,
+        }
+    }
+}
+
+/// Every command reachable in `context` — built-in and registered alike.
+///
+/// This is what the palette, the cheat sheet and the key hints iterate, and
+/// the reason an extension command is discoverable rather than merely
+/// dispatchable. Built-ins come first, in cheat-sheet order, then extensions
+/// in registration order: a plugin cannot reorder the vocabulary a user has
+/// learned by registering early.
+///
+/// [`all`] and [`for_context`] deliberately keep meaning *the built-in table*,
+/// so `docs/keybindings.md` keeps documenting what ships and the tests that
+/// assert over what shipped keep compiling.
+pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
+    let extensions: Vec<ActionSpec> = read_extensions()
+        .iter()
+        .filter(|spec| spec.contexts.contains(context))
+        .map(|spec| ActionSpec::from(*spec))
+        .collect();
+    for_context(context).map(ActionSpec::from).chain(extensions)
+}
+
+/// Every command in the merged vocabulary, in the same order as [`reachable`].
+pub fn every_action() -> impl Iterator<Item = ActionSpec> {
+    let extensions: Vec<ActionSpec> = read_extensions()
+        .iter()
+        .map(|spec| ActionSpec::from(*spec))
+        .collect();
+    all().map(ActionSpec::from).chain(extensions)
+}
+
+/// The spec for any action, built-in or registered.
+///
+/// `None` only for an extension id that has been named but never registered —
+/// which is a real state, not a bug: `[keys]` can bind an id before the
+/// extension providing it loads. Total for every [`CommandId`], like [`get`].
+pub fn spec(id: ActionId) -> Option<ActionSpec> {
+    match id {
+        ActionId::Builtin(id) => Some(ActionSpec::from(get(id))),
+        ActionId::Ext(id) => read_extensions()
+            .iter()
+            .find(|spec| spec.id == id)
+            .map(|spec| ActionSpec::from(*spec)),
+    }
 }
 
 #[cfg(test)]

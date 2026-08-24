@@ -76,7 +76,7 @@ fn events_cover_the_repaint_surface() {
             changed: postio_core::ConfigChange::default(),
         },
         Event::CommandRejected {
-            command: CommandId::Undo,
+            command: CommandId::Undo.into(),
             reason: "nothing to undo".into(),
         },
         Event::Error {

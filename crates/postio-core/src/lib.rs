@@ -52,6 +52,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod action;
 pub mod bridge;
 pub mod command;
 pub mod config;
@@ -63,6 +64,7 @@ pub mod registry;
 pub mod state;
 pub mod undo;
 
+pub use action::{ActionId, ExtId};
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{Command, CommandId, MessageTarget, UnknownCommand};
 pub use config::{ConfigChange, ConfigService, Keymap, SharedConfig};
