@@ -237,3 +237,63 @@ async fn a_full_sync_records_every_correspondent_as_a_contact() {
         "one sighting per message, not per address occurrence"
     );
 }
+
+/// `postio-qhz.9`: what a progress report is a fraction *of*.
+///
+/// The denominator used to be `UIDNEXT - 1`, which is the UID range the pass
+/// enumerates and not the number of messages in the folder. Every message ever
+/// expunged is still counted in it, so a long-lived INBOX reported
+/// `done=61 total=63022` for ninety-two messages and the status line read
+/// `syncing 0% · imap` for the whole pass. The bead this came from asked for
+/// the opposite: the user should be able to tell four hundred from forty
+/// thousand.
+///
+/// A mailbox seeded from UID 1 cannot catch this — the ceiling and the count
+/// are the same number — which is why `MockMailbox::starting_uid` exists.
+#[tokio::test]
+async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
+    let mut mailbox = MockMailbox::new(INBOX).starting_uid(1_000);
+    for n in 1..=5 {
+        mailbox = mailbox.message(MockMessage::new(
+            format!(
+                "From: Ada Lovelace <ada@example.com>\r\n\
+                 Subject: Note {n}\r\n\r\nBody {n}.\r\n"
+            )
+            .into_bytes(),
+        ));
+    }
+    let backend = MockBackend::builder().mailbox(mailbox).build();
+    backend.connect().await.expect("connect");
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account_id, inbox) = local(&connection);
+
+    let mut reports: Vec<Progress> = Vec::new();
+    sync_mailbox(
+        &connection,
+        &backend,
+        &inbox,
+        &CancelToken::new(),
+        |progress| reports.push(progress),
+    )
+    .await
+    .expect("initial sync");
+
+    let last = reports
+        .last()
+        .expect("a pass that wrote mail reports on it");
+    assert_eq!(
+        last.target, 5,
+        "the folder holds five messages in a UID space over a thousand wide; \
+         a denominator of {} is the UID ceiling, which renders as 0%",
+        last.target
+    );
+    assert!(
+        last.fetched >= last.target,
+        "a pass that fetched everything there is reported {}/{} — so nothing \
+         downstream can ever tell that it finished",
+        last.fetched,
+        last.target
+    );
+}
