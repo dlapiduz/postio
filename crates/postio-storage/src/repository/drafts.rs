@@ -245,6 +245,21 @@ impl<'a> DraftRepository<'a> {
         Ok(Some(draft))
     }
 
+    /// The draft a message row in the Drafts folder is listing, if it is
+    /// listing one.
+    ///
+    /// The reverse of the link [`save`](Self::save) writes. The message list
+    /// hands activation a `MessageId`, and a draft's row has to lead back to
+    /// the buffer the composer edits — opening the reader on it instead is the
+    /// dead end #166 is about.
+    ///
+    /// `None` for a draft written by another client: it has a row in the
+    /// folder and no local buffer behind it.
+    pub fn by_message(&self, message: MessageId) -> Result<Option<Draft>> {
+        let mut drafts = self.query("WHERE message_id = ?1", [message.get()])?;
+        Ok(drafts.pop())
+    }
+
     /// An account's drafts, most recently edited first.
     pub fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Draft>> {
         self.query(

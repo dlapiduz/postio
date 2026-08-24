@@ -615,6 +615,32 @@ impl MessageListView {
         *handler.borrow_mut() = Some(id);
     }
 
+    /// Activate the row the cursor is on, exactly as `Return` does.
+    ///
+    /// `Return` reaches `connect_activated` through `GtkListView`'s own
+    /// `list.activate-item` action, which needs the view to hold the keyboard.
+    /// A test driving keys through [`Window::handle_key`] never goes near the
+    /// widget, so it cannot press it; this invokes the same action the
+    /// keybinding does, rather than calling the handlers directly, so a wiring
+    /// that had come loose between the action and the signal would still show.
+    ///
+    /// Not meant for anything but tests.
+    ///
+    /// [`Window::handle_key`]: crate::window::Window::handle_key
+    #[doc(hidden)]
+    pub fn test_activate_cursor(&self) {
+        let imp = self.imp();
+        let position = imp.cursor.selected();
+        if position == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let _ = gtk::prelude::WidgetExt::activate_action(
+            &imp.view,
+            "list.activate-item",
+            Some(&position.to_variant()),
+        );
+    }
+
     /// Extend the selection one row in `step`'s direction, taking the cursor
     /// with it.
     ///

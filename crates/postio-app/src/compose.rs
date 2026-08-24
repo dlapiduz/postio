@@ -65,15 +65,76 @@ pub fn install(
     let composer = window.composer();
     composer.set_account(account);
 
-    install_autosave(&composer, database.clone(), account);
+    let last_id = install_autosave(&composer, database.clone(), account);
+    install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
     install_reply_source(window, &composer, database, blobs.clone());
     install_attach(&composer, blobs, runtime);
 }
 
+/// Activating a draft's row in the Drafts folder opens it in the composer.
+///
+/// # Why activation and not the cursor
+///
+/// The reading pane follows the cursor — `j` over a row previews it, and
+/// nothing waits for Return (#70). Taking the pane away from the reader every
+/// time the cursor crossed a draft would make scrolling through the Drafts
+/// folder open and close the composer under the user. So the cursor previews
+/// and Return opens, which is what Return means on every other row too.
+///
+/// # Why the reader is the wrong answer here
+///
+/// A draft's row is a snapshot of a buffer the composer owns, and the reader
+/// cannot edit it. Before #166 a draft's row could only ever be that snapshot
+/// — a dead end with a signpost. The row now leads back to the draft, so it
+/// leads to the thing that can actually be done with it.
+///
+/// A row with no local draft behind it is another client's draft. It opens in
+/// the reader, as it always has: there is no buffer to resume, and adopting
+/// somebody else's draft into one is a decision with its own questions (what
+/// becomes of their server copy?) rather than a detail of this. #175.
+fn install_resume(
+    window: &Window,
+    composer: &Composer,
+    database: Database,
+    last_id: Rc<Cell<Option<DraftId>>>,
+) {
+    window.list().connect_activated({
+        let composer = composer.clone();
+        move |row| {
+            if !row.draft {
+                return;
+            }
+            let Some(draft) = draft_behind(&database, row.id) else {
+                return;
+            };
+            // So that closing it empty clears the right row: `connect_closed`
+            // carries what became of the draft and not which one it was.
+            last_id.set(Some(draft.id));
+            composer.resume(draft);
+        }
+    });
+}
+
+/// The draft a message row is listing, if it is listing one.
+fn draft_behind(database: &Database, message: MessageId) -> Option<Draft> {
+    let connection = database
+        .connection()
+        .map_err(|error| tracing::warn!(%error, "could not open the store to resume a draft"))
+        .ok()?;
+    DraftRepository::new(&connection)
+        .by_message(message)
+        .map_err(|error| tracing::warn!(%error, "could not read the draft behind a row"))
+        .ok()?
+}
+
 /// Autosave to [`DraftRepository`], crash recovery, and clearing the row once
 /// there is nothing left to keep — sent, discarded, or closed empty.
-fn install_autosave(composer: &Composer, database: Database, account: AccountId) {
+fn install_autosave(
+    composer: &Composer,
+    database: Database,
+    account: AccountId,
+) -> Rc<Cell<Option<DraftId>>> {
     // The id of whatever `connect_save`'s handler last persisted. Not read
     // from the composer's own draft afterward because `connect_closed` does
     // not carry the draft — only what became of it — so this is the one
@@ -108,6 +169,7 @@ fn install_autosave(composer: &Composer, database: Database, account: AccountId)
     });
 
     recover(composer, &database, account, &last_id);
+    last_id
 }
 
 /// Autosave: the local row, and the queue row that carries it to the account's
@@ -356,6 +418,15 @@ pub(crate) fn load_body_or_reason(
     id: MessageId,
 ) -> Body {
     use postio_gtk::reader::Absent;
+
+    // A draft's row has no body in the blob store and never will: the
+    // composer's buffer is inline TEXT, deliberately, because a
+    // content-addressed store would take one immutable blob per keystroke.
+    // Reading the row would say "still downloading" about words the user is
+    // looking at in another pane. #166.
+    if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id) {
+        return Body::Ready(draft.body);
+    }
 
     let repository = MessageRepository::new(connection);
 
