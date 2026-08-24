@@ -428,6 +428,18 @@ and the rest of the former E12 backlog — is tracked as GitHub Issues plus the
 into epics with real GitHub sub-issue links. Do not create new beads for
 post-v1 work; file a GitHub issue under the relevant epic instead.
 
+### Persistent knowledge lives in docs/engineering-notes.md, not `bd remember`
+
+The Beads block above still says to use `bd remember` for persistent
+knowledge — that instruction is superseded. `bd remember`/`bd memories` are
+tied to the Dolt DB, which will not be there to read from once issue tracking
+finishes moving to GitHub. All 43 existing memories were migrated verbatim
+into `docs/engineering-notes.md`, organized by topic, on 2026-08-24. Add new
+hard-won lessons there directly — the file explains its own conventions at
+the top. Product-scope decisions and post-v1 ideas that were captured as
+memories belong in that file's "Product scope & design decisions" section, or
+as a GitHub issue if they describe work rather than a lesson.
+
 ## Architecture
 
 Layers, not a tree: a crate's rank is its position, and shared leaves are
