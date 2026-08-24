@@ -538,6 +538,7 @@ mod tests {
     use postio_runtime::engine::{EngineParts, NetworkSource};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
+    use postio_storage::test_support::TempDatabase;
     use postio_storage::{BlobStore, Database, test_support};
 
     use super::*;
@@ -547,8 +548,18 @@ mod tests {
 
     /// A store with mail in it, an engine over a mock server, and the id of a
     /// message whose parts are *not* downloaded.
-    fn world() -> (Database, BlobStore, Engine, MessageId) {
-        let database = test_support::memory();
+    ///
+    /// File-backed rather than [`test_support::memory`]: this world spawns a
+    /// real [`Engine`] on a thread of its own, and an in-memory database has
+    /// no WAL. Without it, the engine's writer and the test's own reads
+    /// contend on the same shared-cache table lock, and `SQLITE_LOCKED` is
+    /// not one `busy_timeout` retries away -- it is returned immediately,
+    /// which is exactly the load-correlated panic #109 recorded from this
+    /// test (`world` itself, and separately the read right after
+    /// `part_bytes` returns). WAL is what production reads run under, so it
+    /// is also the concurrency this test is supposed to be proving.
+    fn world() -> (TempDatabase, BlobStore, Engine, MessageId) {
+        let database = test_support::temp();
         let report = seed_small(&database, 11);
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
