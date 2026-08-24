@@ -3,7 +3,7 @@
 //! Repositories are a later bead; this test writes the SQL by hand purely to
 //! prove the *columns exist* and round-trip every field of a fully populated
 //! [`Message`] — the model is the input to the schema, so a missing column is a
-//! schema bug and belongs here rather than three beads later.
+//! schema bug and belongs here rather than three issues later.
 
 use chrono::{TimeZone, Utc};
 use rusqlite::{Connection, params};

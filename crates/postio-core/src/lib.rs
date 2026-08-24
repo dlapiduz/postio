@@ -46,7 +46,7 @@
 //!
 //! # What lives elsewhere
 //!
-//! App state and the undo stack are separate beads in epic E6; this module is
+//! App state and the undo stack are separate issues in epic E6; this module is
 //! the vocabulary they share.
 
 #![forbid(unsafe_code)]

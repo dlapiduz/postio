@@ -55,17 +55,18 @@ outside the workspace.
 ```bash
 git status --porcelain
 git log --oneline -10
-bd list --status=in_progress
-bd ready
+git worktree list
+gh issue list --label in-progress --json number,title --jq '.[] | "#\(.number) \(.title)"'
+gh pr list --json number,headRefName --jq '.[] | "#\(.number) \(.headRefName)"'
 ```
 
 Two things to flag explicitly:
 
 - **Uncommitted work.** `CLAUDE.md` forbids leaving it. If files are loose,
   identify which issues they belong to and say so.
-- **Stale claims.** An issue labelled `in-progress` whose work is already merged means
-  a session died before `bd close`. Verify against `git log` and report which
-  ones can be closed.
+- **Stale claims.** An issue labelled `in-progress` with no worktree and no
+  open PR means a session died mid-task. `scripts/issue-release.sh --stale`
+  sweeps the ones whose worktree is gone; report any others you find.
 
 ## 4. Report
 
