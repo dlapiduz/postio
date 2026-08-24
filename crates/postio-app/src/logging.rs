@@ -193,6 +193,32 @@ const OURS: &[&str] = &[
 /// narrate.
 const OTHERS: &str = "warn";
 
+/// Third parties whose `warn` is not a warning, and what to hold them to.
+///
+/// [`OTHERS`] lets any dependency say something went wrong, which is right
+/// until one of them says it constantly about something nobody can act on.
+///
+/// `imap_codec` repairs responses that omit a `text` field and logs each
+/// repair at `warn`. That is correct behaviour and iCloud triggers it on
+/// essentially every `SELECT` and `FETCH`: measured against a live account,
+/// an INBOX resync of 92 messages produced 486 lines at `info`, and 429 of
+/// them — 88% — were that one warning. A level that fires constantly, that
+/// the user cannot act on, and that means nothing is wrong is a level
+/// everyone learns to skip, which is the level real problems arrive at.
+///
+/// This is a *directive*, not a change in `postio-imap`, so
+/// `POSTIO_LOG=imap_codec=trace` still reaches it: a directive naming targets
+/// is passed through untouched by [`scope`], and asking for a target by name
+/// is the one unambiguous way to say you want it.
+///
+/// `io_imap` is deliberately **not** here even though it is the noisier
+/// crate. It is in [`OURS`], and `postio-imap`'s skip counter reads its
+/// records — see the module docs. Quieting it here would not actually break
+/// the counter (that runs in the `log` layer, before tracing sees anything,
+/// and counts `io_imap` at `debug`), but it would take away the output
+/// somebody debugging a resync needs.
+const QUIET: &[(&str, &str)] = &[("imap_codec", "error")];
+
 /// Turn a bare level into a directive that turns *Postio* up, not the world.
 ///
 /// `POSTIO_LOG=debug` has to mean "tell me what Postio is doing". Applied
@@ -215,6 +241,12 @@ fn scope(directive: &str) -> String {
         return bare.to_owned();
     }
     let mut scoped = String::from(OTHERS);
+    for (target, level) in QUIET {
+        scoped.push(',');
+        scoped.push_str(target);
+        scoped.push('=');
+        scoped.push_str(level);
+    }
     for target in OURS {
         scoped.push(',');
         scoped.push_str(target);
@@ -336,6 +368,110 @@ mod tests {
         let filter = parse(&config.directive(), &config);
 
         assert_eq!(filter.to_string(), "postio_sync=debug");
+    }
+
+    #[test]
+    fn the_codec_repair_warning_is_held_below_warn() {
+        // `postio-b9t.4`: 88% of a live sync's output at `info` was
+        // imap_codec repairing responses iCloud sends without a `text`
+        // field. Correct behaviour, constant, and nothing the user can do.
+        let scoped = scope("info");
+
+        assert!(scoped.contains("imap_codec=error"), "{scoped}");
+        assert!(
+            scoped.starts_with("warn,"),
+            "everything else still warns: {scoped}"
+        );
+    }
+
+    #[test]
+    fn asking_for_the_codec_by_name_still_reaches_it() {
+        // The fix is a directive rather than a change in postio-imap
+        // precisely so this keeps working for whoever is debugging the codec.
+        assert_eq!(scope("imap_codec=trace"), "imap_codec=trace");
+        assert_eq!(
+            scope("imap_codec=debug,postio_sync=trace"),
+            "imap_codec=debug,postio_sync=trace"
+        );
+    }
+
+    #[test]
+    fn nothing_quiets_the_target_the_skip_counter_reads() {
+        // `postio-imap`'s skip counter turns a dropped untagged response
+        // into `ResyncIntegrityLost` — an integrity check, not a log line.
+        //
+        // A tracing directive could not actually silence it: the counter is a
+        // `log::Log` wrapper that counts *before* delegating, its `enabled`
+        // ignores the inner logger for `io_imap` at debug, and tracing only
+        // ever sees what the bridge forwards afterwards. But `io_imap`'s
+        // output is also what somebody reads when a resync goes wrong, so it
+        // stays at whatever level was asked for.
+        assert!(
+            QUIET.iter().all(|(target, _)| *target != "io_imap"),
+            "io_imap must keep the level it was asked for"
+        );
+        assert!(scope("debug").contains("io_imap=debug"));
+    }
+
+    #[test]
+    fn a_real_warning_still_gets_through_and_the_repair_does_not() {
+        // The acceptance criterion is about what actually reaches the log,
+        // not about the shape of the directive, so this asserts on output.
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new(scope("info")))
+            .with_writer(captured.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(target: "imap_codec", "Rectified missing `text` to \"\"");
+            tracing::warn!(target: "postio_sync", "the mailbox disagreed about UIDVALIDITY");
+            tracing::error!(target: "imap_codec", "something actually broke");
+        });
+
+        let out = captured.text();
+        assert!(
+            !out.contains("Rectified"),
+            "the repair warning should not reach the log: {out}"
+        );
+        assert!(
+            out.contains("UIDVALIDITY"),
+            "a real warning still has to get through: {out}"
+        );
+        assert!(
+            out.contains("something actually broke"),
+            "quieted is not silenced — the codec can still report a real error: {out}"
+        );
+    }
+
+    /// Somewhere for a test subscriber to write, so an assertion can be about
+    /// what came out rather than about the filter that was built.
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Captured {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("not poisoned")).into_owned()
+        }
+    }
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("not poisoned").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
     }
 
     #[test]
