@@ -13,7 +13,8 @@
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, MailboxId, Operation, OperationId, OperationRange, OperationState, OperationTarget,
+    AccountId, MailboxId, MessageId, Operation, OperationId, OperationRange, OperationState,
+    OperationTarget,
 };
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -249,6 +250,71 @@ impl<'a> OperationQueueRepository<'a> {
             OperationId::new(highest + 1),
             last,
         )))
+    }
+
+    /// Enqueues `operation` once for each of `ids`, in one statement.
+    ///
+    /// The named twin of [`enqueue_set`](Self::enqueue_set): a multi-select
+    /// has no mailbox predicate to enqueue against — the caller already
+    /// resolved it to a list of ids — so this takes that list directly rather
+    /// than building a throwaway [`super::MessageSet`] around it. What both
+    /// share is the shape that matters: one `INSERT ... SELECT` and one flag
+    /// `UPDATE`, whatever the length of `ids`, rather than a loop calling
+    /// [`enqueue`](Self::enqueue) once per message. A 500-row multi-select
+    /// through that loop is 500 savepoints and 500
+    /// `has_pending_operations` refreshes for the same net effect.
+    ///
+    /// Does nothing, successfully, for an empty `ids` — a verb with an empty
+    /// selection has already been rejected further up before this is ever
+    /// called.
+    pub fn enqueue_many(
+        &self,
+        account_id: AccountId,
+        ids: &[MessageId],
+        operation: &Operation,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let account_id = require_persisted(account_id.get(), "account")?;
+        let payload = encode(operation)?;
+        let encoded_inverse = operation.inverse().as_ref().map(encode).transpose()?;
+        let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
+        let scope = super::Scope::open(self.connection)?;
+
+        let sql = format!(
+            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
+                                          mailbox_id, payload, inverse, state, attempts,
+                                          created_at, updated_at)
+             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7
+               FROM messages
+              WHERE messages.id IN ({})",
+            super::messages::placeholders(ids.len(), 8)
+        );
+        let mut parameters = vec![
+            Value::from(account_id),
+            Value::from(operation.op_type().to_owned()),
+            Value::from(mailbox_id.map(MailboxId::get)),
+            Value::from(payload),
+            Value::from(encoded_inverse),
+            Value::from(OperationState::Pending.as_str().to_owned()),
+            Value::from(to_millis(at)),
+        ];
+        parameters.extend(ids.iter().map(|id| Value::from(id.get())));
+        scope.execute(&sql, params_from_iter(parameters))?;
+
+        // One statement rather than `refresh_pending_flag` per row, same as
+        // `enqueue_set`: every id this wrote a row for is a message that now
+        // has something queued.
+        let flag_sql = format!(
+            "UPDATE messages SET has_pending_operations = 1 WHERE id IN ({})",
+            super::messages::placeholders(ids.len(), 1)
+        );
+        scope.execute(&flag_sql, params_from_iter(ids.iter().map(|id| id.get())))?;
+        scope.commit()?;
+
+        Ok(())
     }
 
     /// Enqueues the inverse of a row that is already queued — this is undo.
