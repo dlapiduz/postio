@@ -383,11 +383,12 @@ impl Actions {
                         to: destination,
                     },
                 };
-                for id in ids {
-                    queue
-                        .enqueue(account, OperationTarget::Message(*id), &operation, at)
-                        .map_err(store_failure)?;
-                }
+                // One statement per source mailbox rather than one per
+                // message: a multi-select spanning a handful of folders is a
+                // handful of `enqueue_many` calls, not one `enqueue` per row.
+                queue
+                    .enqueue_many(account, ids, &operation, at)
+                    .map_err(store_failure)?;
             }
         }
         transaction.commit().map_err(store_failure)?;
