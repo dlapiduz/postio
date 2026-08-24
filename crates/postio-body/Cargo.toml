@@ -12,4 +12,9 @@ repository.workspace = true
 # postio-model: `ammonia` pulls html5ever, markup5ever and a generated tag
 # table, and postio-model is what the whole workspace waits on. See ADR 0004.
 ammonia = "4"
+html5ever = "0.39.0"
+markup5ever_rcdom = "0.39.0"
 postio-model = { workspace = true }
+
+[dev-dependencies]
+postio-model = { workspace = true, features = ["test-corpus"] }
