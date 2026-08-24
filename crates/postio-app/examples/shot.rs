@@ -14,6 +14,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/plate.png demo
 //! cargo run -p postio-app --example shot -- /tmp/settings.png settings
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
+//! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
 //! cargo run -p postio-app --example shot -- /tmp/large.png demo text2
 //! cargo run -p postio-app --example shot -- /tmp/box.png demo command
@@ -346,7 +347,10 @@ fn show_composer(window: &Window) {
         )
     };
 
-    let composer = postio_gtk::composer::install(window);
+    // `Window::composer`, not `composer::install`: the window caches the one
+    // it mounted, and installing a second means the shot renders one composer
+    // while `detached` below pops out another.
+    let composer = window.composer();
     composer.set_identities(vec![
         identity("Lena Tomlin", "lena@example.com", true),
         identity("Lena Tomlin", "lena@example.net", false),
@@ -393,9 +397,9 @@ const SETTLE_MS: u64 = 5000;
 /// came to render an empty message list while the running application drew
 /// it correctly. Counting actual frames is the thing that was meant all
 /// along. The heartbeat guarantees the blocking iteration returns.
-fn settle(window: &Window) {
+fn settle(window: &impl IsA<gtk::Widget>) {
     let left = Rc::new(Cell::new(SETTLE_FRAMES));
-    window.add_tick_callback(glib::clone!(
+    window.as_ref().add_tick_callback(glib::clone!(
         #[strong]
         left,
         move |_, _| {
@@ -525,6 +529,23 @@ fn main() -> glib::ExitCode {
 
     settle(&window);
 
+    // The pop-out, rendered as its own window rather than as a state of this
+    // one — because that is what it is. A surface nobody can render is a
+    // surface nobody checks against the canvas, and this one has chrome of
+    // its own (`AdwWindow` draws none unless the content provides it) that a
+    // widget test cannot look at.
+    let target: gtk::Window = match flag("detached").then(|| window.composer()) {
+        Some(composer) => {
+            composer.toggle_detached();
+            let host = composer
+                .detached_window()
+                .expect("`detached` needs `compose`: there is nothing to pop out");
+            settle(&host);
+            host.upcast()
+        }
+        None => window.clone().upcast(),
+    };
+
     // The canvas draws its key hints on the first row, which means the list
     // has the keyboard — and a shot without them is a shot of a different
     // state. Focused here rather than in `populate` because the rows
@@ -554,8 +575,8 @@ fn main() -> glib::ExitCode {
         settle(&window);
     }
 
-    let (width, height) = (window.width(), window.height());
-    let paintable = gtk::WidgetPaintable::new(Some(&window));
+    let (width, height) = (target.width(), target.height());
+    let paintable = gtk::WidgetPaintable::new(Some(&target));
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(&snapshot, width as f64, height as f64);
     let Some(node) = snapshot.to_node() else {
@@ -571,7 +592,7 @@ fn main() -> glib::ExitCode {
         );
         return glib::ExitCode::FAILURE;
     };
-    let renderer = window
+    let renderer = target
         .native()
         .and_then(|native| native.renderer())
         .expect("a realized window has a renderer");

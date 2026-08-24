@@ -1033,6 +1033,39 @@ impl Window {
         key: gtk::gdk::Key,
         state: gtk::gdk::ModifierType,
     ) -> glib::Propagation {
+        self.resolve_key(key, state, self.key_context(), self.is_typing())
+    }
+
+    /// Delivers a key press that arrived in a satellite window.
+    ///
+    /// The detached composer is a real `GtkWindow` of its own, so its keys
+    /// never reach this window's controller — but it must not grow a keymap
+    /// of its own either, or `ctrl+s` would mean one thing in the pane and
+    /// another in the window, and `[keys]` would only reach one of them. So
+    /// the satellite forwards here: same resolver, same user bindings, same
+    /// command registry. Only the two things that genuinely differ come from
+    /// the caller — `context`, because this window has gone back to its own,
+    /// and whether the user is typing, which is a fact about the *satellite's*
+    /// focus and would otherwise be read off a widget nobody is looking at.
+    pub fn handle_key_in(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        source: &impl IsA<gtk::Window>,
+        context: Context,
+    ) -> glib::Propagation {
+        let typing = gtk::prelude::GtkWindowExt::focus(source.as_ref())
+            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>());
+        self.resolve_key(key, state, KeyContext::from(context), typing)
+    }
+
+    fn resolve_key(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        context: KeyContext,
+        typing: bool,
+    ) -> glib::Propagation {
         let Some(chord) = keymap::Chord::from_key_event(key, state) else {
             return glib::Propagation::Proceed;
         };
@@ -1040,8 +1073,6 @@ impl Window {
             return glib::Propagation::Proceed;
         };
 
-        let context = self.key_context();
-        let typing = self.is_typing();
         let outcome =
             resolver
                 .borrow_mut()

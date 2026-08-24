@@ -374,6 +374,22 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
     },
+    CommandSpec {
+        id: CommandId::DetachComposer,
+        // A toggle, like `toggle_sidebar`, and named for the direction the
+        // user has to ask for: in-place is the default and detaching is the
+        // opt-in, so "Detach composer" is what someone looking for it in the
+        // palette will type. Offered only while composing, which is also the
+        // only time the other direction can be reached.
+        title: "Detach composer",
+        // Not next to `ctrl+d`. Discard is the one composer verb that cannot
+        // be undone, and a fat-fingered neighbour of it is a draft gone.
+        default_binding: "ctrl+shift+o",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
     // -- View and application --------------------------------------------
     CommandSpec {
         id: CommandId::Undo,

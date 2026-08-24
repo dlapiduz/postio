@@ -203,6 +203,15 @@ const AUTOSAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(
 /// typed into.
 pub const COMPOSING_CLASS: &str = "composing";
 
+/// How big the detached composer opens, in logical pixels.
+///
+/// Deliberately narrower than the main window: it is one message being
+/// written, not a mail client, and a pop-out that opens the size of the
+/// window it came out of reads as a second application. Tall enough that the
+/// header rows and a paragraph of body are both visible without scrolling,
+/// which is the state most replies are finished in.
+const DETACHED_SIZE: (i32, i32) = (620, 560);
+
 /// What to call with the draft when the user sends or saves.
 type DraftHandler = Box<dyn Fn(&Draft)>;
 
@@ -321,6 +330,16 @@ mod imp {
         pub cc_row: gtk::Box,
         pub bcc_row: gtk::Box,
         pub more: gtk::Button,
+        /// The pointer's way to the same command the keyboard and the palette
+        /// reach. Its label flips, because one control that says which way it
+        /// goes beats two that are each wrong half the time.
+        pub detach: gtk::Button,
+        /// The window the composition is in when it is not in the pane.
+        ///
+        /// `Some` is the whole of "detached" — there is no flag to disagree
+        /// with it, because a flag and a window can drift apart and a window
+        /// that is not there cannot.
+        pub detached: RefCell<Option<adw::Window>>,
         pub identity_row: gtk::Box,
         pub identity: gtk::DropDown,
         pub identity_only: gtk::Label,
@@ -407,6 +426,8 @@ mod imp {
                 cc_row: row(),
                 bcc_row: row(),
                 more: gtk::Button::new(),
+                detach: gtk::Button::new(),
+                detached: RefCell::new(None),
                 identity_row: row(),
                 identity: gtk::DropDown::from_strings(&[]),
                 identity_only: gtk::Label::new(None),
@@ -489,8 +510,14 @@ impl Composer {
     /// see the module documentation for why one pane means one composition.
     pub fn open(&self, draft: Draft) {
         // Already composing: `c` a second time is a no-op that puts the
-        // keyboard back, never a reset of what is being typed.
+        // keyboard back, never a reset of what is being typed. Detached, the
+        // keyboard is in another window, so put *that* in front instead —
+        // there is one composition either way, and asking for it again means
+        // "show me it", not "start another".
         if self.is_open() {
+            if let Some(host) = self.detached_window() {
+                host.present();
+            }
             self.focus_first();
             return;
         }
@@ -562,6 +589,13 @@ impl Composer {
         // an edit made just before closing is on the same footing as one made
         // a second earlier that the timer already caught.
         self.flush_autosave();
+        // Closing a detached composition closes the window it is in — and it
+        // comes back to the pane on the way, so the next `c` finds the
+        // composer where it always is rather than in a window that is gone.
+        // Reparented before hiding, never after: a widget with no parent has
+        // no root, and `focused_field` and the pane restore below both ask
+        // the root what it is doing.
+        self.reclaim();
         self.set_visible(false);
         self.release_pane();
         for handler in self.imp().closed.borrow().iter() {
@@ -928,6 +962,201 @@ impl Composer {
         *self.imp().attach.borrow_mut() = Some(Box::new(handler));
     }
 
+    // -- Detaching ------------------------------------------------------------
+
+    /// Whether the composition is in a window of its own rather than the pane.
+    pub fn is_detached(&self) -> bool {
+        self.imp().detached.borrow().is_some()
+    }
+
+    /// The window the composition is in, while it is in one.
+    ///
+    /// Public because "is it modal, and does it belong to the main window"
+    /// are acceptance criteria rather than implementation, and because the
+    /// application root needs somewhere to hang a title on.
+    pub fn detached_window(&self) -> Option<adw::Window> {
+        self.imp().detached.borrow().clone()
+    }
+
+    /// Moves the composition between the reading pane and its own window.
+    ///
+    /// What `ctrl+shift+o`, the palette entry and the pop-out button all do.
+    /// A no-op when nothing is being composed: there is no empty composer to
+    /// detach, and offering one would be a second way to start writing.
+    pub fn toggle_detached(&self) {
+        if !self.is_open() {
+            return;
+        }
+        if self.is_detached() {
+            self.attach();
+        } else {
+            self.detach();
+        }
+    }
+
+    /// Pops the composition out into a window, and gives the pane back.
+    ///
+    /// The same widget, reparented — which is the entire reason nothing is
+    /// lost. Every field, the identity override, the undo history and the
+    /// cursor are in widgets that are never rebuilt, so "detaching keeps
+    /// them" is a property of doing it this way rather than a list of things
+    /// to remember to copy. A second composer built from the draft would have
+    /// to copy each of them, and would be wrong about one of them eventually.
+    pub fn detach(&self) {
+        if self.is_detached() || !self.is_open() {
+            return;
+        }
+        let Some(window) = self.imp().window.upgrade() else {
+            return;
+        };
+        let field = self.focused_field();
+
+        // The main window goes all the way back first: the message returns to
+        // the reading pane and the keyboard context leaves `Composer`, so
+        // from here on the two windows are independent and the main one is as
+        // usable as it was before `c`.
+        self.release_pane();
+
+        let host = adw::Window::builder()
+            .title(heading(self.imp().draft.borrow().kind))
+            .transient_for(&window)
+            // Not modal, and this is the criterion rather than a default:
+            // the point of detaching is to read something else while you
+            // write, and a modal is precisely the thing that forbids it.
+            .modal(false)
+            .default_width(DETACHED_SIZE.0)
+            .default_height(DETACHED_SIZE.1)
+            .build();
+
+        // A real header bar, not a bare content window. `AdwWindow` draws no
+        // titlebar of its own, so `set_content(composer)` would give a window
+        // with no title, no close button and nothing to drag — and the pane
+        // it came from has a header, so the pop-out looking like a stray
+        // rectangle would read as a bug rather than a window. This is also
+        // what CLAUDE.md means by keeping real Adwaita chrome so Postio reads
+        // as a GNOME application.
+        let layout = adw::ToolbarView::new();
+        layout.add_top_bar(&adw::HeaderBar::new());
+        window.shell().reader().remove(self);
+        layout.set_content(Some(self));
+        host.set_content(Some(&layout));
+        self.set_visible(true);
+
+        // Its keys are the same keys. The controller is a forwarder to the
+        // main window's resolver so that `[keys]` reaches both containers and
+        // there is only ever one keymap to keep in step.
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, state| composer.handle_key(key, state)
+        ));
+        host.add_controller(keys);
+
+        // The window's own close button means what `Esc` means: keep the
+        // draft. Discarding stays explicit and still asks first.
+        host.connect_close_request(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_| {
+                composer.close();
+                // `close` has already reparented and destroyed the window;
+                // letting the default handler run as well would tear down a
+                // window that is no longer there.
+                glib::Propagation::Stop
+            }
+        ));
+
+        self.imp().detached.replace(Some(host.clone()));
+        sync_detach_button(&self.imp().detach, true);
+        host.present();
+        self.restore_focus(field);
+    }
+
+    /// Puts the composition back in the reading pane, window and all.
+    pub fn attach(&self) {
+        let field = self.focused_field();
+        if !self.reclaim() {
+            return;
+        }
+        self.take_pane();
+        self.set_visible(true);
+        self.restore_focus(field);
+    }
+
+    /// Puts the keyboard back in the field it was in before a reparent.
+    ///
+    /// Unparenting a widget drops the focus, so this is the one part of the
+    /// composition that moving it really does lose — the text, the cursor and
+    /// the history all ride along in widgets that were never rebuilt. Falls
+    /// back to the field a fresh composition would start in, which is only
+    /// reached when the keyboard was somewhere else entirely.
+    fn restore_focus(&self, field: Option<Field>) {
+        let imp = self.imp();
+        match field {
+            Some(Field::Body) => {
+                imp.body.grab_focus();
+            }
+            Some(Field::To) => {
+                imp.to.grab_focus();
+            }
+            None => self.focus_first(),
+        }
+    }
+
+    /// Reparents the composer back into the reading pane and disposes of the
+    /// window, changing nothing else. `false` when it was not detached.
+    ///
+    /// Split out because closing a detached composer has to do this part and
+    /// must *not* do the rest: [`attach`](Self::attach) takes the pane over
+    /// again, which is the opposite of what closing wants.
+    fn reclaim(&self) -> bool {
+        let Some(host) = self.imp().detached.take() else {
+            return false;
+        };
+        // Out of the toolbar view, not off the window: the composer is the
+        // layout's content, and unparenting it from anywhere else would leave
+        // GTK holding a child that is no longer there.
+        if let Some(layout) = host.content().and_downcast::<adw::ToolbarView>() {
+            layout.set_content(None::<&gtk::Widget>);
+        }
+        host.set_content(None::<&gtk::Widget>);
+        if let Some(window) = self.imp().window.upgrade() {
+            window.shell().reader().append(self);
+        }
+        // `destroy`, not `close`: `close` emits `close-request`, and this is
+        // reached from inside that handler.
+        host.destroy();
+        sync_detach_button(&self.imp().detach, false);
+        true
+    }
+
+    /// One key press from the detached window, resolved against the main
+    /// window's keymap.
+    ///
+    /// Public for the same reason [`Window::handle_key`] is: it is the whole
+    /// keyboard path in one call, and GTK4 gives no supported way to
+    /// synthesize a GDK event for a test to press instead.
+    ///
+    /// [`Window::handle_key`]: crate::window::Window::handle_key
+    pub fn handle_key(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+    ) -> glib::Propagation {
+        let Some(window) = self.imp().window.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let Some(host) = self.detached_window() else {
+            return glib::Propagation::Proceed;
+        };
+        window.handle_key_in(key, state, &host, Context::Composer)
+    }
+
     // -- Mounting -------------------------------------------------------------
 
     /// Puts the composer in `window`'s reading pane and wires the keyboard.
@@ -956,7 +1185,12 @@ impl Composer {
                 // instead and stays a pure open (`open` is already a no-op
                 // once composing, so `e`/`c` mid-reply cannot clobber it).
                 // Only the button doubles as the close it now visibly is.
-                if composer.is_open() {
+                if let Some(host) = composer.detached_window() {
+                    // Detached, the button is not the close it is in the
+                    // pane: the composition is in another window and the one
+                    // useful thing to do is put it in front.
+                    host.present();
+                } else if composer.is_open() {
                     composer.close();
                 } else {
                     composer.open(Draft::new(composer.account()));
@@ -989,6 +1223,7 @@ impl Composer {
             CommandId::SaveDraft if self.is_open() => self.save(),
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
             CommandId::AttachFile if self.is_open() => self.open_file_chooser(),
+            CommandId::DetachComposer if self.is_open() => self.toggle_detached(),
             CommandId::Back if self.is_open() => {
                 self.close();
             }
@@ -1432,10 +1667,25 @@ impl Composer {
         // feedback only sighted users get is feedback half the users do not.
         imp.status.set_accessible_role(gtk::AccessibleRole::Status);
 
+        imp.detach.add_css_class("flat");
+        imp.detach.add_css_class("postio-ghost");
+        sync_detach_button(&imp.detach, false);
+        imp.detach.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.toggle_detached()
+        ));
+
         let title = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         title.add_css_class("postio-compose-title");
         title.append(&imp.heading);
         title.append(&imp.status);
+        // Pushed to the trailing edge: the heading says what this is, the
+        // status says what has happened to it, and the one control up here is
+        // the one that moves the whole thing somewhere else. Send and Save
+        // stay at the bottom with the rest of the verbs.
+        imp.status.set_hexpand(true);
+        title.append(&imp.detach);
 
         let fields = gtk::Box::new(gtk::Orientation::Vertical, 0);
         fields.add_css_class("postio-compose-fields");
@@ -1677,6 +1927,36 @@ impl Composer {
         self.imp().subject.set_text(text);
     }
 
+    /// Where the cursor is in the body, as a character offset.
+    ///
+    /// The acceptance criterion for detaching is that it keeps the cursor,
+    /// and the only way to state that as an assertion is to be able to read
+    /// it. Not meant for anything but tests.
+    #[doc(hidden)]
+    pub fn test_cursor_offset(&self) -> i32 {
+        let buffer = self.imp().body.buffer();
+        buffer.iter_at_mark(&buffer.get_insert()).offset()
+    }
+
+    /// Puts the keyboard in `field`, as clicking into it would.
+    ///
+    /// Detaching claims to keep the focus where it was, and a test cannot
+    /// state that without first putting it somewhere other than where a fresh
+    /// composition would have left it. Not meant for anything but tests.
+    #[doc(hidden)]
+    pub fn test_focus_field(&self, field: Field) -> bool {
+        match field {
+            Field::To => self.imp().to.grab_focus(),
+            Field::Body => self.imp().body.grab_focus(),
+        }
+    }
+
+    /// The pop-out button, so a test can assert the pointer has a way in too.
+    #[doc(hidden)]
+    pub fn test_detach_button(&self) -> gtk::Button {
+        self.imp().detach.clone()
+    }
+
     /// Types `text` into the body, the way a keystroke reaches the buffer.
     #[doc(hidden)]
     pub fn test_set_body(&self, text: &str) {
@@ -1853,6 +2133,28 @@ fn sync_compose_button(button: &gtk::Button, composing: bool) {
     content.append(&gtk::Image::from_icon_name(icon));
     content.append(&labelled(text, key));
     button.set_child(Some(&content));
+    button.set_tooltip_text(Some(tooltip));
+    button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
+}
+
+/// Keeps the pop-out button saying which way it goes.
+///
+/// One control rather than two, for the same reason the header's Compose
+/// button doubles as Close: a button that is only correct while the composer
+/// is in one of its two places is a button that lies half the time.
+fn sync_detach_button(button: &gtk::Button, detached: bool) {
+    let (icon, tooltip) = if detached {
+        (
+            "view-restore-symbolic",
+            "Put the composer back in the reading pane",
+        )
+    } else {
+        (
+            "window-new-symbolic",
+            "Write in a window of its own, so you can read something else",
+        )
+    };
+    button.set_child(Some(&gtk::Image::from_icon_name(icon)));
     button.set_tooltip_text(Some(tooltip));
     button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }

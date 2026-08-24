@@ -195,6 +195,47 @@ and `postio-app`; `postio-index` owns `rusqlite` and the FTS5 executor.
 
 ## GTK & UI gotchas
 
+**`AdwWindow` draws no titlebar of its own.** `set_content(widget)` on an
+`adw::Window` gives a window with no title, no close button and nothing to
+drag it by — a stray rectangle rather than a window. The content has to
+provide the chrome: an `adw::ToolbarView` with an `adw::HeaderBar` in
+`add_top_bar`, which is what `window.rs` does for the main window and what the
+detached composer (#48) does for its own. This is invisible to a widget test
+and obvious the moment you render it, so if you build a second window, render
+it: `cargo run -p postio-app --example shot -- /tmp/x.png demo compose
+detached`.
+
+**Reparenting a widget is how you move a surface without losing its state.**
+The composer detaches by taking the same widget out of the reading pane and
+into a window — `reader.remove(&composer)`, then the new window's layout
+`set_content(Some(&composer))` — rather than by building a second composer
+from the draft. Everything a rebuild would have to copy (every entry's text,
+the `GtkTextBuffer`'s cursor, the identity `DropDown`'s selection, the
+`postio_body::EditHistory`) simply never moves, so "detaching keeps them" is a
+property of doing it this way rather than a list of things to remember. The
+one thing a reparent really does lose is the **focus**: unparenting drops it,
+so read `focused_field()` before and restore it after.
+
+Two things that follow, and bit while building it:
+
+- **Unparent from the actual parent.** Once the composer is a `ToolbarView`'s
+  content, it is the *toolbar view* it has to come off, not the window.
+- **`destroy()`, not `close()`, when you are inside `close-request`.**
+  `close()` re-emits the signal you are handling.
+
+**A satellite window's keys must forward to the main window's resolver, not
+grow a keymap of their own.** The detached composer installs an
+`EventControllerKey` that calls `Window::handle_key_in`, so `[keys]` in
+`config.toml`, the registry and the palette all reach both containers and
+there is only one keymap to keep in step. Two things genuinely differ and are
+therefore passed in rather than read off the main window: the keyboard
+`Context` (the main window has gone back to `List` by then) and whether the
+user is typing, which is a fact about the *satellite's* focus —
+`GtkWindowExt::focus` on the wrong window reports a widget nobody is looking
+at, and the resolver's "typing always wins" rule would then swallow every
+single-key binding.
+
+
 **The cursor, the selection and an activation are three different facts, and
 a surface that follows the wrong one silently follows nothing.** `postio-gtk`'s
 message list keeps them apart on purpose: `j`/`k` move the *cursor*, `x` and

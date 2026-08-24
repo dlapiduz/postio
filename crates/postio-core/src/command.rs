@@ -111,6 +111,8 @@ command_ids! {
     DiscardDraft => "discard_draft",
     /// Attach a file to the draft.
     AttachFile => "attach_file",
+    /// Move the composition between the reading pane and a window of its own.
+    DetachComposer => "detach_composer",
     /// Undo the last undoable action.
     Undo => "undo",
     /// Open the command palette.
@@ -355,6 +357,13 @@ pub enum Command {
         /// The file; `None` opens the file chooser.
         path: Option<PathBuf>,
     },
+    /// Move the composition between the reading pane and its own window.
+    ///
+    /// A toggle, and one composition either way: detaching moves the draft
+    /// rather than forking it, so there is never a second composer to keep in
+    /// step. Purely a view concern -- nothing downstream of the frontend can
+    /// tell which container the draft is being typed into.
+    DetachComposer,
 
     // -- View and application --------------------------------------------
     /// Undo the last undoable action.
@@ -436,6 +445,7 @@ impl Command {
             Command::SaveDraft => CommandId::SaveDraft,
             Command::DiscardDraft => CommandId::DiscardDraft,
             Command::AttachFile { .. } => CommandId::AttachFile,
+            Command::DetachComposer => CommandId::DetachComposer,
             Command::Undo => CommandId::Undo,
             Command::CommandPalette => CommandId::CommandPalette,
             Command::CheatSheet => CommandId::CheatSheet,
@@ -500,6 +510,7 @@ impl Command {
             CommandId::SaveDraft => Command::SaveDraft,
             CommandId::DiscardDraft => Command::DiscardDraft,
             CommandId::AttachFile => Command::AttachFile { path: None },
+            CommandId::DetachComposer => Command::DetachComposer,
             CommandId::Undo => Command::Undo,
             CommandId::CommandPalette => Command::CommandPalette,
             CommandId::CheatSheet => Command::CheatSheet,
