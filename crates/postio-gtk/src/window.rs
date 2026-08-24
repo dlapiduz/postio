@@ -1010,7 +1010,24 @@ impl Window {
             // A half-typed sequence is consumed so its first chord does not also
             // reach the widget underneath.
             Outcome::Pending(_) => glib::Propagation::Stop,
-            Outcome::Unhandled => glib::Propagation::Proceed,
+            Outcome::Unhandled => {
+                // The silent path, and the one postio-73 was reported from:
+                // a key that does nothing, with nothing said about why. All
+                // three inputs the resolver used are here, so "it randomly
+                // stopped working" becomes one line naming which of them it
+                // was. No message content -- a chord, a context and a widget
+                // type name are not mail.
+                tracing::debug!(
+                    chord = %chord,
+                    ?context,
+                    typing,
+                    focus = focused_type(self).as_deref().unwrap_or("none"),
+                    finder_open = self.finder().is_open(),
+                    finder_has_keyboard = self.finder().has_keyboard(),
+                    "key resolved to nothing"
+                );
+                glib::Propagation::Proceed
+            }
         }
     }
 
@@ -1214,14 +1231,31 @@ impl Window {
     }
 
     fn key_context(&self) -> KeyContext {
-        // The box owns the keyboard while it is open, and which of its two
-        // contexts depends on the mode: `Enter` runs a command in one and
-        // searches in the other.
-        match self.finder().context() {
+        // The box owns the keyboard while it *has* the keyboard, and which of
+        // its two contexts depends on the mode: `Enter` runs a command in one
+        // and searches in the other.
+        //
+        // Not "while it is open". A search deliberately leaves the field up
+        // with the query still in it, so `is_open` stays true while the user
+        // is back in the message list — and asking it here pinned the
+        // resolver to `Search` from the first search onwards, silently
+        // killing every single-key binding for the rest of the session. See
+        // `Finder::has_keyboard` and `postio-73`.
+        let finder = self.finder();
+        match finder.context().filter(|_| finder.has_keyboard()) {
             Some(context) => KeyContext::from(context),
             None => KeyContext::from(self.context()),
         }
     }
+}
+
+/// The type name of whatever holds the keyboard, for a log line.
+///
+/// The type rather than the widget: it is enough to tell a `GtkText` the user
+/// forgot they were in from the message list, and it cannot carry anything a
+/// widget is displaying.
+fn focused_type(window: &Window) -> Option<String> {
+    gtk::prelude::GtkWindowExt::focus(window).map(|focus| focus.type_().name().to_string())
 }
 
 /// What the key resolver could not make sense of.

@@ -608,6 +608,39 @@ impl Finder {
         self.is_open().then(|| self.mode().context())
     }
 
+    /// Whether the box has the keyboard, as opposed to merely being open.
+    ///
+    /// These stopped being the same question the day search began leaving the
+    /// field up after a query — "its results *are* the message list", so the
+    /// box does not close itself and `is_open` stays true while the user goes
+    /// back to reading mail. [`Window::key_context`] asked `is_open`, so from
+    /// the first search onwards the resolver was pinned to `Search`, where
+    /// `?` and the rest are not bound, and every bare key was silently
+    /// dropped for the rest of the session. That is `postio-73`, reported as
+    /// "single-key bindings stop working, seemingly at random" — random
+    /// because nothing times out and nothing else clears it.
+    ///
+    /// So ownership of the keyboard is asked of the keyboard. The field is
+    /// the box: there is one `GtkText` in this application and the header
+    /// draws it, per [`Finder::attach`]. The `focus_child` arm covers the
+    /// results plate, which can hold focus without the field doing so.
+    ///
+    /// `is_focus`, not `has_focus`: the question is which widget the keyboard
+    /// is on *in this window*, and `has_focus` additionally requires the
+    /// window to be the active one. Asking that would hand the bindings back
+    /// to the message list every time the user alt-tabbed away with the
+    /// search box focused, and would answer the same way under a headless
+    /// compositor, where no window is ever active. `Window::is_typing` asks
+    /// the window for its focus widget for the same reason.
+    pub fn has_keyboard(&self) -> bool {
+        self.imp()
+            .field
+            .borrow()
+            .as_ref()
+            .is_some_and(|field| field.text.is_focus())
+            || self.focus_child().is_some()
+    }
+
     /// The live hit count and timing, once the box has a field to draw in.
     ///
     /// This is where a search actually gets run from: whatever owns the store
