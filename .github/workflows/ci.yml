@@ -83,8 +83,21 @@ jobs:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
         run: python3 scripts/check-no-personal-data.py
 
+      - name: Refuse email's tracking mechanisms without recorded consent
+        # Read receipts and List-Unsubscribe One-Click both tell a sender that
+        # a real person read the message. Neither exists in Postio; this is
+        # what notices the day one arrives inside a patch about something
+        # else. See scripts/check-no-silent-tracking.py and postio-qhz.2.
+        run: python3 scripts/check-no-silent-tracking.py
+
       - name: Prove the boundary check actually fails when violated
         run: python3 scripts/test-check-crate-boundaries.py
+
+      - name: Prove the tracking check actually fails when violated
+        # It guards something that does not exist yet, so on a clean tree it
+        # passes whether it works or not. That is the shape of check that
+        # rots silently, so its own failure modes are exercised too.
+        run: python3 scripts/test-check-no-silent-tracking.py
 
       - name: Assert CI never runs the network-touching tests
         run: |
