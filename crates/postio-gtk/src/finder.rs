@@ -293,6 +293,8 @@ mod imp {
         pub(super) on_search: RefCell<Vec<QueryHandler>>,
         pub(super) on_changed: RefCell<Vec<QueryHandler>>,
         pub(super) on_dismissed: RefCell<Vec<Box<dyn Fn()>>>,
+        /// What `Tab` hands the keyboard to, if anything will take it.
+        pub(super) on_tab: RefCell<Vec<Box<dyn Fn() -> bool>>>,
     }
 
     impl Default for Finder {
@@ -320,6 +322,7 @@ mod imp {
                 on_search: RefCell::new(Vec::new()),
                 on_changed: RefCell::new(Vec::new()),
                 on_dismissed: RefCell::new(Vec::new()),
+                on_tab: RefCell::new(Vec::new()),
             }
         }
     }
@@ -414,6 +417,7 @@ impl Finder {
             glib::Propagation::Proceed,
             move |_, key, _, _| match key {
                 gtk::gdk::Key::BackSpace if finder.press_backspace() => glib::Propagation::Stop,
+                gtk::gdk::Key::Tab if finder.press_tab() => glib::Propagation::Stop,
                 gtk::gdk::Key::Escape => {
                     finder.dismiss();
                     glib::Propagation::Stop
@@ -657,6 +661,30 @@ impl Finder {
     /// Called when the box is dismissed.
     pub fn connect_dismissed(&self, handler: impl Fn() + 'static) {
         self.imp().on_dismissed.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called when `Tab` is pressed while searching. Answer `true` to take
+    /// the keyboard; `false` leaves `Tab` meaning what it usually means.
+    pub fn connect_tab(&self, handler: impl Fn() -> bool + 'static) {
+        self.imp().on_tab.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Applies the `Tab` rule, and says whether anything took the keyboard.
+    ///
+    /// Canvas 2b's footer promises `Tab refine`, so `Tab` out of the query
+    /// box goes to the refine chips beside it. Only while searching, and only
+    /// when there is something to move to — otherwise `Tab` is still `Tab`,
+    /// and a key that silently does nothing is worse than one that does the
+    /// ordinary thing.
+    ///
+    /// Public so the behaviour can be driven in a test without synthesizing a
+    /// key event, which GTK4 gives no supported way to do.
+    pub fn press_tab(&self) -> bool {
+        if self.mode() != Mode::Search {
+            return false;
+        }
+        let handlers = self.imp().on_tab.borrow();
+        handlers.iter().any(|handler| handler())
     }
 
     // -- internals ----------------------------------------------------------
