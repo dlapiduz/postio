@@ -71,6 +71,9 @@ pub struct Reader {
     banner: Rc<RemoteImageBanner>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
+    /// Terms to paint where they appear in the body. Empty for ordinary
+    /// reading; set while a search is what put the message on screen.
+    highlight: Rc<RefCell<Vec<String>>>,
 }
 
 impl Reader {
@@ -125,6 +128,7 @@ impl Reader {
             banner,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
+            highlight: Rc::new(RefCell::new(Vec::new())),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -138,10 +142,11 @@ impl Reader {
         {
             let view = reader.view.clone();
             let open = Rc::clone(&reader.open);
+            let highlight = Rc::clone(&reader.highlight);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
                 if let Some(banner) = banner_weak.upgrade() {
-                    render_open(&view, &banner, &open, RemoteImages::Allowed);
+                    render_open(&view, &banner, &open, &highlight, RemoteImages::Allowed);
                 }
             });
         }
@@ -149,6 +154,7 @@ impl Reader {
             let view = reader.view.clone();
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
+            let highlight = Rc::clone(&reader.highlight);
             reader.banner.connect_always_allow(move || {
                 let sender = open.borrow().as_ref().and_then(|o| o.sender.clone());
                 if let Some(sender) = sender {
@@ -162,7 +168,7 @@ impl Reader {
                     }
                 }
                 if let Some(banner) = banner_weak.upgrade() {
-                    render_open(&view, &banner, &open, RemoteImages::Allowed);
+                    render_open(&view, &banner, &open, &highlight, RemoteImages::Allowed);
                 }
             });
         }
@@ -223,7 +229,28 @@ impl Reader {
         } else {
             RemoteImages::Blocked
         };
-        render_open(&self.view, &self.banner, &self.open, remote);
+        render_open(
+            &self.view,
+            &self.banner,
+            &self.open,
+            &self.highlight,
+            remote,
+        );
+    }
+
+    /// Paint `terms` wherever they appear in the body.
+    ///
+    /// What canvas 2b means by "preview · match highlighted": the same
+    /// hardened pane, with the reason this message is a hit picked out in it.
+    /// Marking happens after sanitizing (see [`crate::search::mark_html`]),
+    /// so nothing here loosens what the reader will render. An empty list
+    /// turns it off, which is the state ordinary reading is in.
+    ///
+    /// Takes effect on the next [`Reader::render`]; the caller sets the terms
+    /// and then shows the message, which is the order a search does it in
+    /// anyway.
+    pub fn set_highlight(&self, terms: Vec<String>) {
+        *self.highlight.borrow_mut() = terms;
     }
 
     /// Empty the pane — nothing selected, or the selection closed.
@@ -248,6 +275,7 @@ fn render_open(
     view: &webkit6::WebView,
     banner: &RemoteImageBanner,
     open: &Rc<RefCell<Option<Open>>>,
+    highlight: &Rc<RefCell<Vec<String>>>,
     remote: RemoteImages,
 ) {
     let (body, sender) = {
@@ -258,6 +286,10 @@ fn render_open(
         (current.body.clone(), current.sender.clone())
     };
     let (content, remote_blocked) = body_html(&body, remote);
+    // After sanitizing and quote-folding, never before: ammonia would strip
+    // the `<mark>` as an unknown tag, and there is no point running a matcher
+    // over markup that has not been cleaned yet.
+    let content = crate::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
     banner.set_visible(remote == RemoteImages::Blocked && remote_blocked);
