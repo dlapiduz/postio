@@ -50,7 +50,7 @@ use chrono::{DateTime, Utc};
 use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
-use postio_model::ids::{AccountId, MailboxId};
+use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
@@ -102,6 +102,30 @@ pub trait MessageSource {
     fn fetch(&self, request: PageRequest) -> PageFuture;
 }
 
+/// The answer to a request for a result set's rows.
+///
+/// No total: unlike a mailbox, a result set already knows how long it is —
+/// the ids *are* the answer, and they all arrived at once.
+pub type RowsFuture = Pin<Box<dyn Future<Output = Result<Vec<Row>, String>>>>;
+
+/// Where the rows for a set of search hits come from.
+///
+/// Separate from [`MessageSource`] because a result set is not a window over
+/// a mailbox. The hits are an explicit ranked list of ids that may span
+/// folders, so there is no offset to read from, no mailbox to read it in, and
+/// no count to carry back. What the two do share is the crossing: this is
+/// read off the UI thread and awaited with `glib::spawn_future_local`, the
+/// same as every other page.
+pub trait ResultSource {
+    /// Read the rows for `ids`, in the order given.
+    ///
+    /// The order is the ranking, and it is the caller's, not the store's: a
+    /// repository asked for a set of ids will happily answer in whatever
+    /// order its index found them, which would silently re-sort the results
+    /// by date and lose the thing the search was for.
+    fn rows(&self, ids: Vec<MessageId>) -> RowsFuture;
+}
+
 /// What to call when a page cannot be read.
 type ErrorHandler = Box<dyn Fn(String)>;
 
@@ -114,6 +138,19 @@ struct Inner {
     /// answering a question nobody is asking any more.
     generation: Cell<u64>,
     total: Cell<u32>,
+    /// How long the *mailbox* was, last time one was read.
+    ///
+    /// Kept apart from `total` so that leaving a result set can put the
+    /// list back at its real length in the same turn it stops showing hits.
+    /// Without it the list would go to the hit count, then to zero, then
+    /// back — and the scroll offset the window restores would be measured
+    /// against a scroller that had collapsed in between.
+    mailbox_total: Cell<u32>,
+    /// The hits in view, ranked, or `None` when a mailbox is in view.
+    results: RefCell<Option<Rc<Vec<MessageId>>>>,
+    /// Where a result set's rows come from. `None` in a window that has no
+    /// search wired to it, which is the only reason this is an `Option`.
+    hits: RefCell<Option<Rc<dyn ResultSource>>>,
     errors: RefCell<Vec<ErrorHandler>>,
 }
 
@@ -136,6 +173,10 @@ impl PageSource for Source {
 
 impl Inner {
     fn request(self: Rc<Self>, page: u32) {
+        if self.results.borrow().is_some() {
+            self.request_hits(page);
+            return;
+        }
         let Some(mailbox) = self.mailbox.get() else {
             return;
         };
@@ -154,6 +195,45 @@ impl Inner {
         });
     }
 
+    /// The same request, for a page of a result set rather than of a mailbox.
+    fn request_hits(self: Rc<Self>, page: u32) {
+        let ids = self.results.borrow().clone();
+        let source = self.hits.borrow().clone();
+        let (Some(ids), Some(source)) = (ids, source) else {
+            return;
+        };
+        let start = (page * PAGE_SIZE) as usize;
+        if start >= ids.len() {
+            return;
+        }
+        // The last page of a result set is short, and asking for the ids it
+        // does not have would make the source answer for messages nobody
+        // matched.
+        let end = ids.len().min(start + PAGE_SIZE as usize);
+        let generation = self.generation.get();
+        let future = source.rows(ids[start..end].to_vec());
+        glib::spawn_future_local(async move {
+            match future.await {
+                Ok(rows) => self.deliver_hits(generation, page, rows),
+                Err(message) => self.fail(generation, message),
+            }
+        });
+    }
+
+    /// Hand over a page of hits.
+    ///
+    /// No count to set, unlike [`deliver`](Self::deliver): the result set's
+    /// length was known the moment the ids arrived.
+    fn deliver_hits(&self, generation: u64, page: u32, rows: Vec<Row>) {
+        if generation != self.generation.get() {
+            return;
+        }
+        let Some(list) = self.list.upgrade() else {
+            return;
+        };
+        list.deliver(page, rows);
+    }
+
     fn deliver(&self, generation: u64, page: u32, answer: Page) {
         if generation != self.generation.get() {
             return;
@@ -164,6 +244,7 @@ impl Inner {
         // The count first: `deliver` clamps the page against it, so rows
         // delivered before the list knows how long it is would be dropped.
         self.total.set(answer.total);
+        self.mailbox_total.set(answer.total);
         list.set_total(answer.total);
         list.deliver(page, answer.rows);
     }
@@ -177,8 +258,15 @@ impl Inner {
         }
     }
 
+    /// Whether the list is showing `mailbox` — which a list showing search
+    /// results is not, however much it remembers which folder to go back to.
+    ///
+    /// This is the guard on every mailbox-shaped event at once. `NewMail`
+    /// is the one that matters: the mailbox got longer, the result set did
+    /// not, and inserting at the top of a result set would put a message
+    /// that does not match the query above one that does.
     fn showing(&self, mailbox: MailboxId) -> bool {
-        self.mailbox.get() == Some(mailbox)
+        self.results.borrow().is_none() && self.mailbox.get() == Some(mailbox)
     }
 }
 
@@ -198,6 +286,9 @@ impl Feed {
             mailbox: Cell::new(None),
             generation: Cell::new(0),
             total: Cell::new(0),
+            mailbox_total: Cell::new(0),
+            results: RefCell::new(None),
+            hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
         }))
     }
@@ -213,6 +304,10 @@ impl Feed {
         inner.generation.set(inner.generation.get() + 1);
         inner.mailbox.set(Some(mailbox));
         inner.total.set(0);
+        inner.mailbox_total.set(0);
+        // Opening a folder is leaving the results, if there were any: the
+        // sidebar is a way out of a search as much as `Esc` is.
+        *inner.results.borrow_mut() = None;
         if let Some(list) = inner.list.upgrade() {
             list.set_source(Rc::new(Source(inner.clone())));
         }
@@ -226,6 +321,65 @@ impl Feed {
     /// The mailbox in view, if any.
     pub fn mailbox(&self) -> Option<MailboxId> {
         self.0.mailbox.get()
+    }
+
+    /// Where a result set's rows come from.
+    ///
+    /// Set once, when the application is assembled. A `Feed` without one
+    /// shows mailboxes and ignores [`Event::SearchResults`] — which is
+    /// correct for a window that has no search wired to it, and is why this
+    /// is a setter rather than an argument to [`new`](Self::new).
+    pub fn set_result_source(&self, source: Rc<dyn ResultSource>) {
+        *self.0.hits.borrow_mut() = Some(source);
+    }
+
+    /// Whether the list is showing search hits rather than a mailbox.
+    pub fn showing_results(&self) -> bool {
+        self.0.results.borrow().is_some()
+    }
+
+    /// Show `messages` — the hits, most relevant first — instead of the
+    /// mailbox.
+    ///
+    /// The mailbox is remembered, not left: `Esc` goes back to it, and until
+    /// then it is still the folder the user is in. Only the ids are held; the
+    /// rows are read a page at a time like any other, so a query matching
+    /// forty thousand messages costs forty thousand ids and one page of mail.
+    pub fn show_results(&self, messages: Vec<MessageId>) {
+        let inner = &self.0;
+        if inner.hits.borrow().is_none() {
+            return;
+        }
+        inner.generation.set(inner.generation.get() + 1);
+        let total = messages.len() as u32;
+        *inner.results.borrow_mut() = Some(Rc::new(messages));
+        inner.total.set(total);
+        if let Some(list) = inner.list.upgrade() {
+            list.set_source(Rc::new(Source(inner.clone())));
+        }
+        inner.clone().request(0);
+    }
+
+    /// Put the mailbox back. Returns whether there were results to leave.
+    ///
+    /// The count does not pass through zero on the way: see
+    /// `Inner::mailbox_total`. The rows themselves are re-read, because they
+    /// were dropped when the result set took the list — but the list is the
+    /// right length from this call, which is what lets the window restore a
+    /// scroll offset without waiting for a read.
+    pub fn close_results(&self) -> bool {
+        let inner = &self.0;
+        if inner.results.borrow().is_none() {
+            return false;
+        }
+        inner.generation.set(inner.generation.get() + 1);
+        *inner.results.borrow_mut() = None;
+        inner.total.set(inner.mailbox_total.get());
+        if let Some(list) = inner.list.upgrade() {
+            list.set_source(Rc::new(Source(inner.clone())));
+        }
+        inner.clone().request(0);
+        true
     }
 
     /// Called when a page cannot be read. The reason is the user's, not a log line.
@@ -270,6 +424,13 @@ impl Feed {
             // The order itself moved: a resync, a re-sort, a filter change.
             Event::MessageListChanged { mailbox } if inner.showing(*mailbox) => {
                 self.reload();
+            }
+            // The hits are the list now. Handled here rather than by whoever
+            // ran the search because this is where the list's source lives,
+            // and because it makes every route to a search -- the box, a
+            // saved query, a command -- land in one place.
+            Event::SearchResults { messages, .. } => {
+                self.show_results(messages.clone());
             }
             _ => {}
         }
