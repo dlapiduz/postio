@@ -180,11 +180,14 @@ pub fn migrate_with(
         applied += 1;
     }
 
-    Ok(MigrationReport {
-        from,
-        to: schema_version(connection)?,
-        applied,
-    })
+    let to = schema_version(connection)?;
+    if applied > 0 {
+        tracing::info!(from, to, applied, "applied schema migrations");
+    } else {
+        tracing::debug!(version = to, "schema is up to date");
+    }
+
+    Ok(MigrationReport { from, to, applied })
 }
 
 /// Applies one migration and records it, atomically.

@@ -320,6 +320,7 @@ pub(super) struct SelectedState {
 /// the first unseen message* (RFC 3501 §7.1), not a count, and a number that
 /// looks like a count but is not is worse than none. [`status`] reports the
 /// real count.
+#[tracing::instrument(skip_all, fields(mailbox = %path, mode = ?mode))]
 pub async fn select(
     pool: &ConnectionPool,
     path: &str,
@@ -345,6 +346,17 @@ pub async fn select(
         })
     })
     .await
+    .inspect(|status| {
+        // Counts and generation numbers, which is what a resync argues about.
+        tracing::debug!(
+            exists = status.exists,
+            uid_validity = status.uid_validity.get(),
+            uid_next = status.uid_next.get(),
+            read_only = status.read_only,
+            "selected"
+        );
+    })
+    .inspect_err(|error| tracing::warn!(%error, "cannot select that folder"))
 }
 
 /// Reports a mailbox's state without opening it.

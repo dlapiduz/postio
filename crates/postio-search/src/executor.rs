@@ -141,13 +141,30 @@ pub fn search(
     candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
     candidates.truncate(request.limit as usize);
 
-    let hits = candidates.into_iter().map(Candidate::into_hit).collect();
+    let hits: Vec<_> = candidates.into_iter().map(Candidate::into_hit).collect();
+    let elapsed = start.elapsed();
+
+    // Shape and cost, never the query. What someone searches their own mail
+    // for is as revealing as the mail — a name, an address, an illness — so
+    // the *text* is the one thing this line must not carry, however useful it
+    // would be. The counts and the timing are what the <100ms budget is
+    // argued from anyway.
+    tracing::debug!(
+        terms = request.query.text_terms().count(),
+        filters = request.query.clauses().count(),
+        hits = hits.len(),
+        total_hits,
+        capped = total_hits_capped,
+        by_relevance = rank_by_relevance,
+        elapsed_ms = elapsed.as_millis(),
+        "search finished"
+    );
 
     Ok(SearchResults {
         hits,
         total_hits,
         total_hits_capped,
-        elapsed: start.elapsed(),
+        elapsed,
     })
 }
 

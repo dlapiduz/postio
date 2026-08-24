@@ -122,7 +122,7 @@ pub fn install(
             if commands.send(command).is_err() {
                 // Only ever during teardown: the bridge has stopped and there
                 // is nothing left to run the verb on.
-                eprintln!("postio: the runtime has stopped and did not run that");
+                tracing::debug!("the runtime has stopped and did not run that");
             }
         }
     ));
@@ -143,7 +143,10 @@ pub fn apply(window: &Window, feeds: &Feeds, event: &Event) {
         // nothing and says nothing reads as the application ignoring you.
         Event::CommandRejected { reason, .. } => window.show_action_completed(reason, false),
         Event::Error { message } => {
-            eprintln!("postio: {message}");
+            tracing::error!(
+                message = %postio_model::address::redact_addresses(message),
+                "command failed"
+            );
             window.show_action_completed(message, false);
         }
         // Rows that have left the mailbox cannot stay selected: the next

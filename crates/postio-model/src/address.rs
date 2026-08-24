@@ -246,9 +246,99 @@ impl fmt::Display for EmailAddress {
     }
 }
 
+/// Replace the local part of every address in `text` with `…`.
+///
+/// For **logs**, and only for logs. An error carrying an address is right on
+/// screen — it is how the user knows which account to fix — and wrong in a
+/// file people paste into bug reports. The domain survives because it is what
+/// makes the line diagnostic at all: telling an iCloud failure from a Fastmail
+/// one is most of the triage, and it identifies nobody.
+///
+/// Deliberately crude, and deliberately over-matching. It finds every `@` and
+/// walks left over the characters an address can contain; a log line is not
+/// the place to be precise about RFC 5322 at the cost of missing one.
+///
+/// ```
+/// use postio_model::address::redact_addresses;
+///
+/// assert_eq!(
+///     redact_addresses("no password is stored for ada@example.com; add one"),
+///     "no password is stored for \u{2026}@example.com; add one"
+/// );
+/// ```
+pub fn redact_addresses(text: &str) -> String {
+    if !text.contains('@') {
+        return text.to_owned();
+    }
+    let bytes: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != '@' {
+            out.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        // Walk back over the local part already written out and drop it.
+        let mut local = 0;
+        for ch in out.chars().rev() {
+            if is_local_part_char(ch) {
+                local += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if local > 0 {
+            out.truncate(out.len() - local);
+            out.push('\u{2026}');
+        }
+        out.push('@');
+        index += 1;
+    }
+    out
+}
+
+/// The characters an address's local part is allowed to use, per RFC 5322's
+/// `atext` plus `.` — a superset is the safe direction here.
+fn is_local_part_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~.".contains(ch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redaction_keeps_the_domain_and_drops_who() {
+        // The domain is what makes a log line diagnostic; the local part is
+        // what identifies a person.
+        assert_eq!(
+            redact_addresses("no password is stored for ada@example.com; add one"),
+            "no password is stored for \u{2026}@example.com; add one"
+        );
+    }
+
+    #[test]
+    fn redaction_handles_several_addresses_and_leaves_prose_alone() {
+        assert_eq!(
+            redact_addresses("ada@example.com and grace@example.net disagreed"),
+            "\u{2026}@example.com and \u{2026}@example.net disagreed"
+        );
+        assert_eq!(
+            redact_addresses("nothing to redact here"),
+            "nothing to redact here"
+        );
+    }
+
+    #[test]
+    fn redaction_over_matches_rather_than_missing_one() {
+        // A dotted local part, a plus tag, and an address flush against
+        // punctuation all have to lose their local part.
+        assert_eq!(
+            redact_addresses("<ada.b+postio@example.com>"),
+            "<\u{2026}@example.com>"
+        );
+    }
 
     #[test]
     fn a_list_splits_on_the_separators_that_are_not_inside_something() {
