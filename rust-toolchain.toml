@@ -1,0 +1,24 @@
+# One compiler for CI and for every session, chosen on purpose.
+#
+# CI used to run `rustup default stable` while nothing here pinned anything,
+# so the compiler that decided whether a PR was green was whatever shipped
+# most recently. rustc 1.98.0 tightened `unused_imports` for redundant glob
+# imports, flagged `use adw::prelude::*` in `compose::tests`, and turned main
+# red on a lint nobody wrote — unreproducible locally by construction, because
+# sessions were on 1.97.1. Issue #38.
+#
+# An exact version rather than `stable`: a channel name in this file floats
+# exactly as hard as the workflow did. Bumping it is a commit somebody makes
+# on purpose, which is the whole point — the compiler changing under the
+# project should look like a change, not like weather.
+#
+# `rustup` honours this file everywhere, so CI needs no toolchain step of its
+# own. `scripts/check-toolchain-pinned.py` refuses a workflow that adds one.
+#
+# One caveat it cannot enforce: RUSTUP_TOOLCHAIN in the environment *beats*
+# this file. See docs/engineering-notes.md before wondering why a pin did
+# nothing.
+[toolchain]
+channel = "1.98.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
