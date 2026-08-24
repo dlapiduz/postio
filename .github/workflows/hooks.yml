@@ -1,0 +1,48 @@
+# The agent hooks' own test suite.
+#
+# `ci.yml` deliberately ignores `.claude/**`, because a prose or tooling
+# change should not pay for a twenty-minute Rust build. The cost of that is
+# that `guard-shared-tree.py` -- which decides whether a destructive git
+# command is allowed to run in a tree several sessions share -- had no
+# automated coverage whatsoever, and its worktree exemption has now silently
+# broken twice on path handling (issues #87 and the one its own comment
+# records).
+#
+# So: a workflow of its own, on exactly the paths ci.yml skips. It is Python
+# with no dependencies, so it costs seconds rather than minutes.
+name: Hooks
+
+# Written out twice rather than shared through a YAML anchor. `ci.yml` uses
+# one and it works, but a workflow that fails to register gives no diagnostic
+# at all -- it simply never runs -- and six duplicated lines are cheaper than
+# ever debugging that again.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.claude/hooks/**'
+      - '.github/workflows/hooks.yml'
+  pull_request:
+    paths:
+      - '.claude/hooks/**'
+      - '.github/workflows/hooks.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: hooks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Shared-tree guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prove the guard denies what it must and allows what it must
+        # The suite creates a stand-in worktree under $HOME and asserts both
+        # halves: the destructive commands are refused in the shared checkout
+        # and allowed in a private worktree. A guard that only ever denies is
+        # as broken as one that only ever allows -- it just fails in the
+        # direction that teaches people to switch it off.
+        run: python3 .claude/hooks/test-guard-shared-tree.py
