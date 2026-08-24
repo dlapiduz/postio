@@ -33,6 +33,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene};
 use postio_config::Density;
+use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Keymap, MessageTarget};
 use postio_model::MessageId;
 
@@ -128,6 +129,12 @@ mod imp {
         /// count, a thread — can put the folder's own back afterwards
         /// without having to re-read the sidebar.
         pub(super) unread: std::cell::Cell<u32>,
+        /// How a drag turns into files, when one is dropped outside Postio.
+        ///
+        /// Empty in a build that never wired it, which is why
+        /// [`crate::drag_out::MessageFiles`] refuses rather than handing over
+        /// an empty drop.
+        pub(super) export: RefCell<Option<crate::drag_out::Materialise>>,
     }
 
     impl Default for MessageListView {
@@ -156,6 +163,7 @@ mod imp {
                 keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
                 mailbox: RefCell::new(String::new()),
                 unread: std::cell::Cell::new(0),
+                export: RefCell::new(None),
             }
         }
     }
@@ -414,6 +422,55 @@ impl MessageListView {
         for handler in imp.cursor_moved.borrow().iter() {
             handler(row.clone());
         }
+    }
+
+    /// What a drag from this pane offers a receiver.
+    ///
+    /// Two offers in one drag, and the receiver picks. Postio's own sidebar
+    /// takes the string, which stays a *reference* to the selection and never
+    /// lists it; anything outside the application takes files, which are
+    /// produced only if the drop lands there.
+    ///
+    /// Both describe the same mail: the drag source has already made the
+    /// grabbed row the selection by the time it asks for this, so the ids
+    /// below are exactly what the string half resolves to. Handing the file
+    /// half a different set would move one thing into a folder and copy
+    /// another to the desktop.
+    ///
+    /// Files are offered only for a selection that can be **named**.
+    /// "Everything in this mailbox" is a predicate, and a predicate has no
+    /// file form — resolving one would mean writing an `.eml` per message in
+    /// a folder that may hold a hundred thousand, which is the one thing
+    /// `spec.md` §18 says never to do. So a select-all drag still moves mail
+    /// between folders inside Postio and offers nothing to the desktop: a
+    /// drop that never highlights, rather than one that fails after the fact.
+    ///
+    /// Public because it is what the drag actually does, and a test that
+    /// drove anything else would be testing a copy of it.
+    pub fn drag_offer(&self) -> gdk::ContentProvider {
+        let mut providers = vec![drag_payload()];
+        if let (Some(export), Selection::These(messages)) = (
+            self.imp().export.borrow().clone(),
+            self.imp().selected.selection(),
+        ) && !messages.is_empty()
+        {
+            providers.push(crate::drag_out::MessageFiles::new(messages, export).upcast());
+        }
+        gdk::ContentProvider::new_union(&providers)
+    }
+
+    /// How a drag of these messages becomes files, for a drop outside Postio.
+    ///
+    /// The view layer cannot produce them: an `.eml` file is the raw message
+    /// out of the blob store, and this crate may not depend on `rusqlite`. So
+    /// the application registers the half that can, and the drag carries a
+    /// promise rather than a payload — nothing is written unless a drop
+    /// somewhere else actually asks. See [`crate::drag_out`].
+    ///
+    /// A build that never calls this still drags perfectly well *inside*
+    /// Postio; it simply offers no files to anyone outside it.
+    pub fn connect_export(&self, materialise: crate::drag_out::Materialise) {
+        self.imp().export.replace(Some(materialise));
     }
 
     /// Move the keyboard one row down — `j`.
@@ -897,7 +954,14 @@ impl MessageListView {
                 if let Some(icon) = pane.drag_icon() {
                     source.set_icon(Some(&icon), 12, 12);
                 }
-                Some(drag_payload())
+
+                // Two offers in one drag, and the receiver picks. Postio's own
+                // sidebar takes the string, which stays a *reference* to the
+                // selection and never lists it; anything outside the
+                // application takes files, which are produced only if the drop
+                // lands there. A union rather than a choice made here, because
+                // at drag start there is no way to know where it will end.
+                Some(pane.drag_offer())
             }
         ));
         imp.view.add_controller(drag);

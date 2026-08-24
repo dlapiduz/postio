@@ -172,6 +172,50 @@ pub async fn export_messages(
     Ok(written)
 }
 
+/// Let the list hand messages to another application as files.
+///
+/// The view layer offers the drag; this fills in the half it cannot have.
+/// Registered once, when the window is fed — a build that skips it drags
+/// perfectly well inside Postio and simply offers nothing to the desktop.
+///
+/// # Why the files go in the cache
+///
+/// A receiving application is handed a *path* and reads it after the drop, so
+/// the bytes have to exist somewhere both processes can see. They are copies
+/// of mail that is already stored, so [`crate::paths::export_dir`] puts them
+/// under the cache directory, where the system is allowed to reclaim them.
+pub fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring) {
+    let database = wiring.database.clone();
+    let blobs = wiring.blobs.clone();
+    let engine = wiring.engine.clone();
+    let runtime = wiring.runtime.clone();
+
+    window
+        .list()
+        .connect_export(std::rc::Rc::new(move |messages: Vec<MessageId>| {
+            let (database, blobs) = (database.clone(), blobs.clone());
+            let (engine, runtime) = (engine.get().cloned(), runtime.clone());
+            Box::pin(async move {
+                let into = crate::paths::export_dir();
+                // On the runtime, not the UI thread: this reads SQLite, writes
+                // files, and may wait on a backfill. The drop is already
+                // asynchronous from GTK's point of view, so the one thing that
+                // must not happen is doing it here.
+                let (send, receive) = async_channel::bounded(1);
+                runtime.spawn(async move {
+                    let outcome =
+                        export_messages(&database, &blobs, engine, &into, &messages).await;
+                    let _ = send.send(outcome).await;
+                });
+                let paths = receive
+                    .recv()
+                    .await
+                    .map_err(|_| "The export did not finish".to_string())??;
+                Ok(paths.iter().map(gtk::gio::File::for_path).collect())
+            })
+        }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
