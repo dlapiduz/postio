@@ -409,6 +409,16 @@ the normal state of this project, not an exception. Several sessions work
 different crates at the same time, in the *same* working tree, on the *same*
 branch, sharing one git index and one cargo target directory.
 
+### We are finishing MVP
+
+Work labelled `mvp` is the current scope — `bd list --label mvp --status open`.
+It is short on purpose: the last things between this and a mail client the
+maintainer uses daily. Everything else waits, including several P1 beads that
+are real work but are not between here and a usable product.
+
+When the `mvp` list is empty, stop and say so rather than falling through to
+the wider backlog.
+
 ### Keep going
 
 **Finishing a bead is not finishing a session.** Nobody is watching, and a
