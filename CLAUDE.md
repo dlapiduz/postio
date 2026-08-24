@@ -146,11 +146,16 @@ tests** in `crates/postio-app/tests/` instead — `wiring.rs`, `keystroke.rs`,
 composition root is testable without launching a GUI, and it is the layer
 where eight wiring bugs hid.
 
-**Observability is thin until `postio-b9t.3` lands.** There is no tracing
-subscriber, so `RUST_LOG` does nothing; the script sets `RUST_BACKTRACE=1` and
-`G_MESSAGES_DEBUG=all`, and `--inspect` attaches the GTK Inspector, which is
-the most useful debugging tool available today — live widget tree, CSS, and
-property inspection.
+**`POSTIO_LOG` controls logging, not `RUST_LOG`.** `postio-app/src/logging.rs`
+installs a real `tracing` subscriber before anything else runs; `POSTIO_LOG`
+takes an `EnvFilter` directive (`debug`, or scoped like
+`postio_sync=debug,postio_runtime=debug`), and `[logging]` in `config.toml`
+does the same to an already-running instance, live. The script sets
+`POSTIO_LOG=info` and `RUST_BACKTRACE=1` by default. It deliberately does
+*not* set `G_MESSAGES_DEBUG=all` — that produced two hundred lines of Vulkan
+and portal noise and not one line about mail; set it yourself when the
+problem is actually GTK's. `--inspect` attaches the GTK Inspector on top of
+all that — live widget tree, CSS, and property inspection.
 
 For a quick visual check of a widget without running the app,
 `cargo run -p postio-app --example shot` renders straight out of GSK and needs
