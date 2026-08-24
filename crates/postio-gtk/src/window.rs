@@ -508,6 +508,16 @@ impl Window {
         // arrives, rather than an empty white rectangle pretending to be one.
         widget.set_visible(false);
         self.shell().reader().append(&widget);
+
+        // The parts panel's held-back count follows every render, not just
+        // the first: the banner's "show once" and "always allow" change how
+        // much is being held back, and a badge that only updated on the
+        // initial render would go stale the moment either is used.
+        reader.connect_rendered({
+            let window = self.clone();
+            move |count| window.parts().set_held_back(count, 0)
+        });
+
         let _ = self.imp().reader.set(reader.clone());
         reader
     }

@@ -625,6 +625,19 @@ parts panel (postio-v62): the save worked for parts already downloaded and
 failed only for the ones that had to be fetched, which is the half nobody
 tests by hand.
 
+**The parts panel's held-back "trackers" count is always zero (postio-m2ex).**
+`PartsPanel::set_held_back(remote_images, trackers)` takes two counts, but
+`postio_body::Sanitized::remote_blocked` — the sanitizer's only signal — is
+one number: every `<img src>` pointing at a remote host, counted the same way
+whether it is a 1200px product photo or a 1×1 open-rate beacon. `Window::reader()`
+wires `Reader::connect_rendered` straight to `set_held_back(count, 0)`, so the
+note in the panel only ever says "N remote images", never "and 1 tracker",
+until something in `postio-body::sanitize` can actually tell the two apart
+(a size/dimension heuristic, most likely). Not a bug — `set_held_back`'s
+two-count shape was already there waiting for this, and postio-m2ex's own
+issue text called it out as the one part "needing a change outside
+postio-app". The tracker-detection work is its own issue (#174) rather than
+a heuristic guessed at under `set_held_back`'s wiring.
 
 **An account is a row *and* a credential — never one of the two.** Onboarding
 writes both, and 0.1.0 wrote the row first. When the keyring write then failed

@@ -31,6 +31,7 @@ use std::rc::Rc;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
+use postio_core::bridge::EventSink;
 use postio_gtk::reader::BlobSource;
 use postio_gtk::window::Window;
 use postio_model::ids::{AttachmentId, BlobId};
@@ -126,6 +127,116 @@ pub fn install(window: &Window, wiring: &Wiring) {
                     // Loud rather than silent: the user chose a filename and
                     // is entitled to know nothing arrived at it.
                     events.emit(postio_core::Event::Error { message });
+                }
+            });
+        }
+    ));
+
+    let opener = Rc::new(PartOpener {
+        database: wiring.database.clone(),
+        blobs: wiring.blobs.clone(),
+        events: wiring.events.clone(),
+        runtime: wiring.runtime.clone(),
+    });
+
+    // `Ret` in the parts panel. `parts::previewable` says images and PDFs are
+    // things the desktop already has a sensible viewer for, so those go
+    // straight to it; everything else forces the "Open With" chooser, since
+    // Postio has no better guess for a `.patch` than the user does.
+    window.parts().connect_open(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        showing,
+        #[strong]
+        opener,
+        #[strong(rename_to = engine)]
+        wiring.engine,
+        move |node| {
+            let always_ask = !postio_gtk::parts::previewable(&node.mime);
+            opener.open_externally(
+                &window,
+                showing.get(),
+                engine.get().cloned(),
+                node,
+                always_ask,
+            );
+        }
+    ));
+
+    // `x` in the parts panel -- "Open with…". Always forces the chooser: the
+    // button says what it does, and guessing an app for it would make the
+    // button lie.
+    window.parts().connect_external(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        showing,
+        #[strong]
+        opener,
+        #[strong(rename_to = engine)]
+        wiring.engine,
+        move |node| {
+            opener.open_externally(&window, showing.get(), engine.get().cloned(), node, true);
+        }
+    ));
+
+    // `S` in the parts panel: the panel has already run the portal dialog and
+    // chosen the folder. Every leaf goes through `export_part` once, named by
+    // `parts::save_name` exactly as a single `s` names its own file.
+    window.parts().connect_save_all(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        showing,
+        #[strong(rename_to = database)]
+        wiring.database,
+        #[strong(rename_to = blobs)]
+        wiring.blobs,
+        #[strong(rename_to = events)]
+        wiring.events,
+        #[strong(rename_to = engine)]
+        wiring.engine,
+        #[strong(rename_to = runtime)]
+        wiring.runtime,
+        move |folder| {
+            let (Some(message), Some(into)) = (showing.get(), folder.path()) else {
+                return;
+            };
+            let leaves: Vec<postio_gtk::parts::Node> = window
+                .parts()
+                .nodes()
+                .into_iter()
+                .filter(postio_gtk::parts::Node::is_leaf)
+                .collect();
+            let leaves_len = leaves.len();
+            let (database, blobs) = (database.clone(), blobs.clone());
+            let (events, engine) = (events.clone(), engine.get().cloned());
+            let runtime = runtime.clone();
+            glib::spawn_future_local(async move {
+                // `save_all_parts` is runtime work for the same reason
+                // `part_bytes` is: a part not yet downloaded waits on
+                // `tokio::time::sleep`, which panics off the runtime.
+                let (sender, receiver) = async_channel::bounded(1);
+                let task_runtime = runtime.clone();
+                task_runtime.spawn(async move {
+                    let failed =
+                        save_all_parts(&database, &blobs, engine, &into, message, &leaves).await;
+                    let _ = sender.send(failed).await;
+                });
+                // Every part failed is the safe fallback if the runtime
+                // vanished mid-batch -- see `write_part`'s analogous case.
+                let failed = receiver.recv().await.unwrap_or(leaves_len);
+                if failed > 0 {
+                    // One toast for the whole batch rather than one per part:
+                    // `S` can easily name a dozen parts, and a save that is
+                    // mostly working does not need a dozen interruptions.
+                    events.emit(postio_core::Event::Error {
+                        message: format!(
+                            "{failed} part{} could not be saved",
+                            if failed == 1 { "" } else { "s" }
+                        ),
+                    });
                 }
             });
         }
@@ -414,6 +525,112 @@ fn write_part(file: &gio::File, bytes: &[u8]) -> Result<(), String> {
     .map_err(|error| format!("Could not save that part: {error}"))
 }
 
+/// What opening or "Open with…"-ing a part needs, bundled so the seam that
+/// actually varies between the two -- `always_ask` -- does not have to travel
+/// beside four things that never change per call.
+struct PartOpener {
+    database: Database,
+    blobs: BlobStore,
+    events: EventSink,
+    runtime: tokio::runtime::Handle,
+}
+
+impl PartOpener {
+    /// Fetch `node`'s bytes if it takes that, materialise them under
+    /// [`crate::paths::export_dir`], and hand the result to the desktop's own
+    /// launcher.
+    ///
+    /// Shared between `connect_open` and `connect_external`: both need the
+    /// same bytes, fetched the same way
+    /// [`export_part`](crate::export::export_part) already fetches them for a
+    /// drag, and only disagree about whether the chooser is forced.
+    ///
+    /// A copy in the cache directory rather than a pipe or a temp file GTK
+    /// reads once: the launched application owns the file from here, and some
+    /// viewers (an image viewer's "next", a PDF reader's outline) hold it
+    /// open well after launch returns.
+    fn open_externally(
+        &self,
+        window: &Window,
+        message: Option<MessageId>,
+        engine: Option<Engine>,
+        node: &postio_gtk::parts::Node,
+        always_ask: bool,
+    ) {
+        let Some(message) = message else { return };
+        let into = crate::paths::export_dir();
+        let (window, node) = (window.clone(), node.clone());
+        let (database, blobs, events, runtime) = (
+            self.database.clone(),
+            self.blobs.clone(),
+            self.events.clone(),
+            self.runtime.clone(),
+        );
+        glib::spawn_future_local(async move {
+            let (sender, receiver) = async_channel::bounded(1);
+            runtime.spawn(async move {
+                let outcome =
+                    crate::export::export_part(&database, &blobs, engine, &into, message, &node)
+                        .await;
+                let _ = sender.send(outcome).await;
+            });
+            let outcome = match receiver.recv().await {
+                Ok(outcome) => outcome,
+                Err(_) => Err("Postio's runtime stopped before that part arrived.".to_owned()),
+            };
+            match outcome {
+                Ok(path) => launch(&window, &path, always_ask),
+                Err(message) => {
+                    events.emit(postio_core::Event::Error { message });
+                }
+            }
+        });
+    }
+}
+
+/// Save every part in `nodes` under `into`, fetching first when a part is
+/// not local yet, and say how many could not be saved.
+///
+/// A count rather than which ones: `S` can easily name a dozen parts, and one
+/// toast per failure would be worse than the save. Runtime work, not
+/// main-context work, for the reason [`part_bytes`]'s own doc comment gives:
+/// a part not yet downloaded waits on `tokio::time::sleep`, which panics off
+/// the runtime.
+pub(crate) async fn save_all_parts(
+    database: &Database,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    into: &std::path::Path,
+    message: MessageId,
+    nodes: &[postio_gtk::parts::Node],
+) -> usize {
+    let mut failed = 0;
+    for node in nodes {
+        if crate::export::export_part(database, blobs, engine.clone(), into, message, node)
+            .await
+            .is_err()
+        {
+            failed += 1;
+        }
+    }
+    failed
+}
+
+/// Hand `path` to the desktop's own opener.
+///
+/// `always_ask` forces the "Open With" chooser instead of the platform's own
+/// default handler for the file's type -- what the panel's `x` promises by
+/// calling itself "Open with…".
+fn launch(window: &Window, path: &std::path::Path, always_ask: bool) {
+    let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(path)));
+    launcher.set_always_ask(always_ask);
+    launcher.launch(Some(window), gio::Cancellable::NONE, |result| {
+        if let Err(error) = result {
+            glib::g_warning!("postio", "could not open a part: {error}");
+        }
+    });
+}
+
 /// Wait for a queued body to land, or give up saying so.
 ///
 /// Polling rather than listening: the engine announces arrivals on the event
@@ -652,7 +869,7 @@ mod tests {
         // The MIME path the mock's message puts the attachment at.
         part.part_id = Some("2".to_owned());
         row.attachments = vec![part];
-        messages.update(&mut row).expect("the fixture writes");
+        update_with_retry(&messages, &mut row);
 
         messages
             .get(message)
@@ -662,6 +879,28 @@ mod tests {
             .first()
             .expect("the part was written")
             .id
+    }
+
+    /// As `MessageRepository::update`, but keeps trying for a moment.
+    ///
+    /// `world()`'s engine starts syncing the instant it is spawned, so this
+    /// write can race a real background pass over the very same tables --
+    /// `messages`, `attachments`. A `DatabaseLocked` there is the writer
+    /// being raced holding the table, not a fault -- the same "look again"
+    /// shape `wait_for_body` already uses for exactly this kind of
+    /// contention. See #162.
+    fn update_with_retry(messages: &MessageRepository, row: &mut postio_model::Message) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match messages.update(row) {
+                Ok(()) => return,
+                Err(error) if std::time::Instant::now() < deadline => {
+                    let _ = error;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("the fixture writes: {error}"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -705,6 +944,90 @@ mod tests {
         assert!(
             refused.contains("not syncing"),
             "the sentence has to say why: {refused}"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_all_parts_fetches_what_it_needs_for_every_leaf() {
+        // Same shape as `a_part_nobody_has_is_fetched_before_it_is_saved`, but
+        // through the `S` path: nothing here is downloaded yet, so `S` must
+        // fetch before it writes.
+        let (database, blobs, engine, message) = world();
+        let attachment = a_part_not_here(&database, message);
+        let node = postio_gtk::parts::Node {
+            part_id: "2".to_owned(),
+            depth: 1,
+            mime: "application/pdf".to_owned(),
+            filename: Some("report.pdf".to_owned()),
+            size: 9,
+            downloaded: false,
+            last: true,
+            attachment: Some(attachment),
+        };
+        let into = tempfile::tempdir().expect("a save directory");
+
+        let failed = save_all_parts(
+            &database,
+            &blobs,
+            Some(engine),
+            into.path(),
+            message,
+            &[node],
+        )
+        .await;
+
+        assert_eq!(failed, 0, "the one leaf should have saved cleanly");
+        assert_eq!(
+            std::fs::read(into.path().join("report.pdf"))
+                .expect("the file should exist")
+                .trim_ascii(),
+            ATTACHED.as_bytes(),
+        );
+    }
+
+    #[tokio::test]
+    async fn save_all_parts_counts_a_failure_without_abandoning_the_rest() {
+        // A container has no bytes -- `export_part` refuses it -- but the
+        // batch must still reach the leaf that comes after it, and the
+        // caller has to be told one part did not make it.
+        let (database, blobs, engine, message) = world();
+        let attachment = a_part_not_here(&database, message);
+        let container = postio_gtk::parts::Node {
+            part_id: String::new(),
+            depth: 0,
+            mime: "multipart/mixed".to_owned(),
+            filename: None,
+            size: 0,
+            downloaded: true,
+            last: false,
+            attachment: None,
+        };
+        let leaf = postio_gtk::parts::Node {
+            part_id: "2".to_owned(),
+            depth: 1,
+            mime: "application/pdf".to_owned(),
+            filename: Some("report.pdf".to_owned()),
+            size: 9,
+            downloaded: false,
+            last: true,
+            attachment: Some(attachment),
+        };
+        let into = tempfile::tempdir().expect("a save directory");
+
+        let failed = save_all_parts(
+            &database,
+            &blobs,
+            Some(engine),
+            into.path(),
+            message,
+            &[container, leaf],
+        )
+        .await;
+
+        assert_eq!(failed, 1, "the container is the only one that should fail");
+        assert!(
+            into.path().join("report.pdf").exists(),
+            "the leaf after the failure must still be saved"
         );
     }
 }
