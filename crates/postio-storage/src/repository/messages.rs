@@ -195,6 +195,24 @@ pub enum MessageSet {
     /// queue already wrote one row per message, in one numbered run, so the run
     /// *is* the set. See [`OperationRange`].
     Queued(OperationRange),
+    /// The rows another set names whose denormalised flag column already reads
+    /// `present`.
+    ///
+    /// This is what makes a bulk flag write *exact*. A toggle over a whole
+    /// mailbox changes only the rows that disagree with it, and the queue has
+    /// to carry precisely those — a queue row for a message that was already
+    /// read tells the server nothing and, worse, puts that message inside the
+    /// run undo takes back, so `u` would clear a flag the action never set.
+    /// Narrowing is a column comparison rather than a read, so the set stays a
+    /// predicate.
+    WithFlag {
+        /// The set being narrowed.
+        set: Box<MessageSet>,
+        /// The column to compare.
+        flag: ColumnFlag,
+        /// The value that column has to hold.
+        present: bool,
+    },
 }
 
 impl MessageSet {
@@ -214,6 +232,16 @@ impl MessageSet {
         match self {
             MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::Queued(_) => None,
+            MessageSet::WithFlag { set, .. } => set.mailbox(),
+        }
+    }
+
+    /// This set narrowed to the rows whose `flag` column reads `present`.
+    pub fn with_flag(self, flag: ColumnFlag, present: bool) -> Self {
+        MessageSet::WithFlag {
+            set: Box::new(self),
+            flag,
+            present,
         }
     }
 
@@ -248,6 +276,63 @@ impl MessageSet {
                 ),
                 vec![range.first.get(), range.last.get()],
             ),
+            MessageSet::WithFlag { set, flag, present } => {
+                let (inner, mut arguments) = set.predicate(first);
+                // The inner set numbered its parameters from `first` upwards
+                // and used one per argument, so the next free number is this.
+                let next = first + arguments.len();
+                arguments.push(i64::from(*present));
+                (
+                    format!("({inner}) AND messages.{} = ?{next}", flag.column()),
+                    arguments,
+                )
+            }
+        }
+    }
+}
+
+/// A flag the `messages` table denormalises into a column of its own.
+///
+/// `\Seen` and `\Flagged` are stored twice: once inside the `flags` text and
+/// once as a boolean, so the list and the sidebar filter and count without
+/// parsing a string. Those two columns are what make a whole-mailbox flag
+/// write affordable — the column is both the predicate that selects the rows
+/// which disagree and half of the write itself, so nothing has to be read.
+///
+/// Everything else lives only in the text, and a bulk write over it is not
+/// offered: there is no column to compare, so finding the rows that disagree
+/// would mean scanning strings across the mailbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnFlag {
+    /// `\Seen`, in `messages.seen`.
+    Seen,
+    /// `\Flagged`, in `messages.flagged`.
+    Flagged,
+}
+
+impl ColumnFlag {
+    /// The one this flag denormalises to, if it denormalises to one.
+    pub fn of(flag: &Flag) -> Option<Self> {
+        match flag {
+            Flag::Seen => Some(ColumnFlag::Seen),
+            Flag::Flagged => Some(ColumnFlag::Flagged),
+            _ => None,
+        }
+    }
+
+    /// The flag this is, in the vocabulary the rest of the application speaks.
+    pub fn flag(self) -> Flag {
+        match self {
+            ColumnFlag::Seen => Flag::Seen,
+            ColumnFlag::Flagged => Flag::Flagged,
+        }
+    }
+
+    /// The column holding it.
+    fn column(self) -> &'static str {
+        match self {
+            ColumnFlag::Seen => "seen",
+            ColumnFlag::Flagged => "flagged",
         }
     }
 }
@@ -618,6 +703,59 @@ impl<'a> MessageRepository<'a> {
             .connection
             .query_row(&sql, params_from_iter(arguments), |row| row.get(0))?;
         Ok(count as u32)
+    }
+
+    /// Sets or clears one flag across every message a [`MessageSet`] names,
+    /// returning how many rows it wrote.
+    ///
+    /// The bulk twin of [`set_flags`], and the second half of what makes
+    /// `Ctrl+A` affordable: one `UPDATE` over the mailbox index, whatever the
+    /// mailbox holds. Nothing is read — not the rows, not their flags.
+    ///
+    /// # Why the text can be rebuilt without reading it
+    ///
+    /// `messages.flags` is documented as canonical spellings in [`FlagSet`]
+    /// order, and the five system flags with columns of their own — `\Seen`,
+    /// `\Answered`, `\Flagged`, `\Deleted`, `\Draft` — are exactly the five
+    /// lowest-ranked persistable flags. So the text is always those five, in
+    /// column order, followed by whatever keywords the row also carries. The
+    /// statement below rebuilds the head from the booleans (substituting the
+    /// value it is writing for the one being changed) and keeps the tail by
+    /// stripping the five system spellings out of the text it already has.
+    /// Appending instead would be one `replace` shorter and would put
+    /// `\Seen` last, quietly breaking the ordering the schema promises.
+    ///
+    /// Rows that already agree are still matched unless the caller narrowed
+    /// the set with [`MessageSet::with_flag`] — this writes what it is told
+    /// to. It is the caller that has to care, because the queue rows and the
+    /// undo entry have to cover the same rows this does.
+    ///
+    /// [`set_flags`]: MessageRepository::set_flags
+    pub fn set_flag_on_set(
+        &self,
+        set: &MessageSet,
+        flag: ColumnFlag,
+        present: bool,
+    ) -> Result<usize> {
+        // `SET` reads the row as it was, so the column being written still
+        // holds the old value here and the new one has to be spliced in.
+        let (seen, flagged) = match flag {
+            ColumnFlag::Seen => ("?1", "messages.flagged"),
+            ColumnFlag::Flagged => ("messages.seen", "?1"),
+        };
+        let (predicate, arguments) = set.predicate(2);
+        let sql = format!(
+            "UPDATE messages
+                SET flags = {}, {} = ?1, flags_dirty = 1
+              WHERE {predicate}",
+            flags_expression(seen, flagged),
+            flag.column(),
+        );
+        let mut parameters = vec![i64::from(present)];
+        parameters.extend(arguments);
+        Ok(self
+            .connection
+            .execute(&sql, params_from_iter(parameters))?)
     }
 
     /// Hides messages pending a remote delete or move, or brings them back.
@@ -1299,6 +1437,35 @@ fn read_labels(connection: &Connection, id: MessageId) -> Result<Vec<LabelId>> {
 
 /// Flags as the schema stores them: canonical spellings, space separated, in
 /// [`FlagSet`] order, with `\Recent` already gone.
+/// SQL rebuilding a row's `flags` text out of its own columns.
+///
+/// `seen` and `flagged` are given as SQL expressions rather than read from the
+/// row, so a bulk write can substitute the value it is setting for the one the
+/// column still holds. See [`MessageRepository::set_flag_on_set`] for why this
+/// is exact.
+fn flags_expression(seen: &str, flagged: &str) -> String {
+    // The five system flags, in the order `FlagSet` keeps them.
+    let system = [
+        (Flag::Seen.as_str(), seen.to_owned()),
+        (Flag::Answered.as_str(), "messages.answered".to_owned()),
+        (Flag::Flagged.as_str(), flagged.to_owned()),
+        (Flag::Deleted.as_str(), "messages.deleted".to_owned()),
+        (Flag::Draft.as_str(), "messages.draft".to_owned()),
+    ];
+    // Whatever is left once those five are out of the text: the keywords, in
+    // the order they were already in, which is the order they belong in.
+    let mut rest = "' ' || messages.flags || ' '".to_owned();
+    for (spelling, _) in &system {
+        rest = format!("replace({rest}, ' {spelling} ', ' ')");
+    }
+    let head = system
+        .iter()
+        .map(|(spelling, column)| format!("iif({column}, '{spelling} ', '')"))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    format!("trim({head} || ltrim({rest}))")
+}
+
 fn flag_text(flags: &FlagSet) -> String {
     flags.iter().map(Flag::as_str).collect::<Vec<_>>().join(" ")
 }
