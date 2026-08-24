@@ -334,6 +334,11 @@ impl Sidebar {
         // stopping here would be a stop that does nothing and says nothing.
         scroller.set_focusable(false);
         scroller.set_child(Some(&folders));
+        // A folder below the fold cannot be dropped on otherwise: the pointer
+        // is held down, so the wheel is awkward and the scrollbar is
+        // elsewhere. Without this the only way to reach it is to abandon the
+        // drag, scroll, and start again.
+        crate::autoscroll::attach(&scroller);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&imp.account);
