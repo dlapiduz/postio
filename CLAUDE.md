@@ -282,6 +282,12 @@ asserting it.
   the graph of every crate depending on `postio-core` the moment anything turned
   it on — the view layer included, which in a workspace build really would link
   the SQL. `postio-core` therefore has no optional dependencies at all.
+- `postio-session` must not depend on `gtk4`/`libadwaita`, for the same reason
+  and by the same check. It is the composition root without a toolkit, and the
+  moment a verb reaches for a widget the only way left to run a mail command is
+  through GTK. ADR 0010's alternative — a second binary opening SQLite
+  directly — gives the database two writers with different rules about
+  ordering, undo and the queue, which is a bug nobody remembers the cause of.
 - `postio-sync` talks to the `MailBackend` trait, never to `io-imap` types
   directly — that crate is pre-1.0 and moving fast.
 - Every mutating action is local-first: SQLite write, enqueue the operation, emit
@@ -430,8 +436,13 @@ Layers, not a tree: a crate's rank is its position, and shared leaves are
 shared rather than owned by one parent.
 
 ```
-  frontend    postio-app     composition root + GTK binary. The only crate
-      |                      that knows both halves exist.
+  frontend    postio-app     the GTK binary: a window, and the presenters
+      |                      that join the two halves. The only crate that
+      |                      knows both exist.
+      +------ postio-session composition root, no toolkit -- store, runtime,
+      |                      engines, and the verb vocabulary in actions.rs.
+      |                      What a headless frontend links. No GTK -- CI
+      |                      enforced.
       +------ postio-gtk     GTK4 + libadwaita + WebKitGTK. Widgets, CSS,
       |                      keymap. Command down / Event up. No SQL, no
       |                      protocol.

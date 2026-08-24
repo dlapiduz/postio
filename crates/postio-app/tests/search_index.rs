@@ -12,10 +12,10 @@
 //! opened can be searched", which is the sentence that was false.
 
 use chrono::Utc;
-use postio_app::ensure_search_index;
 use postio_index::{SearchRequest, search};
 use postio_search::facets::Scope;
 use postio_search::parse;
+use postio_session::ensure_search_index;
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 

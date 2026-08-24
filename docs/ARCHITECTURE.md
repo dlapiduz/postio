@@ -14,7 +14,8 @@ gaps this document does not paper over.
 
 ```mermaid
 graph TD
-    app["<b>postio-app</b><br/><i>composition root · GTK binary</i><br/>the only crate that knows both halves exist"]
+    app["<b>postio-app</b><br/><i>GTK binary</i><br/>a window, and the presenters that join the two halves"]
+    session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
     subgraph view ["frontend"]
         gtk["<b>postio-gtk</b><br/>GTK4 · libadwaita · WebKitGTK<br/><i>no SQL · no protocol</i>"]
@@ -40,8 +41,10 @@ graph TD
         model["<b>postio-model</b><br/>domain types · JWZ threading"]
     end
 
+    app --> session
     app --> gtk
-    app --> runtime
+    session --> runtime
+    session --> core
     gtk --> core
     gtk --> search
     gtk --> body
@@ -66,17 +69,26 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search pure
-    class core,gtk guard
+    class core,gtk,session guard
 ```
 
 Arrows are "depends on", and every arrow drawn is a real direct dependency.
-Two sets are left out to keep the layering legible: `postio-app`'s direct
+Two sets are left out to keep the layering legible: `postio-session`'s direct
 edges to most leaves (it is the composition root — it assembles them, which
 says nothing about rank), and edges already implied by a path through the
 diagram, such as `postio-runtime -> postio-search` or the fact that very
 nearly everything depends on `postio-model`.
 
-Dashed borders mark the two crates whose dependency closure CI polices
+`postio-app` and `postio-session` are one rank, split along one line: does it
+name a toolkit. Everything the application *is* — the store, the runtime, the
+engines, and the verb vocabulary that turns a `Command` into rows and events —
+is in `postio-session`, which a frontend that is not GTK can link. What is left
+in `postio-app` is a window and the presenters that join the two halves, each
+of which names a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why
+the alternative — a second binary opening SQLite directly — is not a second
+frontend but a second application sharing a file.
+
+Dashed borders mark the three crates whose dependency closure CI polices
 (`scripts/check-crate-boundaries.py`).
 
 ---
@@ -400,12 +412,17 @@ document. The rich editing surface stays in epic E10.
 Recorded rather than hidden. Full argument in
 [`architecture-review-2026-08.md`](architecture-review-2026-08.md).
 
+**Closed since that review:** `postio-app` was both composition root and GTK
+binary, so `actions.rs` — the whole verb vocabulary, with no toolkit in it —
+linked GTK and no headless frontend was possible. [#82](https://github.com/dlapiduz/postio/issues/82)
+split `postio-session` out and gave it the same CI-enforced rule
+`postio-core` has, which is the part that makes it stay true.
+
 | Gap | Effect | Bead |
 |---|---|---|
 | `CommandId` is a closed enum; no correlation ids on commands/events | No command can exist without recompiling `postio-core`; a programmatic caller cannot await its own invocation. The wall MCP and AI hit. | `postio-plp4` (P0) |
 | Composer document model undecided | Rich text becomes a per-platform rewrite | `postio-3o8f` (P0) |
 | ~3,400 lines of toolkit-free logic live in `postio-gtk` — keymap, selection, sanitize, quote, tokens | A second frontend must reimplement, fork, or link GTK to borrow them | — |
-| `postio-app` is both composition root and GTK binary; `actions.rs` (the whole verb vocabulary, GTK-free) links GTK | No headless frontend is possible, which is what MCP actually needs | — |
 | Boundary rules guard two crates, not the graph | Nothing stops `postio-search` re-acquiring `rusqlite` and undoing the index split | — |
 | `CommandSpec.title` is `&'static str` | Localisation is impossible | folded into `postio-plp4` |
 | `first_account()` in `postio-app/src/lib.rs` | Single account, though model/storage/engine are all account-aware. An appropriate MVP cut. | `postio-he2` |
