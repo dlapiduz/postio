@@ -195,6 +195,55 @@ and `postio-app`; `postio-index` owns `rusqlite` and the FTS5 executor.
 
 ## GTK & UI gotchas
 
+**The cursor, the selection and an activation are three different facts, and
+a surface that follows the wrong one silently follows nothing.** `postio-gtk`'s
+message list keeps them apart on purpose: `j`/`k` move the *cursor*, `x` and
+`Shift+J` change the *selection* an action would hit, and Enter or a double
+click *activates*. That separation is correct and `gtk_selection.rs` enforces
+it — but it means "wire this to the list" is not a well-formed instruction,
+and picking the wrong one produces a surface that is fully built, fully
+tested, and fed by nothing.
+
+That is exactly how #70 shipped: `reading.rs` fed the reading pane from
+`connect_activated`, so a mail client's right-hand column was blank unless the
+user guessed that Return was required. Every layer underneath passed. If you
+are wiring a surface to the list, say out loud which of the three you mean.
+
+Three consequences worth knowing before you use `connect_cursor_moved`:
+
+- **`SingleSelection` autoselects row 0 as soon as the model has rows.** That
+  is not a person choosing anything, so it is deliberately *not* reported.
+  Filling the reading pane there would, once #71's dwell timer exists, mark
+  the newest message read because the application was opened. `move_cursor_to`
+  and `extend_by` are the only paths that count as a landing.
+- **The cursor lands before the mail arrives.** `set_source` sizes the model
+  with placeholders and `deliver` fills it afterwards, so on a first page the
+  cursor is already in place by the time there is anything to show and
+  `notify::selected` has been and gone. Hence the `items_changed` hookup,
+  which is also the fast-scroll case.
+- **`items_changed` also fires for `update_row`** — a flag toggle, an incoming
+  `\Seen`, any sync edit. That is not a landing. Reporting is therefore
+  deduplicated on the *message id* rather than on the signal, which is what
+  tells the three sources apart.
+
+**An empty `MessageBody` is four different situations, and rendering it draws
+the same nothing for all four.** #70's other half. A body that was never
+downloaded, one whose blobs will not read, one that genuinely has no text or
+HTML part, and one that is fine — the first three all reached the reader as
+`MessageBody::default()`. On a mailbox mid-backfill that is most messages, for
+minutes, so a correctly-working client looked broken.
+
+`BodyState` is what distinguishes them and it has to be:
+`MessageRepository::body_blobs` answers a row naming no blobs *both* for a
+message nobody has downloaded and for one that was downloaded and had nothing
+in it. Identical at the blob layer, opposite to a reader — one is worth
+waiting for and one is finished. `compose.rs::load_body_or_reason` reads
+`message.sync.body_state.has_body()` first for that reason;
+`postio_gtk::reader::Absent` is the vocabulary it maps onto.
+
+`load_body` keeps its old shape beside it, because the reply path genuinely
+does not care: quoting nothing is the right degraded behaviour there.
+
 **`GtkListView` read-ahead is ~205 rows, not a screenful.** Measured against
 GTK 4.22.4: 50 items → 50 rows, 200 → 200, 1000 → 205, 5000 → 205. This is why
 a 200-item test model looks exactly like "recycling is broken" — the model is
