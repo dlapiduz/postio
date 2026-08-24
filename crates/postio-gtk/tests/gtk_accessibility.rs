@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
 use gtk::gdk;
+use gtk::glib;
 use gtk::prelude::*;
 use gtk::{AccessibleProperty, AccessibleRelation, AccessibleRole};
 use postio_gtk::feed::{
@@ -109,6 +110,14 @@ impl MessageSource for Sample {
 
 #[test]
 fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
+    // Before GTK initialises, or it has already chosen a backend. See
+    // `require_an_accessibility_backend` for why this is the difference
+    // between an audit and a formality.
+    //
+    // SAFETY: the first statement of the only test in this binary, so no
+    // other thread exists yet to observe the environment changing.
+    unsafe { std::env::set_var("GTK_A11Y", "test") };
+
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;
@@ -130,7 +139,12 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
         account: AccountId::new(1),
         state: postio_core::ConnectionState::Online,
     });
-    pump();
+    // Wait for the page to land and the list to build rows from it. Pumping
+    // once only drains what is already pending, which is a race the live
+    // display used to win by being slow — see the note on `pump_until`.
+    pump_until(|| page_landed(&window) && row_items(&window) > 0);
+
+    require_an_accessibility_backend();
 
     // ── the panes are landmarks a screen reader can navigate by ──────────
     assert!(gtk::test_accessible_has_role(
@@ -150,22 +164,14 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     // The row widget paints its own text, so GTK has nothing to compute a
     // name from: without the sentence being handed over, a screen reader
     // walks a list of anonymous items.
-    let mut items = 0;
-    let mut child = list_view(&window).first_child();
-    while let Some(current) = child {
-        if let Some(item) = current.downcast_ref::<gtk::Widget>()
-            && item.is_visible()
-            && gtk::test_accessible_has_role(item, AccessibleRole::ListItem)
-        {
-            assert!(
-                named(item),
-                "a visible row in the list has no name for a screen reader"
-            );
-            items += 1;
-        }
-        child = current.next_sibling();
+    let rows = row_widgets(&window);
+    assert!(!rows.is_empty(), "no rows to check — the list never filled");
+    for item in &rows {
+        assert!(
+            named(item),
+            "a visible row in the list has no name for a screen reader"
+        );
     }
-    assert!(items > 0, "no rows to check — the list never filled");
 
     // ── 200% text stays usable ───────────────────────────────────────────
     // Not a look-and-see: if the row's type came from constants rather than
@@ -241,15 +247,74 @@ fn audit(widget: &gtk::Widget, path: &str, inside: bool, problems: &mut Vec<Stri
     }
 }
 
+/// Fail unless GTK is actually recording accessible properties.
+///
+/// GTK builds a `GtkATContext` per widget lazily, and only when an
+/// accessibility backend is running. Under `GTK_A11Y=none` — which is what a
+/// headless session with no a11y bus gets by default — there is no context,
+/// so `gtk_test_accessible_has_property` answers "not set" for every widget
+/// on screen no matter what the code did. Nothing here would then be
+/// measuring the application.
+///
+/// That is not hypothetical: it is why this file's row assertion failed
+/// headless and passed on the maintainer's desktop, where at-spi is running.
+/// The cause was read as a timing race for long enough to be worth a guard
+/// rather than a comment.
+///
+/// So the harness proves it can see accessibility at all before the audit is
+/// allowed to draw any conclusion, using the one widget in the tree whose
+/// name is set unconditionally.
+fn require_an_accessibility_backend() {
+    let probe = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    probe.update_property(&[gtk::accessible::Property::Label("probe")]);
+    assert!(
+        gtk::test_accessible_has_property(&probe, AccessibleProperty::Label),
+        "a name set on a widget did not read back, so GTK is recording no \
+         accessible properties and every assertion below would pass or fail \
+         for reasons unrelated to the code. Run with GTK_A11Y=test — this \
+         test sets it, so something has overridden it."
+    );
+}
+
+/// Whether the accessible name of `widget` is set *and* is the empty string.
+///
+/// `gtk_test_accessible_has_property` answers whether a property was ever
+/// set, not whether it says anything, so a widget labelled `""` reads as
+/// named. That is not a hair-split: the list's own unbind path sets `""`
+/// deliberately to clear a recycled row, so "named with nothing" is a state
+/// this tree really reaches, and treating it as named made the row assertion
+/// unable to fail at all.
+///
+/// GTK has no getter for a property value, only `check_property`, which
+/// compares and returns NULL on a match — so the question has to be asked as
+/// "is it equal to empty".
+fn labelled_empty(widget: &gtk::Widget) -> bool {
+    use glib::translate::ToGlibPtr;
+    unsafe {
+        let message = gtk4_sys::gtk_test_accessible_check_property(
+            ToGlibPtr::<*mut gtk4_sys::GtkWidget>::to_glib_none(widget).0
+                as *mut gtk4_sys::GtkAccessible,
+            gtk4_sys::GTK_ACCESSIBLE_PROPERTY_LABEL,
+            c"".as_ptr(),
+        );
+        if message.is_null() {
+            return true;
+        }
+        glib::ffi::g_free(message as *mut _);
+        false
+    }
+}
+
 /// Whether a screen reader would have something to call this widget.
 ///
 /// A set `Label` property or a `LabelledBy` relation is the explicit answer;
 /// a control whose own child is a label is the implicit one GTK computes for
-/// itself, and is just as good.
+/// itself, and is just as good. An empty label is none of them.
 fn named(widget: &gtk::Widget) -> bool {
-    if gtk::test_accessible_has_property(widget, AccessibleProperty::Label)
-        || gtk::test_accessible_has_relation(widget, AccessibleRelation::LabelledBy)
-    {
+    if gtk::test_accessible_has_property(widget, AccessibleProperty::Label) {
+        return !labelled_empty(widget);
+    }
+    if gtk::test_accessible_has_relation(widget, AccessibleRelation::LabelledBy) {
         return true;
     }
     if let Some(button) = widget.downcast_ref::<gtk::Button>()
@@ -293,9 +358,75 @@ fn list_view(window: &Window) -> gtk::Widget {
     find(window.list().upcast_ref::<gtk::Widget>()).expect("the list view")
 }
 
+/// The visible rows the `GtkListView` has built, whatever they announce.
+///
+/// Deliberately blind to naming: this is what the wait condition counts and
+/// what the assertion then inspects, and if it filtered on having a name the
+/// assertion below could never fail. See `pump_until`.
+fn row_widgets(window: &Window) -> Vec<gtk::Widget> {
+    let mut rows = Vec::new();
+    let mut child = list_view(window).first_child();
+    while let Some(current) = child {
+        if current.is_visible() && gtk::test_accessible_has_role(&current, AccessibleRole::ListItem)
+        {
+            rows.push(current.clone());
+        }
+        child = current.next_sibling();
+    }
+    rows
+}
+
+/// Whether the feed's first page has actually arrived.
+///
+/// `n_items` alone is not it: the model reports the mailbox total as soon as
+/// the *count* is known, while `row_at` still answers `None` for every
+/// position until the page carrying it lands. A row bound in that window has
+/// no data to speak, so waiting on the count would wait for the wrong thing.
+fn page_landed(window: &Window) -> bool {
+    window
+        .list()
+        .model()
+        .item(0)
+        .and_downcast::<postio_gtk::list::MessageRow>()
+        .and_then(|item| item.row())
+        .is_some()
+}
+
+fn row_items(window: &Window) -> usize {
+    row_widgets(window).len()
+}
+
 fn pump() {
     let context = gtk::glib::MainContext::default();
     for _ in 0..80 {
         while context.iteration(false) {}
+    }
+}
+
+/// Pump until `ready` holds, rather than for a fixed number of turns.
+///
+/// `pump` spins a fixed budget and hopes it was enough. Measured, that budget
+/// is about 550ms of wall time on this machine, which is why substituting it
+/// here still passes today and why the race postio-9112 predicted does not
+/// currently reproduce — the headless failure it was filed for turned out to
+/// be the missing accessibility backend instead. This is the correct shape
+/// regardless: it states the precondition the assertions depend on instead of
+/// leaving it to a budget nobody has re-measured since.
+///
+/// Bounded, so it cannot mask a failure. If the condition never holds this
+/// returns anyway and the caller's assertion fails on an empty list, rather
+/// than hanging until CI kills the job.
+///
+/// **The condition must not be the assertion.** Waiting for a *named* row and
+/// then asserting the row is named is a test that cannot fail — the more
+/// expensive version of this same bug, and one this file has already had.
+fn pump_until(ready: impl Fn() -> bool) {
+    let context = gtk::glib::MainContext::default();
+    for _ in 0..2000 {
+        while context.iteration(false) {}
+        if ready() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
