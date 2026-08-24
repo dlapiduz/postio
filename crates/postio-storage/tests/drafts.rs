@@ -915,3 +915,92 @@ fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
     );
     assert_eq!(badge(&connection, drafts_mailbox), 1);
 }
+
+#[test]
+fn a_drafts_row_leads_back_to_the_draft_it_is_listing() {
+    // The link the other way. The message list hands back a `MessageId`, and
+    // activating a draft's row has to reach the buffer the composer edits —
+    // opening the reader on it instead is the dead end #166 is about.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+    // Mail in the folder first, so the draft's row does not land on the same
+    // number as the draft. Without this the assertion below holds for a
+    // `by_message` that looked up the draft by its own id, and the test could
+    // not tell the link from the coincidence.
+    let mut noise = vec![
+        fetched(account.id, drafts_mailbox, 30, 1),
+        fetched(account.id, drafts_mailbox, 31, 1),
+        fetched(account.id, drafts_mailbox, 32, 1),
+    ];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut noise)
+        .expect("three drafts written elsewhere");
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    let listed = MessageRepository::new(&connection)
+        .page(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(drafts_mailbox),
+            limit: 50,
+            after: None,
+        })
+        .expect("a page");
+    let row = listed
+        .iter()
+        .find(|row| row.subject.as_deref() == Some("Tide gate interlock"))
+        .expect("the draft is in the folder");
+    assert_ne!(
+        row.id.get(),
+        draft.id.get(),
+        "the fixture exists to make these differ"
+    );
+
+    let found = drafts
+        .by_message(row.id)
+        .expect("a read")
+        .expect("the row is a draft's, so there is one");
+
+    assert_eq!(found.id, draft.id);
+    assert_eq!(found.subject, draft.subject);
+    assert_eq!(
+        found.to, draft.to,
+        "the whole draft, recipients and all — the composer opens on this"
+    );
+}
+
+#[test]
+fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
+    // Another client's draft, which has no local buffer to open. What happens
+    // then is `postio-app`'s decision; what is certain here is that there is
+    // nothing to find — including when its row number happens to be a draft's
+    // id, which is the coincidence a link keyed on the wrong column survives.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let mut draft = a_draft(account.id);
+    DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("a draft, so there is an id to collide with");
+
+    let mut batch = vec![fetched(account.id, drafts_mailbox, 9, 1)];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over Drafts");
+    let foreign = batch[0].id;
+
+    assert!(
+        DraftRepository::new(&connection)
+            .by_message(foreign)
+            .expect("a read")
+            .is_none()
+    );
+    // And the one that *is* a draft's still leads to it, so the assertion
+    // above is about the link rather than about `by_message` finding nothing.
+    let mine = DraftRepository::new(&connection)
+        .get(draft.id)
+        .expect("a read")
+        .expect("the draft");
+    assert_eq!(mine.id, draft.id);
+}
