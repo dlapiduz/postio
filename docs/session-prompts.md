@@ -66,9 +66,10 @@ while every test passed.
 ## Architect
 
 ```
-Read CLAUDE.md, then load the /ux-architect skill. Read spec.md and
-`Design/Mail Client.dc.html`; where they disagree, the canvas is newer
-and wins.
+Read CLAUDE.md, then load the /ux-architect skill. Read
+`docs/PRODUCT.md` and `Design/Mail Client.dc.html`; PRODUCT.md records
+the resolved product decisions, and the canvas is the authority on
+visual detail.
 
 You are here to decide things, not to implement them. Your queue is
 issues labelled `needs-architecture` — the label means a judgement has
@@ -101,7 +102,7 @@ different states. Transitions are <=100ms or absent.
 
 Two things constrain you more than they look:
 
-  * Providers are data, not code. spec.md §3 — every provider is one
+  * Providers are data, not code. docs/PRODUCT.md §3 — every provider is one
     row in a table, never a named constant or a special-cased branch.
     Postio is not an iCloud client.
   * Nothing leaves the machine that the user did not ask for. Remote
