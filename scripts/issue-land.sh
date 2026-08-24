@@ -82,13 +82,18 @@ echo "--- repository invariants ---"
 python3 scripts/check-crate-boundaries.py
 python3 scripts/check-no-personal-data.py
 python3 scripts/check-no-silent-tracking.py
+python3 scripts/check-toolchain-pinned.py
 
-# CI installs `rustup default stable`. When that is newer than this toolchain,
-# lints exist there that cannot fire here -- which has already turned main red
-# on an unused import nobody could reproduce locally.
+# rust-toolchain.toml pins the compiler, so CI and this shell agree by
+# construction -- unless RUSTUP_TOOLCHAIN is exported, which beats the file.
+# That is the one way the skew of issue #38 can come back, so it is said out
+# loud here rather than discovered in a CI log.
 echo "--- toolchain ---"
 echo "local: $(rustc --version)"
-echo "CI floats on stable; if these diverge, expect lints you cannot reproduce."
+echo "pinned: $(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
+if [ -n "${RUSTUP_TOOLCHAIN:-}" ]; then
+    echo "warning: RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN overrides rust-toolchain.toml."
+fi
 
 [ "$GATES_ONLY" = 1 ] && { echo; echo "gates passed; nothing committed."; exit 0; }
 

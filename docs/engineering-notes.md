@@ -740,6 +740,45 @@ subjects/previews/senders read out of the database. It uses
 thread, and a thread-local subscriber would make the test pass while
 observing an empty buffer.
 
+
+## Toolchain
+
+**The rustc version is pinned in `rust-toolchain.toml`, and
+`RUSTUP_TOOLCHAIN` beats it.** rustup's precedence is: the `RUSTUP_TOOLCHAIN`
+environment variable, then a `rustup override` for the directory, then
+`rust-toolchain.toml`, then the default. So a machine that exports the
+variable ignores the pin *while looking pinned* — every gate green, every
+session confident it matches CI, and the same skew as before wearing the
+fix's clothes.
+
+This workstation exports it: `~/.config/mise/config.toml` has a `rust = "..."`
+pin, and mise puts `RUSTUP_TOOLCHAIN` into every shell it starts. When the
+repository pin moves, **that file has to move with it**, or nothing local
+changes. This was found while fixing issue #38 — the pin was added, the check
+passed, and `rustc --version` still printed the old compiler.
+
+`scripts/check-toolchain-pinned.py` reports the skew rather than failing on
+it, and `--strict` makes it fatal for anyone who wants that. It is deliberately
+not fatal by default: a check whose exit status depends on a developer's shell
+would make CI's verdict depend on the runner's environment, which is the
+thing being fixed.
+
+**Why an exact version and not `stable`.** `channel = "stable"` in
+`rust-toolchain.toml` floats exactly as hard as the `rustup default stable`
+it replaced. The point of the pin is that the compiler changing under the
+project looks like a commit somebody made rather than like weather: rustc
+1.98.0 tightened `unused_imports` for redundant glob imports, flagged
+`use adw::prelude::*` in `compose::tests`, and turned main red on a lint
+nobody wrote — and it was unreproducible locally by construction. The check
+refuses a channel name in that file for this reason.
+
+**Bumping it.** Change `rust-toolchain.toml`, change the mise pin to match,
+and expect a cold rebuild: a different compiler shares no artifacts with the
+old one, so the shared `target/` is dead weight the moment the pin moves.
+Sweep it in the same change rather than letting both toolchains' output
+accumulate — that directory reached 232 GB before anyone looked.
+
+
 ## Working in a shared git tree
 
 These matter regardless of whether work is tracked in beads or GitHub Issues
