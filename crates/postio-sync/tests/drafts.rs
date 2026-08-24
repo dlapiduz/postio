@@ -366,3 +366,80 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
         "the draft on the server has to carry every recipient the user typed"
     );
 }
+
+// ---------------------------------------------------------------------------
+// And back down again
+// ---------------------------------------------------------------------------
+
+/// The Drafts mailbox as the sidebar and the message list see it: the rows
+/// `messages` holds for that folder, subject first.
+fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
+    let query = postio_storage::repository::ListQuery {
+        scope: postio_storage::repository::ListScope::Mailbox(mailbox),
+        limit: 50,
+        after: None,
+    };
+    postio_storage::repository::MessageRepository::new(connection)
+        .page(&query)
+        .expect("a page of the Drafts folder")
+        .into_iter()
+        .map(|row| row.subject.unwrap_or_default())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
+    // The whole of #51, end to end. The composer appends the draft; the next
+    // sync pass over Drafts fetches it straight back; without the skip the
+    // user's half-written message is in the folder twice — once as the live
+    // buffer they are typing into and once as a read-only snapshot of it.
+    //
+    // The second message is another client's draft. It has no local draft row,
+    // and it is the reason the folder is worth syncing at all.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let blobs = TempBlobs::new();
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("Drafts").message(postio_imap::backend::MockMessage::new(
+                b"From: Ada Lovelace <ada@example.com>\r\n\
+                  Subject: Written on the phone\r\n\r\nStarted elsewhere.\r\n"
+                    .to_vec(),
+            )),
+        )
+        .build();
+    backend.connect().await.expect("connect");
+
+    let mut draft = a_draft(&account, "Tide gate interlock");
+    DraftRepository::new(&connection)
+        .save_and_sync(&mut draft, at(9))
+        .expect("save and queue");
+    drain(&connection, &backend, &blobs.store, &account).await;
+    assert_eq!(
+        exists(&backend, "Drafts").await,
+        2,
+        "the server now holds both, which is what the pass below will fetch"
+    );
+
+    let mailbox = MailboxRepository::new(&connection)
+        .get(drafts_mailbox)
+        .expect("a read")
+        .expect("the Drafts folder");
+    postio_sync::sync_mailbox(
+        &connection,
+        &backend,
+        &mailbox,
+        &postio_imap::cancel::CancelToken::new(),
+        |_progress: postio_sync::Progress| {},
+    )
+    .await
+    .expect("a sync pass over Drafts");
+
+    assert_eq!(
+        listed(&connection, drafts_mailbox),
+        vec!["Written on the phone".to_owned()],
+        "the composer owns the draft this client wrote; the folder shows the \
+         one it did not"
+    );
+}
