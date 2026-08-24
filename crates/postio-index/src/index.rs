@@ -42,6 +42,15 @@ use crate::error::Result;
 /// start. Requires `PRAGMA foreign_keys = ON` (set by
 /// `postio_storage::db::configure`) so that deleting a message cascades into
 /// `search_documents`.
+///
+/// # It indexes what is already there
+///
+/// Creating the triggers is only half of it. They see mail that arrives after
+/// them, and this index is retro-fitted onto stores that already hold tens of
+/// thousands of messages — so the schema ends with a backfill over `messages`,
+/// and running it again is a no-op rather than a second copy. Everything
+/// except message *bodies*: those live in the blob store, no trigger and no
+/// `SELECT` can reach them, and [`index_body`] is how they arrive.
 pub fn ensure_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(SCHEMA)?;
     Ok(())
@@ -221,6 +230,39 @@ BEGIN
     INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames)
     VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames);
 END;
+
+-- Everything that was already here.
+--
+-- The triggers above only see mail that arrives *after* them, and this index
+-- is being retro-fitted onto stores holding tens of thousands of messages: on
+-- a real account the first run is precisely the run where nothing has arrived
+-- yet. Triggers alone would leave search returning nothing on every existing
+-- store, for ever, which is the mistake migration 0003 made with the cached
+-- mailbox counts and had to come back and fix.
+--
+-- `ON CONFLICT DO NOTHING` rather than a guard on the whole statement: this
+-- runs on every start, and the second run has to be a cheap no-op rather than
+-- a second copy of every document. The `INSERT` into `search_documents` fires
+-- the FTS triggers below, so `messages_fts` follows without being touched
+-- here.
+INSERT INTO search_documents (message_id, subject, sender, recipients, filenames)
+SELECT
+    m.id,
+    coalesce(m.subject, ''),
+    coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || r.address, ' ')
+                FROM recipients r WHERE r.message_id = m.id AND r.kind = 'from'), ''),
+    coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || r.address, ' ')
+                FROM recipients r
+               WHERE r.message_id = m.id AND r.kind IN ('to', 'cc', 'bcc')), ''),
+    coalesce((SELECT group_concat(a.filename, ' ')
+                FROM attachments a
+               WHERE a.message_id = m.id AND a.filename IS NOT NULL), '')
+FROM messages m
+-- `WHERE true` is not decoration: SQLite cannot tell an `ON CONFLICT` clause
+-- from the tail of the SELECT's own WHERE without it, and rejects the
+-- statement as a syntax error near `DO`.
+WHERE true
+ON CONFLICT (message_id) DO NOTHING;
 ";
 
 #[cfg(test)]
