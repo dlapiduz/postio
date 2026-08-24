@@ -1182,6 +1182,12 @@ async fn sync(
         repaint: Repaint::new(parts.events.clone(), mailbox),
     };
     let cancel = postio_imap::cancel::CancelToken::new();
+    // Populated only by the incremental branch below: a first sync or a
+    // rebuild can insert thousands of messages that are new to *this
+    // store*, not new mail the user has not seen arrive — see
+    // `Event::NewMail`'s doc comment and postio-du6's "no notification
+    // storm" acceptance criterion.
+    let mut arrived: Vec<MessageId> = Vec::new();
     let outcome = if synced_before {
         resync::resync_mailbox(
             &connection,
@@ -1191,7 +1197,12 @@ async fn sync(
             |progress| committed.batch(progress),
         )
         .await
-        .map(summarise_resync)
+        .map(|outcome| {
+            if let resync::Outcome::Incremental { arrived: ids, .. } = &outcome {
+                arrived = ids.clone();
+            }
+            summarise_resync(outcome)
+        })
     } else {
         initial::sync_mailbox(
             &connection,
@@ -1235,6 +1246,12 @@ async fn sync(
                     });
                 }
             }
+            if !arrived.is_empty() {
+                parts.events.emit(Event::NewMail {
+                    mailbox,
+                    messages: arrived,
+                });
+            }
             Ok(summary)
         }
         Err(error) => {
@@ -1262,7 +1279,9 @@ fn summarise_resync(outcome: resync::Outcome) -> SyncSummary {
         // An incremental pull counts what moved rather than what it wrote:
         // a flag change is an update, and a message the server no longer has
         // is a row removed. Both mean the list showing this folder is stale.
-        resync::Outcome::Incremental { changed, vanished } => SyncSummary {
+        resync::Outcome::Incremental {
+            changed, vanished, ..
+        } => SyncSummary {
             inserted: 0,
             updated: changed + vanished,
             threaded: 0,
