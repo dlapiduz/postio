@@ -85,6 +85,48 @@ pub fn build(
     attachments: &[OutgoingAttachment<'_>],
     in_reply_to: Option<&Message>,
 ) -> BuiltMessage {
+    assemble(draft, identity, attachments, in_reply_to, Bcc::Omit)
+}
+
+/// Builds `draft` into the copy filed in the account's **Drafts** mailbox.
+///
+/// Identical to [`build`] except for one header: this one carries `Bcc`.
+///
+/// The rule [`build`] exists to enforce — that a bcc'd address never travels
+/// inside the message — is about the bytes handed to `DATA`, which reach every
+/// `To` and `Cc` recipient as they stand. A copy in the user's own Drafts
+/// folder reaches nobody. Dropping `Bcc` there would instead lose the
+/// recipients the user typed: a draft picked up on their phone would look
+/// finished and send to fewer people than they asked for, silently.
+///
+/// The two entry points are separate rather than a boolean because the wrong
+/// answer to that boolean discloses a bcc'd address to every other recipient,
+/// and that is not a mistake worth making reachable by passing `true`.
+pub fn build_draft(
+    draft: &Draft,
+    identity: &Identity,
+    attachments: &[OutgoingAttachment<'_>],
+    in_reply_to: Option<&Message>,
+) -> BuiltMessage {
+    assemble(draft, identity, attachments, in_reply_to, Bcc::Include)
+}
+
+/// Whether the assembled message carries a `Bcc` header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bcc {
+    /// For bytes that go to a recipient. See [`build`].
+    Omit,
+    /// For the copy in the user's own Drafts folder. See [`build_draft`].
+    Include,
+}
+
+fn assemble(
+    draft: &Draft,
+    identity: &Identity,
+    attachments: &[OutgoingAttachment<'_>],
+    in_reply_to: Option<&Message>,
+    bcc: Bcc,
+) -> BuiltMessage {
     let message_id = generate_message_id(identity.address.domain().unwrap_or(FALLBACK_DOMAIN));
 
     let mut builder = MessageBuilder::new()
@@ -106,11 +148,17 @@ pub fn build(
     if let Some(cc) = recipient_list(&draft.cc) {
         builder = builder.cc(cc);
     }
-    // Deliberately no Bcc header: whatever bytes DATA carries go to every
-    // envelope recipient as-is, so writing one here would hand every To/Cc
-    // recipient the bcc'd list — the opposite of what Bcc means. A bcc'd
-    // address is still a `RCPT TO` the caller adds to the envelope; it is
-    // just never inside the message itself. See `postio-sync`'s send path.
+    // Bcc is written only for the Drafts copy. Whatever bytes DATA carries go
+    // to every envelope recipient as-is, so a Bcc header on an outgoing
+    // message would hand every To/Cc recipient the bcc'd list — the opposite
+    // of what Bcc means. A bcc'd address is still a `RCPT TO` the caller adds
+    // to the envelope; it is just never inside a message anybody else
+    // receives. See `postio-sync`'s send path, and `build_draft`.
+    if bcc == Bcc::Include
+        && let Some(addresses) = recipient_list(&draft.bcc)
+    {
+        builder = builder.bcc(addresses);
+    }
     if let Some(text) = &draft.body.text {
         builder = builder.text_body(text.clone());
     }
@@ -273,6 +321,39 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(&built.raw).contains("quiet@example.com"),
             "the bcc'd address must not appear in the message at all, only in the envelope"
+        );
+    }
+
+    #[test]
+    fn the_drafts_copy_keeps_the_bcc_the_sent_bytes_drop() {
+        // The Drafts folder is the user's own mailbox and reaches nobody. A
+        // draft picked up on another client with its Bcc silently gone would
+        // look finished and send to fewer people than the user asked for.
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
+
+        let filed = mime::parse(&build_draft(&draft, &ada, &[], None).raw);
+        let sent = mime::parse(&build(&draft, &ada, &[], None).raw);
+
+        assert_eq!(
+            filed.bcc.first().map(|address| address.address.as_str()),
+            Some("quiet@example.com")
+        );
+        assert!(
+            sent.bcc.is_empty(),
+            "and the two entry points must not have grown into one"
+        );
+    }
+
+    #[test]
+    fn a_draft_with_no_bcc_grows_no_empty_header() {
+        let ada = identity("ada@example.com");
+        let built = build_draft(&draft(), &ada, &[], None);
+
+        assert!(
+            !String::from_utf8_lossy(&built.raw).contains("Bcc"),
+            "an empty header is a header a parser still has to explain"
         );
     }
 

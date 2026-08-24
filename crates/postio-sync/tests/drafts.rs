@@ -322,3 +322,47 @@ async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails
     assert!(report.failed.is_empty(), "{report:?}");
     assert_eq!(exists(&backend, "Drafts").await, 0);
 }
+
+#[tokio::test]
+async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
+    // The Drafts folder is the user's own and reaches nobody. Losing Bcc
+    // there loses recipients they typed; carrying it in the *sent* bytes
+    // would hand every other recipient the list. Both matter, and they are
+    // different bytes.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let blobs = TempBlobs::new();
+    let backend = a_server("Drafts").await;
+
+    let mut draft = a_draft(&account, "Tide gate interlock");
+    draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
+    DraftRepository::new(&connection)
+        .save_and_sync(&mut draft, at(9))
+        .expect("save and queue");
+
+    drain(&connection, &backend, &blobs.store, &account).await;
+
+    let stored = DraftRepository::new(&connection)
+        .get(draft.id)
+        .expect("get")
+        .expect("the draft");
+    let uid = stored.server.uid.expect("the copy landed");
+
+    let mut sink = postio_imap::backend::VecSink::new();
+    backend
+        .fetch_body(
+            "Drafts",
+            uid,
+            &mut sink,
+            &postio_imap::cancel::CancelToken::new(),
+        )
+        .await
+        .expect("read the copy back");
+
+    let raw = String::from_utf8_lossy(sink.as_slice()).into_owned();
+    assert!(
+        raw.contains("quiet@example.com"),
+        "the draft on the server has to carry every recipient the user typed"
+    );
+}
