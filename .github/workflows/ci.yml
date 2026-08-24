@@ -30,6 +30,19 @@ env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
 
+  # A cold debug build of this graph -- GTK, WebKit, ICU, and ~25 test
+  # binaries that each statically link the lot -- ran a runner out of disk and
+  # killed lld with SIGBUS mid-link. DWARF is the bulk of it, and none of it
+  # earns its keep here: line tables still give backtraces function names and
+  # line numbers, which is everything CI reads.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+  # .cargo/config.toml pins `jobs = 2` because four Claude sessions share one
+  # eight-core workstation. That reasoning does not travel: a runner is one
+  # job on its own machine, and inheriting the limit throttled CI to a quarter
+  # of the box for no benefit. CARGO_BUILD_JOBS overrides the config file.
+  CARGO_BUILD_JOBS: 4
+
 jobs:
   fmt:
     name: rustfmt
