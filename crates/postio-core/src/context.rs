@@ -28,7 +28,11 @@ pub enum Context {
     Thread,
     /// The reading pane showing one message.
     Reader,
-    /// Compose, which takes over the reading pane rather than opening a window.
+    /// Compose: the reading pane by default, or a window of its own on ask.
+    ///
+    /// One context either way. The composer is the same widget reparented, so
+    /// a binding that works in the pane works in the detached window without
+    /// a second context to keep in step -- see `CommandId::DetachComposer`.
     Composer,
     /// The search field and its results.
     Search,
