@@ -50,6 +50,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, thread};
 
+use crate::invocation::{EventEnvelope, InvocationId};
 use crate::{Command, Event};
 
 /// How long [`Bridge::shutdown`] waits for in-flight work before it stops
@@ -136,17 +137,59 @@ impl fmt::Display for RuntimeStopped {
 
 impl std::error::Error for RuntimeStopped {}
 
+/// One command on the queue, and whether anybody is waiting on the answer.
+///
+/// Private: the queue's shape is the bridge's business, and both ways of
+/// sending are methods on [`CommandSender`].
+#[derive(Debug)]
+struct Queued {
+    command: Command,
+    invocation: Option<InvocationId>,
+}
+
 /// The UI's end of the command channel: clone it into every widget.
 ///
 /// [`send`](CommandSender::send) never blocks and never awaits, so it is safe
 /// to call from a GTK signal handler.
 #[derive(Debug, Clone)]
-pub struct CommandSender(async_channel::Sender<Command>);
+pub struct CommandSender(async_channel::Sender<Queued>);
 
 impl CommandSender {
     /// Queue a command for the runtime. Returns immediately.
+    ///
+    /// Fire-and-forget: the events it causes are indistinguishable from
+    /// everything else on the stream. That is what the frontend wants — a
+    /// repaint does not care which keystroke caused it — and it is what
+    /// [`send_tracked`](Self::send_tracked) is for when it is not.
     pub fn send(&self, command: Command) -> Result<(), RuntimeStopped> {
-        self.0.try_send(command).map_err(|_| RuntimeStopped)
+        self.0
+            .try_send(Queued {
+                command,
+                invocation: None,
+            })
+            .map_err(|_| RuntimeStopped)
+    }
+
+    /// Queue a command and get back the id its events will carry.
+    ///
+    /// For a caller that has to know how *its own* command ended while the
+    /// sync engine is emitting events of its own: read the stream with
+    /// [`EventStream::next_tracked`] and keep what
+    /// [`EventEnvelope::is_from`] agrees with. Exactly one
+    /// [`Event::InvocationFinished`] arrives per tracked send, whatever
+    /// happened, so waiting for the answer terminates.
+    ///
+    /// Costs the untracked path nothing: an id is one relaxed increment, and
+    /// it is only taken when somebody asks.
+    pub fn send_tracked(&self, command: Command) -> Result<InvocationId, RuntimeStopped> {
+        let invocation = InvocationId::next();
+        self.0
+            .try_send(Queued {
+                command,
+                invocation: Some(invocation),
+            })
+            .map_err(|_| RuntimeStopped)?;
+        Ok(invocation)
     }
 
     /// Whether the runtime has stopped accepting commands.
@@ -159,8 +202,16 @@ impl CommandSender {
 ///
 /// Cloneable and `Send`, so a spawned background task can keep reporting after
 /// the handler that started it has returned.
+///
+/// A sink may be *tagged* with the invocation it is answering, in which case
+/// everything emitted through it — including from a task spawned much later —
+/// carries that origin. That is what makes a body fetch attributable to the
+/// command that asked for it.
 #[derive(Debug, Clone)]
-pub struct EventSink(async_channel::Sender<Event>);
+pub struct EventSink {
+    events: async_channel::Sender<EventEnvelope>,
+    origin: Option<InvocationId>,
+}
 
 impl EventSink {
     /// Tell the frontend something happened. Never blocks.
@@ -169,12 +220,35 @@ impl EventSink {
     /// window closed while this handler was in flight. That is an ordinary
     /// teardown race, not an error worth propagating.
     pub fn emit(&self, event: Event) -> bool {
-        self.0.try_send(event).is_ok()
+        self.events
+            .try_send(EventEnvelope {
+                event,
+                origin: self.origin,
+            })
+            .is_ok()
+    }
+
+    /// The invocation everything emitted through this sink answers.
+    pub fn origin(&self) -> Option<InvocationId> {
+        self.origin
+    }
+
+    /// The same channel, answering `invocation`.
+    ///
+    /// The bridge tags a handler's sink for it. This is here for the
+    /// extension path, which dispatches through
+    /// [`Dispatcher::dispatch_ext`](crate::dispatch::Dispatcher::dispatch_ext)
+    /// rather than through the command queue.
+    pub fn with_origin(&self, invocation: InvocationId) -> Self {
+        EventSink {
+            events: self.events.clone(),
+            origin: Some(invocation),
+        }
     }
 
     /// Whether anyone is still listening.
     pub fn is_closed(&self) -> bool {
-        self.0.is_closed()
+        self.events.is_closed()
     }
 }
 
@@ -185,20 +259,23 @@ impl EventSink {
 /// out to several widgets is the frontend's job, and it has a main loop to do
 /// it on.
 #[derive(Debug)]
-pub struct EventStream(async_channel::Receiver<Event>);
+pub struct EventStream(async_channel::Receiver<EventEnvelope>);
 
 impl EventStream {
     /// Await the next event; `None` once the runtime has stopped and every
     /// queued event has been read.
     ///
-    /// This is what `glib::spawn_future_local` drives on the GTK thread.
+    /// This is what `glib::spawn_future_local` drives on the GTK thread. It
+    /// discards the correlation envelope, because a repaint does not care
+    /// which send caused it; a caller that does care reads
+    /// [`next_tracked`](Self::next_tracked) instead.
     pub async fn next(&self) -> Option<Event> {
-        self.0.recv().await.ok()
+        self.next_tracked().await.map(|envelope| envelope.event)
     }
 
     /// Take an event if one is already queued, without awaiting.
     pub fn try_next(&self) -> Option<Event> {
-        self.0.try_recv().ok()
+        self.try_next_tracked().map(|envelope| envelope.event)
     }
 
     /// Block until the next event arrives; `None` once the runtime has stopped
@@ -207,6 +284,22 @@ impl EventStream {
     /// For headless consumers — tests, a future CLI. Never call it from the UI
     /// thread: that is precisely the freeze this module exists to prevent.
     pub fn next_blocking(&self) -> Option<Event> {
+        self.next_blocking_tracked().map(|envelope| envelope.event)
+    }
+
+    /// [`next`](Self::next), keeping the invocation each event answers.
+    pub async fn next_tracked(&self) -> Option<EventEnvelope> {
+        self.0.recv().await.ok()
+    }
+
+    /// [`try_next`](Self::try_next), keeping the invocation each event answers.
+    pub fn try_next_tracked(&self) -> Option<EventEnvelope> {
+        self.0.try_recv().ok()
+    }
+
+    /// [`next_blocking`](Self::next_blocking), keeping the invocation each
+    /// event answers.
+    pub fn next_blocking_tracked(&self) -> Option<EventEnvelope> {
         self.0.recv_blocking().ok()
     }
 
@@ -233,7 +326,13 @@ impl EventStream {
 /// tests that want the frontend's end without starting one.
 pub fn event_channel() -> (EventSink, EventStream) {
     let (sender, receiver) = async_channel::unbounded();
-    (EventSink(sender), EventStream(receiver))
+    (
+        EventSink {
+            events: sender,
+            origin: None,
+        },
+        EventStream(receiver),
+    )
 }
 
 /// How to build a [`Bridge`]. The defaults are what the application uses.
@@ -292,16 +391,27 @@ impl BridgeBuilder {
 
         // Unbounded in both directions: the UI must never block on a full
         // queue, and a burst of IDLE updates must never stall the sync engine.
-        let (command_tx, command_rx) = async_channel::unbounded::<Command>();
-        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
+        let (command_tx, command_rx) = async_channel::unbounded::<Queued>();
+        let (event_tx, event_rx) = async_channel::unbounded::<EventEnvelope>();
 
         let handler = Arc::new(handler);
-        let sink = EventSink(event_tx);
+        let sink = EventSink {
+            events: event_tx,
+            origin: None,
+        };
         let pump = runtime.spawn(async move {
             // `recv` keeps yielding buffered commands after the sender closes,
             // so everything already queued at quit still gets handled.
-            while let Ok(command) = command_rx.recv().await {
-                handler.handle(command, sink.clone()).await;
+            while let Ok(queued) = command_rx.recv().await {
+                // Tagging the sink rather than the handler is what makes
+                // tracking free for everyone else: the handler signature does
+                // not change, and a handler that never heard of correlation
+                // still emits attributable events.
+                let sink = match queued.invocation {
+                    Some(invocation) => sink.with_origin(invocation),
+                    None => sink.clone(),
+                };
+                handler.handle(queued.command, sink).await;
             }
         });
 
@@ -323,7 +433,7 @@ impl BridgeBuilder {
 pub struct Bridge {
     runtime: Option<tokio::runtime::Runtime>,
     pump: Option<tokio::task::JoinHandle<()>>,
-    commands: async_channel::Sender<Command>,
+    commands: async_channel::Sender<Queued>,
     shutdown_timeout: Duration,
 }
 

@@ -1,4 +1,7 @@
 /target
+# A private target directory, which docs/engineering-notes.md recommends for a
+# result you are going to stake a merge on. See #76.
+/target-*/
 **/*.rs.bk
 *.pdb
 .flatpak-builder/
