@@ -20,6 +20,18 @@ jobs = 2
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--threads=2"]
 
+# Every test binary runs on a compositor of its own, so `cargo test` is
+# headless by default and nobody has to remember a wrapper. postio-gtk has
+# ~20 test binaries that present real windows; without this they land on
+# whoever is at the keyboard, steal focus mid-keystroke, and — until it was
+# fixed — left a save dialog behind that outlived the run.
+#
+# The runner fails open: no mutter, no XDG_RUNTIME_DIR, or a compositor that
+# will not start, and it execs the binary unchanged. POSTIO_HEADLESS=0
+# bypasses it. It fronts `cargo run` too — use scripts/run-isolated.sh for the
+# application, which executes the built binary directly and never comes here.
+runner = "scripts/headless-runner.sh"
+
 # rustc and the linker write intermediate files to TMPDIR, which on this
 # machine is a tmpfs — memory, with a 6 GB quota. Linking the GTK stack put
 # gigabytes of scratch into RAM and then failed with "Disk quota exceeded",
