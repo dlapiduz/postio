@@ -1118,6 +1118,60 @@ Both scripts have self-tests that CI runs: `test-ci-expected-workflows.py`,
 and `test-wait-for-checks.py`, which drives the wait against a stubbed `gh`
 so the registration race is reproducible instead of something you wait for.
 
+## The shared cargo target directory
+
+**It hands you other worktrees' artifacts, and the compile error then names a
+file that is correct.** This is not contention and not a stale cache — it was
+demonstrated end to end while landing #82.
+
+`cargo test -p postio-app` in the `issue-82` worktree failed with:
+
+```
+error[E0308]: mismatched types
+   --> crates/postio-gtk/src/reader/view.rs:438:13
+    |
+438 |             sanitized.remote_blocked,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^ expected `bool`, found `u32`
+```
+
+That worktree's own `postio-body/src/sanitize.rs` declares
+`pub remote_blocked: bool`, and its `postio-gtk` is right to expect a `bool`.
+The `u32` exists in exactly one place on this machine: the `issue-58`
+worktree, where another session is mid-refactor turning that flag into a
+count. So `postio-gtk` from one worktree was compiled against `postio-body`
+from another, through the shared `CARGO_TARGET_DIR` that CLAUDE.md tells every
+session to set.
+
+The same run had produced a second symptom earlier —
+`no variant ... named DetachComposer found for enum postio_core::CommandId`,
+against a `command.rs` that declares it four times — from worktrees still on
+an older `main`. Both are the same fault wearing different clothes.
+
+Three things follow, and the third is the one that costs time:
+
+- **`cargo build --workspace` succeeding proves nothing about the next run.**
+  It depends on what the other sessions happened to have built by then.
+- **Building the failing crate alone is often clean**, because a narrower
+  build reuses less. `cargo clippy -p postio-gtk` passed while
+  `cargo clippy -p postio-app` failed on `postio-gtk`, minutes apart.
+- **Do not go looking for the bug.** Check `pgrep -c 'cargo|rustc'` and
+  whether the type in the error message exists in a *sibling worktree*
+  (`grep -r <symbol> ~/src/postio-worktrees/*/crates/`). If it does, the
+  error is about the build, not the code.
+
+The reliable fix is a `CARGO_TARGET_DIR` of your own for that run. It costs a
+full duplicate build, which is why it is not the default — but see the next
+entry before choosing where to put it. Tracked as #178.
+
+**Do not put a cargo target directory under `/tmp`.** It is a 16 GB *tmpfs* on
+this box — RAM, not disk. A debug build of this workspace fills it, and what
+happens then is not an out-of-space message from cargo: every subsequent
+command in the session fails, `git` exits 128, and even `echo` cannot write
+its output, which reads like the machine has died rather than like a full
+filesystem. `df -h /tmp` is the one-line diagnosis and `rm -rf` the fix. If
+you need a private target directory, put it under `/home`, which has room,
+and delete it when you are done -- it is a full duplicate of the build.
+
 ## Working in a shared git tree
 
 These matter regardless of whether work is tracked in beads or GitHub Issues
