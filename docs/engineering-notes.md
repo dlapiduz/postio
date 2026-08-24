@@ -690,6 +690,44 @@ never a read. The two counts also separate "this mailbox is empty" from "these
 already agree", which are different sentences.
 
 
+**A draft exists twice, and the composer owns it.** Saving a draft appends it
+to the account's Drafts mailbox, and the next sync pass over that folder
+fetches it straight back — so the same unfinished message is both a `drafts`
+row (the composer's live buffer, autosaved as the user types) and a `messages`
+row (a read-only snapshot of that buffer as of the last append). #51.
+
+`MessageRepository::upsert_batch` therefore drops from its batch any message
+whose `(mailbox, UIDVALIDITY, UID)` a local draft row already claims. Three
+things about the shape of that:
+
+- **It takes `&mut Vec` and shortens it**, rather than skipping quietly. Both
+  sync passes go on to `for message in &batch` for threading and for recording
+  correspondents; `resync.rs` also pushes each into `arrived`, which is what
+  notifies. A skip that left the message in the batch would thread a row that
+  was never written and announce the user's own draft as new mail.
+- **It is in the store, not in the two passes that call it.** A skip each
+  caller had to remember is one a third caller would not, which is the same
+  argument the `0003_mailbox_counts` triggers make about `recount`.
+- **It matches on the mailbox too.** UIDs are per-mailbox, so the message that
+  happens to be number 7 in the inbox has nothing to do with the draft that is
+  number 7 in Drafts, and matching on the number alone hides mail.
+
+The skip alone does not close the race where a pass fetched the appended copy
+before `set_server_copy` recorded where it landed: the row is already there,
+every later pass finds it and keeps it current, and the duplicate is permanent.
+So claiming the copy is also what disowns the row — `DraftRepository::set_server_copy`
+deletes any message row for the same server copy in the account's Drafts folder.
+
+A draft whose append the server would not locate (no `UIDPLUS`) has no `uid`,
+matches nothing here, and appears as an ordinary message. That is deliberate
+and is `postio-sync::drafts`' standing rule: it flags the folder for a resync
+rather than guessing which message in Drafts is the one it just wrote.
+
+The consequence is that your own draft is in the composer and nowhere else —
+the Drafts folder lists other clients' drafts only. That is #166, and it is the
+deliberate other half of this decision rather than an oversight.
+
+
 ## Testing infrastructure
 
 **A tokio future awaited on the GTK main context type-checks, passes clippy,

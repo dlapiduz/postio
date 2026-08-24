@@ -304,6 +304,26 @@ impl<'a> DraftRepository<'a> {
                 id: id.get(),
             });
         }
+        // Claiming the copy is also what disowns any message row for it. A
+        // sync pass that fetched the appended draft before this ran left an
+        // ordinary row behind, and `upsert_batch`'s skip cannot reach it —
+        // that only declines to *create* one, and every later pass would find
+        // this row and keep it current for ever. See #51.
+        //
+        // Scoped to the account's Drafts mailbox because UIDs are per-mailbox:
+        // the message that happens to be number 7 in the inbox is mail.
+        self.connection.execute(
+            "DELETE FROM messages
+               WHERE uid = ?2 AND uid_validity = ?3
+                 AND mailbox_id IN (SELECT mailboxes.id FROM mailboxes
+                                      JOIN drafts ON drafts.account_id = mailboxes.account_id
+                                     WHERE drafts.id = ?1 AND mailboxes.role = 'drafts')",
+            params![
+                id.get(),
+                uid.map(|uid| i64::from(uid.get())),
+                uid_validity.map(|validity| i64::from(validity.get())),
+            ],
+        )?;
         Ok(())
     }
 
