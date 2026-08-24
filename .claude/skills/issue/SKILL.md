@@ -167,7 +167,14 @@ scripts/issue-release.sh --stale          # sweep claims whose worktree is gone
 It refuses to remove a worktree with uncommitted changes. A pushed branch is
 recoverable; a deleted worktree is not.
 
-Then **claim the next issue.** Finishing an issue is not finishing a session.
+Then **claim the next issue, without asking.** Finishing an issue is not
+finishing a session, and "shall I pick up another?" is not a question — the
+answer is written down and it is yes. A session that stops to ask has thrown
+away the rest of its context waiting for a reply that may be hours away.
+
+Stop only when `issue-claim.sh` reports nothing ready, when a decision is
+genuinely the maintainer's, or when context is nearly gone. Land your work
+first in every case.
 
 ## When something is in the way
 
