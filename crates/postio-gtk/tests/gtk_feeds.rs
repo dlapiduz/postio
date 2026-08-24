@@ -193,7 +193,12 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         total: 100,
     });
     pump();
-    assert_eq!(status_text(&window).0, "syncing 30% · imap");
+    // Not a percentage: the denominator is an upper bound a pass routinely
+    // finishes short of, so the count is the honest half. `postio-qhz.6`.
+    assert_eq!(
+        status_text(&window),
+        ("syncing · imap".to_string(), "fetched 30".to_string())
+    );
 
     feeds.apply(&Event::Error {
         message: "app-specific password rejected".to_string(),
