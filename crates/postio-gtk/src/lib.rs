@@ -85,6 +85,7 @@ pub mod sidebar;
 pub mod startup;
 pub mod state;
 pub mod style;
+pub mod thread;
 pub mod toast;
 pub mod tokens;
 pub mod window;
