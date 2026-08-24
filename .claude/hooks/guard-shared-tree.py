@@ -138,6 +138,24 @@ RULES: list[tuple[str, str]] = [
 ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
 
 
+def contains(parent: str, child: str) -> bool:
+    """Is `child` inside directory `parent`?
+
+    Compared as paths, not as strings. A plain startswith() would say that
+    /home/x/src/postio-worktrees/issue-27 lives inside /home/x/src/postio,
+    which is how the worktree exemption silently failed to apply the first
+    time it was written.
+    """
+    if not parent or not child:
+        return False
+    try:
+        parent = os.path.realpath(parent)
+        child = os.path.realpath(child)
+    except OSError:
+        return False
+    return parent == child or child.startswith(parent.rstrip(os.sep) + os.sep)
+
+
 def strip_heredocs(command: str) -> str:
     """Remove heredoc bodies so documenting a command is not running it."""
     out: list[str] = []
@@ -222,14 +240,30 @@ def main() -> int:
     if os.environ.get("POSTIO_GUARD", "").lower() in {"off", "0", "false"}:
         return 0
 
-    # Only guard the shared repository. A session doing scratch git work in
-    # /tmp is not a hazard to anyone, and blocking it is pure friction.
+    # Only guard the SHARED repository. Two kinds of place are exempt.
+    #
+    # A private per-issue worktree (scripts/issue-claim.sh) is the important
+    # one: every rule below exists because sessions share one tree and one
+    # index, and inside a worktree none of that is true. `git add -A` there
+    # stages only that agent's own work. Blocking it would make the worktree
+    # flow strictly worse than the shared tree it replaces.
+    #
+    # And scratch git work outside the project is nobody's hazard.
     project = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    worktrees = os.environ.get(
+        "POSTIO_WORKTREES", os.path.expanduser("~/src/postio-worktrees")
+    )
+
     first_cd = re.match(r"\s*cd\s+(\S+)", command)
-    if first_cd and project:
-        target = first_cd.group(1).strip("\"'")
-        if not target.startswith(project) and target.startswith("/"):
-            return 0
+    cd_target = first_cd.group(1).strip("\"'") if first_cd else ""
+    # Where the command will actually run: an explicit leading `cd` wins,
+    # otherwise the shell's own directory.
+    where = cd_target if cd_target.startswith("/") else (payload.get("cwd") or "")
+
+    if contains(worktrees, where):
+        return 0
+    if project and where and not contains(project, where):
+        return 0
 
     haystack = strip_quoted(strip_heredocs(command))
 
