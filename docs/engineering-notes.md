@@ -344,15 +344,47 @@ spans) and `Validation::status_line()` renders `"valid · parsed in 2 ms"`.
 `std::sync::Condvar` when the pool is exhausted — it is not async-aware. The
 sync engine (`postio_runtime::engine::run`) deliberately runs on a
 single-thread tokio runtime with no other OS thread to make progress while
-blocked. Any future work that checks out more than one connection
-concurrently from tasks running on that thread (e.g. a parallel mailbox sync)
-must acquire every connection it needs *sequentially* before spawning
-concurrent work, and must never call `pool.get()` from inside a spawned local
-task once concurrent work has started — otherwise two tasks can both block on
-the same condvar with nothing left on that thread able to run and release
-one: a genuine self-deadlock, not ordinary contention.
+blocked. Work that checks out more than one connection concurrently from
+tasks running on that thread must acquire every connection it needs
+*sequentially* before starting concurrent work, and must never call
+`pool.get()` from inside concurrent work once it has started — otherwise two
+tasks can both block on the same condvar with nothing left on that thread able
+to run and release one: a genuine self-deadlock, not ordinary contention.
 `DEFAULT_MAX_CONNECTIONS` is 4, shared with UI-thread reads, so headroom is
-thin.
+thin. `engine::sync_wave` is the one place that does this and is written to
+that rule (#32): it pops its mailboxes and takes all of its connections in a
+plain `for` loop, and only then builds the `FuturesUnordered`.
+
+**Concurrent mailbox sync: what bounds it, and what it must not break** (#32).
+`engine::sync_wave` runs `sync_lanes(pool)` mailbox passes at once — the
+database pool's size less two reserved connections (UI reads, engine
+housekeeping), clamped to `MAX_SYNC_LANES = 3`. With the default pool of four
+that is **two**. Three constraints set those numbers, and none of them is
+arbitrary:
+- *The database pool is the scarcer one.* A pass holds its SQLite connection
+  for the whole pass, and the UI thread reads through the same pool. Take
+  them all and the message list stops answering during a first sync.
+- *More lanes than IMAP connections is slower, not faster.* The IMAP pool
+  defaults to four with one lane held by `IDLE`, and a pass that does not get
+  a connection of its own shares one — paying a `SELECT` per batch, because
+  `postio_imap::imap::selection` caches the selection *per connection*.
+- *Passes are concurrent, never parallel.* The engine's runtime is
+  current-thread and the futures are polled by one `FuturesUnordered` on one
+  task, so two passes cannot both be inside `initial::enumerate`'s batch
+  transaction at once — there is no await between `unchecked_transaction()`
+  and `commit()`. Do not add one. Those transactions are `BEGIN DEFERRED` and
+  read before they write, so genuinely simultaneous writers would meet
+  `SQLITE_BUSY_SNAPSHOT`, which the busy handler does *not* cover.
+
+Two things had to change to survive concurrency, and would have to change
+again for anything else that overlaps passes. `StatusTracker` keeps the set of
+passes in flight and reports the foremost (earliest-started, i.e. highest
+`order::sync_priority`), because one pass finishing is no longer the account
+going idle. And a wave cancels itself the moment a job arrives — the shared
+`CancelToken` — with the interrupted mailbox pushed back on the front of
+`to_sync`; a first sync is minutes long and the user must not queue behind it.
+An interrupted pass keeps everything it committed and resumes, which is
+`initial`'s resumability doing its job.
 
 **io-imap binding rules** (full ADR: `docs/decisions/0001-imap-library.md`).
 1. Pin `io-imap = "=0.6.0"`, `default-features = false` + `"client"`; never

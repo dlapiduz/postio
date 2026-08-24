@@ -2433,6 +2433,7 @@ dependencies = [
  "async-channel",
  "chrono",
  "criterion",
+ "futures-util",
  "postio-core",
  "postio-imap",
  "postio-index",
