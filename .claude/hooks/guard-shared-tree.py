@@ -21,6 +21,10 @@ hook worse than useless:
 4. **Command position.** A forbidden invocation only counts at the start of a
    command -- after nothing, or after `;`, `&&`, `||`, `|`, `(`, or a newline.
    A path or message that merely contains the words is not an invocation.
+5. **Quoted pathspecs are the scope.** One rule -- `unscoped_rustfmt` -- has to
+   read the RAW command rather than the stripped haystack, because what makes
+   a `rustfmt` safe is a pathspec that is almost always quoted. Blanking it
+   would turn every correct invocation into a refusal. See that function.
 
 PreToolUse contract: the tool call arrives as JSON on stdin; a permission
 decision goes out as JSON on stdout. Exit 0 either way -- "deny" is the
@@ -110,7 +114,8 @@ RULES: list[tuple[str, str]] = [
         f"{SHARED} Refusing a crate-wide format: both --all and -p WRITE to every "
         "file in scope, including one another session has open. That has "
         "already put whitespace churn into someone else's diff. Format what "
-        "you changed: rustfmt --edition 2024 $(git diff --name-only HEAD -- '*.rs'). "
+        "you changed, scoped to your own crate: git status --porcelain -- "
+        "crates/YOUR-CRATE | awk '{print $NF}' | xargs -r rustfmt --edition 2024. "
         "The --check forms are read-only and allowed.",
     ),
     (
@@ -136,6 +141,74 @@ RULES: list[tuple[str, str]] = [
 
 # Start of string, or just after a shell command separator.
 ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
+
+# A `rustfmt` that will WRITE: at command position, or fed by xargs, and not
+# in one of the read-only forms. `--check` and `-l` only report.
+RUSTFMT_WRITES = re.compile(
+    r"(?:" + ANCHOR + r"|xargs\s+(?:-r\s+)?(?:-[a-zA-Z0-9]+\s+)*)"
+    r"rustfmt\b(?![^|;&\n]*(?:--check\b|--emit\b|-l\b))"
+)
+
+# Something that lists files across the tree. These are the ways a file list
+# gets derived rather than typed.
+LISTS_FILES = re.compile(
+    r"git\s+(?:diff\s+--name-only|ls-files|status\s+--porcelain)|\bfind\b"
+)
+
+# A pathspec naming an actual crate. No trailing slash required, because
+# `-- crates/postio-core` is a perfectly good pathspec; but at least one name
+# character is, because `crates/` alone is *every* crate, which is the bug
+# wearing a pathspec rather than a fix for it.
+NAMES_A_CRATE = re.compile(r"crates/[A-Za-z0-9_.-]+")
+
+
+def unscoped_rustfmt(command: str, haystack: str) -> str | None:
+    """Refuse a rustfmt whose file list came from an unscoped query.
+
+    `postio-0uv0`. `rustfmt <files>` is safe -- it writes only what you name --
+    so the hazard is never the tool, it is where the list came from. A list
+    derived from `git diff --name-only HEAD` in a shared checkout is every
+    session's dirty files, and formatting them writes into work the session
+    running the command has never seen.
+
+    This is not hypothetical and it is not a hazard anyone reasoned their way
+    into: it is what `/land` told people to run, and a session ran it over 272
+    lines of another session's loose work. `cargo fmt --all` has been refused
+    here for exactly this reason since the guard existed, and it has strictly
+    smaller blast radius than the command the skill recommended instead.
+
+    Scope is read from the RAW command, never from `haystack`. The pathspec
+    that makes one of these safe is almost always quoted --
+    `-- 'crates/postio-core/*.rs'` -- and `strip_quoted` blanks quoted spans,
+    so checking the haystack would find no crate name in a correctly scoped
+    command and refuse every one of them. A guard that refuses the right
+    answer trains people to turn it off.
+
+    Known false negative, accepted deliberately: a crate name anywhere in the
+    command counts as scope, so `cd crates/postio-core && rustfmt $(git diff
+    --name-only HEAD)` is allowed even though `git diff` still reports the
+    whole repository from a subdirectory. Tightening that means deciding which
+    command segment a pathspec belongs to, which is a shell parser. This guard
+    is defence in depth behind a documented skill, not a proof, and the cost of
+    a false positive here is much higher than the cost of this miss.
+    """
+    if not RUSTFMT_WRITES.search(haystack):
+        return None
+    if not LISTS_FILES.search(haystack):
+        # An explicit list of files. That is the safest form there is.
+        return None
+    if NAMES_A_CRATE.search(command):
+        return None
+    return (
+        f"{SHARED} Refusing a rustfmt over an unscoped file list: "
+        "'git diff --name-only HEAD' and friends list what is dirty in the "
+        "WHOLE TREE, so this writes to other sessions' uncommitted files. "
+        "That has already happened. Name the crates you are landing -- the "
+        "same paths you will pass to git commit --only: "
+        "git status --porcelain -- crates/YOUR-CRATE | awk '{print $NF}' "
+        "| xargs -r rustfmt --edition 2024. Naming the files by hand is safer "
+        "still, and --check is read-only and allowed."
+    )
 
 
 def contains(parent: str, child: str) -> bool:
@@ -267,26 +340,38 @@ def main() -> int:
 
     haystack = strip_quoted(strip_heredocs(command))
 
+    matched: tuple[str, str] | None = None
     for pattern, reason in RULES:
         if re.search(ANCHOR + pattern, haystack):
-            log(
-                "deny",
-                rule=pattern,
-                command=command[:200],
-                session=payload.get("session_id", ""),
-            )
-            json.dump(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
-                },
-                sys.stdout,
-            )
-            return 0
+            matched = (pattern, reason)
+            break
+    else:
+        # Not a pattern rule: the one rule that needs two-part logic, because
+        # whether a rustfmt is safe depends on where its file list came from.
+        why = unscoped_rustfmt(command, haystack)
+        if why:
+            matched = ("unscoped-rustfmt", why)
 
+    if matched is None:
+        return 0
+
+    pattern, reason = matched
+    log(
+        "deny",
+        rule=pattern,
+        command=command[:200],
+        session=payload.get("session_id", ""),
+    )
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        },
+        sys.stdout,
+    )
     return 0
 
 
