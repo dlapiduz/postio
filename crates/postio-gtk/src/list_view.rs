@@ -43,6 +43,14 @@ use crate::selection::{self, SelectionState};
 /// What to call when a row is activated — `Enter`, or a double click.
 type ActivateHandler = Box<dyn Fn(crate::list::Row)>;
 
+/// What to call when the cursor lands on a row — `j`, `k`, a click, `G`.
+///
+/// Separate from [`ActivateHandler`] because in this pane the cursor, the
+/// selection and an activation are three different facts. The reading pane
+/// follows this one: moving the cursor changes what the user is looking at,
+/// and nothing should wait for Return. See issue #70.
+type CursorHandler = Box<dyn Fn(crate::list::Row)>;
+
 /// What to call when the mouse runs a command.
 ///
 /// A whole [`Command`] rather than a [`CommandId`], because the mouse can be
@@ -88,6 +96,14 @@ mod imp {
         pub(super) view: gtk::ListView,
         pub(super) density: Rc<Cell<Density>>,
         pub(super) activated: RefCell<Vec<ActivateHandler>>,
+        pub(super) cursor_moved: RefCell<Vec<CursorHandler>>,
+        /// The message last reported to [`cursor_moved`]. Kept so the report
+        /// is once per *message* rather than once per signal: the cursor
+        /// landing and the row's page arriving are two different signals for
+        /// the same landing, and a flag repaint is neither.
+        ///
+        /// [`cursor_moved`]: Self::cursor_moved
+        pub(super) reported: Cell<Option<MessageId>>,
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
@@ -122,6 +138,8 @@ mod imp {
                 hovered: RefCell::new(None),
                 density: Rc::new(Cell::new(Density::default())),
                 activated: RefCell::new(Vec::new()),
+                cursor_moved: RefCell::new(Vec::new()),
+                reported: Cell::new(None),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
                 keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
@@ -334,6 +352,51 @@ impl MessageListView {
     /// Called when a row is activated.
     pub fn connect_activated(&self, handler: impl Fn(crate::list::Row) + 'static) {
         self.imp().activated.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called when the cursor lands on a row.
+    ///
+    /// Every landing, in order, however the cursor got there — `j`, `k`, `G`,
+    /// `g g`, or a click. This is what the reading pane follows: the preview
+    /// tracks the cursor, and nothing waits for Return (issue #70).
+    ///
+    /// A move that goes nowhere reports nothing, so `k` on the first row does
+    /// not make the reader re-read a message it is already showing. Toggling
+    /// the selection reports nothing either — that moves no cursor.
+    pub fn connect_cursor_moved(&self, handler: impl Fn(crate::list::Row) + 'static) {
+        self.imp().cursor_moved.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Tell the subscribers which message the cursor is on, if that changed.
+    ///
+    /// Deduplicated on the message id rather than on the signal, because
+    /// three different things reach here: the cursor moving, the cursor's
+    /// page arriving, and any other edit to the model — a flag toggled, a
+    /// row repainted, a new message inserted above. Only the first two are
+    /// a landing, and the id is what tells them apart.
+    fn report_cursor(&self) {
+        let imp = self.imp();
+        let position = imp.cursor.selected();
+        if position == gtk::INVALID_LIST_POSITION {
+            imp.reported.set(None);
+            return;
+        }
+        // A placeholder: the page under the cursor has not been delivered.
+        // Nothing to show yet; `items_changed` brings us back when it lands.
+        let Some(row) = imp
+            .cursor
+            .item(position)
+            .and_downcast::<MessageRow>()
+            .and_then(|item| item.row())
+        else {
+            return;
+        };
+        if imp.reported.replace(Some(row.id)) == Some(row.id) {
+            return;
+        }
+        for handler in imp.cursor_moved.borrow().iter() {
+            handler(row.clone());
+        }
     }
 
     /// Move the keyboard one row down — `j`.
@@ -668,6 +731,37 @@ impl MessageListView {
                     handler(row.clone());
                 }
             }
+        ));
+
+        // The cursor announcing itself. `notify::selected` fires only when
+        // the position actually changes, which is exactly the contract
+        // `connect_cursor_moved` promises: `k` on the first row moves
+        // nothing and so reports nothing, and the reader is not asked to
+        // re-read a message it is already showing.
+        //
+        // This also covers the first landing. `SingleSelection` autoselects
+        // row 0 as soon as the model has rows, so a window that has just
+        // finished its first page tells the reader to show that message --
+        // which is why the pane is no longer blank on startup.
+        imp.cursor.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_| pane.report_cursor()
+        ));
+
+        // The other half. `SingleSelection` autoselects row 0 the moment the
+        // model has *rows*, and `set_source` gives it placeholders before
+        // `deliver` gives it mail -- so on a first page the cursor has
+        // already landed by the time there is anything to show, and
+        // `notify::selected` has been and gone. Without this the pane stays
+        // blank until the user presses a key, which is #70's startup case.
+        //
+        // It is also the fast-scroll case: the cursor can sit on a page that
+        // has not arrived yet, and the reader should fill in when it does.
+        imp.model.connect_items_changed(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_, _, _, _| pane.report_cursor()
         ));
 
         let scroller = gtk::ScrolledWindow::new();
