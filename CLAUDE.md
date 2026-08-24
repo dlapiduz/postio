@@ -381,26 +381,70 @@ blob directory for raw messages and attachments — no maildir/mbox/notmuch.
 **No AI in v1** — it is a founding principal but deliberately deferred to epic
 E12 so the core mail experience lands first.
 
+### Docs site and landing page
+
+`spec.md`, the design canvas, and this file are written for contributors, not
+users — none of them are where someone deciding whether to try Postio should
+land. The project has two more surfaces, both GitHub Pages, both tracked as
+GitHub issues rather than beads (see below):
+
+- **A docs site** that documents the *app*: what it does, keyboard shortcuts,
+  the `config.toml` reference, the privacy/security posture. Shortcut and
+  config references should be generated from the same sources of truth the
+  app itself uses (the command registry that drives the in-app `?` cheat
+  sheet; the TOML schema) rather than hand-maintained a second time.
+- **A landing page** that is deliberately more human than the docs site or the
+  README: the north star line as the actual headline, plain language, real
+  screenshots of the running app, and a link into the docs site for anyone
+  who wants depth. Not a restatement of `spec.md`.
+
+### Post-v1 roadmap lives in GitHub, not beads
+
+Beads tracks the active MVP push (`bd list --label mvp`). Everything *after*
+v1 — multi-account, OAuth, AI, filters, the docs site and landing page above,
+and the rest of the former E12 backlog — is tracked as GitHub Issues plus the
+[Postio Roadmap](https://github.com/users/dlapiduz/projects/2) project, grouped
+into epics with real GitHub sub-issue links. Do not create new beads for
+post-v1 work; file a GitHub issue under the relevant epic instead.
+
 ## Architecture
 
-```
-postio-app        The composition root: opens the store, starts the engine,
-   |              runs the UI. The only crate that knows both halves exist.
-   +-- postio-gtk        GTK4 + libadwaita + WebKitGTK. Widgets, CSS, keymap.
-   |     |               Command down / Event up. No SQL, no protocol.
-   |     +-- postio-search   FTS5 index, query-operator parser
-   |
-   +-- postio-runtime    The database half: the store, and the loop that
-         |               drains the queue, backfills bodies and reconnects.
-         +-- postio-sync     operation queue, QRESYNC resync, IDLE, backoff
-         |     +-- postio-imap (io-imap)   postio-smtp (io-smtp)
-         +-- postio-storage  SQLite, migrations, repositories, blob store
+Layers, not a tree: a crate's rank is its position, and shared leaves are
+shared rather than owned by one parent.
 
-postio-core       UI-agnostic contract, under both: command bus, registry,
-   |              event stream, app state, undo, tokio<->glib bridge.
-   +-- postio-config   TOML schema, validation, watcher, live reload
-postio-model      pure domain types + JWZ threading. No storage, no protocol.
 ```
+  frontend    postio-app     composition root + GTK binary. The only crate
+      |                      that knows both halves exist.
+      +------ postio-gtk     GTK4 + libadwaita + WebKitGTK. Widgets, CSS,
+      |                      keymap. Command down / Event up. No SQL, no
+      |                      protocol.
+      |
+  engine  +-- postio-runtime The database half: the store, and the loop that
+          |                  drains the queue, backfills bodies, reconnects.
+          +-- postio-sync    operation queue, QRESYNC resync, IDLE, backoff
+          |     +-- postio-imap (io-imap)   postio-smtp (io-smtp)
+          +-- postio-storage SQLite, migrations, repositories, blob store
+          +-- postio-index   FTS5 index and executor  (owns rusqlite)
+
+  contract  postio-core      commands, events, registry, app state, undo,
+      |                      tokio<->glib bridge. No GTK -- CI enforced.
+      +------ postio-config  TOML schema, validation, watcher, live reload
+
+  domain    postio-model     pure domain types + JWZ threading
+            postio-search    query parser, highlighter, facets. Pure: no SQL,
+                             no toolkit. A SHARED leaf, not a GTK detail --
+                             postio-gtk, postio-index, postio-runtime and
+                             postio-app all depend on it.
+```
+
+`postio-search` is the query *language*; `postio-index` is the FTS5 *index*
+that executes it. They were one crate once and the tree above used to say so.
+Keep them apart: the same query string has to mean the same thing in the
+search bar, in the sidebar, and in `[filters]` in `config.toml`.
+
+See `docs/ARCHITECTURE.md` for the decisions behind this shape,
+`docs/decisions/` for the ADRs, and `docs/architecture-review-2026-08.md`
+for the known gaps.
 
 ## Working in parallel
 
