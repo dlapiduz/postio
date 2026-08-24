@@ -23,6 +23,13 @@ CI, on a lint nobody wrote.
    stable`` anywhere in ``.github/workflows`` silently wins over the file for
    that job, which is the bug this check exists to prevent -- reintroduced in
    one line, in a file nobody re-reads.
+3. ``rust-version`` in the workspace manifest does not claim an MSRV older
+   than the pinned compiler. The manifest said ``1.90`` while the pin said
+   ``1.98``, so nothing had ever built this workspace on 1.90 and the claim
+   was evidence-free -- it would have become false the first time anyone used
+   a 1.91 feature, and nobody would have found out. An MSRV is a promise to
+   somebody; while the only consumer is this repository, the honest promise is
+   the compiler that is actually used.
 
 # What this check cannot see, and what to do about it
 
@@ -62,6 +69,28 @@ FLOATING = re.compile(
 # `channel = "1.98.0"` in rust-toolchain.toml. Deliberately strict: a channel
 # name here floats just as hard as it did in the workflow.
 EXACT = re.compile(r'^\s*channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"\s*$', re.MULTILINE)
+
+
+# `rust-version = "1.90"` in `[workspace.package]`. Two or three components.
+RUST_VERSION = re.compile(
+    r'^\s*rust-version\s*=\s*"(\d+\.\d+(?:\.\d+)?)"\s*$', re.MULTILINE
+)
+
+
+def declared_msrv(root: Path) -> str | None:
+    """`rust-version` from the workspace manifest, if it declares one."""
+    try:
+        text = (root / "Cargo.toml").read_text()
+    except OSError:
+        return None
+    found = RUST_VERSION.search(text)
+    return found.group(1) if found else None
+
+
+def as_tuple(version: str) -> tuple[int, ...]:
+    """`"1.98.0"` -> `(1, 98, 0)`, so versions compare as numbers rather than
+    as strings -- `"1.9" > "1.10"` is true for strings and wrong."""
+    return tuple(int(part) for part in version.split("."))
 
 
 def repository_root() -> Path:
@@ -144,6 +173,32 @@ def main() -> int:
         print(
             "  Drop the selection and let the file decide; `rustup show` installs "
             "what it names.",
+            file=sys.stderr,
+        )
+        return 1
+
+    msrv = declared_msrv(root)
+    if msrv is not None and as_tuple(msrv) < as_tuple(pinned)[: len(as_tuple(msrv))]:
+        print(
+            f"toolchain check FAILED: Cargo.toml claims rust-version = "
+            f'"{msrv}" but rust-toolchain.toml pins {pinned}.\n'
+            f"  Nothing ever builds this workspace on {msrv}, so the claim is "
+            f"untested -- it becomes false the first time anyone uses a newer\n"
+            f"  feature, and no gate here would notice. Either set rust-version "
+            f"to match the pin, or add a CI job that checks on {msrv}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    msrv = declared_msrv(root)
+    if msrv is not None and as_tuple(msrv) < as_tuple(pinned)[: len(as_tuple(msrv))]:
+        print(
+            f"toolchain check FAILED: Cargo.toml claims rust-version = "
+            f'"{msrv}" but rust-toolchain.toml pins {pinned}.\n'
+            f"  Nothing ever builds this workspace on {msrv}, so the claim is "
+            f"untested -- it becomes false the first time anyone uses a newer\n"
+            f"  feature, and no gate here would notice. Either set rust-version "
+            f"to match the pin, or add a CI job that checks on {msrv}.",
             file=sys.stderr,
         )
         return 1

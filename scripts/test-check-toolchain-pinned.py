@@ -43,11 +43,19 @@ jobs:
 """
 
 
-def build_tree(root: Path, *, toolchain: str | None, workflow: str) -> None:
-    """A git repository with an optional rust-toolchain.toml and one workflow."""
+def build_tree(
+    root: Path, *, toolchain: str | None, workflow: str, manifest: str | None = None
+) -> None:
+    """A git repository with an optional rust-toolchain.toml and one workflow.
+
+    `manifest` is the workspace `Cargo.toml`. Omitted for the cases that
+    predate the MSRV rule, which is correct: with no manifest there is no
+    `rust-version` to disagree with the pin, and the rule stays silent."""
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     if toolchain is not None:
         (root / "rust-toolchain.toml").write_text(toolchain, encoding="utf-8")
+    if manifest is not None:
+        (root / "Cargo.toml").write_text(manifest, encoding="utf-8")
     workflows = root / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text(workflow, encoding="utf-8")
@@ -61,11 +69,12 @@ def case(
     expected: int,
     env_toolchain: str | None = None,
     strict: bool = False,
+    manifest: str | None = None,
 ) -> None:
     """Assert the check's verdict on one tree."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        build_tree(root, toolchain=toolchain, workflow=workflow)
+        build_tree(root, toolchain=toolchain, workflow=workflow, manifest=manifest)
         # The check finds its root from its own location, not the cwd, so it
         # has to be run from a copy that lives inside the throwaway tree.
         scripts = root / "scripts"
@@ -107,6 +116,44 @@ def main() -> int:
         "a workflow that installs `stable` fails even with a pin present",
         toolchain=exact,
         workflow=WORKFLOW_FLOATING,
+        expected=1,
+    )
+
+    # ── rule 3: an MSRV nothing ever builds ──────────────────────────────
+    # The manifest said 1.90 while the pin said 1.98, so the claim rested on
+    # nothing. These pin the rule's edges rather than just its happy path.
+    def manifest_with(version: str | None) -> str:
+        head = "[workspace]\nresolver = \"3\"\nmembers = []\n\n[workspace.package]\n"
+        return head if version is None else head + f'rust-version = "{version}"\n'
+
+    case(
+        "an MSRV older than the pin fails",
+        toolchain=exact,
+        workflow=WORKFLOW_PINNED,
+        manifest=manifest_with("1.90"),
+        expected=1,
+    )
+    case(
+        "an MSRV matching the pin passes",
+        toolchain=exact,
+        workflow=WORKFLOW_PINNED,
+        manifest=manifest_with("1.98"),
+        expected=0,
+    )
+    case(
+        "no rust-version at all passes",
+        toolchain=exact,
+        workflow=WORKFLOW_PINNED,
+        manifest=manifest_with(None),
+        expected=0,
+    )
+    # Numeric comparison, not lexicographic: "1.9" > "1.10" as strings, and a
+    # check that got this wrong would pass the one case most likely to appear.
+    case(
+        "an MSRV of 1.9 against a 1.10 pin fails",
+        toolchain='[toolchain]\nchannel = "1.100.0"\n',
+        workflow=WORKFLOW_PINNED,
+        manifest=manifest_with("1.9"),
         expected=1,
     )
 
