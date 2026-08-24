@@ -49,7 +49,7 @@ use postio_imap::discovery::{
     AccountSettings, DiscoveryOutcome, Encryption, PimalayaTransport, Probe,
 };
 use postio_imap::imap::{ConnectionSettings, ImapSession, RustlsConnector};
-use postio_imap::secret::{AccountKey, KeyringSecretStore, Password, SecretStore};
+use postio_imap::secret::{AccountKey, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
 use postio_model::{Account, EmailAddress, Identity};
@@ -90,6 +90,17 @@ pub fn needed(database: &Database) -> bool {
 /// event queues, not merely feed the panes. Skipping that would leave a
 /// window with mail in it and no key that does anything, the same shape of
 /// bug `postio-bl2` is named for.
+///
+/// # `repairing`
+///
+/// `Some` when this is not a first run: [`crate::startup_route`] found an
+/// account the keyring will not give up a password for, and sent it back
+/// here rather than into a window that cannot sync. The screen arrives
+/// knowing the address and the servers, says which one thing is missing,
+/// and puts the cursor in the field for it. Before `postio-67` that state
+/// had nowhere to go at all: onboarding only ran when the store held no
+/// account, so an account with a broken credential was permanent.
+#[allow(clippy::too_many_arguments)]
 pub fn install(
     window: &Window,
     wiring: &Wiring,
@@ -97,11 +108,19 @@ pub fn install(
     wired: Vec<CommandId>,
     streams: Rc<RefCell<Vec<Option<EventStream>>>>,
     notifier: crate::notifications::Notifier,
+    repairing: Option<Account>,
 ) {
     let screen = Onboarding::new();
     let previous = window.content();
     window.set_content(Some(&screen));
-    screen.focus_address();
+    match &repairing {
+        Some(account) => {
+            screen.set_address(&account.address.address);
+            screen.set_status(Status::Reauthenticate(configured(account)));
+            screen.focus_password();
+        }
+        None => screen.focus_address(),
+    }
 
     screen.connect_probe({
         let screen = screen.clone();
@@ -221,24 +240,25 @@ fn submit(
                 return;
             }
 
-            // Only now, with the credentials known good. Writing first would
-            // leave a broken account behind every failed attempt.
-            if let Err(reason) = save(&wiring.database, &submission) {
-                screen.set_status(Status::Failed(reason));
-                return;
-            }
-
-            // The credential goes over D-Bus from the runtime, and the answer
-            // comes back over a channel — the same crossing the connection
-            // test above makes, and for the same reason.
+            // Only now, with the credentials known good. Writing either half
+            // first would leave a broken account behind every failed attempt.
+            //
+            // Both writes go over to the runtime together and answer over a
+            // channel — the same crossing the connection test above makes,
+            // and for the same reason: the keyring is a tokio future and this
+            // is the glib main context. See [`persist`] for the order they
+            // happen in and why it is that way round.
             let (sender, receiver) = async_channel::bounded(1);
-            let address = submission.address.clone();
-            let password = Password::new(submission.password.clone());
+            let database = wiring.database.clone();
+            let secrets = wiring.secrets.clone();
+            let written = submission.clone();
             wiring.runtime.spawn(async move {
-                let _ = sender.send(store_credential(address, password).await).await;
+                let _ = sender
+                    .send(persist(&database, secrets.as_ref(), &written).await)
+                    .await;
             });
             let stored = receiver.recv().await.unwrap_or_else(|_| {
-                Err("Postio's runtime stopped before the keyring answered.".to_owned())
+                Err("Postio's runtime stopped before the account was saved.".to_owned())
             });
             if let Err(reason) = stored {
                 screen.set_status(Status::Failed(reason));
@@ -258,16 +278,106 @@ fn submit(
     });
 }
 
-/// The first of the two writes: the account row.
+/// Both writes, in the order that cannot strand an account.
 ///
-/// Synchronous, and deliberately separate from the credential. The keyring
-/// is reached over D-Bus by a future that needs a tokio runtime to be polled
-/// at all, and this runs on the GTK main context where there is none — see
-/// [`store_credential`].
+/// **The credential first, then the row.** 0.1.0 did it the other way round
+/// and `postio-67` is what that cost: a keyring write that failed after the
+/// row was committed left an account with no reachable password, which could
+/// not sync, could not authenticate, and could not be repaired from inside
+/// the application — onboarding is the only thing that writes a credential,
+/// and `first_account().is_some()` meant onboarding never ran again.
+///
+/// The failure that order *does* leave behind — a secret with no account —
+/// is rolled back here, and would be harmless even if the rollback failed:
+/// nothing reads a credential no account row names.
+///
+/// **Must be polled on the engine runtime, not the GTK main context.** The
+/// keyring is reached over D-Bus by a future bounded with
+/// `tokio::time::timeout`, so awaiting it from `glib::spawn_future_local`
+/// panics with "there is no reactor running" — `postio-66`, which shipped.
+/// `feed.rs` states the rule: neither loop can drive the other, so runtime
+/// work is spawned and answered over a channel.
+async fn persist(
+    database: &Database,
+    secrets: &dyn SecretStore,
+    submission: &Submission,
+) -> Result<(), String> {
+    let key = AccountKey::new(submission.address.clone());
+    let password = Password::new(submission.password.clone());
+    // Reported rather than swallowed: an account with no password in the
+    // keyring cannot sync, and a silent failure would read as a Postio bug
+    // rather than as a locked keyring.
+    secrets.store(&key, &password).await.map_err(|error| {
+        format!(
+            "The password could not be stored in the keyring: {error}. \
+             Is the keyring unlocked?"
+        )
+    })?;
+
+    if let Err(reason) = save(database, submission) {
+        if let Err(error) = secrets.delete(&key).await {
+            // Safe to log: no `SecretError` carries a password.
+            tracing::warn!(%error, "the rolled-back credential could not be removed");
+        }
+        return Err(reason);
+    }
+    Ok(())
+}
+
+/// Write the account row, creating it or repairing the one already there.
+///
+/// Synchronous, because rusqlite is; called from [`persist`] on the engine
+/// runtime, where one indexed insert is not worth a `spawn_blocking`.
+///
+/// # Why this can be a repair
+///
+/// Since `postio-67` the screen is reachable a second time: an account whose
+/// credential the keyring will not give up is sent back here rather than
+/// opened. That submit arrives over a row that already exists, and a second
+/// row would leave `first_account` choosing between two accounts for the
+/// same address. So an existing row is *updated* — and its identities are
+/// left exactly as they are, because [`AccountRepository::update`] makes the
+/// list it is handed authoritative and every saved draft points at one.
 fn save(database: &Database, submission: &Submission) -> Result<(), String> {
-    let address = submission.address.clone();
-    let email = EmailAddress::new(None::<String>, address.clone());
-    let mut account = Account::new(address.clone(), email.clone());
+    let connection = database
+        .connection()
+        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
+    let repository = AccountRepository::new(&connection);
+    let existing = repository
+        .list()
+        .map_err(|error| format!("Postio could not read its local store: {error}"))?
+        .into_iter()
+        .find(|account| {
+            account
+                .address
+                .address
+                .eq_ignore_ascii_case(&submission.address)
+        });
+
+    match existing {
+        Some(mut account) => {
+            configure(&mut account, submission);
+            repository
+                .update(&mut account)
+                .map_err(|error| format!("Postio could not update the account: {error}"))
+        }
+        None => {
+            let email = EmailAddress::new(None::<String>, submission.address.clone());
+            let mut account = Account::new(submission.address.clone(), email.clone());
+            configure(&mut account, submission);
+            let mut identity = Identity::new(AccountId::UNASSIGNED, email);
+            identity.is_default = true;
+            account.identities = vec![identity];
+            repository
+                .create(&mut account)
+                .map(|_| ())
+                .map_err(|error| format!("Postio could not write the account: {error}"))
+        }
+    }
+}
+
+/// Put the submitted servers on `account`, leaving its identities alone.
+fn configure(account: &mut Account, submission: &Submission) {
     account.incoming.host = submission.settings.imap.host.clone();
     account.incoming.port = submission.settings.imap.port;
     account.incoming.security = security(submission.settings.imap.tls);
@@ -277,43 +387,33 @@ fn save(database: &Database, submission: &Submission) -> Result<(), String> {
     account.outgoing.security = security(submission.settings.smtp.tls);
     account.outgoing.username = submission.settings.login.clone();
     account.auth = AuthMethod::Password;
-    let mut identity = Identity::new(AccountId::UNASSIGNED, email);
-    identity.is_default = true;
-    account.identities = vec![identity];
-
-    let connection = database
-        .connection()
-        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
-    AccountRepository::new(&connection)
-        .create(&mut account)
-        .map_err(|error| format!("Postio could not write the account: {error}"))?;
-
-    Ok(())
+    // A repair over an account somebody had disabled is still a repair: the
+    // user just proved they want to sign in to it.
+    account.enabled = true;
 }
 
-/// The second write: the credential, into the keyring.
+/// What the screen shows for an account the store already has.
 ///
-/// **Must be polled on the engine runtime, not the GTK main context.** It
-/// reaches the Secret Service over D-Bus and bounds the round trip with
-/// `tokio::time::timeout`, so awaiting it from `glib::spawn_future_local`
-/// panics with "there is no reactor running" — which is what 0.1.0 did, on
-/// the main thread, immediately after a successful login. `feed.rs` explains
-/// the rule this broke: neither loop can drive the other, so runtime work is
-/// spawned and answered over a channel.
-///
-/// The failure is reported rather than swallowed: an account with no password
-/// in the keyring cannot sync, and a silent failure would look like a Postio
-/// bug rather than a locked keyring.
-async fn store_credential(address: String, password: Password) -> Result<(), String> {
-    KeyringSecretStore::default()
-        .store(&AccountKey::new(address), &password)
-        .await
-        .map_err(|error| {
-            format!(
-                "The account was added but the password could not be stored: {error}. \
-                 Is the keyring unlocked?"
-            )
-        })
+/// The inverse of [`configure`]: a repair is asking for a password, not for
+/// server settings, so the ones the account was signed in with last time are
+/// what it offers. `source` names where they came from because the card
+/// shows it, and "entered by hand" — what an empty form falls back to —
+/// would be a lie the second time round.
+fn configured(account: &Account) -> Settings {
+    let server = |config: &postio_model::account::ServerConfig| Server {
+        host: config.host.clone(),
+        port: config.port,
+        tls: config.security == TransportSecurity::Tls,
+    };
+    Settings {
+        imap: server(&account.incoming),
+        smtp: server(&account.outgoing),
+        login: account.incoming.username.clone(),
+        requires_app_password: false,
+        note: None,
+        help_url: None,
+        source: "saved with this account".to_owned(),
+    }
 }
 
 /// What the screen shows, from what the probe found.
@@ -397,6 +497,22 @@ fn explain(error: &postio_imap::backend::BackendError) -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    use postio_imap::secret::MemorySecretStore;
+
+    /// The account the store holds, if it holds one.
+    fn stored(database: &Database) -> Option<Account> {
+        let connection = database.connection().expect("a connection");
+        let accounts = AccountRepository::new(&connection)
+            .list()
+            .expect("the accounts should read");
+        assert!(
+            accounts.len() < 2,
+            "onboarding wrote {} rows",
+            accounts.len()
+        );
+        accounts.into_iter().next()
+    }
 
     fn submission(host: &str, tls: bool) -> Submission {
         Submission {
@@ -486,6 +602,127 @@ mod tests {
         assert!(
             !needed(&database),
             "an account exists, so the screen is done"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_credential_that_cannot_be_stored_leaves_no_account_behind() {
+        // `postio-67`: 0.1.0 wrote the row first. When the keyring write then
+        // failed, the row stayed — and every launch after that opened an
+        // account with no reachable password, in an application whose only
+        // credential writer is the screen that never runs again.
+        let database = postio_storage::test_support::memory();
+
+        let outcome = persist(
+            &database,
+            &MemorySecretStore::locked(),
+            &submission("imap.example.com", true),
+        )
+        .await;
+
+        assert!(outcome.is_err(), "a locked keyring has to fail the submit");
+        assert!(
+            stored(&database).is_none(),
+            "the account row outlived the credential write that failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_first_run_writes_both_the_row_and_the_credential() {
+        let database = postio_storage::test_support::memory();
+        let secrets = MemorySecretStore::new();
+
+        persist(&database, &secrets, &submission("imap.example.com", true))
+            .await
+            .expect("both writes should land");
+
+        let account = stored(&database).expect("an account row");
+        assert_eq!(account.address.address, "lena@example.com");
+        assert_eq!(account.incoming.host, "imap.example.com");
+        assert_eq!(
+            secrets
+                .retrieve(&AccountKey::new("lena@example.com"))
+                .await
+                .expect("a credential")
+                .expose(),
+            "hunter2"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_row_that_will_not_write_takes_its_credential_back() {
+        // The other order's failure, and the reason the rollback is here: a
+        // secret Postio kept for an account that does not exist is a secret
+        // nobody asked it to keep.
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute("ALTER TABLE accounts RENAME TO accounts_elsewhere", [])
+            .expect("the table should move out of the way");
+        drop(connection);
+        let secrets = MemorySecretStore::new();
+
+        let outcome = persist(&database, &secrets, &submission("imap.example.com", true)).await;
+
+        assert!(outcome.is_err(), "there is no table to write the row into");
+        assert!(
+            secrets.is_empty(),
+            "the credential stayed behind for an account that was never created"
+        );
+    }
+
+    #[tokio::test]
+    async fn signing_in_again_repairs_the_account_rather_than_duplicating_it() {
+        // What a repair run does. `startup_route` sends an account with no
+        // credential back to this screen, so the second submit arrives over a
+        // row that already exists — and a second row would leave
+        // `first_account` picking between two.
+        let database = postio_storage::test_support::memory();
+        let secrets = MemorySecretStore::new();
+        persist(&database, &secrets, &submission("old.example.com", true))
+            .await
+            .expect("the first run should land");
+        let first = stored(&database).expect("an account row");
+
+        persist(&database, &secrets, &submission("new.example.com", true))
+            .await
+            .expect("the repair should land");
+
+        // `stored` fails the test outright on a second row.
+        let repaired = stored(&database).expect("an account row");
+        assert_eq!(repaired.id, first.id, "the repair replaced the account");
+        assert_eq!(
+            repaired.incoming.host, "new.example.com",
+            "the repair did not take the corrected server"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repair_keeps_the_identity_the_drafts_point_at() {
+        // `AccountRepository::update` makes the identity list authoritative,
+        // so a repair that rebuilt the list from scratch would delete the
+        // identity every saved draft refers to.
+        let database = postio_storage::test_support::memory();
+        let secrets = MemorySecretStore::new();
+        persist(&database, &secrets, &submission("imap.example.com", true))
+            .await
+            .expect("the first run should land");
+        let before = stored(&database).expect("an account row");
+        let identity = before
+            .identities
+            .first()
+            .expect("a first run gives the account its default identity")
+            .id;
+
+        persist(&database, &secrets, &submission("imap.example.com", true))
+            .await
+            .expect("the repair should land");
+
+        let after = stored(&database).expect("an account row");
+        assert_eq!(
+            after.identities.first().map(|i| i.id),
+            Some(identity),
+            "the repair rewrote the identity, orphaning anything pointing at it"
         );
     }
 }

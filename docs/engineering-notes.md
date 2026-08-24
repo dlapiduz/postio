@@ -439,6 +439,36 @@ failed only for the ones that had to be fetched, which is the half nobody
 tests by hand.
 
 
+**An account is a row *and* a credential — never one of the two.** Onboarding
+writes both, and 0.1.0 wrote the row first. When the keyring write then failed
+(a locked keyring, no Secret Service, a D-Bus timeout) the row stayed behind,
+and startup routed on `first_account(..).is_some()` — one row was enough. So
+the next launch opened an account that could not authenticate, could not sync,
+and could not be repaired from inside the application: onboarding is the only
+thing in Postio that writes a credential, and it never ran again. Recovering
+meant deleting rows from SQLite by hand (issue #67). Two rules came out of it,
+and both hold for anything that ever writes an account:
+
+- **The credential goes in first, the row second.** The failure that order
+  leaves behind is a secret with no account, which nothing reads;
+  `onboarding::persist` rolls it back anyway. The other order strands the
+  account, and the account is the half that is fatal.
+- **"Has an account" means `postio_app::startup_route` said so** — a row whose
+  password the secret store will actually give up. Not a row. That definition
+  also covers the credential being deleted or the keyring reset later, which
+  no care at write time can prevent, and it is why the onboarding screen is
+  reachable a second time (`Status::Reauthenticate`, prefilled from the row).
+
+The check is asynchronous for the reason every keyring call in this codebase
+is: `KeyringSecretStore` is a tokio future bounded by a 10s timeout, so it is
+spawned on the engine runtime and answered on the glib main context. Reading
+it inline would have swapped a wrong guess for a startup that stalls behind a
+locked keyring. `postio_app::open_or_onboard` is that decision in a function
+rather than in the `activate` closure, so a test can drive it over a real
+`Window` — `crates/postio-app/tests/startup_repair.rs`, which fails against
+the 0.1.0 routing.
+
+
 ## Testing infrastructure
 
 **`postio_runtime::Engine` does not need a trait in front of it to be
