@@ -1,6 +1,6 @@
 //! The reading pane: a hardened `WebView` for message bodies.
 //!
-//! Three beads, one module, because they build on each other in a straight
+//! Three issues, one module, because they build on each other in a straight
 //! line:
 //!
 //! * [`postio-lu6`](view) — the `WebView` itself: JavaScript and network

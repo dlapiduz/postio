@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "bd prime --hook-json",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -55,7 +44,6 @@
       "Bash(rustfmt:*)",
       "Bash(python3 scripts/check-crate-boundaries.py:*)",
       "Bash(python3 scripts/check-no-personal-data.py:*)",
-      "Bash(bd:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Read",
@@ -65,7 +53,18 @@
       "Grep",
       "Bash(git remote -v:*)",
       "Bash(git remote get-url:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(gh issue:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh run:*)",
+      "Bash(gh label:*)",
+      "Bash(scripts/issue-claim.sh:*)",
+      "Bash(scripts/issue-land.sh:*)",
+      "Bash(scripts/issue-release.sh:*)",
+      "Bash(scripts/test-headless.sh:*)",
+      "Bash(python3 scripts/check-no-silent-tracking.py:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git fetch:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",

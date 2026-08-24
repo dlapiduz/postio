@@ -11,7 +11,7 @@
 //! search — and become overridable when the keymap lands (E6).
 //!
 //! Compose is wired to the `win.compose` action the composer installs; the
-//! rest of the actions arrive with their own beads.
+//! rest of the actions arrive with their own issues.
 
 use adw::prelude::*;
 
