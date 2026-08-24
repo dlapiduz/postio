@@ -24,13 +24,14 @@
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use postio_app::{Wiring, actions, commands, feed_the_window};
+use postio_app::{commands, feed_the_window};
 use postio_core::CommandId;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{MailboxId, MailboxRole};
+use postio_session::{Wiring, actions};
 use postio_storage::repository::{ColumnFlag, MessageRepository, MessageSet};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};

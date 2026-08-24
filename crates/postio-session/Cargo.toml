@@ -1,0 +1,42 @@
+[package]
+name = "postio-session"
+description = "The composition root without a toolkit: store, runtime, engines and the verb vocabulary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Queue rows are stamped with when the user performed the action, so the
+# drainer replays them in the order they happened.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+postio-config.workspace = true
+postio-core.workspace = true
+postio-imap.workspace = true
+postio-index.workspace = true
+postio-model.workspace = true
+# The database half. This crate is where SQLite is allowed; postio-gtk is
+# guarded against it and so is postio-core.
+postio-runtime.workspace = true
+postio-search.workspace = true
+postio-smtp.workspace = true
+postio-storage.workspace = true
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-journald = "0.3"
+tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+
+[dev-dependencies]
+# Throwaway migrated databases, so a verb is an ordinary function over a real
+# schema rather than something only a running application can exercise. This
+# is the whole argument for the crate: the verbs are testable without a
+# toolkit, and they were not while they lived beside a GTK binary.
+postio-storage = { workspace = true, features = ["test-support"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true
