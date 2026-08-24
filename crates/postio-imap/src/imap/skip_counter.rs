@@ -15,8 +15,10 @@
 //! There is no other hook into this behaviour: it is a `debug!()` log
 //! record and nothing else, so this module installs a [`log::Log`] that
 //! watches for exactly that record, counts it, and forwards every record —
-//! including that one — to whatever logger the application already
-//! installed. [`super::fetch_headers`] snapshots the counter around its own
+//! including that one — to the application's own logger, which it is
+//! composed with rather than installed alongside (see
+//! [`install_forwarding_to`], and why there can only be one).
+//! [`super::fetch_headers`] snapshots the counter around its own
 //! `CHANGEDSINCE` round trip and turns a nonzero delta into
 //! [`BackendError::ResyncIntegrityLost`](crate::backend::BackendError::ResyncIntegrityLost),
 //! whose [`requires_full_resync`](crate::backend::BackendError::requires_full_resync)
@@ -24,7 +26,7 @@
 //! predicate a `UIDVALIDITY` change reports through.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
@@ -47,6 +49,7 @@ fn is_io_imap_target(target: &str) -> bool {
 
 static COUNT: AtomicU64 = AtomicU64::new(0);
 static INSTALLED: OnceLock<()> = OnceLock::new();
+static COUNTING: AtomicBool = AtomicBool::new(false);
 
 struct SkipCountingLogger {
     inner: &'static dyn Log,
@@ -73,17 +76,17 @@ impl Log for SkipCountingLogger {
     }
 }
 
-/// Installs the counting logger. Idempotent — safe to call more than once,
-/// which every test in this crate that touches it does.
+/// Installs the counting logger over whatever logger is already registered.
+/// Idempotent — safe to call more than once, which every test in this crate
+/// that touches it does.
 ///
-/// # Call this after the application sets up its own logger
+/// # An application with its own logging wants `install_forwarding_to`
 ///
-/// `log::set_logger` succeeds only once per process. This function captures
-/// whatever [`log::logger()`] returns *at the time it runs* as the logger it
-/// forwards every record to, so calling it before the application installs
-/// its own (`env_logger`, `tracing-log`, or similar) would make this the
-/// *only* logger for the rest of the process, silently swallowing the
-/// application's own log output.
+/// [`log::set_logger`] succeeds only once per process, and this captures
+/// whatever [`log::logger()`] returns *at the time it runs*. On a process that
+/// has installed nothing that is the no-op logger, which is right for a test
+/// and wrong for an application: records would be counted and then dropped.
+/// [`install_forwarding_to`] is how the two are composed instead.
 ///
 /// # Why this raises the process's log level
 ///
@@ -97,15 +100,63 @@ impl Log for SkipCountingLogger {
 /// dependency graph would compile the record out before this runtime check
 /// ever applies; none is enabled in this workspace today.
 pub fn install() {
+    install_forwarding_to(None);
+}
+
+/// Installs the counting logger, forwarding every record to `inner`.
+///
+/// This is what an application with its own logging calls. Postio's is
+/// `tracing`, and the bridge that carries `log` records into it —
+/// `tracing_log::LogTracer` — is itself a [`log::Log`], so it comes here as
+/// `inner` rather than being installed separately.
+///
+/// # Why it cannot be installed separately
+///
+/// [`log::set_logger`] succeeds exactly once per process. Whichever of the two
+/// ran first would win and the other would be silently discarded, and both
+/// orders lose something: the bridge first leaves this counter inert, which
+/// removes [`BackendError::ResyncIntegrityLost`](crate::backend::BackendError)
+/// — an integrity check, not a log line — and this counter first leaves
+/// `io-imap`'s own output going nowhere. Composing them into the one logger
+/// the process is allowed is the only arrangement that keeps both.
+///
+/// `None` forwards to whatever [`log::logger()`] already returns, which on a
+/// process that has installed nothing is the no-op logger. Idempotent: the
+/// first call wins and later ones do nothing, which every test in this crate
+/// that touches the counter relies on.
+///
+/// Returns whether this call is the one that installed it. A `false` from the
+/// application's own startup means something else got there first and the
+/// counter may be inert — see [`is_counting`].
+pub fn install_forwarding_to(inner: Option<Box<dyn Log>>) -> bool {
+    let mut installed = false;
     INSTALLED.get_or_init(|| {
-        let inner = log::logger();
+        // Leaked deliberately: `Log` has to be `&'static` to be forwarded to
+        // for the rest of the process, and there is exactly one of these.
+        let inner: &'static dyn Log = match inner {
+            Some(inner) => Box::leak(inner),
+            None => log::logger(),
+        };
         // `set_boxed_logger` leaks its box to obtain a `&'static dyn Log`
         // internally, so `log::logger()` keeps returning this instance for
         // the rest of the process from here on — the recursion in `inner`
         // terminates at whatever was registered before this call.
-        let _ = log::set_boxed_logger(Box::new(SkipCountingLogger { inner }));
+        installed = log::set_boxed_logger(Box::new(SkipCountingLogger { inner })).is_ok();
+        COUNTING.store(installed, Ordering::Relaxed);
         log::set_max_level(log::max_level().max(LevelFilter::Debug));
     });
+    installed
+}
+
+/// Whether the counting logger is actually the process's logger.
+///
+/// `false` means something else called [`log::set_logger`] first, so
+/// [`skipped_untagged_responses`] will never move and the resync integrity
+/// check behind it is inert. Worth saying out loud at startup: it degrades a
+/// correctness guard into silence, which is precisely the failure this module
+/// exists to prevent elsewhere.
+pub fn is_counting() -> bool {
+    COUNTING.load(Ordering::Relaxed)
 }
 
 /// How many undecodable untagged responses `io-imap` has skipped since the
@@ -152,6 +203,8 @@ pub async fn exclusive_measurement() -> tokio::sync::MutexGuard<'static, ()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     #[test]
@@ -185,5 +238,57 @@ mod tests {
             before + 1,
             "the exact record io-imap logs for a dropped line must be counted"
         );
+
+        // ── and every record still reaches the application's own logger ──
+        //
+        // Composed rather than installed alongside: `log::set_logger` succeeds
+        // once per process, so a bridge into `tracing` has to arrive as this
+        // logger's `inner` or one of the two is silently discarded. Exercised
+        // on a local instance because the global one is already installed by
+        // the calls above — and it has to stay in this test function, since
+        // `cargo test` runs functions concurrently and the counter is global.
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let composed = SkipCountingLogger {
+            inner: Box::leak(Box::new(Recording(Arc::clone(&seen)))),
+        };
+
+        let before = skipped_untagged_responses();
+        composed.log(
+            &Record::builder()
+                .target("io_imap::send")
+                .level(Level::Debug)
+                .args(format_args!("skipping undecodable untagged response"))
+                .build(),
+        );
+
+        assert_eq!(
+            skipped_untagged_responses(),
+            before + 1,
+            "a composed logger must still count"
+        );
+        assert_eq!(
+            *seen.lock().expect("not poisoned"),
+            vec!["skipping undecodable untagged response".to_string()],
+            "and must still forward — including the record it counted, or \
+             io-imap's own output would vanish into this shim"
+        );
+    }
+
+    /// A `Log` that keeps what it was given, standing in for the application's.
+    struct Recording(Arc<Mutex<Vec<String>>>);
+
+    impl Log for Recording {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &Record<'_>) {
+            self.0
+                .lock()
+                .expect("not poisoned")
+                .push(record.args().to_string());
+        }
+
+        fn flush(&self) {}
     }
 }
