@@ -11,6 +11,22 @@
 //! into `postio-core` events; this module's job stops at producing a correct,
 //! throttled sequence of them.
 //!
+//! # Several passes at once
+//!
+//! Mailboxes are synced concurrently (`postio-0d9.7`), so at any moment the
+//! account may have two or three passes in flight. A status line has room for
+//! one folder, so this module keeps the set of passes that have started and
+//! not yet finished and reports the *foremost* of them — the earliest-started
+//! one still running. The engine starts passes in
+//! [`crate::order::sync_priority`] order, so that is INBOX while INBOX is
+//! still fetching, which is the only folder anybody is waiting on during a
+//! first sync. Progress from a pass that is not foremost moves the list (the
+//! engine repaints it directly) but not the status line.
+//!
+//! The set is also what stops a finished pass from claiming the account is
+//! idle while its neighbours are still working: only the *last* pass to
+//! finish moves the status to [`SyncStatus::Idle`] and stamps `last_sync`.
+//!
 //! # Two different kinds of infrequent
 //!
 //! A connection transition ([`Link`]) is already coalesced upstream —
@@ -116,6 +132,12 @@ pub struct StatusTracker {
     last_sync: Option<DateTime<Utc>>,
     last_progress_at: Option<DateTime<Utc>>,
     min_progress_interval: TimeDelta,
+    /// Passes that have started and not yet finished, in the order they
+    /// started. A `Vec` rather than a set because the *order* is the whole
+    /// point: `in_flight[0]` is the foremost pass, and the engine starts
+    /// mailboxes by sync priority. It holds at most as many entries as the
+    /// engine has sync lanes, so a linear scan is the cheap answer.
+    in_flight: Vec<MailboxId>,
 }
 
 /// How often [`StatusTracker::on_progress`] is allowed to report, at most.
@@ -145,6 +167,7 @@ impl StatusTracker {
             last_sync: None,
             last_progress_at: None,
             min_progress_interval: TimeDelta::from_std(interval).unwrap_or(TimeDelta::zero()),
+            in_flight: Vec::new(),
         }
     }
 
@@ -178,14 +201,31 @@ impl StatusTracker {
 
     /// Marks a sync pass starting on `mailbox`. Always reported: it happens
     /// once per pass, not once per batch.
+    ///
+    /// Starting a second pass while a first is still running does not take
+    /// the status line away from it — see [`Self::foremost`].
     pub fn on_sync_started(&mut self, mailbox: MailboxId) -> SyncStatus {
-        self.last_progress_at = None;
+        if !self.in_flight.contains(&mailbox) {
+            self.in_flight.push(mailbox);
+        }
+        // Only the pass that owns the status line resets the throttle.
+        // A background folder starting up is not a reason to let the
+        // foremost pass's next batch through early.
+        if self.foremost() == Some(mailbox) {
+            self.last_progress_at = None;
+        }
         self.status = SyncStatus::Syncing {
-            mailbox,
+            mailbox: self.foremost().unwrap_or(mailbox),
             progress: None,
             last_sync: self.last_sync,
         };
         self.status.clone()
+    }
+
+    /// The pass the status line is showing: the earliest-started one still
+    /// running.
+    fn foremost(&self) -> Option<MailboxId> {
+        self.in_flight.first().copied()
     }
 
     /// Applies one committed batch's progress.
@@ -196,6 +236,15 @@ impl StatusTracker {
     /// the UI. The batch that finishes the pass is never dropped.
     pub fn on_progress(&mut self, progress: Progress, now: DateTime<Utc>) -> Option<SyncStatus> {
         let progress = SyncProgress::from(progress);
+        // A batch from a pass that is not the one on the status line changes
+        // nothing the user can see, and reporting it would make the line
+        // flicker between folders for the whole of a first sync.
+        if self
+            .foremost()
+            .is_some_and(|foremost| foremost != progress.mailbox)
+        {
+            return None;
+        }
         let due = self
             .last_progress_at
             .is_none_or(|at| now - at >= self.min_progress_interval);
@@ -211,15 +260,43 @@ impl StatusTracker {
         Some(self.status.clone())
     }
 
-    /// Marks a sync pass finished at `at`. Always reported, and always moves
-    /// the status to [`SyncStatus::Idle`] — a caller that reconnects or fails
-    /// afterwards reports that separately through [`Self::on_link`].
-    pub fn on_sync_finished(&mut self, at: DateTime<Utc>) -> SyncStatus {
-        self.last_sync = Some(at);
-        self.last_progress_at = None;
-        self.status = SyncStatus::Idle {
-            last_sync: self.last_sync,
-        };
+    /// Marks `mailbox`'s pass finished at `at`.
+    ///
+    /// Always reported, but only the *last* pass still in flight moves the
+    /// status to [`SyncStatus::Idle`] and stamps `last_sync`: with several
+    /// mailboxes syncing at once, one of them returning is not the account
+    /// going quiet. While others are still running this hands the status line
+    /// to the next pass in priority order instead.
+    ///
+    /// A mailbox this tracker never saw start leaves the set alone, so a
+    /// caller that reports a requeued or cancelled pass twice cannot empty it
+    /// out from under the passes that really are running.
+    pub fn on_sync_finished(&mut self, mailbox: MailboxId, at: DateTime<Utc>) -> SyncStatus {
+        let was_foremost = self.foremost() == Some(mailbox);
+        self.in_flight.retain(|&in_flight| in_flight != mailbox);
+
+        match self.foremost() {
+            Some(mailbox) => {
+                // The status line changes hands. Reset the throttle so the
+                // new pass's next batch is reported at once rather than
+                // waiting out a window opened by the pass that just left.
+                if was_foremost {
+                    self.last_progress_at = None;
+                }
+                self.status = SyncStatus::Syncing {
+                    mailbox,
+                    progress: None,
+                    last_sync: self.last_sync,
+                };
+            }
+            None => {
+                self.last_sync = Some(at);
+                self.last_progress_at = None;
+                self.status = SyncStatus::Idle {
+                    last_sync: self.last_sync,
+                };
+            }
+        }
         self.status.clone()
     }
 }
@@ -293,7 +370,7 @@ mod tests {
         tracker.on_link(&Link::Online { since: at(0) });
         tracker.on_sync_started(mailbox);
         tracker.on_progress(progress(mailbox, 5, 5), at(1));
-        let status = tracker.on_sync_finished(at(2));
+        let status = tracker.on_sync_finished(mailbox, at(2));
 
         assert_eq!(
             status,
@@ -357,6 +434,118 @@ mod tests {
     }
 
     #[test]
+    fn a_pass_finishing_while_another_runs_leaves_the_account_syncing() {
+        // postio-0d9.7. Mailboxes are synced concurrently now, so
+        // "a pass finished" and "the account is idle" stopped being the same
+        // sentence. A tracker that equated them dropped the status line to
+        // `idle · last sync now` the moment the *first* of several passes
+        // returned, while the engine was still fetching thousands of messages.
+        let mut tracker = StatusTracker::new();
+        let inbox = MailboxId::new(1);
+        let archive = MailboxId::new(2);
+
+        tracker.on_sync_started(inbox);
+        tracker.on_sync_started(archive);
+        let status = tracker.on_sync_finished(archive, at(1));
+
+        assert!(
+            matches!(status, SyncStatus::Syncing { mailbox, .. } if mailbox == inbox),
+            "INBOX is still being fetched, so the account is still syncing: {status:?}"
+        );
+        assert_eq!(
+            tracker.last_sync(),
+            None,
+            "and nothing has finished from the user's point of view yet"
+        );
+    }
+
+    #[test]
+    fn the_last_pass_to_finish_is_what_makes_the_account_idle() {
+        let mut tracker = StatusTracker::new();
+        let inbox = MailboxId::new(1);
+        let archive = MailboxId::new(2);
+
+        tracker.on_sync_started(inbox);
+        tracker.on_sync_started(archive);
+        tracker.on_sync_finished(archive, at(1));
+        let status = tracker.on_sync_finished(inbox, at(2));
+
+        assert_eq!(
+            status,
+            SyncStatus::Idle {
+                last_sync: Some(at(2))
+            }
+        );
+        assert_eq!(tracker.last_sync(), Some(at(2)));
+    }
+
+    #[test]
+    fn the_status_line_follows_the_pass_the_user_is_waiting_on() {
+        // The engine starts passes in `order::sync_priority`, so the
+        // earliest-started pass still running is the most important one —
+        // INBOX, on a first sync. A status line that showed whichever batch
+        // committed last would flicker between folders and spend most of a
+        // first sync reporting an archive nobody is looking at.
+        let mut tracker = StatusTracker::with_min_progress_interval(Duration::ZERO);
+        let inbox = MailboxId::new(1);
+        let archive = MailboxId::new(2);
+
+        tracker.on_sync_started(inbox);
+        tracker.on_sync_started(archive);
+
+        assert_eq!(
+            tracker.on_progress(progress(archive, 900, 40_000), at(1)),
+            None,
+            "a batch from a background folder tells the status line nothing"
+        );
+
+        let status = tracker
+            .on_progress(progress(inbox, 200, 1_000), at(1))
+            .expect("the foremost pass reports");
+        assert!(
+            matches!(status, SyncStatus::Syncing { mailbox, .. } if mailbox == inbox),
+            "{status:?}"
+        );
+    }
+
+    #[test]
+    fn the_next_pass_takes_over_the_status_line_when_the_foremost_one_ends() {
+        let mut tracker = StatusTracker::with_min_progress_interval(Duration::ZERO);
+        let inbox = MailboxId::new(1);
+        let archive = MailboxId::new(2);
+
+        tracker.on_sync_started(inbox);
+        tracker.on_sync_started(archive);
+        tracker.on_sync_finished(inbox, at(1));
+
+        let status = tracker
+            .on_progress(progress(archive, 900, 40_000), at(2))
+            .expect("the archive is the foremost pass now");
+        assert!(
+            matches!(status, SyncStatus::Syncing { mailbox, .. } if mailbox == archive),
+            "{status:?}"
+        );
+    }
+
+    #[test]
+    fn a_pass_that_was_never_started_cannot_finish_the_account() {
+        // Cancelled passes are requeued and finished by whoever picks them up.
+        // A stray `on_sync_finished` for a mailbox this tracker never saw
+        // start must not empty the in-flight set out from under the passes
+        // that really are running.
+        let mut tracker = StatusTracker::new();
+        let inbox = MailboxId::new(1);
+
+        tracker.on_sync_started(inbox);
+        let status = tracker.on_sync_finished(MailboxId::new(99), at(1));
+
+        assert!(
+            matches!(status, SyncStatus::Syncing { mailbox, .. } if mailbox == inbox),
+            "{status:?}"
+        );
+    }
+
+    #[test]
     fn starting_a_new_pass_resets_the_progress_throttle() {
         let mailbox = MailboxId::new(1);
         let mut tracker = StatusTracker::with_min_progress_interval(Duration::from_secs(60));
@@ -365,7 +554,7 @@ mod tests {
             .on_progress(progress(mailbox, 1, 10), at(0))
             .expect("first report of the first pass");
 
-        tracker.on_sync_finished(at(1));
+        tracker.on_sync_finished(mailbox, at(1));
         tracker.on_sync_started(mailbox);
 
         assert!(
