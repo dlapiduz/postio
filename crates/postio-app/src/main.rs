@@ -334,16 +334,11 @@ fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
     drop(connection);
 
     let selectable = mailboxes.iter().filter(|m| m.selectable).count();
-    // The line that would have answered "why did sync produce nothing": every
-    // folder-enumerating path in the engine reads this same local table, and
-    // until `postio-755` lands nothing ever fills it from the server.
+    // Read *before* the engine has connected, so zero here is ordinary on a
+    // first run — `postio_sync::discover` fills the table on link-up. Worth
+    // saying anyway: a backfill seeded over no folders is the difference
+    // between "still starting" and "nothing works".
     tracing::info!(known = mailboxes.len(), selectable, "folders known locally");
-    if mailboxes.is_empty() {
-        tracing::warn!(
-            "no folders are known locally, so nothing will sync; the server's \
-             folder list has never been read (postio-755)"
-        );
-    }
 
     for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
         wiring.runtime.spawn(async move {
