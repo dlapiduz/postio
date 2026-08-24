@@ -51,7 +51,7 @@ use postio_model::mailbox::Mailbox;
 use postio_search::ParsedQuery;
 
 use crate::palette::{Entry, entries, highlight, score};
-use crate::search::{Backspace, Chip, backspace, chips};
+use crate::search::{Backspace, Chip, Live, backspace, chips};
 
 /// Which question the box is asking.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -252,6 +252,8 @@ pub struct Field {
     pub marker: gtk::Label,
     /// The text the user types into.
     pub text: gtk::Text,
+    /// The live hit count and timing, at the right-hand end of the field.
+    pub readout: gtk::Label,
     /// The `/` cap at the right, hidden once the box is open.
     pub hint: gtk::Label,
 }
@@ -278,6 +280,8 @@ mod imp {
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) query: RefCell<Query>,
         pub(super) parsed: RefCell<ParsedQuery>,
+        /// The hit count and timing, once `attach` has a field to draw it in.
+        pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<CommandId>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
         pub(super) open: Cell<bool>,
@@ -306,6 +310,7 @@ mod imp {
                 mailboxes: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
                 parsed: RefCell::new(ParsedQuery::default()),
+                live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
                 open: Cell::new(false),
@@ -366,6 +371,7 @@ impl Finder {
     pub fn attach(&self, field: &Field) {
         let imp = self.imp();
         *imp.field.borrow_mut() = Some(field.clone());
+        *imp.live.borrow_mut() = Some(Live::new(field.readout.clone()));
 
         field.text.connect_changed(glib::clone!(
             #[weak(rename_to = finder)]
@@ -464,6 +470,15 @@ impl Finder {
     /// The keyboard context while the box is open.
     pub fn context(&self) -> Option<Context> {
         self.is_open().then(|| self.mode().context())
+    }
+
+    /// The live hit count and timing, once the box has a field to draw in.
+    ///
+    /// This is where a search actually gets run from: whatever owns the store
+    /// calls [`Live::connect_run`] and answers with [`Live::deliver`]. The box
+    /// itself only knows how to pace the question, not how to answer it.
+    pub fn live(&self) -> Option<Live> {
+        self.imp().live.borrow().clone()
     }
 
     /// The query as the search parser reads it.
@@ -755,11 +770,22 @@ impl Finder {
                 let parsed = postio_search::parse(&query.text, today());
                 *imp.parsed.borrow_mut() = parsed;
                 let parsed = imp.parsed.borrow().clone();
+                // The readout paces itself: a keystroke reschedules the run
+                // rather than starting one, so typing never waits for a
+                // search. See `crate::search::Live`.
+                if let Some(live) = imp.live.borrow().as_ref() {
+                    live.typed(&parsed);
+                }
                 for handler in imp.on_changed.borrow().iter() {
                     handler(&parsed);
                 }
             }
             Mode::Command => {
+                // Not searching mail any more, so there is no count to keep
+                // showing and nothing in flight worth waiting for.
+                if let Some(live) = imp.live.borrow().as_ref() {
+                    live.clear();
+                }
                 let found = entries(&imp.keymap.borrow(), *imp.context.borrow(), &query.text);
                 for entry in &found {
                     imp.list.append(&command_row(entry));
@@ -767,6 +793,9 @@ impl Finder {
                 *imp.commands.borrow_mut() = found.iter().map(|entry| entry.id).collect();
             }
             Mode::Mailbox => {
+                if let Some(live) = imp.live.borrow().as_ref() {
+                    live.clear();
+                }
                 let found = folders(&imp.mailboxes.borrow(), &query.text);
                 for hit in &found {
                     imp.list.append(&folder_row(hit));
