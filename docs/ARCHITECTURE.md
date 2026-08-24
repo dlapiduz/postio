@@ -279,8 +279,31 @@ Remote images blocked per-sender until allowed; read receipts never automatic;
 `List-Unsubscribe` One-Click only on deliberate activation; no link prefetch, no
 favicon fetch, no speculative connections; no telemetry, no crash reporting, no
 update ping; credentials in the OS keyring, never in `config.toml`, never in a
-log. The reader's WebView has JavaScript off and network off, and `cid:` images
-resolve from the local blob store.
+log.
+
+#### Script never touches message content — in either direction
+
+The rule attaches to **content that came from a message**, not to which widget
+is on screen. Mail is attacker-controlled text; Postio's own code is not. Three
+consequences, and the third is the one that is easy to forget:
+
+- **Nothing from a message ever executes.** The reader's `WebView` has
+  JavaScript off and network off, and `cid:` images resolve from the local blob
+  store. Message-derived markup is sanitised before it reaches any surface —
+  script, event handlers, embedded objects and `style` removed.
+- **Postio's own script is not an exception to that rule, because it is not
+  message content.** The composer runs a bundled editor script from the
+  GResource bundle, and that is permitted: no message-derived script exists in
+  its document, because quoted and forwarded content is sanitised *before* it
+  is inserted. What is forbidden is script that arrived in the mail, wherever
+  it would run. A composer surface still takes no network and loads no remote
+  script.
+- **Replies and forwards carry no script outward.** Quoted content is sanitised
+  on the way in, and the outgoing body is generated from Postio's own document
+  types rather than passed through, so nothing a sender wrote is re-emitted.
+  This direction matters as much as the other one: Postio must never make a
+  recipient run something its own user was protected from. A forwarded phishing
+  mail is the most likely way that happens, and it is silent when it does.
 
 **Logs never carry message content** — no bodies, subjects or recipient
 addresses, at any level. Ids, counts and outcomes only. A debug log full of
