@@ -56,7 +56,16 @@ impl Store {
                 flagged: 0,
             };
             // A folder that has synced, so the status line has an age to show.
-            mailbox.last_synced_at = Some(Utc::now() - chrono::Duration::seconds(12));
+            //
+            // Five and a half minutes rather than twelve seconds. `age`
+            // renders exact seconds below a minute, so a twelve-second
+            // fixture re-read the wall clock at render time and said `13s`
+            // on any run that crossed a second boundary — about one in three
+            // (#49). In the minutes bucket the same assertion has thirty
+            // seconds of slack and still proves the only thing it is for:
+            // that the age came off the folder rather than from anywhere
+            // else.
+            mailbox.last_synced_at = Some(Utc::now() - chrono::Duration::seconds(330));
             mailbox
         };
         vec![
@@ -166,7 +175,7 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     );
     assert_eq!(
         status_text(&window).1,
-        "last sync 12s",
+        "last sync 5m",
         "the age came off the folders' own last_synced_at"
     );
 
