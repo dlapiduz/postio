@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use postio_core::ActionId;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::{CommandError, Dispatcher};
 use postio_core::state::{AppState, SharedState, ViewMode};
@@ -412,7 +413,7 @@ fn state_changes_arrive_at_the_ui_as_events_from_the_bus() {
         seen.iter().any(|event| matches!(
             event,
             Event::CommandRejected {
-                command: CommandId::Back,
+                command: ActionId::Builtin(CommandId::Back),
                 ..
             }
         )),

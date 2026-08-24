@@ -148,6 +148,11 @@ impl fmt::Display for CommandId {
 pub struct UnknownCommand(String);
 
 impl UnknownCommand {
+    /// Name `text` as something that is not a command in this build.
+    pub fn new(text: impl Into<String>) -> Self {
+        UnknownCommand(text.into())
+    }
+
     /// The text that named no command.
     pub fn as_str(&self) -> &str {
         &self.0

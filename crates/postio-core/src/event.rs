@@ -173,7 +173,12 @@ pub enum Event {
     /// Not an error: the UI usually answers with a quiet hint, not a dialog.
     CommandRejected {
         /// The command that was refused.
-        command: crate::CommandId,
+        ///
+        /// An [`ActionId`](crate::ActionId) rather than a `CommandId`, so a
+        /// registered extension command is refused through the same event and
+        /// answered by the same quiet hint. It still serialises as the
+        /// command's stable string id.
+        command: crate::ActionId,
         /// Why, phrased for the user.
         reason: String,
     },
@@ -204,7 +209,7 @@ mod tests {
     fn events_survive_a_serde_round_trip() {
         // Events are logged and replayed in tests; they must round-trip.
         let event = Event::CommandRejected {
-            command: CommandId::Undo,
+            command: CommandId::Undo.into(),
             reason: "nothing to undo".into(),
         };
         let json = serde_json::to_string(&event).unwrap();

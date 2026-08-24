@@ -9,6 +9,7 @@
 use std::time::{Duration, Instant};
 
 use postio_config::{Config, KeyBindings, validate};
+use postio_core::ActionId;
 use postio_core::bridge::event_channel;
 use postio_core::config::{ConfigService, Keymap, SharedConfig};
 use postio_core::{CommandId, Context, Event};
@@ -66,7 +67,7 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
     );
     assert_eq!(
         keymap.command_for(Context::List, "o"),
-        Some(CommandId::OpenMessage)
+        Some(ActionId::Builtin(CommandId::OpenMessage))
     );
     assert_eq!(
         keymap.command_for(Context::List, "Return"),
@@ -81,7 +82,7 @@ fn a_key_resolves_only_in_the_contexts_its_command_lives_in() {
 
     assert_eq!(
         keymap.command_for(Context::List, "a"),
-        Some(CommandId::Archive)
+        Some(ActionId::Builtin(CommandId::Archive))
     );
     assert_eq!(
         keymap.command_for(Context::Composer, "a"),
@@ -90,7 +91,7 @@ fn a_key_resolves_only_in_the_contexts_its_command_lives_in() {
     );
     assert_eq!(
         keymap.command_for(Context::Composer, "ctrl+k"),
-        Some(CommandId::CommandPalette),
+        Some(ActionId::Builtin(CommandId::CommandPalette)),
         "the palette is reachable everywhere"
     );
 }
@@ -141,7 +142,7 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
 
     assert_eq!(
         keymap.command_for(Context::List, "a"),
-        Some(CommandId::Delete)
+        Some(ActionId::Builtin(CommandId::Delete))
     );
     assert_eq!(
         keymap.binding(CommandId::Archive),
@@ -166,7 +167,7 @@ fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
 
     assert_eq!(
         keymap.command_for(Context::List, "q"),
-        Some(CommandId::Archive)
+        Some(ActionId::Builtin(CommandId::Archive))
     );
     assert_eq!(
         keymap.binding(CommandId::Delete),
