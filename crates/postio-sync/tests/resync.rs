@@ -123,9 +123,17 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
         .expect("resync");
 
     match outcome {
-        Outcome::Incremental { changed, vanished } => {
+        Outcome::Incremental {
+            changed,
+            vanished,
+            arrived,
+        } => {
             assert_eq!(changed, 1, "only message 2's flag change was reported");
             assert_eq!(vanished, 1, "message 3 is gone");
+            assert!(
+                arrived.is_empty(),
+                "a flag change is not new mail: {arrived:?}"
+            );
         }
         other => panic!("expected an incremental resync, got {other:?}"),
     }
@@ -207,9 +215,18 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
         .expect("resync");
 
     match outcome {
-        Outcome::Incremental { changed, vanished } => {
+        Outcome::Incremental {
+            changed,
+            vanished,
+            arrived,
+        } => {
             assert_eq!(changed, 1, "UIDNEXT moved, so the gap was fetched");
             assert_eq!(vanished, 0);
+            assert_eq!(
+                arrived.len(),
+                1,
+                "the gap UIDNEXT caught is exactly one new message"
+            );
         }
         other => panic!("expected an incremental resync, got {other:?}"),
     }

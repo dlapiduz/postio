@@ -70,7 +70,8 @@ use chrono::Utc;
 use postio_imap::backend::{MailBackend, MailboxStatus as ServerStatus, SelectMode, UidSet};
 use postio_imap::cancel::CancelToken;
 use postio_model::{
-    FullResyncReason, Mailbox, MailboxId, MailboxStatus, Message, ResyncPlan, Uid, UidValidity,
+    FullResyncReason, Mailbox, MailboxId, MailboxStatus, Message, MessageId, ResyncPlan, Uid,
+    UidValidity,
 };
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
@@ -116,6 +117,11 @@ pub enum Outcome {
         /// Messages that no longer exist on the server and were removed
         /// locally.
         vanished: usize,
+        /// Of `changed`, the ones that were not known before this pass —
+        /// genuine arrivals rather than a flag change on mail already here.
+        /// This is what a desktop notification is about; `changed` alone
+        /// cannot tell the two apart.
+        arrived: Vec<MessageId>,
     },
 }
 
@@ -342,6 +348,7 @@ async fn incremental(
         .count() as u32;
     let changed_count = changed.len();
 
+    let mut arrived: Vec<MessageId> = Vec::new();
     if !changed.is_empty() {
         let mut batch: Vec<Message> = changed
             .into_iter()
@@ -354,10 +361,11 @@ async fn incremental(
             threading.thread(message)?;
         }
 
-        // Only the arrivals: `known_set` was read before this fetch, so a
-        // message already in it is a flag change or similar, not a new
-        // correspondent sighting. See `contacts::record`'s docs for why this
-        // pass would otherwise double-count on every resync.
+        // Only the arrivals, by the same test twice over: `known_set` was
+        // read before this fetch, so a message already in it is a flag
+        // change or similar, not a new correspondent sighting and not new
+        // mail to notify about. See `contacts::record`'s docs for the
+        // double-counting this also avoids.
         if let Some(account) = AccountRepository::new(connection).get(mailbox.account_id)? {
             for message in &batch {
                 let is_new = message
@@ -366,6 +374,7 @@ async fn incremental(
                     .is_some_and(|uid| !known_set.contains(uid));
                 if is_new {
                     crate::contacts::record(connection, &account, message)?;
+                    arrived.push(message.id);
                 }
             }
         }
@@ -395,6 +404,7 @@ async fn incremental(
     Ok(Outcome::Incremental {
         changed: changed_count,
         vanished: vanished_count,
+        arrived,
     })
 }
 

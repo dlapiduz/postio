@@ -211,6 +211,60 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
         )),
         "nothing told the open list its mailbox had changed"
     );
+
+    // postio-du6: a first sync inserted ten messages, and none of them are
+    // new mail in the sense a desktop notification means -- they are the
+    // account's whole history arriving at once. `Event::NewMail` firing here
+    // would be a notification storm on the very first run.
+    assert!(
+        !announced(&events)
+            .iter()
+            .any(|event| matches!(event, Event::NewMail { .. })),
+        "an initial sync must never announce new mail"
+    );
+}
+
+#[tokio::test]
+async fn a_resync_that_finds_new_mail_announces_it() {
+    // postio-du6: `Event::NewMail` existed, was consumed by
+    // `postio_gtk::feed`, and nothing ever emitted it -- the trigger a
+    // desktop notification needs simply never fired.
+    let database = test_support::memory();
+    let account =
+        postio_storage::test_support::account(&database.connection().expect("a connection"));
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, events) = engine_over_arc(&database, account.id, backend.clone());
+
+    engine.sync(mailbox.id).await.expect("a first sync");
+    // The bootstrap pass's own events are not what this test is about.
+    let _ = announced(&events);
+
+    backend
+        .append(
+            "INBOX",
+            &postio_imap::backend::AppendMessage::new(arriving_message()),
+        )
+        .await
+        .expect("the server takes delivery");
+    engine.sync(mailbox.id).await.expect("a resync");
+
+    let arrived = announced(&events)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::NewMail { mailbox, messages } => Some((mailbox, messages)),
+            _ => None,
+        })
+        .expect("the delivery must be announced as new mail");
+    assert_eq!(arrived.0, mailbox.id);
+    assert_eq!(arrived.1.len(), 1, "exactly the one message that arrived");
 }
 
 #[tokio::test]

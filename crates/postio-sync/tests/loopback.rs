@@ -162,9 +162,18 @@ async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
         .expect("resync");
 
     match outcome {
-        Outcome::Incremental { changed, vanished } => {
+        Outcome::Incremental {
+            changed,
+            vanished,
+            arrived,
+        } => {
             assert_eq!(changed, 2, "the flag change and the arrival");
             assert_eq!(vanished, 0);
+            assert_eq!(
+                arrived.len(),
+                1,
+                "only the delivery is new mail, not the flag change: {arrived:?}"
+            );
         }
         other => panic!("expected an incremental resync, got {other:?}"),
     }
