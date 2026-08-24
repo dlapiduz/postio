@@ -2288,6 +2288,7 @@ dependencies = [
  "postio-runtime",
  "postio-smtp",
  "postio-storage",
+ "tempfile",
  "tokio",
 ]
 
