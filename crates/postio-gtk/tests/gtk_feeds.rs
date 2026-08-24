@@ -18,7 +18,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_gtk::feed::{
-    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
@@ -79,12 +79,21 @@ impl MessageSource for Store {
     fn fetch(&self, request: PageRequest) -> PageFuture {
         // Each mailbox holds a different amount of mail, so "the list shows
         // the folder you picked" is checkable by counting.
-        let total = match request.mailbox.get() {
+        // A folder id to count by. The flagged query has no folder, so it
+        // stands in for one here: this store is about "the list shows what
+        // you picked", and `gtk_flagged.rs` is about which scope was asked
+        // for.
+        let mailbox = match request.scope {
+            FeedScope::Mailbox(id) => id,
+            FeedScope::Flagged(_) => MailboxId::new(0),
+        };
+        // Each mailbox holds a different amount of mail, so "the list shows
+        // the folder you picked" is checkable by counting.
+        let total = match mailbox.get() {
             INBOX => 940,
             ARCHIVE => 7,
             _ => 0,
         };
-        let mailbox = request.mailbox;
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
             let rows = (request.offset..end)
@@ -146,6 +155,11 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         labels(&window),
         [
             ("Inbox".to_string(), Some("12".to_string())),
+            // Synthesised by `Folders`, not read from the store: a query over
+            // the flagged role, which no server has a folder for. No count
+            // because this account has no flagged mail, the same way Archive
+            // shows none with nothing unread. See `gtk_flagged.rs`.
+            ("Flagged".to_string(), None),
             ("Drafts".to_string(), Some("2".to_string())),
             ("Archive".to_string(), None),
         ]

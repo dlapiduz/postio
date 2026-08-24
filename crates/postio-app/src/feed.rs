@@ -23,8 +23,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use postio_gtk::feed::{
-    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest, ResultSource,
-    RowsFuture,
+    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    ResultSource, RowsFuture,
 };
 use postio_gtk::list::Row;
 use postio_model::ids::{AccountId, MessageId};
@@ -70,8 +70,15 @@ type SendRead<T> = std::pin::Pin<
 
 impl MessageSource for Sources {
     fn fetch(&self, request: PageRequest) -> PageFuture {
+        // The translation the whole seam exists for: `postio-gtk` may not
+        // depend on `postio-runtime`, so the two describe the same idea in
+        // their own vocabularies and this crate — which knows both halves
+        // exist — is where they meet.
         let wanted = StoreRequest {
-            scope: ListScope::Mailbox(request.mailbox),
+            scope: match request.scope {
+                FeedScope::Mailbox(id) => ListScope::Mailbox(id),
+                FeedScope::Flagged(account) => ListScope::Flagged(account),
+            },
             offset: request.offset,
             limit: request.limit,
         };
@@ -85,7 +92,7 @@ impl MessageSource for Sources {
                     // that answered empty, and only this line tells them
                     // apart — which is the whole of `postio-qhz.7`.
                     tracing::debug!(
-                        mailbox = request.mailbox.get(),
+                        scope = %scope_name(request.scope),
                         page = request.page,
                         offset = request.offset,
                         rows = page.rows.len(),
@@ -142,6 +149,18 @@ impl MailboxSource for Sources {
                 Err(_) => Err("the runtime stopped before the folders arrived".to_string()),
             }
         })
+    }
+}
+
+/// What a page read was asked for, for the log line above.
+///
+/// An id and a role, never a name: a folder's name is the user's, and
+/// `CLAUDE.md` puts mailbox names on the wrong side of the line that keeps
+/// logs free of anybody's mail.
+fn scope_name(scope: FeedScope) -> String {
+    match scope {
+        FeedScope::Mailbox(id) => format!("mailbox {}", id.get()),
+        FeedScope::Flagged(account) => format!("flagged in account {}", account.get()),
     }
 }
 
