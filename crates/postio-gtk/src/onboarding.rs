@@ -399,6 +399,29 @@ impl Onboarding {
             && !self.status().is_busy()
     }
 
+    /// Sets the password field directly, without a key event.
+    #[doc(hidden)]
+    pub fn test_set_password(&self, password: &str) {
+        self.imp().password.set_text(password);
+    }
+
+    /// Fires `activate` on each of the five manual server fields, exactly as
+    /// a real Return keystroke would. Every field, not just one, so a fix
+    /// that only wired up `login` cannot pass this — see `postio-68`.
+    #[doc(hidden)]
+    pub fn test_activate_manual_fields(&self) {
+        let imp = self.imp();
+        for entry in [
+            &imp.imap_host,
+            &imp.imap_port,
+            &imp.smtp_host,
+            &imp.smtp_port,
+            &imp.login,
+        ] {
+            entry.emit_activate();
+        }
+    }
+
     // -- internals ---------------------------------------------------------
 
     fn fill_manual(&self, settings: &Settings) {
@@ -647,6 +670,14 @@ impl Onboarding {
             ("Login name", &imp.login),
         ] {
             entry.set_hexpand(true);
+            // Ret here has never done anything -- postio-68. Address and
+            // password already commit the form this way; the five manual
+            // fields had no handler on `activate` at all.
+            entry.connect_activate(glib::clone!(
+                #[weak(rename_to = screen)]
+                self,
+                move |_| screen.submit()
+            ));
             entry.connect_changed(glib::clone!(
                 #[weak(rename_to = screen)]
                 self,
