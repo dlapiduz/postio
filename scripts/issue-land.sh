@@ -8,8 +8,14 @@
 #
 # Usage:
 #   scripts/issue-land.sh -m "feat(gtk): teach the list to do the thing"
-#   scripts/issue-land.sh -m "..." --wip     # push without opening a PR
-#   scripts/issue-land.sh --gates-only       # run the checks, commit nothing
+#   scripts/issue-land.sh -m "..." --wip        # push without opening a PR
+#   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
+#   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
+#
+# By default this waits for CI and merges. A PR nobody merges is work that
+# looks finished and is not: it goes stale, it conflicts with whatever lands
+# next, and the issue it closes stays open. The session that wrote it is the
+# one that knows what to do if the checks fail, so it is the one that waits.
 set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
@@ -17,12 +23,13 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 MAIN_CHECKOUT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$MAIN_CHECKOUT/target}"
 
-MSG=""; WIP=0; GATES_ONLY=0
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
         --wip)        WIP=1;    shift ;;
         --gates-only) GATES_ONLY=1; shift ;;
+        --no-merge)   MERGE=0;      shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -113,4 +120,30 @@ Closes #$ISSUE
 BODY
 )"
 fi
-gh pr view --json url -q .url
+URL=$(gh pr view --json url -q .url)
+echo "$URL"
+
+[ "$MERGE" = 1 ] || { echo "left open at your request (--no-merge)."; exit 0; }
+
+# Watch, do not fire and forget. GitHub's own --auto would merge immediately
+# here: it waits for *required* checks, branch protection is what makes a check
+# required, and this repository cannot set any (private repo, free plan). So
+# auto-merge would land the PR before CI had started.
+echo
+echo "--- waiting for checks ---"
+if ! gh pr checks --watch --fail-fast; then
+    echo
+    echo "Checks failed. The PR is open at $URL and the branch is pushed." >&2
+    echo "Fix it on this branch and run this script again -- do not open a" >&2
+    echo "second PR, and do not leave it sitting." >&2
+    exit 1
+fi
+
+# Rebase, not squash. This history is linear and the project's convention is
+# small focused commits; squashing a multi-commit branch throws away exactly
+# the structure the commit rules exist to produce.
+gh pr merge --rebase --delete-branch
+echo
+echo "merged and branch deleted."
+echo "Now: scripts/issue-release.sh $ISSUE   (removes the worktree)"
+echo "Then claim the next one -- finishing an issue is not finishing a session."
