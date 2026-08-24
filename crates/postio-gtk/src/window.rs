@@ -57,6 +57,16 @@ type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 /// argument about what it is.
 pub const DEFAULT_SIZE: (i32, i32) = (1120, 700);
 
+/// How much of a thread a drill-in reads.
+///
+/// One request rather than a paged feed: a thread is a conversation, and the
+/// column already holds every message it is given in memory to sort and
+/// filter them. `benches/thread_drill.rs` measures the drill-in against a
+/// 200-message thread, which is the size this is chosen to clear comfortably;
+/// a conversation past it is pathological rather than long, and the header's
+/// `n of m` says so honestly.
+const THREAD_PAGE: u32 = 500;
+
 mod imp {
     use std::cell::OnceCell;
 
@@ -73,6 +83,14 @@ mod imp {
         pub list_pane: OnceCell<gtk::Overlay>,
         /// The thread, where the list was. See [`crate::thread`].
         pub thread: OnceCell<crate::thread::ThreadView>,
+        /// Where a drill-in reads the whole thread from.
+        ///
+        /// The message list's own feed owns this too; the window keeps a
+        /// handle because a thread is not a page of the list and cannot be
+        /// asked for through it. `None` until `install_feeds`, which is the
+        /// state a window built for a test of one widget is in — the drill-in
+        /// then shows what the list model holds, exactly as it always did.
+        pub messages: std::cell::RefCell<Option<std::rc::Rc<dyn MessageSource>>>,
         /// Where the list was scrolled to when the drill-in hid it.
         pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
@@ -253,12 +271,48 @@ impl Window {
     /// the column up without synthesizing a key event.
     pub fn open_thread(&self, row: &crate::list::Row) {
         let Some(id) = row.thread else { return };
+        // What the list already holds, first and synchronously. A drill-in is
+        // an ordinary interaction and owes an answer inside the 16ms budget;
+        // waiting for a read would make `t` feel like a load. This is the
+        // same local-first shape every mutating action here uses.
         self.show_thread(
             id,
             row.subject.as_deref(),
             self.thread_rows(id),
             row.thread_count,
         );
+
+        // Then the rest of it. A thread routinely spans folders, and the part
+        // of it in *this* folder is all the list model has ever been able to
+        // offer -- less than that, if the page carrying a message has not been
+        // scrolled to. See #44.
+        let Some(source) = self.imp().messages.borrow().clone() else {
+            return;
+        };
+        let future = source.fetch(crate::feed::PageRequest {
+            scope: crate::feed::FeedScope::Thread(id),
+            page: 0,
+            offset: 0,
+            limit: THREAD_PAGE,
+        });
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method,
+                // and the trait's contract is that what it returns is pollable
+                // on the main context -- `postio-app` implements it by
+                // spawning the runtime work and handing back a channel
+                // receive.
+                match future.await {
+                    Ok(page) => window.thread().fill(id, page.rows, page.total),
+                    // The column keeps what the list gave it, which is a
+                    // subset rather than nothing, and the header goes on
+                    // saying `n of m`. Worth a line, not a banner.
+                    Err(message) => tracing::debug!(message, "the thread could not be read"),
+                }
+            }
+        ));
     }
 
     /// Put `thread` in the column, with the messages you name.
@@ -578,7 +632,7 @@ impl Window {
         mailboxes: std::rc::Rc<dyn MailboxSource>,
     ) -> Feeds {
         let list = self.list();
-        let feed = list.feed(messages);
+        let feed = list.feed(messages.clone());
         let folders = Folders::new(&self.sidebar(), mailboxes);
 
         // One way to show a folder, whether the user picked it or the window
@@ -678,6 +732,7 @@ impl Window {
         ));
 
         folders.open(account, address);
+        *self.imp().messages.borrow_mut() = Some(messages);
         Feeds {
             messages: feed,
             folders,
