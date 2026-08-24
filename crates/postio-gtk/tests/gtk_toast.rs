@@ -12,9 +12,18 @@
 //! postio_gtk-... (signal: 6, SIGABRT)
 //! ```
 //!
-//! Cargo gives every integration test its own process, so the process-wide
-//! init is safe here. Anything in this crate that needs a display belongs in
-//! `tests/`, not in a `#[cfg(test)] mod tests`.
+//! Cargo gives every integration test *binary* its own process — but not
+//! every test *function*. Those still share the binary's thread pool, so
+//! three `#[test]`s here reproduced the same abort the move was meant to end:
+//!
+//! ```text
+//! Gdk-ERROR **: gdk_display_open_default() was called before gtk_init()
+//! ```
+//!
+//! So this file is deliberately *one* test function, the way `gtk_style.rs`
+//! and `gtk_accessibility.rs` already are. Anything in this crate that needs
+//! a display belongs in `tests/`, one test to a file, not in a
+//! `#[cfg(test)] mod tests`.
 
 use postio_gtk::toast::Toast;
 
@@ -24,11 +33,13 @@ fn ready() -> bool {
 }
 
 #[test]
-fn a_second_action_replaces_the_first_toasts_text_rather_than_stacking() {
+fn the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo() {
     if !ready() {
         eprintln!("skipping: no display");
         return;
     }
+
+    // ── a second action replaces the first rather than stacking ──────────
     let toast = Toast::new();
     toast.show_action_completed("Archived 3 messages", true);
     let first = toast.showing();
@@ -42,30 +53,18 @@ fn a_second_action_replaces_the_first_toasts_text_rather_than_stacking() {
         second.unwrap(),
         "coalescing swaps in a new toast rather than editing the old one in place"
     );
-}
 
-#[test]
-fn only_an_undoable_completion_offers_the_button() {
-    if !ready() {
-        eprintln!("skipping: no display");
-        return;
-    }
-    let toast = Toast::new();
-    toast.show_action_completed("Marked 1 message as read", false);
-    let current = toast.showing().unwrap();
-    assert_eq!(current.button_label(), None);
-    assert_eq!(current.action_name(), None);
-}
-
-#[test]
-fn an_undoable_completion_names_the_win_undo_action() {
-    if !ready() {
-        eprintln!("skipping: no display");
-        return;
-    }
+    // ── an undoable completion names the win.undo action ─────────────────
     let toast = Toast::new();
     toast.show_action_completed("Archived 12 messages", true);
     let current = toast.showing().unwrap();
     assert_eq!(current.button_label().as_deref(), Some("Undo"));
     assert_eq!(current.action_name().as_deref(), Some("win.undo"));
+
+    // ── and one with nothing to take back offers no button ───────────────
+    let toast = Toast::new();
+    toast.show_action_completed("Marked 1 message as read", false);
+    let current = toast.showing().unwrap();
+    assert_eq!(current.button_label(), None);
+    assert_eq!(current.action_name(), None);
 }
