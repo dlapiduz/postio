@@ -89,11 +89,29 @@ scripts/issue-land.sh -m "..." --wip  # push a branch, no PR yet
 ```
 
 It formats, runs clippy and tests **for the crates you actually changed**,
-runs the three repository invariant checks, commits, pushes the branch, and
-opens a PR whose body says `Closes #<n>` — so merging the PR closes the issue.
-No separate close step, and no way to leave an issue claimed after the work is
-done — leaving finished work still marked claimed is the mistake sessions
-make most often.
+runs the three repository invariant checks, commits, pushes the branch, opens
+a PR whose body says `Closes #<n>`, **waits for CI, and merges it**.
+
+That last part is not optional and not someone else's job. A PR nobody merges
+is work that looks finished and is not: the branch goes stale, it conflicts
+with whatever lands next, and the issue it claims to close stays open. You are
+the session that knows what the change was for, so you are the session that
+waits for the checks and deals with them.
+
+- **Checks pass** → it rebases onto `main` and deletes the branch. Then
+  `scripts/issue-release.sh <n>` and claim the next issue.
+- **Checks fail** → yours to fix, on the same branch, then run the script
+  again. Do not open a second PR, and do not leave it sitting.
+- `--no-merge` opens the PR and stops, for a change that genuinely needs a
+  human to look first. Say in the PR why.
+
+Merging is a **rebase**, not a squash: this history is linear and the commit
+convention asks for small focused commits, so squashing a branch discards the
+structure those rules exist to produce.
+
+GitHub's own `--auto` merge is deliberately **not** used. It waits for
+*required* checks, branch protection is what makes a check required, and this
+repository cannot set any — so `--auto` would merge before CI had started.
 
 The commit message rules are unchanged — conventional subject, a body that
 explains **why**, wrapped at 72 columns. The footer becomes `Refs: #<n>`
