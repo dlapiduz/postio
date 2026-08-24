@@ -14,7 +14,9 @@ This is the **only** place the gates need to run. Formatting in particular is
 not verification: run it here, not after every edit.
 
 ```bash
-rustfmt --edition 2024 $(git diff --name-only HEAD -- "*.rs"; git ls-files --others --exclude-standard -- "*.rs") \
+{ git diff --name-only --diff-filter=d HEAD -- 'crates/<your-crate>/*.rs'
+  git ls-files --others --exclude-standard  -- 'crates/<your-crate>/*.rs'
+} | xargs -r rustfmt --edition 2024 \
   && cargo clippy -p <your-crate> --all-targets -- -D warnings \
   && cargo test   -p <your-crate> \
   && python3 scripts/check-crate-boundaries.py \
@@ -41,10 +43,23 @@ reformats *every* file in that crate — including a file another session has
 open and uncommitted. That already happened once: a composer session ran
 `cargo fmt -p postio-gtk` and churned whitespace through the settings session's
 in-flight test file. Nothing was lost, but their diff got noise they did not
-write. `rustfmt --edition 2024 <files>` touches only what you name; the command
-above derives that list from your own changes. It lists untracked files
-too — `git diff HEAD` alone silently skips a brand-new test file, which is
-exactly how unformatted code has reached a commit here before.
+write. `rustfmt --edition 2024 <files>` touches only what you name.
+
+**The pathspec is what makes "the files you touched" true.** Naming your crate
+in both halves is not tidiness — without it this command has the very bug it
+exists to avoid. `git diff --name-only HEAD` lists what is dirty in the *whole
+tree*, and in a shared checkout that is every session's work. An earlier
+version of this block omitted the pathspec, and a session ran it over 272 lines
+of someone else's loose work; nothing was damaged, but only because those files
+happened to be formatted already. Use the same paths you will pass to
+`git commit --only`.
+
+Three details in the command carry weight. It lists untracked files too —
+`git diff HEAD` alone silently skips a brand-new test file, which is exactly
+how unformatted code has reached a commit here before. `--diff-filter=d` drops
+deletions, which `rustfmt` cannot open. And `xargs -r` makes the empty case a
+no-op — bare `rustfmt` with no file arguments waits on stdin, so without it a
+session with nothing to format appears to hang.
 
 `cargo fmt --all --check` and `-p <crate> --check` are read-only and safe. It is
 only the writing forms that reach into other people's files.
