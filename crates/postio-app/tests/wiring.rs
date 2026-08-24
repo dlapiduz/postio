@@ -34,10 +34,11 @@
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use postio_app::{Wiring, feed_the_window};
+use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
+use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 

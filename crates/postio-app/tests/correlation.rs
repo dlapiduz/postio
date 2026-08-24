@@ -18,12 +18,12 @@
 //! never started.
 
 use chrono::Utc;
-use postio_app::actions::{Actions, wire};
 use postio_core::bridge::Bridge;
 use postio_core::invocation::InvocationOutcome;
 use postio_core::state::SharedState;
 use postio_core::{Command, Dispatcher, Event, MessageTarget};
 use postio_model::{Message, MessageId};
+use postio_session::actions::{Actions, wire};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 

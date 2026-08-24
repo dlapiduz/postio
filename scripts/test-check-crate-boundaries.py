@@ -51,6 +51,8 @@ def build_fixture(
     core_deps: str = "",
     gtk_deps: str = "",
     gtk_dev_deps: str = "",
+    session_deps: str = "",
+    session_dev_deps: str = "",
     helper_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
@@ -60,6 +62,7 @@ def build_fixture(
     write_crate(root, "crates", "postio-core", core_deps)
     if include_gtk:
         write_crate(root, "crates", "postio-gtk", gtk_deps, gtk_dev_deps)
+    write_crate(root, "crates", "postio-session", session_deps, session_dev_deps)
     write_crate(root, "crates", "helper", helper_deps)
     # Stand-ins for the real third-party crates, so nothing is fetched.
     for banned in ("gtk4", "libadwaita", "rusqlite", "io-imap"):
@@ -189,7 +192,48 @@ def main() -> int:
             must_mention=("postio-gtk",),
         )
 
-        # 7. And the real workspace is clean today.
+        # 7. postio-session is the composition root without a toolkit, and
+        #    that is the whole reason it was split out of postio-app (#82).
+        #    A verb added in a hurry that reaches for a widget is exactly how
+        #    it would be lost, and it would be lost silently: everything
+        #    would still compile and every test would still pass.
+        check_case(
+            "postio-session gains a direct gtk4 dependency",
+            build_fixture(
+                tmp_path / "session-gtk",
+                session_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-session", "gtk4"),
+        )
+
+        # 8. …and transitively, which is the way it would actually happen:
+        #    nobody writes `gtk4` into that manifest on purpose.
+        check_case(
+            "postio-session reaches libadwaita through another crate",
+            build_fixture(
+                tmp_path / "session-transitive",
+                session_deps='helper = { path = "../helper" }\n',
+                helper_deps='libadwaita = { path = "../../vendor/libadwaita" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-session", "libadwaita"),
+        )
+
+        # 9. A test is not an exemption. `postio-app`'s integration tests
+        #    drive the session crate, and a dev-dependency on the toolkit
+        #    would let a "headless" verb be exercised only through GTK.
+        check_case(
+            "postio-session gains a gtk4 dev-dependency",
+            build_fixture(
+                tmp_path / "session-dev",
+                session_dev_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-session", "gtk4"),
+        )
+
+        # 10. And the real workspace is clean today.
         check_case(
             "the real workspace passes",
             REPO_ROOT / "Cargo.toml",

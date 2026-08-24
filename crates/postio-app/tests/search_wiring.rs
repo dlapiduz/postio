@@ -25,12 +25,13 @@
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use postio_app::{Wiring, ensure_search_index, feed_the_window};
+use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_search::facets::Scope;
+use postio_session::{Wiring, ensure_search_index};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 

@@ -8,6 +8,11 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
     non-GTK frontend possible later.
   * ``postio-gtk`` must not depend on ``rusqlite``/``io-imap``. The view layer
     does no SQL and speaks no protocol.
+  * ``postio-session`` must not depend on ``gtk4``/``libadwaita``. It is the
+    composition root without a toolkit -- the store, the runtime, the engines
+    and the whole verb vocabulary -- which is what makes a headless frontend
+    (an MCP server; see ADR 0010) possible without giving the database a
+    second writer that plays by different rules.
 
 The check inspects ``cargo metadata``'s resolved dependency graph rather than
 grepping source, so it catches a violation that arrives *transitively* through
@@ -68,6 +73,30 @@ RULES: dict[str, dict[str, object]] = {
             "postio-gtk is the view layer: command down, event up. No SQL and "
             "no protocol. Storage goes through postio-storage and mail through "
             "the MailBackend trait, both behind postio-core."
+        ),
+    },
+    # The same list as postio-core's, and deliberately not shared with it: the
+    # two crates are guarded for related but different reasons, and a single
+    # constant would invite "fixing" one by loosening the other.
+    "postio-session": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+        ],
+        "why": (
+            "postio-session is the composition root without a toolkit: the "
+            "store, the runtime, the engines and the verb vocabulary. A "
+            "headless frontend links this and not postio-app; the moment a "
+            "verb reaches for a widget, the only remaining way to run mail "
+            "commands is through GTK -- and ADR 0010's alternative, a second "
+            "binary opening SQLite directly, gives the database two writers "
+            "with different rules about ordering, undo and the queue."
         ),
     },
 }

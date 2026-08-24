@@ -26,34 +26,36 @@
 //! the window — which happens on `activate`, after the frontend has built its
 //! own.
 
-pub mod actions;
 pub mod commands;
 pub mod compose;
-pub mod engine;
 pub mod export;
 pub mod feed;
-pub mod logging;
 pub mod notifications;
 pub mod onboarding;
-pub mod paths;
 pub mod reading;
-pub mod refresh;
 pub mod search;
 
+// The toolkit-free half of the composition root lives in `postio-session`, so
+// that a frontend which is not GTK can link it (ADR 0010). Re-exported here
+// rather than left for every call site to find, because `run` below reads as
+// one startup sequence and it should not matter to the reader which side of
+// the split each step came from.
+pub use postio_session::{
+    Wiring, actions, engine, ensure_search_index, first_account, logging, open_store, paths,
+    refresh,
+};
+
 use std::rc::Rc;
-use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
-use postio_core::bridge::{Bridge, EventSink, event_channel};
+use postio_core::bridge::{Bridge, event_channel};
 use postio_core::dispatch::Dispatcher;
 use postio_core::state::SharedState;
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_runtime::store::{MailStore, SqliteStore};
-use postio_storage::repository::AccountRepository;
-use postio_storage::{BlobStore, Database};
+use postio_storage::Database;
 
 /// Open the store, start the runtime, build the window, and join them.
 ///
@@ -315,129 +317,6 @@ fn open_account(
     }
 }
 
-/// What the frontend needs, once there is a store to give it.
-#[derive(Clone)]
-pub struct Wiring {
-    /// The local store every pane reads through.
-    pub database: Database,
-    /// Bodies and attachments, content-addressed beside the database.
-    pub blobs: BlobStore,
-    /// The store as the frontend sees it: rows in, no SQL.
-    pub store: Arc<dyn MailStore>,
-    /// The runtime every read is polled on.
-    pub runtime: tokio::runtime::Handle,
-    /// Where the engine and the handlers report to.
-    pub events: EventSink,
-    /// The command bus.
-    pub commands: postio_core::bridge::CommandSender,
-    /// Where the engine goes once it is running, so `Refresh` can find it.
-    pub engine: refresh::EngineSlot,
-    /// Where account passwords live.
-    ///
-    /// A part rather than something the modules that need it construct, for
-    /// the reason `engine.rs` gives about every other part: which keyring
-    /// this installation uses is a choice about *this installation*, and a
-    /// module that reaches for `KeyringSecretStore::default()` itself cannot
-    /// be driven by a test without a Secret Service session. Both credential
-    /// paths — the one onboarding writes and the one startup reads — hang
-    /// off this.
-    pub secrets: Arc<dyn postio_imap::secret::SecretStore>,
-}
-
-impl Wiring {
-    /// Everything the panes need, over an already-open store.
-    ///
-    /// `runtime`, `events` and `commands` come from the `Bridge` in [`run`];
-    /// a test supplies its own, which is the whole point of this being
-    /// constructible from outside.
-    pub fn new(
-        database: Database,
-        blobs: BlobStore,
-        runtime: tokio::runtime::Handle,
-        events: EventSink,
-        commands: postio_core::bridge::CommandSender,
-    ) -> Self {
-        Wiring {
-            store: Arc::new(SqliteStore::new(&database)),
-            database,
-            blobs,
-            runtime,
-            events,
-            commands,
-            engine: refresh::EngineSlot::default(),
-            secrets: Arc::new(postio_imap::secret::KeyringSecretStore::default()),
-        }
-    }
-
-    /// The same wiring, reading and writing passwords somewhere else.
-    ///
-    /// The seam a test needs: `MemorySecretStore` stands in for a keyring
-    /// that has no D-Bus session behind it, and `MemorySecretStore::locked`
-    /// for one nobody has unlocked.
-    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
-        self.secrets = secrets;
-        self
-    }
-}
-
-/// Open the local store, or explain why there is none.
-///
-/// A missing or unreadable database is not a reason to refuse to start: the
-/// window opens, says it has never synced, and stays usable for everything
-/// that does not need mail. A mail client that will not open is worse than one
-/// with nothing in it.
-pub fn open_store() -> Option<(Database, BlobStore)> {
-    let path = paths::store_path();
-    let database = match Database::open(&path) {
-        Ok(database) => database,
-        Err(error) => {
-            tracing::error!(path = %path.display(), %error, "cannot open the store");
-            return None;
-        }
-    };
-    // Beside the database, not inside it: bodies and attachments are
-    // content-addressed files, and SQLite holds the key and the metadata.
-    let blobs = match BlobStore::open(path.with_file_name("blobs")) {
-        Ok(blobs) => blobs,
-        Err(error) => {
-            tracing::error!(%error, "cannot open the blob store");
-            return None;
-        }
-    };
-    if let Err(error) = ensure_search_index(&database) {
-        // Recoverable: everything except search still works, and refusing to
-        // open a mail client because its index would not build would be a
-        // worse answer than opening one you cannot search.
-        tracing::error!(%error, "the search index is unavailable");
-    }
-
-    Some((database, blobs))
-}
-
-/// Create the full-text index if it is not there, on every start.
-///
-/// The same contract `postio_storage::migrate` has, and for the same reason:
-/// the schema is part of opening the store, not part of searching it. Once it
-/// exists the metadata columns — subject, sender, recipients — are maintained
-/// **by trigger**, exactly like the mailbox counts in migration 0003, so this
-/// one call indexes every message already in the store and every one that
-/// arrives after.
-///
-/// It was missing entirely. `postio_index::index::ensure_schema` documents
-/// that it must run at startup and nothing ran it, so `search_documents` and
-/// `messages_fts` did not exist on any real store and search had nothing to
-/// search — `postio-x4e`, and the ninth instance of `postio-bl2`.
-///
-/// Message *bodies* are a separate matter: they live in the blob store, no
-/// trigger can reach them, and `index_body` has to be called when a backfill
-/// lands one. That half is still missing.
-pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error::Error>> {
-    let connection = database.connection()?;
-    postio_index::index::ensure_schema(&connection)?;
-    tracing::debug!("the search index is ready");
-    Ok(())
-}
-
 /// Everything `feed_the_window` wires up, for whoever has to drive it.
 ///
 /// The `View` is handed back rather than only leaked because it is the far
@@ -676,25 +555,6 @@ pub async fn startup_route(
             Startup::Onboard(Some(Box::new(account)))
         }
     }
-}
-
-/// The account to open, if the store holds one.
-///
-/// Read straight off a connection rather than through [`MailStore`]: which
-/// account to open is a question about *starting up*, not about drawing mail,
-/// and this crate is the one place allowed to ask it directly. It is one
-/// indexed read before the window is presented.
-pub fn first_account(database: &Database) -> Option<postio_model::Account> {
-    let connection = database
-        .connection()
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
-        .ok()?;
-    AccountRepository::new(&connection)
-        .list_enabled()
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
-        .ok()?
-        .into_iter()
-        .next()
 }
 
 #[cfg(test)]
