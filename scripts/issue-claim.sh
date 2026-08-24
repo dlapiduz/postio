@@ -44,9 +44,10 @@ args=(issue list --state open --limit 200
 [ -n "$LABEL" ]     && args+=(--label "$LABEL")
 
 CANDIDATES=$(gh "${args[@]}" | WANT="$WANT" python3 -c '
-import json, os, sys
+import json, os, re, sys
 
 want = os.environ.get("WANT") or ""
+rows = []
 SKIP = {"epic", "icebox", "needs-architecture", "in-progress", "blocked"}
 
 for i in json.load(sys.stdin):
@@ -61,6 +62,17 @@ for i in json.load(sys.stdin):
         continue
     if any(not b.get("closed", False) for b in i["blockedBy"].get("nodes", [])):
         continue
+    rows.append(i)
+
+# Highest priority first, then oldest -- an issue that has been waiting is
+# more likely to be blocking something than one filed this morning. Without
+# this the order is whatever the API returned, which is newest-first, so a
+# P3 filed today outranks a P1 filed last week.
+def rank(i):
+    p = next((l["name"] for l in i["labels"] if re.fullmatch(r"p[0-9]", l["name"])), "p9")
+    return (p, i["number"])
+
+for i in sorted(rows, key=rank):
     print(i["number"], i["title"], sep="\t")
 ')
 
