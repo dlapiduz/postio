@@ -83,3 +83,22 @@ if ! gh pr checks --watch --fail-fast; then
     echo "second PR, and do not leave it sitting." >&2
     exit 1
 fi
+
+# `--watch --fail-fast` exiting 0 is not proof every check's conclusion has
+# actually landed: #161 saw it return success two seconds before CI's own
+# FAILURE was recorded, and the merge went ahead on the red commit. So this
+# waits one more beat for the API to catch up, then asks again without
+# watching and reads the buckets itself -- `gh --json` reports the checks
+# as they stand right now, unlike `--watch`'s exit code, which only proves
+# what it last polled.
+sleep "$POLL"
+BAD=$(gh pr checks --json name,bucket \
+    | jq -c '[.[] | select(.bucket != "pass" and .bucket != "skipping")]')
+if [ "$BAD" != "[]" ]; then
+    echo >&2
+    echo "A check is not green after watching finished. $URL is open and" >&2
+    echo "the branch is pushed. Fix it on this branch and run issue-land.sh" >&2
+    echo "again -- do not open a second PR, and do not leave it sitting." >&2
+    echo "$BAD" >&2
+    exit 1
+fi

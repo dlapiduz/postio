@@ -107,7 +107,8 @@ def case(label: str, *, expected_status: int, expect_output: str = "", **kwargs)
 
 CODE = ["crates/postio-core/src/command.rs", "crates/postio-gtk/src/reader.rs"]
 PROSE = ["README.md", "docs/engineering-notes.md"]
-CHECK = '[{"name":"build"}]'
+CHECK = '[{"name":"build","bucket":"pass"}]'
+FAILED_BUCKET = '[{"name":"build","bucket":"fail"}]'
 NONE = "-"
 
 
@@ -176,6 +177,19 @@ def main() -> int:
         json_replies=["[]"],
         expected_status=1,
         expect_output="Not merging",
+    )
+    # #161: `--watch --fail-fast` returned success two seconds before CI's own
+    # FAILURE conclusion was recorded, and issue-land.sh merged the red
+    # commit. `watch_status=0` here plays that exact race -- the watch call
+    # claims success -- and the second, non-watching read has to be the one
+    # that actually refuses.
+    case(
+        "watch claiming success is not trusted on its own -- issue #161",
+        diff=CODE,
+        json_replies=[CHECK, FAILED_BUCKET],
+        watch_status=0,
+        expected_status=1,
+        expect_output="not green after watching",
     )
 
     for failure in FAILURES:
