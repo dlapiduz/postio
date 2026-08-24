@@ -295,11 +295,20 @@ mod tests {
     fn only_one_switches_a_trace_on() {
         // SAFETY: single-threaded test, and the variable is read nowhere else
         // in this process.
-        unsafe { std::env::set_var("POSTIO_TEST_SWITCH", "0") };
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("POSTIO_TEST_SWITCH", "0")
+        };
         assert!(!enabled("POSTIO_TEST_SWITCH"));
-        unsafe { std::env::set_var("POSTIO_TEST_SWITCH", "1") };
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("POSTIO_TEST_SWITCH", "1")
+        };
         assert!(enabled("POSTIO_TEST_SWITCH"));
-        unsafe { std::env::remove_var("POSTIO_TEST_SWITCH") };
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::remove_var("POSTIO_TEST_SWITCH")
+        };
         assert!(!enabled("POSTIO_TEST_SWITCH"));
     }
 }

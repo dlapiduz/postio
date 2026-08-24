@@ -25,3 +25,6 @@ serde_json = "1.0.151"
 # Self dev-dependency so `cargo test -p postio-model` exercises the corpus
 # loader without making `test-corpus` a default feature.
 postio-model = { path = ".", features = ["test-corpus"] }
+
+[lints]
+workspace = true

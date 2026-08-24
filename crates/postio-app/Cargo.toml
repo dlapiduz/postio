@@ -50,3 +50,7 @@ postio-search.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+[lints.rust]
+# Not the workspace floor: see EXCEPTIONS in scripts/check-lint-floor.py.
+unsafe_code = "deny"

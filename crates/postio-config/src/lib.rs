@@ -45,8 +45,6 @@
 //! assert_eq!(cfg.account("personal").unwrap().imap_keyring_entry(), "postio:personal:imap");
 //! ```
 
-#![warn(missing_docs)]
-
 pub mod accounts;
 pub mod change;
 pub mod error;

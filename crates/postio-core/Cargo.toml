@@ -29,3 +29,6 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 [[bench]]
 name = "perf_budgets"
 harness = false
+
+[lints]
+workspace = true

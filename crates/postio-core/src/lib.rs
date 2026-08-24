@@ -49,9 +49,6 @@
 //! App state and the undo stack are separate issues in epic E6; this module is
 //! the vocabulary they share.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-
 pub mod action;
 pub mod bridge;
 pub mod command;

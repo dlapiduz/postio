@@ -8,6 +8,12 @@
 //! big buffer — otherwise the *test double* would dominate the measurement
 //! this test exists to take on the code under test.
 
+#![allow(unsafe_code)]
+// Installing a `GlobalAlloc` is `unsafe impl` by definition. That is the whole
+// technique here: counting allocations is how this test proves a body fetch
+// does not materialise the whole message. The crate's library code has no
+// `unsafe` at all.
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
