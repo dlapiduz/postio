@@ -366,7 +366,7 @@ impl Sidebar {
                     if sidebar.imp().echoing.get() {
                         return;
                     }
-                    let id = MailboxId::new(unsafe { row_id(row) });
+                    let id = MailboxId::new(row_id(row));
                     for callback in sidebar.imp().selected.borrow().iter() {
                         callback(id);
                     }
@@ -407,7 +407,7 @@ impl Sidebar {
         let imp = self.imp();
         for list in [&imp.special, &imp.ordinary] {
             if let Some(row) = list.selected_row() {
-                return Some(MailboxId::new(unsafe { row_id(&row) }));
+                return Some(MailboxId::new(row_id(&row)));
             }
         }
         None
@@ -455,10 +455,7 @@ impl Sidebar {
         let rows = self.rows();
         let landing = self
             .selected()
-            .and_then(|id| {
-                rows.iter()
-                    .find(|row| MailboxId::new(unsafe { row_id(row) }) == id)
-            })
+            .and_then(|id| rows.iter().find(|row| MailboxId::new(row_id(row)) == id))
             .or_else(|| rows.first());
         match landing {
             Some(row) => {
@@ -485,7 +482,7 @@ impl Sidebar {
         }
         let current = self.selected().and_then(|id| {
             rows.iter()
-                .position(|row| MailboxId::new(unsafe { row_id(row) }) == id)
+                .position(|row| MailboxId::new(row_id(row)) == id)
         });
         let next = match current {
             Some(index) => (index as i32 + delta).clamp(0, rows.len() as i32 - 1) as usize,
@@ -496,7 +493,7 @@ impl Sidebar {
         };
         let row = &rows[next];
         row.grab_focus();
-        let id = MailboxId::new(unsafe { row_id(row) });
+        let id = MailboxId::new(row_id(row));
         self.select(id);
         // `select` is deliberately quiet — it is what the window calls to
         // echo a folder it opened — so the keyboard has to announce its own
@@ -638,7 +635,7 @@ fn accept_drops(row: &gtk::ListBoxRow, sidebar: &Sidebar) {
                 return gtk::gdk::DragAction::empty();
             };
             // SAFETY: the key is private to this module and always holds an i64.
-            let mailbox = MailboxId::new(unsafe { row_id(&row) });
+            let mailbox = MailboxId::new(row_id(&row));
             // The folder the mail is already in says no rather than saying
             // nothing: a target that highlights and then does nothing is
             // worse than one that never lit up.
@@ -673,7 +670,7 @@ fn accept_drops(row: &gtk::ListBoxRow, sidebar: &Sidebar) {
                 return false;
             };
             // SAFETY: the key is private to this module and always holds an i64.
-            let mailbox = MailboxId::new(unsafe { row_id(&row) });
+            let mailbox = MailboxId::new(row_id(&row));
             // Dropping mail into the folder it is already in is not a move,
             // and reporting it as one would put an undo entry on the stack
             // for something that did not happen.
@@ -691,7 +688,12 @@ fn accept_drops(row: &gtk::ListBoxRow, sidebar: &Sidebar) {
 
 fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
     // SAFETY: the key is private to this module and always holds an i64.
-    unsafe { row.set_data("postio-mailbox-id", mailbox.id.get()) };
+    // The only writer of this key; `row_id` is the only reader. Keeping both
+    // in this file is what lets `row_id` be safe.
+    #[allow(unsafe_code)]
+    unsafe {
+        row.set_data("postio-mailbox-id", mailbox.id.get())
+    };
 
     let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
         return;
@@ -764,7 +766,7 @@ pub fn display_name(mailbox: &Mailbox) -> String {
 fn find_row(list: &gtk::ListBox, id: MailboxId) -> Option<gtk::ListBoxRow> {
     let mut index = 0;
     while let Some(row) = list.row_at_index(index) {
-        if unsafe { row_id(&row) } == id.get() {
+        if row_id(&row) == id.get() {
             return Some(row);
         }
         index += 1;
@@ -772,10 +774,18 @@ fn find_row(list: &gtk::ListBox, id: MailboxId) -> Option<gtk::ListBoxRow> {
     None
 }
 
-/// # Safety
+/// The mailbox id [`update_row`] stored on `row`, or 0 if it has none.
 ///
-/// The key is private to this module and only ever set by [`update_row`].
-unsafe fn row_id(row: &gtk::ListBoxRow) -> i64 {
+/// Safe, and the reason is a module invariant rather than a caller's promise:
+/// `"postio-mailbox-id"` is private to this file and is only ever written by
+/// [`update_row`], always as an `i64`. Nothing outside can put another type
+/// under that key, so there is no obligation left for a caller to discharge --
+/// which is what makes confining the `unsafe` here correct rather than
+/// convenient. It used to be an `unsafe fn`, and its nine call sites each
+/// opened an `unsafe` block to repeat an argument that was already true.
+fn row_id(row: &gtk::ListBoxRow) -> i64 {
+    // glib cannot know the type a key was stored under; this file can.
+    #[allow(unsafe_code)]
     unsafe {
         row.data::<i64>("postio-mailbox-id")
             .map(|p| *p.as_ref())
