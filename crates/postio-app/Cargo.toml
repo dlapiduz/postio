@@ -29,6 +29,7 @@ postio-model.workspace = true
 # guarded against the `rusqlite` it pulls in — which is the whole reason this
 # crate exists. See its `main.rs`.
 postio-runtime.workspace = true
+postio-search.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
