@@ -62,7 +62,7 @@ fn binding(window: &Window, id: CommandId) -> Option<String> {
         .sections()
         .into_iter()
         .flat_map(|section| section.rows)
-        .find(|row| row.id == id)
+        .find(|row| row.id == Some(id))
         .and_then(|row| row.binding)
 }
 
