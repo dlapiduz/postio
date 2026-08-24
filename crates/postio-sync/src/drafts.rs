@@ -11,7 +11,7 @@
 //!
 //! # Why the bytes are built here
 //!
-//! [`Operation::SaveDraft`] carries no message. Building a draft's RFC 5322
+//! `Operation::SaveDraft` carries no message. Building a draft's RFC 5322
 //! form means reading every attachment out of the blob store and assembling
 //! MIME, and a draft is saved as the user types — doing that per keystroke
 //! would be work thrown away, and storing the result would put one immutable
@@ -24,7 +24,7 @@
 //!
 //! The opposite problem. Discarding a draft deletes the local row at once —
 //! local-first, like every other mutation — so by the time
-//! [`Operation::DiscardDraft`] drains there is nothing left to read a `UID`
+//! `Operation::DiscardDraft` drains there is nothing left to read a `UID`
 //! from. It therefore carries its own, together with the [`UidValidity`] it
 //! was observed under: under a new generation that number names a different
 //! message, and expunging that would be deleting the user's mail.
@@ -94,7 +94,7 @@ pub(crate) enum ResolvedDraft {
     Impossible(String),
 }
 
-/// Resolves an [`Operation::SaveDraft`]: loads the draft, its identity and its
+/// Resolves an `Operation::SaveDraft`: loads the draft, its identity and its
 /// attachments' bytes, and builds the message to upload. Nothing here is
 /// async — every input is a database row or a blob store read.
 pub(crate) fn resolve_save(
@@ -176,7 +176,7 @@ pub(crate) fn resolve_save(
     })))
 }
 
-/// Resolves an [`Operation::DiscardDraft`]. There is no draft row left to
+/// Resolves an `Operation::DiscardDraft`. There is no draft row left to
 /// read — that is the point of the operation carrying its own `UID` — so this
 /// only has to find the folder and check the generation still matches.
 pub(crate) fn resolve_discard(

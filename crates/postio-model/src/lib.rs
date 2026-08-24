@@ -32,7 +32,7 @@
 //! # Test corpus
 //!
 //! Behind the off-by-default `test-corpus` feature this crate also ships the
-//! `.eml` fixture corpus and its loader ([`test_corpus`]), so that every crate
+//! `.eml` fixture corpus and its loader (`test_corpus`), so that every crate
 //! in the workspace can test against realistic mail without touching the
 //! network. It is dev-dependency-only; nothing in a normal build pulls it in.
 //!

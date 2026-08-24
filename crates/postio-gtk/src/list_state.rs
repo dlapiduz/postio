@@ -1,14 +1,14 @@
 //! The list pane's three named states: inbox zero, offline, sync failure.
 //!
 //! Canvas 3d: each one "names the local store and gives a key, not a
-//! shrug." [`derive`] decides which state applies, and is a pure function
+//! shrug." [`derive()`] decides which state applies, and is a pure function
 //! tested with no display, the same split [`crate::cheatsheet`] uses.
 //! [`ListStateView`] is the widget around it.
 //!
 //! # Where it lives, and how much of it it covers
 //!
 //! It is an overlay over [`crate::list_view::MessageListView`], and hides
-//! itself the moment [`derive`] returns `None` — there are rows to show and
+//! itself the moment [`derive()`] returns `None` — there are rows to show and
 //! nothing needs saying about them.
 //!
 //! The rest of the time, [`State::placement`] decides how much of the pane it
@@ -49,7 +49,7 @@ use crate::sidebar::{SyncStatus, age};
 
 /// What the list pane shows in place of rows.
 ///
-/// `None` from [`derive`] means there are rows to show and the widget should
+/// `None` from [`derive()`] means there are rows to show and the widget should
 /// stay out of the way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
@@ -96,7 +96,7 @@ pub enum Placement {
 impl State {
     /// Whether this state may share the pane with rows, or has to fill it.
     ///
-    /// `item_count` is the same count [`derive`] was given: `InboxZero` never
+    /// `item_count` is the same count [`derive()`] was given: `InboxZero` never
     /// needs it, since being empty is what put it here in the first place,
     /// but `Offline` and `Failing` can arrive with a full mailbox loaded
     /// underneath, and that is exactly the mail the banner treatment exists

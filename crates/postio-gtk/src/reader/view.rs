@@ -10,7 +10,7 @@
 //! * **Nothing is fetched.** [`sanitize::sanitize_body`] never leaves a
 //!   remote `src` in the markup unless the caller explicitly allows it
 //!   (`postio-xxz`), so there is nothing in the DOM to fetch in the first
-//!   place; the `WebView` also gets its own ephemeral [`NetworkSession`],
+//!   place; the `WebView` also gets its own ephemeral `NetworkSession`,
 //!   isolated from anything else in the process and backed by no disk cache
 //!   or cookie jar. Two independent reasons the tracking-pixel fixture
 //!   requests nothing.
@@ -19,7 +19,7 @@
 //!   in — a blob-store read, never a network round trip.
 //! * **A click never navigates the pane.** [`decide-policy`][decide] fires
 //!   for every frame navigation, including our own `load_html`; only a
-//!   navigation whose [`NavigationType`] is [`LinkClicked`] gets intercepted
+//!   navigation whose `NavigationType` is [`LinkClicked`] gets intercepted
 //!   and handed to [`gtk::UriLauncher`] instead.
 //!
 //! [decide]: https://webkitgtk.org/reference/webkit2gtk/stable/signal.WebView.decide-policy.html

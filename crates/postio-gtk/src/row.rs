@@ -7,7 +7,7 @@
 //! A row assembled from nested `GtkBox`es costs a dozen widgets each — CSS
 //! nodes, measure and allocate passes, snapshot recursion — and that is the
 //! usual reason a GTK list feels sluggish under the finger. This one is a
-//! single `GtkWidget` with a hand-written [`snapshot`] and no children that
+//! single `GtkWidget` with a hand-written `snapshot` and no children that
 //! are ever laid out, so scrolling costs text and rectangles and nothing
 //! else.
 //!

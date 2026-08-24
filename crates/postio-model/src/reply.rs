@@ -5,7 +5,7 @@
 //!
 //! Nobody inside Postio notices a wrong `In-Reply-To` or a dropped `Re:` —
 //! only the person on the other end, whose client silently starts a new
-//! conversation instead of threading the reply. [`outgoing::build`] writes the
+//! conversation instead of threading the reply. `outgoing::build` writes the
 //! RFC 5322 headers once it has a parent [`Message`] to read them from; this
 //! module is what decides *which* message that is and what the reply looks
 //! like before it gets there: `draft.in_reply_to` names it by local id, and

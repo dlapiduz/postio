@@ -59,7 +59,7 @@ impl RemoteImageAllowList {
     /// Whether `sender` has a standing "always allow" exception.
     ///
     /// `sender` is a bare address (`ada@example.com`), not a "Display Name
-    /// <addr>" mailbox — normalization here is only trimming and
+    /// `<addr>`" mailbox — normalization here is only trimming and
     /// lowercasing, not address parsing.
     pub fn is_allowed(&self, sender: &str) -> bool {
         self.senders.contains(&normalize(sender))
@@ -70,7 +70,7 @@ impl RemoteImageAllowList {
     /// Deliberately not persisted here: [`super::view::Reader`] is what
     /// knows whether it is running against the real
     /// `$XDG_STATE_HOME/postio/remote-images.ini` or, in a test, a scratch
-    /// path — see [`save_to`](Self::save_to). Call that (or [`save`]
+    /// path — see [`save_to`](Self::save_to). Call that (or `save`
     /// (Self::save)) once the mutation is one the caller wants to keep.
     pub fn allow(&mut self, sender: &str) {
         self.senders.insert(normalize(sender));

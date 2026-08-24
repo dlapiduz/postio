@@ -8,7 +8,7 @@
 //! one above).
 //!
 //! [`record`] is what [`crate::initial::enumerate`] and
-//! [`crate::resync::incremental`] call for every message a sync pass
+//! `crate::resync::incremental` call for every message a sync pass
 //! genuinely inserts. "Genuinely inserts" matters: a `Coverage::Everything`
 //! re-enumeration re-fetches messages that are already known (its whole
 //! point is to refresh what an untrustworthy incremental pull might have

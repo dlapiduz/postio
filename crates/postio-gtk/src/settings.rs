@@ -351,7 +351,7 @@ impl SettingsPanel {
 
     /// Replaces the buffer's text, as though the user had typed it: the
     /// validity line recomputes and a write is scheduled, same as any other
-    /// edit. A test seam, in the same spirit as [`crate::palette::Palette`]'s
+    /// edit. A test seam, in the same spirit as `crate::palette::Palette`'s
     /// `set_query`.
     pub fn set_text(&self, text: &str) {
         self.imp().buffer.set_text(text);

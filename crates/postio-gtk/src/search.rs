@@ -1551,7 +1551,7 @@ fn tag_name(tag: &str) -> Option<&str> {
     (!name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric())).then_some(name)
 }
 
-/// [`Highlighted`] as Pango markup for a label, with the matches in bold.
+/// `Highlighted` as Pango markup for a label, with the matches in bold.
 ///
 /// Weight rather than the accent tint the body gets. A `GtkLabel` can only be
 /// given a *literal* colour through Pango markup, and a literal colour is a

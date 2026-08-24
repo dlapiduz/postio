@@ -17,7 +17,7 @@
 //!
 //! - [`backfill`] decides which message body to download next: newest first
 //!   in the background, and immediately for the one the user just opened.
-//! - [`coalesce`] folds a batch down to the operations the server actually
+//! - [`coalesce()`] folds a batch down to the operations the server actually
 //!   needs, so a minute of offline flagging is not replayed keystroke by
 //!   keystroke.
 //! - `contacts` records a sighting of every correspondent on a message as

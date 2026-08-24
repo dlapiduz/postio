@@ -38,7 +38,7 @@
 //! back to the subject — but only where one side looks like a reply, or every
 //! message anyone titled "Hello" ends up in one conversation. [`assign`] applies
 //! the fallback only when there is no reference link at all *and* the subject
-//! carries reply decoration ([`is_reply`](crate::subject::is_reply)).
+//! carries reply decoration ([`is_reply`](crate::subject::is_reply())).
 
 use crate::ids::{RfcMessageId, ThreadId};
 use crate::message::Message;
