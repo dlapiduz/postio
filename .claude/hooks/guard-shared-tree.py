@@ -229,6 +229,56 @@ def contains(parent: str, child: str) -> bool:
     return parent == child or child.startswith(parent.rstrip(os.sep) + os.sep)
 
 
+# A `cd` at a command position: the start of the line, or after `;`, `&&`,
+# `||`, `&` or a pipe. Its argument may be quoted, and the quotes are not part
+# of the path.
+CD = re.compile(
+    r"""(?:^|[\n;&|]|&&|\|\|)\s*cd\s+("[^"]*"|'[^']*'|\S+)""",
+)
+
+
+def is_worktree(worktrees: str, path: str) -> bool:
+    """Is `path` one of the private per-issue worktrees?
+
+    A *strict* descendant: the worktrees directory itself holds no checkout,
+    so it is not a place where the destructive commands are safe.
+    """
+    if not path or not contains(worktrees, path):
+        return False
+    try:
+        return os.path.realpath(path) != os.path.realpath(worktrees)
+    except OSError:
+        return False
+
+
+def cd_destination(command: str, cwd: str) -> str:
+    """Where a leading `cd` sends the command, or `""` if none does.
+
+    The shell expands `~` and `$HOME` before `cd` ever sees them, so a
+    command that names a worktree that way is correct and the guard has to
+    read it the same way. Not doing so is how issue #87 happened: the target
+    did not start with `/`, the guard fell back to the session's own cwd —
+    the shared checkout — and refused correct work in a tree that is
+    explicitly exempt. That was the second time the worktree exemption
+    silently failed on path handling, which is why this is a named function
+    with tests rather than a condition inline.
+
+    Heredoc bodies are stripped first: documenting a `cd` must not be
+    performing one.
+
+    The last `cd` wins, because that is the directory the rest of the line
+    runs in.
+    """
+    targets = CD.findall(strip_heredocs(command))
+    if not targets:
+        return ""
+    target = targets[-1].strip("\"'")
+    target = os.path.expandvars(os.path.expanduser(target))
+    if not target:
+        return ""
+    return target if os.path.isabs(target) else os.path.join(cwd or "", target)
+
+
 def strip_heredocs(command: str) -> str:
     """Remove heredoc bodies so documenting a command is not running it."""
     out: list[str] = []
@@ -327,13 +377,18 @@ def main() -> int:
         "POSTIO_WORKTREES", os.path.expanduser("~/src/postio-worktrees")
     )
 
-    first_cd = re.match(r"\s*cd\s+(\S+)", command)
-    cd_target = first_cd.group(1).strip("\"'") if first_cd else ""
-    # Where the command will actually run: an explicit leading `cd` wins,
-    # otherwise the shell's own directory.
-    where = cd_target if cd_target.startswith("/") else (payload.get("cwd") or "")
+    cwd = payload.get("cwd") or ""
 
-    if contains(worktrees, where):
+    # A `cd` into a private worktree is the one thing that can lift these
+    # rules, and it can only ever *grant* the exemption -- never remove
+    # protection. So a `cd` somewhere else leaves `where` as the session's own
+    # directory rather than being trusted to have moved out of scrutiny, which
+    # keeps `cd .. && git reset --hard` refused instead of arguing about
+    # whether the parent of the shared checkout is the project.
+    destination = cd_destination(command, cwd)
+    where = destination if is_worktree(worktrees, destination) else cwd
+
+    if is_worktree(worktrees, where):
         return 0
     if project and where and not contains(project, where):
         return 0
