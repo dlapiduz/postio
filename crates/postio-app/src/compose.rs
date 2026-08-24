@@ -334,7 +334,6 @@ mod tests {
     //! `cargo test` runs every unit test in one process unless told
     //! otherwise. Add a second one here only with that in mind.
 
-    use adw::prelude::*;
     use gtk::gdk;
 
     use super::*;
