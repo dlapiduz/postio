@@ -27,6 +27,7 @@
   --r-hairline: rgba(29, 31, 32, 0.16);
   --r-accent: #5980a6;
   --r-quote-bg: rgba(89, 128, 166, 0.06);
+  --r-match-bg: rgba(89, 128, 166, 0.28);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,6 +39,7 @@
     --r-hairline: #5d5d60;
     --r-accent: #94bce3;
     --r-quote-bg: rgba(148, 188, 227, 0.08);
+    --r-match-bg: rgba(148, 188, 227, 0.32);
   }
 }
 
@@ -134,4 +136,19 @@ blockquote {
   padding-left: 0.8em;
   border-left: 2px solid var(--r-hairline);
   color: var(--r-ink-secondary);
+}
+
+/* Where the search matched, per canvas 2b's `preview · match highlighted`.
+   The artboard's own steel tint at 28%: strong enough to find by scanning,
+   weak enough to read straight through. `crate::search::mark_html` puts
+   these in, after the sanitizer, and only for terms the executed query
+   actually asked for.
+
+   No colour of its own — the tint carries it. A highlight that also
+   recoloured the text would fight the reader's own type, and would have to
+   pick a foreground that works over both this tint and a quoted block's. */
+mark.postio-match {
+  background: var(--r-match-bg);
+  color: inherit;
+  border-radius: 2px;
 }

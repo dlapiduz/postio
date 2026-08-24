@@ -263,6 +263,49 @@ fn show_search_panels(window: &Window) {
         14,
     );
     view.set_searching(true);
+
+    // Canvas 2b's own focused result, snippet and all. The markers are what
+    // FTS5 puts around a match, so this is the shape a real hit arrives in.
+    let marked = |text: &str| {
+        text.replace('[', &postio_search::highlight::MATCH_START.to_string())
+            .replace(']', &postio_search::highlight::MATCH_END.to_string())
+    };
+    view.set_focused(Some(&postio_search::SearchHit {
+        message_id: postio_model::ids::MessageId::new(1),
+        thread_id: Some(postio_model::ids::ThreadId::new(1)),
+        mailbox_id: MailboxId::new(1),
+        subject: Some("Re: maildir index rebuild is O(n²)".to_owned()),
+        from: Some(postio_model::EmailAddress::new(
+            Some("Lena Tomlin"),
+            "lena@example.com",
+        )),
+        received_at: chrono::Utc::now(),
+        snippet: marked(
+            "…the rebuild walks every message once per folder rather than once per \
+             store, so a 40k-message [maildir] takes about nine minutes on a cold \
+             cache. The patch keys the header cache on the [maildir] filename…",
+        ),
+        score: -3.5,
+    }));
+
+    // And the body itself, so the match tint the reader stylesheet paints is
+    // something that can be looked at rather than only asserted on.
+    view.preview().set_body(
+        postio_model::ids::MessageId::new(1),
+        &postio_model::MessageBody {
+            text: Some(
+                "Confirmed on 0.4.1 — the rebuild walks every message once per folder \
+                 rather than once per store, so a 40k-message maildir takes about nine \
+                 minutes on a cold cache.\n\n\
+                 The patch moves the header cache to a single pass and keys it on the \
+                 maildir filename instead of Message-ID.\n"
+                    .to_owned(),
+            ),
+            html: None,
+        },
+        Some("lena@example.com"),
+    );
+
     // Leaked for the same reason `populate` leaks its feeds: the shot renders
     // one window and exits, and a view dropped here would unwire itself.
     Box::leak(Box::new(view));
@@ -456,7 +499,7 @@ fn main() -> glib::ExitCode {
         window.open_finder(postio_gtk::finder::Mode::Search);
         window.finder().set_query(postio_gtk::finder::Query {
             mode: postio_gtk::finder::Mode::Search,
-            text: "from:lena has:attach after:aug1".into(),
+            text: "maildir from:lena has:attach after:aug1".into(),
         });
         // Canvas 2b's own readout. Delivered through the same pacing the
         // application uses — `flush` asks the question the debounce was
