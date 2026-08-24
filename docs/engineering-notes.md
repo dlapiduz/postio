@@ -506,6 +506,28 @@ the 0.1.0 routing.
 
 ## Testing infrastructure
 
+**A tokio future awaited on the GTK main context type-checks, passes clippy,
+and panics the first time the line is reached.** `spawn_future_local` runs on
+the glib main loop, which has no reactor, so
+`secrets.store(..).await` there gives "there is no reactor running" — which
+shipped in 0.1.0 and made the app unable to add an account with every gate
+green. The rule was already written down in `postio-app/src/feed.rs` and
+followed everywhere except the one path no test could reach, which is why the
+guard is now static: `scripts/check-runtime-crossings.py` refuses any `.await`
+inside a `spawn_future_local` block that is not a channel receive. Nested
+`runtime.spawn(..)` blocks are exempt — that is the crossing working. An await
+that is safe without being a receive needs a `POSTIO-GLIB-SAFE:` comment
+saying why.
+
+Worth knowing what this class of bug looks like, because it is not obvious in
+review: the suspend point is often several calls away. The check's first real
+find was `part_bytes` in `reading.rs`, which returns without suspending when
+the message body is local — so every seeded test passed — and reaches
+`tokio::time::sleep` only when it has to wait for a download. **A test over
+seeded fixtures cannot catch this**, which is the conclusion #66 reached
+about onboarding before asking for the lint instead.
+
+
 **GTK records no accessible properties unless an accessibility backend is
 running, so an a11y test with no backend measures nothing.** GTK builds a
 `GtkATContext` per widget lazily, and only when a backend is live. A headless
