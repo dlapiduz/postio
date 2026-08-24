@@ -18,7 +18,16 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.90"
+# The compiler this workspace is actually built with, everywhere.
+#
+# This said 1.90 while rust-toolchain.toml pinned 1.98, so nothing had ever
+# built on 1.90 and the claim rested on nothing. An MSRV is a promise made to
+# someone downstream; the only consumer today is this repository, so the honest
+# promise is the pin. `scripts/check-toolchain-pinned.py` keeps the two equal.
+#
+# When Postio is published, this stops being free: supporting an older compiler
+# then means a CI job that proves it, not a lower number here.
+rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/dlapiduz/postio"
 
