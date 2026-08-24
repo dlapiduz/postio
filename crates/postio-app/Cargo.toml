@@ -35,3 +35,5 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
 # Throwaway migrated databases, so a verb is an ordinary function over a real
 # schema rather than something only a running application can exercise.
 postio-storage = { workspace = true, features = ["test-support"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

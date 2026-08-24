@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use postio_core::bridge::EventSink;
-use postio_core::dispatch::{CommandError, Dispatcher};
+use postio_core::dispatch::{CommandError, DispatcherBuilder};
 use postio_core::state::{Resolved, SharedState};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
 use postio_core::{Command, CommandId, Event, MessageTarget};
@@ -547,19 +547,30 @@ fn store_failure(error: impl std::fmt::Display) -> CommandError {
     CommandError::failed("Could not save that change")
 }
 
-/// The bus, with every verb this module answers registered on it.
-pub fn dispatcher(actions: Actions) -> Dispatcher {
-    Dispatcher::builder()
-        .on_each(WIRED.iter().copied(), move |invocation| {
-            let actions = actions.clone();
-            // Synchronous on purpose: a local-first verb is a handful of
-            // indexed writes and their queue rows, and the bus awaits each
-            // handler so app state and the undo stack see a total order.
-            // Anything that could actually take time belongs on a spawned
-            // task reporting through its own events.
-            async move { actions.run(&invocation.command, &invocation.events()) }
-        })
-        .build()
+/// A bus answering this module's verbs and nothing else.
+///
+/// The application composes a larger one — see [`wire`] — so this exists for
+/// the tests below, which are about the verbs rather than about the wiring.
+#[cfg(test)]
+pub fn dispatcher(actions: Actions) -> postio_core::Dispatcher {
+    wire(DispatcherBuilder::new(), actions).build()
+}
+
+/// Register every verb this module answers on `builder`.
+///
+/// The builder is taken rather than made so that a verb belonging to another
+/// module — `Refresh`, which is a network pass rather than a local-first write
+/// — can join the same bus without this module knowing about it.
+pub fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
+    builder.on_each(WIRED.iter().copied(), move |invocation| {
+        let actions = actions.clone();
+        // Synchronous on purpose: a local-first verb is a handful of
+        // indexed writes and their queue rows, and the bus awaits each
+        // handler so app state and the undo stack see a total order.
+        // Anything that could actually take time belongs on a spawned
+        // task reporting through its own events.
+        async move { actions.run(&invocation.command, &invocation.events()) }
+    })
 }
 
 #[cfg(test)]
