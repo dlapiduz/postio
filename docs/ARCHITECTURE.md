@@ -112,9 +112,42 @@ from it.
 
 **Consequence to respect:** a command that is not in the registry **does not
 exist** — not merely unbound, but absent from every way a user could discover
-it. Any future extension mechanism must register rather than bypass, or
+it. An extension mechanism must therefore register rather than bypass, or
 extension commands become second-class in exactly the surfaces that make the
-app good. This is the substance of `postio-plp4`.
+app good.
+
+**How an extension command reaches those surfaces** (`postio-plp4`, ADR 0002):
+`registry::register` takes an owned `ExtCommand` with a namespaced id —
+`"mcp:summarise-thread"` — and returns an interned `ExtId`. `ActionId` is the
+union of that and the built-in `CommandId`, and it is what the keymap, the
+palette, the cheat sheet and the key hints deal in; `registry::reachable`
+yields the merged vocabulary for a context. `registry::all` and `get` still
+mean *the built-in table*, so `docs/keybindings.md` keeps documenting what
+ships.
+
+Three properties worth not losing:
+
+- `CommandId` stays closed, fieldless and `Copy`. `registry::get` is
+  `SPECS[id as usize]`, and rustc allows that cast only for a fieldless enum,
+  so a data-carrying variant would cost the registry its O(1) shape. This is
+  why the seam is `ActionId` rather than a new `CommandId` variant.
+- Extension commands are equal to built-ins where it matters to the *user* —
+  palette, cheat sheet, `[keys]` — and distinguishable where it matters to the
+  *compiler*. Dispatch keeps a `Command`-typed path for built-ins and a
+  parallel `ExtId`-keyed one for registrations, because a built-in is
+  statically known to have a handler and carries a typed payload, and an
+  extension is neither.
+- **`destructive: true` with `Recovery::None` is rejected at registration.**
+  For the built-in table that invariant is a test over a literal; a table that
+  grows at runtime cannot be checked that way, so the check moved into the
+  door. An AI- or plugin-invoked destructive action with no undo is worse than
+  a built-in one, because the user did not type it.
+
+The right-click menu is the one surface that stays built-in only. It is a
+`PopoverMenu` with no query box and no ranking, so it has no answer for a
+vocabulary that grows, and its contents would otherwise depend on what is
+installed rather than on which build you are running — and right-click is
+muscle memory in a way `Ctrl+K` deliberately is not.
 
 **Bonus the table buys:** `destructive` and `recovery` are fields, so
 "a destructive command must be recoverable" is machine-checked rather than a
