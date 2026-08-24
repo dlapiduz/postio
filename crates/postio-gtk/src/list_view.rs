@@ -8,7 +8,7 @@
 //! # Why a `GtkListView` and not a `GtkListBox`
 //!
 //! `GtkListBox` materialises a widget per item, which is the one thing
-//! spec.md §18 forbids: a 100,000-message folder would cost 100,000 widgets.
+//! docs/PRODUCT.md §18 forbids: a 100,000-message folder would cost 100,000 widgets.
 //! `GtkListView` recycles a screenful, asks the model only for the rows it is
 //! about to draw, and hands each one to the same handful of
 //! [`MessageRowView`]s over and over. That is what makes the windowed model

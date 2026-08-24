@@ -1,6 +1,6 @@
 //! The message list's model: a `GListModel` windowed over paged storage.
 //!
-//! spec.md §18 is a hard requirement — a mailbox is never loaded into memory.
+//! docs/PRODUCT.md §18 is a hard requirement — a mailbox is never loaded into memory.
 //! A `GtkListView` over this model asks for the rows it is about to draw and
 //! nothing else, so a 100,000-message folder costs the same as a 50-message
 //! one: a few hundred rows resident, and the rest a page request away.

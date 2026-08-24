@@ -1,6 +1,6 @@
 //! What a page of the message list costs, on a mailbox worth worrying about.
 //!
-//! spec.md §18 makes two claims about the message list, and this measures
+//! docs/PRODUCT.md §18 makes two claims about the message list, and this measures
 //! both:
 //!
 //! * **An ordinary interaction is under 16ms.** Scrolling asks for a page,

@@ -302,7 +302,7 @@ fn head_schema_has_every_table_the_spec_requires() {
     let connection = migrated();
     let tables = table_names(&connection);
 
-    // spec.md §6.
+    // docs/PRODUCT.md §6.
     for required in [
         "accounts",
         "identities",
@@ -320,7 +320,7 @@ fn head_schema_has_every_table_the_spec_requires() {
     ] {
         assert!(
             tables.iter().any(|name| name == required),
-            "spec.md §6 requires a `{required}` table; have {tables:?}"
+            "docs/PRODUCT.md §6 requires a `{required}` table; have {tables:?}"
         );
     }
 }

@@ -45,7 +45,7 @@ which SQLite can do with `ATTACH` but which then makes every list query's plan
 depend on how many accounts are configured. It would also fork the FTS5 index,
 so a search across accounts becomes N searches merged in Rust with no way to
 rank them against each other — and search is Postio's primary way to move
-around (`spec.md` §7).
+around (`PRODUCT.md` §7).
 
 The cost of one database is writer contention, and Q3 answers it.
 

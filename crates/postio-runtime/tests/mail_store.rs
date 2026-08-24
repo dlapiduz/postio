@@ -115,7 +115,7 @@ async fn a_store_is_usable_behind_a_trait_object() {
 
 #[tokio::test]
 async fn asking_for_a_window_asks_for_a_window() {
-    // spec.md §18: a mailbox is never loaded into memory. The seam has to be
+    // docs/PRODUCT.md §18: a mailbox is never loaded into memory. The seam has to be
     // able to express "these fifty, starting here" or the windowed list model
     // above it has nothing to window over.
     let fake = Fake {

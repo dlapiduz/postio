@@ -16,7 +16,7 @@
 //! # Never a `Vec` for "select all"
 //!
 //! The list is windowed over paged SQLite and must never materialise a mailbox
-//! (`spec.md` §18), so "select all" cannot mean "collect a hundred thousand
+//! (`docs/PRODUCT.md` §18), so "select all" cannot mean "collect a hundred thousand
 //! ids". [`Selection`] — `postio-core`'s, so the view and the command bus
 //! cannot drift about what a selection *is* — models it as either an explicit
 //! set or the predicate `Everything { except }`. Selecting a 100k mailbox and
