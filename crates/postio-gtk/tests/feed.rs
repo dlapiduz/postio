@@ -219,11 +219,28 @@ fn the_message_list_is_fed_from_the_runtime() {
     let anchor = list.item(3).and_downcast::<MessageRow>().unwrap();
     let anchored = anchor.id();
 
+    // The *shape* of the change, not merely its outcome. Issue #72: the
+    // rows end up correct either way, so an assertion about content passes
+    // whether this is a two-row insertion or a reset of the whole list —
+    // and a reset is what discards every visible row widget, re-reads every
+    // page, and makes the list flicker while the user is reading.
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    list.connect_items_changed({
+        let changes = changes.clone();
+        move |_, position, removed, added| changes.borrow_mut().push((position, removed, added))
+    });
+
     feed.apply(&Event::NewMail {
         mailbox: MailboxId::new(INBOX),
         messages: vec![MessageId::new(9_001), MessageId::new(9_002)],
     });
 
+    assert_eq!(
+        *changes.borrow(),
+        [(0, 0, 2)],
+        "new mail has to arrive as an insertion at the top. A reset here \
+         reads as `(0, 200, 202)` and costs every row widget on screen"
+    );
     assert_eq!(list.n_items(), 202, "two arrived");
     assert_eq!(
         anchor.id(),
