@@ -247,7 +247,7 @@ fn contexts_round_trip_through_strings() {
     // that happens on the way past. `ContextSet` packs one bit per context
     // into a `u8`, so this is also the ceiling: an eighth is the last that
     // fits, and a ninth needs the representation widened first.
-    assert_eq!(Context::ALL.len(), 7);
+    assert_eq!(Context::ALL.len(), 8);
     assert!(
         Context::ALL.len() <= 8,
         "ContextSet is a u8; widen it before adding another context"

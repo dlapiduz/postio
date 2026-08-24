@@ -137,6 +137,22 @@ command_ids! {
     PrevFolder => "prev_folder",
     /// Ask the sync engine to check for new mail now.
     Refresh => "refresh",
+    /// Show the focused message's MIME structure.
+    OpenParts => "open_parts",
+    /// Move the parts panel's cursor to the next part.
+    NextPart => "next_part",
+    /// Move the parts panel's cursor to the previous part.
+    PrevPart => "prev_part",
+    /// Open the part under the parts panel's cursor.
+    OpenPart => "open_part",
+    /// Save the part under the parts panel's cursor.
+    SavePart => "save_part",
+    /// Save every part the message holds.
+    SaveAllParts => "save_all_parts",
+    /// Hand the part under the parts panel's cursor to the desktop.
+    OpenPartExternally => "open_part_externally",
+    /// Render a held-back part once, loading what it references.
+    RenderPartOnce => "render_part_once",
 }
 
 impl fmt::Display for CommandId {
@@ -420,6 +436,24 @@ pub enum Command {
     PrevFolder,
     /// Check for new mail now.
     Refresh,
+
+    // -- Parts panel -------------------------------------------------------
+    /// Show the focused message's MIME structure.
+    OpenParts,
+    /// Move the parts panel's cursor to the next part.
+    NextPart,
+    /// Move the parts panel's cursor to the previous part.
+    PrevPart,
+    /// Open the part under the parts panel's cursor.
+    OpenPart,
+    /// Save the part under the parts panel's cursor.
+    SavePart,
+    /// Save every part the message holds.
+    SaveAllParts,
+    /// Hand the part under the parts panel's cursor to the desktop.
+    OpenPartExternally,
+    /// Render a held-back part once, loading what it references.
+    RenderPartOnce,
 }
 
 impl Command {
@@ -494,6 +528,14 @@ impl Command {
             Command::NextFolder => CommandId::NextFolder,
             Command::PrevFolder => CommandId::PrevFolder,
             Command::Refresh => CommandId::Refresh,
+            Command::OpenParts => CommandId::OpenParts,
+            Command::NextPart => CommandId::NextPart,
+            Command::PrevPart => CommandId::PrevPart,
+            Command::OpenPart => CommandId::OpenPart,
+            Command::SavePart => CommandId::SavePart,
+            Command::SaveAllParts => CommandId::SaveAllParts,
+            Command::OpenPartExternally => CommandId::OpenPartExternally,
+            Command::RenderPartOnce => CommandId::RenderPartOnce,
         }
     }
 
@@ -561,6 +603,14 @@ impl Command {
             CommandId::NextFolder => Command::NextFolder,
             CommandId::PrevFolder => Command::PrevFolder,
             CommandId::Refresh => Command::Refresh,
+            CommandId::OpenParts => Command::OpenParts,
+            CommandId::NextPart => Command::NextPart,
+            CommandId::PrevPart => Command::PrevPart,
+            CommandId::OpenPart => Command::OpenPart,
+            CommandId::SavePart => Command::SavePart,
+            CommandId::SaveAllParts => Command::SaveAllParts,
+            CommandId::OpenPartExternally => Command::OpenPartExternally,
+            CommandId::RenderPartOnce => Command::RenderPartOnce,
         }
     }
 

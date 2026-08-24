@@ -493,6 +493,8 @@ pub enum KeyContext {
     Palette,
     /// The folder list, once the keyboard is in it.
     Sidebar,
+    /// The parts panel, once the keyboard is in it.
+    Parts,
 }
 
 impl KeyContext {
@@ -516,6 +518,11 @@ impl KeyContext {
             // "next message" there, and falling through would make the
             // sidebar's own keys the ones that lose.
             Self::Sidebar => &[Self::Sidebar, Self::Global],
+            // Not layered over anything either, and for a sharper reason
+            // than the sidebar's: the panel sits over a message, and letting
+            // `a` fall through to `archive` would act on the message
+            // underneath while the user's eyes are on its parts.
+            Self::Parts => &[Self::Parts, Self::Global],
         }
     }
 }
@@ -536,6 +543,7 @@ impl From<Context> for KeyContext {
             Context::Search => Self::Search,
             Context::Palette => Self::Palette,
             Context::Sidebar => Self::Sidebar,
+            Context::Parts => Self::Parts,
         }
     }
 }

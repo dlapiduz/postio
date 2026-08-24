@@ -163,6 +163,9 @@ mod imp {
         /// The context that had the keyboard before it went to the folders,
         /// so `Esc` puts it back where it was rather than guessing `List`.
         pub before_sidebar: std::cell::Cell<Option<Context>>,
+        /// The context that had the keyboard before it went to the parts
+        /// panel, restored when the panel closes — see `before_sidebar`.
+        pub before_parts: std::cell::Cell<Option<Context>>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -254,11 +257,23 @@ impl Window {
         panel.show_parts(root, attachments);
         panel.set_visible(true);
         panel.focus_tree();
+        // A real context, not a focus flag — the same reason the sidebar
+        // needed one. Without it `j` here reached the window's own resolver
+        // first and moved the message selection instead of walking the
+        // tree; see `postio-14b`.
+        if self.context() != Context::Parts {
+            self.imp().before_parts.set(Some(self.context()));
+            self.set_context(Context::Parts);
+        }
     }
 
     /// Put the parts panel away.
     pub fn close_parts(&self) {
         self.parts().set_visible(false);
+        if self.context() == Context::Parts {
+            let previous = self.imp().before_parts.take().unwrap_or(Context::List);
+            self.set_context(previous);
+        }
     }
 
     /// The thread column, shown in the list's place while drilled in.
@@ -1004,14 +1019,10 @@ impl Window {
         settings.set_visible(false);
         // Canvas 3g. An overlay like the rest — a message's structure is
         // something to look at, not something the application has to stop for.
+        // `Esc` reaches it through the registry's `Back`, handled generically
+        // below wherever the panel is visible — the same path `Esc` takes
+        // everywhere else.
         let parts = crate::parts::PartsPanel::new();
-        parts.connect_dismissed(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            // Through the registry's `Back`, so `Esc` in here and `Esc`
-            // anywhere else are one path.
-            move || window.run(CommandId::Back)
-        ));
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&shell));
         overlay.add_overlay(&finder);
@@ -1376,6 +1387,18 @@ impl Window {
             CommandId::PrevFolder => {
                 self.sidebar().step(-1);
             }
+
+            // The parts panel. Reached through `Context::Parts` for the same
+            // reason the folders are — see `postio-14b`. Set and cleared by
+            // `open_parts`/`close_parts`, the one door in and out of it.
+            CommandId::OpenParts => self.reader().request_parts(),
+            CommandId::NextPart => self.parts().next_part(),
+            CommandId::PrevPart => self.parts().prev_part(),
+            CommandId::OpenPart => self.parts().open_part(),
+            CommandId::SavePart => self.parts().save_part(),
+            CommandId::SaveAllParts => self.parts().save_all(),
+            CommandId::OpenPartExternally => self.parts().open_externally(),
+            CommandId::RenderPartOnce => self.parts().render_once(),
             _ => return false,
         }
         true
@@ -1695,7 +1718,8 @@ impl Window {
             self.settings().set_keymap_problems(&problems);
         }
         self.finder().set_keymap(keymap.clone());
-        self.cheatsheet().set_keymap(keymap);
+        self.cheatsheet().set_keymap(keymap.clone());
+        self.parts().set_keymap(&keymap);
     }
 
     /// Apply the `[ui]` block: what the list shows, and how much of it.

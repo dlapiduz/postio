@@ -77,3 +77,11 @@ command from inside a text field.
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |
 | `k` or `Up` | Previous folder | Folder list |  | `prev_folder` |
 | `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |
+| `p` | Show message parts | Reader |  | `open_parts` |
+| `j` or `Down` | Next part | Parts panel |  | `next_part` |
+| `k` or `Up` | Previous part | Parts panel |  | `prev_part` |
+| `Return` | Open part | Parts panel |  | `open_part` |
+| `s` | Save part | Parts panel |  | `save_part` |
+| `S` | Save all parts | Parts panel |  | `save_all_parts` |
+| `x` | Open part externally | Parts panel |  | `open_part_externally` |
+| `H` | Render part once | Parts panel |  | `render_part_once` |

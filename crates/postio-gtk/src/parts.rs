@@ -34,6 +34,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
+use postio_core::{CommandId, Keymap};
 use postio_model::Attachment;
 use postio_model::ids::AttachmentId;
 
@@ -251,8 +252,49 @@ pub fn save_name(node: &Node) -> String {
 // The panel — canvas 3g
 // ---------------------------------------------------------------------------
 
-/// The keys the tree column offers, drawn at its foot, from the canvas.
-const PARTS_KEYS: &str = "j/k walk · Ret open\ns save · S save all · x xdg-open";
+/// The commands the panel's own keys hint at, and the label each gets — the
+/// canvas' words, not the registry's titles.
+///
+/// `NextPart`/`PrevPart` are folded into one "walk" line below rather than
+/// listed here, since a reader wants one entry for one verb even though it
+/// takes two keys.
+const HINT_COMMANDS: [(CommandId, &str); 5] = [
+    (CommandId::OpenPart, "open"),
+    (CommandId::SavePart, "save"),
+    (CommandId::SaveAllParts, "save all"),
+    (CommandId::OpenPartExternally, "xdg-open"),
+    (CommandId::RenderPartOnce, "render once"),
+];
+
+/// The panel's own keys, drawn at the tree's foot — generated from `keymap`
+/// rather than typed in once, so `postio-14b`'s fix cannot go stale the way
+/// the footer it replaced already had: it never mentioned `H` at all.
+fn hints_for(keymap: &Keymap) -> String {
+    let mut parts = Vec::new();
+    let walk = match (
+        keymap.binding(CommandId::NextPart),
+        keymap.binding(CommandId::PrevPart),
+    ) {
+        (Some(next), Some(prev)) => Some(format!("{next}/{prev} walk")),
+        (Some(next), None) => Some(format!("{next} walk")),
+        (None, Some(prev)) => Some(format!("{prev} walk")),
+        (None, None) => None,
+    };
+    parts.extend(walk);
+    for (id, label) in HINT_COMMANDS {
+        if let Some(key) = keymap.binding(id) {
+            parts.push(format!("{key} {label}"));
+        }
+    }
+    parts.join(" · ")
+}
+
+/// The registry's own bindings, so a panel built with no keymap yet — every
+/// widget test, and the first frame before `postio-gtk::config` reads
+/// `config.toml` — still reads correctly rather than blank.
+fn default_hints() -> String {
+    hints_for(&Keymap::resolve(&Default::default()))
+}
 
 /// What the detail pane says about a part nothing has fetched.
 const NOT_FETCHED: &str =
@@ -281,6 +323,10 @@ mod imp {
         pub(super) summary: gtk::Label,
         pub(super) blocked: gtk::Label,
         pub(super) tree: gtk::ListBox,
+        /// The panel's own keys, drawn at the tree's foot — generated from
+        /// the live keymap by [`PartsPanel::set_keymap`] rather than typed
+        /// in once, so a rebind in `config.toml` changes what this says.
+        pub(super) keys: gtk::Label,
         pub(super) meta: gtk::Label,
         pub(super) note: gtk::Label,
         pub(super) render_once: gtk::Button,
@@ -295,7 +341,6 @@ mod imp {
         pub(super) on_save_all: RefCell<Vec<SaveAllHandler>>,
         pub(super) on_external: RefCell<Vec<NodeHandler>>,
         pub(super) on_render_once: RefCell<Vec<NodeHandler>>,
-        pub(super) on_dismissed: RefCell<Vec<Box<dyn Fn()>>>,
         /// How a dragged part becomes a file. Empty in a build that never
         /// wired it, in which case the panel offers nothing to drag.
         pub(super) export: RefCell<Option<crate::drag_out::MaterialisePart>>,
@@ -600,11 +645,6 @@ impl PartsPanel {
             .push(Box::new(handler));
     }
 
-    /// Called when `Esc` asks for the panel to go away.
-    pub fn connect_dismissed(&self, handler: impl Fn() + 'static) {
-        self.imp().on_dismissed.borrow_mut().push(Box::new(handler));
-    }
-
     /// Put the keyboard in the tree.
     pub fn focus_tree(&self) {
         let imp = self.imp();
@@ -614,29 +654,13 @@ impl PartsPanel {
         };
     }
 
-    /// Applies one of the panel's own keys, and says whether it did.
+    /// Regenerate the footer's key hints from the live keymap.
     ///
-    /// Public so the behaviour can be driven in a test without synthesizing a
-    /// key event, which GTK4 gives no supported way to do — the same reason
-    /// [`crate::finder::Finder::press_backspace`] is public.
-    pub fn press(&self, key: gtk::gdk::Key) -> bool {
-        use gtk::gdk::Key;
-        match key {
-            Key::j | Key::Down => self.next_part(),
-            Key::k | Key::Up => self.prev_part(),
-            Key::Return | Key::KP_Enter => self.open_part(),
-            Key::s => self.save_part(),
-            Key::S => self.save_all(),
-            Key::x => self.open_externally(),
-            Key::H => self.render_once(),
-            Key::Escape => {
-                for handler in self.imp().on_dismissed.borrow().iter() {
-                    handler();
-                }
-            }
-            _ => return false,
-        }
-        true
+    /// A rebind changes what the footer says without a restart, the same
+    /// promise [`crate::row::Row::set_keymap`] already keeps for the
+    /// message list's own hints.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        self.imp().keys.set_text(&hints_for(keymap));
     }
 
     // -- internals ---------------------------------------------------------
@@ -767,16 +791,18 @@ impl PartsPanel {
         scroller.set_max_content_height(TREE_MAX_HEIGHT);
         scroller.set_child(Some(&imp.tree));
 
-        let keys = gtk::Label::new(Some(PARTS_KEYS));
-        keys.add_css_class("postio-parts-keys");
-        keys.set_xalign(0.0);
-        keys.set_accessible_role(gtk::AccessibleRole::Presentation);
+        imp.keys.set_text(&default_hints());
+        imp.keys.add_css_class("postio-parts-keys");
+        imp.keys.set_xalign(0.0);
+        imp.keys.set_wrap(true);
+        imp.keys
+            .set_accessible_role(gtk::AccessibleRole::Presentation);
 
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.add_css_class("postio-parts-column");
         left.set_size_request(TREE_WIDTH, -1);
         left.append(&scroller);
-        left.append(&keys);
+        left.append(&imp.keys);
 
         imp.meta.add_css_class("postio-parts-meta");
         imp.meta.set_xalign(0.0);
@@ -850,27 +876,9 @@ impl PartsPanel {
         column.append(&body);
         self.set_child(Some(&column));
 
-        // The panel's own keys. Not registry commands: `j`, `s`, `S` and `x`
-        // mean something different here from anywhere else in the
-        // application, and `postio-core` has no `Context` for this surface to
-        // filter them by. They are drawn at the foot of the tree, which is
-        // how the panel teaches them — see `postio-14b`.
-        let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, _| {
-                if panel.press(key) {
-                    glib::Propagation::Stop
-                } else {
-                    glib::Propagation::Proceed
-                }
-            }
-        ));
-        self.add_controller(keys);
+        // The panel's own keys are registry commands now, reached through
+        // `Context::Parts` — `postio-14b`. `Window::act` dispatches them to
+        // the methods below; this widget no longer owns a key controller.
 
         // Dragging a part out to the desktop. The row under the pointer, not
         // the cursor: a drag starts where the hand is, and the two are only
@@ -1328,5 +1336,26 @@ mod tests {
     fn a_name_that_is_nothing_but_punctuation_falls_back() {
         let nodes = tree("multipart/mixed", &[named("1", "image/png", 10, "  ...  ")]);
         assert_eq!(save_name(&nodes[1]), "part-1.png");
+    }
+
+    // -- the generated footer -----------------------------------------------
+
+    #[test]
+    fn hints_read_the_live_keymap_not_a_hard_coded_string() {
+        assert_eq!(
+            default_hints(),
+            "j/k walk · Return open · s save · S save all · x xdg-open · H render once",
+            "the registry's own bindings, canvas order"
+        );
+
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("save_part".to_string(), "y".to_string());
+        let rebound = hints_for(&Keymap::resolve(&overrides));
+        assert_eq!(
+            rebound, "j/k walk · Return open · y save · S save all · x xdg-open · H render once",
+            "a rebind of `save_part` changes what the footer teaches, live"
+        );
     }
 }

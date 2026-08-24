@@ -45,6 +45,13 @@ pub enum Context {
     /// cheat sheet without either of them learning about the sidebar. Before
     /// it existed there was no way to change mailbox without the mouse.
     Sidebar,
+    /// The parts panel: a message's MIME tree, walkable from the keyboard.
+    ///
+    /// Also a real context rather than a focus flag, and for the same
+    /// reason `Sidebar` had to become one: without it, `j` in the panel
+    /// reached the window's own resolver first and moved the message
+    /// selection instead of walking the tree — see `postio-14b`.
+    Parts,
 }
 
 impl Context {
@@ -57,6 +64,7 @@ impl Context {
         Context::Search,
         Context::Palette,
         Context::Sidebar,
+        Context::Parts,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -69,6 +77,7 @@ impl Context {
             Context::Search => "search",
             Context::Palette => "palette",
             Context::Sidebar => "sidebar",
+            Context::Parts => "parts",
         }
     }
 

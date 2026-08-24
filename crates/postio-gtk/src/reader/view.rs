@@ -91,7 +91,13 @@ pub struct Reader {
     ///
     /// [`connect_rendered`]: Reader::connect_rendered
     rendered: Rc<RefCell<Vec<RenderedHandler>>>,
+    /// Called when `p` asks to see the parts panel for whatever is showing,
+    /// with no chip to click — see [`Reader::connect_parts_requested`].
+    on_parts_requested: Rc<RefCell<Vec<PartsRequestedHandler>>>,
 }
+
+/// What [`Reader::connect_parts_requested`] holds.
+type PartsRequestedHandler = Box<dyn Fn()>;
 
 /// Why the reading pane has no body to draw.
 ///
@@ -236,6 +242,7 @@ impl Reader {
             highlight: Rc::new(RefCell::new(Vec::new())),
             chips,
             rendered: Rc::new(RefCell::new(Vec::new())),
+            on_parts_requested: Rc::new(RefCell::new(Vec::new())),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -389,6 +396,21 @@ impl Reader {
     /// [`crate::parts::PartsPanel`], which is where the verbs live.
     pub fn connect_attachment(&self, handler: impl Fn(&crate::parts::Node) + 'static) {
         self.chips.connect_activated(handler);
+    }
+
+    /// Ask for the parts panel — `p`, the keyboard's way in when there is no
+    /// chip to click. Same destination as [`Reader::connect_attachment`],
+    /// with no particular part in hand: it opens on whatever the pane is
+    /// showing, same as clicking any chip does today.
+    pub fn connect_parts_requested(&self, handler: impl Fn() + 'static) {
+        self.on_parts_requested.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Fires what [`Reader::connect_parts_requested`] is listening for.
+    pub fn request_parts(&self) {
+        for handler in self.on_parts_requested.borrow().iter() {
+            handler();
+        }
     }
 
     /// Paint `terms` wherever they appear in the body.
