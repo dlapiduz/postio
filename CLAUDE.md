@@ -507,20 +507,8 @@ Use these rather than reconstructing the commands:
 | `/gtk-design` | Building it: tokens, GTK traps, motion, render-to-PNG |
 
 
-**Finishing an issue is not finishing the work.** Keep going for as long as
-you can — but start each issue with a clean context.
-
-One issue's context is a liability on the next. You carry stale assumptions
-about which files matter, what `main` looked like, and what was already
-decided, and every one of those has produced a wrong conclusion here. So after
-you have merged and released the worktree: `/clear`, then
-`scripts/issue-claim.sh`, and read the new issue as though you had not been
-here.
-
-`/clear` is a CLI built-in and no skill can invoke it. If nobody is at the
-keyboard to type it, **end the session cleanly instead** — say what you landed
-and that the next issue wants a fresh one. A new session that reads its issue
-beats a long one that half-remembers three others.
+**Finishing an issue is not finishing a session.** Run
+`scripts/issue-claim.sh` and keep going. Keep going for as long as you can.
 
 **Do not ask whether to continue.** Nobody is waiting to be asked, and a
 session that stops to check has thrown away the rest of its context for
