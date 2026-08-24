@@ -267,6 +267,29 @@ mod tests {
     }
 
     #[test]
+    fn every_crate_in_the_workspace_is_in_the_scoped_list() {
+        // `OURS` is hand-maintained, and the failure mode of forgetting an
+        // entry is silence: the new crate is held at `warn` and nobody finds
+        // out until they are trying to diagnose something in it. So the list
+        // is checked against the directory that defines it.
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates/postio-app has a parent");
+        let mut missing = Vec::new();
+        for entry in std::fs::read_dir(crates).expect("the crates directory") {
+            let name = entry.expect("a directory entry").file_name();
+            let name = name.to_string_lossy().replace('-', "_");
+            if name.starts_with("postio_") && !OURS.contains(&name.as_str()) {
+                missing.push(name);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these crates would be held at `{OTHERS}` by a bare POSTIO_LOG level: {missing:?}"
+        );
+    }
+
+    #[test]
     fn a_directive_naming_targets_is_passed_through_untouched() {
         // Someone who wrote `rustls=trace` wants rustls, and second-guessing
         // that would take away the only way to ask.
