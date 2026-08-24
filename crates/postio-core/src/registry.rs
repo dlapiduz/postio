@@ -516,6 +516,82 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
     },
+    // -- Parts panel -------------------------------------------------------
+    CommandSpec {
+        id: CommandId::OpenParts,
+        title: "Show message parts",
+        default_binding: "p",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Reader]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::NextPart,
+        title: "Next part",
+        // The same keys the message list walks by, in a context where they
+        // mean a different verb — see `Context::Sidebar`'s `NextFolder` for
+        // why that is one idiom rather than reusing `next_message`.
+        default_binding: "j",
+        alternate_bindings: &["Down"],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::PrevPart,
+        title: "Previous part",
+        default_binding: "k",
+        alternate_bindings: &["Up"],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::OpenPart,
+        title: "Open part",
+        default_binding: "Return",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::SavePart,
+        title: "Save part",
+        default_binding: "s",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::SaveAllParts,
+        title: "Save all parts",
+        default_binding: "S",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::OpenPartExternally,
+        title: "Open part externally",
+        default_binding: "x",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::RenderPartOnce,
+        title: "Render part once",
+        default_binding: "H",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Parts]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

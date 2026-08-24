@@ -79,6 +79,7 @@ fn heading(context: Context) -> &'static str {
         // in UI copy, and the section is about what is in the pane, not about
         // the pane.
         Context::Sidebar => "Folders",
+        Context::Parts => "Parts",
     }
 }
 
@@ -641,10 +642,14 @@ mod tests {
                 // thread is also reachable from the list, and files under
                 // "Message list" instead. These two exist nowhere else.
                 heading(Context::Thread),
+                // `open_parts` is the one command reachable only from
+                // `Context::Reader` — see `postio-14b`.
+                heading(Context::Reader),
                 heading(Context::Composer),
                 heading(Context::Sidebar),
+                heading(Context::Parts),
             ],
-            "no registry command is filed under Reading, Search or Palette \
+            "no registry command is filed under Search or Palette \
              today; if one is, this test is how you find out"
         );
     }
