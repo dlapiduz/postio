@@ -153,18 +153,23 @@ This is the part that actually produces consistency. "Matches the canvas" is
 not checkable by squinting at a running app.
 
 ```sh
-cargo run -p postio-gtk --example shot -- /tmp/plate.png            # light
-cargo run -p postio-gtk --example shot -- /tmp/plate.png dark
-cargo run -p postio-gtk --example shot -- /tmp/plate.png dark hc
-cargo run -p postio-gtk --example shot -- /tmp/narrow.png 900x700
-cargo run -p postio-gtk --example shot -- /tmp/plate.png demo
+cargo run -p postio-app --example shot -- /tmp/plate.png            # light
+cargo run -p postio-app --example shot -- /tmp/plate.png dark
+cargo run -p postio-app --example shot -- /tmp/plate.png dark hc
+cargo run -p postio-app --example shot -- /tmp/narrow.png 900x700
+cargo run -p postio-app --example shot -- /tmp/plate.png demo
 ```
 
 It asks GTK for the exact render node it would put on screen and writes a PNG,
 so spacing, weight and colour become something you can look at, diff, and
-attach to a review. `demo` fills the panes with canvas 1b's own sample content
-— the only way to check the selected row against the drawing before there is a
-database to read.
+attach to a review. `demo` fills the panes from `postio_storage::seed` — a
+migrated in-memory database with a real folder tree and corpus-derived
+messages, read back through the store the running application reads through —
+so what you are looking at is content the store actually produces rather than
+content that was written to match the drawing.
+
+It is `-p postio-app`, not `-p postio-gtk`: reading a store means `rusqlite`,
+which the view layer may not have at any depth, dev-dependencies included.
 
 **Read the PNG back.** Rendering it and not looking is the same as not
 rendering it. Then compare against the artboard in `Design/Mail Client.dc.html`

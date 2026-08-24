@@ -150,8 +150,11 @@ the most useful debugging tool available today — live widget tree, CSS, and
 property inspection.
 
 For a quick visual check of a widget without running the app,
-`cargo run -p postio-gtk --example shot` renders straight out of GSK and needs
-no display server.
+`cargo run -p postio-app --example shot` renders straight out of GSK and needs
+no display server. It lives in `postio-app` rather than beside the widgets
+because its `demo` mode reads a seeded store, and `postio-gtk` may not depend
+on `rusqlite` — not even as a dev-dependency, which is what an example is
+built from.
 
 ## Development rules
 
