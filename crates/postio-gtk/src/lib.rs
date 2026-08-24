@@ -74,6 +74,7 @@ pub mod list;
 pub mod list_state;
 pub mod list_view;
 pub mod palette;
+pub mod parts;
 pub mod reader;
 pub mod resources;
 pub mod row;

@@ -130,6 +130,38 @@ fn show_thread(window: &Window) {
     window.show_thread(ThreadId::new(1), Some(subject), rows, 6);
 }
 
+/// Canvas 3g's own message: four parts, one of them held back.
+///
+/// Built from `Attachment` metadata alone — a `part_id`, a type and a size —
+/// which is exactly what `BODYSTRUCTURE` gives before a byte is transferred,
+/// and the reason this needs no store to render.
+fn show_parts(window: &Window) {
+    use postio_model::Attachment;
+    use postio_model::ids::AttachmentId;
+
+    let message = MessageId::new(1);
+    let part = |id: i64, path: &str, mime: &str, size: u64, filename: Option<&str>| {
+        let mut part = Attachment::new(message, mime, size);
+        part.id = AttachmentId::new(id);
+        part.part_id = Some(path.to_owned());
+        part.filename = filename.map(str::to_owned);
+        part
+    };
+
+    window.open_parts(
+        "multipart/mixed",
+        &[
+            part(1, "1", "text/plain", 2_100, None),
+            part(2, "2", "text/html", 6 * 1024, None),
+            part(3, "3", "text/x-diff", 11 * 1024, Some("0001-index.patch")),
+            part(4, "4", "image/png", 1_100 * 1024, Some("cold.png")),
+        ],
+    );
+    // The canvas draws the panel on the `text/html` part, held back.
+    window.parts().set_held_back(3, 1);
+    window.parts().next_part();
+}
+
 /// How many frames to let the window paint before the shot is taken.
 const SETTLE_FRAMES: u32 = 8;
 
@@ -214,6 +246,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("thread") {
         show_thread(&window);
+    }
+    if flag("parts") {
+        show_parts(&window);
     }
     window.present();
     settle(&window);
