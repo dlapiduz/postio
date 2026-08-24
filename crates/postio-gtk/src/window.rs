@@ -77,6 +77,25 @@ mod imp {
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
         pub composer: OnceCell<crate::composer::Composer>,
+        /// The hardened reader, built into the reading pane on first use.
+        ///
+        /// Lazy for the reason the composer is: a `WebKitWebView` is the most
+        /// expensive widget in the window, and a session that never opens a
+        /// message should never pay for one.
+        pub reader: OnceCell<crate::reader::Reader>,
+        /// Where the reader resolves `cid:` parts from.
+        ///
+        /// A slot rather than a constructor argument, so the reader can be
+        /// built before storage has been wired and start resolving parts the
+        /// moment something supplies a source — the same shape the search
+        /// preview uses, and for the same reason.
+        pub blobs: std::cell::RefCell<Option<std::rc::Rc<dyn crate::reader::BlobSource>>>,
+        /// Whether the reader has a message to show.
+        ///
+        /// The reading pane holds both the reader and the composer, so "is
+        /// there something to read" and "is the composer up" are different
+        /// questions and the pane needs both to decide what to draw.
+        pub reading: std::cell::Cell<bool>,
         /// The header's own `Compose` button — kept so the composer can make
         /// it say `Composing` while it has the reading pane. The rest of
         /// `Header` has no other reader today, so only the button is worth
@@ -345,10 +364,115 @@ impl Window {
     /// for a composer nobody opens. Whoever wires storage to it — the
     /// composition root — is the one place that needs this at all.
     pub fn composer(&self) -> crate::composer::Composer {
+        if let Some(composer) = self.imp().composer.get() {
+            return composer.clone();
+        }
+        let composer = crate::composer::install(self);
+        // The two share the reading pane, so each hand-over is a swap. Wired
+        // once, here, because this is the moment the second of the pair comes
+        // into existence — and because neither widget should have to know the
+        // other one does.
+        composer.connect_opened({
+            let window = self.clone();
+            move || window.sync_reading_pane()
+        });
+        composer.connect_closed({
+            let window = self.clone();
+            move |_| window.sync_reading_pane()
+        });
+        let _ = self.imp().composer.set(composer.clone());
+        composer
+    }
+
+    /// The reader, installing it into the reading pane the first time anyone
+    /// asks.
+    ///
+    /// # Why the window mounts this and not the composition root
+    ///
+    /// The reading pane holds two things that must never be on screen at
+    /// once — this and the composer, which takes the pane over. Something has
+    /// to own that swap, and it cannot be either of them: a reader that hid
+    /// itself when a composer appeared would have to know composers exist.
+    /// The window is what holds both.
+    pub fn reader(&self) -> crate::reader::Reader {
+        if let Some(reader) = self.imp().reader.get() {
+            return reader.clone();
+        }
+        // Read through the slot on every request rather than captured, so a
+        // source wired after the reader was built still resolves parts.
+        let source = {
+            let window = self.clone();
+            move |content_id: &str| {
+                let blobs = window.imp().blobs.borrow();
+                blobs.as_ref().and_then(|blobs| blobs.resolve(content_id))
+            }
+        };
+        let reader = crate::reader::Reader::new(std::rc::Rc::new(source));
+        let widget = reader.widget();
+        widget.set_vexpand(true);
+        // Nothing to read yet. The pane shows its empty state until a message
+        // arrives, rather than an empty white rectangle pretending to be one.
+        widget.set_visible(false);
+        self.shell().reader().append(&widget);
+        let _ = self.imp().reader.set(reader.clone());
+        reader
+    }
+
+    /// Where the reader resolves `cid:` parts from.
+    ///
+    /// Set by whoever wires storage. Until it is, an inline image simply does
+    /// not resolve — which is the same thing that happens for a part the
+    /// store has never fetched, and is deliberately not a network request.
+    pub fn set_blob_source(&self, blobs: std::rc::Rc<dyn crate::reader::BlobSource>) {
+        *self.imp().blobs.borrow_mut() = Some(blobs);
+    }
+
+    /// Show a message in the reading pane.
+    ///
+    /// `sender` is the allow-list key: remote images stay blocked until this
+    /// sender is allowed, which is [`crate::reader::Reader`]'s own rule and
+    /// is not something this can bypass.
+    pub fn show_message(&self, body: &postio_model::MessageBody, sender: Option<&str>) {
+        let reader = self.reader();
+        reader.render(body, sender);
+        self.imp().reading.set(true);
+        self.sync_reading_pane();
+    }
+
+    /// Empty the reading pane — the folder changed, or the message went away.
+    pub fn clear_reader(&self) {
+        if let Some(reader) = self.imp().reader.get() {
+            reader.clear();
+        }
+        self.imp().reading.set(false);
+        self.sync_reading_pane();
+    }
+
+    /// Whether the reading pane is showing a message right now.
+    pub fn reading(&self) -> bool {
+        self.imp().reading.get() && !self.composing()
+    }
+
+    /// Whether the composer has the reading pane.
+    ///
+    /// Asks the slot rather than [`Window::composer`], which would *install* a
+    /// composer just to be told there is not one.
+    fn composing(&self) -> bool {
         self.imp()
             .composer
-            .get_or_init(|| crate::composer::install(self))
-            .clone()
+            .get()
+            .is_some_and(|composer| composer.is_open())
+    }
+
+    /// Give the pane to whichever of the two should have it.
+    ///
+    /// The composer wins while it is open: it took the pane over on purpose,
+    /// and a reply drawn on top of the message being replied to is the bug
+    /// this exists to prevent.
+    fn sync_reading_pane(&self) {
+        if let Some(reader) = self.imp().reader.get() {
+            reader.widget().set_visible(self.reading());
+        }
     }
 
     /// The header's `Compose` button, once `build` has run. `None` only

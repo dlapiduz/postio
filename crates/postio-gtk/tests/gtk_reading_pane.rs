@@ -1,0 +1,131 @@
+//! The reading pane holds two things, and never both at once.
+//!
+//! `postio-y39y`: nothing mounted a [`Reader`] into `shell().reader()`, so the
+//! running application could list mail and not read it — the pane was only
+//! ever filled by the composer taking it over. This is the window half: the
+//! reader is mounted, it shows a message, and it gets out of the way when the
+//! composer wants the pane.
+//!
+//! Skips without a display. Nothing here touches the network.
+//!
+//! # What this deliberately does not re-assert
+//!
+//! Remote-image blocking. [`Window::show_message`] is a call to
+//! `Reader::render` and there is no second way in, so the sanitizing, the
+//! banner and the per-sender allow list are exactly what `gtk_reader.rs`
+//! already proves them to be against the `.eml` corpus. Repeating those
+//! assertions here would mean waiting on a real `WebKitWebView` load —
+//! `gtk_reader.rs` allows it five seconds — to re-test somebody else's
+//! subject. If a bypass is ever introduced it will be by growing a second
+//! path into the pane, which is what the mounting assertions below would
+//! catch.
+//!
+//! One test function, for the reason `gtk_style.rs` gives.
+
+use gtk::gdk;
+use gtk::glib;
+use gtk::prelude::*;
+use postio_gtk::window::Window;
+use postio_gtk::{fonts, style};
+use postio_model::ids::AccountId;
+use postio_model::{Draft, MessageBody};
+
+#[test]
+fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    // ── nothing to read yet ──────────────────────────────────────────────
+    assert!(
+        !window.reading(),
+        "an empty pane shows its empty state, not a blank reader"
+    );
+
+    // ── a message fills it ───────────────────────────────────────────────
+    window.show_message(&body(), Some("ada@example.com"));
+    pump();
+
+    assert!(window.reading(), "opening a message fills the reading pane");
+    assert!(
+        window.reader().widget().is_visible(),
+        "and the reader is the widget actually on screen"
+    );
+    assert!(
+        in_the_reading_pane(&window, &window.reader().widget()),
+        "mounted into the pane the PLATE layout gives the reader, not \
+         somewhere of its own"
+    );
+
+    // ── the composer takes the pane, and the reader gets out of the way ──
+    window.composer().open(Draft::new(AccountId::new(1)));
+    pump();
+
+    assert!(
+        !window.reading(),
+        "a reply drawn on top of the message being replied to is the bug \
+         this swap exists to prevent"
+    );
+    assert!(!window.reader().widget().is_visible());
+
+    // ── and gives it back ────────────────────────────────────────────────
+    window.composer().close();
+    pump();
+
+    assert!(
+        window.reading(),
+        "closing the composer puts the message back, rather than leaving the \
+         pane empty until the user clicks something again"
+    );
+    assert!(window.reader().widget().is_visible());
+
+    // ── clearing empties it ──────────────────────────────────────────────
+    window.clear_reader();
+    pump();
+
+    assert!(!window.reading());
+    assert!(!window.reader().widget().is_visible());
+
+    window.destroy();
+}
+
+/// A plain-text body with a remote image in its HTML, so the blocking has
+/// something to block.
+fn body() -> MessageBody {
+    MessageBody {
+        text: Some("The tide gate interlock proposal, for review.".to_string()),
+        html: Some(
+            "<p>The tide gate interlock proposal, for review.</p>\
+             <img src=\"https://tracker.example.com/pixel.gif\">"
+                .to_string(),
+        ),
+    }
+}
+
+/// Whether `widget` is a descendant of the pane the shell gives the reader.
+fn in_the_reading_pane(window: &Window, widget: &gtk::Widget) -> bool {
+    let pane = window.shell().reader();
+    let mut node = Some(widget.clone());
+    while let Some(current) = node {
+        if current == *pane.upcast_ref::<gtk::Widget>() {
+            return true;
+        }
+        node = current.parent();
+    }
+    false
+}
+
+fn pump() {
+    let context = glib::MainContext::default();
+    for _ in 0..40 {
+        while context.iteration(false) {}
+    }
+}
