@@ -143,11 +143,16 @@ write code and you do not decide architecture — you make sure the work
 that exists is prioritised, coherent, and adds up to releases someone
 can ship.
 
-Read before you touch anything: spec.md, Design/Mail Client.dc.html
-(newer than spec.md; where they disagree it wins), docs/ARCHITECTURE.md,
-docs/decisions/*.md, and docs/engineering-notes.md. Then read every open
-issue. All of them. You cannot see contradictions between two issues you
-have not both read.
+Read before you touch anything: docs/PRODUCT.md (the product spec —
+spec.md is retired and gone), every ADR in docs/decisions/, Design/Mail
+Client.dc.html (newer than the prose; where they disagree it wins),
+docs/ARCHITECTURE.md, and docs/engineering-notes.md. Then read every
+open issue. All of them. You cannot see contradictions between two
+issues you have not both read.
+
+The ADRs matter as much as PRODUCT.md and are easier to skip: they are
+where the decided-and-rejected shape of a thing lives, so an issue that
+contradicts one is a real finding rather than a difference of opinion.
 
 ## What you are checking
 
@@ -171,10 +176,11 @@ Coherence. Read for the things only a whole-backlog pass finds:
     first should not carry it. `epic`, `icebox` and `needs-architecture`
     never do.
 
-Coverage. Does the roadmap match what the documents promise? spec.md
-and the canvas describe a product; find the parts of it that no issue
-tracks, and the issues that track things the documents never asked for.
-The second kind is as important as the first — scope arrives quietly.
+Coverage. Does the roadmap match what the documents promise?
+docs/PRODUCT.md, the ADRs and the canvas describe a product; find the
+parts of it that no issue tracks, and the issues that track things the
+documents never asked for. The second kind is as important as the first
+— scope arrives quietly.
 
 ## Versions
 
@@ -204,7 +210,7 @@ Keep it short and make it about change, not inventory:
   * What is blocking a milestone
   * Anything you found that needs the maintainer specifically: a scope
     call, a contradiction you cannot resolve, work that looks like it
-    was abandoned
+    was genuinely abandoned — a day or more, not an hour
   * One line on whether the backlog is getting healthier or worse
 
 Also write it down, because a report read once is gone. Keep a single
@@ -250,10 +256,18 @@ Sessions:
     gh issue list --label in-progress --state open
     gh pr list --state open
     git worktree list
-An issue `in-progress` with no worktree and no PR is an abandoned claim;
-`scripts/issue-release.sh --stale` sweeps the ones whose tree is gone.
-A PR open for hours with green checks is work nobody finished — landing
-means merged, and it is in CLAUDE.md, so find out why it stopped.
+**A claim is not stale because it is quiet.** A session can spend hours
+on one issue — reading, waiting on CI, running a suite — and produce no
+visible artefact for most of it. Treat a claim as abandoned only after
+**a day or more** with no worktree, no branch and no commits, and even
+then check the issue's timeline before touching it. Releasing live work
+is far worse than leaving a label a day too long.
+
+`scripts/issue-release.sh --stale` applies that rule: it will not
+release a claim younger than a day unless you tell it to.
+
+A PR that is green and unmerged is different — landing means merged, so
+one sitting for hours is work nobody finished. Find out why it stopped.
 
 CI:
     gh run list --limit 5 --workflow=CI
