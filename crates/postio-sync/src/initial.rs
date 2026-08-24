@@ -233,9 +233,11 @@ pub(crate) async fn enumerate(
         }
 
         let uids: UidSet = chunk.iter().map(|&uid| Uid::new(uid)).collect();
+        let asked_at = std::time::Instant::now();
         let mut fetched = backend
             .fetch_headers(&mailbox.path, &uids, None, cancel)
             .await?;
+        let fetch_took = asked_at.elapsed();
         fetched.sort_unstable_by_key(|message| std::cmp::Reverse(message.uid));
 
         let mut messages: Vec<Message> = fetched
@@ -246,6 +248,7 @@ pub(crate) async fn enumerate(
             continue;
         }
 
+        let wrote_from = std::time::Instant::now();
         let upsert = MessageRepository::new(connection).upsert_batch(&mut messages)?;
         report.inserted += upsert.inserted;
         report.updated += upsert.updated;
@@ -272,6 +275,19 @@ pub(crate) async fn enumerate(
                 }
             }
         }
+
+        // Where a first sync's wall clock actually goes, per batch: waiting on
+        // the server, or writing to SQLite. `postio-0d9.7` asks for several
+        // different optimisations — more connections, pipelined FETCH, bigger
+        // batches, bigger transactions — and which of them is worth anything
+        // depends entirely on this ratio. Counts and durations only; a log
+        // never carries mail.
+        tracing::debug!(
+            messages = messages.len(),
+            fetch_ms = fetch_took.as_millis() as u64,
+            write_ms = wrote_from.elapsed().as_millis() as u64,
+            "sync batch committed"
+        );
 
         fetched_so_far += messages.len() as u32;
         on_progress(Progress {
