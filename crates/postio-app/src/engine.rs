@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use postio_imap::backend::MailBackend;
 use postio_imap::imap::{ConnectionSettings, ImapBackend, PoolConfig, RustlsConnector};
-use postio_imap::secret::{AccountKey, KeyringSecretStore, SecretStore};
+use postio_imap::secret::{AccountKey, SecretStore};
 use postio_model::Account;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
 use postio_storage::{BlobStore, Database};
@@ -36,13 +36,17 @@ use postio_core::bridge::EventSink;
 /// `None` when the transports cannot be built at all — a system with no
 /// usable TLS stack, say. That costs the account its sync and nothing else:
 /// the local store still opens and everything already synced still reads.
+///
+/// `secrets` is handed in rather than built here for the reason the module
+/// docs give: it is the composition root's choice, and it is the same store
+/// onboarding writes the password into and startup reads it back from.
 pub fn start(
     account: &Account,
     database: &Database,
     blobs: BlobStore,
     events: EventSink,
+    secrets: Arc<dyn SecretStore>,
 ) -> Option<Engine> {
-    let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecretStore::default());
     let key = AccountKey::new(account.address.address.clone());
 
     let connector = match RustlsConnector::new() {
