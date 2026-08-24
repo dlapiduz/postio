@@ -19,6 +19,7 @@
 #   scripts/run-isolated.sh <commit>        # build and run a specific commit
 #   scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector attached
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
+#   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
 # The store lives under $ROOT/state and persists between runs, so a synced
@@ -42,10 +43,12 @@ COMMIT="${1:-HEAD}"
 shift || true
 INSPECT=0
 SHOT=0
+PROVISION=0
 for arg in "$@"; do
     case "$arg" in
         --inspect) INSPECT=1 ;;
         --shot) SHOT=1 ;;
+        --provision) PROVISION=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -82,6 +85,17 @@ export GTK_A11Y="${GTK_A11Y:-none}"     # quiets an at-spi warning on headless
 [ "$INSPECT" = 1 ] && export GTK_DEBUG=interactive
 
 cd "$TREE"
+if [ "$PROVISION" = 1 ]; then
+    # Writes into $STATE, not your real store, because XDG_DATA_HOME is set
+    # above. The password comes from the environment and is never echoed.
+    if [ -z "${POSTIO_ADDRESS:-}" ] || [ -z "${POSTIO_APP_PASSWORD:-}" ]; then
+        echo "set POSTIO_ADDRESS, and read the app password without putting it in" >&2
+        echo "your shell history:  read -rs POSTIO_APP_PASSWORD && export POSTIO_APP_PASSWORD" >&2
+        exit 2
+    fi
+    exec cargo run --release -p postio-app --example provision
+fi
+
 if [ "$SHOT" = 1 ]; then
     OUT="$ROOT/shot-$SHA.png"
     cargo run --release -p postio-gtk --example shot -- "$OUT" demo
