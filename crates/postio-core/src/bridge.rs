@@ -276,7 +276,15 @@ impl BridgeBuilder {
     /// Fails only if the OS will not give us threads.
     pub fn build<H: CommandHandler>(self, handler: H) -> io::Result<(Bridge, EventStream)> {
         let mut builder = tokio::runtime::Builder::new_multi_thread();
-        builder.enable_time().thread_name("postio-core");
+        // Both drivers, explicitly. This is the runtime the sync engine runs
+        // on, so every socket the application opens is opened here, and a
+        // runtime with only the timer enabled panics the first time one is --
+        // which is what 0.1.0 did on first launch, the moment onboarding
+        // tried to reach a server. `enable_all` would do the same thing today
+        // but says less: it enables whatever drivers happen to be compiled
+        // in, so it would go quietly back to timer-only if the `net` feature
+        // ever left this crate's dependency.
+        builder.enable_io().enable_time().thread_name("postio-core");
         if let Some(threads) = self.worker_threads {
             builder.worker_threads(threads);
         }
