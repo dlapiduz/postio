@@ -31,14 +31,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The pin decides; see the note in ci.yml's `fmt` job. A
+      # `rustup default stable` here would silently win over
+      # rust-toolchain.toml, which is the bug #38 is about.
       - name: Install Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+        run: rustup show active-toolchain
 
-      # The cache key has to name the compiler. CI tracks `stable`, so rustc
-      # moves under it -- 1.97 to 1.98 mid-day, once. A key of Cargo.lock alone
-      # still matches after a bump, so the runner spends ~50s restoring 2 GB of
+      # The cache key has to name the compiler. It no longer moves on its own
+      # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
+      # a commit, and the cache must not survive it: a key of Cargo.lock alone
+      # still matches afterwards, so the runner spends ~50s restoring 2 GB of
       # artifacts built by the old compiler that cargo then throws away. A miss
       # is cheaper than a restore that buys nothing.
       - name: Identify the compiler
