@@ -50,7 +50,7 @@ use chrono::{DateTime, Utc};
 use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
-use postio_model::ids::{AccountId, MailboxId, MessageId};
+use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::mailbox::Mailbox;
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
@@ -92,6 +92,12 @@ pub enum FeedScope {
     Mailbox(MailboxId),
     /// Everything flagged in an account, wherever it is filed.
     Flagged(AccountId),
+    /// One conversation, wherever its messages are filed.
+    ///
+    /// The drill-in reads this rather than filtering the message list's own
+    /// model, which only ever held the part of the thread that was in this
+    /// folder and had been paged in.
+    Thread(ThreadId),
 }
 
 impl FeedScope {
@@ -103,7 +109,7 @@ impl FeedScope {
     pub fn mailbox(self) -> Option<MailboxId> {
         match self {
             FeedScope::Mailbox(id) => Some(id),
-            FeedScope::Flagged(_) => None,
+            FeedScope::Flagged(_) | FeedScope::Thread(_) => None,
         }
     }
 }
