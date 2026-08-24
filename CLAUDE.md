@@ -2,73 +2,41 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
-## Beads Issue Tracker
+## Issue tracking is GitHub
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
+Every piece of work in this repository is a GitHub issue, and every issue is
+worked in a **private git worktree** on its own branch. Start with the `/issue`
+skill; it is three commands.
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+scripts/issue-claim.sh                  # take the next ready issue, get a worktree
+cd ~/src/postio-worktrees/issue-<n>     # work there
+scripts/issue-land.sh -m "feat(gtk): ..."   # gates, commit, push, PR
 ```
 
-### Rules
+An issue is yours to take when it is open, labelled `ready`, unassigned, and
+blocked by nothing still open. `blockedBy` is a native GitHub field, so that is
+a fact rather than a convention. Never take `epic` (a container), `icebox`
+(deferred), or `needs-architecture` (a human decides first).
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+Priority is `p0`…`p4`. The claim script takes the most important thing
+available, not the newest.
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-<!-- END BEADS INTEGRATION -->
+- Do **not** use TodoWrite, TaskCreate, or markdown TODO lists. The issue is
+  the tracker.
+- Work that an issue reveals becomes `gh issue create`, labelled `ready` only
+  if you would be happy for another session to start it unattended.
+- Knowledge future sessions need goes in `docs/engineering-notes.md`, next to
+  the reasoning it belongs with.
 
 ## Git authority for this repository
 
-The Beads block above describes a conservative default profile. **This project
-overrides it**, and the Beads block itself defers to explicit repository
-instructions:
-
-- **Commits are standing-authorised.** Commit each bead as you finish it. Do not
-  ask first, and do not leave work uncommitted. See **Commits** below.
-- **Pushes are not.** Never `git push`, add a remote, or rewrite history unless
-  the user asks in the current session.
-
-
+- **Commits are standing-authorised.** Commit as you go, and never end a
+  session with uncommitted work. See **Commits** below.
+- **Pushing an issue branch is standing-authorised.** A branch that exists to
+  be reviewed cannot damage anything.
+- **Pushing `main` is not.** Neither is adding a remote, force-pushing, or
+  rewriting history. Ask in the current session.
 
 ## Build & Test
 
@@ -110,8 +78,9 @@ alarm.
 *write*, and both reach beyond what you changed — `-p` reformats every file in
 the crate, including one another session has open and uncommitted. That has
 already put whitespace churn into somebody else's diff. Use
-`rustfmt --edition 2024 <files>`; `/land` derives the list from your own
-changes. The `--check` forms are read-only and safe.
+`rustfmt --edition 2024 <files>` with your own paths named explicitly.
+The guard hook refuses a file list produced by an unscoped `git diff`, which
+reaches every crate anyone has edited. The `--check` forms are read-only and safe.
 
 **GTK tests belong on their own display.** `postio-gtk` has about twenty test
 binaries that call `window.present()`, and on a live session every one of them
@@ -192,12 +161,11 @@ built from.
 
 ## Development rules
 
-> **You are probably not alone in this repository.** Other Claude sessions work
-> other crates in this same working tree, concurrently. Claim your bead with
-> `bd update <id> --claim`, stay inside your crate, and never run a command that
-> touches files you do not own — `git add -A`, `git reset --hard`, `git stash`
-> and `cargo fmt --all` all destroy or corrupt other sessions' work. See
-> **Working in parallel** at the end of this file before your first commit.
+> **You are probably not alone in this repository.** Other Claude sessions are
+> working other issues right now. Claim yours with `scripts/issue-claim.sh` and
+> work in the worktree it gives you — inside it the destructive git commands are
+> safe, and in the shared `main` checkout they are not. See **How work happens
+> here** at the end of this file before your first commit.
 
 
 ### Test-driven development is mandatory
@@ -205,9 +173,9 @@ built from.
 **Write the failing test first, then the implementation.** This is not a
 preference — it is how this repository is built, and it applies to every crate.
 
-- A bead is not done until its acceptance criteria are covered by tests.
+- An issue is not done until its acceptance criteria are covered by tests.
 - Verify with `cargo test -p <your-crate>` while working, and run the full
-  gate chain once in `/land` before committing. See **Build & Test** above
+  gate chain once via `scripts/issue-land.sh` before committing. See **Build & Test** above
   for why the inner loop is per-crate.
 - `postio-model`, `postio-storage`, `postio-search`, `postio-config` and the sync
   reconciliation logic are pure logic and must have thorough unit coverage.
@@ -335,8 +303,9 @@ Refs: postio-abc
 - **body**: explain **why**, not what. The diff already says what. Write one
   whenever the change encodes a decision, a trade-off, or a constraint that is
   not obvious from the code.
-- **footer**: every commit carries `Refs: <bead-id>`. Use `Closes: <bead-id>`
-  when the commit completes the bead. Note `BREAKING CHANGE:` when applicable.
+- **footer**: every commit carries `Refs: #<issue>`. The PR body carries
+  `Closes: #<issue>`, which is what actually closes it on merge. Note
+  `BREAKING CHANGE:` when applicable.
 
 **Every commit must be green** for the crates you touched — `cargo build`,
 `cargo test -p <your-crate>`, `cargo clippy -p <your-crate> --all-targets --
@@ -352,7 +321,7 @@ which would stash every other session's work too.
 Pushing still does: never `git push`, add a remote, or rewrite history without
 being asked.
 
-Commit each bead as you finish it. Do not batch a session's work into one commit
+Commit each piece of work as you finish it. Do not batch a session's work into one commit
 at the end, and never end a session — or go idle waiting on the user — with
 uncommitted changes in the tree.
 
@@ -362,8 +331,8 @@ gone, in a tree that other sessions are editing. This has already cost this
 project a scare: roughly fifty files of finished work sat loose in the tree
 after four sessions were interrupted at once.
 
-If you are interrupted or must stop mid-bead, commit what you have rather than
-leaving it loose. Mark it plainly and keep the bead open:
+If you are interrupted or must stop mid-issue, commit what you have rather
+than leaving it loose. Mark it plainly and leave the issue open:
 
 ```
 feat(storage): begin the operation queue drainer
@@ -407,7 +376,7 @@ E12 so the core mail experience lands first.
 `spec.md`, the design canvas, and this file are written for contributors, not
 users — none of them are where someone deciding whether to try Postio should
 land. The project has two more surfaces, both GitHub Pages, both tracked as
-GitHub issues rather than beads (see below):
+GitHub issues:
 
 - **A docs site** that documents the *app*: what it does, keyboard shortcuts,
   the `config.toml` reference, the privacy/security posture. Shortcut and
@@ -419,26 +388,21 @@ GitHub issues rather than beads (see below):
   screenshots of the running app, and a link into the docs site for anyone
   who wants depth. Not a restatement of `spec.md`.
 
-### Post-v1 roadmap lives in GitHub, not beads
+### The roadmap is grouped into epics
 
-Beads tracks the active MVP push (`bd list --label mvp`). Everything *after*
-v1 — multi-account, OAuth, AI, filters, the docs site and landing page above,
-and the rest of the former E12 backlog — is tracked as GitHub Issues plus the
-[Postio Roadmap](https://github.com/users/dlapiduz/projects/2) project, grouped
-into epics with real GitHub sub-issue links. Do not create new beads for
-post-v1 work; file a GitHub issue under the relevant epic instead.
+Post-v1 work — multi-account, OAuth, AI, filters, the docs site and landing
+page above — lives under themed epics in the
+[Postio Roadmap](https://github.com/users/dlapiduz/projects/2) project, wired
+with real GitHub sub-issue links. File new post-v1 work as an issue under the
+relevant epic, labelled `roadmap`, and leave `ready` off it: the roadmap is a
+plan, not a queue.
 
-### Persistent knowledge lives in docs/engineering-notes.md, not `bd remember`
+### Persistent knowledge lives in docs/engineering-notes.md
 
-The Beads block above still says to use `bd remember` for persistent
-knowledge — that instruction is superseded. `bd remember`/`bd memories` are
-tied to the Dolt DB, which will not be there to read from once issue tracking
-finishes moving to GitHub. All 43 existing memories were migrated verbatim
-into `docs/engineering-notes.md`, organized by topic, on 2026-08-24. Add new
-hard-won lessons there directly — the file explains its own conventions at
-the top. Product-scope decisions and post-v1 ideas that were captured as
-memories belong in that file's "Product scope & design decisions" section, or
-as a GitHub issue if they describe work rather than a lesson.
+Hard-won lessons go in `docs/engineering-notes.md`, organized by topic — the
+file explains its own conventions at the top. Product-scope decisions and
+post-v1 ideas belong in its "Product scope & design decisions" section, or as
+a GitHub issue if they describe work rather than a lesson.
 
 ## Architecture
 
@@ -479,96 +443,138 @@ See `docs/ARCHITECTURE.md` for the decisions behind this shape,
 `docs/decisions/` for the ADRs, and `docs/architecture-review-2026-08.md`
 for the known gaps.
 
-## Working in parallel
+## How work happens here
 
-**Assume other Claude sessions are editing this repository right now.** That is
-the normal state of this project, not an exception. Several sessions work
-different crates at the same time, in the *same* working tree, on the *same*
-branch, sharing one git index and one cargo target directory.
+Every session runs the same loop. Take an issue, work it in a worktree of your
+own, land it as a PR, take the next one.
 
-### We are finishing MVP
+```bash
+scripts/issue-claim.sh                  # next ready issue, highest priority first
+cd ~/src/postio-worktrees/issue-<n>
+export CARGO_TARGET_DIR=~/src/postio/target   # keeps GTK and WebKit warm
+# ... write the failing test, then the code ...
+scripts/issue-land.sh -m "feat(gtk): ..."     # gates, commit, push, PR
+scripts/issue-release.sh <n>            # after it merges
+```
 
-Work labelled `mvp` is the current scope — `bd list --label mvp --status open`.
-It is short on purpose: the last things between this and a mail client the
-maintainer uses daily. Everything else waits, including several P1 beads that
-are real work but are not between here and a usable product.
+### Skills
 
-When the `mvp` list is empty, stop and say so rather than falling through to
-the wider backlog.
-
-### Keep going
-
-**Finishing a bead is not finishing a session.** Nobody is watching, and a
-session that stops with work available has wasted the rest of its context. When
-you close a bead, run `/next`: it finds unclaimed, unblocked work inside your
-lane and continues.
-
-Record rather than stop. Work the bead revealed becomes a `bd create`; a
-decision future sessions should follow becomes a `bd remember`; a bead you
-cannot finish gets committed as work-in-progress, un-claimed, with the
-remaining criterion in its notes. Stop only when `bd ready` has nothing in your
-lane, when a decision is genuinely the user's, or when context is nearly gone —
-and land your work before you do.
-
-### Tooling
-
-Four project skills encode the routines below — use them rather than
-reconstructing the commands:
+Use these rather than reconstructing the commands:
 
 | Skill | Use it when |
 |---|---|
-| `/lanes` | Starting up: who else is here, what is safe to claim |
+| `/issue` | The loop above, in full — claim, work, land, release |
+| `/lanes` | Starting up: who else is here, what is safe to take |
 | `/preflight` | Checking the real state of the tree, or when it looks broken |
-| `/land` | A bead is done: gates, staging, message, `bd close` |
-| `/next` | A bead is done and you need the next one — run it, don't wait |
 | `/add-fixture` | Adding `.eml` test mail to the corpus |
-| `/ux-architect` | Designing any surface, flow, or interaction — hold the experience coherent |
+| `/ux-architect` | Designing any surface, flow, or interaction |
 | `/gtk-design` | Building it: tokens, GTK traps, motion, render-to-PNG |
 
-A `PreToolUse` hook (`.claude/hooks/guard-shared-tree.py`) refuses the
-destructive commands listed below rather than trusting anyone to have read this
-far. Its own test suite is `.claude/hooks/test-guard-shared-tree.py`.
 
-Check who is active before you start:
+**Finishing an issue is not finishing a session.** Claim the next one. Stop
+only when `scripts/issue-claim.sh` says there is nothing ready, when a decision
+is genuinely the maintainer's, or when context is nearly gone — and land your
+work before you do.
 
-```bash
-bd list --status=in_progress   # claimed by someone; leave it alone
-bd ready                       # unblocked work (ignore [epic] rows)
-bd show <id>
-bd update <id> --claim         # claim BEFORE writing code
-bd close <id> --suggest-next
-```
+### Say it in the issue, not in the terminal
 
-### Never do these — they destroy other sessions' work
+**GitHub is where this project talks to itself.** An issue comment, a PR body,
+a commit message: those persist, they are searchable, they are attached to the
+thing they describe, and the next session finds them without anyone relaying
+anything. Output printed into a Claude session is read once, by one person, and
+is gone.
+
+So the default is to write it down where it belongs:
+
+| What you found | Where it goes |
+|---|---|
+| Why the fix is shaped this way | the commit body |
+| What you discovered while doing the work | a comment on the issue |
+| Work this revealed | a new issue |
+| A constraint future sessions must respect | `docs/engineering-notes.md` |
+| An architectural decision | an ADR in `docs/decisions/` |
+
+**Printing to the session is superfluous unless a decision is needed.** Do not
+narrate progress, restate what the diff already says, or summarise work that
+is already recorded in a PR. Speak up when — and only when — you need the
+maintainer to choose something you cannot choose yourself, and then say what
+you need and why, briefly.
+
+### Work in the open
+
+This repository is open source. Assume every issue, comment, PR, branch name
+and commit message is public the moment you write it, and permanent after
+that — deleting it later does not un-publish it.
+
+Practically:
+
+- **Never write an address, a name, or a credential** into an issue, a commit,
+  or a fixture. `scripts/check-no-personal-data.py` enforces this on tracked
+  files; it cannot see an issue comment you wrote by hand.
+- **Never paste real mail** — no subjects, no bodies, no recipients — into a
+  bug report. Describe the shape of the message and use the reserved-domain
+  corpus in `crates/postio-model/tests/corpus/`.
+- **Logs and stack traces get read before pasting**, for the same reason.
+- **Write for a stranger.** The reader is a contributor who was not here, has
+  no context, and cannot ask you a follow-up question. That is the standard
+  every issue comment and commit body is held to.
+- Do not name a provider as though Postio were built for it, and do not
+  describe peer projects as competitors. See the rules above on providers.
+
+### Several sessions run at once
+
+That is the normal state of this project. Each session has its own worktree, so
+the file-level collisions are gone — you can `git add -A`, `git commit -a`,
+`git stash` and `cargo fmt --all` inside your worktree, because nothing else is
+writing there. Isolation is by branch, so an issue spanning several crates is
+one piece of work rather than a handoff.
+
+Three things are still shared, and still bite:
+
+- **One cargo target directory.** Builds serialise on it rather than running in
+  parallel. That is contention, not breakage. `Cargo.lock` churn is expected.
+- **One machine.** Four concurrent builds saturate eight cores; `.cargo/config.toml`
+  pins `jobs = 2` for that reason. Never run `scripts/run-isolated.sh` while
+  others are building — it links `--release` in a target directory of its own,
+  which is what put this box into swap.
+- **One `main` checkout at `~/src/postio`.** It is for coordination, not for
+  work. The commands below are still refused there, by
+  `.claude/hooks/guard-shared-tree.py`, because uncommitted work of other
+  sessions lives in it.
+
+### In the main checkout, never do these
 
 | Don't | Why | Do instead |
 |---|---|---|
-| `git add -A`, `git add .`, `git commit -a` | Commits other sessions' half-written files | `git commit --only crates/<your-crate> Cargo.lock` |
-| `git add <paths>` then `git commit` | Two steps over a SHARED index — anything another session stages in between lands in your commit | `git commit --only <your paths> -m "..."` |
-| Expecting `--only` to pick up a **new** file | It diffs tracked paths and cannot introduce one git has never seen | `git add <the new files>` first, then `git commit --only <paths>` |
-| Naming a shared file in `--only` without checking it | It commits the working-tree version, including another session's uncommitted edits to that file | `git status --porcelain <your paths>` first; every line must be yours |
-| `git reset --hard`, `git checkout .` | **Irrecoverably deletes** uncommitted work across every crate | Revert only your own files, by path |
-| `git stash` | Stashes *everyone's* changes, not just yours | Leave the tree alone; commit your own work |
-| `git rebase`, `git filter-repo`, history rewrites | Others hold refs that become invalid | Only when the user confirms the tree is quiet |
-| `cargo fmt --all` | Reformats crates being edited right now, creating phantom diffs | `cargo fmt -p <your-crate>` |
-| Editing the workspace root `Cargo.toml` | Four sessions colliding on one manifest | `cargo add -p <your-crate> <dep>` |
-| "Fixing" a failure in a crate you don't own | It is almost always someone's in-flight TDD | Note it in your bead and move on |
+| `git add -A`, `git commit -a` | Commits other sessions' half-written files | Work in your worktree, where it is safe |
+| `git reset --hard`, `git checkout .` | **Irrecoverably deletes** uncommitted work across every crate | Revert your own files, by path |
+| `git stash` | Stashes *everyone's* changes | Leave it alone |
+| `cargo fmt --all` or `-p <crate>` | Reformats files being edited right now | `rustfmt --edition 2024 <named paths>` |
+| `rustfmt $(git diff --name-only ...)` | Same hazard, wider — it reaches every crate anyone touched | Name your paths, or a scoped pathspec |
+| `git rebase`, history rewrites | Others hold refs that become invalid | Only when the maintainer confirms the tree is quiet |
+| Editing the workspace root `Cargo.toml` | Sessions colliding on one manifest | `cargo add -p <crate> <dep>` |
 
-### Expected friction, not breakage
+The hook refuses these rather than trusting anyone to have read this far, and
+exempts your worktree, where they are correct. Its test suite is
+`.claude/hooks/test-guard-shared-tree.py`.
 
-- **`cargo test --workspace` may fail in a crate you don't own.** That is another
-  session mid-TDD. Verify your own work with `cargo test -p <your-crate>`, and
-  only require the full workspace green for the crates you touched.
-- **`Cargo.lock` churns constantly.** Expected — it is a resolved superset and
-  last-writer-wins is fine. Stage it with your commit.
-- **`index.lock` contention** means another session is mid-commit. Wait and retry.
-- **Cargo serialises on the target directory**, so builds feel slower than usual.
-  That is contention, not a problem to debug.
+### Testing
 
-### Scope discipline
+**Run GTK tests on a compositor of their own**, or ~20 test binaries throw
+windows onto the maintainer's desktop:
 
-Take one epic, and stay inside its crates. The crate split exists partly so
-sessions do not collide: `postio-model`, `postio-storage`, `postio-search`,
-`postio-config`, `postio-imap`, `postio-smtp`, `postio-sync`, `postio-core` and
-`postio-gtk` are deliberately disjoint. If your bead genuinely requires touching
-a crate another session owns, say so in the bead notes rather than editing it.
+```bash
+scripts/test-headless.sh cargo test -p postio-gtk
+```
+
+It is ~3.5x faster than a live session and will expose races a real compositor
+hides. If something passes on the desktop and fails there, suspect the code.
+
+**Verify your tests can fail.** Inject the regression each one exists to catch
+and confirm it goes red. A session once closed a bug on four green runs of a
+test that failed half the time — four coin flips. An await-for-condition test
+can silently become one that cannot fail.
+
+**CI is the workspace's judge, not you.** Verify your own crates with
+`cargo test -p <crate>`; a red crate you do not own is usually someone's
+in-flight TDD. Note it on your issue and move on.

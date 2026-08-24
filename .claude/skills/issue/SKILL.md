@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Take a GitHub issue and work it end to end in a private worktree — claim it, branch, build, verify, commit, push, open a PR that closes it. Use instead of /next and /land once issue tracking has moved from beads to GitHub. Run it whenever you need work, and again the moment a PR is open.
+description: Take a GitHub issue and work it end to end in a private worktree — claim it, branch, build, verify, commit, push, open a PR that closes it. This is how all work in this repository starts. Run it whenever you need work, and again the moment a PR is open.
 ---
 
 # Work a GitHub issue
@@ -63,7 +63,7 @@ yours. So all of these are now correct rather than dangerous:
 
 That last row is the real gain. Work is isolated by *branch* now, not by crate,
 so an issue that spans `postio-storage` and `postio-gtk` is one piece of work
-rather than a bead you have to hand off.
+rather than something you have to hand off.
 
 Run GTK tests on a display of their own, so they stop landing on the
 maintainer's desktop:
@@ -92,18 +92,44 @@ It formats, runs clippy and tests **for the crates you actually changed**,
 runs the three repository invariant checks, commits, pushes the branch, and
 opens a PR whose body says `Closes #<n>` — so merging the PR closes the issue.
 No separate close step, and no way to leave an issue claimed after the work is
-done, which is the mistake sessions made most often with beads.
+done — leaving finished work still marked claimed is the mistake sessions
+make most often.
 
 The commit message rules are unchanged — conventional subject, a body that
 explains **why**, wrapped at 72 columns. The footer becomes `Refs: #<n>`
-instead of a bead id, and the script adds it.
+and the script adds it.
 
 **Push is now standing-authorised for issue branches only.** Pushing a branch
 that exists to be reviewed cannot damage anything. Pushing `main` still
 requires the user to ask, and force-push, remote changes and history rewrites
 are still refused outright.
 
-## 4. Finish
+## 4. Is it actually reachable?
+
+Before you call an issue done, if it built a **surface** — a widget, a pane, a
+command, a view — answer this: can a person reach it in the running app?
+
+This has gone wrong four times here, and the last one was the worst. Commands
+resolved through the registry, the keymap, the palette and the selection model
+and then hit a no-op handler. The entire search UI was built, tested, and fed
+by nothing. The parts panel existed with no command to open it. And the
+**Reader was never mounted** — `postio_gtk::reader::Reader` was constructed in
+exactly one place in the workspace, for the search preview, while the pane the
+layout gives the reader had one caller: the composer, taking it over. You
+could not read mail in a mail client. Every test passed. The epic said
+Reading was done.
+
+That one was found by rendering the app and looking at it, not by a test:
+
+```bash
+cargo run -p postio-app --example shot -- /tmp/check.png demo selected
+```
+
+So: **either wire it, or open the wiring issue before you close** — and say
+which in the PR. A green suite proves the widget works. It does not prove the
+application does.
+
+## 5. Finish
 
 When the PR merges:
 

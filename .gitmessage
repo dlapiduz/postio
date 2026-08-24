@@ -12,6 +12,7 @@
 # the change encodes a decision, a trade-off, or a non-obvious constraint.
 #
 # ── Footer ─────────────────────────────────────────────────────────────
-# Refs: postio-abc            (always — every commit belongs to a bead)
-# Closes: postio-abc          (when this commit completes the bead)
+# Refs: #123                  (always — every commit belongs to an issue)
+# Closes: #123                (when this commit completes the issue —
+#                              put it in the PR body, which is what closes it)
 # BREAKING CHANGE: <what and what to do about it>
