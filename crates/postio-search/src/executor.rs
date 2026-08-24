@@ -151,7 +151,7 @@ pub fn search(
     // argued from anyway.
     tracing::debug!(
         terms = request.query.text_terms().count(),
-        filters = request.query.clauses().count(),
+        filters = request.query.filters().count(),
         hits = hits.len(),
         total_hits,
         capped = total_hits_capped,
