@@ -174,6 +174,93 @@ async fn a_seeded_body_is_actually_fetched() {
 }
 
 #[tokio::test]
+async fn a_backfill_says_how_far_it_has_got_without_being_asked() {
+    // Issue #74. `Engine::backfill_progress` could always answer this and
+    // nothing ever called it, so the longest phase of a first sync -- the
+    // bodies, not the list -- reached the frontend as no event at all. The
+    // sidebar drew `idle`, which is worse than silence: a user watching
+    // `idle` while the log fetches bodies concludes it is stuck.
+    let (engine, database, report, events) = engine();
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+
+    give_the_inbox_uids(&database, inbox.id);
+
+    let queued = engine
+        .seed_backfill(inbox.id, 10)
+        .await
+        .expect("seeding reads the store");
+    assert!(queued > 0, "the seed left nothing worth fetching");
+
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let progress = engine
+                .backfill_progress()
+                .await
+                .expect("the engine answers");
+            if progress.pending == 0 && progress.in_flight == 0 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the backfill loop never settled");
+
+    let reports: Vec<(u32, u32)> = announced(&events)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::BackfillProgress { done, total, .. } => Some((done, total)),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        !reports.is_empty(),
+        "the backfill fetched bodies and announced none of it, so the status \
+         line has nothing to draw but `idle`"
+    );
+
+    // The numbers have to be usable, not merely present: a status line needs
+    // a count that climbs and a denominator that does not lie.
+    let (last_done, last_total) = *reports.last().expect("checked non-empty");
+    assert!(
+        last_done >= queued as u32,
+        "the final report claims {last_done} settled out of {queued} queued"
+    );
+    assert_eq!(
+        last_done, last_total,
+        "a drained queue must report done == total, or the sidebar reads \
+         `downloading` for as long as the account stays connected"
+    );
+    // The queue announces itself when it is filled, not after the first body
+    // has been and gone. Seeding is when the denominator becomes known, and
+    // a line that appears only once a fetch has completed is silent for
+    // exactly the stretch someone is most likely to be watching it.
+    assert_eq!(
+        reports[0].0, 0,
+        "the first report already had bodies settled, so nothing was said \
+         when the queue was filled: {reports:?}"
+    );
+
+    // A denominator that only ever equals the numerator is not a
+    // denominator. At least one report has to show work still outstanding,
+    // or the line can never say anything except "finished".
+    assert!(
+        reports.iter().any(|(done, total)| done < total),
+        "every report claimed the queue was already drained, so the status \
+         line would never once read as downloading: {reports:?}"
+    );
+    assert!(
+        reports.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "the settled count went backwards, which is not progress: {reports:?}"
+    );
+    assert!(
+        reports.iter().all(|(done, total)| done <= total),
+        "a report claimed more settled than were ever queued: {reports:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
     // postio-uif. `sync_mailbox` and `resync_mailbox` were written, tested
     // and never called, so the local store only ever held what something

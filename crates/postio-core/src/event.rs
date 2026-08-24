@@ -151,6 +151,28 @@ pub enum Event {
         /// Units expected.
         total: u32,
     },
+    /// Progress filling in message *bodies*, for the status line only.
+    ///
+    /// Distinct from [`SyncProgress`], which is the message *list*. The two
+    /// are different phases with different consequences: a mailbox whose list
+    /// is incomplete cannot be read at all, and one whose bodies are still
+    /// arriving is perfectly usable — so the status line says different
+    /// things about them.
+    ///
+    /// Issue #74: the backfill kept this as a fact nobody could ask for
+    /// unprompted, so the longest phase of a first sync was reported as
+    /// `idle`. `Engine::backfill_progress` still exists for a caller that
+    /// wants to pull; the bug was that pulling was the only way.
+    ///
+    /// [`SyncProgress`]: Self::SyncProgress
+    BackfillProgress {
+        /// The account whose bodies these are.
+        account: AccountId,
+        /// Messages the queue has finished with, one way or another.
+        done: u32,
+        /// Messages that have entered the queue at all.
+        total: u32,
+    },
 
     // -- Feedback --------------------------------------------------------
     /// An action finished and should be announced.

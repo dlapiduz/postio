@@ -223,6 +223,48 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         ("syncing · imap".to_string(), "fetched 30".to_string())
     );
 
+    // ── bodies arriving is its own state, on the real widget ─────────────
+    //
+    // Issue #74: the backfill announced nothing, so the longest phase of a
+    // first sync drew `idle` -- not merely unreported but reported as
+    // nothing happening, which reads as stuck. It is a separate word from
+    // `syncing` because the consequences differ: a mailbox whose list is
+    // still arriving cannot be read, and one whose bodies are still arriving
+    // can.
+    feeds.apply(&Event::SyncProgress {
+        account: AccountId::new(ACCOUNT),
+        done: 100,
+        total: 100,
+    });
+    feeds.apply(&Event::BackfillProgress {
+        account: AccountId::new(ACCOUNT),
+        done: 412,
+        total: 2000,
+    });
+    pump();
+    assert_eq!(
+        status_text(&window),
+        (
+            "downloading · imap".to_string(),
+            "bodies 412 of 2000".to_string()
+        ),
+        "the list is complete and the bodies are not, and the line has to \
+         say which"
+    );
+
+    // Drained, and it gets out of the way rather than sticking at 2000/2000.
+    feeds.apply(&Event::BackfillProgress {
+        account: AccountId::new(ACCOUNT),
+        done: 2000,
+        total: 2000,
+    });
+    pump();
+    assert_eq!(
+        status_text(&window).0,
+        "idle · imap",
+        "a drained body queue is not a backfill in progress"
+    );
+
     feeds.apply(&Event::Error {
         message: "app-specific password rejected".to_string(),
     });
