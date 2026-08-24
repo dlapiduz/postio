@@ -265,7 +265,38 @@ pub fn open_store() -> Option<(Database, BlobStore)> {
             return None;
         }
     };
+    if let Err(error) = ensure_search_index(&database) {
+        // Recoverable: everything except search still works, and refusing to
+        // open a mail client because its index would not build would be a
+        // worse answer than opening one you cannot search.
+        tracing::error!(%error, "the search index is unavailable");
+    }
+
     Some((database, blobs))
+}
+
+/// Create the full-text index if it is not there, on every start.
+///
+/// The same contract `postio_storage::migrate` has, and for the same reason:
+/// the schema is part of opening the store, not part of searching it. Once it
+/// exists the metadata columns — subject, sender, recipients — are maintained
+/// **by trigger**, exactly like the mailbox counts in migration 0003, so this
+/// one call indexes every message already in the store and every one that
+/// arrives after.
+///
+/// It was missing entirely. `postio_index::index::ensure_schema` documents
+/// that it must run at startup and nothing ran it, so `search_documents` and
+/// `messages_fts` did not exist on any real store and search had nothing to
+/// search — `postio-x4e`, and the ninth instance of `postio-bl2`.
+///
+/// Message *bodies* are a separate matter: they live in the blob store, no
+/// trigger can reach them, and `index_body` has to be called when a backfill
+/// lands one. That half is still missing.
+pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    let connection = database.connection()?;
+    postio_index::index::ensure_schema(&connection)?;
+    tracing::debug!("the search index is ready");
+    Ok(())
 }
 
 /// Point the window's panes at the store.
