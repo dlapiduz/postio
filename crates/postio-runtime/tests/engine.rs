@@ -268,6 +268,70 @@ async fn a_resync_that_finds_new_mail_announces_it() {
 }
 
 #[tokio::test]
+async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
+    // Issue #72: the list flickered on every sync tick. Both halves of the
+    // reason are here rather than in the view.
+    //
+    // A pass that only delivered new mail emitted `NewMail` *and*
+    // `MessageListChanged`. The view does the right thing with each of them
+    // separately -- `NewMail` is a prepend that keeps every row widget, its
+    // selection and its scroll position; `MessageListChanged` is
+    // `MessageList::invalidate`, which is documented as the blunt instrument
+    // for when the *order* moved and tells GTK every row was removed and
+    // re-added. Sending both means the blunt one runs, and the cheap one is
+    // an optimisation that never gets to happen.
+    //
+    // The engine knows which this was: `arrived` accounts for every insert,
+    // and nothing was updated or re-threaded. A change that can describe
+    // itself precisely must not also ask for a reload.
+    let database = test_support::memory();
+    let account =
+        postio_storage::test_support::account(&database.connection().expect("a connection"));
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, events) = engine_over_arc(&database, account.id, backend.clone());
+
+    engine.sync(mailbox.id).await.expect("a first sync");
+    // The bootstrap pass reloads on purpose -- see the test above. What this
+    // one is about starts after it.
+    let _ = announced(&events);
+
+    backend
+        .append(
+            "INBOX",
+            &postio_imap::backend::AppendMessage::new(arriving_message()),
+        )
+        .await
+        .expect("the server takes delivery");
+    engine.sync(mailbox.id).await.expect("a resync");
+
+    let seen = announced(&events);
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            Event::NewMail { mailbox: to, messages } if *to == mailbox.id && messages.len() == 1
+        )),
+        "the arrival itself must still be announced: {seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            Event::MessageListChanged { mailbox: changed } if *changed == mailbox.id
+        )),
+        "a pass that only delivered mail also demanded a full reload, which \
+         throws away every visible row widget and re-reads every page while \
+         the user is trying to read: {seen:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
     // The last piece of postio-26c: a sync is exactly when the set of
     // messages missing a body changes, so it is exactly when the backfill is
