@@ -8,10 +8,20 @@
 use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
 use postio_imap::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
-use postio_storage::repository::{MessageRepository, SyncStateRepository};
+use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Outcome, resync_mailbox, sync_mailbox};
 use rusqlite::Connection;
+
+fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
+    ContactRepository::new(connection)
+        .list(Some(account_id))
+        .expect("list contacts")
+        .into_iter()
+        .find(|contact| contact.address.normalized() == "ada@example.com")
+        .map(|contact| contact.times_seen)
+        .unwrap_or(0)
+}
 
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
@@ -137,6 +147,44 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     );
 }
 
+/// postio-66j's "watch out for": a flag change resyncs the message that
+/// already has a contact sighting from bootstrap, and must not add another
+/// one — `times_seen` counting flag changes as new mail would overstate every
+/// correspondent every time the user reads or archives something.
+#[tokio::test]
+async fn a_flag_only_change_does_not_double_count_the_correspondent() {
+    let backend = server_with_messages(3).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account_id, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+    assert_eq!(
+        times_ada_was_seen(&connection, account_id),
+        3,
+        "bootstrap already saw ada on all three messages"
+    );
+
+    backend
+        .store_flags(
+            INBOX,
+            &UidSet::single(Uid::new(2)),
+            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+        )
+        .await
+        .expect("flag");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+    assert!(matches!(outcome, Outcome::Incremental { changed: 1, .. }));
+
+    assert_eq!(
+        times_ada_was_seen(&connection, account_id),
+        3,
+        "a flag change on a message already seen must not count as a new sighting"
+    );
+}
+
 #[tokio::test]
 async fn a_message_the_change_feed_never_mentions_still_arrives() {
     let backend = server_with_messages(2).await;
@@ -170,6 +218,31 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
         vec![1, 2, 3],
         "UIDNEXT is the second witness for an arrival, and it cannot be wrong \
          without the server being incoherent"
+    );
+}
+
+#[tokio::test]
+async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
+    let backend = server_with_messages(2).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account_id, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+    assert_eq!(times_ada_was_seen(&connection, account_id), 2);
+
+    backend
+        .append(INBOX, &postio_imap::backend::AppendMessage::new(note(3)))
+        .await
+        .expect("deliver");
+
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert_eq!(
+        times_ada_was_seen(&connection, account_id),
+        3,
+        "the incremental pull found a new message, so it must add a sighting"
     );
 }
 

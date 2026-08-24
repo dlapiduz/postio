@@ -20,6 +20,9 @@
 //! - [`coalesce`] folds a batch down to the operations the server actually
 //!   needs, so a minute of offline flagging is not replayed keystroke by
 //!   keystroke.
+//! - `contacts` records a sighting of every correspondent on a message as
+//!   [`initial`] and [`resync`] insert it, which is what @ and recipient
+//!   completion read.
 //! - [`drain`] sends them in order, resolves conflicts against what the server
 //!   says, and settles each queue row.
 //! - [`send`] is what [`drain`] calls for `Operation::Send`: build the
@@ -50,6 +53,7 @@
 pub mod backfill;
 pub mod coalesce;
 pub mod connect;
+mod contacts;
 pub mod discover;
 pub mod drafts;
 pub mod drain;

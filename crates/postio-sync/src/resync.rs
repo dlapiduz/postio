@@ -72,7 +72,9 @@ use postio_imap::cancel::CancelToken;
 use postio_model::{
     FullResyncReason, Mailbox, MailboxId, MailboxStatus, Message, ResyncPlan, Uid, UidValidity,
 };
-use postio_storage::repository::{MessageRepository, SyncStateRepository, ThreadingRepository};
+use postio_storage::repository::{
+    AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
+};
 use rusqlite::Connection;
 
 use crate::drain::SyncError;
@@ -350,6 +352,22 @@ async fn incremental(
         let threading = ThreadingRepository::new(connection, mailbox.account_id);
         for message in &batch {
             threading.thread(message)?;
+        }
+
+        // Only the arrivals: `known_set` was read before this fetch, so a
+        // message already in it is a flag change or similar, not a new
+        // correspondent sighting. See `contacts::record`'s docs for why this
+        // pass would otherwise double-count on every resync.
+        if let Some(account) = AccountRepository::new(connection).get(mailbox.account_id)? {
+            for message in &batch {
+                let is_new = message
+                    .server
+                    .uid
+                    .is_some_and(|uid| !known_set.contains(uid));
+                if is_new {
+                    crate::contacts::record(connection, &account, message)?;
+                }
+            }
         }
     }
 
