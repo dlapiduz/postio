@@ -23,14 +23,16 @@
 //! popup beside it" — so several `IDLE` wake-ups in a row settle into the one
 //! notification on screen actually saying, rather than a burst of them.
 //!
-//! # What a click does today
+//! # What a click does
 //!
-//! Presents the window. It does not yet switch to the mailbox the mail
-//! landed in or select the message: `postio-gtk` has no call that does
-//! either from outside a click on an already-visible row — `window.list()`'s
-//! activation is the reverse direction, a signal the list emits, not
-//! something this module can drive. Filed as `postio-du6`'s own follow-up
-//! rather than guessed at here.
+//! Presents the window, then switches to the mailbox the mail landed in —
+//! and, for a single arrival, puts the cursor on that message. A burst
+//! ("3 new messages") has no one message to point at, so it only opens the
+//! mailbox. `Window::open_mailbox` and `Window::open_message`
+//! (`postio-gtk`) are what make this possible from outside a click on an
+//! already-visible row; [`build`] is where the click's target is encoded
+//! onto the notification, in [`RAISE_ACTION`]'s own string parameter, and
+//! [`install_action`] is where it is read back.
 
 use std::sync::Arc;
 
@@ -53,11 +55,23 @@ const RAISE_ACTION: &str = "raise-for-mail";
 /// Registers [`RAISE_ACTION`] on `application`, so a notification's click
 /// target exists before the first one is ever sent.
 pub fn install_action(application: &impl IsA<gio::ActionMap>, window: &Window) {
-    let raise = gio::SimpleAction::new(RAISE_ACTION, None);
+    let raise = gio::SimpleAction::new(RAISE_ACTION, Some(glib::VariantTy::STRING));
     raise.connect_activate(glib::clone!(
         #[weak]
         window,
-        move |_, _| window.present()
+        move |_, parameter| {
+            window.present();
+            let Some((mailbox, message)) = parameter
+                .and_then(|value| value.str())
+                .and_then(parse_target)
+            else {
+                return;
+            };
+            match message {
+                Some(message) => window.open_message(mailbox, message),
+                None => window.open_mailbox(mailbox),
+            }
+        }
     ));
     application.add_action(&raise);
 }
@@ -140,7 +154,7 @@ impl Notifier {
             if rows.is_empty() {
                 return;
             }
-            application.send_notification(Some(&notification_id(mailbox)), &build(&rows));
+            application.send_notification(Some(&notification_id(mailbox)), &build(mailbox, &rows));
         });
     }
 }
@@ -196,13 +210,59 @@ fn content(rows: &[postio_runtime::store::MessageSummary]) -> (String, String) {
     }
 }
 
-/// The notification itself, from [`content`].
-fn build(rows: &[postio_runtime::store::MessageSummary]) -> gio::Notification {
+/// The notification itself, from [`content`], with a click target that says
+/// which mailbox and — for a single arrival — which message to focus.
+fn build(mailbox: MailboxId, rows: &[postio_runtime::store::MessageSummary]) -> gio::Notification {
     let (title, body) = content(rows);
     let notification = gio::Notification::new(&title);
     notification.set_body(Some(&body));
-    notification.set_default_action(&format!("app.{RAISE_ACTION}"));
+    notification.set_default_action_and_target_value(
+        &format!("app.{RAISE_ACTION}"),
+        Some(&target_for(mailbox, rows).to_variant()),
+    );
     notification
+}
+
+/// What a click on this notification should focus.
+///
+/// A single arrival names its own message: the notification already says
+/// who it is from and what it is about, so the click should land on exactly
+/// that row. A burst has no one message to point at — "3 new messages" does
+/// not pick one — so it names only the mailbox, and the click opens it the
+/// way picking it in the sidebar does, cursor wherever the folder's own
+/// autoselect puts it.
+fn target_for(mailbox: MailboxId, rows: &[postio_runtime::store::MessageSummary]) -> String {
+    match rows {
+        [only] => encode_target(mailbox, Some(only.id)),
+        _ => encode_target(mailbox, None),
+    }
+}
+
+/// `RAISE_ACTION`'s parameter: a mailbox, and optionally the one message a
+/// single-arrival notification is about.
+///
+/// A plain string rather than a `(x, mx)` tuple variant: this crate has no
+/// other use for GVariant's maybe-type machinery, and a delimited string is
+/// exactly as much of it as the action actually needs.
+fn encode_target(mailbox: MailboxId, message: Option<MessageId>) -> String {
+    match message {
+        Some(message) => format!("{}:{}", mailbox.get(), message.get()),
+        None => mailbox.get().to_string(),
+    }
+}
+
+/// The other half of [`encode_target`]. `None` for a parameter this build
+/// does not recognise — a notification from a future version of Postio,
+/// say — which the caller treats as "just present the window", exactly
+/// what a click did before this action carried a target at all.
+fn parse_target(value: &str) -> Option<(MailboxId, Option<MessageId>)> {
+    let mut parts = value.splitn(2, ':');
+    let mailbox: i64 = parts.next()?.parse().ok()?;
+    let message = match parts.next() {
+        Some(text) => Some(MessageId::new(text.parse().ok()?)),
+        None => None,
+    };
+    Some((MailboxId::new(mailbox), message))
 }
 
 #[cfg(test)]
@@ -270,6 +330,49 @@ mod tests {
         assert_ne!(
             notification_id(MailboxId::new(7)),
             notification_id(MailboxId::new(8))
+        );
+    }
+
+    #[test]
+    fn a_target_round_trips_through_encode_and_parse() {
+        assert_eq!(
+            parse_target(&encode_target(MailboxId::new(7), Some(MessageId::new(42)))),
+            Some((MailboxId::new(7), Some(MessageId::new(42))))
+        );
+        assert_eq!(
+            parse_target(&encode_target(MailboxId::new(7), None)),
+            Some((MailboxId::new(7), None)),
+            "a burst names only the mailbox, and that has to round-trip too"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_target_is_none_rather_than_a_panic() {
+        // A future build could send a shape this one does not recognise; the
+        // click has to fall back to just presenting the window, not crash.
+        assert_eq!(parse_target(""), None);
+        assert_eq!(parse_target("not-a-number"), None);
+        assert_eq!(parse_target("7:not-a-number"), None);
+    }
+
+    #[test]
+    fn a_single_arrival_targets_its_own_message() {
+        let mut only = summary("Ada Lovelace", "Quarterly report");
+        only.id = MessageId::new(42);
+        assert_eq!(
+            target_for(MailboxId::new(7), &[only]),
+            encode_target(MailboxId::new(7), Some(MessageId::new(42))),
+            "the click should land on exactly the message the notification named"
+        );
+    }
+
+    #[test]
+    fn a_burst_targets_only_the_mailbox() {
+        let rows = [summary("Ada Lovelace", "One"), summary("Bob", "Two")];
+        assert_eq!(
+            target_for(MailboxId::new(7), &rows),
+            encode_target(MailboxId::new(7), None),
+            "\"2 new messages\" does not point at either one of them"
         );
     }
 

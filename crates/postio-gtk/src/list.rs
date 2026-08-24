@@ -445,12 +445,24 @@ impl MessageList {
     /// somewhere off screen needs nothing done, and one that is on screen
     /// costs a refetch of its page rather than of the folder.
     pub fn page_of(&self, message: MessageId) -> Option<u32> {
-        self.imp()
-            .pages
-            .borrow()
-            .iter()
-            .find(|(_, rows)| rows.iter().any(|row| row.id() == Some(message)))
-            .map(|(page, _)| *page)
+        self.position_of(message)
+            .map(|position| position / PAGE_SIZE)
+    }
+
+    /// Where `message` sits, among the pages currently resident.
+    ///
+    /// `None` covers both "not in this mailbox" and "resident but not
+    /// fetched yet" — a caller that wants to put the cursor on a message it
+    /// did not just deliver itself (a notification's click, landing on
+    /// whatever page happens to already be cached) cannot tell those apart
+    /// and has to treat them the same: ask for the page, and try again once
+    /// it answers.
+    pub fn position_of(&self, message: MessageId) -> Option<u32> {
+        self.imp().pages.borrow().iter().find_map(|(page, rows)| {
+            rows.iter()
+                .position(|row| row.id() == Some(message))
+                .map(|index| page * PAGE_SIZE + index as u32)
+        })
     }
 
     /// Which pages are resident, lowest first. For tests and diagnostics.
