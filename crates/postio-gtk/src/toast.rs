@@ -59,6 +59,15 @@ impl Toast {
         &self.overlay
     }
 
+    /// Which undo toast is on screen, if any.
+    ///
+    /// The bookkeeping this struct exists for, and what `tests/gtk_toast.rs`
+    /// asserts against — it cannot reach a private field from its own
+    /// process, and a display-touching test has to be in one.
+    pub fn showing(&self) -> Option<adw::Toast> {
+        self.current.borrow().clone()
+    }
+
     /// *Archived 12 messages — Undo.* `description` is already user-facing
     /// prose (`UndoEntry::description`); `undoable` decides whether the
     /// button appears at all — some completions have nothing to take back.
@@ -101,63 +110,5 @@ impl Toast {
 impl Default for Toast {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn init() -> bool {
-        adw::init().is_ok() && gtk::gdk::Display::default().is_some()
-    }
-
-    #[test]
-    fn a_second_action_replaces_the_first_toasts_text_rather_than_stacking() {
-        if !init() {
-            eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
-            return;
-        }
-        let toast = Toast::new();
-        toast.show_action_completed("Archived 3 messages", true);
-        let first = toast.current.borrow().clone();
-        assert!(first.is_some());
-
-        toast.show_action_completed("Archived 5 messages", true);
-        let second = toast.current.borrow().clone();
-        assert!(second.is_some());
-        assert_ne!(
-            first.unwrap(),
-            second.unwrap(),
-            "coalescing swaps in a new toast rather than editing the old one in place"
-        );
-    }
-
-    #[test]
-    fn only_an_undoable_completion_offers_the_button() {
-        if !init() {
-            eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
-            return;
-        }
-        let toast = Toast::new();
-        toast.show_action_completed("Marked 1 message as read", false);
-        let current = toast.current.borrow();
-        let current = current.as_ref().unwrap();
-        assert_eq!(current.button_label(), None);
-        assert_eq!(current.action_name(), None);
-    }
-
-    #[test]
-    fn an_undoable_completion_names_the_win_undo_action() {
-        if !init() {
-            eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
-            return;
-        }
-        let toast = Toast::new();
-        toast.show_action_completed("Archived 12 messages", true);
-        let current = toast.current.borrow();
-        let current = current.as_ref().unwrap();
-        assert_eq!(current.button_label().as_deref(), Some("Undo"));
-        assert_eq!(current.action_name().as_deref(), Some("win.undo"));
     }
 }
