@@ -36,3 +36,7 @@ glib-build-tools = "0.21.0"
 [[bench]]
 name = "list_scroll"
 harness = false
+
+[[bench]]
+name = "thread_drill"
+harness = false
