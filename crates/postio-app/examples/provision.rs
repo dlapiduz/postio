@@ -126,9 +126,8 @@ fn main() -> ExitCode {
     let smtp_host = env("POSTIO_SMTP_HOST")
         .or_else(|| preset.map(|p| p.2.to_owned()))
         .unwrap_or_else(|| imap_host.replacen("imap.", "smtp.", 1));
-    let port = |name: &str, fallback: u16| {
-        env(name).and_then(|v| v.parse().ok()).unwrap_or(fallback)
-    };
+    let port =
+        |name: &str, fallback: u16| env(name).and_then(|v| v.parse().ok()).unwrap_or(fallback);
     let imap_port = port("POSTIO_IMAP_PORT", preset.map_or(993, |p| p.1));
     let smtp_port = port("POSTIO_SMTP_PORT", preset.map_or(465, |p| p.3));
     // Login name, when it is not the address mail arrives at.
