@@ -126,6 +126,7 @@ fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     pump();
 
     let list = window.list();
+    pump_until(|| list.model().n_items() == 120);
     assert_eq!(list.model().n_items(), 120, "the folder as it stands");
 
     // Where the user is: a few rows down, with three messages marked.
@@ -144,7 +145,7 @@ fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     feeds.apply(&Event::MessageListChanged {
         mailbox: MailboxId::new(INBOX),
     });
-    pump();
+    pump_until(|| list.model().n_items() == 320);
 
     assert_eq!(
         list.model().n_items(),
@@ -172,12 +173,13 @@ fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
 
     // And again, several times over, because a real sync does this for
     // minutes rather than once.
-    for _ in 0..5 {
+    for batch in 0..5 {
         store.batch_committed(200);
         feeds.apply(&Event::MessageListChanged {
             mailbox: MailboxId::new(INBOX),
         });
-        pump();
+        let expected = 520 + batch * 200;
+        pump_until(|| list.model().n_items() == expected);
     }
     assert_eq!(list.model().n_items(), 1_320);
     assert_eq!(list.cursor_id(), Some(cursor), "drifted over six batches");
@@ -194,5 +196,28 @@ fn pump() {
         while context.pending() {
             context.iteration(false);
         }
+    }
+}
+
+/// Pump until `done`, or give up after a deadline.
+///
+/// `pump` spins two hundred times over whatever is *currently* pending, which
+/// is a bet that the work will have been queued by the time it looks. With
+/// several sessions building, a task can be spawned and not yet scheduled
+/// when `pending()` reports false, so `pump` returns before the page it set
+/// in motion has landed and the count read after it is one batch stale
+/// (`postio-mdu1`).
+///
+/// Waiting on the condition keeps the assertion exactly as strict — a batch
+/// that genuinely never arrives still fails, after the deadline — while a
+/// loaded machine only makes it wait longer.
+fn pump_until(done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        pump();
+        if done() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
