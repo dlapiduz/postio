@@ -236,6 +236,17 @@ The chosen visual direction is **PLATE (canvas option 1b)**: airy desktop,
 The composer takes over the reading pane. It is **not a separate window** — the
 original brief implied one and the design canvas is explicit that it is not,
 and this is the resolved decision rather than a disagreement to arbitrate.
+The list keeps its scroll and its selection underneath, so context never
+disappears and `Esc` returns you exactly where you were.
+
+A composition **can** be popped out into a window of its own (`ctrl+shift+o`,
+or the button beside the composer's heading), which is the inverse of what
+most clients default to and deliberately so: losing your place in the list to
+write a reply is the failure the in-place design exists to avoid, so nothing
+ever opens detached and the pop-out is only ever asked for. It exists because
+writing while reading something *else* is the one thing an in-place composer
+genuinely cannot do. It is the same composition either way — the same widget,
+moved — so there is never a second composer to keep in step.
 
 Recipients autocomplete from explicit contacts and from correspondents seen in
 the mailbox ([ADR 0007](decisions/0007-address-book.md)); Cc and Bcc appear on
