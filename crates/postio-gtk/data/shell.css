@@ -224,6 +224,62 @@ button.postio-compose {
   color: var(--postio-selected-accent-text);
 }
 
+/* ── Search: the scope and refine column (canvas 2b) ─────────────────
+   The sidebar's own ground and its own row idiom, because while a search is
+   on screen this *is* the sidebar. Nothing here restyles a folder row; the
+   scope rows wear `.postio-folder` unchanged, so the selected-row treatment
+   cannot drift between the two lists. */
+.postio-search-panel {
+  padding: 18px 0;
+}
+
+.postio-refine {
+  padding: 0 18px;
+}
+
+/* An offered narrowing. The outline tag from canvas 2b: mono, because it is
+   a token the user could have typed, and hollow rather than filled so it
+   reads as something on offer next to the solid chips already in the query. */
+.postio-refine-chip {
+  min-height: 22px;
+  padding: 2px 7px;
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-sm);
+  background: none;
+  box-shadow: none;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-refine-chip:hover {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-accent-text);
+}
+
+.postio-refine-chip:focus {
+  border-color: var(--postio-accent);
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 1px;
+}
+
+/* Why there is nothing on offer. Never a blank column. */
+.postio-refine-empty {
+  padding: 0 18px;
+  font-size: 0.8523rem;
+  color: var(--postio-faint);
+}
+
+/* The keys this column offers, at its foot, the way the canvas draws them. */
+.postio-panel-keys {
+  padding: 0 18px;
+  font-family: var(--postio-font-mono);
+  font-size: 0.7841rem;
+  line-height: 1.7;
+  color: var(--postio-faint);
+}
+
 /* `idle · imap` / `last sync 12s`, pinned to the foot. */
 .postio-status-line {
   padding: 12px 18px 0;

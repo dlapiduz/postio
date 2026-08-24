@@ -44,9 +44,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::glib;
-use gtk::prelude::*;
+use adw::prelude::*;
+use adw::subclass::prelude::*;
+use gtk::{glib, pango};
 use postio_search::ParsedQuery;
+use postio_search::facets::{Facets, Refinement, Scope};
 use postio_search::query::{Field, TokenKind};
 
 /// One chip: an operator the parser recognized in the query.
@@ -410,6 +412,18 @@ impl Live {
         *inner.pending.borrow_mut() = Some(source);
     }
 
+    /// Asks the last query again, now.
+    ///
+    /// Not typing, so there is no debounce to wait out: the scope changed, or
+    /// something else the user did deliberately means the same query now has
+    /// a different answer. Does nothing if there is no query.
+    pub fn rerun(&self) {
+        let asked = self.inner.asked.borrow().clone();
+        let Some(query) = asked else { return };
+        *self.inner.queued.borrow_mut() = Some(query);
+        self.flush();
+    }
+
     /// Runs the queued query now instead of waiting out the debounce.
     ///
     /// What `Enter` does, and what a test does instead of sleeping.
@@ -488,6 +502,544 @@ impl Live {
             None => {
                 inner.label.set_text("");
                 inner.label.set_visible(false);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scope and refine — canvas 2b's left column
+// ---------------------------------------------------------------------------
+
+/// What the refine column says when it has nothing to offer.
+///
+/// Never a blank space and never a shrug: the two reasons a shortlist can be
+/// empty are different, and which one it is decides what the next keystroke
+/// should be.
+const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
+const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
+
+/// The keys the column offers, drawn at its foot.
+///
+/// Canvas 2b draws a third line here, `C-s save as folder`. It is not here
+/// because saved searches are not a command this build has, and a key hint
+/// for a key that does nothing teaches the wrong thing — the whole argument
+/// of the design is that the hints are true. `postio-7yp` tracks the command;
+/// the line comes back with it.
+const PANEL_KEYS: &str = "Ret open · Tab refine";
+
+type ScopeHandler = Box<dyn Fn(Scope)>;
+type RefineHandler = Box<dyn Fn(&str)>;
+
+mod panel_imp {
+    use super::*;
+
+    pub struct Panel {
+        pub(super) scopes: gtk::ListBox,
+        pub(super) chips: gtk::FlowBox,
+        pub(super) nothing: gtk::Label,
+        /// The tokens currently drawn, in the order they are drawn.
+        pub(super) offered: RefCell<Vec<String>>,
+        pub(super) scope: Cell<Scope>,
+        /// Set while the panel is moving its own selection, so putting the
+        /// scope back does not read as the user picking it.
+        pub(super) echoing: Cell<bool>,
+        pub(super) on_scope: RefCell<Vec<ScopeHandler>>,
+        pub(super) on_refine: RefCell<Vec<RefineHandler>>,
+    }
+
+    impl Default for Panel {
+        fn default() -> Self {
+            Panel {
+                scopes: gtk::ListBox::new(),
+                chips: gtk::FlowBox::new(),
+                nothing: gtk::Label::new(None),
+                offered: RefCell::new(Vec::new()),
+                scope: Cell::new(Scope::default()),
+                echoing: Cell::new(false),
+                on_scope: RefCell::new(Vec::new()),
+                on_refine: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for Panel {
+        const NAME: &'static str = "PostioSearchPanel";
+        type Type = super::Panel;
+        type ParentType = adw::Bin;
+    }
+
+    impl ObjectImpl for Panel {
+        fn constructed(&self) {
+            self.parent_constructed();
+            self.obj().build();
+        }
+    }
+
+    impl WidgetImpl for Panel {}
+    impl BinImpl for Panel {}
+}
+
+glib::wrapper! {
+    /// Canvas 2b's left column: which slice of the mailbox to search, and
+    /// what else is true of what it found.
+    ///
+    /// Wears the sidebar's own classes, because it *is* the sidebar while a
+    /// search is on screen — one list idiom, one selected-row treatment, one
+    /// place the eye looks for "where am I".
+    pub struct Panel(ObjectSubclass<panel_imp::Panel>)
+        @extends adw::Bin, gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl Default for Panel {
+    fn default() -> Self {
+        glib::Object::new()
+    }
+}
+
+impl Panel {
+    /// A column scoped to all mail, with nothing measured yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Which scope is active.
+    pub fn scope(&self) -> Scope {
+        self.imp().scope.get()
+    }
+
+    /// Put the column on `scope` without calling it a choice the user made.
+    pub fn set_scope(&self, scope: Scope) {
+        let imp = self.imp();
+        if imp.scope.replace(scope) == scope {
+            return;
+        }
+        self.select_scope_row(scope);
+    }
+
+    /// Draw what the query's result set turned out to be.
+    ///
+    /// `total` is the size of that set — what the readout is showing — and is
+    /// what decides which refinements are worth offering. See
+    /// [`postio_search::Facets::suggested`].
+    pub fn set_facets(&self, facets: &Facets, total: u64) {
+        let imp = self.imp();
+
+        for (index, scope) in Scope::ALL.iter().enumerate() {
+            let Some(row) = imp.scopes.row_at_index(index as i32) else {
+                continue;
+            };
+            let hits = facets.hits(*scope);
+            set_scope_count(&row, *scope, hits);
+        }
+
+        while let Some(child) = imp.chips.first_child() {
+            imp.chips.remove(&child);
+        }
+        let offered = facets.suggested(total);
+        for refinement in &offered {
+            imp.chips.append(&self.refine_chip(refinement));
+        }
+        *imp.offered.borrow_mut() = offered
+            .iter()
+            .map(|refinement| refinement.token.clone())
+            .collect();
+
+        let empty = offered.is_empty();
+        imp.chips.set_visible(!empty);
+        imp.nothing.set_visible(empty);
+        if empty {
+            imp.nothing.set_text(if total == 0 {
+                NOTHING_MATCHED
+            } else {
+                NOTHING_TO_NARROW
+            });
+        }
+    }
+
+    /// Called when the user picks a scope.
+    pub fn connect_scope(&self, handler: impl Fn(Scope) + 'static) {
+        self.imp().on_scope.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called when a refine chip is activated, with the token to append.
+    pub fn connect_refine(&self, handler: impl Fn(&str) + 'static) {
+        self.imp().on_refine.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Put the keyboard on the first refine chip. What `Tab` does from the
+    /// query box, per the canvas' own footer.
+    ///
+    /// Answers whether there was anything to move to, so the caller can let
+    /// `Tab` mean what it usually means when there is not.
+    pub fn focus_refine(&self) -> bool {
+        // The chip itself, not the `GtkFlowBoxChild` wrapping it: the button
+        // is what `Enter` and `Space` activate, and focusing the wrapper
+        // would leave the keyboard one step short of doing anything.
+        let Some(chip) = self
+            .imp()
+            .chips
+            .child_at_index(0)
+            .and_then(|child| child.child())
+        else {
+            return false;
+        };
+        chip.grab_focus()
+    }
+
+    /// The tokens currently offered, in the order they are drawn.
+    ///
+    /// What the column is offering is a fact about the result set, not a
+    /// private detail of the widget — a test asserts on it, and so could a
+    /// screen reader summary.
+    pub fn offered(&self) -> Vec<String> {
+        self.imp().offered.borrow().clone()
+    }
+
+    fn build(&self) {
+        let imp = self.imp();
+        // Not `.postio-sidebar`: the pane it sits in already wears that, so
+        // the ground and the `.postio-kicker` / `.postio-rule` insets come
+        // for free, and adding it here would be the same class on a widget
+        // and its own ancestor.
+        self.add_css_class("postio-search-panel");
+        self.set_hexpand(false);
+
+        imp.scopes.set_selection_mode(gtk::SelectionMode::Single);
+        imp.scopes.add_css_class("postio-folders");
+        imp.scopes
+            .update_property(&[gtk::accessible::Property::Label("Search scope")]);
+        for scope in Scope::ALL {
+            imp.scopes.append(&scope_row(scope));
+        }
+        self.select_scope_row(Scope::default());
+
+        imp.scopes.connect_row_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let Some(row) = row else { return };
+                let index = row.index().max(0) as usize;
+                let Some(scope) = Scope::ALL.get(index).copied() else {
+                    return;
+                };
+                panel.imp().scope.set(scope);
+                if panel.imp().echoing.get() {
+                    return;
+                }
+                for handler in panel.imp().on_scope.borrow().iter() {
+                    handler(scope);
+                }
+            }
+        ));
+
+        imp.chips.set_selection_mode(gtk::SelectionMode::None);
+        imp.chips.set_max_children_per_line(3);
+        imp.chips.set_row_spacing(6);
+        imp.chips.set_column_spacing(6);
+        imp.chips.set_homogeneous(false);
+        imp.chips.add_css_class("postio-refine");
+        imp.chips
+            .update_property(&[gtk::accessible::Property::Label("Refine the search")]);
+
+        imp.nothing.add_css_class("postio-refine-empty");
+        imp.nothing.set_xalign(0.0);
+        imp.nothing.set_wrap(true);
+        imp.nothing.set_visible(false);
+
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&kicker("Scope"));
+        column.append(&imp.scopes);
+
+        let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
+        rule.add_css_class("postio-rule");
+        column.append(&rule);
+        column.append(&kicker("Refine"));
+        column.append(&imp.chips);
+        column.append(&imp.nothing);
+
+        let filler = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        filler.set_vexpand(true);
+        column.append(&filler);
+
+        // The keys this column offers, where the canvas puts them. Mono, and
+        // the same shape the focused message row uses for its own hints.
+        let keys = gtk::Label::new(Some(PANEL_KEYS));
+        keys.add_css_class("postio-panel-keys");
+        keys.set_xalign(0.0);
+        keys.set_wrap(true);
+        keys.set_accessible_role(gtk::AccessibleRole::Presentation);
+        column.append(&keys);
+
+        self.set_child(Some(&column));
+    }
+
+    fn select_scope_row(&self, scope: Scope) {
+        let imp = self.imp();
+        let index = Scope::ALL
+            .iter()
+            .position(|candidate| *candidate == scope)
+            .unwrap_or(0);
+        let Some(row) = imp.scopes.row_at_index(index as i32) else {
+            return;
+        };
+        imp.echoing.set(true);
+        imp.scopes.select_row(Some(&row));
+        imp.echoing.set(false);
+    }
+
+    fn refine_chip(&self, refinement: &Refinement) -> gtk::Button {
+        let button = gtk::Button::with_label(&refinement.token);
+        button.add_css_class("postio-refine-chip");
+        // A button, not a label with a click handler: the keyboard reaches it,
+        // `Enter` and `Space` activate it, and a screen reader calls it what
+        // it is. The count rides in the description rather than on the face —
+        // the column is 212px wide and a scannable shortlist beats a wide one.
+        button.set_tooltip_text(Some(&spoken_refinement(refinement)));
+        button.update_property(&[gtk::accessible::Property::Label(&spoken_refinement(
+            refinement,
+        ))]);
+        let token = refinement.token.clone();
+        button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                for handler in panel.imp().on_refine.borrow().iter() {
+                    handler(&token);
+                }
+            }
+        ));
+        button
+    }
+}
+
+/// How a refine chip reads to a screen reader, and in its tooltip: the token
+/// plus what taking it would leave.
+pub fn spoken_refinement(refinement: &Refinement) -> String {
+    match refinement.hits {
+        1 => format!("{}, 1 match", refinement.token),
+        hits => format!("{}, {hits} matches", refinement.token),
+    }
+}
+
+/// One scope row: the name, and how many of the matches are in it.
+fn scope_row(scope: Scope) -> gtk::ListBoxRow {
+    let name = gtk::Label::new(Some(scope.label()));
+    name.add_css_class("postio-folder-name");
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(pango::EllipsizeMode::End);
+
+    let count = gtk::Label::new(None);
+    count.add_css_class("postio-folder-count");
+
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    line.append(&name);
+    line.append(&count);
+
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("postio-folder");
+    row.set_child(Some(&line));
+    set_scope_count(&row, scope, 0);
+    row
+}
+
+/// Writes a scope row's count, and the sentence a screen reader hears.
+///
+/// A zero is drawn, unlike the sidebar's unread counts which hide at zero: an
+/// empty scope is a fact worth knowing before switching to it, where an inbox
+/// with nothing unread is just an ordinary inbox.
+fn set_scope_count(row: &gtk::ListBoxRow, scope: Scope, hits: u64) {
+    let Some(count) = row
+        .child()
+        .and_then(|line| line.last_child())
+        .and_then(|label| label.downcast::<gtk::Label>().ok())
+    else {
+        return;
+    };
+    count.set_text(&hits.to_string());
+    row.update_property(&[gtk::accessible::Property::Label(&match hits {
+        1 => format!("{}, 1 match", scope.label()),
+        hits => format!("{}, {hits} matches", scope.label()),
+    })]);
+}
+
+/// A section heading, in the sidebar's own kicker type.
+fn kicker(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("postio-kicker");
+    label.set_xalign(0.0);
+    label
+}
+
+// ---------------------------------------------------------------------------
+// The search view — the three panes, while a search is on screen
+// ---------------------------------------------------------------------------
+
+/// Canvas 2b, mounted.
+///
+/// The artboard is not a new window or a new overlay: it is the three panes
+/// the application already has, with the sidebar showing [`Panel`] instead of
+/// the folder list. That is the whole of it, and it is deliberate — search is
+/// primary navigation here, so it has to happen *in* the application rather
+/// than on top of it, and `Esc` has to put everything back exactly as it was.
+///
+/// # One call to mount it
+///
+/// [`View::attach`] takes the shell and the box and wires the rest itself:
+/// the panel appears when there is a query and goes away when there is not,
+/// because both of those are things the box already announces. Whoever owns
+/// the store answers [`Live::connect_run`] and hands the facets back through
+/// [`View::set_facets`]; nothing else has to know this surface exists.
+#[derive(Clone)]
+pub struct View {
+    inner: Rc<ViewInner>,
+}
+
+struct ViewInner {
+    panel: Panel,
+    sidebar: gtk::Box,
+    /// The sidebar children the panel displaced, each with the `visible` it
+    /// had before, so leaving search puts back exactly what was there.
+    displaced: RefCell<Vec<(gtk::Widget, bool)>>,
+    active: Cell<bool>,
+}
+
+impl View {
+    /// Mount the search surfaces into `shell` and wire them to `finder`.
+    ///
+    /// Called once, by whoever builds the window.
+    pub fn attach(shell: &crate::shell::Shell, finder: &crate::finder::Finder) -> View {
+        let panel = Panel::new();
+        panel.set_vexpand(true);
+        panel.set_visible(false);
+        let sidebar = shell.sidebar();
+        sidebar.append(&panel);
+
+        let view = View {
+            inner: Rc::new(ViewInner {
+                panel,
+                sidebar,
+                displaced: RefCell::new(Vec::new()),
+                active: Cell::new(false),
+            }),
+        };
+
+        // The box already says when there is a query and when there is not,
+        // so the surface follows it rather than being told twice.
+        finder.connect_changed({
+            let view = view.clone();
+            move |parsed| view.set_searching(!parsed.is_empty())
+        });
+        finder.connect_dismissed({
+            let view = view.clone();
+            move || view.set_searching(false)
+        });
+
+        // Canvas 2b's footer: `Tab refine`.
+        finder.connect_tab({
+            let view = view.clone();
+            move || view.panel().focus_refine()
+        });
+
+        // A refine chip appends a token the user could have typed, so it
+        // lands in the box as an ordinary chip and Backspace pops it like any
+        // other. The alternative — a filter held beside the query — would be
+        // a second place the search is written down, and the two would
+        // disagree the first time anyone edited either.
+        view.panel().connect_refine({
+            let finder = finder.clone();
+            move |token| {
+                let query = finder.query();
+                finder.set_query(crate::finder::Query {
+                    mode: crate::finder::Mode::Search,
+                    text: postio_search::facets::append(&query.text, token),
+                });
+            }
+        });
+
+        // The scope is *not* written into the box — switching it must not
+        // mean editing what was typed. So the same query is simply asked
+        // again, against the new scope, which whoever answers reads off the
+        // panel.
+        view.panel().connect_scope({
+            let finder = finder.clone();
+            move |_| {
+                if let Some(live) = finder.live() {
+                    live.rerun();
+                }
+            }
+        });
+
+        view
+    }
+
+    /// Which slice of the mailbox the search is looking at.
+    ///
+    /// Whoever answers [`Live::connect_run`] reads this to build its request:
+    /// the scope is state the panel owns, not something the query carries.
+    pub fn scope(&self) -> Scope {
+        self.inner.panel.scope()
+    }
+
+    /// The scope and refine column.
+    pub fn panel(&self) -> Panel {
+        self.inner.panel.clone()
+    }
+
+    /// Whether the search surface is the one on screen.
+    pub fn is_active(&self) -> bool {
+        self.inner.active.get()
+    }
+
+    /// Draw what the query's result set turned out to be. See
+    /// [`Panel::set_facets`].
+    pub fn set_facets(&self, facets: &Facets, total: u64) {
+        self.inner.panel.set_facets(facets, total);
+    }
+
+    /// Show or hide the search surface.
+    ///
+    /// Instant, with no transition: the motion budget is explicit that pane
+    /// switches do not animate, and a column that slid in would be a column
+    /// you wait for before you can read the counts on it.
+    pub fn set_searching(&self, searching: bool) {
+        let inner = &self.inner;
+        if inner.active.replace(searching) == searching {
+            return;
+        }
+
+        if searching {
+            // Whatever the sidebar was showing steps aside rather than being
+            // unparented: the folder list keeps its selection, its scroll
+            // position and its subscriptions, so `Esc` costs nothing.
+            //
+            // The `visible` *property* rather than `is_visible()`, which in
+            // gtk4-rs answers the effective question — visible, and every
+            // ancestor visible too — and is therefore `false` for every child
+            // of a window that has not been presented yet. Mounting before
+            // `present` is exactly what the shot does, and reading the
+            // effective answer there left the folder list on screen
+            // underneath the panel.
+            let panel = inner.panel.clone().upcast::<gtk::Widget>();
+            let mut displaced = inner.displaced.borrow_mut();
+            displaced.clear();
+            let mut child = inner.sidebar.first_child();
+            while let Some(current) = child {
+                let next = current.next_sibling();
+                if current != panel {
+                    displaced.push((current.clone(), current.property::<bool>("visible")));
+                    current.set_visible(false);
+                }
+                child = next;
+            }
+            inner.panel.set_visible(true);
+        } else {
+            inner.panel.set_visible(false);
+            for (widget, visible) in inner.displaced.borrow_mut().drain(..) {
+                widget.set_visible(visible);
             }
         }
     }
