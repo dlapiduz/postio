@@ -76,9 +76,15 @@ pub struct Progress {
     /// Messages written to the local store so far this pass, counting
     /// whatever was already there when it started.
     pub fetched: u32,
-    /// The server's `UIDNEXT` minus one: the highest UID this pass could ever
-    /// reach. Some UIDs in range may not exist — expunged messages leave
-    /// gaps — so this is an upper bound on the total, not a promise of it.
+    /// How many messages the server says the mailbox holds — its `EXISTS`.
+    ///
+    /// The same kind of thing as [`fetched`](Self::fetched), which is what
+    /// makes the pair a fraction anyone can read. It is deliberately *not*
+    /// `UIDNEXT - 1`: that is the width of the UID space, which counts every
+    /// message ever expunged from the folder, and a long-lived inbox of
+    /// ninety-two messages reported `61 / 63022` and rendered as `0%` for the
+    /// whole of a pass (`postio-qhz.9`). The enumeration still walks the UID
+    /// ceiling — it has to — but nobody has to look at it.
     pub target: u32,
 }
 
@@ -186,10 +192,13 @@ pub(crate) async fn enumerate(
     let now = Utc::now();
     SyncStateRepository::new(connection).observe(mailbox.id, &server_status, now)?;
 
-    let target = selected.uid_next.get().saturating_sub(1);
+    // The UID ceiling: the highest UID this pass could reach, and the range
+    // it enumerates. Not what progress is reported against — see
+    // `Progress::target`.
+    let highest_uid = selected.uid_next.get().saturating_sub(1);
     let mut report = Report::default();
 
-    if target < 1 {
+    if highest_uid < 1 {
         SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
         return Ok(report);
     }
@@ -206,7 +215,7 @@ pub(crate) async fn enumerate(
     // over a nicety.
     let account = AccountRepository::new(connection).get(mailbox.account_id)?;
 
-    let mut missing: Vec<u32> = (1..=target)
+    let mut missing: Vec<u32> = (1..=highest_uid)
         .filter(|uid| coverage == Coverage::Everything || !known.contains(uid))
         .collect();
     // Descending: the newest UID in the mailbox is fetched, threaded and
@@ -268,7 +277,7 @@ pub(crate) async fn enumerate(
         on_progress(Progress {
             mailbox_id: mailbox.id,
             fetched: fetched_so_far,
-            target,
+            target: selected.exists,
         });
     }
 
