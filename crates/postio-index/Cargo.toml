@@ -1,0 +1,24 @@
+[package]
+name = "postio-index"
+description = "FTS5 search index and query executor over postio-search's parser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+postio-model = { workspace = true }
+postio-search = { workspace = true }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+thiserror = "2.0.20"
+tracing = "0.1"
+
+[dev-dependencies]
+criterion = "0.7.0"
+postio-storage = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "search_budget"
+harness = false

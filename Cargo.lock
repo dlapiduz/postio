@@ -2399,6 +2399,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-index"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "postio-model",
+ "postio-search",
+ "postio-storage",
+ "rusqlite",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "postio-model"
 version = "0.1.0"
 dependencies = [
@@ -2419,7 +2433,9 @@ dependencies = [
  "criterion",
  "postio-core",
  "postio-imap",
+ "postio-index",
  "postio-model",
+ "postio-search",
  "postio-smtp",
  "postio-storage",
  "postio-sync",
@@ -2435,12 +2451,7 @@ name = "postio-search"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "criterion",
  "postio-model",
- "postio-storage",
- "rusqlite",
- "thiserror",
- "tracing",
 ]
 
 [[package]]

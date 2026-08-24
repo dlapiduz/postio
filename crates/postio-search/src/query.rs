@@ -396,10 +396,11 @@ impl ParsedQuery {
 
 /// Wraps a term as an FTS5 string literal, doubling embedded quotes.
 ///
-/// `pub(crate)` rather than private: the executor needs it too, to build the
-/// exclusion `MATCH` it runs itself when [`ParsedQuery::fts_match`] returns
-/// `None` for a query that is all negated text (see that method's docs).
-pub(crate) fn fts_literal(value: &str) -> String {
+/// `pub` rather than private: `postio-index`'s executor needs it too, to
+/// build the exclusion `MATCH` it runs itself when
+/// [`ParsedQuery::fts_match`] returns `None` for a query that is all negated
+/// text (see that method's docs).
+pub fn fts_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for ch in value.chars() {
