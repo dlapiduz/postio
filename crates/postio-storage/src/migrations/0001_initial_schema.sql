@@ -1,4 +1,4 @@
--- Postio's initial schema (spec.md §6).
+-- Postio's initial schema (docs/PRODUCT.md §6).
 --
 -- Conventions used throughout:
 --
@@ -238,7 +238,7 @@ CREATE INDEX idx_messages_body_state
 -- Address headers, for messages and for drafts alike.
 --
 -- One table rather than six columns of packed text: `from:`/`to:` search
--- operators (spec.md §7) index `address_normalized` directly, and `position`
+-- operators (docs/PRODUCT.md §7) index `address_normalized` directly, and `position`
 -- preserves header order exactly.
 CREATE TABLE recipients (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,7 +347,7 @@ CREATE INDEX idx_drafts_thread ON drafts (thread_id) WHERE thread_id IS NOT NULL
 
 -- Correspondents accumulated from headers, for recipient autocomplete.
 --
--- Beyond spec.md §6's list, but `postio_model::Contact` exists and autocomplete
+-- Beyond docs/PRODUCT.md §6's list, but `postio_model::Contact` exists and autocomplete
 -- has to rank from somewhere.
 CREATE TABLE contacts (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
