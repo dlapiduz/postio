@@ -184,4 +184,7 @@ gh pr merge --rebase --delete-branch
 echo
 echo "merged and branch deleted."
 echo "Now: scripts/issue-release.sh $ISSUE   (removes the worktree)"
-echo "Then claim the next one -- finishing an issue is not finishing a session."
+echo "Then start the next issue CLEAN: /clear, then scripts/issue-claim.sh."
+echo "One issue's context is a liability on the next -- stale assumptions about"
+echo "which files matter and what main looked like. If nobody is at the keyboard"
+echo "to type /clear, end the session and let a fresh one take the next issue."

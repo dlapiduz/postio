@@ -51,8 +51,16 @@ passes on the desktop and fails there, suspect the code first.
 Land with scripts/issue-land.sh. It gates, commits, pushes, opens a PR
 that closes the issue, waits for CI, and merges. Landing means merged. A
 green PR left open is not finished work — if a check fails, that is
-yours, on that branch. Then scripts/issue-release.sh <n> and claim the
-next one. Finishing an issue is not finishing a session.
+yours, on that branch. Then scripts/issue-release.sh <n>.
+
+Start the next issue with a clean context: /clear, then
+scripts/issue-claim.sh, and read the issue as though you had not been
+here. One issue's context is a liability on the next — stale assumptions
+about which files matter, what main looked like, and what was already
+decided. /clear is a CLI built-in you cannot invoke yourself, so if
+nobody is at the keyboard, end the session cleanly instead and let a
+fresh one take the next issue. That is not stopping work; it is moving
+it somewhere it will go better.
 
 Write things down where they belong, not in the terminal: why a change
 is shaped the way it is goes in the commit body, what you discovered
