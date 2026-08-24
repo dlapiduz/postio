@@ -4,8 +4,21 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-HOOK = "/home/diego/src/postio/.claude/hooks/guard-shared-tree.py"
+# The hook beside this file, not one at a hard-coded absolute path. A test
+# that always read `~/src/postio/.claude/hooks/` reported on the *shared
+# checkout's* copy no matter which tree it was run from -- so a fix made in a
+# worktree looked untested, and CI, which has no such directory at all, would
+# have been testing nothing. Found while fixing #87, whose whole subject is
+# the guard being wrong about which directory it is talking about.
+HOOK = str(Path(__file__).resolve().parent / "guard-shared-tree.py")
+
+# A private per-issue worktree, and the shared checkout it must be told apart
+# from. Defined up here because `decide` hands the project directory to the
+# hook rather than hoping the shell exported it.
+WORKTREE = os.path.expanduser("~/src/postio-worktrees/issue-27")
+SHARED = os.environ.get("CLAUDE_PROJECT_DIR") or os.path.expanduser("~/src/postio")
 
 DENY = [
     "git reset --hard",
@@ -114,8 +127,19 @@ def decide(cmd: str, cwd: str | None = None) -> str:
     if cwd:
         body["cwd"] = cwd
     payload = json.dumps(body)
+    # `CLAUDE_PROJECT_DIR` is set for real, so set it here. Without it the
+    # hook reads `project` as empty and its "this is not our repository at
+    # all" branch can never be taken -- so the rule that a `cd` must not be
+    # able to carry a command *out* of scrutiny was untestable, and a
+    # regression in it invisible. An interactive shell happens not to export
+    # this, which is exactly why the test must not depend on inheriting it.
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=SHARED)
     r = subprocess.run(
-        [sys.executable, HOOK], input=payload, capture_output=True, text=True
+        [sys.executable, HOOK],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     if r.returncode != 0:
         return f"ERROR rc={r.returncode} {r.stderr.strip()}"
@@ -141,8 +165,6 @@ for cmd in ALLOW:
 # commands that destroy a shared tree are the correct thing to run in it. The
 # comparison has to be by path -- .../postio-worktrees/issue-27 is a string
 # prefix match against .../postio and is emphatically not inside it.
-WORKTREE = os.path.expanduser("~/src/postio-worktrees/issue-27")
-SHARED = os.environ.get("CLAUDE_PROJECT_DIR") or os.path.expanduser("~/src/postio")
 os.makedirs(WORKTREE, exist_ok=True)
 
 for cmd in ["git add -A", "git stash", "cargo fmt --all", "git reset --hard"]:
@@ -160,6 +182,59 @@ for cmd in ["git add -A", "git stash", "cargo fmt --all", "git reset --hard"]:
         failures += not ok
         print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} in {label} -> {got}")
         scoped += 1
+
+# A leading `cd` says where the command will really run, and the guard has to
+# read it the way the shell does. `~` and `$HOME` are expanded by the shell
+# before `cd` ever sees them, so a command naming the worktree that way is
+# correct -- and the guard used to refuse it, because the target did not start
+# with `/` and it fell back to the session's own cwd, which is the shared
+# checkout. Issue #87, and the *second* time the worktree exemption has
+# silently failed on path handling.
+#
+# The cwd passed alongside is deliberately the shared tree in every case: the
+# whole point is that the `cd` wins over it.
+HOME = os.path.expanduser("~")
+worktree_cds = [
+    f"cd {WORKTREE} && git add -A",
+    "cd ~/src/postio-worktrees/issue-27 && git add -A",
+    "cd ~/src/postio-worktrees/issue-27 && git rebase origin/main",
+    "cd $HOME/src/postio-worktrees/issue-27 && git add -A",
+    "cd ${HOME}/src/postio-worktrees/issue-27 && git stash",
+    f"cd '{WORKTREE}' && cargo fmt --all",
+    f'cd "{WORKTREE}" && git reset --hard',
+    # Not the first thing on the line. The `cd` still decides where the
+    # dangerous half runs, so the guard has to find it.
+    f"set -e; cd {WORKTREE} && git add -A",
+    f"export CARGO_TARGET_DIR=~/src/postio/target && cd {WORKTREE} && git add -A",
+]
+for cmd in worktree_cds:
+    got = decide(cmd, cwd=SHARED)
+    ok = got == "allow"
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} allow {cmd!r} -> {got}")
+    scoped += 1
+
+# The mirror image, which is what stops the fix from being a hole: a `cd`
+# into the shared checkout is still the shared checkout, however it is
+# spelled, and a relative `cd` is not a claim to be anywhere else.
+shared_cds = [
+    "cd ~/src/postio && git add -A",
+    "cd $HOME/src/postio && git add -A",
+    f"cd {SHARED} && git stash",
+    "cd ~/src/postio && git rebase origin/main",
+    # Relative: resolved against the cwd, which here is the shared tree.
+    "cd crates && git add -A",
+    "cd ./crates/postio-core && cargo fmt --all",
+    "cd .. && git reset --hard",
+    # A `cd` to somewhere that is not a worktree at all.
+    "cd ~/src/postio-worktrees && git add -A",
+]
+for cmd in shared_cds:
+    got = decide(cmd, cwd=SHARED)
+    ok = got == "deny"
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} -> {got}")
+    scoped += 1
 
 print(f"\n{len(DENY) + len(ALLOW) + scoped} cases, {failures} failure(s)")
 sys.exit(1 if failures else 0)
