@@ -50,10 +50,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No toolchain selected here: rust-toolchain.toml names the exact
+      # version and its components, and `rustup show` installs what it names.
+      # A `rustup default stable` in this file would silently win over the
+      # pin, which is the bug issue #38 is about — reintroduced in one line.
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt
-          rustup default stable
+          rustup show active-toolchain
           cargo fmt --version
 
       - name: cargo fmt --check
@@ -68,10 +71,9 @@ jobs:
       # Only `cargo metadata` is needed here: it resolves the dependency graph
       # without compiling anything, so this job needs no GTK system libraries
       # and finishes in seconds.
+      # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+        run: rustup show active-toolchain
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -103,8 +105,17 @@ jobs:
         # else. See scripts/check-no-silent-tracking.py and postio-qhz.2.
         run: python3 scripts/check-no-silent-tracking.py
 
+      - name: Refuse a floating rustc
+        # CI and every session must agree on one compiler. This is what
+        # notices a `rustup default stable` coming back into a workflow,
+        # where it would silently win over rust-toolchain.toml. Issue #38.
+        run: python3 scripts/check-toolchain-pinned.py
+
       - name: Prove the boundary check actually fails when violated
         run: python3 scripts/test-check-crate-boundaries.py
+
+      - name: Prove the toolchain check actually fails when violated
+        run: python3 scripts/test-check-toolchain-pinned.py
 
       - name: Prove the tracking check actually fails when violated
         # It guards something that does not exist yet, so on a clean tree it
@@ -150,15 +161,16 @@ jobs:
             libglib2.0-dev \
             libpango1.0-dev
 
+      # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
+          rustup show active-toolchain
           rustc --version && cargo clippy --version
 
-      # The cache key has to name the compiler. CI tracks `stable`, so rustc
-      # moves under it -- 1.97 to 1.98 mid-day, once. A key of Cargo.lock alone
-      # still matches after a bump, so the runner spends ~50s restoring 2 GB of
+      # The cache key has to name the compiler. It no longer moves on its own
+      # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
+      # a commit, and the cache must not survive it: a key of Cargo.lock alone
+      # still matches afterwards, so the runner spends ~50s restoring 2 GB of
       # artifacts built by the old compiler that cargo then throws away. A miss
       # is cheaper than a restore that buys nothing.
       - name: Identify the compiler
