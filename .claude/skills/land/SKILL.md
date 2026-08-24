@@ -99,7 +99,27 @@ Refs: postio-abc
 
 One bead per commit. If the subject needs an "and", it is two commits.
 
-## 4. Close the bead
+## 4. Is it actually reachable?
+
+Before closing a bead that builds a **surface** — a widget, a pane, a command,
+a view — answer this: can a person reach it in the running app?
+
+This has gone wrong three times here. Commands resolved through the registry,
+the keymap, the palette and the selection model and then hit a no-op handler
+(`postio-agr`). The whole search UI was built and tested and nothing fed it
+(`postio-1ag`). The list and sidebar were finished before anything connected
+them to the store. Each time the tests passed, the bead looked done, and the
+epic percentage said the feature existed when it did not.
+
+So: **either wire it, or file the wiring bead before you close** — and say so
+in the closing reason. A green test suite proves the widget works. It does not
+prove the application does.
+
+If you cannot wire it because another session owns the file, that is a good
+reason to file rather than force it. Name the exact calls the wiring needs, so
+whoever takes it does not have to re-derive them.
+
+## 5. Close the bead
 
 ```bash
 bd close <id> --reason="<what you did>" --suggest-next
@@ -122,7 +142,7 @@ Refs: postio-abc
 
 Uncommitted work is unprotected work.
 
-## 5. Never push
+## 6. Never push
 
 Commits are standing-authorised in this repository; pushes are not. Do not
 push, add a remote, or rewrite history unless the user asks in this session.
