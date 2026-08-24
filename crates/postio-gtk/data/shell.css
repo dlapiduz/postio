@@ -1012,6 +1012,100 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* ── First run (canvas 3e) ───────────────────────────────────────────
+   One screen, on its own plate in the middle of the window. The same plate
+   the palette and the parts panel use, because it is the same kind of thing:
+   a surface the application puts in front of you, not a dialog. */
+.postio-onboarding {
+  min-width: 640px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.postio-onboarding-header {
+  min-height: 44px;
+  padding: 0 18px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* `step 1 of 1`. Mono, and it is the whole promise of this screen: there is
+   no second page and nothing is being held back for later. */
+.postio-onboarding-step {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
+.postio-onboarding-body {
+  padding: 22px 26px 26px;
+}
+
+.postio-onboarding-label {
+  font-size: 0.8864rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* What the probe found, on its own ground so it reads as an answer rather
+   than as more form. */
+.postio-onboarding-card {
+  padding: 14px 16px;
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-active-bg);
+}
+
+.postio-onboarding-card-icon {
+  color: var(--postio-accent);
+}
+
+.postio-onboarding-card-heading {
+  font-size: 0.8864rem;
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+/* IMAP / SMTP / Auth. Mono, because they are hostnames and ports — the same
+   face every other identifier in the application wears. */
+.postio-onboarding-line {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* The provider's own sentence. Prose, not mono: it is the one thing on this
+   screen the user has to actually read, and iCloud's is the difference
+   between the password working and not. */
+.postio-onboarding-note {
+  font-size: 0.8864rem;
+  line-height: 1.5;
+  color: var(--postio-ink-secondary);
+  margin-top: 4px;
+}
+
+.postio-onboarding-help {
+  padding: 0;
+  font-size: 0.8523rem;
+}
+
+.postio-onboarding-hint {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
+/* Why it did not work. The accent's warning cousin rather than a red banner:
+   nothing has gone wrong with Postio, the server said no. */
+.postio-onboarding-failed {
+  padding: 10px 12px;
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  font-size: 0.8864rem;
+  line-height: 1.5;
+  color: var(--postio-ink);
+}
+
 /* ── Settings (canvas 3f) ────────────────────────────────────────────
    The panel and the file are the same thing: a plate over the raw TOML,
    the folder list's own selected-row treatment for its section nav, and a
