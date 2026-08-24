@@ -22,7 +22,7 @@
 //! # Dropped tag *and* contents
 //!
 //! Most unknown elements are unwrapped — a `<div>` or a `<span>` is a
-//! container, and its text is the author's. [`DROPPED`] is the list where
+//! container, and its text is the author's. `DROPPED` is the list where
 //! that is wrong, and `<noscript>` is the interesting one: with scripting
 //! off, the HTML spec has the parser treat its content as *markup* rather
 //! than inert text, which turns a sender's "if you can't run our JavaScript,

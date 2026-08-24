@@ -152,7 +152,7 @@ fn percent_encode(value: &str) -> String {
     out
 }
 
-/// The inverse of [`percent_encode`], for `postio_gtk::reader::scheme` to recover the
+/// The inverse of `percent_encode`, for `postio_gtk::reader::scheme` to recover the
 /// `Content-ID` a request named.
 pub fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
