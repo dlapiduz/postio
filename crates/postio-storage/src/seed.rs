@@ -50,7 +50,9 @@ use postio_model::{
 use rusqlite::Connection;
 
 use crate::db::Database;
-use crate::repository::{MailboxRepository, MessageRepository, Scope, ThreadingRepository};
+use crate::repository::{
+    ContactRepository, MailboxRepository, MessageRepository, Scope, ThreadingRepository,
+};
 use crate::test_support;
 
 /// What one seed call produced.
@@ -178,6 +180,7 @@ pub fn seed_large(database: &Database, seed: u64, message_count: usize) -> SeedR
             MessageRepository::new(&scope)
                 .create(&mut message)
                 .expect("insert a synthetic message");
+            record_correspondents(&scope, &message);
         }
         scope.commit().expect("commit a seed batch");
         inserted = end;
@@ -217,7 +220,7 @@ fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
         .expect("reload seeded mailboxes")
 }
 
-/// Inserts `message` and files it into a thread.
+/// Inserts `message`, files it into a thread, and remembers who wrote it.
 fn file_message(
     connection: &Connection,
     account_id: postio_model::AccountId,
@@ -229,6 +232,25 @@ fn file_message(
     ThreadingRepository::new(connection, account_id)
         .thread(&message)
         .expect("thread a seeded message");
+    record_correspondents(connection, &message);
+}
+
+/// Remember everyone on `message`, the way a sync pass would.
+///
+/// Contacts are accumulated by `postio-sync` as mail arrives, and a seeded
+/// store never goes near that path — so before `postio-3ta` every screenshot,
+/// demo, bench and UI test built on one had an empty `@` palette and an empty
+/// recipient completion however much mail was in the store. A fixture that
+/// claims to model a synced account has to model this too, or the surfaces
+/// that read it cannot be told apart from the ones nothing ever wired up.
+///
+/// Not fatal: a sighting that will not record leaves the store's *mail*
+/// perfectly good, and panicking here would turn a completion list into a
+/// broken fixture.
+fn record_correspondents(connection: &Connection, message: &Message) {
+    if let Err(error) = ContactRepository::new(connection).record_message(message) {
+        tracing::warn!(%error, "could not record a seeded message's correspondents");
+    }
 }
 
 /// Picks one of `folders`, weighted by [`FOLDER_WEIGHTS`].
@@ -376,6 +398,7 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repository::ContactRepository;
 
     #[test]
     fn seeding_twice_with_the_same_seed_gives_the_same_store() {
@@ -491,6 +514,66 @@ mod tests {
         assert_eq!(report.message_count, BATCH_SIZE * 2 + 137);
         let total: u32 = report.mailboxes.iter().map(|m| m.counts.total).sum();
         assert_eq!(total as usize, report.message_count);
+    }
+
+    #[test]
+    fn a_seeded_store_knows_who_has_written_to_it() {
+        // `postio-3ta`. Contacts are recorded by the *sync* path, and a seeded
+        // store never goes near it — so every screenshot, demo and test built
+        // on one had an `@` palette and a recipient completion that were
+        // empty however much mail was in the store. A fixture that models a
+        // synced account has to model this too, or the surfaces that read it
+        // cannot be told apart from the ones nobody wired up.
+        let database = test_support::memory();
+        let report = seed_small(&database, 7);
+        let connection = database.connection().expect("a checked-out connection");
+
+        let contacts = ContactRepository::new(&connection)
+            .search(Some(report.account.id), "", 1_000)
+            .expect("read the seeded correspondents");
+
+        assert!(
+            !contacts.is_empty(),
+            "the seed filed {} messages and the store knows nobody who sent \
+             one of them",
+            report.message_count
+        );
+        // Not merely non-empty: they have to be the mail's own senders. A
+        // fixture that invented correspondents would pass the line above and
+        // still not resemble a synced account.
+        let senders: std::collections::BTreeSet<String> = MessageRepository::new(&connection)
+            .page(&crate::repository::ListQuery::account(report.account.id).limit(u32::MAX))
+            .expect("read the seeded mail")
+            .into_iter()
+            .filter_map(|row| row.from)
+            .map(|from| from.normalized())
+            .collect();
+        assert!(
+            contacts
+                .iter()
+                .any(|contact| senders.contains(&contact.address.normalized())),
+            "the store lists correspondents that never wrote any of the \
+             seeded mail"
+        );
+    }
+
+    #[test]
+    fn the_large_variant_records_its_correspondents_too() {
+        // Its senders come from a small fixed pool, so this is a handful of
+        // rows however many messages there are — and the benches and paging
+        // fixtures built on it look like an account somebody actually uses.
+        let database = test_support::memory();
+        let report = seed_large(&database, 9, 500);
+        let connection = database.connection().expect("a checked-out connection");
+
+        let contacts = ContactRepository::new(&connection)
+            .search(Some(report.account.id), "", 1_000)
+            .expect("read the seeded correspondents");
+
+        assert!(
+            !contacts.is_empty(),
+            "500 synthetic messages and not one recorded sender"
+        );
     }
 
     #[test]
