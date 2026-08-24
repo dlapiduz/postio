@@ -210,6 +210,24 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      # `#![warn(missing_docs)]` has been on most crates from the start and
+      # failed nothing, because no job ever built the docs. Denying warnings
+      # here is what makes that attribute mean something -- and it catches
+      # broken intra-doc links, which are invisible until somebody browses
+      # the docs. There were 41 of them the first time this ran. See #96.
+      #
+      # A step in this job rather than a job of its own: rustdoc needs the GTK
+      # system libraries and a warm target dir, and both are already here.
+      #
+      # `private_intra_doc_links` is allowed on purpose. These docs are written
+      # for contributors and cross-reference internals deliberately; the build
+      # passes --document-private-items, so those links do resolve. The lint
+      # exists for published crate docs, which this is not.
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: -D warnings -A rustdoc::private_intra_doc_links
+        run: cargo doc --workspace --no-deps --document-private-items
+
       # Keep the ~400 third-party crates; drop our own, which every commit
       # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
       # is housekeeping rather than a speed-up -- the win is that a restored
