@@ -35,6 +35,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use chrono::Utc;
 use gtk::gio;
 use gtk::prelude::*;
 use postio_gtk::composer::{Closing, Composer};
@@ -109,15 +110,23 @@ fn install_autosave(composer: &Composer, database: Database, account: AccountId)
     recover(composer, &database, account, &last_id);
 }
 
+/// Autosave: the local row, and the queue row that carries it to the account's
+/// Drafts mailbox, in one write.
+///
+/// The enqueue is what makes a draft survive more than this machine — see
+/// `DraftRepository::save_and_sync`. It costs nothing extra here: the queue
+/// row is written inside the same transaction, and the engine sends it when
+/// there is a connection. A run of autosaves folds into one upload.
 fn save_draft(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
     let connection = database.connection()?;
-    DraftRepository::new(&connection).save(draft)?;
+    DraftRepository::new(&connection).save_and_sync(draft, Utc::now())?;
     Ok(())
 }
 
+/// Discard: the local row goes now, and the server copy is queued for removal.
 fn delete_draft(database: &Database, id: DraftId) -> postio_storage::Result<()> {
     let connection = database.connection()?;
-    DraftRepository::new(&connection).delete(id)?;
+    DraftRepository::new(&connection).discard(id, Utc::now())?;
     Ok(())
 }
 
