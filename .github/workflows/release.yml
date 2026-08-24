@@ -1,0 +1,100 @@
+name: Release
+
+# Deliberately not part of CI. A Flatpak build compiles the whole workspace
+# --release inside a sandbox against a ~3 GB runtime it has to download first,
+# which is minutes of runner time that says nothing new about a commit. It runs
+# when a version is tagged, and on demand.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # to create the release and upload the bundle
+
+env:
+  APP_ID: dev.postio.Postio
+  MANIFEST: flatpak/dev.postio.Postio.json
+
+jobs:
+  flatpak:
+    name: Flatpak bundle
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # A cold debug build already ran a runner out of disk once and killed lld
+      # with SIGBUS mid-link. This build is --release and additionally needs the
+      # GNOME runtime and SDK, so reclaim the preinstalled toolchains nothing
+      # here uses before starting rather than diagnosing it again.
+      - name: Reclaim disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost /usr/local/.ghcup
+          df -h /
+
+      - name: Install flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      # Pinned to what the manifest declares. Reading them from the manifest
+      # rather than repeating the versions keeps this from drifting out of step
+      # with it -- a second copy of a version number is a second thing to forget.
+      - name: Install the runtime the manifest asks for
+        run: |
+          RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$MANIFEST")
+          SDK=$(jq -r '.sdk + "//" + (."runtime-version"|tostring)' "$MANIFEST")
+          echo "runtime: $RUNTIME"
+          echo "sdk:     $SDK"
+          flatpak install --user -y flathub "$RUNTIME" "$SDK"
+          for ext in $(jq -r '."sdk-extensions"[]?' "$MANIFEST"); do
+            flatpak install --user -y flathub \
+              "$ext//$(jq -r '."runtime-version"' "$MANIFEST")" || \
+            flatpak install --user -y flathub "$ext"
+          done
+
+      # Flatpak builds offline, so every crate is pinned by checksum up front.
+      # Generated rather than committed: a stale copy is worse than none, since
+      # it would silently build something other than what Cargo.lock resolves.
+      - name: Generate the offline cargo sources
+        run: |
+          pip install --quiet aiohttp PyYAML tomlkit
+          python3 flatpak/flatpak-cargo-generator.py Cargo.lock \
+            -o flatpak/cargo-sources.json
+          echo "$(jq length flatpak/cargo-sources.json) crate sources pinned"
+
+      - name: Cache flatpak-builder state
+        uses: actions/cache@v4
+        with:
+          path: .flatpak-builder
+          key: ${{ runner.os }}-flatpak-${{ hashFiles('Cargo.lock', 'flatpak/dev.postio.Postio.json') }}
+          restore-keys: ${{ runner.os }}-flatpak-
+
+      - name: Build
+        run: |
+          flatpak-builder --user --disable-rofiles-fuse --force-clean \
+            --repo=repo build-dir "$MANIFEST"
+
+      - name: Bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
+          BUNDLE="postio-${VERSION}-x86_64.flatpak"
+          flatpak build-bundle repo "$BUNDLE" "$APP_ID" --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+          ls -lh "$BUNDLE"
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: ${{ env.BUNDLE }}
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        run: gh release upload "$GITHUB_REF_NAME" "$BUNDLE" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
