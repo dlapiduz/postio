@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 repository.workspace = true
 
 # What lands on PATH — and what the desktop entry's `Exec` names — is `postio`.
