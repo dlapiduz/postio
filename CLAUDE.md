@@ -143,6 +143,19 @@ a known commit rather than a moving tree, the build cannot contend with or
 poison the shared `target/`, and the running app reads a throwaway store that
 cannot reach real mail.
 
+**Do not run this while other sessions are building.** It uses its own
+`CARGO_TARGET_DIR`, so it duplicates the whole build rather than sharing one,
+and it links `--release`, which is the heaviest thing that happens on this
+machine. Four concurrent sessions already saturate eight cores; adding an
+isolated release build on top is what put the box into swap. It is a tool for
+looking at the app when you are present, not something to run unattended.
+
+**To prove a change reaches the running application, use the integration
+tests** in `crates/postio-app/tests/` instead — `wiring.rs`, `keystroke.rs`,
+`search_index.rs`. That is exactly what `postio-bl2` built them for: the
+composition root is testable without launching a GUI, and it is the layer
+where eight wiring bugs hid.
+
 **Observability is thin until `postio-b9t.3` lands.** There is no tracing
 subscriber, so `RUST_LOG` does nothing; the script sets `RUST_BACKTRACE=1` and
 `G_MESSAGES_DEBUG=all`, and `--inspect` attaches the GTK Inspector, which is
