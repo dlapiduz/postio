@@ -59,6 +59,11 @@ there were two.
 over `postio-core::bridge`, exactly as `postio-gtk` does. Everything below it
 is unchanged, and there is one set of rules.
 
+> **Prerequisite settled:** when this was written the bridge had exactly one
+> `EventStream`, so two frontends could not both read it — the constraint ADR
+> 0002 left open. [ADR 0013](0013-event-fanout.md) (2026-08-24) resolves it:
+> both frontends subscribe to one event hub, each receiving its own stream.
+
 That requires the extraction the gaps table describes:
 
 ```
