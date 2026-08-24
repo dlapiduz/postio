@@ -21,6 +21,11 @@ struct MockTransport {
     autoconfig: HashMap<ProbeStep, String>,
     srv: Option<DiscoverySrvReport>,
     calls: Mutex<Vec<ProbeStep>>,
+    /// Every domain (and, for the subdomain step, local part) a request was
+    /// actually made for — `postio-iigq`'s "only the domain the user typed"
+    /// audit point needs the request's own arguments, not just which step
+    /// ran.
+    requested: Mutex<Vec<(ProbeStep, String, Option<String>)>>,
     stall: Option<Duration>,
 }
 
@@ -50,6 +55,11 @@ impl MockTransport {
         self.calls.lock().unwrap().clone()
     }
 
+    /// Every request actually made, as `(step, domain, local_part)`.
+    fn requested(&self) -> Vec<(ProbeStep, String, Option<String>)> {
+        self.requested.lock().unwrap().clone()
+    }
+
     async fn maybe_stall(&self) {
         if let Some(stall) = self.stall {
             tokio::time::sleep(stall).await;
@@ -65,6 +75,14 @@ impl DiscoveryTransport for MockTransport {
     ) -> Result<DiscoveryAutoconfig, TransportError> {
         let step = endpoint.step();
         self.calls.lock().unwrap().push(step);
+        let local_part = match endpoint {
+            AutoconfigEndpoint::Subdomain { local_part, .. } => Some(local_part.to_owned()),
+            AutoconfigEndpoint::WellKnown { .. } | AutoconfigEndpoint::Ispdb { .. } => None,
+        };
+        self.requested
+            .lock()
+            .unwrap()
+            .push((step, endpoint.domain().to_owned(), local_part));
         self.maybe_stall().await;
 
         match self.autoconfig.get(&step) {
@@ -73,8 +91,12 @@ impl DiscoveryTransport for MockTransport {
         }
     }
 
-    async fn srv(&self, _domain: &str) -> Result<DiscoverySrvReport, TransportError> {
+    async fn srv(&self, domain: &str) -> Result<DiscoverySrvReport, TransportError> {
         self.calls.lock().unwrap().push(ProbeStep::Srv);
+        self.requested
+            .lock()
+            .unwrap()
+            .push((ProbeStep::Srv, domain.to_owned(), None));
         self.maybe_stall().await;
 
         match &self.srv {
@@ -504,6 +526,86 @@ async fn the_default_options_are_bounded() {
     assert!(options.overall_timeout <= Duration::from_secs(30));
     assert!(options.step_timeout <= options.overall_timeout);
     assert!(!options.guess_common_names);
+}
+
+// --- postio-iigq: privacy audit ------------------------------------------
+
+#[tokio::test]
+async fn only_the_domain_the_user_typed_is_ever_probed() {
+    // No step answers with anything usable, so the probe has to walk all
+    // four before giving up into `ManualEntry` — which is what makes this
+    // exercise every endpoint's own request, not just whichever one
+    // happened to hit first.
+    let transport = Arc::new(MockTransport::new());
+    let probe = Probe::with_options(transport.clone(), fast_options());
+
+    let report = probe
+        .run("a.user+tag@Example.ORG", &CancelToken::new())
+        .await
+        .expect("cancellation was never asked for");
+    assert!(
+        matches!(report.outcome, DiscoveryOutcome::ManualEntry { .. }),
+        "every step was made to miss, on purpose: {:?}",
+        report.outcome
+    );
+
+    let requested = transport.requested();
+    assert_eq!(
+        requested.len(),
+        4,
+        "every step should have made exactly one request: {requested:?}"
+    );
+    for (step, domain, local_part) in &requested {
+        assert_eq!(
+            domain, "example.org",
+            "{step:?} asked about the wrong domain, or a stale one"
+        );
+        match (step, local_part) {
+            // Only the subdomain step's request carries a local part at
+            // all — the one place a provider's autoconfig can be keyed
+            // per-user rather than per-domain.
+            (ProbeStep::AutoconfigSubdomain, Some(local)) => {
+                assert_eq!(local, "a.user+tag", "the wrong mailbox's local part");
+            }
+            (ProbeStep::AutoconfigSubdomain, None) => {
+                panic!("the subdomain step lost the local part entirely")
+            }
+            (_, None) => {}
+            (_, Some(local)) => panic!("{step:?} should never carry a local part: {local}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_guessed_suggestion_is_built_after_every_step_missed_not_instead_of_them() {
+    // Nothing here answers, the same as the domain-scoping test above, so
+    // the loop reaches every step before falling back to a guess.
+    let transport = Arc::new(MockTransport::new());
+    let probe = Probe::with_options(
+        transport.clone(),
+        ProbeOptions {
+            guess_common_names: true,
+            ..fast_options()
+        },
+    );
+
+    let report = probe
+        .run("user@example.org", &CancelToken::new())
+        .await
+        .expect("no cancellation to fail on");
+    match report.outcome {
+        DiscoveryOutcome::ManualEntry {
+            suggestion: Some(guess),
+        } => {
+            assert_eq!(guess.source, SettingsSource::Guess);
+            assert_eq!(guess.imap.host, "imap.example.org");
+        }
+        other => panic!("expected a guessed suggestion, got {other:?}"),
+    }
+
+    // The guess itself is string formatting, not a fifth request: every
+    // call the mock saw was a step, and there are only four of those.
+    assert_eq!(transport.requested().len(), 4);
 }
 
 // --- live probe ---------------------------------------------------------
