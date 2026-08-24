@@ -22,6 +22,7 @@ postio-core.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
 thiserror = "2.0.20"
+tracing = "0.1.44"
 webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]

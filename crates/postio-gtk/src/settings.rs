@@ -456,7 +456,7 @@ impl SettingsPanel {
             return;
         };
         if let Err(error) = write_atomically(&path, &text) {
-            eprintln!("postio: cannot revert {}: {error}", path.display());
+            tracing::error!(path = %path.display(), %error, "cannot revert the config file");
             return;
         }
         imp.loading.set(true);
@@ -509,7 +509,7 @@ impl SettingsPanel {
             return;
         };
         if let Err(error) = write_atomically(&path, &self.text()) {
-            eprintln!("postio: cannot save {}: {error}", path.display());
+            tracing::error!(path = %path.display(), %error, "cannot save the config file");
         }
     }
 
