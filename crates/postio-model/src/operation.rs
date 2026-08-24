@@ -24,7 +24,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::flag::FlagSet;
-use crate::ids::{AccountId, BlobId, DraftId, MailboxId, MessageId, ThreadId};
+use crate::ids::{AccountId, BlobId, DraftId, MailboxId, MessageId, ThreadId, Uid, UidValidity};
 
 /// What an operation acts on.
 ///
@@ -189,6 +189,35 @@ pub enum Operation {
         /// The draft to send.
         draft: DraftId,
     },
+    /// Put the draft named by the target in the account's Drafts mailbox,
+    /// replacing whatever copy of it is already there.
+    ///
+    /// Deliberately carries no bytes. A draft is autosaved as the user types,
+    /// and building its RFC 5322 form means reading every attachment out of
+    /// the blob store — so the bytes are built once, when this drains, from
+    /// whatever the draft says *then*. That is also what makes two of these
+    /// fold into one: the later save does not describe different work, it
+    /// describes the same work against a newer draft.
+    SaveDraft {
+        /// The account's Drafts mailbox.
+        mailbox: MailboxId,
+    },
+    /// Remove a draft's copy from the account's Drafts mailbox.
+    ///
+    /// This one *does* name its message, because by the time it drains the
+    /// local draft row is gone — discarding a draft is local-first like
+    /// everything else, so the row disappears at once and the server catches
+    /// up later. The [`UidValidity`] travels with the [`Uid`] because a `Uid`
+    /// alone is not an identity: under a new generation it names a different
+    /// message, and deleting that would be deleting the user's mail.
+    DiscardDraft {
+        /// The account's Drafts mailbox.
+        mailbox: MailboxId,
+        /// The server copy to remove.
+        uid: Uid,
+        /// The generation `uid` was observed under.
+        uid_validity: UidValidity,
+    },
 }
 
 impl Operation {
@@ -202,6 +231,8 @@ impl Operation {
             Self::Expunge { .. } => "expunge",
             Self::Append { .. } => "append",
             Self::Send { .. } => "send",
+            Self::SaveDraft { .. } => "save_draft",
+            Self::DiscardDraft { .. } => "discard_draft",
         }
     }
 
@@ -217,6 +248,11 @@ impl Operation {
     ///   nothing to name in an inverse. Undoing a send is a *cancel* against
     ///   the queue — dropping the row before it drains — not a compensating
     ///   operation, and that is the undo the composer offers.
+    /// * [`Operation::SaveDraft`] would have to restore the text the draft had
+    ///   before, which is not kept — the composer's undo is over the text
+    ///   itself, and the next save carries it to the server like any other
+    ///   edit. [`Operation::DiscardDraft`] destroys the server's only copy,
+    ///   the same way [`Operation::Expunge`] does.
     ///
     /// Everything else round-trips: applying an operation and then its inverse
     /// leaves the mailbox as it was.
@@ -236,7 +272,11 @@ impl Operation {
                 from: *trash,
                 to: *from,
             }),
-            Self::Expunge { .. } | Self::Append { .. } | Self::Send { .. } => None,
+            Self::Expunge { .. }
+            | Self::Append { .. }
+            | Self::Send { .. }
+            | Self::SaveDraft { .. }
+            | Self::DiscardDraft { .. } => None,
         }
     }
 
@@ -252,7 +292,10 @@ impl Operation {
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             Self::Move { from, .. } | Self::Delete { from, .. } => Some(*from),
-            Self::Expunge { mailbox } | Self::Append { mailbox, .. } => Some(*mailbox),
+            Self::Expunge { mailbox }
+            | Self::Append { mailbox, .. }
+            | Self::SaveDraft { mailbox }
+            | Self::DiscardDraft { mailbox, .. } => Some(*mailbox),
             Self::SetFlags { .. } | Self::ClearFlags { .. } | Self::Send { .. } => None,
         }
     }
@@ -294,6 +337,14 @@ mod tests {
             Operation::Send {
                 draft: DraftId::new(4),
             },
+            Operation::SaveDraft {
+                mailbox: MailboxId::new(5),
+            },
+            Operation::DiscardDraft {
+                mailbox: MailboxId::new(5),
+                uid: Uid::new(77),
+                uid_validity: UidValidity::new(12),
+            },
         ]
     }
 
@@ -308,9 +359,11 @@ mod tests {
                 | Operation::ClearFlags { .. }
                 | Operation::Move { .. }
                 | Operation::Delete { .. } => true,
-                Operation::Expunge { .. } | Operation::Append { .. } | Operation::Send { .. } => {
-                    false
-                }
+                Operation::Expunge { .. }
+                | Operation::Append { .. }
+                | Operation::Send { .. }
+                | Operation::SaveDraft { .. }
+                | Operation::DiscardDraft { .. } => false,
             };
             assert_eq!(
                 operation.is_reversible(),
@@ -485,6 +538,57 @@ mod tests {
             .mailbox(),
             None,
             "the target's own mailbox, which the row already carries"
+        );
+        assert_eq!(
+            Operation::SaveDraft {
+                mailbox: MailboxId::new(5)
+            }
+            .mailbox(),
+            Some(MailboxId::new(5)),
+            "a draft is filed in the account's Drafts mailbox"
+        );
+    }
+
+    #[test]
+    fn the_draft_operations_are_not_offered_an_undo() {
+        for operation in [
+            Operation::SaveDraft {
+                mailbox: MailboxId::new(5),
+            },
+            Operation::DiscardDraft {
+                mailbox: MailboxId::new(5),
+                uid: Uid::new(77),
+                uid_validity: UidValidity::new(12),
+            },
+        ] {
+            assert_eq!(
+                operation.inverse(),
+                None,
+                "{} has nothing to restore: the text it replaced is not kept",
+                operation.op_type()
+            );
+        }
+    }
+
+    #[test]
+    fn discarding_a_draft_names_the_generation_its_uid_belongs_to() {
+        // The whole reason this operation carries its own identity rather than
+        // reading it back from a draft row: by the time it drains, that row is
+        // gone. A `Uid` without its `UidValidity` would name whatever message
+        // holds that number under the *next* generation.
+        let discard = Operation::DiscardDraft {
+            mailbox: MailboxId::new(5),
+            uid: Uid::new(77),
+            uid_validity: UidValidity::new(12),
+        };
+        let encoded = serde_json::to_value(&discard).expect("encode");
+
+        assert_eq!(encoded.get("uid").and_then(|uid| uid.as_u64()), Some(77));
+        assert_eq!(
+            encoded
+                .get("uid_validity")
+                .and_then(|validity| validity.as_u64()),
+            Some(12)
         );
     }
 }

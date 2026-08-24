@@ -25,6 +25,11 @@
 //!   archive-then-undo costs the server, which is nothing.
 //! * A move followed by a delete deletes from where the message actually was.
 //!
+//! * Saves of the same draft merge into one, and a discard subsumes a save
+//!   that has not gone out yet. A save carries no text — the bytes are built
+//!   when it drains — so two of them are one piece of work described twice,
+//!   which is exactly what autosave produces.
+//!
 //! Everything else is left alone. In particular [`Operation::Append`],
 //! [`Operation::Send`] and [`Operation::Expunge`] never fold: they are not
 //! idempotent, and two of them are two of them.
@@ -195,6 +200,8 @@ fn foldable(operation: &Operation) -> bool {
             | Operation::ClearFlags { .. }
             | Operation::Move { .. }
             | Operation::Delete { .. }
+            | Operation::SaveDraft { .. }
+            | Operation::DiscardDraft { .. }
     )
 }
 
@@ -264,6 +271,24 @@ fn merge(earlier: &Operation, later: &Operation) -> Merged {
             }
         }
 
+        // Autosave is why this matters at all: a minute of typing leaves a
+        // queue full of saves for one draft, and every one of them says the
+        // same thing — *this draft is stale*. They carry no text (the bytes
+        // are built when the step drains), so the later one is not different
+        // work, it is the same work described again.
+        (SaveDraft { mailbox: first }, SaveDraft { mailbox: second }) if first == second => {
+            Merged::Into(later.clone())
+        }
+        // Discarding subsumes an undrained save: the copy the discard names is
+        // the one already on the server, and uploading a new copy first only
+        // to remove it is two round trips to reach the same folder.
+        (
+            SaveDraft { mailbox: first },
+            DiscardDraft {
+                mailbox: second, ..
+            },
+        ) if first == second => Merged::Into(later.clone()),
+
         _ => Merged::No,
     }
 }
@@ -292,6 +317,10 @@ mod tests {
 
     fn message(id: i64) -> OperationTarget {
         OperationTarget::Message(MessageId::new(id))
+    }
+
+    fn draft(id: i64) -> OperationTarget {
+        OperationTarget::Draft(postio_model::ids::DraftId::new(id))
     }
 
     /// A queue row, built directly: this module is pure and never reads one out
@@ -619,5 +648,56 @@ mod tests {
             batch.len(),
             "a row that is neither planned nor obsolete would be a lost mutation"
         );
+    }
+
+    #[test]
+    fn a_run_of_autosaves_folds_into_one_upload() {
+        // The saves carry no text — the bytes are built when the step drains —
+        // so three of them are one piece of work described three times.
+        let drafts = MailboxId::new(4);
+        let batch = [
+            row(1, draft(7), Operation::SaveDraft { mailbox: drafts }),
+            row(2, draft(7), Operation::SaveDraft { mailbox: drafts }),
+            row(3, draft(7), Operation::SaveDraft { mailbox: drafts }),
+        ];
+
+        let plan = coalesce(&batch);
+
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].rows.len(), 3, "all three settle together");
+        assert_eq!(plan.saved(), 2);
+    }
+
+    #[test]
+    fn discarding_subsumes_a_save_that_has_not_gone_out() {
+        let drafts = MailboxId::new(4);
+        let discard = Operation::DiscardDraft {
+            mailbox: drafts,
+            uid: postio_model::Uid::new(9),
+            uid_validity: postio_model::UidValidity::new(1),
+        };
+        let batch = [
+            row(1, draft(7), Operation::SaveDraft { mailbox: drafts }),
+            row(2, draft(7), discard.clone()),
+        ];
+
+        let plan = coalesce(&batch);
+
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(
+            plan.steps[0].operation, discard,
+            "uploading a copy only to remove it is two round trips to nowhere"
+        );
+    }
+
+    #[test]
+    fn saves_for_different_drafts_stay_apart() {
+        let drafts = MailboxId::new(4);
+        let batch = [
+            row(1, draft(7), Operation::SaveDraft { mailbox: drafts }),
+            row(2, draft(8), Operation::SaveDraft { mailbox: drafts }),
+        ];
+
+        assert_eq!(coalesce(&batch).steps.len(), 2);
     }
 }

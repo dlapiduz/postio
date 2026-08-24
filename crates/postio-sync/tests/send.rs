@@ -377,3 +377,61 @@ async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
         "but it must never appear in the message content itself"
     );
 }
+
+#[tokio::test]
+async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
+    // A sent message still showing as an unfinished draft on the user's phone
+    // is the same bug as never having uploaded it: the two folders disagree
+    // about what happened.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _sent_mailbox) = account_with_sent(&connection);
+    test_support::mailbox(&connection, &account, "Drafts");
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = DraftRepository::new(&connection)
+        .save_and_sync(&mut draft, at(8))
+        .map(|_| draft.id)
+        .expect("save and queue the draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue the send");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .mailbox(MockMailbox::new("Drafts"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let secrets = MemorySecretStore::new();
+    store_password(&secrets, &account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    // Both rows in one pass: the draft is uploaded, then sent, in the order
+    // the user did them.
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            secrets: &secrets,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    assert_eq!(report.applied, 2, "{report:?}");
+    assert_eq!(
+        backend.status("Drafts").await.expect("status").exists,
+        0,
+        "the draft does not outlive the message it became"
+    );
+    assert_eq!(backend.status("Sent").await.expect("status").exists, 1);
+}

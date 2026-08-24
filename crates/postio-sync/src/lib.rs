@@ -48,6 +48,7 @@
 pub mod backfill;
 pub mod coalesce;
 pub mod connect;
+pub mod drafts;
 pub mod drain;
 pub mod initial;
 pub mod resync;
