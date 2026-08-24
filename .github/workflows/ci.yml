@@ -119,6 +119,13 @@ jobs:
         # reported zero of postio-gtk's 305 passing tests. See #41.
         run: python3 scripts/check-no-gtk-init-in-unit-tests.py
 
+      - name: Refuse a tokio await on the GTK main context
+        # `spawn_future_local` runs on the glib main loop, which has no tokio
+        # reactor. 0.1.0 awaited the keyring there and panicked with "there is
+        # no reactor running" the instant a login succeeded, with every gate
+        # green. See scripts/check-runtime-crossings.py and #66.
+        run: python3 scripts/check-runtime-crossings.py
+
       - name: Prove the boundary check actually fails when violated
         run: python3 scripts/test-check-crate-boundaries.py
 
@@ -136,6 +143,11 @@ jobs:
         # passes whether it works or not. That is the shape of check that
         # rots silently, so its own failure modes are exercised too.
         run: python3 scripts/test-check-no-silent-tracking.py
+
+      - name: Prove the runtime-crossing check catches the bug it exists for
+        # Its first case is the 0.1.0 defect verbatim in shape. A guard that
+        # would not have caught the fault it was written for is worth nothing.
+        run: python3 scripts/test-check-runtime-crossings.py
 
       - name: Assert CI never runs the network-touching tests
         run: |
