@@ -101,6 +101,12 @@ pub enum ListScope {
     Account(AccountId),
     /// The sidebar's "Flagged" view.
     Flagged(AccountId),
+    /// One conversation, wherever its messages are filed.
+    ///
+    /// Not a narrowing of a mailbox: a thread routinely spans folders, and
+    /// the drill-in used to show only the part of it the list happened to
+    /// have paged in. See `idx_messages_thread`.
+    Thread(ThreadId),
 }
 
 /// One window of the message list.
@@ -128,6 +134,11 @@ impl ListQuery {
     /// Every flagged message in an account.
     pub fn flagged(id: AccountId) -> Self {
         Self::new(ListScope::Flagged(id))
+    }
+
+    /// Every message of one thread, in every folder it touches.
+    pub fn thread(id: ThreadId) -> Self {
+        Self::new(ListScope::Thread(id))
     }
 
     fn new(scope: ListScope) -> Self {
@@ -854,6 +865,7 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         ListScope::Mailbox(_) => "messages.mailbox_id = ?1",
         ListScope::Account(_) => "messages.account_id = ?1",
         ListScope::Flagged(_) => "messages.account_id = ?1 AND messages.flagged = 1",
+        ListScope::Thread(_) => "messages.thread_id = ?1",
     };
     let cursor = if with_cursor {
         // A row value, so SQLite can turn it into one range constraint on
@@ -870,6 +882,7 @@ fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     vec![match scope {
         ListScope::Mailbox(id) => id.get(),
         ListScope::Account(id) | ListScope::Flagged(id) => id.get(),
+        ListScope::Thread(id) => id.get(),
     }]
 }
 
