@@ -79,6 +79,20 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         }
     ));
 
+    // `p`: the same destination as clicking a chip, for a message the
+    // keyboard is on with no chip to click at all.
+    window.reader().connect_parts_requested(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        opened,
+        move || {
+            if let Some(opened) = opened.borrow().as_ref() {
+                window.open_parts(&opened.root, &opened.parts);
+            }
+        }
+    ));
+
     window.set_blob_source(cid_source(
         {
             let showing = showing.clone();
