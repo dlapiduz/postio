@@ -232,6 +232,42 @@ impl MessageSource for Sample {
     }
 }
 
+/// Canvas 2b's left column, over the artboard's own numbers.
+///
+/// Mounted through `search::View::attach`, which is the one call a running
+/// Postio makes — so what this renders is what the application renders once
+/// something answers with facets.
+fn show_search_panels(window: &Window) {
+    use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
+
+    let view = postio_gtk::search::View::attach(&window.shell(), &window.finder());
+    let count = |scope, hits| ScopeCount { scope, hits };
+    let refinement = |token: &str, hits| Refinement {
+        token: token.to_owned(),
+        hits,
+    };
+    view.set_facets(
+        &Facets {
+            scopes: vec![
+                count(Scope::AllMail, 14),
+                count(Scope::Inbox, 6),
+                count(Scope::Lists, 8),
+            ],
+            refinements: vec![
+                refinement("is:unread", 9),
+                refinement("larger:1M", 5),
+                refinement("is:flagged", 2),
+                refinement("in:lkml", 8),
+            ],
+        },
+        14,
+    );
+    view.set_searching(true);
+    // Leaked for the same reason `populate` leaks its feeds: the shot renders
+    // one window and exits, and a view dropped here would unwire itself.
+    Box::leak(Box::new(view));
+}
+
 /// Canvas 3f's own sample file, so the shot can be held up against the
 /// drawing.
 fn show_settings(window: &Window) {
@@ -437,6 +473,7 @@ fn main() -> glib::ExitCode {
                 },
             );
         }
+        show_search_panels(&window);
     }
     if flag("settings") {
         show_settings(&window);
