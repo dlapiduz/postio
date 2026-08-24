@@ -40,6 +40,23 @@ repository = "https://github.com/dlapiduz/postio"
 # could not have one.
 publish = false
 
+# The lint floor every crate answers to.
+#
+# This used to be a `#![forbid(unsafe_code)]` / `#![warn(missing_docs)]` pair
+# repeated in each `lib.rs`, and it drifted: `unsafe_code` reached seven crates
+# of twelve and `missing_docs` nine, with three crates that contain no `unsafe`
+# at all still not forbidding it. One table cannot drift.
+# `scripts/check-lint-floor.py` keeps it the only table.
+#
+# `forbid` rather than `deny` on purpose: `deny` can be switched off again by an
+# `#[allow]` anywhere inside the crate, and a mail client that holds credentials
+# and parses hostile input is the wrong place for `unsafe` to arrive quietly.
+# The two crates that genuinely need it are exceptions with a reason, not a
+# weaker default for everybody.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
 [workspace.dependencies]
 postio-model   = { path = "crates/postio-model" }
 postio-storage = { path = "crates/postio-storage" }

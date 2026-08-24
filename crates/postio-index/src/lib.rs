@@ -29,9 +29,6 @@
 //!   with the FTS5 index, ranking the results and cutting snippets.
 //! * [`error`] — this crate's `thiserror` error type.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-
 pub mod error;
 pub mod executor;
 pub mod index;

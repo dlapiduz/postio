@@ -9,6 +9,11 @@
 //! to the main context and changes what a key press does. Nothing is mocked,
 //! because what is being tested is precisely that the pieces are joined up.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use std::time::{Duration, Instant};
 
 use gtk::gdk;

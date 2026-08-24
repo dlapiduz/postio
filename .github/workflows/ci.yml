@@ -131,6 +131,12 @@ jobs:
         # else. See scripts/check-no-silent-tracking.py and postio-qhz.2.
         run: python3 scripts/check-no-silent-tracking.py
 
+      - name: Enforce the lint floor
+        # `[workspace.lints]` is the only place the floor is set. This is what
+        # notices a new crate that forgets to inherit it -- a missing lint
+        # produces no output at all, so nothing else would. See #95.
+        run: python3 scripts/check-lint-floor.py
+
       - name: Refuse a floating rustc
         # CI and every session must agree on one compiler. This is what
         # notices a `rustup default stable` coming back into a workflow,
@@ -163,6 +169,9 @@ jobs:
         # Its own failure modes -- including the brace scanner that decides
         # where a test module ends -- are exercised instead.
         run: python3 scripts/test-check-no-gtk-init-in-unit-tests.py
+
+      - name: Prove the lint-floor check actually fails when violated
+        run: python3 scripts/test-check-lint-floor.py
 
       - name: Prove the tracking check actually fails when violated
         # It guards something that does not exist yet, so on a clean tree it

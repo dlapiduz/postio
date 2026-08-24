@@ -57,8 +57,6 @@
 //! Development in this repository is test-first: write the failing test,
 //! then the implementation. See `CLAUDE.md`.
 
-#![warn(missing_docs)]
-
 pub mod backend;
 pub mod cancel;
 pub mod discovery;
