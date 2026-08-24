@@ -7,7 +7,7 @@
 use postio_imap::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_imap::cancel::CancelToken;
 use postio_model::{AccountId, Mailbox, MailboxId, Uid};
-use postio_storage::repository::{MessageRepository, SyncStateRepository};
+use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Progress, sync_mailbox, sync_mailbox_with_batch_size};
 use rusqlite::Connection;
@@ -206,5 +206,34 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
         parent.thread_id, reply.thread_id,
         "the reply's thread must have claimed the parent once it arrived, \
          even though the reply was threaded first"
+    );
+}
+
+/// postio-66j: `ContactRepository::record_message` existed, was tested, and
+/// had no caller, so @ and recipient completion always listed nobody no
+/// matter how much mail the account held. This is the seam that broke —
+/// before the fix this assertion fails with an empty contact list, because
+/// nothing in `sync_mailbox`'s call chain ever wrote the `contacts` table.
+#[tokio::test]
+async fn a_full_sync_records_every_correspondent_as_a_contact() {
+    let backend = server_with_messages(3).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account_id, inbox) = local(&connection);
+
+    sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("initial sync");
+
+    let contacts = ContactRepository::new(&connection)
+        .list(Some(account_id))
+        .expect("list contacts");
+    let ada = contacts
+        .iter()
+        .find(|contact| contact.address.normalized() == "ada@example.com")
+        .expect("the sender of all three messages must be a recorded contact");
+    assert_eq!(
+        ada.times_seen, 3,
+        "one sighting per message, not per address occurrence"
     );
 }
