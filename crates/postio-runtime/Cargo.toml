@@ -17,6 +17,7 @@ postio-smtp.workspace = true
 postio-storage.workspace = true
 postio-sync.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
+zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 criterion = "0.7.0"

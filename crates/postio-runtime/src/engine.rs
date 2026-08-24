@@ -181,6 +181,25 @@ pub struct EngineParts {
     pub reconnect: ReconnectPolicy,
     /// How closely to watch for mail arriving.
     pub watch: WatchPolicy,
+    /// Where the engine learns that the machine's network came or went.
+    pub network: NetworkSource,
+}
+
+/// Who tells the engine about the network.
+///
+/// Explicit rather than "listen if the bus is there", because a test that
+/// quietly opened a D-Bus connection would be a test that behaves differently
+/// on a developer's desktop and on a CI runner. The application asks for
+/// [`NetworkSource::NetworkManager`]; everything else leaves it alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NetworkSource {
+    /// Nobody. The link is judged entirely by whether connections work, which
+    /// is correct but waits out a backoff the machine could have skipped.
+    #[default]
+    Ignored,
+    /// NetworkManager over the system bus. Falls back to [`Self::Ignored`]
+    /// behaviour on a machine that does not run it.
+    NetworkManager,
 }
 
 /// One unit of work for the engine's thread.
@@ -409,6 +428,14 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
         // unexamined until the first interval elapsed.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+        // A channel rather than a job, so that a bus which is slow to answer —
+        // or absent — cannot hold up anything the user asked for. The listener
+        // task lives on this same runtime and stops with it.
+        let (network, mut network_changed) = tokio::sync::watch::channel(NetworkState::Unknown);
+        if parts.network == NetworkSource::NetworkManager {
+            tokio::spawn(crate::network::follow(network));
+        }
+
         loop {
             tokio::select! {
                 job = inbox.recv() => match job {
@@ -421,6 +448,15 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                         .supervisor
                         .poll(parts.backend.as_ref(), Utc::now(), entropy())
                         .await;
+                    announce_link(&parts, &mut state, moved);
+                }
+                // The machine's own opinion of the network. It only ever moves
+                // the link between waiting and offline — the attempt count is
+                // the supervisor's, because NetworkManager knows about the
+                // interface and not about whether the server answers.
+                Ok(()) = network_changed.changed() => {
+                    let reported = *network_changed.borrow_and_update();
+                    let moved = state.supervisor.set_network(reported, Utc::now());
                     announce_link(&parts, &mut state, moved);
                 }
             }

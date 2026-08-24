@@ -12,7 +12,7 @@ use postio_core::bridge::{EventStream, event_channel};
 use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
-use postio_runtime::engine::{Engine, EngineParts, Link, NetworkState};
+use postio_runtime::engine::{Engine, EngineParts, Link, NetworkSource, NetworkState};
 use postio_storage::repository::OperationQueueRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
@@ -58,6 +58,7 @@ fn engine_with_backend() -> (
         backfill: Default::default(),
         reconnect: Default::default(),
         watch: Default::default(),
+        network: NetworkSource::Ignored,
     })
     .expect("the engine starts");
 
@@ -587,6 +588,7 @@ fn engine_over_arc(
         backfill: Default::default(),
         reconnect: Default::default(),
         watch: Default::default(),
+        network: NetworkSource::Ignored,
     })
     .expect("the engine starts");
     (engine, events)
@@ -706,6 +708,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
         backfill: Default::default(),
         reconnect: Default::default(),
         watch: Default::default(),
+        network: NetworkSource::Ignored,
     })
     .expect("the engine starts");
 
