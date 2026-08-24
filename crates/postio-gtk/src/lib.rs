@@ -87,6 +87,7 @@ pub mod startup;
 pub mod state;
 pub mod style;
 pub mod thread;
+pub mod thread_row;
 pub mod toast;
 pub mod tokens;
 pub mod window;

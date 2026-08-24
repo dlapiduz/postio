@@ -357,79 +357,76 @@ button.postio-compose {
   background: none;
 }
 
-/* The row widget a `GtkListView` wraps each item in. The selected state lives
-   here, not on the box inside it, so the tint and the steel edge are keyed off
-   the item and the box only carries the type. */
+/* The row widget a `GtkListView` wraps each item in. `crate::thread_row`
+   paints the row's own ground and its steel edge, because it draws its own
+   pixels — so the item widget itself stays out of the way entirely. */
 .postio-thread-rows > row {
   padding: 0;
-  border-left: 3px solid transparent;
+  border: none;
   border-radius: 0;
-  box-shadow: inset 0 -1px var(--postio-hairline);
+  background: none;
+  box-shadow: none;
 }
 
-.postio-thread-rows > row:hover {
-  background-color: var(--postio-hover-bg);
-}
+/* ── What the thread row's probe reads ───────────────────────────────
+   `crate::thread_row` draws in one `snapshot()`, which gives up the cascade
+   for the row's internals. These classes hand it back: an invisible label
+   wears each in turn and its resolved `color` and font are what the row
+   paints with. That is why the variants below are *classes* and not
+   `:selected` state selectors — a probe can be given a class, but it cannot
+   be put into another widget's state.
 
-/* The same 3px steel edge the folder list and the message list use for their
-   selected row. One selection idiom across the application, not three. */
-.postio-thread-rows > row:selected {
-  border-left-color: var(--postio-selected-border);
-  background-color: var(--postio-selected-strong-bg);
-  color: var(--postio-selected-fg);
-}
-
-/* One line per message. 8px/18px from the artboard — the thread is a
-   transcript, and the hairline under each row is what makes it read as one
-   rather than as a second inbox. 15px on the left because the row's own 3px
-   steel edge makes up the rest, so the text does not shift when the cursor
-   lands on it. */
-.postio-thread-row {
-  min-height: 32px;
-  padding: 6px 18px 6px 15px;
-}
-
-.postio-thread-index {
-  font-family: var(--postio-font-mono);
-  font-size: 0.6818rem;
-  color: var(--postio-faint);
-}
-
-/* 13px, not the canvas' 12.5px. At 12.5px and weight 400 the cap-height
-   strokes of `D`, `R`, `O` and `5` fall between pixel rows and wash out
-   against the surface — a rendered column read `Uiogo Ferreira` and `Ke:`
-   where it should have read `Diogo Ferreira` and `Re:`. Ascenders were
-   untouched, so it was the rasterizer and not a clip. One step up fixes it,
-   and it is the same 13px the finder's own rows already use. */
-.postio-thread-sender,
-.postio-thread-line {
-  font-size: 0.8864rem;
-  color: var(--postio-ink-secondary);
-}
-
+   Nothing else in the application uses them, and nothing draws them. */
+.postio-thread-index,
 .postio-thread-when {
   font-family: var(--postio-font-mono);
   font-size: 0.6818rem;
   color: var(--postio-faint);
 }
 
+.postio-thread-sender,
+.postio-thread-line {
+  font-family: var(--postio-font-body);
+  font-size: 0.8864rem;
+  font-weight: 400;
+  color: var(--postio-ink-secondary);
+}
+
 /* Unread is weight, the way the message list says it — not a dot the eye has
    to find in a column of thirty lines. */
-.postio-thread-row.unread .postio-thread-sender,
-.postio-thread-row.unread .postio-thread-line {
+.postio-thread-sender.unread,
+.postio-thread-line.unread {
   font-weight: 500;
   color: var(--postio-ink);
 }
 
-.postio-thread-rows > row:selected .postio-thread-index,
-.postio-thread-rows > row:selected .postio-thread-when {
+.postio-thread-sender.selected,
+.postio-thread-line.selected {
+  font-weight: 500;
+  color: var(--postio-selected-fg);
+}
+
+.postio-thread-index.selected,
+.postio-thread-when.selected {
   color: var(--postio-selected-accent-text);
 }
 
-.postio-thread-rows > row:selected .postio-thread-sender,
-.postio-thread-rows > row:selected .postio-thread-line {
-  font-weight: 500;
-  color: var(--postio-selected-fg);
+/* Painted rather than displayed: `color` here is the value the row fills
+   with, which is the convention `crate::row`'s own probe classes established. */
+.postio-thread-edge.hairline {
+  color: var(--postio-hairline);
+}
+
+.postio-thread-edge.selected {
+  color: var(--postio-selected-border);
+}
+
+.postio-thread-ground.selected {
+  color: var(--postio-selected-strong-bg);
+}
+
+.postio-thread-ground.hover {
+  color: var(--postio-hover-bg);
 }
 
 /* Why the column is empty, when a filter has emptied it. */
