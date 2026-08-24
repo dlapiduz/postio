@@ -88,6 +88,11 @@ fn main() -> glib::ExitCode {
         None => Dispatcher::builder().build(),
     };
 
+    // What the bus answers, asked before it is handed over: the window's
+    // action seam carries *every* gesture, and the ones another consumer owns
+    // must not come back as "not wired up in this build".
+    let wired: Vec<postio_core::CommandId> = bus.wired().collect();
+
     // The runtime: the tokio threads every read is polled on and every command
     // is handled on.
     let (runtime, replies) = match Bridge::new(bus) {
@@ -135,7 +140,13 @@ fn main() -> glib::ExitCode {
             // handler. Before this line the keymap, the palette and the
             // selection model all resolved correctly and then handed off to
             // nothing.
-            commands::install(&window, &feeds, state.clone(), wiring.commands.clone());
+            commands::install(
+                &window,
+                &feeds,
+                state.clone(),
+                wiring.commands.clone(),
+                wired.clone(),
+            );
             // Everything either half has to say reaches the panes here: a
             // mailbox the server disagreed with, a body that arrived, an
             // archive that landed. Two queues because there are two

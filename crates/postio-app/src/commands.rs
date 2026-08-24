@@ -26,9 +26,9 @@
 //! and telling it back would be a round trip to nowhere. They go into a sink
 //! whose reader was dropped on purpose.
 
-use postio_core::Event;
 use postio_core::bridge::{CommandSender, EventSink, EventStream, event_channel};
 use postio_core::state::{Selection, SharedState};
+use postio_core::{Command, CommandId, Event};
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
 use postio_model::{MailboxId, MessageId};
@@ -75,8 +75,31 @@ pub fn mirror(
     });
 }
 
-/// Send every invocation the window produces to the bus.
-pub fn install(window: &Window, feeds: &Feeds, state: SharedState, commands: CommandSender) {
+/// Whether this invocation is the bus's business.
+///
+/// The bus is one consumer among several — the composer answers reply and
+/// compose, the config module answers `edit_config`, and the window answers
+/// `Esc` itself when there is something to close — and it sees every gesture,
+/// because [`Window::connect_action`] is the seam that carries whole
+/// invocations. Sending it commands it does not handle would answer a stray
+/// `Esc` with "`back` is not wired up in this build".
+///
+/// `wired` comes from [`Dispatcher::wired`], so this cannot drift from what
+/// the bus actually answers.
+///
+/// [`Dispatcher::wired`]: postio_core::dispatch::Dispatcher::wired
+fn is_for_the_bus(wired: &[CommandId], command: &Command) -> bool {
+    wired.contains(&command.id())
+}
+
+/// Send the invocations the bus owns to it, as the window produces them.
+pub fn install(
+    window: &Window,
+    feeds: &Feeds,
+    state: SharedState,
+    commands: CommandSender,
+    wired: Vec<CommandId>,
+) {
     // No reader, on purpose: see the module docs.
     let (quiet, _) = event_channel();
     let feeds = feeds.clone();
@@ -85,6 +108,9 @@ pub fn install(window: &Window, feeds: &Feeds, state: SharedState, commands: Com
         #[weak(rename_to = window)]
         window,
         move |command| {
+            if !is_for_the_bus(&wired, &command) {
+                return;
+            }
             let list = window.list();
             mirror(
                 &state,
@@ -156,6 +182,38 @@ mod tests {
 
     fn mailbox() -> MailboxId {
         MailboxId::new(4)
+    }
+
+    #[test]
+    fn only_the_verbs_the_bus_owns_are_sent_to_it() {
+        // The bus is one consumer among several: the composer answers reply
+        // and compose, the config module answers edit_config, and the window
+        // answers `Esc` itself when there is something to close. Sending it
+        // everything would put "`back` is not wired up in this build" on
+        // screen every time a stray `Esc` found nothing to close.
+        let wired = [CommandId::Archive, CommandId::Undo];
+
+        assert!(is_for_the_bus(
+            &wired,
+            &Command::Archive {
+                target: MessageTarget::Selection
+            }
+        ));
+        assert!(is_for_the_bus(&wired, &Command::Undo));
+        assert!(!is_for_the_bus(&wired, &Command::Back));
+        assert!(!is_for_the_bus(&wired, &Command::Reply { message: None }));
+    }
+
+    #[test]
+    fn a_bus_with_nothing_wired_is_told_nothing() {
+        // What an unopenable store leaves behind. Every key would otherwise
+        // answer with a rejection it can do nothing about.
+        assert!(!is_for_the_bus(
+            &[],
+            &Command::Archive {
+                target: MessageTarget::Selection
+            }
+        ));
     }
 
     #[test]
