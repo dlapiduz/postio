@@ -162,6 +162,63 @@ fn show_parts(window: &Window) {
     window.parts().next_part();
 }
 
+/// A sidebar with as many folders as a real account has.
+///
+/// `postio-qhz.4`: the live run that produced the Adwaita height warning had
+/// fifteen. The folder lists are `GtkListBox`es in a plain box, so their
+/// height is however many folders there are.
+fn show_folders(window: &Window) {
+    use postio_model::ids::{AccountId, MailboxId};
+    use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
+
+    let account = AccountId::new(1);
+    let folder = |id: i64, path: &str, role, unread| {
+        let mut mailbox = Mailbox::new(account, path, Some('/'));
+        mailbox.id = MailboxId::new(id);
+        mailbox.role = role;
+        mailbox.counts = MailboxCounts {
+            total: 400,
+            unread,
+            flagged: 0,
+        };
+        mailbox
+    };
+    let mut folders = vec![
+        folder(1, "INBOX", MailboxRole::Inbox, 12),
+        folder(2, "Drafts", MailboxRole::Drafts, 2),
+        folder(3, "Sent", MailboxRole::Sent, 0),
+        folder(4, "Archive", MailboxRole::Archive, 0),
+        folder(5, "Junk", MailboxRole::Junk, 3),
+        folder(6, "Trash", MailboxRole::Trash, 0),
+    ];
+    for (index, name) in [
+        "lkml",
+        "wayland-devel",
+        "gtk-devel",
+        "rust-internals",
+        "notmuch",
+        "mutt-users",
+        "postfix",
+        "dovecot",
+        "receipts",
+        "travel",
+        "family",
+        "recruiters",
+    ]
+    .iter()
+    .enumerate()
+    {
+        folders.push(folder(
+            10 + index as i64,
+            name,
+            MailboxRole::Regular,
+            (index as u32 * 7) % 40,
+        ));
+    }
+    window.sidebar().set_account("lena@example.com");
+    window.sidebar().set_mailboxes(&folders);
+}
+
 /// How many frames to let the window paint before the shot is taken.
 const SETTLE_FRAMES: u32 = 8;
 
@@ -249,6 +306,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("parts") {
         show_parts(&window);
+    }
+    if flag("folders") {
+        show_folders(&window);
     }
     window.present();
     settle(&window);

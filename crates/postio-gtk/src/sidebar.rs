@@ -267,9 +267,19 @@ impl Sidebar {
         imp.account.set_xalign(0.0);
         imp.account.set_ellipsize(pango::EllipsizeMode::Middle);
 
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&imp.account);
-        column.append(&folder_list(&imp.special));
+        // The folders scroll; the account line above them and the sync status
+        // below them do not. An account with fifteen folders — which is an
+        // ordinary account, not a large one — asked for 949px of a 700px
+        // window, and GTK answered by clipping: four folders were unreachable
+        // with no scrollbar to say so, and the status line was pushed off the
+        // bottom entirely. `postio-qhz.4`.
+        //
+        // Pinning the status rather than letting it scroll away with the
+        // folders is the point of splitting them: `idle · imap / last sync
+        // 12s` is the answer to "is anything happening", and an answer you
+        // have to scroll for is one you will not look at.
+        let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        folders.append(&folder_list(&imp.special));
 
         let heading = gtk::Label::new(Some("Folders"));
         heading.add_css_class("postio-kicker");
@@ -285,11 +295,19 @@ impl Sidebar {
         imp.ordinary_section.append(&folder_list(&imp.ordinary));
         // Nothing to list until there are folders that are not special-use.
         imp.ordinary_section.set_visible(false);
-        column.append(&imp.ordinary_section);
+        folders.append(&imp.ordinary_section);
 
-        let filler = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        filler.set_vexpand(true);
-        column.append(&filler);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
+        // Not a tab stop: the lists inside already move with the keyboard, so
+        // stopping here would be a stop that does nothing and says nothing.
+        scroller.set_focusable(false);
+        scroller.set_child(Some(&folders));
+
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&imp.account);
+        column.append(&scroller);
 
         for label in [&imp.status_state, &imp.status_detail] {
             label.add_css_class("postio-status");
