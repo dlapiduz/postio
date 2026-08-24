@@ -907,6 +907,55 @@ impl Repaint {
     }
 }
 
+/// What one committed batch tells the rest of the application.
+///
+/// Both halves have to happen *as the batch lands*, and for the same reason:
+/// a first sync of a large mailbox takes minutes, and everything the user can
+/// see of it happens in here. Collecting the reports and folding them in after
+/// the pass returned left the list empty (`postio-qhz.7`) and the status line
+/// silent (`postio-qhz.5`) for the whole of it.
+///
+/// # Two throttles, deliberately
+///
+/// They are not the same number because they are not the same cost. A repaint
+/// costs the list an invalidation and a page read, so it is held to
+/// [`REPAINT_INTERVAL`]; a progress report costs a label, and
+/// [`StatusTracker`] holds it to its own, shorter interval. The tracker also
+/// never drops the report that completes a pass, which the list does not need
+/// — a repaint that is superseded loses nothing, whereas a status line stuck
+/// at 89% on a folder that has finished is simply wrong.
+///
+/// [`StatusTracker`]: postio_sync::StatusTracker
+struct Committed<'a> {
+    parts: &'a EngineParts,
+    /// Borrowed rather than owned: it is the account's tracker and it outlives
+    /// this pass. Holding it here is what lets the callback fold progress in
+    /// as it arrives, which is the whole of `postio-qhz.5` — the previous
+    /// arrangement could not, because the callback is `FnMut` and something
+    /// else already had the `&mut`.
+    status: &'a mut postio_sync::StatusTracker,
+    repaint: Repaint,
+}
+
+impl Committed<'_> {
+    /// A batch reached the database.
+    fn batch(&mut self, progress: Progress) {
+        self.repaint.batch_committed(Instant::now());
+        if let Some(status) = self.status.on_progress(progress, Utc::now()) {
+            // Counts and an outcome, which is all a log may carry about mail.
+            // Here because the two `sync started` / `sync finished` lines say
+            // nothing about the minutes in between, and this is the line that
+            // tells a pass that is working from one that has stalled.
+            tracing::debug!(
+                done = progress.fetched,
+                total = progress.target,
+                "sync progress announced"
+            );
+            announce_status(self.parts, &status);
+        }
+    }
+}
+
 /// Fetch one queued body, if there is one and it is worth doing now.
 ///
 /// Returns whether it did anything, so the caller can keep going until the
@@ -1127,17 +1176,11 @@ async fn sync(
 
     announce_status(parts, &state.status.on_sync_started(mailbox));
 
-    // Every batch this pass commits is rows the list could already be
-    // drawing. Telling it as they land is the difference between a first
-    // sync that fills in front of you and one that shows nothing for minutes
-    // and then everything at once — which is what `postio-qhz.7` was.
-    //
-    // The status *tracker* still cannot be touched from in here: it needs
-    // `&mut`, and so does `batches`. That is fine — the event sink does not,
-    // and the list only needs to be told that the mailbox moved.
-    let mut repaint = Repaint::new(parts.events.clone(), mailbox);
-
-    let mut batches: Vec<Progress> = Vec::new();
+    let mut committed = Committed {
+        parts,
+        status: &mut state.status,
+        repaint: Repaint::new(parts.events.clone(), mailbox),
+    };
     let cancel = postio_imap::cancel::CancelToken::new();
     let outcome = if synced_before {
         resync::resync_mailbox(
@@ -1145,10 +1188,7 @@ async fn sync(
             parts.backend.as_ref(),
             &record,
             &cancel,
-            |progress| {
-                batches.push(progress);
-                repaint.batch_committed(Instant::now());
-            },
+            |progress| committed.batch(progress),
         )
         .await
         .map(summarise_resync)
@@ -1158,10 +1198,7 @@ async fn sync(
             parts.backend.as_ref(),
             &record,
             &cancel,
-            |progress| {
-                batches.push(progress);
-                repaint.batch_committed(Instant::now());
-            },
+            |progress| committed.batch(progress),
         )
         .await
         .map(|report| SyncSummary {
@@ -1173,12 +1210,6 @@ async fn sync(
     };
 
     let now = Utc::now();
-    for progress in batches {
-        if let Some(status) = state.status.on_progress(progress, now) {
-            announce_status(parts, &status);
-        }
-    }
-
     match outcome {
         Ok(summary) => {
             tracing::info!(
