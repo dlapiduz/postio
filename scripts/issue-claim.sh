@@ -48,6 +48,7 @@ import json, os, re, sys
 
 want = os.environ.get("WANT") or ""
 rows = []
+skipped = []
 SKIP = {"epic", "icebox", "needs-architecture", "in-progress", "blocked"}
 
 for i in json.load(sys.stdin):
@@ -56,11 +57,17 @@ for i in json.load(sys.stdin):
         if str(i["number"]) == want:
             print(i["number"], i["title"], sep="\t")
         continue
+    pri = next((n for n in names if re.fullmatch(r"p[0-9]", n)), "p9")
+    num = i["number"]
     if "ready" not in names or names & SKIP:
+        why = ", ".join(sorted(names & SKIP)) or "not labelled ready"
+        skipped.append((pri, "#%s (%s) skipped: %s" % (num, pri, why)))
         continue
     if i["assignees"]:
+        skipped.append((pri, "#%s (%s) skipped: already claimed" % (num, pri)))
         continue
     if any(not b.get("closed", False) for b in i["blockedBy"].get("nodes", [])):
+        skipped.append((pri, "#%s (%s) skipped: blocked" % (num, pri)))
         continue
     rows.append(i)
 
@@ -72,7 +79,20 @@ def rank(i):
     p = next((l["name"] for l in i["labels"] if re.fullmatch(r"p[0-9]", l["name"])), "p9")
     return (p, i["number"])
 
-for i in sorted(rows, key=rank):
+ranked = sorted(rows, key=rank)
+
+# Explain only the skips that outrank what we are about to take. An `epic` or
+# `needs-architecture` issue is deliberately not claimable, so the top of the
+# queue can be a P2 while three P0s sit above it -- which reads as the script
+# choosing at random unless it says why. Skips at or below the chosen
+# priority are noise.
+if not want and ranked:
+    top = rank(ranked[0])[0]
+    louder = [line for pri, line in skipped if pri < top]
+    for line in sorted(louder):
+        print("note: " + line, file=sys.stderr)
+
+for i in ranked:
     print(i["number"], i["title"], sep="\t")
 ')
 
