@@ -21,17 +21,17 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::gio;
 use gtk::prelude::*;
-use postio_gtk::drag_out::{Materialise, MessageFiles};
+use postio_gtk::drag_out::{LazyFiles, Materialise};
 
 /// A provider whose export callback counts how often it ran.
-fn provider(calls: &Rc<Cell<usize>>, files: Vec<gio::File>) -> MessageFiles {
+fn provider(calls: &Rc<Cell<usize>>, files: Vec<gio::File>) -> LazyFiles {
     let calls = Rc::clone(calls);
     let materialise: Materialise = Rc::new(move |_messages| {
         calls.set(calls.get() + 1);
         let files = files.clone();
         Box::pin(async move { Ok(files) })
     });
-    MessageFiles::new(vec![postio_model::MessageId::new(1)], materialise)
+    LazyFiles::for_messages(vec![postio_model::MessageId::new(1)], materialise)
 }
 
 /// Drive the main context until `future` finishes, the way GTK would.
@@ -138,7 +138,7 @@ fn an_export_that_produced_nothing_refuses_the_drop() {
     // It also cannot be handed to GDK at all: `gdk_file_list_new_from_array`
     // returns NULL for an empty array and gdk4-rs turns that into a panic, so
     // this guards an abort and not only a lie.
-    let empty = MessageFiles::new(
+    let empty = LazyFiles::for_messages(
         vec![postio_model::MessageId::new(1)],
         Rc::new(|_| Box::pin(async { Ok(Vec::new()) })),
     );
@@ -148,7 +148,7 @@ fn an_export_that_produced_nothing_refuses_the_drop() {
     assert!(outcome.is_err(), "an empty export must refuse the drop");
 
     // And a build that never registered the seam at all.
-    let unwired = glib::Object::builder::<MessageFiles>().build();
+    let unwired = glib::Object::builder::<LazyFiles>().build();
     let stream = gio::MemoryOutputStream::new_resizable();
     let outcome =
         block_on(unwired.write_mime_type_future("text/uri-list", &stream, glib::Priority::DEFAULT));
@@ -159,7 +159,7 @@ fn an_export_that_produced_nothing_refuses_the_drop() {
 fn a_failed_export_fails_the_drop() {
     let materialise: Materialise =
         Rc::new(|_| Box::pin(async { Err("That message is still downloading".to_string()) }));
-    let provider = MessageFiles::new(vec![postio_model::MessageId::new(1)], materialise);
+    let provider = LazyFiles::for_messages(vec![postio_model::MessageId::new(1)], materialise);
 
     let stream = gio::MemoryOutputStream::new_resizable();
     let outcome = block_on(provider.write_mime_type_future(

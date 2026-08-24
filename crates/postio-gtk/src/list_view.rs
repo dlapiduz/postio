@@ -454,7 +454,7 @@ impl MessageListView {
             self.imp().selected.selection(),
         ) && !messages.is_empty()
         {
-            providers.push(crate::drag_out::MessageFiles::new(messages, export).upcast());
+            providers.push(crate::drag_out::LazyFiles::for_messages(messages, export).upcast());
         }
         gdk::ContentProvider::new_union(&providers)
     }

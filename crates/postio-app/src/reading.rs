@@ -131,6 +131,42 @@ pub fn install(window: &Window, wiring: &Wiring) {
         }
     ));
 
+    // Dragging a part out to the desktop. Wired here rather than in
+    // `export::install` because the panel says *which* part and this scope is
+    // the only one that knows which message it belongs to.
+    window.parts().connect_export({
+        let showing = showing.clone();
+        let database = wiring.database.clone();
+        let blobs = wiring.blobs.clone();
+        let engine = wiring.engine.clone();
+        let runtime = wiring.runtime.clone();
+        std::rc::Rc::new(move |node: postio_gtk::parts::Node| {
+            let (database, blobs) = (database.clone(), blobs.clone());
+            let (engine, runtime) = (engine.get().cloned(), runtime.clone());
+            let message = showing.get();
+            Box::pin(async move {
+                let message = message.ok_or("There is no message open to take a part from")?;
+                let into = crate::paths::export_dir();
+                // On the runtime: this reads SQLite, may wait on a fetch, and
+                // writes a file. None of that belongs on the UI thread, and
+                // the drop is already asynchronous to GTK.
+                let (send, receive) = async_channel::bounded(1);
+                runtime.spawn(async move {
+                    let outcome = crate::export::export_part(
+                        &database, &blobs, engine, &into, message, &node,
+                    )
+                    .await;
+                    let _ = send.send(outcome).await;
+                });
+                let path = receive
+                    .recv()
+                    .await
+                    .map_err(|_| "The export did not finish".to_string())??;
+                Ok(vec![gio::File::for_path(path)])
+            })
+        })
+    });
+
     let database = wiring.database.clone();
     let blobs = wiring.blobs.clone();
     let runtime = wiring.runtime.clone();

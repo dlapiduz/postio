@@ -47,21 +47,36 @@ use gtk::subclass::prelude::*;
 
 use postio_model::MessageId;
 
-/// Turn the dragged messages into files, when somebody finally asks for them.
+/// The files a drop is about to be handed, produced on the spot.
 ///
-/// Named messages rather than a selection, and deliberately: a selection can
-/// be the predicate "everything in this mailbox", and there is no such thing
-/// as a predicate handed to a file manager. Resolving it is the list's job —
-/// see `MessageListView`'s drag source, which offers files only for a
-/// selection it can name.
+/// Takes nothing: whatever is being exported — a set of messages, one
+/// attachment — is closed over when the drag starts, so this one type serves
+/// every surface that can be dragged out of.
 ///
 /// Asynchronous because it may have to fetch: a message whose source has not
 /// been backfilled has nothing to export yet, and the drop is the moment the
 /// user asked for it. The error is prose for the user — the drop failed and
 /// they are entitled to know why.
+pub type Produce =
+    Rc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<Vec<gio::File>, String>> + 'static>>>;
+
+/// Turn dragged messages into files. The message list's export seam.
+///
+/// Named messages rather than a selection, and deliberately: a selection can
+/// be the predicate "everything in this mailbox", and there is no such thing
+/// as a predicate handed to a file manager. Resolving it is the list's job —
+/// see `MessageListView::drag_offer`, which offers files only for a selection
+/// it can name.
 pub type Materialise = Rc<
     dyn Fn(
         Vec<MessageId>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<gio::File>, String>> + 'static>>,
+>;
+
+/// Turn one dragged message part into a file. The parts panel's export seam.
+pub type MaterialisePart = Rc<
+    dyn Fn(
+        crate::parts::Node,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<gio::File>, String>> + 'static>>,
 >;
 
@@ -69,21 +84,20 @@ mod imp {
     use super::*;
 
     #[derive(Default)]
-    pub struct MessageFiles {
-        pub(super) messages: RefCell<Option<Vec<MessageId>>>,
-        pub(super) materialise: RefCell<Option<Materialise>>,
+    pub struct LazyFiles {
+        pub(super) produce: RefCell<Option<Produce>>,
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for MessageFiles {
-        const NAME: &'static str = "PostioMessageFiles";
-        type Type = super::MessageFiles;
+    impl ObjectSubclass for LazyFiles {
+        const NAME: &'static str = "PostioLazyFiles";
+        type Type = super::LazyFiles;
         type ParentType = gdk::ContentProvider;
     }
 
-    impl ObjectImpl for MessageFiles {}
+    impl ObjectImpl for LazyFiles {}
 
-    impl ContentProviderImpl for MessageFiles {
+    impl ContentProviderImpl for LazyFiles {
         fn formats(&self) -> gdk::ContentFormats {
             // Start from the *type* and let GDK name the mime types, rather
             // than naming them here. That is what keeps the portal spelling --
@@ -114,12 +128,11 @@ mod imp {
         ) -> Pin<Box<dyn Future<Output = Result<(), glib::Error>> + 'static>> {
             // Here, and only here, does anything get written to disk. Every
             // abandoned drag stops before this line.
-            let messages = self.messages.borrow().clone();
-            let materialise = self.materialise.borrow().clone();
+            let produce = self.produce.borrow().clone();
             let (stream, mime_type) = (stream.clone(), mime_type.to_string());
 
             Box::pin(async move {
-                let (Some(messages), Some(materialise)) = (messages, materialise) else {
+                let Some(produce) = produce else {
                     // No handler registered: the application did not wire the
                     // export seam. Refusing is right -- a drop that silently
                     // produced nothing would look like it had worked.
@@ -128,9 +141,9 @@ mod imp {
                         "This build cannot export messages as files",
                     ));
                 };
-                let files = materialise(messages)
-                    .await
-                    .map_err(|reason| glib::Error::new(gio::IOErrorEnum::Failed, &reason))?;
+                let files = produce().await.map_err(|reason| {
+                    glib::Error::new(gio::IOErrorEnum::Failed, reason.as_str())
+                })?;
                 if files.is_empty() {
                     // `gdk_file_list_new_from_array` returns NULL for an empty
                     // array and gdk4-rs turns that into a panic, so this is a
@@ -154,17 +167,26 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The files a drag of messages will hand over, produced on demand.
-    pub struct MessageFiles(ObjectSubclass<imp::MessageFiles>)
+    /// The files a drag will hand over, produced on demand.
+    pub struct LazyFiles(ObjectSubclass<imp::LazyFiles>)
         @extends gdk::ContentProvider;
 }
 
-impl MessageFiles {
-    /// Offer the files for `messages`, produced by `materialise` at drop time.
-    pub fn new(messages: Vec<MessageId>, materialise: Materialise) -> Self {
+impl LazyFiles {
+    /// Offer files, produced by `produce` at drop time and not before.
+    pub fn new(produce: Produce) -> Self {
         let provider: Self = glib::Object::new();
-        provider.imp().messages.replace(Some(messages));
-        provider.imp().materialise.replace(Some(materialise));
+        provider.imp().produce.replace(Some(produce));
         provider
+    }
+
+    /// Offer the files for `messages`, through the message list's seam.
+    pub fn for_messages(messages: Vec<MessageId>, materialise: Materialise) -> Self {
+        LazyFiles::new(Rc::new(move || materialise(messages.clone())))
+    }
+
+    /// Offer the file for one message part, through the parts panel's seam.
+    pub fn for_part(node: crate::parts::Node, materialise: MaterialisePart) -> Self {
+        LazyFiles::new(Rc::new(move || materialise(node.clone())))
     }
 }
