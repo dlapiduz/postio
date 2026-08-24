@@ -29,7 +29,7 @@
 
 use std::borrow::Cow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use ammonia::Builder;
 
@@ -56,13 +56,15 @@ pub enum RemoteImages {
 pub struct Sanitized {
     /// The cleaned markup.
     pub html: String,
-    /// Whether at least one remote (`http`/`https`) reference was stripped.
+    /// How many remote (`http`/`https`) references were stripped.
     ///
-    /// What `postio_gtk::reader::banner::RemoteImageBanner` uses to decide whether a
-    /// message actually has anything for it to say — a newsletter with no
-    /// images should not get a "remote images blocked" banner it can never
-    /// have anything to show for.
-    pub remote_blocked: bool,
+    /// `postio_gtk::reader::banner::RemoteImageBanner` uses whether this is
+    /// nonzero to decide whether a message actually has anything for it to
+    /// say — a newsletter with no images should not get a "remote images
+    /// blocked" banner it can never have anything to show for. The parts
+    /// panel's held-back count (`postio_gtk::parts::PartsPanel::set_held_back`)
+    /// uses the number itself.
+    pub remote_blocked: u32,
 }
 
 /// Sanitize one HTML body for the reading pane.
@@ -71,8 +73,8 @@ pub struct Sanitized {
 /// those against the message's local parts (or answers 404 for a dangling
 /// reference — the corpus has one on purpose).
 pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
-    let blocked_any = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&blocked_any);
+    let blocked_count = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&blocked_count);
 
     let mut builder = Builder::default();
     builder
@@ -90,12 +92,12 @@ pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
         // intent to.
         .add_url_schemes(["cid", CID_SCHEME])
         .attribute_filter(move |element, attribute, value| {
-            rewrite_attribute(element, attribute, value, remote, &flag)
+            rewrite_attribute(element, attribute, value, remote, &counter)
         });
 
     Sanitized {
         html: builder.clean(html).to_string(),
-        remote_blocked: blocked_any.load(Ordering::Relaxed),
+        remote_blocked: blocked_count.load(Ordering::Relaxed),
     }
 }
 
@@ -104,7 +106,7 @@ fn rewrite_attribute<'u>(
     attribute: &str,
     value: &'u str,
     remote: RemoteImages,
-    blocked_flag: &AtomicBool,
+    blocked_count: &AtomicU32,
 ) -> Option<Cow<'u, str>> {
     if attribute != "src" {
         return Some(Cow::Borrowed(value));
@@ -116,7 +118,7 @@ fn rewrite_attribute<'u>(
         )));
     }
     if is_remote(value) && remote == RemoteImages::Blocked {
-        blocked_flag.store(true, Ordering::Relaxed);
+        blocked_count.fetch_add(1, Ordering::Relaxed);
         return None;
     }
     Some(Cow::Borrowed(value))
@@ -205,7 +207,7 @@ mod tests {
         assert!(!out.html.contains("tracker.example.org"));
         // A stripped <style> is not a stripped *image*: the banner has
         // nothing to report about a message that never referenced one.
-        assert!(!out.remote_blocked);
+        assert_eq!(out.remote_blocked, 0);
     }
 
     #[test]
@@ -237,7 +239,21 @@ mod tests {
             "the src attribute itself must be gone: {}",
             out.html
         );
-        assert!(out.remote_blocked);
+        assert_eq!(out.remote_blocked, 1);
+    }
+
+    #[test]
+    fn each_remote_image_is_counted_not_just_flagged() {
+        // The parts panel's held-back count (postio-m2ex) needs a real
+        // number, not the bool this used to be — three blocked images must
+        // read as 3, not as "some".
+        let out = sanitize_body(
+            r#"<img src="https://a.example.org/1.gif">
+               <img src="https://a.example.org/2.gif">
+               <img src="https://a.example.org/3.gif">"#,
+            RemoteImages::Blocked,
+        );
+        assert_eq!(out.remote_blocked, 3);
     }
 
     #[test]
@@ -251,8 +267,8 @@ mod tests {
             "{}",
             out.html
         );
-        assert!(
-            !out.remote_blocked,
+        assert_eq!(
+            out.remote_blocked, 0,
             "nothing was blocked when images are allowed"
         );
     }
@@ -260,7 +276,7 @@ mod tests {
     #[test]
     fn a_message_with_no_remote_reference_reports_nothing_blocked() {
         let out = sanitize_body("<p>plain text only</p>", RemoteImages::Blocked);
-        assert!(!out.remote_blocked);
+        assert_eq!(out.remote_blocked, 0);
     }
 
     #[test]
@@ -275,7 +291,7 @@ mod tests {
             "{}",
             out.html
         );
-        assert!(!out.remote_blocked, "a cid: reference is not remote");
+        assert_eq!(out.remote_blocked, 0, "a cid: reference is not remote");
     }
 
     #[test]
@@ -290,7 +306,7 @@ mod tests {
             "{}",
             out.html
         );
-        assert!(!out.remote_blocked, "a link is not a fetch");
+        assert_eq!(out.remote_blocked, 0, "a link is not a fetch");
     }
 
     #[test]

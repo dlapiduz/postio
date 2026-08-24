@@ -11,7 +11,7 @@
 //!   sanitized output `lu6` produces.
 //! * [`postio-xxz`](banner) — the remote-image banner and its
 //!   [`allowlist::RemoteImageAllowList`], both consuming the
-//!   [`postio_body::Sanitized::remote_blocked`] flag the sanitizer already
+//!   [`postio_body::Sanitized::remote_blocked`] count the sanitizer already
 //!   computes.
 //!
 //! [`view::Reader`] is the module's one public entry point; everything else
