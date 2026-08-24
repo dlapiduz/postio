@@ -353,11 +353,21 @@ impl SyncTracker {
                     self.status.detail = None;
                     self.reason = None;
                 }
-                // A resync's progress belongs to the connection that was
-                // making it.
-                if *state != ConnectionState::Online {
-                    self.status.progress = None;
-                }
+                // A pass's progress belongs to that pass. The engine announces
+                // a connection state at the *boundaries* — a pass starting or
+                // finishing, or the link itself moving — and never between two
+                // batches, so any of them means the number on screen is no
+                // longer being made.
+                //
+                // Including `Online`, which is the case that matters: a pass
+                // ends by moving the tracker to idle, and idle is announced as
+                // `Online`. `SyncProgress` only clears itself when `done`
+                // reaches `total`, and `total` is `UIDNEXT - 1` — an upper
+                // bound that expunged messages leave gaps in, so a pass can
+                // finish having never reached it. Leaving `Online` alone left
+                // the line reading `syncing 89%` on a folder that had finished,
+                // for as long as the account stayed connected.
+                self.status.progress = None;
             }
             Event::SyncProgress { done, total, .. } => {
                 self.status.progress = Some((*done, *total));
@@ -710,6 +720,34 @@ mod tests {
         });
         tracker.apply(&connection(ConnectionState::Offline));
         assert_eq!(tracker.status().progress, None, "syncing 3% while offline");
+    }
+
+    #[test]
+    fn a_pass_that_ends_short_of_its_own_total_stops_reporting_a_percentage() {
+        // `total` is `UIDNEXT - 1`: an upper bound, not a promise, because
+        // expunged messages leave gaps in the UID space. So a pass can finish
+        // having fetched everything there is and still never reach it, and the
+        // last report before it ended is a percentage below 100.
+        //
+        // The pass ending is announced as idle, which reaches the tracker as
+        // `Online`. If that did not clear the number, the line would read
+        // `syncing 89% · imap` for as long as the account stayed connected —
+        // on a folder with nothing left to sync.
+        let mut tracker = SyncTracker::new();
+        tracker.apply(&connection(ConnectionState::Online));
+        tracker.apply(&Event::SyncProgress {
+            account: account(),
+            done: 89,
+            total: 100,
+        });
+        assert_eq!(tracker.status().progress, Some((89, 100)), "mid-pass");
+
+        tracker.apply(&connection(ConnectionState::Online));
+        assert_eq!(
+            tracker.status().progress,
+            None,
+            "the pass finished; there is no percentage to be a percentage of"
+        );
     }
 
     #[test]
