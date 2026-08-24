@@ -12,10 +12,13 @@
 //! need a migration.
 
 use chrono::{DateTime, Utc};
-use postio_model::{AccountId, MailboxId, Operation, OperationId, OperationState, OperationTarget};
-use rusqlite::{Connection, Row, params};
+use postio_model::{
+    AccountId, MailboxId, Operation, OperationId, OperationRange, OperationState, OperationTarget,
+};
+use rusqlite::types::Value;
+use rusqlite::{Connection, Row, params, params_from_iter};
 
-use super::{from_millis, require_persisted, to_millis, unknown_enum};
+use super::{MessageSet, from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
 
 /// One row of the mutation queue.
@@ -159,6 +162,93 @@ impl<'a> OperationQueueRepository<'a> {
             created_at: at,
             updated_at: at,
         })
+    }
+
+    /// Enqueues `operation` once per message a [`MessageSet`] names, in one
+    /// statement, and returns the run of rows it wrote.
+    ///
+    /// # Why one row per message rather than one row for the mailbox
+    ///
+    /// The queue is a promise about *specific* messages. A single row saying
+    /// "move everything in INBOX to Archive" would be resolved by the drainer
+    /// later — by which time mail that arrived after the user acted would be
+    /// sitting in INBOX too, and the drainer would file it away. That is not a
+    /// slower version of the right answer; it is the user losing mail they
+    /// never saw. So the set is resolved *now*, against the mailbox as it was
+    /// when the key was pressed, and each row carries the message whose UID the
+    /// drainer will need.
+    ///
+    /// What must not happen is one statement per row, and does not: this is a
+    /// single `INSERT ... SELECT` over the same index the move uses. The rows
+    /// it writes cost the server nothing extra either — `postio-sync`'s
+    /// coalescer folds a run of identical moves before any of it is sent.
+    ///
+    /// Returns `None` when the set named nothing, which is not an error: a
+    /// whole-mailbox action over an empty mailbox has simply nothing to do.
+    pub fn enqueue_set(
+        &self,
+        account_id: AccountId,
+        set: &MessageSet,
+        operation: &Operation,
+        at: DateTime<Utc>,
+    ) -> Result<Option<OperationRange>> {
+        let account_id = require_persisted(account_id.get(), "account")?;
+        let payload = encode(operation)?;
+        let encoded_inverse = operation.inverse().as_ref().map(encode).transpose()?;
+        let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
+        let scope = super::Scope::open(self.connection)?;
+
+        // Read before writing: `first` is one past whatever the queue already
+        // held, so the run this returns cannot swallow a row somebody else
+        // wrote. Taking it from `last - changes + 1` instead would assume the
+        // statement's rowids came out contiguous, which is true today and is
+        // not something the schema promises.
+        let highest: i64 = scope.query_row(
+            "SELECT coalesce(max(id), 0) FROM operation_queue",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let (predicate, mut arguments) = set.predicate(8);
+        let sql = format!(
+            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
+                                          mailbox_id, payload, inverse, state, attempts,
+                                          created_at, updated_at)
+             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7
+               FROM messages
+              WHERE {predicate}"
+        );
+        let mut parameters = vec![
+            Value::from(account_id),
+            Value::from(operation.op_type().to_owned()),
+            Value::from(mailbox_id.map(MailboxId::get)),
+            Value::from(payload),
+            Value::from(encoded_inverse),
+            Value::from(OperationState::Pending.as_str().to_owned()),
+            Value::from(to_millis(at)),
+        ];
+        parameters.extend(arguments.drain(..).map(Value::from));
+        let written = scope.execute(&sql, params_from_iter(parameters))?;
+        if written == 0 {
+            scope.commit()?;
+            return Ok(None);
+        }
+        let last = OperationId::new(scope.last_insert_rowid());
+
+        // One statement rather than `refresh_pending_flag` per row: the flag
+        // says "this message has something queued", and every row this wrote
+        // is a message that now does.
+        let (predicate, arguments) = set.predicate(1);
+        scope.execute(
+            &format!("UPDATE messages SET has_pending_operations = 1 WHERE {predicate}"),
+            params_from_iter(arguments),
+        )?;
+        scope.commit()?;
+
+        Ok(Some(OperationRange::new(
+            OperationId::new(highest + 1),
+            last,
+        )))
     }
 
     /// Enqueues the inverse of a row that is already queued — this is undo.

@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use postio_model::{AccountId, DraftId, MailboxId, MessageId, ThreadId};
+use postio_model::{AccountId, DraftId, MailboxId, MessageId, OperationRange, ThreadId};
 use serde::{Deserialize, Serialize};
 
 use crate::bridge::EventSink;
@@ -197,6 +197,17 @@ pub enum Resolved {
     },
     /// Every message in a thread.
     Thread(ThreadId),
+    /// Every message a run of queue rows named, and where they are now.
+    ///
+    /// The other half of the predicate story: [`Resolved::Everything`] is how a
+    /// whole-mailbox action reaches the store, and this is how *undoing* one
+    /// gets back. Both stay queries the whole way down.
+    Batch {
+        /// The queue rows the bulk action wrote.
+        range: OperationRange,
+        /// The mailbox those messages are in now.
+        from: MailboxId,
+    },
 }
 
 /// One step of the back stack: where the user was, and where they were in it.
@@ -282,6 +293,12 @@ impl AppState {
     pub fn resolve(&self, target: &MessageTarget) -> Option<Resolved> {
         match target {
             MessageTarget::Thread(thread) => Some(Resolved::Thread(*thread)),
+            // Taken at its word for the same reason a named list of messages
+            // is: undo built this, and it names exactly what it moved.
+            MessageTarget::Batch { range, from } => Some(Resolved::Batch {
+                range: *range,
+                from: *from,
+            }),
             MessageTarget::Messages(messages) if messages.is_empty() => None,
             MessageTarget::Messages(messages) => Some(Resolved::Messages(messages.clone())),
             MessageTarget::Selection => match &self.selected {
