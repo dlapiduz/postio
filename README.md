@@ -232,29 +232,75 @@ from `[keys]` in `config.toml`, and the running app's `?` cheat sheet and
 
 ## Architecture
 
-```
-postio-app        The composition root: opens the store, starts the engine,
-   |              runs the UI. The only crate that knows both halves exist.
-   +-- postio-gtk        GTK4 + libadwaita + WebKitGTK. Widgets, CSS, keymap.
-   |     |               Command down / Event up. No SQL, no protocol.
-   |     +-- postio-search   FTS5 index, query-operator parser
-   |
-   +-- postio-runtime    The database half: the store, and the loop that
-         |               drains the queue, backfills bodies and reconnects.
-         +-- postio-sync     operation queue, QRESYNC resync, IDLE, backoff
-         |     +-- postio-imap (io-imap)   postio-smtp (io-smtp)
-         +-- postio-storage  SQLite, migrations, repositories, blob store
+```mermaid
+graph TD
+    app["<b>postio-app</b><br/><i>composition root · GTK binary</i>"]
 
-postio-core       UI-agnostic contract, under both: command bus, registry,
-   |              event stream, app state, undo, tokio<->glib bridge.
-   +-- postio-config   TOML schema, validation, watcher, live reload
-postio-model      pure domain types + JWZ threading. No storage, no protocol.
+    gtk["<b>postio-gtk</b><br/>GTK4 · libadwaita · WebKitGTK<br/><i>no SQL · no protocol</i>"]
+
+    runtime["<b>postio-runtime</b><br/>queue drainer · body backfill · reconnect"]
+    sync["<b>postio-sync</b><br/>operation queue · QRESYNC · IDLE · backoff"]
+    imap["<b>postio-imap</b><br/>io-imap behind MailBackend"]
+    smtp["<b>postio-smtp</b><br/>io-smtp"]
+    storage["<b>postio-storage</b><br/>SQLite · migrations · blob store"]
+    index["<b>postio-index</b><br/>FTS5 index · executor"]
+
+    core["<b>postio-core</b><br/>commands · events · registry · undo · bridge<br/><i>no GTK — CI enforced</i>"]
+    config["<b>postio-config</b><br/>TOML schema · validation · live reload"]
+
+    search["<b>postio-search</b><br/>query parser · highlighter · facets<br/><i>pure — no SQL, no toolkit</i>"]
+    model["<b>postio-model</b><br/>domain types · JWZ threading"]
+
+    app --> gtk
+    app --> runtime
+    gtk --> core
+    gtk --> search
+    gtk --> config
+    runtime --> sync
+    runtime --> index
+    runtime --> core
+    runtime --> storage
+    sync --> imap
+    sync --> smtp
+    sync --> storage
+    index --> search
+    index --> model
+    core --> config
+    core --> model
+    search --> model
+    storage --> model
+    imap --> model
+    smtp --> model
 ```
 
-`postio-core` has no GTK dependency, which is what keeps a non-Linux
-frontend possible later. See [`CLAUDE.md`](CLAUDE.md) for the full set of
-architectural invariants CI enforces, and [`docs/decisions/`](docs/decisions/)
-for the reasoning behind key choices (e.g. why `io-imap`).
+Arrows are "depends on", and every arrow drawn is a real direct dependency.
+Two sets are left out to keep the layering legible: `postio-app`'s direct
+edges to most leaves (it is the composition root — it assembles them, which
+says nothing about rank), and edges already implied by a path through the
+diagram, such as `postio-runtime -> postio-search` or the fact that very
+nearly everything depends on `postio-model`.
+
+- **`postio-app`** opens the store, starts the engine and runs the UI. The
+  only crate that knows both halves exist.
+- **`postio-gtk`** is the view layer: command down, event up.
+- **`postio-runtime`** is the database half — the store, and the loop that
+  drains the operation queue, backfills bodies and reconnects.
+- **`postio-core`** is the UI-agnostic contract under both halves.
+- **`postio-search`** is a pure leaf, not a frontend detail: the query
+  language is shared by the search bar, the FTS5 executor in
+  **`postio-index`**, and `[filters]` in `config.toml`. One matching
+  language, one syntax to learn.
+
+`postio-core` has no GTK dependency and `postio-gtk` has no SQL or protocol
+dependency. Both are enforced against `cargo metadata`'s resolved graph by
+`scripts/check-crate-boundaries.py`, so a violation arriving transitively is
+caught too.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decisions behind
+this shape and why each one is load-bearing,
+[`docs/decisions/`](docs/decisions/) for the long-form ADRs, and
+[`docs/architecture-review-2026-08.md`](docs/architecture-review-2026-08.md)
+for the standing critique and known gaps.
 
 ## License
 
