@@ -31,19 +31,22 @@
 //! Both report back as [`Event`]s on the sink they were given, so the UI
 //! learns what happened the same way it learns everything else.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use postio_imap::backend::MailBackend;
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
+use postio_imap::backend::{BackendError, MailBackend};
 use postio_imap::secret::SecretStore;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::repository::{
     MailboxRepository, OperationQueueRepository, SyncStateRepository,
 };
-use postio_storage::{BlobStore, Database, Pool};
+use postio_storage::{BlobStore, Database, Pool, PooledConnection};
 use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
 use postio_sync::{
@@ -425,7 +428,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             let mut state = State {
                 backfill: Backfill::new(parts.backfill),
                 supervisor: Supervisor::new(parts.reconnect),
-                status: StatusTracker::new(),
+                status: RefCell::new(StatusTracker::new()),
                 online: false,
                 to_sync: std::collections::VecDeque::new(),
                 watcher: None,
@@ -494,20 +497,18 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                     announce_drain(&parts.events, &outcome);
                 }
 
-                // One mailbox at a time, inbox checked between each: a folder
-                // with forty thousand messages must not hold the engine away
-                // from a body the user is waiting for.
-                #[allow(clippy::never_loop)]
+                // A few mailboxes at a time, highest priority first, and the
+                // inbox checked between waves: a folder with forty thousand
+                // messages must not hold the engine away from a body the user
+                // is waiting for. A wave in progress is cancelled the moment a
+                // job arrives rather than waiting to be noticed here, which is
+                // what keeps that true now that a wave is more than one
+                // mailbox long. See `sync_wave`.
                 while inbox.is_empty()
                     && state.supervisor.link().is_online()
-                    && let Some(mailbox) = state.to_sync.pop_front()
+                    && !state.to_sync.is_empty()
                 {
-                    let outcome = sync(&parts, &pool, &mut state, mailbox).await;
-                    if let Err(error) = outcome {
-                        parts.events.emit(Event::Error {
-                            message: error.message().to_string(),
-                        });
-                    }
+                    sync_wave(&parts, &pool, &mut state, &inbox).await;
                 }
 
                 // Then fetch bodies, but only while nothing else is asking. One
@@ -555,7 +556,15 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
 struct State {
     backfill: Backfill,
     supervisor: Supervisor,
-    status: StatusTracker,
+    /// The account's status line.
+    ///
+    /// Behind a `RefCell` because a sync wave runs several passes at once and
+    /// every one of them folds its own batches in as they land — which is the
+    /// whole of `postio-qhz.5` and cannot be deferred to the end of a pass.
+    /// The engine is a single-thread runtime, so this is a borrow checker
+    /// question rather than a thread-safety one, and no borrow is ever held
+    /// across an await: every one of them is a single call on the tracker.
+    status: RefCell<StatusTracker>,
     /// Whether the link was up last time anything looked.
     ///
     /// Only the *transition* is interesting: a connection that has been up
@@ -933,7 +942,11 @@ struct Committed<'a> {
     /// as it arrives, which is the whole of `postio-qhz.5` — the previous
     /// arrangement could not, because the callback is `FnMut` and something
     /// else already had the `&mut`.
-    status: &'a mut postio_sync::StatusTracker,
+    ///
+    /// A cell rather than a `&mut` because the passes of one sync wave share
+    /// the tracker. The borrow below is taken and given back inside `batch`,
+    /// never across an await.
+    status: &'a RefCell<StatusTracker>,
     repaint: Repaint,
 }
 
@@ -941,7 +954,8 @@ impl Committed<'_> {
     /// A batch reached the database.
     fn batch(&mut self, progress: Progress) {
         self.repaint.batch_committed(Instant::now());
-        if let Some(status) = self.status.on_progress(progress, Utc::now()) {
+        let reported = self.status.borrow_mut().on_progress(progress, Utc::now());
+        if let Some(status) = reported {
             // Counts and an outcome, which is all a log may carry about mail.
             // Here because the two `sync started` / `sync finished` lines say
             // nothing about the minutes in between, and this is the line that
@@ -1133,12 +1147,394 @@ async fn drain(
     })
 }
 
+/// How many mailboxes the engine will sync at the same time.
+///
+/// Bounded by the *database* pool rather than the IMAP one, because that is
+/// the scarcer of the two here: each concurrent pass holds one SQLite
+/// connection for as long as it runs, and the UI thread reads through the
+/// same pool. Leaving [`RESERVED_FOR_ELSEWHERE`] behind is what keeps the
+/// message list answering while a first sync is working through an archive.
+///
+/// The ceiling is separate and lower: the IMAP pool defaults to four
+/// connections with one lane spoken for by `IDLE`, so a fourth concurrent
+/// mailbox would not get a connection of its own — it would take turns on
+/// somebody else's and pay a `SELECT` on every batch for the privilege (see
+/// `postio_imap::imap::selection`). More lanes than the server will give
+/// connections is slower than fewer.
+const MAX_SYNC_LANES: usize = 3;
+
+/// Database connections a sync wave will not touch.
+///
+/// One for the UI thread's reads — the message list, the reader, the sidebar
+/// — and one for the engine's own housekeeping between waves.
+const RESERVED_FOR_ELSEWHERE: usize = 2;
+
+/// How many mailboxes may be in flight at once, for this pool.
+fn sync_lanes(pool: &Pool) -> usize {
+    pool.max_connections()
+        .saturating_sub(RESERVED_FOR_ELSEWHERE)
+        .clamp(1, MAX_SYNC_LANES)
+}
+
+/// Sync several mailboxes at once, in priority order, until a job arrives.
+///
+/// # Why concurrently
+///
+/// A first sync of a real account is the slowest thing Postio does, and
+/// almost all of that wall clock is a round trip: measured against a live
+/// server, a batch of two hundred headers spent an order of magnitude longer
+/// waiting for the server than writing to SQLite. One mailbox at a time
+/// leaves every one of those waits unused. Running two or three passes
+/// together overlaps them, and costs nothing but connections the pool was
+/// already sized for (`postio-0d9.7`).
+///
+/// # Why INBOX still comes first
+///
+/// [`queue_every_mailbox`] sorts by [`postio_sync::order::sync_priority`] and
+/// this takes from the front, so INBOX is in the *first* wave rather than
+/// behind an archive — which is the whole of `postio-0d9.6`, and matters more
+/// now rather than less: a lane occupied by a forty-thousand-message archive
+/// is a lane INBOX is not waiting behind.
+///
+/// # Why the connections are all taken before any pass starts
+///
+/// [`postio_storage::db::Pool::get`] blocks the *OS thread* on a condvar when
+/// the pool is exhausted, and the engine is a single-thread runtime. Two
+/// concurrent passes both calling it with nothing left to hand out would both
+/// block that one thread, with nothing able to run and release a connection:
+/// a real deadlock rather than contention. Acquiring every lane's connection
+/// up front, sequentially, before anything is concurrent is what makes that
+/// unreachable — see `docs/engineering-notes.md`.
+async fn sync_wave(
+    parts: &EngineParts,
+    pool: &Pool,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+) {
+    if !state.supervisor.link().is_online() {
+        let moved = state
+            .supervisor
+            .poll(parts.backend.as_ref(), Utc::now(), entropy())
+            .await;
+        announce_link(parts, state, moved);
+    }
+    if !state.supervisor.link().is_online() {
+        return;
+    }
+
+    // Every connection this wave will ever need, taken one at a time while
+    // nothing else on this thread is running. See the note above.
+    let mut lanes: Vec<(MailboxId, PooledConnection)> = Vec::new();
+    for _ in 0..sync_lanes(pool) {
+        let Some(mailbox) = state.to_sync.pop_front() else {
+            break;
+        };
+        match pool.get() {
+            Ok(connection) => lanes.push((mailbox, connection)),
+            Err(error) => {
+                // Nothing to sync it with. Put it back rather than dropping
+                // it: the next wave will have a connection.
+                state.to_sync.push_front(mailbox);
+                tracing::warn!(%error, "no connection for a sync lane");
+                break;
+            }
+        }
+    }
+    if lanes.is_empty() {
+        return;
+    }
+
+    // Shared by every pass in the wave, and cancelled as one: a job the user
+    // is waiting on must not queue behind three mailboxes. A cancelled pass
+    // keeps everything it committed and resumes from there, so this costs at
+    // most the batch that was on the wire.
+    let cancel = postio_imap::cancel::CancelToken::new();
+    let mut outcomes: Vec<PassOutcome> = Vec::with_capacity(lanes.len());
+
+    {
+        // Borrowed by every pass at once, which is what the `RefCell` is for.
+        // Nothing holds the borrow across an await: `Committed::batch` takes
+        // it, folds one batch in, and gives it back.
+        let status = &state.status;
+        let mut running = FuturesUnordered::new();
+        for (mailbox, connection) in &lanes {
+            running.push(sync_pass(parts, connection, status, *mailbox, &cancel));
+        }
+
+        let mut asked_to_stop = false;
+        while !running.is_empty() {
+            tokio::select! {
+                biased;
+                // Completions first: a wave that is already finishing should
+                // finish rather than notice the job it was about to be told
+                // about and mark everything cancelled.
+                Some(outcome) = running.next() => outcomes.push(outcome),
+                _ = wait_for_job(inbox), if !asked_to_stop => {
+                    asked_to_stop = true;
+                    cancel.cancel();
+                }
+            }
+        }
+    }
+
+    // Then fold every pass back into the engine's state, sequentially — this
+    // is where the `&mut` work lives, and there is no reason for it to be
+    // concurrent.
+    let connection = &lanes[0].1;
+    let mut interrupted: Vec<MailboxId> = Vec::new();
+    for outcome in outcomes {
+        let stopped_early = outcome.was_cancelled();
+        if stopped_early {
+            interrupted.push(outcome.mailbox);
+        }
+        // The wave is the engine acting on its own initiative, so a failed
+        // pass is reported to the user here rather than returned to a caller
+        // who asked for it. An interrupted one is not a failure: it stops
+        // where it was told to and resumes, and saying so would put a
+        // spurious error on screen every time the user did something during a
+        // first sync.
+        if let Err(error) = settle_pass(parts, state, connection, outcome)
+            && !stopped_early
+        {
+            parts.events.emit(Event::Error {
+                message: error.message().to_string(),
+            });
+        }
+    }
+
+    // Back on the front of the queue, in the order they were taken off it —
+    // `outcomes` is in completion order, which says nothing about priority,
+    // and INBOX must not come back behind the archive it started alongside.
+    for (mailbox, _) in lanes.iter().rev() {
+        if interrupted.contains(mailbox) {
+            state.to_sync.push_front(*mailbox);
+        }
+    }
+    if !interrupted.is_empty() {
+        tracing::debug!(
+            mailboxes = interrupted.len(),
+            "sync wave interrupted; requeued"
+        );
+    }
+}
+
+/// What one pass did, before the engine's own state hears about it.
+struct PassOutcome {
+    mailbox: MailboxId,
+    result: Result<SyncSummary, PassFailure>,
+}
+
+impl PassOutcome {
+    /// Whether this pass stopped because the wave cancelled it, rather than
+    /// finishing or failing. Its mailbox is owed another turn.
+    fn was_cancelled(&self) -> bool {
+        matches!(
+            &self.result,
+            Err(PassFailure::Failed(SyncError::Backend(
+                BackendError::Cancelled
+            )))
+        )
+    }
+}
+
+/// Why a pass did not produce a summary.
+enum PassFailure {
+    /// The folder was queued and then went away — renamed or removed by
+    /// another client between discovery and this wave. Not the link's fault,
+    /// so the supervisor never hears about it.
+    NoSuchMailbox,
+    /// The pass ran and failed.
+    Failed(SyncError),
+}
+
+impl fmt::Display for PassFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSuchMailbox => f.write_str("that folder is not in the local store"),
+            Self::Failed(error) => write!(f, "{error}"),
+        }
+    }
+}
+
 /// One sync pass over one mailbox.
 ///
 /// `sync_mailbox` the first time and `resync_mailbox` afterwards, decided by
 /// whether the mailbox has sync state — which is the record of a pass having
 /// completed, and the thing `resync_mailbox` needs to be incremental against.
-#[tracing::instrument(skip_all, fields(mailbox = mailbox.get(), path, incremental))]
+///
+/// Deliberately touches nothing that needs `&mut State`: several of these run
+/// at once (see [`sync_wave`]), and what they share — the status line — is
+/// behind a `RefCell` that no pass holds across an await. Everything else is
+/// [`settle_pass`]'s job, afterwards.
+// Named `sync` rather than `sync_pass`: the span is the log surface for a
+// mailbox pass and predates the split, and `logging_privacy` keys on it.
+#[tracing::instrument(name = "sync", skip_all, fields(mailbox = mailbox.get(), path, incremental))]
+async fn sync_pass(
+    parts: &EngineParts,
+    connection: &PooledConnection,
+    status: &RefCell<StatusTracker>,
+    mailbox: MailboxId,
+    cancel: &postio_imap::cancel::CancelToken,
+) -> PassOutcome {
+    let failed = |failure: PassFailure| PassOutcome {
+        mailbox,
+        result: Err(failure),
+    };
+    let record = match MailboxRepository::new(connection).get(mailbox) {
+        Ok(Some(record)) => record,
+        Ok(None) => return failed(PassFailure::NoSuchMailbox),
+        Err(error) => return failed(PassFailure::Failed(error.into())),
+    };
+    let synced_before = match SyncStateRepository::new(connection).get(mailbox) {
+        Ok(state) => state.is_some(),
+        Err(error) => return failed(PassFailure::Failed(error.into())),
+    };
+
+    // A folder *path* is a name the user chose for a container, not a message
+    // and not an address; it is what makes a per-mailbox line legible at all.
+    tracing::Span::current().record("path", record.path.as_str());
+    tracing::Span::current().record("incremental", synced_before);
+    tracing::info!("sync started");
+
+    announce_status(parts, &status.borrow_mut().on_sync_started(mailbox));
+
+    let mut committed = Committed {
+        parts,
+        status,
+        repaint: Repaint::new(parts.events.clone(), mailbox),
+    };
+    // Populated only by the incremental branch below: a first sync or a
+    // rebuild can insert thousands of messages that are new to *this
+    // store*, not new mail the user has not seen arrive — see
+    // `Event::NewMail`'s doc comment and postio-du6's "no notification
+    // storm" acceptance criterion.
+    let mut arrived: Vec<MessageId> = Vec::new();
+    let result = if synced_before {
+        resync::resync_mailbox(
+            connection,
+            parts.backend.as_ref(),
+            &record,
+            cancel,
+            |progress| committed.batch(progress),
+        )
+        .await
+        .map(|outcome| {
+            if let resync::Outcome::Incremental { arrived: ids, .. } = &outcome {
+                arrived = ids.clone();
+            }
+            summarise_resync(outcome)
+        })
+    } else {
+        initial::sync_mailbox(
+            connection,
+            parts.backend.as_ref(),
+            &record,
+            cancel,
+            |progress| committed.batch(progress),
+        )
+        .await
+        .map(|report| SyncSummary {
+            inserted: report.inserted,
+            updated: report.updated,
+            threaded: report.threaded,
+            full: true,
+        })
+    };
+
+    if let Ok(summary) = &result {
+        tracing::info!(
+            inserted = summary.inserted,
+            updated = summary.updated,
+            threaded = summary.threaded,
+            full = summary.full,
+            "sync finished"
+        );
+        if summary.changed() {
+            // The list showing this folder has to re-read it.
+            parts.events.emit(Event::MessageListChanged { mailbox });
+        }
+        if !arrived.is_empty() {
+            parts.events.emit(Event::NewMail {
+                mailbox,
+                messages: arrived,
+            });
+        }
+    }
+
+    PassOutcome {
+        mailbox,
+        result: result.map_err(PassFailure::Failed),
+    }
+}
+
+/// Fold a finished pass into the engine's state, and say what it did.
+///
+/// Split from [`sync_pass`] because everything in here needs `&mut State`,
+/// and passes run concurrently. Sequential and cheap: no network, one
+/// possible indexed read.
+fn settle_pass(
+    parts: &EngineParts,
+    state: &mut State,
+    connection: &PooledConnection,
+    outcome: PassOutcome,
+) -> Result<SyncSummary, EngineError> {
+    let PassOutcome { mailbox, result } = outcome;
+    let now = Utc::now();
+
+    // A pass the wave cancelled is not a failure and not a completed pass: it
+    // stopped where it was told to, keeping everything it had committed, and
+    // whoever requeues it resumes from there. It leaves the status line
+    // (nothing is fetching for it any more) and touches nothing else — in
+    // particular not the supervisor, since the link is fine.
+    if let Err(PassFailure::Failed(SyncError::Backend(BackendError::Cancelled))) = &result {
+        announce_status(
+            parts,
+            &state.status.borrow_mut().on_sync_finished(mailbox, now),
+        );
+        return Err(EngineError::new("the sync pass was interrupted"));
+    }
+
+    match result {
+        Ok(summary) => {
+            announce_status(
+                parts,
+                &state.status.borrow_mut().on_sync_finished(mailbox, now),
+            );
+            if summary.changed() {
+                // A sync is exactly when the set of messages missing a body
+                // changed, so it is exactly when the backfill is worth
+                // seeding again.
+                if let Err(error) =
+                    backfill::seed(connection, &mut state.backfill, mailbox, SEED_PER_MAILBOX)
+                {
+                    parts.events.emit(Event::Error {
+                        message: error.to_string(),
+                    });
+                }
+            }
+            Ok(summary)
+        }
+        Err(failure) => {
+            tracing::warn!(error = %failure, "sync failed");
+            if let PassFailure::Failed(SyncError::Backend(backend)) = &failure {
+                let moved = state.supervisor.observe(backend, now);
+                announce_link(parts, state, moved);
+            }
+            announce_status(
+                parts,
+                &state.status.borrow_mut().on_sync_finished(mailbox, now),
+            );
+            Err(EngineError::new(failure.to_string()))
+        }
+    }
+}
+
+/// One mailbox, synced now, for a caller that is waiting on the answer.
+///
+/// The wave above is how the engine syncs on its own initiative; this is
+/// [`Job::Sync`] — the watcher saw mail arrive, or the user asked. It takes
+/// one connection and runs one pass, so a single mailbox never pays for the
+/// wave's machinery.
 async fn sync(
     parts: &EngineParts,
     pool: &Pool,
@@ -1159,111 +1555,9 @@ async fn sync(
     let connection = pool
         .get()
         .map_err(|error| EngineError::new(error.to_string()))?;
-    let record = MailboxRepository::new(&connection)
-        .get(mailbox)
-        .map_err(|error| EngineError::new(error.to_string()))?
-        .ok_or_else(|| EngineError::new("that folder is not in the local store"))?;
-    let synced_before = SyncStateRepository::new(&connection)
-        .get(mailbox)
-        .map_err(|error| EngineError::new(error.to_string()))?
-        .is_some();
-
-    // A folder *path* is a name the user chose for a container, not a message
-    // and not an address; it is what makes a per-mailbox line legible at all.
-    tracing::Span::current().record("path", record.path.as_str());
-    tracing::Span::current().record("incremental", synced_before);
-    tracing::info!("sync started");
-
-    announce_status(parts, &state.status.on_sync_started(mailbox));
-
-    let mut committed = Committed {
-        parts,
-        status: &mut state.status,
-        repaint: Repaint::new(parts.events.clone(), mailbox),
-    };
     let cancel = postio_imap::cancel::CancelToken::new();
-    // Populated only by the incremental branch below: a first sync or a
-    // rebuild can insert thousands of messages that are new to *this
-    // store*, not new mail the user has not seen arrive — see
-    // `Event::NewMail`'s doc comment and postio-du6's "no notification
-    // storm" acceptance criterion.
-    let mut arrived: Vec<MessageId> = Vec::new();
-    let outcome = if synced_before {
-        resync::resync_mailbox(
-            &connection,
-            parts.backend.as_ref(),
-            &record,
-            &cancel,
-            |progress| committed.batch(progress),
-        )
-        .await
-        .map(|outcome| {
-            if let resync::Outcome::Incremental { arrived: ids, .. } = &outcome {
-                arrived = ids.clone();
-            }
-            summarise_resync(outcome)
-        })
-    } else {
-        initial::sync_mailbox(
-            &connection,
-            parts.backend.as_ref(),
-            &record,
-            &cancel,
-            |progress| committed.batch(progress),
-        )
-        .await
-        .map(|report| SyncSummary {
-            inserted: report.inserted,
-            updated: report.updated,
-            threaded: report.threaded,
-            full: true,
-        })
-    };
-
-    let now = Utc::now();
-    match outcome {
-        Ok(summary) => {
-            tracing::info!(
-                inserted = summary.inserted,
-                updated = summary.updated,
-                threaded = summary.threaded,
-                full = summary.full,
-                "sync finished"
-            );
-            announce_status(parts, &state.status.on_sync_finished(mailbox, now));
-            if summary.changed() {
-                // The list showing this folder has to re-read it.
-                parts.events.emit(Event::MessageListChanged { mailbox });
-                // And a sync is exactly when the set of messages missing a
-                // body changed, so it is exactly when the backfill is worth
-                // seeding again. Inside the pass rather than at its call
-                // sites, so every caller gets it and none has to remember.
-                if let Err(error) =
-                    backfill::seed(&connection, &mut state.backfill, mailbox, SEED_PER_MAILBOX)
-                {
-                    parts.events.emit(Event::Error {
-                        message: error.to_string(),
-                    });
-                }
-            }
-            if !arrived.is_empty() {
-                parts.events.emit(Event::NewMail {
-                    mailbox,
-                    messages: arrived,
-                });
-            }
-            Ok(summary)
-        }
-        Err(error) => {
-            tracing::warn!(%error, "sync failed");
-            if let SyncError::Backend(backend) = &error {
-                let moved = state.supervisor.observe(backend, now);
-                announce_link(parts, state, moved);
-            }
-            announce_status(parts, &state.status.on_sync_finished(mailbox, now));
-            Err(EngineError::new(error.to_string()))
-        }
-    }
+    let outcome = sync_pass(parts, &connection, &state.status, mailbox, &cancel).await;
+    settle_pass(parts, state, &connection, outcome)
 }
 
 /// What a resync did, in the engine's own terms.
@@ -1359,7 +1653,7 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
         link = %postio_model::address::redact_addresses(&format!("{link:?}")),
         "connection state changed"
     );
-    let status = state.status.on_link(&link);
+    let status = state.status.borrow_mut().on_link(&link);
     let connection = match &status {
         SyncStatus::Offline => postio_core::ConnectionState::Offline,
         SyncStatus::Connecting => postio_core::ConnectionState::Connecting,
@@ -1445,7 +1739,7 @@ mod tests {
         State {
             backfill: Backfill::new(BackfillPolicy::default()),
             supervisor: Supervisor::new(ReconnectPolicy::default()),
-            status: StatusTracker::new(),
+            status: RefCell::new(StatusTracker::new()),
             online: false,
             to_sync: std::collections::VecDeque::new(),
             watcher: None,

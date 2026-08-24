@@ -10,6 +10,12 @@ repository.workspace = true
 [dependencies]
 async-channel = "2.5.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+# `FuturesUnordered` only, for the concurrent sync wave in `engine.rs`.
+# `default-features = false` keeps the futures executor, its io traits and its
+# `Sink` machinery out of the graph -- tokio is this crate's runtime, and the
+# only thing missing from it is a way to poll a variable number of futures at
+# once. Already in the lock file via `zbus`, so it costs no extra compile.
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 postio-core.workspace = true
 postio-imap.workspace = true
 postio-index.workspace = true

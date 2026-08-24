@@ -382,6 +382,10 @@ struct State {
     faults: Vec<(u64, Fault)>,
     latency: Duration,
     calls: u64,
+    /// Calls currently waiting out [`State::latency`].
+    in_flight: usize,
+    /// The largest [`State::in_flight`] ever reached.
+    peak_in_flight: usize,
     chunk_size: usize,
 }
 
@@ -451,6 +455,30 @@ impl Default for MockBackend {
     }
 }
 
+/// Counts one call as in flight for as long as it is alive.
+///
+/// See [`MockBackend::peak_in_flight`].
+struct InFlight(Arc<Mutex<State>>);
+
+impl InFlight {
+    fn enter(state: &Arc<Mutex<State>>) -> Self {
+        {
+            let mut state = state.lock().expect("mock backend mutex");
+            state.in_flight += 1;
+            state.peak_in_flight = state.peak_in_flight.max(state.in_flight);
+        }
+        Self(Arc::clone(state))
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.in_flight = state.in_flight.saturating_sub(1);
+        }
+    }
+}
+
 impl MockBackend {
     /// A backend with an iCloud-shaped capability set and **no folders**.
     ///
@@ -509,6 +537,22 @@ impl MockBackend {
         self.state().calls
     }
 
+    /// The most calls that were on the wire at once.
+    ///
+    /// "On the wire" is precisely the stretch a call spends waiting out
+    /// [`set_latency`](Self::set_latency), which is the only part of a mock
+    /// call that yields — so this is zero-information without a latency set,
+    /// and with one it is exactly what a caller that overlaps its requests
+    /// looks like from the server's side. A sequential caller never gets
+    /// above one however fast it goes, which is what makes this the assertion
+    /// for concurrency rather than a stopwatch.
+    ///
+    /// A call whose future is dropped mid-flight (a cancelled sync) is
+    /// counted out again, so cancellation cannot inflate the peak.
+    pub fn peak_in_flight(&self) -> usize {
+        self.state().peak_in_flight
+    }
+
     /// Renumbers a mailbox's UID space, as a server does after a restore.
     ///
     /// Every data operation on that mailbox then fails with
@@ -559,6 +603,13 @@ impl MockBackend {
             let call = state.calls;
             (state.latency, state.take_fault(call))
         };
+
+        // Dropped at the end of this scope *or* when the caller's future is
+        // cancelled mid-sleep, which is a case the sync engine really does
+        // produce: a guard rather than a decrement after the await, so a
+        // cancelled call cannot leave the in-flight count permanently high
+        // and every later peak reading wrong.
+        let _in_flight = InFlight::enter(&self.state);
 
         if !latency.is_zero() {
             tokio::time::sleep(latency).await;
@@ -697,6 +748,8 @@ impl MockBackendBuilder {
                 faults: Vec::new(),
                 latency: Duration::ZERO,
                 calls: 0,
+                in_flight: 0,
+                peak_in_flight: 0,
                 chunk_size: self.chunk_size,
             })),
             notify: Arc::new(Notify::new()),
