@@ -898,6 +898,14 @@ impl Repaint {
     }
 
     /// A batch reached the database. Announce it if it is time to.
+    ///
+    /// Only a *full enumeration* ever gets here: an incremental pull writes
+    /// its rows without reporting [`Progress`], so the flicker of issue #72
+    /// was never this. It is worth saying because the event this emits is
+    /// `MessageListChanged`, which the view answers by discarding every
+    /// visible row widget — the right answer while the list is being built
+    /// out of nothing, and the wrong one for a delivery. If an incremental
+    /// path ever starts reporting progress, it must not come through here.
     fn batch_committed(&mut self, now: Instant) {
         if !self.due(now) {
             return;
@@ -1409,6 +1417,15 @@ async fn sync_pass(
     // `Event::NewMail`'s doc comment and postio-du6's "no notification
     // storm" acceptance criterion.
     let mut arrived: Vec<MessageId> = Vec::new();
+    // Whether `arrived` accounts for everything this pass did to the list.
+    //
+    // `SyncSummary` cannot answer this: it folds `changed + vanished` into
+    // one `updated` count, and an incremental pull reports a brand-new
+    // message as *changed* rather than inserted. The distinction only exists
+    // here, while the `Outcome` is still whole — `arrived` is the subset of
+    // `changed` that was not known before, so `changed == arrived.len()`
+    // means nothing already on screen moved or changed under the user.
+    let mut only_arrivals = false;
     let result = if synced_before {
         resync::resync_mailbox(
             connection,
@@ -1419,8 +1436,15 @@ async fn sync_pass(
         )
         .await
         .map(|outcome| {
-            if let resync::Outcome::Incremental { arrived: ids, .. } = &outcome {
+            if let resync::Outcome::Incremental {
+                arrived: ids,
+                changed,
+                vanished,
+                ..
+            } = &outcome
+            {
                 arrived = ids.clone();
+                only_arrivals = *vanished == 0 && *changed == ids.len();
             }
             summarise_resync(outcome)
         })
@@ -1449,7 +1473,20 @@ async fn sync_pass(
             full = summary.full,
             "sync finished"
         );
-        if summary.changed() {
+        // `MessageListChanged` is the view's blunt instrument: it means the
+        // *order* moved, and `MessageList::invalidate` answers it by telling
+        // GTK every row was removed and re-added — every visible row widget
+        // discarded and rebuilt, every page re-read, the scroll anchor and
+        // the selection rediscovered. That is the right answer to a resort
+        // and the wrong one to a delivery.
+        //
+        // When `arrived` accounts for every insert and nothing was updated
+        // or re-threaded, the `NewMail` below says the same thing precisely,
+        // and the view prepends instead. Emitting both means the blunt one
+        // runs anyway and the cheap one never gets to matter — issue #72,
+        // the flicker on every sync tick.
+        let described_by_arrivals = only_arrivals && !arrived.is_empty();
+        if summary.changed() && !described_by_arrivals {
             // The list showing this folder has to re-read it.
             parts.events.emit(Event::MessageListChanged { mailbox });
         }
