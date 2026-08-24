@@ -453,9 +453,14 @@ scripts/issue-claim.sh                  # next ready issue, highest priority fir
 cd ~/src/postio-worktrees/issue-<n>
 export CARGO_TARGET_DIR=~/src/postio/target   # keeps GTK and WebKit warm
 # ... write the failing test, then the code ...
-scripts/issue-land.sh -m "feat(gtk): ..."     # gates, commit, push, PR
-scripts/issue-release.sh <n>            # after it merges
+scripts/issue-land.sh -m "feat(gtk): ..."     # gates, commit, push, PR, merge
+scripts/issue-release.sh <n>            # remove the worktree
 ```
+
+`issue-land.sh` **waits for CI and merges on green**. Opening a PR is not
+finishing: an unmerged branch goes stale, conflicts with whatever lands next,
+and leaves the issue open. If a check fails, that is yours to fix on the same
+branch — not something to hand to whoever reads the PR list next.
 
 ### Skills
 
