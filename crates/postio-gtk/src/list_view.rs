@@ -847,6 +847,10 @@ impl MessageListView {
         scroller.set_focusable(false);
         scroller.set_child(Some(&imp.view));
         scroller.set_vexpand(true);
+        // Scrolls under a drag too, for the same reason the sidebar does: a
+        // drag that started near the bottom of a long list has to be able to
+        // reach the rest of it without being put down first.
+        crate::autoscroll::attach(&scroller);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&header);
