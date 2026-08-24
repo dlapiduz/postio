@@ -64,6 +64,7 @@ command from inside a text field.
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
+| `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
 | `u` | Undo | List, thread, reader |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |
