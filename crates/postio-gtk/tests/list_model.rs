@@ -463,6 +463,37 @@ fn the_model_can_say_which_page_holds_a_message() {
     );
 }
 
+#[test]
+fn the_model_can_say_where_a_resident_message_sits() {
+    // What a notification's click needs: not just which page a message is
+    // on, but the exact position to put the cursor on.
+    let source = Fake::new(HUGE);
+    let list = MessageList::new();
+    list.set_source(source.clone());
+
+    list.item(0);
+    list.item(PAGE_SIZE * 4);
+    source.drain();
+    list.deliver(0, (0..PAGE_SIZE).map(row).collect());
+    list.deliver(4, (PAGE_SIZE * 4..PAGE_SIZE * 5).map(row).collect());
+
+    assert_eq!(list.position_of(MessageId::new(1)), Some(0));
+    assert_eq!(
+        list.position_of(MessageId::new(7)),
+        Some(6),
+        "position, not just page — the row's own offset within it"
+    );
+    assert_eq!(
+        list.position_of(MessageId::new(PAGE_SIZE as i64 * 4 + 1)),
+        Some(PAGE_SIZE * 4)
+    );
+    assert_eq!(
+        list.position_of(MessageId::new(PAGE_SIZE as i64 * 2 + 1)),
+        None,
+        "a message whose page is not resident has no position to give"
+    );
+}
+
 /// A source that answers inside `request`, which the contract forbids and
 /// which a real one cannot do — but a test double, a bench or a second view
 /// written in a hurry can, and used to take the process down with it.

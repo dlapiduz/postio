@@ -43,6 +43,10 @@ use crate::{header, style};
 /// What to call when a key press resolves to a command.
 type CommandHandler = Box<dyn Fn(CommandId)>;
 
+/// Switch to a mailbox, the way picking it in the sidebar does. See
+/// [`Window::open_mailbox`].
+type OpenMailbox = std::rc::Rc<dyn Fn(postio_model::ids::MailboxId)>;
+
 /// What to call with a whole invocation — the verb *and* what it is aimed at.
 type ActionHandler = Box<dyn Fn(postio_core::Command)>;
 
@@ -91,6 +95,11 @@ mod imp {
         /// state a window built for a test of one widget is in — the drill-in
         /// then shows what the list model holds, exactly as it always did.
         pub messages: std::cell::RefCell<Option<std::rc::Rc<dyn MessageSource>>>,
+        /// Switch to a mailbox the way picking it in the sidebar does: set
+        /// by [`install_feeds`](super::Window::install_feeds), so
+        /// [`open_mailbox`](super::Window::open_mailbox) is a no-op before
+        /// the window has been fed anything to switch to.
+        pub open_mailbox: std::cell::RefCell<Option<OpenMailbox>>,
         /// Where the list was scrolled to when the drill-in hid it.
         pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
@@ -614,6 +623,35 @@ impl Window {
             .clone()
     }
 
+    /// Switch to `mailbox`, the way picking it in the sidebar does.
+    ///
+    /// The one way in from outside a click on an already-visible sidebar
+    /// row — a notification's click, today. A no-op before
+    /// [`install_feeds`](Self::install_feeds) has run, since there is
+    /// nothing yet to switch to.
+    pub fn open_mailbox(&self, mailbox: postio_model::ids::MailboxId) {
+        let show = self.imp().open_mailbox.borrow().clone();
+        if let Some(show) = show {
+            self.sidebar().select(mailbox);
+            show(mailbox);
+        }
+    }
+
+    /// Switch to `mailbox` and put the keyboard on `message`, once its row
+    /// is resident.
+    ///
+    /// See [`MessageListView::select_message`] for what "once" means: the
+    /// mailbox has just been switched to, so nothing is resident yet, and
+    /// the message is normally in the very first page that answers.
+    pub fn open_message(
+        &self,
+        mailbox: postio_model::ids::MailboxId,
+        message: postio_model::ids::MessageId,
+    ) {
+        self.open_mailbox(mailbox);
+        self.list().select_message(message);
+    }
+
     /// Feed both panes from the runtime, and wire the sidebar to the list.
     ///
     /// The one call whoever assembles the application makes: hand it the two
@@ -657,6 +695,7 @@ impl Window {
                 feed.open(folders.scope_of(id));
             })
         };
+        *self.imp().open_mailbox.borrow_mut() = Some(show.clone());
 
         self.sidebar().connect_selected({
             let show = show.clone();
