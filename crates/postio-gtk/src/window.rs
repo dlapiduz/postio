@@ -88,6 +88,8 @@ mod imp {
         pub toast: OnceCell<crate::toast::Toast>,
 
         pub settings: OnceCell<SettingsPanel>,
+        /// What a message is made of. See [`crate::parts`].
+        pub parts: OnceCell<crate::parts::PartsPanel>,
         /// The pane that had the keyboard when the box opened.
         pub before_finder: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
         pub overlay: OnceCell<gtk::Overlay>,
@@ -157,6 +159,32 @@ impl Window {
     /// The message list: canvas 1b's header, and the rows under it.
     pub fn list(&self) -> MessageListView {
         self.imp().list.get().expect("built in constructed").clone()
+    }
+
+    /// What a message is made of, per canvas 3g.
+    pub fn parts(&self) -> crate::parts::PartsPanel {
+        self.imp()
+            .parts
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
+    /// Show the structure of a message whose own content type is `root`.
+    ///
+    /// Metadata only — see [`crate::parts`]. Nothing is fetched by opening
+    /// this, which is the whole reason it can be opened for a message the
+    /// application has never downloaded.
+    pub fn open_parts(&self, root: &str, attachments: &[postio_model::Attachment]) {
+        let panel = self.parts();
+        panel.show_parts(root, attachments);
+        panel.set_visible(true);
+        panel.focus_tree();
+    }
+
+    /// Put the parts panel away.
+    pub fn close_parts(&self) {
+        self.parts().set_visible(false);
     }
 
     /// The thread column, shown in the list's place while drilled in.
@@ -575,11 +603,23 @@ impl Window {
         cheatsheet.set_visible(false);
         let settings = SettingsPanel::new();
         settings.set_visible(false);
+        // Canvas 3g. An overlay like the rest — a message's structure is
+        // something to look at, not something the application has to stop for.
+        let parts = crate::parts::PartsPanel::new();
+        parts.connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            // Through the registry's `Back`, so `Esc` in here and `Esc`
+            // anywhere else are one path.
+            move || window.run(CommandId::Back)
+        ));
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&shell));
         overlay.add_overlay(&finder);
         overlay.add_overlay(&cheatsheet);
         overlay.add_overlay(&settings);
+        overlay.add_overlay(&parts);
+        let _ = self.imp().parts.set(parts);
 
         let layout = adw::ToolbarView::new();
         layout.add_top_bar(&header.bar);
@@ -792,6 +832,9 @@ impl Window {
             // is the nearest thing of all once every overlay is shut. It is
             // also the only way out of one that does not require picking a
             // row, which matters most when the selection is a predicate.
+            // Nearest first. The parts panel is the innermost thing `Esc`
+            // could mean while it is up.
+            CommandId::Back if self.parts().is_visible() => self.close_parts(),
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.finder().is_open() => self.close_finder(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),

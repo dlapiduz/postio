@@ -74,6 +74,9 @@ pub struct Reader {
     /// Terms to paint where they appear in the body. Empty for ordinary
     /// reading; set while a search is what put the message on screen.
     highlight: Rc<RefCell<Vec<String>>>,
+    /// What came with the message, per canvas 1b — and the way into the
+    /// parts panel. See [`crate::parts::Chips`].
+    chips: crate::parts::Chips,
 }
 
 impl Reader {
@@ -118,9 +121,12 @@ impl Reader {
 
         let banner = Rc::new(RemoteImageBanner::new());
 
+        let chips = crate::parts::Chips::new();
+
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&banner.widget());
         container.append(&view);
+        container.append(&chips.widget());
 
         let reader = Reader {
             container,
@@ -129,6 +135,7 @@ impl Reader {
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
+            chips,
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -236,6 +243,23 @@ impl Reader {
             &self.highlight,
             remote,
         );
+    }
+
+    /// Draw the message's attachments as chips under the body.
+    ///
+    /// Metadata only, and deliberately: a chip is drawn from what
+    /// `BODYSTRUCTURE` already said, so a message nothing has been fetched
+    /// for still shows what came with it. See [`crate::parts`].
+    pub fn set_attachments(&self, root: &str, parts: &[postio_model::Attachment]) {
+        self.chips.set_parts(root, parts);
+    }
+
+    /// Called when one of those chips is activated.
+    ///
+    /// The chip does not act — it asks. Whoever wires this opens
+    /// [`crate::parts::PartsPanel`], which is where the verbs live.
+    pub fn connect_attachment(&self, handler: impl Fn(&crate::parts::Node) + 'static) {
+        self.chips.connect_activated(handler);
     }
 
     /// Paint `terms` wherever they appear in the body.
