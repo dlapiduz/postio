@@ -203,6 +203,22 @@ button.postio-compose {
   color: var(--postio-selected-fg);
 }
 
+/* Where the keyboard is, which is not the same as which folder is open.
+   Selection follows the cursor here — `j` opens as it moves, exactly as a
+   click does — so the selected ground marks the *open* folder whether or not
+   the keyboard is in this pane. The ring is what says the keys are here now,
+   and it has to read on the selected ground as well as off it, which is why
+   it is an inset outline in the accent rather than a background change.
+
+   `:focus`, not `:focus-visible`: the row is focused programmatically — by
+   `g f`, and by a click landing on it — and GTK only marks focus "visible"
+   for its own keyboard traversal, so the ring would have been absent in
+   exactly the case it exists for. Caught by rendering it and looking. */
+.postio-folder:focus {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
 .postio-folder-name {
   font-size: 0.9545rem;
   color: var(--postio-ink-secondary);

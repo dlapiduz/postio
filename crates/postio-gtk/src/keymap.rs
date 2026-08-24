@@ -491,6 +491,8 @@ pub enum KeyContext {
     Search,
     /// The command palette.
     Palette,
+    /// The folder list, once the keyboard is in it.
+    Sidebar,
 }
 
 impl KeyContext {
@@ -510,6 +512,10 @@ impl KeyContext {
             Self::Composer => &[Self::Composer, Self::Global],
             Self::Search => &[Self::Search, Self::Global],
             Self::Palette => &[Self::Palette, Self::Global],
+            // Not layered over `List`: `j` means "next folder" here and
+            // "next message" there, and falling through would make the
+            // sidebar's own keys the ones that lose.
+            Self::Sidebar => &[Self::Sidebar, Self::Global],
         }
     }
 }
@@ -529,6 +535,7 @@ impl From<Context> for KeyContext {
             Context::Composer => Self::Composer,
             Context::Search => Self::Search,
             Context::Palette => Self::Palette,
+            Context::Sidebar => Self::Sidebar,
         }
     }
 }

@@ -34,6 +34,13 @@ pub enum Context {
     Search,
     /// The `Ctrl+K` command palette overlay.
     Palette,
+    /// The folder list, once the keyboard is in it.
+    ///
+    /// A real context rather than a focus flag, because that is what makes
+    /// the folder commands reachable from the palette and printable in the
+    /// cheat sheet without either of them learning about the sidebar. Before
+    /// it existed there was no way to change mailbox without the mouse.
+    Sidebar,
 }
 
 impl Context {
@@ -45,6 +52,7 @@ impl Context {
         Context::Composer,
         Context::Search,
         Context::Palette,
+        Context::Sidebar,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -56,6 +64,7 @@ impl Context {
             Context::Composer => "composer",
             Context::Search => "search",
             Context::Palette => "palette",
+            Context::Sidebar => "sidebar",
         }
     }
 
@@ -119,7 +128,21 @@ impl ContextSet {
     pub const EMPTY: ContextSet = ContextSet(0);
 
     /// Every context, for commands like the palette that are always reachable.
-    pub const ANY: ContextSet = ContextSet(0b0011_1111);
+    ///
+    /// Derived from [`Context::ALL`] rather than written as a literal. It was
+    /// `0b0011_1111`, and adding a seventh context silently left it meaning
+    /// "the first six" — a command declared reachable everywhere would have
+    /// been unreachable in the new one, which is the kind of bug that shows up
+    /// as a key that does nothing in one pane.
+    pub const ANY: ContextSet = {
+        let mut bits = 0u8;
+        let mut index = 0;
+        while index < Context::ALL.len() {
+            bits |= Context::ALL[index].bit();
+            index += 1;
+        }
+        ContextSet(bits)
+    };
 
     /// A set holding exactly one context.
     pub const fn of(context: Context) -> ContextSet {
