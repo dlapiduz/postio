@@ -249,6 +249,28 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
+        // One transaction for the whole batch, which is what this module's own
+        // documentation has always claimed it does — "committing and threading
+        // each batch" — and did not.
+        //
+        // Every repository call below opens a savepoint of its own and
+        // releases it, and a release is a real commit when nothing encloses
+        // it. Nothing did: a batch of two hundred messages committed once for
+        // the upserts and then once *per message* for threading and once more
+        // per message for the contact sighting, so it paid four hundred-odd
+        // fsyncs where it needed one. Measured on a real account, that was
+        // 2.25 ms of local write per message — the same order as the network
+        // transfer it was supposedly waiting on (`postio-0d9.7`).
+        //
+        // Enclosing them turns those savepoints into nested ones, which cost
+        // nothing to release, and leaves exactly one commit per batch. The
+        // durability story is unchanged: a batch was already the unit an
+        // interrupted pass resumed from.
+        let batch = connection
+            .unchecked_transaction()
+            .map_err(postio_storage::Error::from)?;
+        let connection: &Connection = &batch;
+
         let upsert = MessageRepository::new(connection).upsert_batch(&mut messages)?;
         report.inserted += upsert.inserted;
         report.updated += upsert.updated;
@@ -275,6 +297,8 @@ pub(crate) async fn enumerate(
                 }
             }
         }
+
+        batch.commit().map_err(postio_storage::Error::from)?;
 
         // Where a first sync's wall clock actually goes, per batch: waiting on
         // the server, or writing to SQLite. `postio-0d9.7` asks for several
