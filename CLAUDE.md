@@ -444,7 +444,18 @@ shared rather than owned by one parent.
                              no toolkit. A SHARED leaf, not a GTK detail --
                              postio-gtk, postio-index, postio-runtime and
                              postio-app all depend on it.
+            postio-body      message bodies both ways: the composer's
+                             Document, the HTML subset, quoting, sanitising.
+                             Owns `ammonia`. The other shared leaf.
 ```
+
+`postio-body` is why the composer's state is a `Document` rather than a
+`GtkTextBuffer`, and why there is one allowlist instead of an incoming one in
+the frontend and an outgoing one beside it. Outgoing HTML is *generated* from
+a closed type — `Inline::Image` holds a `ContentId`, so a tracking pixel has
+no representation rather than being stripped. It does not live in
+`postio-model` because `ammonia` pulls an HTML parser and the whole workspace
+waits on `postio-model`. See ADR 0004.
 
 `postio-search` is the query *language*; `postio-index` is the FTS5 *index*
 that executes it. They were one crate once and the tree above used to say so.
