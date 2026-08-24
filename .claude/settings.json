@@ -62,11 +62,16 @@
       "Edit",
       "Write",
       "Glob",
-      "Grep"
+      "Grep",
+      "Bash(git remote -v:*)",
+      "Bash(git remote get-url:*)",
+      "Bash(git push:*)"
     ],
     "deny": [
-      "Bash(git push:*)",
-      "Bash(git remote:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git remote add:*)",
+      "Bash(git remote set-url:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)"
     ]
