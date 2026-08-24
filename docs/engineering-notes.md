@@ -355,6 +355,49 @@ never reached `connect_action` at all. Pinned by
 
 ## Storage, sync & search internals
 
+**A `oneshot`-reply `Job` on the engine is a fact nobody will ever hear.**
+`Engine::backfill_progress` could always answer how far the body queue had
+got, and in the entire workspace nothing called it. So the longest phase of a
+first sync — the bodies, not the message list — reached the frontend as no
+event at all, and `announce_status` maps `Syncing` with no progress onto
+`ConnectionState::Online`, which the sidebar draws as **idle**. The
+application was reported as doing nothing while it downloaded a mailbox
+(#74). That is worse than silence: a user watching `idle` concludes it is
+stuck and goes looking for a bug that is not there.
+
+The rule this suggests: a pull-shaped API is right for *asking* (a settings
+pane, a diagnostic), and is never sufficient for anything the status line
+needs. If a subsystem moves the status, it pushes through `announce_status`'s
+neighbourhood, which exists precisely so the frontend does not have to know
+which subsystem moved it. Check for other `Job` variants with a
+`oneshot::Sender` whose only reader is a test.
+
+A push added to the engine loop needs the same throttle the sync side already
+has. `StatusTracker` puts a 250 ms floor under a pass's batches and never
+drops the batch that finishes the pass; the backfill's announcement follows
+that policy exactly, because a body settling is not a redraw and a fast
+server produces far more of them than a status line can show.
+
+**The list phase and the body phase are not the same status, and folding them
+together loses the thing the user needs.** A mailbox mid-initial-sync cannot
+be read; one whose bodies are still arriving is perfectly usable. So `syncing`
+stayed the list's word and the backfill got `downloading`, with
+`SyncStatus::progress` and `SyncStatus::backfill` as separate fields and the
+list outranking the bodies when both are running.
+
+Two details worth keeping:
+
+- **The backfill has an honest denominator and the list pass does not.** The
+  list's `total` is `UIDNEXT - 1`, an upper bound that expunged messages leave
+  gaps in, so a pass routinely finishes well short of it — which is why that
+  line reads `fetched 1204` and deliberately not `of`. `BackfillProgress`
+  keeps every queued message in exactly one of its counts, so
+  `settled + pending + in_flight` really is everything, and `bodies 412 of
+  2000` is true.
+- **Both phases must clear their number when the queue drains**, or the line
+  sticks — `syncing 89%` on a finished folder was the original version of this
+  bug, and `downloading 2000 of 2000` would have been the new one.
+
 **Mailbox counts are maintained by triggers, not by call sites.**
 `mailboxes.total_count`/`unread_count`/`flagged_count` are maintained by
 SQLite triggers on `messages` (migration `0003_mailbox_counts.sql`), not by
