@@ -74,7 +74,7 @@ pane on the main window. That is the pattern; keep it.
 |---|---|
 | A command surface, help, settings | An overlay on the main window |
 | Composing a message | The reading pane, list keeps scroll and selection |
-| Something the user must answer before anything else can happen | A modal — and say why in the bead |
+| Something the user must answer before anything else can happen | A modal — and say why in the issue |
 | Something the user wants *alongside* the main window | A real non-modal window, opt-in only |
 
 A modal is a claim that nothing else in the app matters until this is resolved.
@@ -112,7 +112,7 @@ Same for tone: labels are lower-case sentence case, imperative for actions
 today, absolute beyond.
 
 If you introduce a word the app has not used, you are making a vocabulary
-decision for everyone — say so in the bead rather than deciding silently.
+decision for everyone — say so in the issue rather than deciding silently.
 
 ---
 
@@ -204,5 +204,6 @@ render-to-PNG loop — are in `/gtk-design`. This skill decides *what the
 experience should be*; that one gets it built correctly.
 
 When you make an experience decision that future surfaces should follow,
-record it: `bd remember`, or a note on the bead. An invariant nobody wrote down
+record it in `docs/engineering-notes.md`, or as a comment on the issue. An
+invariant nobody wrote down
 lasts exactly as long as the session that invented it.

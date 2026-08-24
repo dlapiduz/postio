@@ -12,7 +12,7 @@ fails — a partial picture is what sends sessions chasing the wrong problem.
 
 This is the deliberate full sweep — the *only* place `--workspace` belongs.
 Do not run it as an inner loop; use `cargo test -p <crate>` while working and
-`/land` before committing. A workspace test compiles all nine crates including
+`scripts/issue-land.sh` before committing. A workspace test compiles all nine crates including
 GTK and serialises on the shared target directory, so running it habitually is
 the largest wall-clock cost in this project.
 
@@ -50,7 +50,7 @@ Any hit means stale artifacts, not a regression. Fix with
 `cargo clean -p <affected crates>` and re-run. Never build a copy of this repo
 outside the workspace.
 
-## 3. Tree and bead state
+## 3. Tree and issue state
 
 ```bash
 git status --porcelain
@@ -62,8 +62,8 @@ bd ready
 Two things to flag explicitly:
 
 - **Uncommitted work.** `CLAUDE.md` forbids leaving it. If files are loose,
-  identify which beads they belong to and say so.
-- **Stale claims.** A bead `in_progress` whose work is already committed means
+  identify which issues they belong to and say so.
+- **Stale claims.** An issue labelled `in-progress` whose work is already merged means
   a session died before `bd close`. Verify against `git log` and report which
   ones can be closed.
 
