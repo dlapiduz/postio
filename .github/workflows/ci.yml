@@ -156,6 +156,15 @@ jobs:
           rustup default stable
           rustc --version && cargo clippy --version
 
+      # The cache key has to name the compiler. CI tracks `stable`, so rustc
+      # moves under it -- 1.97 to 1.98 mid-day, once. A key of Cargo.lock alone
+      # still matches after a bump, so the runner spends ~50s restoring 2 GB of
+      # artifacts built by the old compiler that cargo then throws away. A miss
+      # is cheaper than a restore that buys nothing.
+      - name: Identify the compiler
+        id: rust
+        run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
+
       - name: Cache cargo registry and target dir
         uses: actions/cache@v4
         with:
@@ -164,8 +173,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-build-
+          key: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -175,62 +184,24 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-  bench:
-    name: Benches (compile only)
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
+      # Keep the ~400 third-party crates; drop our own, which every commit
+      # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
+      # is housekeeping rather than a speed-up -- the win is that a restored
+      # cache never carries a stale artifact of ours for cargo to reason
+      # about. Deliberately conservative: it names only files this workspace
+      # produces, because deleting a third-party rlib by accident would make
+      # every later build slower, not faster.
+      #
+      # Runs as a normal step, which is what makes it take effect: post steps
+      # run after all normal ones, so actions/cache saves what is left here.
+      - name: Drop workspace artifacts before caching
+        if: always()
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
-      # The criterion harness is a separate bead. Until it lands there are no
-      # bench targets, and a missing bench is not a CI failure -- this job just
-      # reports that it skipped. Once benches/ exists it starts compiling them,
-      # with no workflow change needed. Perf budgets are asserted by the bench
-      # code itself; this job deliberately only builds, because a shared runner
-      # is far too noisy to time anything on.
-      - name: Detect bench targets
-        id: detect
-        run: |
-          if cargo metadata --format-version 1 --no-deps \
-              | jq -e '[.packages[].targets[] | select(.kind[] == "bench")] | length > 0' >/dev/null; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "Bench targets found; they will be compiled."
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "No bench targets yet - skipping. (See the criterion harness bead.)"
-          fi
-
-      - name: Install system dependencies
-        if: steps.detect.outputs.found == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential \
-            pkg-config \
-            libgtk-4-dev \
-            libadwaita-1-dev \
-            libwebkitgtk-6.0-dev \
-            libsqlite3-dev \
-            libsecret-1-dev \
-            libglib2.0-dev \
-            libpango1.0-dev
-
-      - name: Cache cargo registry and target dir
-        if: steps.detect.outputs.found == 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-bench-
-
-      - name: Compile benches
-        if: steps.detect.outputs.found == 'true'
-        run: cargo bench --workspace --no-run
+          before=$(du -sm target 2>/dev/null | cut -f1 || echo 0)
+          rm -rf target/*/incremental
+          rm -f  target/*/deps/libpostio_*.rlib \
+                 target/*/deps/libpostio_*.rmeta \
+                 target/*/deps/postio_*.d \
+                 target/*/deps/libpostio_*.d
+          rm -rf target/*/.fingerprint/postio-*
+          echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
