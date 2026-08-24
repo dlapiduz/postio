@@ -19,3 +19,13 @@ jobs = 2
 # parallelism modest too.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--threads=2"]
+
+# rustc and the linker write intermediate files to TMPDIR, which on this
+# machine is a tmpfs — memory, with a 6 GB quota. Linking the GTK stack put
+# gigabytes of scratch into RAM and then failed with "Disk quota exceeded",
+# which reads like a compile error and is not one.
+#
+# `relative = true` resolves against the workspace root, so this stays correct
+# for anyone who clones the repo rather than naming one machine's paths.
+[env]
+TMPDIR = { value = "target/tmp", relative = true }
