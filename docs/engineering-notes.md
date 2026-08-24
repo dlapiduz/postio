@@ -503,6 +503,62 @@ the 0.1.0 routing.
 
 ## Testing infrastructure
 
+**GTK records no accessible properties unless an accessibility backend is
+running, so an a11y test with no backend measures nothing.** GTK builds a
+`GtkATContext` per widget lazily, and only when a backend is live. A headless
+session has no a11y bus, so it gets `GTK_A11Y=none`, so there is no context,
+so `gtk_test_accessible_has_property` answers "not set" for every widget on
+screen no matter what the code did. On a maintainer's desktop at-spi *is*
+running, which is the whole of the difference — and it is why
+`gtk_accessibility.rs` failed headless and passed live for long enough that
+the split was misread as a timing race (`postio-9112`). Verified against
+plain GTK outside this codebase: the same list item reports `has_property=0`
+under `GTK_A11Y=none` and `1` under `GTK_A11Y=test`. Any test asserting
+accessibility must select a backend itself — `GTK_A11Y=test` needs no bus —
+and should prove it has one before drawing conclusions, which
+`require_an_accessibility_backend` does by setting a name on a throwaway
+widget and reading it back.
+
+**`gtk_test_accessible_has_property` asks whether a property was set, not
+whether it says anything.** A widget labelled `""` reads as named. That is a
+state this tree really reaches — the message list's unbind path sets `""`
+deliberately to clear a recycled row — and it made the row-naming assertion
+unable to fail at all: sabotaging `announce()` outright left the test green.
+gtk-rs binds no getter for a property *value*, so the only way to ask is
+`gtk_test_accessible_check_property` from `gtk4-sys`, which compares and
+returns NULL on a match. Hence `gtk4-sys` as a dev-dependency of
+`postio-gtk`.
+
+**Cargo gives every integration test *binary* its own process — but not
+every test *function*.** libtest runs each `#[test]` on a thread of its own
+even at `--test-threads=1`, and GTK may be initialized from exactly one
+thread, so the second test in a binary to reach `adw::init()` aborts with
+`gdk_display_open_default() was called before gtk_init()`. Moving GTK tests
+out of `#[cfg(test)] mod tests` into `tests/` is only half the fix
+(`postio-yxfn` stopped there, and `gtk_toast` went on aborting). **One test
+function per file** for anything that touches a display, the way
+`gtk_style.rs`, `gtk_accessibility.rs` and now `gtk_toast.rs` are.
+Deterministic under `--test-threads=1`, intermittent otherwise, so it reads
+as flakiness. `gtk_composer_autosave.rs` and `gtk_finder.rs` still have this
+shape — see #41.
+
+**A scroll area is a tab stop, and an unnamed one announces nothing.**
+`GtkScrolledWindow` takes the keyboard so it can be scrolled with one, which
+puts it in the focus order *before* the widget inside it. Three of them —
+settings' config view, the composer's body, the thread's message column —
+each announced nothing when focus landed there. Give the region the name of
+what it scrolls, from a constant shared with the widget inside so the two
+cannot drift into disagreeing.
+
+**Comparing rendered pixels to prove a focus ring is drawn does not work
+reliably headless.** The technique itself is sound — `WidgetPaintable` +
+`render_texture` + `download`, and a deliberately loud override does show up
+— but against the real stylesheet it reports the ring about one run in five.
+`pump()` drains the main context without guaranteeing a frame carrying the
+new CSS state. Do not ship such a test without waiting on a real frame; the
+full record of what was ruled out is in #90.
+
+
 **`postio_runtime::Engine` does not need a trait in front of it to be
 tested.** A proposal to add one was closed as not-needed after being written
 on a wrong premise. `Engine::spawn` takes
