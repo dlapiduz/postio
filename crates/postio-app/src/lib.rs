@@ -32,12 +32,10 @@ pub mod compose;
 pub mod engine;
 pub mod feed;
 pub mod logging;
-pub mod onboarding;
 pub mod paths;
 pub mod refresh;
 pub mod search;
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 use adw::prelude::*;
@@ -143,11 +141,8 @@ pub fn run() -> glib::ExitCode {
     let (sink, events) = event_channel();
     // Taken on the first `activate`. `EventStream` is not `Clone` — there is
     // one queue and exactly one reader of it — and `activate` can fire again
-    // when a second launch raises the window. `Rc` rather than a plain
-    // `RefCell`: `onboarding::install`'s `on_ready` runs later, from its own
-    // closure, and needs its own handle onto the same cell to drain these
-    // once an account exists rather than only when `activate` first fired.
-    let streams = Rc::new(std::cell::RefCell::new(vec![Some(events), replies]));
+    // when a second launch raises the window.
+    let streams = std::cell::RefCell::new(vec![Some(events), replies]);
 
     let application = app::build_with(timeline);
 
@@ -171,24 +166,29 @@ pub fn run() -> glib::ExitCode {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
             return;
         };
-        let Some(wiring) = &wiring else {
-            return;
-        };
-
-        if first_account(&wiring.database).is_some() {
-            open_account(&window, wiring, &state, &wired, &streams);
-        } else {
-            // `postio-hiy`: nothing to feed yet. The screen replaces the
-            // window's content and finishes the same sequence
-            // `open_account` runs, once it has written the two things an
-            // account needs.
-            onboarding::install(
+        if let Some(wiring) = &wiring {
+            start_syncing(&window, wiring);
+            let Some(feeds) = feed_the_window(&window, wiring) else {
+                return;
+            };
+            // Every gesture the window produces from here on reaches a real
+            // handler. Before this line the keymap, the palette and the
+            // selection model all resolved correctly and then handed off to
+            // nothing.
+            commands::install(
                 &window,
-                wiring,
+                &feeds,
                 state.clone(),
+                wiring.commands.clone(),
                 wired.clone(),
-                Rc::clone(&streams),
             );
+            // Everything either half has to say reaches the panes here: a
+            // mailbox the server disagreed with, a body that arrived, an
+            // archive that landed. Two queues because there are two
+            // producers — the engine and the bus — and one reader each.
+            for stream in streams.borrow_mut().iter_mut().filter_map(Option::take) {
+                commands::drain(&window, &feeds, stream);
+            }
         }
     });
 
@@ -199,45 +199,7 @@ pub fn run() -> glib::ExitCode {
     code
 }
 
-/// Point the window at `wiring` and wire every gesture to a real handler.
-///
-/// The tail end of `run()`'s `activate` handler, factored out so
-/// [`onboarding::install`]'s successful submission can reach the exact same
-/// sequence once it has created the account `run()` did not find at
-/// startup — the account this depends on did not exist yet, but everything
-/// else about bringing a window up is identical.
-fn open_account(
-    window: &Window,
-    wiring: &Wiring,
-    state: &SharedState,
-    wired: &[postio_core::CommandId],
-    streams: &Rc<std::cell::RefCell<Vec<Option<postio_core::bridge::EventStream>>>>,
-) {
-    start_syncing(window, wiring);
-    let Some(feeds) = feed_the_window(window, wiring) else {
-        return;
-    };
-    // Every gesture the window produces from here on reaches a real handler.
-    // Before this line the keymap, the palette and the selection model all
-    // resolved correctly and then handed off to nothing.
-    commands::install(
-        window,
-        &feeds,
-        state.clone(),
-        wiring.commands.clone(),
-        wired.to_vec(),
-    );
-    // Everything either half has to say reaches the panes here: a mailbox the
-    // server disagreed with, a body that arrived, an archive that landed. Two
-    // queues because there are two producers — the engine and the bus — and
-    // one reader each.
-    for stream in streams.borrow_mut().iter_mut().filter_map(Option::take) {
-        commands::drain(window, &feeds, stream);
-    }
-}
-
 /// What the frontend needs, once there is a store to give it.
-#[derive(Clone)]
 pub struct Wiring {
     /// The local store every pane reads through.
     pub database: Database,
