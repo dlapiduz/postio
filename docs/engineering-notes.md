@@ -961,6 +961,20 @@ not fatal by default: a check whose exit status depends on a developer's shell
 would make CI's verdict depend on the runner's environment, which is the
 thing being fixed.
 
+**A warning in a gate log is weaker than the pin was supposed to give.**
+`scripts/issue-land.sh` and `scripts/test-headless.sh` are the two scripts
+that run `cargo`/`rustc` on a session's behalf, so both capture
+`RUSTUP_TOOLCHAIN` and `unset` it before invoking either — the gates run on
+whatever `rust-toolchain.toml` names regardless of what the shell exports,
+and `issue-land.sh` still prints the captured value afterward so the skew is
+visible rather than silently corrected. This turns the warning into a
+guarantee for the two paths that matter; it cannot reach a session's
+interactive shell, where `rustc --version` still answers however
+`RUSTUP_TOOLCHAIN` says to. `scripts/test-rustup-toolchain-cleared.py` proves
+it with a `RUSTUP_TOOLCHAIN` naming a toolchain rustup has never installed —
+that makes `rustc`/`cargo` refuse outright, so a regression here fails loudly
+rather than silently drifting back. Issue #112.
+
 **Why an exact version and not `stable`.** `channel = "stable"` in
 `rust-toolchain.toml` floats exactly as hard as the `rustup default stable`
 it replaced. The point of the pin is that the compiler changing under the

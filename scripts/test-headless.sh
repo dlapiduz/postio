@@ -66,4 +66,12 @@ export GDK_BACKEND=wayland
 unset DISPLAY
 export GTK_A11Y="${GTK_A11Y:-none}"    # quiets an at-spi warning with no bus
 
+# rust-toolchain.toml pins the compiler; RUSTUP_TOOLCHAIN in the environment
+# beats it (this workstation's mise config sets it). A warning in a gate log
+# is weaker than the pin was supposed to give, and this wrapper fronts every
+# `cargo test` invocation a session runs, so it is where the guarantee lives:
+# whatever the shell exports, what runs here is what rust-toolchain.toml
+# names. See docs/engineering-notes.md and issue #112.
+unset RUSTUP_TOOLCHAIN
+
 exec "$@"

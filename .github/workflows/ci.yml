@@ -164,6 +164,13 @@ jobs:
       - name: Prove the toolchain check actually fails when violated
         run: python3 scripts/test-check-toolchain-pinned.py
 
+      - name: Prove RUSTUP_TOOLCHAIN cannot reach a gate
+        # The pin only guarantees anything if a session's own environment
+        # cannot override it; this exercises issue-land.sh and
+        # test-headless.sh with an uninstalled toolchain named in
+        # RUSTUP_TOOLCHAIN and checks that neither one lets it through. #112.
+        run: python3 scripts/test-rustup-toolchain-cleared.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
