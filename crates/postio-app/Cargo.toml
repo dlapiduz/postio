@@ -19,6 +19,7 @@ async-channel = "2.5.0"
 # drainer replays them in the order they happened.
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
+postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
 postio-imap.workspace = true
@@ -30,8 +31,17 @@ postio-runtime.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-journald = "0.3"
+tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 
 [dev-dependencies]
+# Both are for the `shot` example, which renders surfaces the application
+# itself reaches only through postio-gtk: the search panels, and the settings
+# panel over a real config file.
+postio-config.workspace = true
+postio-search.workspace = true
 # Throwaway migrated databases, so a verb is an ordinary function over a real
 # schema rather than something only a running application can exercise.
 postio-storage = { workspace = true, features = ["test-support"] }
