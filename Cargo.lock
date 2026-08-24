@@ -2324,6 +2324,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-body"
+version = "0.1.0"
+dependencies = [
+ "ammonia",
+ "postio-model",
+]
+
+[[package]]
 name = "postio-config"
 version = "0.1.0"
 dependencies = [
@@ -2352,7 +2360,6 @@ dependencies = [
 name = "postio-gtk"
 version = "0.1.0"
 dependencies = [
- "ammonia",
  "async-channel",
  "chrono",
  "criterion",
@@ -2364,6 +2371,7 @@ dependencies = [
  "libadwaita",
  "pango",
  "pangocairo",
+ "postio-body",
  "postio-config",
  "postio-core",
  "postio-model",

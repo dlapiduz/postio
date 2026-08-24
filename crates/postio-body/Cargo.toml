@@ -1,0 +1,15 @@
+[package]
+name = "postio-body"
+description = "Message bodies in both directions: the document, its HTML subset, quoting and sanitisation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The HTML parser, and the reason this is its own crate rather than part of
+# postio-model: `ammonia` pulls html5ever, markup5ever and a generated tag
+# table, and postio-model is what the whole workspace waits on. See ADR 0004.
+ammonia = "4"
+postio-model = { workspace = true }
