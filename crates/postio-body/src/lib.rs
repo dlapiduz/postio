@@ -33,8 +33,14 @@
 //! [issue #30]: https://github.com/dlapiduz/postio/issues/30
 //! [ADR 0004]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0004-composer-document-model.md
 
+pub mod document;
+pub mod outgoing;
+pub mod parse;
 pub mod quote;
 pub mod sanitize;
 
+pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+pub use outgoing::{harden, render};
+pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
 pub use sanitize::{CID_SCHEME, RemoteImages, Sanitized, sanitize_body};
