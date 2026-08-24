@@ -106,4 +106,4 @@ fi
 echo "building (first run compiles GTK deps; later runs are incremental)…"
 cargo build --release -p postio-app
 echo "running — Ctrl-C to stop"
-exec ./target/release/postio
+exec "$TARGET/release/postio"
