@@ -188,6 +188,26 @@ pub enum Event {
         message: String,
     },
 
+    /// A tracked invocation ended, whichever way it ended.
+    ///
+    /// Emitted only for a command sent through
+    /// [`CommandSender::send_tracked`](crate::bridge::CommandSender::send_tracked),
+    /// so the GTK frontend — which sends fire-and-forget — never sees one and
+    /// does not gain an event per keystroke.
+    ///
+    /// It is the *terminal* event of an invocation and always arrives, even
+    /// when the handler panicked or no handler existed: a programmatic caller
+    /// awaiting an answer that never comes is a hang, which is a worse failure
+    /// than the one it was reporting. The user-facing prose has already gone
+    /// past as [`Event::CommandRejected`] or [`Event::Error`]; this repeats it
+    /// so one event answers the whole question.
+    InvocationFinished {
+        /// The send this answers.
+        invocation: crate::InvocationId,
+        /// How it ended.
+        outcome: crate::InvocationOutcome,
+    },
+
     // -- Configuration ---------------------------------------------------
     /// `config.toml` was reloaded and something a subsystem cares about moved.
     ///
@@ -214,6 +234,17 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"undo\""), "{json}");
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn a_completion_names_the_send_it_answers() {
+        let event = Event::InvocationFinished {
+            invocation: crate::InvocationId::next(),
+            outcome: crate::InvocationOutcome::Completed,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("completed"), "{json}");
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
     }
 
