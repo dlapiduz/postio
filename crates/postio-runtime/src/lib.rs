@@ -28,6 +28,9 @@
 //!   a table.
 //! * [`engine`] — the loop that drains the operation queue, backfills message
 //!   bodies, and keeps the connection up.
+//! * [`network`] — what NetworkManager says about the link, so a reconnect
+//!   after a lid opens is prompt rather than a backoff measured against a
+//!   network that is gone.
 //!
 //! Both are joined to a frontend by `postio-app`, which is the only crate
 //! that knows both halves exist.
@@ -36,9 +39,12 @@
 #![warn(missing_docs)]
 
 pub mod engine;
+pub mod network;
 pub mod store;
 
-pub use engine::{DrainSummary, Engine, EngineError, EngineParts, Link, NetworkState, SyncSummary};
+pub use engine::{
+    DrainSummary, Engine, EngineError, EngineParts, Link, NetworkSource, NetworkState, SyncSummary,
+};
 pub use store::{
     ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, SqliteStore, StoreError,
 };
