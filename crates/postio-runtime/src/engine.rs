@@ -40,7 +40,9 @@ use postio_imap::backend::MailBackend;
 use postio_imap::secret::SecretStore;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
-use postio_storage::repository::{MailboxRepository, SyncStateRepository};
+use postio_storage::repository::{
+    MailboxRepository, OperationQueueRepository, SyncStateRepository,
+};
 use postio_storage::{BlobStore, Database, Pool};
 use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
@@ -433,6 +435,16 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // And find out what the server has been doing meanwhile.
                 queue_every_mailbox(&parts, &pool, &mut state);
                 start_watching(&parts, &pool, &mut state).await;
+            } else if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
+                // The queue is filled by whoever performed the action — a flag,
+                // an archive, a draft autosaved as it is typed — and none of
+                // them can tell this thread that they wrote a row. So it asks,
+                // and the cost of asking with an empty queue is one indexed
+                // read. Without this a mutation made while connected would wait
+                // for the next *reconnection* to go out, which on a machine
+                // that stays online is never.
+                let outcome = drain(&parts, &pool, &mut state).await;
+                announce_drain(&parts.events, &outcome);
             }
 
             // One mailbox at a time, inbox checked between each: a folder
@@ -470,6 +482,12 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                     // cancelled, and a job taken off the queue by a branch
                     // that is then dropped is a job nobody serves.
                     _ = wait_for_job(&inbox) => {}
+                    // A local mutation is not a job — nobody tells this thread
+                    // that a row was written — and an `IDLE` is held for
+                    // minutes. Without this branch, a flag set or a draft
+                    // autosaved while connected would wait out the whole watch
+                    // before going anywhere.
+                    _ = wait_for_queued_work(&parts, &pool) => {}
                     _ = keep_watch(&parts, &mut state) => {}
                 }
             }
@@ -501,6 +519,20 @@ struct State {
     watcher: Option<Watcher>,
 }
 
+/// Whether the account's queue has anything due right now.
+///
+/// Deliberately silent about failure: a connection this cannot check out is
+/// already being reported by whatever else wanted one, and a drain skipped for
+/// a tick costs five seconds.
+fn has_queued_work(parts: &EngineParts, pool: &Pool) -> bool {
+    let Ok(connection) = pool.get() else {
+        return false;
+    };
+    OperationQueueRepository::new(&connection)
+        .pending(parts.account, Utc::now())
+        .is_ok_and(|due| !due.is_empty())
+}
+
 /// Whether the link has come up since this was last asked.
 fn came_up(state: &mut State) -> bool {
     let online = state.supervisor.link().is_online();
@@ -518,6 +550,26 @@ async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
         tokio::time::sleep(WATCH_FLOOR).await;
     }
 }
+
+/// Resolve once the account's queue has something due, without draining it.
+///
+/// Polled rather than signalled because the queue is a table, written by
+/// whichever thread performed the user's action, and SQLite has no way to say
+/// so. Half a second is chosen against [`wait_for_job`], which already wakes
+/// twenty times a second on the same loop: next to that, two indexed reads a
+/// second cost nothing, and they are what makes an action taken while
+/// connected reach the server while the user still remembers taking it.
+async fn wait_for_queued_work(parts: &EngineParts, pool: &Pool) {
+    loop {
+        if has_queued_work(parts, pool) {
+            return;
+        }
+        tokio::time::sleep(QUEUE_FLOOR).await;
+    }
+}
+
+/// How often the queue is asked whether anything new is in it.
+const QUEUE_FLOOR: Duration = Duration::from_millis(500);
 
 /// The shortest a watch step will ever sleep.
 ///
