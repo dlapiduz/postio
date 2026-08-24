@@ -672,3 +672,93 @@ fn announced(events: &EventStream) -> Vec<Event> {
     }
     seen
 }
+
+#[tokio::test]
+async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() {
+    // Nothing in the app can tell this thread that a row was written — the
+    // composer autosaves on the GTK thread and the queue is just a table. So
+    // the loop asks, and a draft typed on a machine that never disconnects
+    // still goes out. Before this it waited for the next *reconnection*.
+    let database = test_support::memory();
+    let report = seed_small(&database, 12);
+    let drafts_mailbox = report
+        .mailbox(MailboxRole::Drafts)
+        .expect("the seed has a Drafts folder");
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let (sink, _events) = event_channel();
+
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(MockMailbox::new("INBOX"))
+            .mailbox(MockMailbox::new(&drafts_mailbox.path))
+            .build(),
+    );
+    let engine = Engine::spawn(EngineParts {
+        account: report.account.id,
+        database: database.clone(),
+        blobs,
+        backend: backend.clone(),
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        events: sink,
+        retry: Default::default(),
+        backfill: Default::default(),
+        reconnect: Default::default(),
+        watch: Default::default(),
+    })
+    .expect("the engine starts");
+
+    // Wait for the link before writing anything, so what is proven is the
+    // "already online" path rather than the reconnect drain.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !matches!(engine.link().await, Ok(Link::Online { .. })) {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the engine never connected");
+
+    // The seed writes no identity, and a draft has to be composed as
+    // somebody — the same requirement sending has.
+    let mut identity = postio_model::Identity::new(
+        report.account.id,
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    identity.is_default = true;
+    {
+        let connection = database.connection().expect("checkout");
+        postio_storage::repository::IdentityRepository::new(&connection)
+            .create(&mut identity)
+            .expect("create the identity");
+    }
+
+    let mut draft = postio_model::Draft::new(report.account.id);
+    draft.to = vec![postio_model::EmailAddress::new(
+        None::<String>,
+        "grace@example.net",
+    )];
+    draft.subject = "Written while the wire was up".to_owned();
+    draft.body.text = Some("A thought, mid-thought.".to_owned());
+    {
+        let connection = database.connection().expect("checkout");
+        postio_storage::repository::DraftRepository::new(&connection)
+            .save_and_sync(&mut draft, Utc::now())
+            .expect("save and queue");
+    }
+
+    let landed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if let Ok(status) = backend.status(&drafts_mailbox.path).await
+                && status.exists > 0
+            {
+                return status.exists;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the draft never reached the server on the engine's own initiative");
+
+    assert_eq!(landed, 1, "one copy, uploaded once");
+}
