@@ -9,6 +9,22 @@
 //! which already implements Mozilla autoconfig (all three endpoints) and
 //! RFC 6186 SRV lookups; the only thing it adds is moving those blocking
 //! clients onto the blocking pool so an async caller is never stalled.
+//!
+//! # What "never stalled" does not cover
+//!
+//! Moving a blocking call onto [`tokio::task::spawn_blocking`] keeps the
+//! *caller's* runtime responsive; it does not make the call itself
+//! cancellable. [`blocking`] awaits the spawned task's `JoinHandle`, and
+//! [`Probe::attempt`](super::Probe::attempt) races that await against a
+//! timeout and the caller's [`CancelToken`](crate::cancel::CancelToken) — so
+//! when either wins, this function's own future is dropped, but the
+//! `JoinHandle` being dropped only *detaches* the spawned task. Nothing
+//! aborts it: `io-pim-discovery`'s std client keeps running on its blocking
+//! thread, with whatever socket it opened still open, for as long as that
+//! client itself takes to finish or fail. `postio-iigq` is the audit that
+//! found this; `postio-brp.2` is the follow-up, since a real fix needs a
+//! transport this crate can actually cancel rather than `io-pim-discovery`'s
+//! blocking one.
 
 use async_trait::async_trait;
 

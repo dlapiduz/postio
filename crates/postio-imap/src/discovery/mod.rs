@@ -34,6 +34,69 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! "Raced" is a claim about *this* future, not about the socket underneath
+//! it — see [`transport`](self::transport)'s module docs for the one place
+//! that distinction is not free, and `postio-iigq` for the audit that found
+//! it.
+//!
+//! # Privacy (`postio-iigq`)
+//!
+//! This module is the one place in Postio that reaches the network *by
+//! design* rather than only because the user asked for mail — a probe's
+//! whole job is finding out where to ask. `postio-qhz.2` settled every other
+//! outbound path by refusing it until asked; this one is settled by scope
+//! and consent instead, audited point by point:
+//!
+//! * **Only the typed domain.** Every step above derives its request from
+//!   [`Address::domain`] (and, for step 3, the local part — some providers
+//!   key per-user autoconfig on it) — never a *different* domain, and never
+//!   anything guessed. [`ProbeStep::ORDER`]'s four steps are the only
+//!   requests this module makes for a real lookup; [`builtin`]'s table costs
+//!   no I/O, and [`ProbeOptions::guess_common_names`]'s suggestion costs none
+//!   either — see the next point. `only_the_domain_the_user_typed_is_ever_probed`
+//!   (`postio-imap/tests/discovery.rs`) drives a probe with every step
+//!   answering and asserts every recorded request's domain (and, for the
+//!   subdomain step, local part) equals the one parsed from the typed
+//!   address — nothing derived, nothing left over from a previous probe.
+//! * **A guess is never a request.** [`guess`] runs only after the loop
+//!   above has already finished (`Ok`, out of steps, or out of time) and
+//!   only when [`ProbeOptions::guess_common_names`] is on — off by
+//!   default. It builds `imap.<domain>` / `smtp.<domain>` by string
+//!   formatting alone and calls nothing resembling [`DiscoveryTransport`].
+//! * **Cancellation stops *waiting*, not the request.** [`Probe::attempt`]
+//!   races each step against [`CancelToken::cancelled`], and losing that
+//!   race does make this module stop caring about the answer. It does not
+//!   make the request go away: [`PimalayaTransport`] runs `io-pim-discovery`'s
+//!   blocking client on [`tokio::task::spawn_blocking`], and a `JoinHandle`
+//!   dropped by a lost `select!` detaches the task rather than aborting it
+//!   — the blocking thread, and the socket it opened, run to whatever
+//!   `io-pim-discovery` itself decides is done, with no timeout of its own.
+//!   Realistically bounded rather than fixed: [`Onboarding::probe`]
+//!   (`postio-gtk`) already refuses to start a second probe while
+//!   [`Status::is_busy`], so this is one abandoned request at a time, not an
+//!   accumulating pile of them, and it is the same shape of exposure typing
+//!   any address into any browser's address bar already has. Fixing it for
+//!   real needs a transport under this module's own control instead of
+//!   `io-pim-discovery`'s blocking client — out of scope for an audit bead,
+//!   and recorded as `postio-brp.2` rather than attempted blind here.
+//! * **Nowhere else constructs a [`Probe`].** `crates/postio-app/src/onboarding.rs`
+//!   is the only production call site (`grep -rn 'Probe::new\|Probe::with_options'`
+//!   outside `tests/` and doc examples finds exactly that one line); every
+//!   other match is a test or the doc example above.
+//! * **What the ISPDB step discloses.** Step 4 asks
+//!   `autoconfig.thunderbird.net` — Mozilla's community database, not
+//!   Postio's own infrastructure — for the typed *domain* only
+//!   ([`AutoconfigEndpoint::Ispdb`] carries no local part), the same way a
+//!   browser typing that URL by hand would. That tells Mozilla someone is
+//!   setting up mail for that domain, at the moment they type it into
+//!   Postio's onboarding screen — canvas 3e's whole premise ("it probes
+//!   autoconfig") is the disclosure; nothing here names Thunderbird or its
+//!   database to the user more specifically than that. Step 5's SRV lookup
+//!   is a plain DNS query through the host's own resolver
+//!   ([`PimalayaTransport::new`]) — the same shape of disclosure as any
+//!   other name the machine resolves, and a much smaller one than an HTTPS
+//!   request to a named third party.
 
 mod builtin;
 mod settings;
