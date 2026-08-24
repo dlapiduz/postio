@@ -23,6 +23,7 @@ postio-storage.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 secrecy = "0.10.3"
 thiserror = "2.0.20"
+tracing = "0.1"
 
 [dev-dependencies]
 # Tests only: the real io-imap-backed backend and the in-process IMAP server

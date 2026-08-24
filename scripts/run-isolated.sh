@@ -17,6 +17,7 @@
 # Usage:
 #   scripts/run-isolated.sh                 # build and run HEAD
 #   scripts/run-isolated.sh <commit>        # build and run a specific commit
+#   POSTIO_LOG=debug scripts/run-isolated.sh # with a readable trace of the sync
 #   scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector attached
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
@@ -76,11 +77,17 @@ export CARGO_TARGET_DIR="$TARGET"
 export XDG_DATA_HOME="$STATE/data"
 export XDG_CONFIG_HOME="$STATE/config"
 
-# What passes for observability until postio-b9t.3 lands. There is no
-# tracing subscriber yet, so RUST_LOG does nothing — GLib's own channel and a
-# backtrace are what we have.
+# Observability. POSTIO_LOG takes an EnvFilter directive, so `debug` turns
+# everything up and `postio_sync=debug,postio_runtime=debug` turns up just the
+# half that talks to a server. `[logging]` in the scratch config.toml does the
+# same thing to an already-running instance.
+#
+# G_MESSAGES_DEBUG=all is deliberately *not* set: it produced two hundred lines
+# of Vulkan and portal settings and not one line about mail, which is what made
+# the first live run undiagnosable. Set it yourself when the problem is
+# actually GTK's.
+export POSTIO_LOG="${POSTIO_LOG:-info}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-export G_MESSAGES_DEBUG="${G_MESSAGES_DEBUG:-all}"
 export GTK_A11Y="${GTK_A11Y:-none}"     # quiets an at-spi warning on headless
 [ "$INSPECT" = 1 ] && export GTK_DEBUG=interactive
 

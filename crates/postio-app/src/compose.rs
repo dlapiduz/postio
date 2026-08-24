@@ -85,7 +85,7 @@ fn install_autosave(composer: &Composer, database: Database, account: AccountId)
         let last_id = Rc::clone(&last_id);
         move |draft| match save_draft(&database, draft) {
             Ok(()) => last_id.set(Some(draft.id)),
-            Err(error) => eprintln!("postio: could not autosave the draft: {error}"),
+            Err(error) => tracing::error!(%error, "could not autosave the draft"),
         }
     });
 
@@ -102,7 +102,7 @@ fn install_autosave(composer: &Composer, database: Database, account: AccountId)
                 return;
             };
             if let Err(error) = delete_draft(&database, id) {
-                eprintln!("postio: could not clear the finished draft: {error}");
+                tracing::warn!(%error, "could not clear the finished draft");
             }
         }
     });
@@ -150,7 +150,7 @@ fn recover(
     let drafts = match DraftRepository::new(&connection).list_for_account(account) {
         Ok(drafts) => drafts,
         Err(error) => {
-            eprintln!("postio: could not read drafts to recover: {error}");
+            tracing::error!(%error, "could not read drafts to recover");
             return;
         }
     };
@@ -172,14 +172,14 @@ fn install_recipient_suggestions(composer: &Composer, database: Database, accoun
         let connection = match database.connection() {
             Ok(connection) => connection,
             Err(error) => {
-                eprintln!("postio: could not search contacts: {error}");
+                tracing::warn!(%error, "could not search contacts");
                 return Vec::new();
             }
         };
         match ContactRepository::new(&connection).search(Some(account), prefix, SUGGESTION_LIMIT) {
             Ok(contacts) => contacts.iter().map(resolved_address).collect(),
             Err(error) => {
-                eprintln!("postio: could not search contacts: {error}");
+                tracing::warn!(%error, "could not search contacts");
                 Vec::new()
             }
         }
@@ -216,7 +216,7 @@ fn install_reply_source(
         let id = current.get()?;
         let connection = database
             .connection()
-            .map_err(|error| eprintln!("postio: could not open a reply source: {error}"))
+            .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
             .ok()?;
         let mut message = MessageRepository::new(&connection).get(id).ok().flatten()?;
         message.body = load_body(&connection, &blobs, id);
@@ -256,11 +256,13 @@ fn attach_file(blobs: &BlobStore, path: &std::path::Path) -> Option<Attachment> 
     let size = std::fs::metadata(path).ok()?.len();
     let mime_type = mime_type_of(path);
     let file = std::fs::File::open(path)
-        .map_err(|error| eprintln!("postio: could not read {}: {error}", path.display()))
+        // The path is deliberately not logged: an attachment's name is the
+        // user's, and a log line is a thing people paste into bug reports.
+        .map_err(|error| tracing::warn!(%error, "could not read the file to attach"))
         .ok()?;
     let blob_id = blobs
         .put_reader(file)
-        .map_err(|error| eprintln!("postio: could not store the attachment: {error}"))
+        .map_err(|error| tracing::warn!(%error, "could not store the attachment"))
         .ok()?;
 
     let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
@@ -311,10 +313,10 @@ fn load_body(
 fn read_blob_text(blobs: &BlobStore, id: &postio_model::ids::BlobId) -> Option<String> {
     let bytes = blobs
         .get(id)
-        .map_err(|error| eprintln!("postio: could not read a message body blob: {error}"))
+        .map_err(|error| tracing::warn!(%error, "could not read a message body blob"))
         .ok()?;
     String::from_utf8(bytes)
-        .map_err(|error| eprintln!("postio: a body blob was not valid UTF-8: {error}"))
+        .map_err(|error| tracing::warn!(%error, "a body blob was not valid UTF-8"))
         .ok()
 }
 

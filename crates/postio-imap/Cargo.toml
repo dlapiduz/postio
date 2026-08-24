@@ -55,6 +55,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "macros", "process", "time", "sync", "net", "io-util"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+tracing = "0.1"
 url = "2.5.8"
 zeroize = "1.9.0"
 

@@ -158,6 +158,15 @@ pub async fn resync_mailbox(
 
     match previous.plan(&reported) {
         ResyncPlan::Full(reason) => {
+            // Which of the three paths a pass took, and why. The `warn` is
+            // deliberate: falling back to a full re-enumeration is correct but
+            // degraded, and the reason is what tells you whether the server
+            // renumbered or we lost the incremental basis ourselves.
+            tracing::warn!(
+                mailbox = mailbox.id.get(),
+                reason = ?reason,
+                "falling back to a full resync"
+            );
             if let Some(uid_validity) = previous.uid_validity {
                 wipe_mailbox(connection, mailbox.id, uid_validity)?;
             }
@@ -167,6 +176,11 @@ pub async fn resync_mailbox(
             Ok(Outcome::Full { reason, report })
         }
         ResyncPlan::Incremental { since } => {
+            tracing::debug!(
+                mailbox = mailbox.id.get(),
+                since = since.get(),
+                "resyncing incrementally"
+            );
             let outcome = incremental(
                 connection,
                 backend,
@@ -189,6 +203,15 @@ pub async fn resync_mailbox(
                 // a state that says "synchronized up to here" would tell the
                 // next pass there was nothing to catch up on.
                 Err(SyncError::Backend(error)) if error.requires_full_resync() => {
+                    // The integrity guard firing: io-imap dropped a response
+                    // line the incremental pull was counting on, so the answer
+                    // cannot be trusted. Loud, because it means a delta was
+                    // silently lost — see postio-imap's skip counter.
+                    tracing::error!(
+                        mailbox = mailbox.id.get(),
+                        %error,
+                        "the incremental pull cannot be trusted; rebuilding"
+                    );
                     rebuild(
                         connection,
                         backend,
@@ -203,6 +226,7 @@ pub async fn resync_mailbox(
             }
         }
         ResyncPlan::UpToDate => {
+            tracing::debug!(mailbox = mailbox.id.get(), "already up to date");
             sync_state.observe(mailbox.id, &reported, Utc::now())?;
             Ok(Outcome::UpToDate)
         }

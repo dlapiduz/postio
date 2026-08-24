@@ -33,6 +33,7 @@ use super::{ConnectionPool, Dispatch, ImapSession, ListingStrategy, Priority};
 /// One connection is used for the whole listing, so `LIST` and the `LSUB` that
 /// tells us what is subscribed cannot disagree about a folder that was created
 /// between them.
+#[tracing::instrument(skip_all, fields(pattern = %filter.pattern, subscribed_only = filter.subscribed_only))]
 pub async fn list_mailboxes(
     pool: &ConnectionPool,
     filter: &MailboxFilter,
@@ -50,6 +51,16 @@ pub async fn list_mailboxes(
         list_with(session, &pattern, strategy).await
     })
     .await
+    .inspect(|mailboxes| {
+        // Folder *names*: the containers, not the mail in them. This is the
+        // line that says whether a server answered a LIST at all.
+        tracing::info!(
+            count = mailboxes.len(),
+            paths = ?mailboxes.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(),
+            "listed the server's folders"
+        );
+    })
+    .inspect_err(|error| tracing::warn!(%error, "cannot list the server's folders"))
     .map(|mailboxes| finish(mailboxes, filter))
 }
 

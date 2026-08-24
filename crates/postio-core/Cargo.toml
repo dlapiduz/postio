@@ -13,6 +13,7 @@ postio-config.workspace = true
 postio-model.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
 
 [dev-dependencies]
 criterion = "0.7.0"
