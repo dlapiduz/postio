@@ -217,12 +217,27 @@ impl SqliteStore {
 /// counting: `count(*)` over a folder is linear in its size, and the message
 /// list asks for the total with *every page* — so a 100,000-message mailbox
 /// paid 12ms per scroll for a number it already had written down. The
-/// `mailboxes.total` column is maintained by `MailboxRepository::recount`
-/// against `deleted_locally = 0`, which is exactly the list query's own
-/// predicate, so the two cannot mean different things.
+/// `mailboxes.total` column is maintained by triggers on `messages` against
+/// `deleted_locally = 0`, which is exactly the list query's own predicate, so
+/// the two cannot mean different things.
 ///
 /// The account-wide and flagged views still count: there is no column for
 /// them, and neither is on the scrolling hot path.
+///
+/// # Why zero is not taken at its word
+///
+/// This number is the list model's `n_items`, and a `GtkListView` over a model
+/// of length zero asks for no pages at all — so a cached count that is wrong
+/// *low* does not show a wrong number, it shows an empty mailbox. That is
+/// `postio-qhz.7`: a live account with 81,716 messages, every cached count
+/// still at its `DEFAULT 0` because nothing maintained the column, and a store
+/// handing the list fifty real rows and a total of zero in the same read.
+///
+/// The column has an owner now, so this should never fire. It is here because
+/// the two failure modes are not comparable: counting an empty folder is free,
+/// counting a full one costs milliseconds off the UI thread, and getting it
+/// wrong the other way costs the user their mail with nothing on screen to say
+/// so. Any future drift degrades to slow rather than to invisible.
 fn count(
     connection: &postio_storage::PooledConnection,
     scope: ListScope,
@@ -230,6 +245,7 @@ fn count(
 ) -> Result<u32, StoreError> {
     if let ListScope::Mailbox(mailbox) = scope
         && let Some(counts) = MailboxRepository::new(connection).counts(mailbox)?
+        && counts.total > 0
     {
         return Ok(counts.total);
     }

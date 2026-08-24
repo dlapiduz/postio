@@ -264,6 +264,49 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     );
 }
 
+#[tokio::test]
+async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
+    // `postio-qhz.7`. The total this read carries is the list model's
+    // `n_items`, and a `GtkListView` over a model of length zero asks for no
+    // pages — so a cached count that is wrong low does not draw a wrong
+    // number, it draws an empty mailbox. On a live account that meant 81,716
+    // messages and nothing on screen in any folder.
+    //
+    // The column has an owner now. This is about what happens if it ever
+    // stops: the read has to degrade to slow, not to invisible.
+    let database = test_support::memory();
+    let report = seed_small(&database, 5);
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+
+    {
+        let connection = database.connection().expect("a connection");
+        // Behind the triggers' back, which is exactly the drift being guarded
+        // against: the rows are all still there.
+        connection
+            .execute(
+                "UPDATE mailboxes SET total_count = 0 WHERE id = ?1",
+                [inbox.get()],
+            )
+            .expect("the fixture writes");
+    }
+
+    let page = SqliteStore::new(&database)
+        .message_page(PageRequest {
+            scope: ListScope::Mailbox(inbox),
+            offset: 0,
+            limit: 50,
+        })
+        .await
+        .expect("the inbox reads");
+
+    assert!(
+        page.total >= page.rows.len() as u32 && page.total > 0,
+        "the store answered {} rows and a total of {}",
+        page.rows.len(),
+        page.total
+    );
+}
+
 /// The ids on one page.
 async fn page_ids(
     store: &SqliteStore,
