@@ -46,7 +46,8 @@ use postio_gtk::onboarding::{Onboarding, Server, Settings, Status, Submission};
 use postio_gtk::window::Window;
 use postio_imap::cancel::CancelToken;
 use postio_imap::discovery::{
-    AccountSettings, DiscoveryOutcome, Encryption, PimalayaTransport, Probe,
+    AccountSettings, DiscoveryOutcome, DiscoveryReport, Encryption, PimalayaTransport, Probe,
+    ProbeOptions,
 };
 use postio_imap::imap::{ConnectionSettings, ImapSession, RustlsConnector};
 use postio_imap::secret::{AccountKey, Password, SecretStore};
@@ -153,6 +154,41 @@ pub fn install(
     });
 }
 
+/// How this application probes, as against how the crate probes by default.
+///
+/// The one difference is `guess_common_names`, which `postio-imap` ships off
+/// because "an unverified guess presented as a *discovery* is worse than an
+/// empty form" — and it is right about that. The composition root turns it on
+/// because it controls what the guess is presented *as*: [`status_for`] can
+/// only ever put it in [`Status::Manual`], the state whose heading says no
+/// settings were published and whose form is open for editing. That is a
+/// starting point, not a claim.
+///
+/// `postio-69`: without it, a domain publishing no autoconfig — every custom
+/// domain, which is exactly the person least able to answer — got five empty
+/// boxes.
+fn probe_options() -> ProbeOptions {
+    ProbeOptions {
+        guess_common_names: true,
+        ..ProbeOptions::default()
+    }
+}
+
+/// What the screen should show for `report`.
+///
+/// Split out of [`probe`] so it can be driven without a network: the mapping
+/// is where a discovery becomes a sentence, and it is the half that had the
+/// bug.
+fn status_for(report: &DiscoveryReport) -> Status {
+    let found = report.settings().map(shown);
+    match (&report.outcome, found) {
+        (DiscoveryOutcome::Discovered(_), Some(settings)) => Status::Found(settings),
+        // Everything else is manual entry, prefilled when there was anything
+        // to prefill with. Never `Found`: see `probe_options`.
+        (_, suggestion) => Status::Manual { suggestion },
+    }
+}
+
 /// Run the autoconfig probe for `address` and show what it found.
 fn probe(screen: &Onboarding, runtime: &tokio::runtime::Handle, address: &str) {
     screen.set_status(Status::Probing);
@@ -160,7 +196,7 @@ fn probe(screen: &Onboarding, runtime: &tokio::runtime::Handle, address: &str) {
     let (sender, receiver) = async_channel::bounded(1);
     let email = address.to_owned();
     runtime.spawn(async move {
-        let probe = Probe::new(Arc::new(PimalayaTransport::new()));
+        let probe = Probe::with_options(Arc::new(PimalayaTransport::new()), probe_options());
         let answer = probe.run(&email, &CancelToken::new()).await;
         let _ = sender.send(answer).await;
     });
@@ -174,15 +210,7 @@ fn probe(screen: &Onboarding, runtime: &tokio::runtime::Handle, address: &str) {
                 return;
             };
             match answer {
-                Ok(report) => {
-                    let found = report.settings().map(shown);
-                    screen.set_status(match (&report.outcome, found) {
-                        (DiscoveryOutcome::Discovered(_), Some(settings)) => {
-                            Status::Found(settings)
-                        }
-                        (_, suggestion) => Status::Manual { suggestion },
-                    });
-                }
+                Ok(report) => screen.set_status(status_for(&report)),
                 Err(error) => {
                     tracing::info!(%error, "autoconfig found nothing");
                     screen.set_status(Status::Manual { suggestion: None });
@@ -498,6 +526,41 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    use postio_imap::discovery::{DiscoveryReport, ServerSettings, SettingsSource};
+
+    /// A report from a domain that publishes nothing, with the guess on.
+    fn nothing_published(suggestion: Option<AccountSettings>) -> DiscoveryReport {
+        DiscoveryReport {
+            email: "lena@example.com".to_owned(),
+            domain: "example.com".to_owned(),
+            outcome: DiscoveryOutcome::ManualEntry { suggestion },
+            attempts: Vec::new(),
+        }
+    }
+
+    /// What `guess_common_names` produces for `example.com`.
+    fn guessed() -> AccountSettings {
+        AccountSettings {
+            imap: ServerSettings {
+                host: "imap.example.com".to_owned(),
+                port: 993,
+                encryption: postio_imap::discovery::Encryption::Tls,
+            },
+            smtp: ServerSettings {
+                host: "smtp.example.com".to_owned(),
+                port: 465,
+                encryption: postio_imap::discovery::Encryption::Tls,
+            },
+            email: "lena@example.com".to_owned(),
+            login: "lena@example.com".to_owned(),
+            display_name: None,
+            source: SettingsSource::Guess,
+            requires_app_password: false,
+            note: None,
+            password_help_url: None,
+        }
+    }
+
     use postio_imap::secret::MemorySecretStore;
 
     /// The account the store holds, if it holds one.
@@ -724,5 +787,56 @@ mod tests {
             Some(identity),
             "the repair rewrote the identity, orphaning anything pointing at it"
         );
+    }
+
+    #[test]
+    fn the_probe_asks_for_a_guess_when_nothing_is_published() {
+        // `postio-69`: the screen handed the user five empty boxes for the
+        // one domain shape least able to fill them in — a custom domain that
+        // publishes no autoconfig. The guess is off by default in
+        // `postio-imap` on purpose (an unverified guess presented as a
+        // *discovery* is worse than nothing); the composition root turns it
+        // on because `Status::Manual` presents it as a starting point to
+        // edit, which is a different claim.
+        assert!(
+            probe_options().guess_common_names,
+            "with the guess off there is nothing to prefill the manual form with"
+        );
+    }
+
+    #[test]
+    fn a_guess_reaches_the_form_as_a_prefill_rather_than_being_dropped() {
+        let status = status_for(&nothing_published(Some(guessed())));
+
+        let Status::Manual {
+            suggestion: Some(settings),
+        } = status
+        else {
+            panic!("the guess did not reach the form: {status:?}");
+        };
+        assert_eq!(settings.imap.host, "imap.example.com");
+        assert_eq!(settings.imap.port, 993);
+        assert_eq!(settings.smtp.host, "smtp.example.com");
+        assert_eq!(settings.smtp.port, 465);
+        assert_eq!(settings.login, "lena@example.com");
+    }
+
+    #[test]
+    fn a_guess_is_never_shown_as_a_discovery() {
+        // The whole reason the guess is safe to turn on. `Status::Found`
+        // says Postio looked this up; `Status::Manual` says "here is a
+        // starting point, check it". A guess must only ever be the second.
+        assert!(matches!(
+            status_for(&nothing_published(Some(guessed()))),
+            Status::Manual { .. }
+        ));
+    }
+
+    #[test]
+    fn a_domain_that_publishes_nothing_and_cannot_be_guessed_still_opens_the_form() {
+        assert!(matches!(
+            status_for(&nothing_published(None)),
+            Status::Manual { suggestion: None }
+        ));
     }
 }
