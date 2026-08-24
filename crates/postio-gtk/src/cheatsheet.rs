@@ -28,11 +28,18 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_core::{CommandId, Context, ContextSet, Keymap, registry};
 
+use crate::finder::Mode;
+
 /// One key the sheet lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    /// The command it runs.
-    pub id: CommandId,
+    /// The command it runs, when it runs one.
+    ///
+    /// `None` for the one box's prefixes: `>` and `#` and `@` are not
+    /// commands, they are what you type *inside* a surface a command opened.
+    /// They belong on the sheet all the same — a user who never reads docs
+    /// would otherwise never discover two thirds of the box.
+    pub id: Option<CommandId>,
     /// Its title, as the registry gives it.
     pub title: &'static str,
     /// The binding in force. `None` means palette-only — still worth listing,
@@ -51,6 +58,9 @@ pub struct Section {
 
 /// The heading a command reachable in every context is filed under.
 const EVERYWHERE: &str = "Everywhere";
+
+/// The heading the one box's prefixes are filed under.
+const IN_THE_BOX: &str = "In the search box";
 
 /// The heading for each context, in the order the sheet lays them out.
 fn heading(context: Context) -> &'static str {
@@ -88,7 +98,7 @@ pub fn sections(keymap: &Keymap) -> Vec<Section> {
 
     for spec in registry::all() {
         let row = Row {
-            id: spec.id,
+            id: Some(spec.id),
             title: spec.title,
             binding: keymap.binding(spec.id).map(str::to_owned),
         };
@@ -109,12 +119,43 @@ pub fn sections(keymap: &Keymap) -> Vec<Section> {
         }
     }
 
-    let mut out = Vec::with_capacity(sections.len() + 1);
+    let mut out = Vec::with_capacity(sections.len() + 2);
     if !everywhere.rows.is_empty() {
         out.push(everywhere);
     }
+    // Right after the keys that *open* the box, so the sheet reads "here is
+    // how to get there" and then "here is what you can type once you are".
+    if let Some(prefixes) = prefix_section() {
+        out.push(prefixes);
+    }
     out.extend(sections.into_iter().filter(|s| !s.rows.is_empty()));
     out
+}
+
+/// What the one box does with a leading `>`, `#` or `@`.
+///
+/// Generated from [`Mode::ALL`], which has always been documented as being in
+/// the order the sheet should list them and which until now nothing read. A
+/// mode added later appears here with no other edit — that is the whole point,
+/// and it is the acceptance criterion of `postio-2ee`.
+///
+/// [`Mode::Search`] is skipped: it has no prefix because it is what the box
+/// already is, and the key that opens it is `/`, which the registry lists.
+fn prefix_section() -> Option<Section> {
+    let rows: Vec<Row> = Mode::ALL
+        .into_iter()
+        .filter_map(|mode| {
+            Some(Row {
+                id: None,
+                title: mode.placeholder(),
+                binding: Some(mode.prefix()?.to_string()),
+            })
+        })
+        .collect();
+    (!rows.is_empty()).then_some(Section {
+        title: IN_THE_BOX,
+        rows,
+    })
 }
 
 /// How a row reads to a screen reader.
@@ -333,7 +374,7 @@ mod tests {
         let listed: Vec<CommandId> = sections(&defaults())
             .into_iter()
             .flat_map(|section| section.rows)
-            .map(|row| row.id)
+            .filter_map(|row| row.id)
             .collect();
 
         for spec in registry::all() {
@@ -355,7 +396,7 @@ mod tests {
             .find(|section| section.title == EVERYWHERE)
             .expect("an Everywhere section");
 
-        let ids: Vec<CommandId> = everywhere.rows.iter().map(|row| row.id).collect();
+        let ids: Vec<CommandId> = everywhere.rows.iter().filter_map(|row| row.id).collect();
         assert!(ids.contains(&CommandId::CommandPalette));
         assert!(ids.contains(&CommandId::Back));
         assert_eq!(
@@ -374,7 +415,9 @@ mod tests {
             .expect("a Message list section");
 
         assert!(
-            list.rows.iter().any(|row| row.id == CommandId::Archive),
+            list.rows
+                .iter()
+                .any(|row| row.id == Some(CommandId::Archive)),
             "archive works in the list, the thread and the reader; the sheet \
              says so once"
         );
@@ -383,7 +426,12 @@ mod tests {
             .iter()
             .find(|section| section.title == heading(Context::Composer))
             .expect("a Composing section");
-        assert!(composing.rows.iter().any(|row| row.id == CommandId::Send));
+        assert!(
+            composing
+                .rows
+                .iter()
+                .any(|row| row.id == Some(CommandId::Send))
+        );
     }
 
     #[test]
@@ -402,7 +450,7 @@ mod tests {
         let archive = sections(&defaults())
             .into_iter()
             .flat_map(|section| section.rows)
-            .find(|row| row.id == CommandId::Archive)
+            .find(|row| row.id == Some(CommandId::Archive))
             .expect("archive");
 
         assert_eq!(archive.binding.as_deref(), Some("a"));
@@ -418,7 +466,7 @@ mod tests {
         let archive = sections(&Keymap::resolve(&overrides))
             .into_iter()
             .flat_map(|section| section.rows)
-            .find(|row| row.id == CommandId::Archive)
+            .find(|row| row.id == Some(CommandId::Archive))
             .expect("archive");
 
         assert_eq!(
@@ -431,9 +479,14 @@ mod tests {
     #[test]
     fn a_command_with_no_key_is_still_listed() {
         // An empty keymap is what a build with every binding taken looks like.
+        //
+        // Commands only: the box's prefixes are also rows, but `>` is not a
+        // binding the keymap has any say over — it is a character you type
+        // into a surface — so an empty keymap does not silence one.
         let listed: Vec<Row> = sections(&Keymap::default())
             .into_iter()
             .flat_map(|section| section.rows)
+            .filter(|row| row.id.is_some())
             .collect();
 
         assert_eq!(listed.len(), registry::all().count());
@@ -447,7 +500,7 @@ mod tests {
     fn a_row_reads_as_a_sentence() {
         assert_eq!(
             spoken(&Row {
-                id: CommandId::Archive,
+                id: Some(CommandId::Archive),
                 title: "Archive",
                 binding: Some("a".to_owned()),
             }),
@@ -455,11 +508,74 @@ mod tests {
         );
         assert_eq!(
             spoken(&Row {
-                id: CommandId::Archive,
+                id: Some(CommandId::Archive),
                 title: "Archive",
                 binding: None,
             }),
             "Archive, no keyboard shortcut"
+        );
+    }
+
+    #[test]
+    fn the_sheet_teaches_every_prefix_the_one_box_understands() {
+        // `postio-2ee`: `?` is generated from the command registry, and the
+        // box's prefixes are not commands — so `>`, `#` and `@` appeared
+        // nowhere in the app's own teaching. A user who never reads docs
+        // would never discover two thirds of the box.
+        let section = sections(&defaults())
+            .into_iter()
+            .find(|section| section.title == IN_THE_BOX)
+            .expect("the sheet has no section for the box's prefixes");
+
+        // Driven from `Mode::ALL` rather than a written-out list, so adding a
+        // mode makes this test cover it without anyone editing the test —
+        // which is the same property the section itself has to have.
+        for mode in Mode::ALL {
+            let Some(prefix) = mode.prefix() else {
+                continue;
+            };
+            let row = section
+                .rows
+                .iter()
+                .find(|row| row.binding.as_deref() == Some(&prefix.to_string()))
+                .unwrap_or_else(|| panic!("`{prefix}` is not on the sheet"));
+            assert_eq!(
+                row.title,
+                mode.placeholder(),
+                "`{prefix}` is listed as something other than what it does"
+            );
+            assert!(
+                row.id.is_none(),
+                "a prefix is not a command and must not claim to run one"
+            );
+        }
+
+        assert_eq!(
+            section.rows.len(),
+            Mode::ALL
+                .into_iter()
+                .filter(|m| m.prefix().is_some())
+                .count(),
+            "the section is not generated from Mode::ALL — a mode added later \
+             would not appear"
+        );
+    }
+
+    #[test]
+    fn search_is_not_listed_as_a_prefix_because_it_has_none() {
+        // It is what the box already is; the key that opens it is `/`, which
+        // the registry lists as a command.
+        assert_eq!(Mode::Search.prefix(), None);
+        let section = sections(&defaults())
+            .into_iter()
+            .find(|section| section.title == IN_THE_BOX)
+            .expect("a prefix section");
+        assert!(
+            !section
+                .rows
+                .iter()
+                .any(|row| row.title == Mode::Search.placeholder()),
+            "search is listed as though it needed a prefix typed to reach it"
         );
     }
 
@@ -474,6 +590,9 @@ mod tests {
             titles,
             vec![
                 EVERYWHERE,
+                // Right after the keys that open the box, before the
+                // per-surface sections — see `sections`.
+                IN_THE_BOX,
                 heading(Context::List),
                 heading(Context::Composer),
                 heading(Context::Sidebar),

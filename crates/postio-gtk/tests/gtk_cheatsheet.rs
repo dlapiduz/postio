@@ -62,7 +62,10 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
     assert!(!sections.is_empty(), "and it has something in it");
     let listed: Vec<CommandId> = sections
         .iter()
-        .flat_map(|section| section.rows.iter().map(|row| row.id))
+        // `filter_map`: a row's command is optional now, because the box's
+        // prefixes are on the sheet and are not commands. Dropping the `None`s
+        // is what keeps the count below a count of *registry* entries.
+        .flat_map(|section| section.rows.iter().filter_map(|row| row.id))
         .collect();
     assert_eq!(
         listed.len(),
@@ -104,7 +107,7 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
         .sections()
         .into_iter()
         .flat_map(|section| section.rows)
-        .find(|row| row.id == CommandId::Archive)
+        .find(|row| row.id == Some(CommandId::Archive))
         .expect("archive");
     assert_eq!(archive.binding.as_deref(), Some("y"));
 
