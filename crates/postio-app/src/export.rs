@@ -172,6 +172,35 @@ pub async fn export_messages(
     Ok(written)
 }
 
+/// Write one message part into `into`, under the name the sender gave it.
+///
+/// The bytes come from [`crate::reading::part_bytes`], so a part that was
+/// never downloaded is fetched exactly as `s` fetches it — the user named
+/// this part by dragging it.
+///
+/// The filename is the panel's own [`postio_gtk::parts::save_name`], the same
+/// one the save dialog offers, so a part saved and a part dragged land under
+/// the same name. It already refuses to let a part called `../../.bashrc`
+/// steer where the file goes.
+pub async fn export_part(
+    database: &Database,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    into: &Path,
+    message: MessageId,
+    node: &postio_gtk::parts::Node,
+) -> Result<PathBuf, String> {
+    let attachment = node
+        .attachment
+        .ok_or("That part is not something with bytes of its own")?;
+    let bytes = crate::reading::part_bytes(database, blobs, engine, message, attachment).await?;
+
+    std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
+    let path = into.join(postio_gtk::parts::save_name(node));
+    std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
 /// Let the list hand messages to another application as files.
 ///
 /// The view layer offers the drag; this fills in the half it cannot have.
@@ -385,6 +414,121 @@ Half past twelve?\r\n";
             0,
             "nothing should have been written"
         );
+    }
+
+    /// A two-part message: a text body and a named attachment.
+    const WITH_ATTACHMENT: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
+To: Grace Hopper <grace@example.net>\r\n\
+Subject: The plan\r\n\
+Content-Type: multipart/mixed; boundary=\"edge\"\r\n\
+\r\n\
+--edge\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Attached.\r\n\
+--edge\r\n\
+Content-Type: text/csv\r\n\
+Content-Disposition: attachment; filename=\"figures.csv\"\r\n\
+\r\n\
+one,two\r\n\
+--edge--\r\n";
+
+    #[test]
+    fn an_exported_part_is_the_bytes_the_sender_attached() {
+        let world = world();
+        let parsed = postio_model::mime::parse(WITH_ATTACHMENT);
+        let message = {
+            let connection = world.database.connection().expect("a connection");
+            let mut message = Message::new(world.account.id, world.inbox, Utc::now());
+            message.subject = Some("The plan".into());
+            message.raw_blob_id = Some(world.blobs.put(WITH_ATTACHMENT).expect("a blob"));
+            message.attachments = parsed
+                .parts
+                .iter()
+                .map(|part| part.attachment.clone())
+                .collect();
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message")
+        };
+
+        let row = crate::reading::read_message(&world.database, message).expect("the row");
+        let attachment = row
+            .attachments
+            .iter()
+            .find(|part| part.filename.as_deref() == Some("figures.csv"))
+            .expect("the fixture has a named attachment, or this could not fail");
+
+        let node = postio_gtk::parts::Node {
+            part_id: attachment.part_id.clone().unwrap_or_default(),
+            depth: 1,
+            mime: attachment.mime_type.clone(),
+            filename: attachment.filename.clone(),
+            size: attachment.size,
+            downloaded: true,
+            last: true,
+            attachment: Some(attachment.id),
+        };
+
+        let into = tempfile::tempdir().expect("a directory");
+        let path = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime")
+            .block_on(export_part(
+                &world.database,
+                &world.blobs,
+                None,
+                into.path(),
+                message,
+                &node,
+            ))
+            .expect("it exports");
+
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "figures.csv",
+            "a dragged part must land under the name the save dialog would offer"
+        );
+        // No trailing CRLF: per RFC 2046 the line break before a boundary
+        // belongs to the boundary, not to the part, and the parser is right to
+        // take it off. The file is what the sender attached.
+        assert_eq!(std::fs::read(&path).expect("the file"), b"one,two");
+    }
+
+    #[test]
+    fn a_container_has_no_bytes_to_export() {
+        // `multipart/mixed` is a wrapper. Exporting it would write an empty
+        // file named after something that was never a file.
+        let world = world();
+        let message = world.message(Some("The plan"), Some(WITH_ATTACHMENT));
+        let node = postio_gtk::parts::Node {
+            part_id: String::new(),
+            depth: 0,
+            mime: "multipart/mixed".into(),
+            filename: None,
+            size: 0,
+            downloaded: true,
+            last: true,
+            attachment: None,
+        };
+
+        let into = tempfile::tempdir().expect("a directory");
+        let outcome = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime")
+            .block_on(export_part(
+                &world.database,
+                &world.blobs,
+                None,
+                into.path(),
+                message,
+                &node,
+            ));
+
+        assert!(outcome.is_err(), "{outcome:?}");
+        assert_eq!(std::fs::read_dir(into.path()).unwrap().count(), 0);
     }
 
     #[test]

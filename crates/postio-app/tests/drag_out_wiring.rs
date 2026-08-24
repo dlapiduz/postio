@@ -131,6 +131,64 @@ fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
         "the file another application opens is not the message the server sent"
     );
 
+    // ── and the reader's parts panel offers its attachments too ─────────
+    a_part_in_the_reader_can_be_dragged_out(&window);
+
     bridge.shutdown();
     let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+/// The parts panel is a second surface with the same failure mode: fully
+/// built, fully unit-tested, and offering nothing because nothing called
+/// `connect_export`.
+///
+/// This asserts the seam is wired and that a container is refused. What it
+/// does not do is drive a real fetch — `export::tests` covers the bytes, and
+/// getting a message *open* in the reader from here needs the activation
+/// round trip that `reading.rs` owns.
+fn a_part_in_the_reader_can_be_dragged_out(window: &Window) {
+    use postio_gtk::parts::Node;
+
+    let attachment = Node {
+        part_id: "2".into(),
+        depth: 1,
+        mime: "text/csv".into(),
+        filename: Some("figures.csv".into()),
+        size: 7,
+        downloaded: true,
+        last: true,
+        attachment: Some(postio_model::ids::AttachmentId::new(1)),
+    };
+    let container = Node {
+        part_id: String::new(),
+        depth: 0,
+        mime: "multipart/mixed".into(),
+        filename: None,
+        size: 0,
+        downloaded: true,
+        last: true,
+        attachment: None,
+    };
+
+    let offer = window.parts().drag_offer(&attachment).expect(
+        "the reader offers no way to drag an attachment out. Every layer under this one \
+         is tested and passes — check whether anything calls Parts::connect_export.",
+    );
+    let mimes: Vec<String> = offer
+        .formats()
+        .union_serialize_mime_types()
+        .mime_types()
+        .iter()
+        .map(|mime| mime.to_string())
+        .collect();
+    assert!(
+        mimes.iter().any(|mime| mime == "text/uri-list"),
+        "no file manager could take this drag: {mimes:?}"
+    );
+
+    assert!(
+        window.parts().drag_offer(&container).is_none(),
+        "a container is a wrapper, not a file: dragging one would write an empty \
+         file named after something that was never a file"
+    );
 }

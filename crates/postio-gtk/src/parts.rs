@@ -33,7 +33,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{gio, glib, pango};
+use gtk::{gdk, gio, glib, graphene, pango};
 use postio_model::Attachment;
 use postio_model::ids::AttachmentId;
 
@@ -296,6 +296,9 @@ mod imp {
         pub(super) on_external: RefCell<Vec<NodeHandler>>,
         pub(super) on_render_once: RefCell<Vec<NodeHandler>>,
         pub(super) on_dismissed: RefCell<Vec<Box<dyn Fn()>>>,
+        /// How a dragged part becomes a file. Empty in a build that never
+        /// wired it, in which case the panel offers nothing to drag.
+        pub(super) export: RefCell<Option<crate::drag_out::MaterialisePart>>,
     }
 
     #[glib::object_subclass]
@@ -502,6 +505,86 @@ impl PartsPanel {
     /// Called with the folder the user chose to save every part into.
     pub fn connect_save_all(&self, handler: impl Fn(&gio::File) + 'static) {
         self.imp().on_save_all.borrow_mut().push(Box::new(handler));
+    }
+
+    /// What a drag of `node` offers a receiver, or `None` when there is
+    /// nothing to offer.
+    ///
+    /// A container is refused: `multipart/mixed` is a wrapper, and exporting
+    /// it would write an empty file named after something that was never a
+    /// file. A part that has not been downloaded is *not* refused — the drop
+    /// fetches it, exactly as `s` does, because the user named it by dragging.
+    ///
+    /// Public because it is what the drag actually does, and a test that drove
+    /// anything else would be testing a copy of it.
+    pub fn drag_offer(&self, node: &Node) -> Option<gdk::ContentProvider> {
+        if !node.is_leaf() {
+            return None;
+        }
+        let export = self.imp().export.borrow().clone()?;
+        Some(crate::drag_out::LazyFiles::for_part(node.clone(), export).upcast())
+    }
+
+    /// The node whose row sits at `y` in the tree's coordinates.
+    ///
+    /// The row under the pointer rather than the cursor: a drag starts where
+    /// the hand is, and the two coincide only if the user happened to have
+    /// walked there with `j`.
+    fn row_at(&self, y: f64) -> Option<Node> {
+        let row = self.imp().tree.row_at_y(y as i32)?;
+        let index = usize::try_from(row.index()).ok()?;
+        self.imp().nodes.borrow().get(index).cloned()
+    }
+
+    /// The picture that follows the pointer while a part is dragged.
+    ///
+    /// The part's own name, so what is being carried is never in doubt — the
+    /// same reason the message list's drag image says how many messages are
+    /// moving rather than ghosting one row.
+    fn drag_icon(&self, node: &Node) -> Option<gdk::Paintable> {
+        let layout = self.create_pango_layout(Some(node.label()));
+        let (width, height) = layout.pixel_size();
+        let (pad_x, pad_y) = (10.0, 6.0);
+        let (w, h) = (width as f32 + pad_x * 2.0, height as f32 + pad_y * 2.0);
+
+        let snapshot = gtk::Snapshot::new();
+        snapshot.append_color(
+            &self.style_probe(&["postio-row-edge", "selected"]),
+            &graphene::Rect::new(0.0, 0.0, w, h),
+        );
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(pad_x, pad_y));
+        snapshot.append_layout(
+            &layout,
+            &self.style_probe(&["postio-row-ground", "check-mark"]),
+        );
+        snapshot.restore();
+        snapshot.to_paintable(Some(&graphene::Size::new(w, h)))
+    }
+
+    /// Read one role's colour off a throwaway node under this widget's
+    /// classes, so a scheme change moves the drag image with everything else.
+    fn style_probe(&self, classes: &[&str]) -> gdk::RGBA {
+        let probe = gtk::Label::new(None);
+        probe.set_css_classes(classes);
+        probe.set_parent(self);
+        let colour = probe.color();
+        probe.unparent();
+        colour
+    }
+
+    /// How a dragged part becomes a file, for a drop outside Postio.
+    ///
+    /// The same shape as [`connect_save`](Self::connect_save) and for the same
+    /// reason: this panel must not be able to fetch. It knows which part the
+    /// pointer is on; the bytes are the application's half.
+    ///
+    /// Dragging is never the only way out — `s` saves the part through the
+    /// file dialog, which is the portal under Flatpak. A pointer gesture that
+    /// was the sole path to an action would fail `/ux-architect`'s rule that
+    /// the mouse is equal to the keyboard rather than ahead of it.
+    pub fn connect_export(&self, materialise: crate::drag_out::MaterialisePart) {
+        self.imp().export.replace(Some(materialise));
     }
 
     /// Called when a part should go to the desktop's own handler.
@@ -788,6 +871,26 @@ impl PartsPanel {
             }
         ));
         self.add_controller(keys);
+
+        // Dragging a part out to the desktop. The row under the pointer, not
+        // the cursor: a drag starts where the hand is, and the two are only
+        // the same if the user happened to have walked there with `j`.
+        let drag = gtk::DragSource::new();
+        drag.set_actions(gdk::DragAction::COPY);
+        drag.connect_prepare(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            None,
+            move |source, _, y| {
+                let node = panel.row_at(y).filter(Node::is_leaf)?;
+                if let Some(icon) = panel.drag_icon(&node) {
+                    source.set_icon(Some(&icon), 12, 12);
+                }
+                panel.drag_offer(&node)
+            }
+        ));
+        self.imp().tree.add_controller(drag);
 
         self.refresh_detail();
     }
