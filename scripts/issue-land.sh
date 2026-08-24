@@ -62,6 +62,16 @@ echo "crates: ${CRATES:-none}"
 echo "target: $CARGO_TARGET_DIR"
 echo
 
+# rust-toolchain.toml pins the compiler, and RUSTUP_TOOLCHAIN in the
+# environment beats it -- this workstation's mise config sets it, so a
+# session builds, lints and tests on the wrong compiler while every gate here
+# looks green. A warning in the log is weaker than the pin was supposed to
+# give, so the value is captured for the diagnostic below and then cleared:
+# every cargo invocation from here on runs on whatever rust-toolchain.toml
+# names, whatever this shell exports. See docs/engineering-notes.md and #112.
+HOST_RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-}"
+unset RUSTUP_TOOLCHAIN
+
 # This worktree is private, so formatting the whole thing is safe here. In the
 # shared checkout it would reach into files another session has open, which is
 # why CLAUDE.md forbids it there and permits it here.
@@ -87,14 +97,16 @@ python3 scripts/check-no-gtk-init-in-unit-tests.py
 python3 scripts/check-runtime-crossings.py
 
 # rust-toolchain.toml pins the compiler, so CI and this shell agree by
-# construction -- unless RUSTUP_TOOLCHAIN is exported, which beats the file.
-# That is the one way the skew of issue #38 can come back, so it is said out
-# loud here rather than discovered in a CI log.
+# construction -- the gates above ran with RUSTUP_TOOLCHAIN cleared, so
+# `rustc --version` here reports the pinned compiler regardless of what this
+# shell exports.
 echo "--- toolchain ---"
 echo "local: $(rustc --version)"
 echo "pinned: $(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
-if [ -n "${RUSTUP_TOOLCHAIN:-}" ]; then
-    echo "warning: RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN overrides rust-toolchain.toml."
+if [ -n "$HOST_RUSTUP_TOOLCHAIN" ]; then
+    echo "note: this shell exports RUSTUP_TOOLCHAIN=$HOST_RUSTUP_TOOLCHAIN, which" \
+         "overrides rust-toolchain.toml -- cleared above, so the gates ran" \
+         "pinned regardless."
 fi
 
 [ "$GATES_ONLY" = 1 ] && { echo; echo "gates passed; nothing committed."; exit 0; }
