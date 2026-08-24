@@ -30,6 +30,15 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/dlapiduz/postio"
+# Postio is an application, and these crates are its internals. None of them is
+# published, and `cargo publish` on one would fail anyway -- they depend on each
+# other by path, which crates.io refuses.
+#
+# Saying so has two effects beyond preventing an accident. It is the truth, and
+# it is what lets `deny.toml`'s `allow-wildcard-paths` apply: cargo-deny treats
+# a publishable crate's path dependency as a wildcard, because a published crate
+# could not have one.
+publish = false
 
 [workspace.dependencies]
 postio-model   = { path = "crates/postio-model" }
