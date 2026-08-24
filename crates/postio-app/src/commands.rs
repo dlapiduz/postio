@@ -7,7 +7,7 @@
 //!
 //! # App state mirrors the window, and does it at send time
 //!
-//! Every message verb defaults to [`MessageTarget::Selection`], and
+//! Every message verb defaults to `MessageTarget::Selection`, and
 //! `AppState::resolve` is what turns that into rows. But the *selection* lives
 //! in the list widget: it is what the user built with `x`, Ctrl-click and
 //! `Ctrl+A`, and the list is the only thing that knows it.

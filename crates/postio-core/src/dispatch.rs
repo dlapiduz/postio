@@ -1,7 +1,7 @@
 //! The command bus: one dispatch path, whatever the user touched.
 //!
 //! A keystroke, a `Ctrl+K` palette row, a context-menu item and a click on a
-//! toolbar button all resolve — through the [`registry`](crate::registry) — to
+//! toolbar button all resolve — through the [`registry`] — to
 //! the same [`Command`], and the bus routes it to the one handler registered
 //! for its [`CommandId`]. Nothing else is allowed to mutate anything, which is
 //! why the mouse and the keyboard cannot drift apart and why a test can drive a

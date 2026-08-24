@@ -36,7 +36,7 @@
 //! ```
 //!
 //! "Raced" is a claim about *this* future, not about the socket underneath
-//! it — see [`transport`](self::transport)'s module docs for the one place
+//! it — see [`transport`]'s module docs for the one place
 //! that distinction is not free, and `postio-iigq` for the audit that found
 //! it.
 //!
@@ -72,9 +72,9 @@
 //!   dropped by a lost `select!` detaches the task rather than aborting it
 //!   — the blocking thread, and the socket it opened, run to whatever
 //!   `io-pim-discovery` itself decides is done, with no timeout of its own.
-//!   Realistically bounded rather than fixed: [`Onboarding::probe`]
+//!   Realistically bounded rather than fixed: `Onboarding::probe`
 //!   (`postio-gtk`) already refuses to start a second probe while
-//!   [`Status::is_busy`], so this is one abandoned request at a time, not an
+//!   `Status::is_busy`, so this is one abandoned request at a time, not an
 //!   accumulating pile of them, and it is the same shape of exposure typing
 //!   any address into any browser's address bar already has. Fixing it for
 //!   real needs a transport under this module's own control instead of

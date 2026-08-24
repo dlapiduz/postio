@@ -7,7 +7,7 @@
 //! read: every widget is main-thread only, and a query that blocked the main
 //! loop would cost frames on the one interaction that happens most.
 //!
-//! [`Store`] is both halves of that answer. It owns the connection pool, runs
+//! `Store` is both halves of that answer. It owns the connection pool, runs
 //! every query on a blocking thread through `tokio::task::spawn_blocking`, and
 //! hands back types built out of [`postio_model`] — which the frontend already
 //! depends on — rather than anything of `postio-storage`'s. The rows a

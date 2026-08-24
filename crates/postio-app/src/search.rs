@@ -299,7 +299,7 @@ type Held = Rc<std::cell::RefCell<Option<SearchResults>>>;
 ///
 /// The best match is what the canvas draws for a query just typed, and it is
 /// where the list's cursor lands — so this paints the first frame and
-/// [`follow_cursor`] takes over from the next keystroke on. Both go through
+/// `follow_cursor` takes over from the next keystroke on. Both go through
 /// [`preview`], so there is one path to the pane rather than two that can
 /// disagree.
 fn focus(
