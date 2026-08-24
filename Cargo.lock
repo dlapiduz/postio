@@ -2369,6 +2369,7 @@ dependencies = [
  "postio-search",
  "tempfile",
  "thiserror",
+ "tracing",
  "webkit6",
 ]
 

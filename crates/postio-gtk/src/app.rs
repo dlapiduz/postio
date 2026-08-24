@@ -39,7 +39,7 @@ pub fn run() -> glib::ExitCode {
     let timeline = Timeline::start();
 
     if adw::init().is_err() {
-        eprintln!("postio: no display; the UI needs a Wayland or X11 session");
+        tracing::error!("no display; the UI needs a Wayland or X11 session");
         return glib::ExitCode::FAILURE;
     }
     timeline.mark(Phase::Init);
@@ -48,7 +48,7 @@ pub fn run() -> glib::ExitCode {
     if let Err(error) = fonts::install() {
         // Recoverable: the design degrades to system fallbacks, which is
         // ugly but usable, and refusing to start over a font would be worse.
-        eprintln!("postio: {error}");
+        tracing::warn!(%error, "the embedded fonts did not install");
     }
     timeline.mark(Phase::Fonts);
 
@@ -137,7 +137,11 @@ fn report_first_frame(window: &Window, app: &adw::Application, timeline: &Timeli
     startup::on_first_frame(window, move || {
         timeline.mark(Phase::FirstFrame);
         if startup::enabled(startup::TRACE_ENV) {
-            eprintln!("postio: {}", timeline.report());
+            // Through tracing rather than straight to stderr, so it is
+            // filtered and formatted like everything else. `POSTIO_LOG=off`
+            // now silences it, which is the correct reading of `off`; the
+            // benchmark path is `POSTIO_STARTUP_EXIT` and does not read this.
+            tracing::info!("{}", timeline.report());
         }
         if startup::enabled(startup::EXIT_ENV) {
             app.quit();
