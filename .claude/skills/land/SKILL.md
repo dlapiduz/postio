@@ -54,6 +54,35 @@ of someone else's loose work; nothing was damaged, but only because those files
 happened to be formatted already. Use the same paths you will pass to
 `git commit --only`.
 
+`guard-shared-tree.py` now refuses a `rustfmt` whose file list came from an
+unscoped `git diff`/`ls-files`/`status`, so getting this wrong is a denied
+tool call rather than someone else's corrupted diff. The guard is the backstop;
+this paragraph is still the reason.
+
+**A bead may span crates — name every one of them.** Repeat the pathspec
+argument rather than widening it: `-- 'crates/postio-core/*.rs'
+'crates/postio-gtk/*.rs'` formats both and nothing else. Widening to
+`crates/` instead is *this bug reintroduced by someone following this skill*,
+and the guard refuses it. `postio-plp4` spanned two crates; an earlier bead
+spanned five.
+
+**Do not add `:(glob)` to the pathspec.** `crates/<your-crate>/*.rs` reaches
+`src/action.rs` and `benches/perf_budgets.rs` because in a **git pathspec**
+`*` crosses `/`, unlike a shell glob. Prefixing `:(glob)` switches on
+shell-style matching, where it does not — measured on this repository:
+
+| pathspec | files matched |
+|---|---|
+| `crates/postio-core/*.rs` | 24 |
+| `crates/postio-core/**/*.rs` | 24 |
+| `:(glob)crates/postio-core/*.rs` | **0** |
+| `:(glob)crates/postio-core/**/*.rs` | 24 |
+
+Zero matches formats nothing, and the chain still goes green — a failure
+indistinguishable from success, with your unformatted code in the commit.
+(`**/` is harmless either way; it is `:(glob)` with a single `*` that is the
+trap.)
+
 Three details in the command carry weight. It lists untracked files too —
 `git diff HEAD` alone silently skips a brand-new test file, which is exactly
 how unformatted code has reached a commit here before. `--diff-filter=d` drops
