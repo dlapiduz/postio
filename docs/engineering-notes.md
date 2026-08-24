@@ -954,6 +954,43 @@ Sweep it in the same change rather than letting both toolchains' output
 accumulate — that directory reached 232 GB before anyone looked.
 
 
+## Landing work
+
+**`gh pr checks` cannot tell "nothing will run" from "nothing has run yet",
+and `issue-land.sh` used to merge on the ambiguity.** It printed `no checks
+reported` in both cases, and the script read that as "prose-only change,
+nothing to wait for". Lost one way it cost a re-run — three consecutive
+first attempts on #92, #106 and #118. Lost the other, on #135, it merged a
+five-crate change before CI had started; CI passed afterwards, so nothing
+broke, but that was luck rather than the guarantee the script exists to
+provide. The whole reason it waits rather than using `gh pr merge --auto` is
+that auto-merge lands a PR before CI registers, and this path did the same
+thing (#139, #131).
+
+The fix is that **the branch's own diff decides, not `gh`**. The workflows'
+`on.pull_request` path filters are the authority on what a change schedules,
+and `scripts/ci-expected-workflows.py` reads them — including the `&prose`
+anchor/`*prose` alias that `ci.yml` uses to share one ignore list between its
+`push` and `pull_request` triggers. `scripts/wait-for-checks.sh` then polls
+for the checks it predicted and **refuses to merge** if one was due and never
+appeared, while still watching briefly on a branch that should schedule
+nothing, in case a rerun or `workflow_dispatch` produces one anyway.
+
+Two things to respect if you touch this:
+
+- **`gh pr checks` exit status cannot answer "is a check registered?"** It is
+  non-zero both while nothing has registered and when a check has failed.
+  Ask positively, with `gh pr checks --json name`, and treat `[]` as "no".
+- **GitHub filter patterns are not shell globs.** `*` and `?` stop at a
+  slash, `**` crosses them, and a later `!` pattern undoes an earlier match.
+  `'*.md'` in `ci.yml` therefore ignores top-level prose only, which is why a
+  hand-edit of the generated `docs/keybindings.md` still runs CI — the drift
+  test in `postio-core/tests/keybindings_doc.rs` depends on that.
+
+Both scripts have self-tests that CI runs: `test-ci-expected-workflows.py`,
+and `test-wait-for-checks.py`, which drives the wait against a stubbed `gh`
+so the registration race is reproducible instead of something you wait for.
+
 ## Working in a shared git tree
 
 These matter regardless of whether work is tracked in beads or GitHub Issues
