@@ -70,6 +70,16 @@ pub enum State {
         /// The actual error, phrased for the user. Never a shrug.
         reason: String,
     },
+    /// A search matched nothing.
+    ///
+    /// Separate from [`InboxZero`](State::InboxZero) because the mailbox is
+    /// not empty — the query is. Telling someone who searched for an invoice
+    /// that they have nothing left to triage is a different statement, and a
+    /// false one.
+    NoMatches {
+        /// What was searched for, shown back so what to widen is visible.
+        query: String,
+    },
 }
 
 /// How much of the pane a [`State`] takes.
@@ -93,7 +103,7 @@ impl State {
     /// to keep visible.
     pub fn placement(&self, item_count: u64) -> Placement {
         match self {
-            State::InboxZero { .. } => Placement::Full,
+            State::InboxZero { .. } | State::NoMatches { .. } => Placement::Full,
             State::Offline { .. } | State::Failing { .. } => {
                 if item_count == 0 {
                     Placement::Full
@@ -112,11 +122,34 @@ impl State {
 /// do not depend on the server being reachable at all — that is the whole
 /// point of "everything already synced still opens."
 ///
+/// `searching` is the query the list is showing results for, or `None` when
+/// it is showing a mailbox. It is passed in rather than inferred from the
+/// query box, because a box with text in it is not the same thing as a list
+/// showing that text's results — the box stays up after `Esc` puts the
+/// folder back.
+///
 /// [`ConnectionState::Connecting`] folds into [`State::Offline`]: from the
 /// user's chair both mean "not connected right now, local mail still
 /// works," and a fourth named state for a transition that resolves itself
 /// would be a state nobody could tell apart from the one before it.
-pub fn derive(status: &SyncStatus, item_count: u64, stored: u64, queued: u64) -> Option<State> {
+pub fn derive(
+    status: &SyncStatus,
+    item_count: u64,
+    stored: u64,
+    queued: u64,
+    searching: Option<&str>,
+) -> Option<State> {
+    // A search answers for itself, ahead of the connection. The index is
+    // local and it answered completely, so "Offline — reading local mail"
+    // over an empty result set would be true and useless: the local mail is
+    // exactly what was just searched. A search that *did* match still gets
+    // the connection's banner over its rows, because that is a fact about
+    // the rows rather than about the query.
+    if let Some(query) = searching.filter(|_| item_count == 0) {
+        return Some(State::NoMatches {
+            query: query.to_string(),
+        });
+    }
     match status.state {
         ConnectionState::Failing => Some(State::Failing {
             reason: status
@@ -199,6 +232,24 @@ fn describe(state: &State, now: Instant) -> Content {
             detail: format!("{reason} Local mail is untouched."),
             hints: vec![("Retry now", "R")],
         },
+        // The query is echoed back rather than described, because what to
+        // change is the thing the user cannot see from here: the box holds
+        // chips, and the operators they stand for are what actually ran.
+        //
+        // Quoted, and that is not decoration. Unquoted it renders as
+        // "Nothing in the local store matches from:ada invoice." -- prose
+        // and query in one face with nothing between them, which wraps
+        // mid-query and reads as a sentence. Quotes rather than a mono span,
+        // because a query is user-typed and a Pango markup span would mean
+        // escaping it; a label that renders `&` wrong is a worse bug than a
+        // face that is not quite the token.
+        State::NoMatches { query } => Content {
+            icon: "system-search-symbolic",
+            icon_class: "no-matches",
+            title: "No matches",
+            detail: format!("Nothing in the local store matches \u{201c}{query}\u{201d}."),
+            hints: vec![("Back to the folder", "Esc")],
+        },
     }
 }
 
@@ -212,7 +263,7 @@ mod imp {
         pub title: gtk::Label,
         pub detail: gtk::Label,
         pub hints: gtk::Box,
-        pub inputs: RefCell<(SyncStatus, u64, u64, u64)>,
+        pub inputs: RefCell<(SyncStatus, u64, u64, u64, Option<String>)>,
         pub tick: RefCell<Option<glib::SourceId>>,
     }
 
@@ -223,7 +274,7 @@ mod imp {
                 title: gtk::Label::new(None),
                 detail: gtk::Label::new(None),
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
-                inputs: RefCell::new((SyncStatus::default(), 0, 0, 0)),
+                inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
                 tick: RefCell::new(None),
             }
         }
@@ -308,7 +359,8 @@ impl ListStateView {
     /// there is nothing left to say — see [`State::placement`] for when
     /// having rows to show stops meaning that.
     pub fn set_status(&self, status: SyncStatus, item_count: u64, stored: u64, queued: u64) {
-        let inputs = (status, item_count, stored, queued);
+        let searching = self.imp().inputs.borrow().4.clone();
+        let inputs = (status, item_count, stored, queued, searching);
         // Cheap to call and cheap to call often: the row count moves with
         // every page the message list takes delivery of, and re-rendering
         // an unchanged state would also re-arm the age timer each time.
@@ -319,24 +371,39 @@ impl ListStateView {
         self.render();
     }
 
+    /// Say that the list is showing results for `query`, or a mailbox again.
+    ///
+    /// Its own setter rather than a fifth argument to
+    /// [`set_status`](Self::set_status): the status arrives from the sync
+    /// feed and the query from the search, they change on completely
+    /// different occasions, and a combined call would make each of them
+    /// carry a value it has no business knowing.
+    pub fn set_searching(&self, query: Option<String>) {
+        if self.imp().inputs.borrow().4 == query {
+            return;
+        }
+        self.imp().inputs.borrow_mut().4 = query;
+        self.render();
+    }
+
     /// The state currently on screen, if any.
     pub fn state(&self) -> Option<State> {
-        let (status, item_count, stored, queued) = self.imp().inputs.borrow().clone();
-        derive(&status, item_count, stored, queued)
+        let (status, item_count, stored, queued, searching) = self.imp().inputs.borrow().clone();
+        derive(&status, item_count, stored, queued, searching.as_deref())
     }
 
     fn render(&self) {
         let imp = self.imp();
         let now = Instant::now();
-        let (status, item_count, stored, queued) = imp.inputs.borrow().clone();
-        let state = derive(&status, item_count, stored, queued);
+        let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
+        let state = derive(&status, item_count, stored, queued, searching.as_deref());
 
         self.set_visible(state.is_some());
         if let Some(state) = &state {
             let content = describe(state, now);
 
             imp.icon.set_icon_name(Some(content.icon));
-            for class in ["inbox-zero", "offline", "failing"] {
+            for class in ["inbox-zero", "offline", "failing", "no-matches"] {
                 imp.icon.remove_css_class(class);
             }
             imp.icon.add_css_class(content.icon_class);
@@ -509,7 +576,7 @@ mod tests {
 
     #[test]
     fn an_empty_online_mailbox_is_inbox_zero() {
-        let derived = derive(&status(ConnectionState::Online), 0, 4291, 0);
+        let derived = derive(&status(ConnectionState::Online), 0, 4291, 0, None);
         assert_eq!(
             derived,
             Some(State::InboxZero {
@@ -520,8 +587,99 @@ mod tests {
     }
 
     #[test]
+    fn a_search_that_matched_nothing_does_not_claim_the_inbox_is_clear() {
+        // The same inputs that make an empty mailbox `InboxZero`. What
+        // changes the answer is that the emptiness belongs to the query.
+        let derived = derive(
+            &status(ConnectionState::Online),
+            0,
+            4291,
+            0,
+            Some("from:ada invoice"),
+        );
+        assert_eq!(
+            derived,
+            Some(State::NoMatches {
+                query: "from:ada invoice".to_string(),
+            })
+        );
+        // Nothing underneath it to keep visible.
+        assert_eq!(derived.unwrap().placement(0), Placement::Full);
+    }
+
+    #[test]
+    fn a_search_answers_for_itself_whatever_the_connection_is_doing() {
+        // The index is local and it answered completely, so a connection
+        // state over an empty result set would be true and useless -- the
+        // local mail is exactly what was just searched.
+        for state in [
+            ConnectionState::Offline,
+            ConnectionState::Connecting,
+            ConnectionState::Failing,
+        ] {
+            assert!(
+                matches!(
+                    derive(&status(state), 0, 4291, 2, Some("invoice")),
+                    Some(State::NoMatches { .. })
+                ),
+                "{state:?} spoke over the search"
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_that_found_something_still_hears_about_the_connection() {
+        // The banner is a fact about the rows, not about the query, so
+        // finding hits does not silence it.
+        assert_eq!(
+            derive(
+                &status(ConnectionState::Online),
+                14,
+                4291,
+                0,
+                Some("invoice")
+            ),
+            None,
+            "a search with hits invented a state of its own"
+        );
+        let derived = derive(
+            &status(ConnectionState::Offline),
+            14,
+            4291,
+            2,
+            Some("invoice"),
+        );
+        assert_eq!(derived, Some(State::Offline { queued: 2 }));
+        assert_eq!(
+            derived.unwrap().placement(14),
+            Placement::Banner,
+            "the hits were hidden behind the connection"
+        );
+    }
+
+    #[test]
+    fn the_no_matches_plate_says_the_query_and_the_way_out() {
+        let content = describe(
+            &State::NoMatches {
+                query: "from:ada invoice".to_string(),
+            },
+            Instant::now(),
+        );
+        assert!(
+            content.detail.contains("from:ada invoice"),
+            "the plate does not say what was searched for: {}",
+            content.detail
+        );
+        // Never a dead end: every named state names a key.
+        assert_eq!(content.hints, vec![("Back to the folder", "Esc")]);
+    }
+
+    #[test]
     fn a_populated_online_mailbox_has_no_named_state() {
-        assert_eq!(derive(&status(ConnectionState::Online), 12, 4291, 0), None);
+        assert_eq!(
+            derive(&status(ConnectionState::Online), 12, 4291, 0, None),
+            None
+        );
     }
 
     #[test]
@@ -534,7 +692,7 @@ mod tests {
         // lived: this state was always right, only how much of the pane it
         // took was wrong.
         assert_eq!(
-            derive(&status(ConnectionState::Offline), 12, 0, 2),
+            derive(&status(ConnectionState::Offline), 12, 0, 2, None),
             Some(State::Offline { queued: 2 })
         );
     }
@@ -574,7 +732,7 @@ mod tests {
     #[test]
     fn connecting_reads_the_same_as_offline() {
         assert_eq!(
-            derive(&status(ConnectionState::Connecting), 0, 0, 0),
+            derive(&status(ConnectionState::Connecting), 0, 0, 0, None),
             Some(State::Offline { queued: 0 })
         );
     }
@@ -587,14 +745,14 @@ mod tests {
             ..SyncStatus::default()
         };
         assert_eq!(
-            derive(&with_reason, 0, 0, 0),
+            derive(&with_reason, 0, 0, 0, None),
             Some(State::Failing {
                 reason: "AUTHENTICATIONFAILED".to_string(),
             })
         );
 
         let without_reason = status(ConnectionState::Failing);
-        let State::Failing { reason } = derive(&without_reason, 0, 0, 0).unwrap() else {
+        let State::Failing { reason } = derive(&without_reason, 0, 0, 0, None).unwrap() else {
             panic!("failing status did not produce a failing state");
         };
         assert!(!reason.is_empty(), "a failing state never shows nothing");
@@ -611,6 +769,9 @@ mod tests {
             State::Offline { queued: 2 },
             State::Failing {
                 reason: "IMAP rejected the credentials.".to_string(),
+            },
+            State::NoMatches {
+                query: "from:ada invoice".to_string(),
             },
         ] {
             let content = describe(&state, now);
@@ -633,6 +794,9 @@ mod tests {
             State::Offline { queued: 0 },
             State::Failing {
                 reason: "IMAP rejected the credentials.".to_string(),
+            },
+            State::NoMatches {
+                query: "from:ada invoice".to_string(),
             },
         ] {
             let content = describe(&state, now);

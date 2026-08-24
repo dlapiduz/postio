@@ -356,6 +356,17 @@ fn main() -> glib::ExitCode {
     if flag("onboarding") {
         show_onboarding(&window, flag("manual"), flag("failed"));
     }
+    // The list pane's fourth named state. `long` is the one worth looking at:
+    // a query is user-typed and unbounded, and it is the only thing any of
+    // these plates interpolates that the application does not control the
+    // length of.
+    if flag("nomatches") {
+        window.set_searching(Some(if flag("long") {
+            "from:ada subject:\"quarterly invoice\" has:attachment after:2026-01-01 before:2026-06-30"
+        } else {
+            "from:ada invoice"
+        }));
+    }
     window.present();
     settle(&window);
     // The thread column asks for the keyboard on the way in, and the focus
