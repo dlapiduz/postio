@@ -551,7 +551,10 @@ impl Window {
                         mailbox.counts.unread,
                     );
                 }
-                feed.open(id);
+                // The sidebar deals in row ids; everything below here deals
+                // in scopes, because "Flagged" is a query and has no folder
+                // to name.
+                feed.open(folders.scope_of(id));
             })
         };
 

@@ -18,7 +18,7 @@ use chrono::{TimeZone, Utc};
 use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
-use postio_gtk::feed::{Feed, MessageSource, Page, PageFuture, PageRequest};
+use postio_gtk::feed::{Feed, FeedScope, MessageSource, Page, PageFuture, PageRequest};
 use postio_gtk::list::{MessageList, MessageRow, PAGE_SIZE, Row};
 use postio_model::ids::{MailboxId, MessageId};
 
@@ -37,6 +37,15 @@ struct Fake {
     totals: RefCell<Vec<(i64, u32)>>,
     /// Mailboxes whose reads fail, and why.
     broken: RefCell<Vec<(i64, String)>>,
+}
+
+/// The folder a request names. These tests open folders, not smart folders —
+/// `gtk_flagged.rs` is where the query scope is exercised.
+fn scope_mailbox(request: &PageRequest) -> MailboxId {
+    request
+        .scope
+        .mailbox()
+        .expect("these tests open folders, not queries")
 }
 
 impl Fake {
@@ -75,10 +84,10 @@ impl MessageSource for Fake {
             .broken
             .borrow()
             .iter()
-            .find(|(id, _)| MailboxId::new(*id) == request.mailbox)
+            .find(|(id, _)| MailboxId::new(*id) == scope_mailbox(&request))
             .map(|(_, reason)| reason.clone());
-        let total = self.total_of(request.mailbox);
-        let mailbox = request.mailbox;
+        let total = self.total_of(scope_mailbox(&request));
+        let mailbox = scope_mailbox(&request);
         Box::pin(async move {
             if let Some(reason) = broken {
                 return Err(reason);
@@ -136,12 +145,12 @@ fn the_message_list_is_fed_from_the_runtime() {
 
     assert_eq!(list.n_items(), 0, "nothing is showing before a mailbox is");
 
-    feed.open(MailboxId::new(INBOX));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
     assert_eq!(feed.mailbox(), Some(MailboxId::new(INBOX)));
     assert_eq!(
         source.drain(),
         [PageRequest {
-            mailbox: MailboxId::new(INBOX),
+            scope: FeedScope::Mailbox(MailboxId::new(INBOX)),
             page: 0,
             offset: 0,
             limit: PAGE_SIZE,
@@ -184,8 +193,8 @@ fn the_message_list_is_fed_from_the_runtime() {
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
 
-    feed.open(MailboxId::new(INBOX));
-    feed.open(MailboxId::new(ARCHIVE));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(FeedScope::Mailbox(MailboxId::new(ARCHIVE)));
     settle();
 
     assert_eq!(
@@ -203,7 +212,7 @@ fn the_message_list_is_fed_from_the_runtime() {
     let source = Fake::new().holding(INBOX, 200);
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
-    feed.open(MailboxId::new(INBOX));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
     settle();
 
     // Hold the object at a position the way a selection model does.
@@ -237,7 +246,7 @@ fn the_message_list_is_fed_from_the_runtime() {
     let source = Fake::new().holding(INBOX, 500);
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
-    feed.open(MailboxId::new(INBOX));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
     settle();
 
     // Reach into a second page so there is more than one to be wrong about.
@@ -270,7 +279,7 @@ fn the_message_list_is_fed_from_the_runtime() {
     let source = Fake::new().holding(INBOX, 120);
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
-    feed.open(MailboxId::new(INBOX));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
     settle();
     assert_eq!(list.n_items(), 120);
 
@@ -297,7 +306,7 @@ fn the_message_list_is_fed_from_the_runtime() {
         move |reason| reported.borrow_mut().push(reason)
     });
 
-    feed.open(MailboxId::new(INBOX));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
     settle();
 
     assert_eq!(
