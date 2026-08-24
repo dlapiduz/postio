@@ -1,4 +1,4 @@
-//! Perf budgets from spec.md §18, encoded as thresholds rather than hoped
+//! Perf budgets from docs/PRODUCT.md §18, encoded as thresholds rather than hoped
 //! for. `postio-core` hosts this because it is the crate every frontend and
 //! subsystem eventually calls through, and because it is deliberately
 //! UI-agnostic — the budgets apply to the assembled app, not to GTK.

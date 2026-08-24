@@ -3,7 +3,7 @@
 //! `postio-cfd.2`: `ToggleSidebar` was the only sidebar command in the
 //! registry and `Context` had no sidebar variant, so the folder list — the
 //! main axis of navigation after the message list — could only be reached by
-//! pointing at it. That is a direct violation of spec.md §8 and of the
+//! pointing at it. That is a direct violation of docs/PRODUCT.md §8 and of the
 //! project's second principal.
 //!
 //! What is asserted here is the round trip a keyboard user actually makes:

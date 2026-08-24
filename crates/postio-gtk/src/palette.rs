@@ -2,7 +2,7 @@
 //!
 //! # Why it exists
 //!
-//! spec.md §8 asks that every command be reachable without memorizing a
+//! docs/PRODUCT.md §8 asks that every command be reachable without memorizing a
 //! binding. The palette is that promise kept: it is generated from
 //! [`postio_core::registry`], so a command that exists is a command that can be
 //! found, and one that gains a binding shows it here without anybody editing a

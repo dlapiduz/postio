@@ -8,7 +8,7 @@
 //!
 //! # The registry is the source of truth
 //!
-//! spec.md §8 requires every command to have a keyboard shortcut, a
+//! docs/PRODUCT.md §8 requires every command to have a keyboard shortcut, a
 //! command-palette entry and an accessible action. Rather than three lists that
 //! drift, there is one enumerable table — [`registry`] — and the keymap, the
 //! `Ctrl+K` palette, the `?` cheat sheet, the right-click menu and the key

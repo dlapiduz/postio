@@ -8,7 +8,7 @@
 //!
 //! **Every provider is one row.** No named constant, no special-cased branch,
 //! no identifier that mentions a vendor. Adding the next provider is adding a
-//! [`Preset`] to [`PRESETS`] and nothing else; `spec.md` §3 asks for exactly
+//! [`Preset`] to [`PRESETS`] and nothing else; `docs/PRODUCT.md` §3 asks for exactly
 //! that, and it is what keeps Postio a mail client rather than one provider's
 //! client.
 

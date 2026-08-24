@@ -20,7 +20,7 @@
 //! | 5,000 | 205 |
 //!
 //! So a 60,000-message mailbox costs 205 row widgets, not 60,000, and
-//! `spec.md` §18's "never materialise a mailbox" was never being violated.
+//! `docs/PRODUCT.md` §18's "never materialise a mailbox" was never being violated.
 //!
 //! What that leaves is a real cost — filling those rows, once, when a list is
 //! first populated — paid per *widget* rather than per item. That is why the

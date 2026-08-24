@@ -16,7 +16,7 @@
 //!
 //! # The modes
 //!
-//! spec.md §9, at the widths canvas 1b's proportions actually need:
+//! docs/PRODUCT.md §9, at the widths canvas 1b's proportions actually need:
 //!
 //! | Mode | Window | Shows |
 //! |---|---|---|

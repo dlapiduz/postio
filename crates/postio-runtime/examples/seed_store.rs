@@ -1,6 +1,6 @@
 //! Fill a store with a realistic mailbox, for measuring against.
 //!
-//! `postio-88b` asks whether the assembled application meets spec.md §18's
+//! `postio-88b` asks whether the assembled application meets docs/PRODUCT.md §18's
 //! budgets on a *realistic account*, and an empty database answers nothing:
 //! startup on no mail is fast for the wrong reason. This writes one.
 //!

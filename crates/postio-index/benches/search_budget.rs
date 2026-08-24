@@ -1,4 +1,4 @@
-//! The search half of spec.md §18's `<100 ms` budget (CLAUDE.md), gated on a
+//! The search half of docs/PRODUCT.md §18's `<100 ms` budget (CLAUDE.md), gated on a
 //! corpus large enough to be honest about it: 120,000 messages, one account.
 //!
 //! Four query shapes, chosen to stress different parts of `search`:
@@ -48,7 +48,7 @@ use postio_search::parse;
 use postio_storage::repository::MessageRepository;
 use postio_storage::{Database, test_support};
 
-/// spec.md §18 / CLAUDE.md: local search must resolve in under this.
+/// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 
 /// Large enough that an index gap shows up as milliseconds, not microseconds.

@@ -88,7 +88,7 @@ enum Destination {
 /// The second variant is the whole of `postio-agr.1`. A whole-mailbox
 /// selection arrives here as a predicate and has to leave here as a predicate:
 /// turning it into rows — even briefly, even only to count them — is the
-/// mailbox-sized read spec.md §18 forbids and the 16 ms budget cannot afford.
+/// mailbox-sized read docs/PRODUCT.md §18 forbids and the 16 ms budget cannot afford.
 enum Aim {
     /// These messages, read out of the store.
     Rows(Vec<Message>),

@@ -1,6 +1,6 @@
 //! The command registry: one table, every surface.
 //!
-//! spec.md §8 asks that every command have a keyboard shortcut, a
+//! docs/PRODUCT.md §8 asks that every command have a keyboard shortcut, a
 //! command-palette entry and an accessible UI action. Three hand-maintained
 //! lists would drift apart within a release; one enumerable table cannot. The
 //! keymap, the `Ctrl+K` palette, the `?` cheat sheet, the right-click context
@@ -9,15 +9,17 @@
 //!
 //! # Where the bindings come from
 //!
-//! The design canvas, not spec.md §8 — the canvas is newer and CLAUDE.md says
-//! it wins: `e` reply, `a` archive, `A` archive thread, `u` undo, `t` thread.
+//! The design canvas: `e` reply, `a` archive, `A` archive thread, `u` undo,
+//! `t` thread. The original brief proposed `r` for reply; the canvas was newer
+//! and won, and docs/PRODUCT.md §8 records the resolution rather than the
+//! argument.
 //! The ids and their defaults are the same vocabulary `postio-config`'s
 //! `DEFAULT_BINDINGS` fixed, so `[keys]` overrides land on the right command.
 //! Everything here is a *default*; the user's `[keys]` wins at resolve time.
 //!
 //! # Destructive commands
 //!
-//! spec.md §1 requires that destructive operations be confirmed or undoable.
+//! docs/PRODUCT.md §1 requires that destructive operations be confirmed or undoable.
 //! [`CommandSpec::destructive`] and [`CommandSpec::recovery`] make that
 //! machine-checkable rather than a review habit: a destructive command with no
 //! [`Recovery`] fails the test suite.
@@ -38,7 +40,7 @@ pub enum Recovery {
     /// Nothing to recover from; the command changed no durable state.
     None,
     /// Reversible from the undo stack, and worth an "— Undo" toast
-    /// (spec.md §16: *Archived 12 messages — Undo*).
+    /// (docs/PRODUCT.md §16: *Archived 12 messages — Undo*).
     Undo,
     /// Irreversible enough to ask first.
     Confirm,
@@ -251,7 +253,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "a",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
-        // Sweeping a screenful out of the inbox is exactly the case spec.md §16
+        // Sweeping a screenful out of the inbox is exactly the case docs/PRODUCT.md §16
         // wants a toast for.
         destructive: true,
         recovery: Recovery::Undo,
@@ -295,8 +297,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::MarkUnread,
         title: "Mark unread",
-        // spec.md §8 wanted `u`, but the canvas gives `u` to undo and the
-        // canvas wins; shifted, like the other second-choice actions.
+        // `u` belongs to undo (docs/PRODUCT.md §16), so mark-unread is
+        // shifted, like the other second-choice actions. The original brief
+        // proposed `u` here and lost that argument to the canvas.
         default_binding: "U",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),

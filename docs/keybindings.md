@@ -7,8 +7,8 @@ change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-core`. --
 Every command below is also in the `Ctrl+K` palette and the `?` cheat
 sheet, because all three are generated from one table.
 
-Bindings come from the design canvas, which is newer than `spec.md` §8
-and wins where they disagree — `e` replies, not `r`.
+Bindings come from the design canvas — `e` replies, not `r`.
+`docs/PRODUCT.md` §8 records that resolution; this table is the registry.
 
 ## Rebinding
 

@@ -1,6 +1,6 @@
 //! What a scroll frame costs in the message list.
 //!
-//! spec.md §18 gives an ordinary interaction 16ms, and scrolling the list is
+//! docs/PRODUCT.md §18 gives an ordinary interaction 16ms, and scrolling the list is
 //! the interaction that happens most. `postio_gtk::row` draws a row in one
 //! `snapshot()` precisely to stay inside that; this bench is what says
 //! whether it does.

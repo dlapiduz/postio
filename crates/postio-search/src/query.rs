@@ -46,8 +46,9 @@ impl Span {
 
 /// The operator keywords Postio understands.
 ///
-/// The spellings come from the design canvas (artboard 2b), which supersedes
-/// `spec.md` §7 where they disagree: it is `has:attach` and `is:flagged`.
+/// The spellings come from the design canvas (artboard 2b) and are recorded in
+/// `docs/PRODUCT.md` §7: it is `has:attach` and `is:flagged`, with the older
+/// `has:attachment` and `is:starred` accepted as aliases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Field {
     /// `from:` — sender address or display name.

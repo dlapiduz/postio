@@ -219,8 +219,9 @@ rule, never the value — because CI logs on a public repository are public, and
 a check that printed what it found would publish exactly what it protects. Use
 `python3 scripts/check-no-personal-data.py --reveal` locally while fixing.
 
-Providers are **data, not code**. `spec.md` §3 requires provider configuration
-to be extensible rather than hard-coded, so server settings belong in a preset
+Providers are **data, not code**. `docs/PRODUCT.md` §3 requires provider
+configuration to be extensible rather than hard-coded, so server settings
+belong in a preset
 table where every provider is one row — never a named constant, a special-cased
 branch, or an identifier like `ICLOUD_IMAP_HOST`. Postio is not an iCloud
 client; iCloud is one preset among many, and the maintainer's own provider must
@@ -348,16 +349,22 @@ fixtures. Two CI checks enforce this; run them before you commit.
 ## Design and scope
 
 - **Approved plan:** `~/.claude/plans/ethereal-fluttering-kettle.md`
-- **Product spec:** `spec.md`
+- **Product spec:** `docs/PRODUCT.md`
 - **Design canvas:** `Design/Mail Client.dc.html` — the chosen direction is
   **PLATE (option 1b)**: airy desktop, 40px rows, key hints on the focused row only.
 
-Where `spec.md` and the design canvas disagree, **the canvas wins** (it is newer):
+`docs/PRODUCT.md` records the resolved product decisions and already agrees
+with the canvas — where the two once differed, the canvas was newer and won,
+and the resolution is now simply what the document says:
 
-- Keys are `e` reply, `a` archive, `A` archive thread, `u` undo, `t` thread —
-  *not* spec.md §8's `r` reply. All bindings are overridable via `[keys]`.
+- Keys are `e` reply, `a` archive, `A` archive thread, `u` undo, `t` thread.
+  Every binding is overridable via `[keys]`; the table is `docs/keybindings.md`,
+  generated from the registry.
 - Compose takes over the reading pane; it is not a separate window.
 - The sidebar says "Flagged", not "Starred".
+
+The **canvas remains the authority on visual detail** — spacing, colour,
+proportion. `docs/PRODUCT.md` §19 defers to it rather than restating it.
 
 Visual target: keep the Industry design system's *identity* — Barlow / Barlow
 Condensed / IBM Plex Mono, steel accent `#5980a6`, hairline dividers, airy rows,
@@ -373,10 +380,10 @@ E12 so the core mail experience lands first.
 
 ### Docs site and landing page
 
-`spec.md`, the design canvas, and this file are written for contributors, not
-users — none of them are where someone deciding whether to try Postio should
-land. The project has two more surfaces, both GitHub Pages, both tracked as
-GitHub issues:
+`docs/PRODUCT.md`, the design canvas, and this file are written for
+contributors, not users — none of them are where someone deciding whether to
+try Postio should land. The project has two more surfaces, both GitHub Pages,
+both tracked as GitHub issues:
 
 - **A docs site** that documents the *app*: what it does, keyboard shortcuts,
   the `config.toml` reference, the privacy/security posture. Shortcut and
@@ -386,7 +393,7 @@ GitHub issues:
 - **A landing page** that is deliberately more human than the docs site or the
   README: the north star line as the actual headline, plain language, real
   screenshots of the running app, and a link into the docs site for anyone
-  who wants depth. Not a restatement of `spec.md`.
+  who wants depth. Not a restatement of `docs/PRODUCT.md`.
 
 ### The roadmap is grouped into epics
 

@@ -12,15 +12,15 @@ at all — is `/ux-architect`. Load that one first when designing something new;
 this one when building it.
 
 Postio should look like a premium application that happens to be built with
-GTK, not like "a GTK developer made an email client" (`spec.md` §19). That is a
-consistency problem more than a taste problem: the identity already exists, and
-the job is to apply it the same way every time.
+GTK, not like "a GTK developer made an email client" (`docs/PRODUCT.md` §19).
+That is a consistency problem more than a taste problem: the identity already
+exists, and the job is to apply it the same way every time.
 
 **Before designing a screen, look at the source of truth.** `Design/Mail
 Client.dc.html` is the approved canvas; the chosen direction is **PLATE
 (option 1b)** — airy native desktop, 40px rows, real breathing room, key hints
-revealed on the focused row only. Where the canvas and `spec.md` disagree, the
-canvas wins.
+revealed on the focused row only. `docs/PRODUCT.md` §19 defers to the canvas on
+visual detail rather than restating it, so the canvas is where you look.
 
 ---
 
@@ -137,7 +137,7 @@ The budget is a functional requirement, not a preference: <500ms to usable UI,
 
 ## 5. Accessibility is part of the design
 
-Not a later pass (`spec.md` §20):
+Not a later pass (`docs/PRODUCT.md` §20):
 
 - Every custom widget gets an accessible name and role — including list rows
 - Visible focus ring from the accent token; logical focus order

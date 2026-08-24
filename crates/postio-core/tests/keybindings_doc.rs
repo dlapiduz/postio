@@ -1,7 +1,7 @@
 //! `docs/keybindings.md` is generated from the command registry.
 //!
 //! A hand-written key reference is wrong within a release — that is the whole
-//! reason the registry exists (spec.md §8: one table, every surface). So the
+//! reason the registry exists (docs/PRODUCT.md §8: one table, every surface). So the
 //! document is rendered from [`registry::all()`] and this test fails when the
 //! file on disk no longer matches, with `POSTIO_UPDATE_DOCS=1` to rewrite it.
 //!
@@ -64,8 +64,8 @@ fn render() -> String {
          Every command below is also in the `Ctrl+K` palette and the `?` cheat\n\
          sheet, because all three are generated from one table.\n\
          \n\
-         Bindings come from the design canvas, which is newer than `spec.md` §8\n\
-         and wins where they disagree — `e` replies, not `r`.\n\
+         Bindings come from the design canvas — `e` replies, not `r`.\n\
+         `docs/PRODUCT.md` §8 records that resolution; this table is the registry.\n\
          \n\
          ## Rebinding\n\
          \n\

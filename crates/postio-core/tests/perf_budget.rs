@@ -1,4 +1,4 @@
-//! spec.md §18 encodes three perf budgets as hard requirements, not
+//! docs/PRODUCT.md §18 encodes three perf budgets as hard requirements, not
 //! aspirations. This test is the CI-reliable half of enforcing them: it is a
 //! deterministic check on a `Duration` value, not a wall-clock measurement,
 //! so it runs in the ordinary `cargo test` job without the timing noise a

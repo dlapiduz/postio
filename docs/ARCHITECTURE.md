@@ -102,7 +102,7 @@ its own loop. No GTK type appears in that module, and none may.
 
 ### 2. The registry is the source of truth for every command surface
 
-`spec.md` §8 wants every command to have a keyboard shortcut, a palette entry
+`PRODUCT.md` §8 wants every command to have a keyboard shortcut, a palette entry
 and an accessible action. There is **one enumerable table** — `postio-core::registry` —
 and the keymap, the `Ctrl+K` palette, the `?` cheat sheet, the right-click menu,
 the key hints on the focused row and `docs/keybindings.md` are all *derived*
@@ -180,7 +180,7 @@ anything. This is why `Event::SelectionChanged` carries the selection rather
 than a list of ids: an event that flattened it would undo the reason it exists.
 
 Related: **the message list is never loaded into memory.** It is windowed over
-paged SQLite (`spec.md` §18).
+paged SQLite (`PRODUCT.md` §18).
 
 ### 5. Undo replays inverses through the same machinery
 
@@ -242,7 +242,7 @@ are how you get a *view*; mailboxes are where mail *is*.
 
 ### 7. Providers are data, not code
 
-`spec.md` §3 requires provider configuration to be extensible rather than
+`PRODUCT.md` §3 requires provider configuration to be extensible rather than
 hard-coded. Server settings belong in a preset table where every provider is
 one row — never a named constant, never a special-cased branch, never an
 identifier like `ICLOUD_IMAP_HOST`.
@@ -347,12 +347,12 @@ When adding anything that could make a network request, the question is not
 
 ### 12. AI is a founding principle and is deliberately absent from v1
 
-`spec.md` §23 is explicit: the MVP ships without AI, because core mail, search
+`PRODUCT.md` §23 is explicit: the MVP ships without AI, because core mail, search
 and the keyboard have to be excellent first. Epic E12 holds the work.
 
 Two constraints already decided, before any of it is built:
 
-- **AI must never silently modify or send mail** (`spec.md` §12). Read and
+- **AI must never silently modify or send mail** (`PRODUCT.md` §12). Read and
   search tools may be exposed relatively freely; **every externally visible
   action — send, forward, delete, move, mark read — requires explicit human
   confirmation in the Postio UI.**

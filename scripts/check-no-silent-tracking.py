@@ -31,7 +31,7 @@ catching: nobody adds a tracker on purpose.
 
 Consent must be per-message and deliberate. Never a setting that defaults on,
 never on render, never prefetched. See CLAUDE.md, "Privacy is a feature, not a
-setting", and spec.md §17.
+setting", and docs/PRODUCT.md §21.
 
 # Exit status
 

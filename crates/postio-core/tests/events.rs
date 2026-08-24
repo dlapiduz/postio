@@ -93,7 +93,7 @@ fn events_cover_the_repaint_surface() {
 
 #[test]
 fn an_undoable_action_announces_itself() {
-    // spec.md §16: "Archived 12 messages — Undo" is driven by this pairing.
+    // docs/PRODUCT.md §16: "Archived 12 messages — Undo" is driven by this pairing.
     let command = Command::Archive {
         target: MessageTarget::Selection,
     };

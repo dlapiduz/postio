@@ -19,7 +19,7 @@
 //! # Giving up is a decision, not a silence
 //!
 //! After [`RetryPolicy::max_attempts`] the operation is *failed*, which means
-//! the user is told — see `Drainer` and spec.md §16. It is never dropped:
+//! the user is told — see `Drainer` and docs/PRODUCT.md §16. It is never dropped:
 //! silently discarding a mutation the user watched happen locally is how a
 //! mail client loses mail.
 
