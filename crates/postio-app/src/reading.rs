@@ -134,50 +134,115 @@ pub fn install(window: &Window, wiring: &Wiring) {
     let database = wiring.database.clone();
     let blobs = wiring.blobs.clone();
     let runtime = wiring.runtime.clone();
+    // One filler, two ways in.
+    //
+    // The cursor is the one that matters: `j` and `k` are how a mailbox is
+    // read, and feeding the pane only from `connect_activated` -- Enter or a
+    // double click -- is what left the column blank until somebody guessed
+    // that Return was required (#70, Cause B). The maintainer settled it:
+    // the preview follows the cursor and nothing waits for Return.
+    //
+    // Activation stays wired anyway, because it is not redundant. The cursor
+    // reports only once the *user* has moved it, so on a window nobody has
+    // touched the pane is deliberately empty -- and Enter on that window
+    // still has to open the message under the cursor. Showing the same
+    // message twice is harmless, so the overlap costs a store read and
+    // nothing else.
+    let parts = Rc::new(Fill {
+        database,
+        blobs,
+        runtime,
+        showing,
+        opened,
+    });
+    window.list().connect_cursor_moved(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        parts,
+        move |row| parts.fill(&window, row)
+    ));
     window.list().connect_activated(glib::clone!(
         #[weak]
         window,
-        move |row| {
-            let message = row.id;
-            let sender = row.from.as_ref().map(|from| from.address.clone());
-            showing.set(Some(message));
-
-            let answer = crate::search::ask(&database, &runtime, {
-                let blobs = blobs.clone();
-                move |connection| {
-                    // One crossing for both. The parts are metadata the
-                    // sync already stored -- `BODYSTRUCTURE`, not bytes --
-                    // so asking for them costs a row read and never a fetch.
-                    let body = crate::compose::load_body(connection, &blobs, message);
-                    let parts = MessageRepository::new(connection)
-                        .get(message)
-                        .ok()
-                        .flatten()
-                        .map(|message| message.attachments)
-                        .unwrap_or_default();
-                    Some((body, parts))
-                }
-            });
-            glib::spawn_future_local({
-                let showing = showing.clone();
-                let opened = opened.clone();
-                async move {
-                    let Ok(Some((body, parts))) = answer.recv().await else {
-                        return;
-                    };
-                    // Late. The cursor moved while the blob was read, and the
-                    // pane is showing something else now.
-                    if showing.get() != Some(message) {
-                        return;
-                    }
-                    let root = root_type(&body, &parts);
-                    window.reader().set_attachments(&root, &parts);
-                    *opened.borrow_mut() = Some(Opened { root, parts });
-                    window.show_message(&body, sender.as_deref());
-                }
-            });
-        }
+        #[strong]
+        parts,
+        move |row| parts.fill(&window, row)
     ));
+}
+
+/// Everything filling the reading pane needs, so the cursor and activation
+/// can share one implementation rather than two that drift.
+struct Fill {
+    database: Database,
+    blobs: BlobStore,
+    runtime: tokio::runtime::Handle,
+    /// What the pane is showing, or is waiting to show.
+    showing: Rc<Cell<Option<MessageId>>>,
+    opened: Rc<RefCell<Option<Opened>>>,
+}
+
+impl Fill {
+    /// Put `row`'s message in the pane, or say why it cannot be.
+    fn fill(&self, window: &Window, row: postio_gtk::list::Row) {
+        let message = row.id;
+        let sender = row.from.as_ref().map(|from| from.address.clone());
+        self.showing.set(Some(message));
+
+        let answer = crate::search::ask(&self.database, &self.runtime, {
+            let blobs = self.blobs.clone();
+            move |connection| {
+                // One crossing for both. The parts are metadata the sync
+                // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
+                // for them costs a row read and never a fetch.
+                let body = crate::compose::load_body_or_reason(connection, &blobs, message);
+                let parts = MessageRepository::new(connection)
+                    .get(message)
+                    .ok()
+                    .flatten()
+                    .map(|message| message.attachments)
+                    .unwrap_or_default();
+                Some((body, parts))
+            }
+        });
+        glib::spawn_future_local({
+            let showing = self.showing.clone();
+            let opened = self.opened.clone();
+            let window = window.clone();
+            async move {
+                let Ok(Some((body, parts))) = answer.recv().await else {
+                    return;
+                };
+                // Late. The cursor moved while the blob was read, and the
+                // pane is showing something else now. This guard carries far
+                // more weight than it used to: it used to filter double
+                // clicks and now it filters a held-down `j`.
+                if showing.get() != Some(message) {
+                    return;
+                }
+                match body {
+                    crate::compose::Body::Ready(body) => {
+                        let root = root_type(&body, &parts);
+                        window.reader().set_attachments(&root, &parts);
+                        *opened.borrow_mut() = Some(Opened { root, parts });
+                        window.show_message(&body, sender.as_deref());
+                    }
+                    crate::compose::Body::Absent(reason) => {
+                        // The chips still go on. They are drawn from
+                        // `BODYSTRUCTURE` metadata the sync already stored,
+                        // so a message nothing has been fetched for can
+                        // still say what came with it -- which is worth more
+                        // than a blank pane, and is the one part of this
+                        // state that is not a wait.
+                        let root = root_type(&postio_model::MessageBody::default(), &parts);
+                        window.reader().set_attachments(&root, &parts);
+                        *opened.borrow_mut() = Some(Opened { root, parts });
+                        window.show_absent(reason);
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// What the message on screen is made of.

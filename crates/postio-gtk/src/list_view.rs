@@ -104,6 +104,16 @@ mod imp {
         ///
         /// [`cursor_moved`]: Self::cursor_moved
         pub(super) reported: Cell<Option<MessageId>>,
+        /// Whether the user has put the cursor anywhere yet.
+        ///
+        /// `SingleSelection` autoselects row 0 the moment the model has rows,
+        /// which is not somebody looking at a message — and the reading pane
+        /// must not fill on startup for a row nobody chose. Once the dwell
+        /// timer of #71 exists, that would also mark the newest message read
+        /// for the sole reason that the application was opened, which is the
+        /// unread signal destroying itself. Every real move sets this; the
+        /// autoselect does not.
+        pub(super) landed: Cell<bool>,
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
@@ -140,6 +150,7 @@ mod imp {
                 activated: RefCell::new(Vec::new()),
                 cursor_moved: RefCell::new(Vec::new()),
                 reported: Cell::new(None),
+                landed: Cell::new(false),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
                 keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
@@ -377,6 +388,12 @@ impl MessageListView {
     fn report_cursor(&self) {
         let imp = self.imp();
         let position = imp.cursor.selected();
+        if !imp.landed.get() {
+            // The autoselect, not a person. Remember where it put the cursor
+            // so the first real move is still a change, but say nothing.
+            imp.reported.set(imp.model.peek(position));
+            return;
+        }
         if position == gtk::INVALID_LIST_POSITION {
             imp.reported.set(None);
             return;
@@ -519,6 +536,7 @@ impl MessageListView {
             return;
         }
         let to = to as u32;
+        imp.landed.set(true);
         imp.cursor.set_selected(to);
         imp.view.scroll_to(to, gtk::ListScrollFlags::FOCUS, None);
         if let Some(id) = imp.model.peek(to) {
@@ -978,9 +996,15 @@ impl MessageListView {
     /// Move the keyboard to `position`, and the focus with it.
     fn move_cursor_to(&self, position: u32) {
         let imp = self.imp();
+        imp.landed.set(true);
         imp.cursor.set_selected(position);
         imp.view
             .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+        // Explicitly, as well as through `notify::selected`, because clicking
+        // the row the cursor is already on changes no position and so emits
+        // nothing — and that click is still someone asking to read it.
+        // `report_cursor` deduplicates, so the two paths cannot double-fire.
+        self.report_cursor();
     }
 
     /// The row under `(x, y)` in the list's coordinates, and where it sits.

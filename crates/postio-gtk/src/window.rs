@@ -470,6 +470,21 @@ impl Window {
         self.sync_reading_pane();
     }
 
+    /// Show the message, but say why its body is not here.
+    ///
+    /// The pane is *open* on a message either way — this is a message with
+    /// no body yet, not the absence of a message — so `reading` is set and
+    /// the pane is revealed exactly as [`show_message`] does. The difference
+    /// the user sees is the plate instead of the body, which is the whole
+    /// point of #70: a mailbox mid-backfill must not look like a broken app.
+    ///
+    /// [`show_message`]: Self::show_message
+    pub fn show_absent(&self, state: crate::reader::Absent) {
+        self.reader().show_absent(state);
+        self.imp().reading.set(true);
+        self.sync_reading_pane();
+    }
+
     /// Empty the reading pane — the folder changed, or the message went away.
     pub fn clear_reader(&self) {
         if let Some(reader) = self.imp().reader.get() {
