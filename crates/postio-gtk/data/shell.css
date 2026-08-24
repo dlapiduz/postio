@@ -664,6 +664,50 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* ── Search: the preview pane (canvas 2b) ────────────────────────────
+   The artboard's 22px/28px inset. The message itself is rendered by the
+   hardened reader, which brings its own stylesheet (`reader.css`) — nothing
+   here reaches inside it. */
+.postio-preview-head {
+  padding: 22px 28px 0;
+}
+
+/* `preview · match highlighted`. Mono and dim: it labels the pane, it is not
+   part of what is being read. */
+.postio-preview-kicker {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+  margin-bottom: 10px;
+}
+
+.postio-preview-subject {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.5909rem;
+  color: var(--postio-ink);
+  margin-bottom: 14px;
+}
+
+/* What FTS5 cut, shown until the body itself arrives. Reading measure, not
+   pane width: a line of prose 58 characters wide is one the eye tracks. */
+.postio-preview-snippet {
+  font-size: 0.9545rem;
+  line-height: 1.7;
+  color: var(--postio-ink-secondary);
+  margin-bottom: 12px;
+}
+
+/* Why there is no body yet, or no result focused. Never a blank pane. */
+.postio-preview-note {
+  font-size: 0.8523rem;
+  color: var(--postio-faint);
+}
+
+.postio-preview-footer {
+  padding: 18px 28px 22px;
+}
+
 /* ── Settings (canvas 3f) ────────────────────────────────────────────
    The panel and the file are the same thing: a plate over the raw TOML,
    the folder list's own selected-row treatment for its section nav, and a

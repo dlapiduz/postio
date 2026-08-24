@@ -47,7 +47,10 @@ use std::time::Duration;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
+use postio_model::MessageBody;
+use postio_model::ids::MessageId;
 use postio_search::ParsedQuery;
+use postio_search::SearchHit;
 use postio_search::facets::{Facets, Refinement, Scope};
 use postio_search::query::{Field, TokenKind};
 
@@ -875,8 +878,339 @@ fn kicker(text: &str) -> gtk::Label {
 }
 
 // ---------------------------------------------------------------------------
+// The preview — canvas 2b's right-hand pane
+// ---------------------------------------------------------------------------
+
+/// The reading measure the canvas sets on the preview's prose, in characters.
+const PROSE_MEASURE: i32 = 58;
+
+/// The kicker over the preview, from the artboard.
+const PREVIEW_KICKER: &str = "preview · match highlighted";
+
+/// What the pane says with no result focused.
+const NOTHING_FOCUSED: &str = "Arrow through the results to preview one.";
+
+/// What it says while a result's body is still only a snippet.
+///
+/// The commonest state in this application and not an error: headers sync
+/// long before bodies do, so a search can find a message the store has never
+/// fetched. The snippet FTS5 cut is genuinely all there is to show, and
+/// saying so beats an empty pane that looks broken.
+const BODY_NOT_HERE: &str = "The full message has not been fetched yet.";
+
+type OpenHandler = Box<dyn Fn(MessageId)>;
+
+mod preview_imp {
+    use super::*;
+
+    #[derive(Default)]
+    pub struct Preview {
+        pub(super) subject: gtk::Label,
+        pub(super) snippet: gtk::Label,
+        pub(super) note: gtk::Label,
+        pub(super) body: gtk::Box,
+        /// Holds the footer down while there is no body to do it. Hidden
+        /// once there is, or the two would split the pane between them and
+        /// the message would stop half way down it.
+        pub(super) filler: gtk::Box,
+        pub(super) open: gtk::Button,
+        /// Built on first use, not at startup: a `WebKitWebView` is the most
+        /// expensive widget in the application and the `<500ms` budget is
+        /// measured from launch, where nothing has been searched yet.
+        pub(super) reader: RefCell<Option<crate::reader::Reader>>,
+        /// Where `cid:` parts come from, once something supplies them.
+        /// Filled through a slot rather than at construction because
+        /// `WebKitWebContext` registers its scheme handler once and for good.
+        pub(super) blobs: RefCell<Option<Rc<dyn crate::reader::BlobSource>>>,
+        pub(super) focused: RefCell<Option<MessageId>>,
+        pub(super) terms: RefCell<Vec<String>>,
+        pub(super) on_open: RefCell<Vec<OpenHandler>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for Preview {
+        const NAME: &'static str = "PostioSearchPreview";
+        type Type = super::Preview;
+        type ParentType = adw::Bin;
+    }
+
+    impl ObjectImpl for Preview {
+        fn constructed(&self) {
+            self.parent_constructed();
+            self.obj().build();
+        }
+    }
+
+    impl WidgetImpl for Preview {}
+    impl BinImpl for Preview {}
+}
+
+glib::wrapper! {
+    /// The focused result, with the match highlighted.
+    ///
+    /// Canvas 2b's right-hand pane: a kicker, the subject, the message, and
+    /// `Open Ret`. The message is rendered by [`crate::reader::Reader`] —
+    /// the same hardened `WebView` the reading pane uses, with JavaScript and
+    /// network access off — because a preview is still someone else's HTML
+    /// and a second, softer renderer would be a second way to be attacked.
+    pub struct Preview(ObjectSubclass<preview_imp::Preview>)
+        @extends adw::Bin, gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl Default for Preview {
+    fn default() -> Self {
+        glib::Object::new()
+    }
+}
+
+impl Preview {
+    /// An empty preview.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Where inline (`cid:`) images resolve from.
+    ///
+    /// Without one they simply do not load, which is the safe default and the
+    /// right one for a preview of a message whose parts have never been
+    /// fetched.
+    pub fn set_blob_source(&self, source: Rc<dyn crate::reader::BlobSource>) {
+        *self.imp().blobs.borrow_mut() = Some(source);
+    }
+
+    /// The message currently previewed.
+    pub fn focused(&self) -> Option<MessageId> {
+        *self.imp().focused.borrow()
+    }
+
+    /// Preview `hit`, highlighting `terms`.
+    ///
+    /// Shows what the search already knows — the subject and the snippet FTS5
+    /// cut — immediately. There is nothing to wait for: those came back with
+    /// the hit, so arrowing through results never shows an empty frame while
+    /// something loads.
+    pub fn show(&self, hit: &SearchHit, terms: &[String]) {
+        let imp = self.imp();
+        let same = *imp.focused.borrow() == Some(hit.message_id);
+        *imp.focused.borrow_mut() = Some(hit.message_id);
+        *imp.terms.borrow_mut() = terms.to_vec();
+
+        // The subject is not highlighted, and the canvas does not highlight
+        // it either. It is already set in the heading face at heading weight,
+        // so bold — the only treatment Pango markup can apply without a
+        // hard-coded colour — is invisible on it. The snippet below carries
+        // the highlighting, where regular-weight prose makes it obvious.
+        let subject = hit.subject.as_deref().unwrap_or("(no subject)");
+        imp.subject.set_text(subject);
+        imp.subject.set_tooltip_text(Some(subject));
+
+        let snippet = postio_search::highlight::from_snippet(&hit.snippet);
+        let has_snippet = !snippet.text.trim().is_empty();
+        imp.snippet.set_markup(&markup(&snippet));
+
+        // Moving the focus to a different message means whatever body is on
+        // screen belongs to the wrong one. Moving it to the *same* message —
+        // a re-render after a refine, say — must not throw away a body that
+        // has already arrived.
+        if !same {
+            imp.body.set_visible(false);
+            imp.filler.set_visible(true);
+            if let Some(reader) = imp.reader.borrow().as_ref() {
+                reader.clear();
+            }
+        }
+        imp.snippet
+            .set_visible(!imp.body.is_visible() && has_snippet);
+        imp.note.set_visible(!imp.body.is_visible());
+        imp.note.set_text(BODY_NOT_HERE);
+        imp.open.set_sensitive(true);
+        self.set_accessible_label(&format!("Preview of {subject}"));
+    }
+
+    /// The body arrived for `message`.
+    ///
+    /// Ignored if the focus has moved on — the same rule the readout follows,
+    /// for the same reason: arrowing down the results is faster than fetching
+    /// a body, and a body that landed in the wrong preview would be worse
+    /// than one that never landed.
+    pub fn set_body(&self, message: MessageId, body: &MessageBody, sender: Option<&str>) {
+        let imp = self.imp();
+        if *imp.focused.borrow() != Some(message) {
+            return;
+        }
+        let reader = self.reader();
+        reader.set_highlight(imp.terms.borrow().clone());
+        reader.render(body, sender);
+        imp.body.set_visible(true);
+        imp.filler.set_visible(false);
+        imp.snippet.set_visible(false);
+        imp.note.set_visible(false);
+    }
+
+    /// Nothing is focused.
+    pub fn clear(&self) {
+        let imp = self.imp();
+        *imp.focused.borrow_mut() = None;
+        imp.terms.borrow_mut().clear();
+        imp.subject.set_text("");
+        imp.snippet.set_text("");
+        imp.snippet.set_visible(false);
+        imp.body.set_visible(false);
+        imp.filler.set_visible(true);
+        imp.note.set_visible(true);
+        imp.note.set_text(NOTHING_FOCUSED);
+        imp.open.set_sensitive(false);
+        if let Some(reader) = imp.reader.borrow().as_ref() {
+            reader.clear();
+        }
+        self.set_accessible_label("Preview");
+    }
+
+    /// Called when the previewed message is opened.
+    pub fn connect_open(&self, handler: impl Fn(MessageId) + 'static) {
+        self.imp().on_open.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Open what is previewed — what `Ret` and the `Open` button both do.
+    ///
+    /// One verb: this only *emits*, and whoever wired it dispatches the
+    /// registry's own open command. A pane that opened a message itself would
+    /// be a second implementation of a verb the registry already owns.
+    pub fn open(&self) {
+        let imp = self.imp();
+        let Some(message) = *imp.focused.borrow() else {
+            return;
+        };
+        for handler in imp.on_open.borrow().iter() {
+            handler(message);
+        }
+    }
+
+    /// The hardened reader, built the first time a body actually arrives.
+    fn reader(&self) -> crate::reader::Reader {
+        let imp = self.imp();
+        if let Some(reader) = imp.reader.borrow().as_ref() {
+            return reader.clone();
+        }
+        // The blob source is read through a slot on every request, so the
+        // reader can be built before anything has supplied one and start
+        // resolving `cid:` parts the moment something does.
+        let blobs = self.clone();
+        let source = move |content_id: &str| {
+            let blobs = blobs.imp().blobs.borrow();
+            blobs.as_ref().and_then(|source| source.resolve(content_id))
+        };
+        let reader = crate::reader::Reader::new(Rc::new(source));
+        imp.body.append(&reader.widget());
+        *imp.reader.borrow_mut() = Some(reader.clone());
+        reader
+    }
+
+    fn set_accessible_label(&self, label: &str) {
+        self.update_property(&[gtk::accessible::Property::Label(label)]);
+    }
+
+    fn build(&self) {
+        let imp = self.imp();
+        self.add_css_class("postio-preview");
+        self.set_accessible_role(gtk::AccessibleRole::Group);
+
+        let kicker = gtk::Label::new(Some(PREVIEW_KICKER));
+        kicker.add_css_class("postio-preview-kicker");
+        kicker.set_xalign(0.0);
+        kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
+
+        imp.subject.add_css_class("postio-preview-subject");
+        imp.subject.set_xalign(0.0);
+        imp.subject.set_wrap(true);
+        imp.subject.set_wrap_mode(pango::WrapMode::WordChar);
+        imp.subject
+            .set_accessible_role(gtk::AccessibleRole::Caption);
+
+        imp.snippet.add_css_class("postio-preview-snippet");
+        imp.snippet.set_xalign(0.0);
+        imp.snippet.set_wrap(true);
+        // The canvas' 58ch measure, not the pane's width: a line of prose
+        // the full width of a wide window is one the eye loses its place in.
+        // `halign` as well as `max-width-chars`, or the label is allocated
+        // the whole pane and wraps at *that* instead of at its natural width.
+        imp.snippet.set_max_width_chars(PROSE_MEASURE);
+        imp.snippet.set_halign(gtk::Align::Start);
+        imp.snippet.set_visible(false);
+
+        imp.note.add_css_class("postio-preview-note");
+        imp.note.set_xalign(0.0);
+        imp.note.set_wrap(true);
+
+        imp.body.set_orientation(gtk::Orientation::Vertical);
+        imp.body.set_vexpand(true);
+        imp.body.set_visible(false);
+
+        imp.open
+            .set_child(Some(&crate::header::labelled("Open", "Ret")));
+        imp.open.add_css_class("suggested-action");
+        imp.open.set_halign(gtk::Align::Start);
+        imp.open
+            .update_property(&[gtk::accessible::Property::Label("Open this message")]);
+        imp.open.connect_clicked(glib::clone!(
+            #[weak(rename_to = preview)]
+            self,
+            move |_| preview.open()
+        ));
+
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        footer.add_css_class("postio-preview-footer");
+        footer.append(&imp.open);
+
+        imp.filler.set_orientation(gtk::Orientation::Vertical);
+        imp.filler.set_vexpand(true);
+
+        // The head and the footer carry the canvas' 28px inset; the body does
+        // not. `reader.css` gives the message its own margin, and a message
+        // indented twice — once by this pane and once by its own stylesheet —
+        // would sit visibly further in than the subject above it.
+        let head = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        head.add_css_class("postio-preview-head");
+        head.append(&kicker);
+        head.append(&imp.subject);
+        head.append(&imp.snippet);
+        head.append(&imp.note);
+
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&head);
+        column.append(&imp.body);
+        column.append(&imp.filler);
+        column.append(&footer);
+        self.set_child(Some(&column));
+
+        self.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The search view — the three panes, while a search is on screen
 // ---------------------------------------------------------------------------
+
+/// Hides everything in `pane` except `mine`, recording what to put back.
+///
+/// The `visible` *property* rather than `is_visible()`, which in gtk4-rs
+/// answers the effective question — visible, and every ancestor visible too —
+/// and is therefore `false` for every child of a window that has not been
+/// presented yet. Mounting before `present` is exactly what the shot does,
+/// and reading the effective answer there left the folder list on screen
+/// underneath the panel.
+fn displace(pane: &gtk::Box, mine: &gtk::Widget, displaced: &mut Vec<(gtk::Widget, bool)>) {
+    let mut child = pane.first_child();
+    while let Some(current) = child {
+        let next = current.next_sibling();
+        if &current != mine {
+            displaced.push((current.clone(), current.property::<bool>("visible")));
+            current.set_visible(false);
+        }
+        child = next;
+    }
+}
 
 /// Canvas 2b, mounted.
 ///
@@ -900,10 +1234,15 @@ pub struct View {
 
 struct ViewInner {
     panel: Panel,
+    preview: Preview,
     sidebar: gtk::Box,
-    /// The sidebar children the panel displaced, each with the `visible` it
-    /// had before, so leaving search puts back exactly what was there.
+    reader: gtk::Box,
+    /// The pane children the search surface displaced, each with the
+    /// `visible` it had before, so leaving search puts back exactly what was
+    /// there.
     displaced: RefCell<Vec<(gtk::Widget, bool)>>,
+    /// The terms the query is currently asking about, for the highlighting.
+    terms: RefCell<Vec<String>>,
     active: Cell<bool>,
 }
 
@@ -918,11 +1257,20 @@ impl View {
         let sidebar = shell.sidebar();
         sidebar.append(&panel);
 
+        let preview = Preview::new();
+        preview.set_vexpand(true);
+        preview.set_visible(false);
+        let reader = shell.reader();
+        reader.append(&preview);
+
         let view = View {
             inner: Rc::new(ViewInner {
                 panel,
+                preview,
                 sidebar,
+                reader,
                 displaced: RefCell::new(Vec::new()),
+                terms: RefCell::new(Vec::new()),
                 active: Cell::new(false),
             }),
         };
@@ -931,12 +1279,29 @@ impl View {
         // so the surface follows it rather than being told twice.
         finder.connect_changed({
             let view = view.clone();
-            move |parsed| view.set_searching(!parsed.is_empty())
+            move |parsed| {
+                // The terms follow the query rather than the results: they
+                // are what the *user asked for*, and the preview has to paint
+                // them the moment a hit arrives rather than a round trip
+                // later.
+                *view.inner.terms.borrow_mut() = postio_search::highlight::terms(parsed);
+                view.set_searching(!parsed.is_empty());
+            }
         });
         finder.connect_dismissed({
             let view = view.clone();
             move || view.set_searching(false)
         });
+
+        // Seed from whatever the box is already holding. `attach` runs at
+        // window build, where that is nothing — but a surface that only ever
+        // learns the query from the *next* keystroke is one that starts wrong
+        // whenever it does not, and the shot mounts it after typing.
+        {
+            let parsed = finder.parsed();
+            *view.inner.terms.borrow_mut() = postio_search::highlight::terms(&parsed);
+            view.set_searching(!parsed.is_empty());
+        }
 
         // Canvas 2b's footer: `Tab refine`.
         finder.connect_tab({
@@ -989,6 +1354,31 @@ impl View {
         self.inner.panel.clone()
     }
 
+    /// The focused result, with the match highlighted.
+    pub fn preview(&self) -> Preview {
+        self.inner.preview.clone()
+    }
+
+    /// Preview `hit`, or nothing.
+    ///
+    /// Called as the focus moves through the results. The terms come from the
+    /// query the box is holding, so the highlighting always answers what was
+    /// actually asked rather than trailing it.
+    pub fn set_focused(&self, hit: Option<&SearchHit>) {
+        match hit {
+            Some(hit) => self
+                .inner
+                .preview
+                .show(hit, &self.inner.terms.borrow().clone()),
+            None => self.inner.preview.clear(),
+        }
+    }
+
+    /// The terms the preview is painting.
+    pub fn terms(&self) -> Vec<String> {
+        self.inner.terms.borrow().clone()
+    }
+
     /// Whether the search surface is the one on screen.
     pub fn is_active(&self) -> bool {
         self.inner.active.get()
@@ -1012,37 +1402,176 @@ impl View {
         }
 
         if searching {
-            // Whatever the sidebar was showing steps aside rather than being
+            // Whatever the panes were showing steps aside rather than being
             // unparented: the folder list keeps its selection, its scroll
             // position and its subscriptions, so `Esc` costs nothing.
-            //
-            // The `visible` *property* rather than `is_visible()`, which in
-            // gtk4-rs answers the effective question — visible, and every
-            // ancestor visible too — and is therefore `false` for every child
-            // of a window that has not been presented yet. Mounting before
-            // `present` is exactly what the shot does, and reading the
-            // effective answer there left the folder list on screen
-            // underneath the panel.
-            let panel = inner.panel.clone().upcast::<gtk::Widget>();
             let mut displaced = inner.displaced.borrow_mut();
             displaced.clear();
-            let mut child = inner.sidebar.first_child();
-            while let Some(current) = child {
-                let next = current.next_sibling();
-                if current != panel {
-                    displaced.push((current.clone(), current.property::<bool>("visible")));
-                    current.set_visible(false);
-                }
-                child = next;
-            }
+            displace(
+                &inner.sidebar,
+                &inner.panel.clone().upcast(),
+                &mut displaced,
+            );
+            displace(
+                &inner.reader,
+                &inner.preview.clone().upcast(),
+                &mut displaced,
+            );
             inner.panel.set_visible(true);
+            inner.preview.set_visible(true);
         } else {
             inner.panel.set_visible(false);
+            inner.preview.set_visible(false);
+            inner.preview.clear();
             for (widget, visible) in inner.displaced.borrow_mut().drain(..) {
                 widget.set_visible(visible);
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Painting the match — canvas 2b's "preview · match highlighted"
+// ---------------------------------------------------------------------------
+
+/// The class the reader stylesheet tints. See `reader.css`.
+const MARK_CLASS: &str = "postio-match";
+
+/// Tags whose contents are not prose and must not be marked.
+///
+/// `script` and `style` never survive [`crate::reader::sanitize`], and
+/// `title` never appears in a body fragment — they are here because
+/// "the sanitizer removes it" is a fact about another module, and a
+/// highlighter that would corrupt a stylesheet if one ever reached it is one
+/// bad refactor away from doing so.
+const OPAQUE_TAGS: [&str; 3] = ["script", "style", "title"];
+
+/// Wraps every place `terms` match in `html` with a `<mark>` the reader
+/// stylesheet tints.
+///
+/// Applied *after* sanitizing, not before: ammonia would strip the `<mark>`
+/// as an unknown tag, and marking first would mean running a matcher over
+/// markup that has not been cleaned yet. What goes in is already-safe HTML
+/// and what comes out adds one fixed literal tag to it — no attacker-shaped
+/// string is ever interpolated.
+///
+/// Matches never cross a tag boundary. `<b>mail</b>dir` is two text runs and
+/// FTS5 would not have matched `maildir` across them either, so the
+/// highlighting agrees with why the message was a hit.
+pub fn mark_html(html: &str, terms: &[String]) -> String {
+    if terms.is_empty() {
+        return html.to_owned();
+    }
+
+    let mut out = String::with_capacity(html.len());
+    let mut run = String::new();
+    let mut rest = html;
+    // `Some(tag)` while inside an element whose contents are not prose.
+    let mut opaque: Option<&str> = None;
+
+    while !rest.is_empty() {
+        let Some(next) = rest.find(['<', '&']) else {
+            run.push_str(rest);
+            break;
+        };
+        run.push_str(&rest[..next]);
+        rest = &rest[next..];
+
+        if rest.starts_with('&') {
+            // An entity is one indivisible character as far as the reader is
+            // concerned, and splitting one would corrupt it. It also ends the
+            // token run, which is right: `&amp;` is punctuation.
+            let end = rest
+                .find(';')
+                .filter(|end| *end <= 12)
+                .map(|end| end + 1)
+                .unwrap_or(1);
+            flush(&mut out, &mut run, terms, opaque.is_none());
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+            continue;
+        }
+
+        // A tag. Copy it through untouched, and note whether it opens or
+        // closes something whose contents must be left alone.
+        let end = rest.find('>').map(|end| end + 1).unwrap_or(rest.len());
+        let tag = &rest[..end];
+        flush(&mut out, &mut run, terms, opaque.is_none());
+        out.push_str(tag);
+        rest = &rest[end..];
+
+        let name = tag_name(tag);
+        match opaque {
+            Some(open) if tag.starts_with("</") && name == Some(open) => opaque = None,
+            None if !tag.starts_with("</") => {
+                if let Some(name) = name.filter(|name| OPAQUE_TAGS.contains(name)) {
+                    opaque = Some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut out, &mut run, terms, opaque.is_none());
+    out
+}
+
+/// Empties `run` into `out`, marking the matches if this run is prose.
+fn flush(out: &mut String, run: &mut String, terms: &[String], prose: bool) {
+    if run.is_empty() {
+        return;
+    }
+    if !prose {
+        out.push_str(run);
+        run.clear();
+        return;
+    }
+    let highlighted = postio_search::highlight::highlight(run, terms);
+    for (piece, matched) in highlighted.runs() {
+        if matched {
+            out.push_str("<mark class=\"");
+            out.push_str(MARK_CLASS);
+            out.push_str("\">");
+            out.push_str(piece);
+            out.push_str("</mark>");
+        } else {
+            out.push_str(piece);
+        }
+    }
+    run.clear();
+}
+
+/// The lower-cased element name of a tag, opening or closing.
+fn tag_name(tag: &str) -> Option<&str> {
+    let body = tag
+        .trim_start_matches('<')
+        .trim_start_matches('/')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let name = body.split([' ', '\t', '\n', '\r']).next()?;
+    (!name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric())).then_some(name)
+}
+
+/// [`Highlighted`] as Pango markup for a label, with the matches in bold.
+///
+/// Weight rather than the accent tint the body gets. A `GtkLabel` can only be
+/// given a *literal* colour through Pango markup, and a literal colour is a
+/// hard-coded value that would not follow the theme — the one thing
+/// `/gtk-design` says never to do. Bold is also already this application's
+/// label idiom for "this is why it matched": the finder marks its fuzzy hits
+/// the same way, in the same face, one row above.
+pub fn markup(highlighted: &postio_search::Highlighted) -> String {
+    let mut out = String::with_capacity(highlighted.text.len());
+    for (piece, matched) in highlighted.runs() {
+        let escaped = glib::markup_escape_text(piece);
+        if matched {
+            out.push_str("<b>");
+            out.push_str(&escaped);
+            out.push_str("</b>");
+        } else {
+            out.push_str(&escaped);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1258,6 +1787,101 @@ mod tests {
             Backspace::Ordinary,
             "the caret is in `report`, not in the chip before it"
         );
+    }
+
+    // -- painting the match -----------------------------------------------
+
+    fn terms(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    #[test]
+    fn a_matched_word_is_wrapped_where_it_stands() {
+        assert_eq!(
+            mark_html("<p>the maildir index</p>", &terms(&["maildir"])),
+            "<p>the <mark class=\"postio-match\">maildir</mark> index</p>"
+        );
+    }
+
+    #[test]
+    fn a_query_with_no_terms_leaves_the_markup_alone() {
+        let html = "<p>the maildir index</p>";
+        assert_eq!(mark_html(html, &[]), html);
+    }
+
+    #[test]
+    fn a_term_inside_a_tag_is_not_a_word_on_the_page() {
+        // `title` is an attribute here, and `p` an element name. Marking
+        // either would produce markup, not a highlight.
+        let html = r#"<p title="maildir">nothing</p>"#;
+        assert_eq!(mark_html(html, &terms(&["maildir", "p"])), html);
+    }
+
+    #[test]
+    fn a_match_never_crosses_a_tag_boundary() {
+        let html = "<b>mail</b>dir";
+        assert_eq!(
+            mark_html(html, &terms(&["maildir"])),
+            html,
+            "FTS5 did not match across the tag either, so nothing here may"
+        );
+    }
+
+    #[test]
+    fn an_entity_survives_being_marked_around() {
+        assert_eq!(
+            mark_html("a &amp; maildir", &terms(&["maildir"])),
+            "a &amp; <mark class=\"postio-match\">maildir</mark>"
+        );
+        assert_eq!(
+            mark_html("a &amp; b", &terms(&["amp"])),
+            "a &amp; b",
+            "`&amp;` is one character, not the word `amp`"
+        );
+    }
+
+    #[test]
+    fn a_bare_ampersand_does_not_swallow_the_rest_of_the_body() {
+        assert_eq!(
+            mark_html("Tom & Jerry maildir", &terms(&["maildir"])),
+            "Tom & Jerry <mark class=\"postio-match\">maildir</mark>"
+        );
+    }
+
+    #[test]
+    fn a_stylesheet_is_not_prose() {
+        let html = "<style>.maildir { color: red }</style><p>maildir</p>";
+        assert_eq!(
+            mark_html(html, &terms(&["maildir"])),
+            "<style>.maildir { color: red }</style><p><mark class=\"postio-match\">maildir</mark></p>",
+            "marking inside a stylesheet would corrupt it"
+        );
+    }
+
+    #[test]
+    fn several_matches_across_several_elements_are_all_painted() {
+        assert_eq!(
+            mark_html("<p>maildir one</p><p>two maildir</p>", &terms(&["maildir"])),
+            "<p><mark class=\"postio-match\">maildir</mark> one</p>\
+             <p>two <mark class=\"postio-match\">maildir</mark></p>"
+        );
+    }
+
+    #[test]
+    fn markup_escapes_what_it_did_not_write() {
+        let highlighted =
+            postio_search::highlight::highlight("a <b> & maildir", &terms(&["maildir"]));
+        assert_eq!(
+            markup(&highlighted),
+            "a &lt;b&gt; &amp; <b>maildir</b>",
+            "the message's own angle brackets are text, not markup"
+        );
+    }
+
+    #[test]
+    fn markup_of_a_plain_string_is_the_plain_string() {
+        let highlighted = postio_search::highlight::highlight("nothing here", &terms(&["maildir"]));
+        assert_eq!(markup(&highlighted), "nothing here");
     }
 
     // -- the readout ------------------------------------------------------
