@@ -437,9 +437,30 @@ impl Default for MockBackend {
 }
 
 impl MockBackend {
-    /// A backend with an iCloud-shaped capability set and an empty `INBOX`.
+    /// A backend with an iCloud-shaped capability set and **no folders**.
+    ///
+    /// It used to invent an `INBOX`, and that one line is the fixture half of
+    /// a shipped bug: with a server that always had an inbox, no test ever
+    /// had to say where folders come from, and nothing noticed that the
+    /// application never asked for them. `MailBackend::list_mailboxes` was
+    /// implemented, tested, and had no production caller for the life of the
+    /// project — a live account synced 0 mailboxes and 0 messages and
+    /// reported success. See `postio-755` and `postio-bl2`.
+    ///
+    /// A test that needs folders now says so:
+    ///
+    /// ```
+    /// # use postio_imap::backend::{MockBackend, MockMailbox};
+    /// let backend = MockBackend::builder()
+    ///     .mailbox(MockMailbox::new("INBOX"))
+    ///     .build();
+    /// # let _ = backend;
+    /// ```
+    ///
+    /// Which is the point: a fixture must not supply what the wiring is
+    /// supposed to produce.
     pub fn new() -> Self {
-        Self::builder().mailbox(MockMailbox::new("INBOX")).build()
+        Self::builder().build()
     }
 
     /// Starts describing a backend.
