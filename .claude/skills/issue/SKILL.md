@@ -65,6 +65,17 @@ That last row is the real gain. Work is isolated by *branch* now, not by crate,
 so an issue that spans `postio-storage` and `postio-gtk` is one piece of work
 rather than a bead you have to hand off.
 
+Run GTK tests on a display of their own, so they stop landing on the
+maintainer's desktop:
+
+```bash
+scripts/test-headless.sh cargo test -p postio-gtk
+```
+
+`issue-land.sh` already does this for you; you need it only when running tests
+by hand. Be aware it is faster than a real session and will expose tests that
+race an async load — that is the test's bug, not the harness's.
+
 Still true, and not negotiable: **TDD** — write the failing test first;
 **no network in the default suite**; **no personal data in fixtures**; the
 [architectural invariants](../../../CLAUDE.md); and the perf and motion budgets.

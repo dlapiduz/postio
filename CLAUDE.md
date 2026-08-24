@@ -113,6 +113,27 @@ already put whitespace churn into somebody else's diff. Use
 `rustfmt --edition 2024 <files>`; `/land` derives the list from your own
 changes. The `--check` forms are read-only and safe.
 
+**GTK tests belong on their own display.** `postio-gtk` has about twenty test
+binaries that call `window.present()`, and on a live session every one of them
+throws a window onto the maintainer's desktop and steals focus mid-keystroke.
+Run them through a headless compositor instead:
+
+```bash
+scripts/test-headless.sh cargo test -p postio-gtk
+scripts/test-headless.sh --stop            # when you are done for the day
+```
+
+It starts `mutter --headless` on a display of its own and reuses it. mutter
+rather than Xvfb because it is GNOME's own compositor and already installed, so
+the tests keep running on Wayland against the thing the application targets
+instead of under XWayland.
+
+It is also *faster* than the real session, which is not free: a headless run
+finishes `gtk_accessibility` in 0.40s against 1.44s on the live display, and
+that gap is enough to expose tests that `pump()` once and then assert on
+content which arrives asynchronously. If a test passes on your desktop and
+fails headless, suspect the test before the harness — see `postio-9112`.
+
 System dependencies (Fedora 40+; this box is Fedora 44 / GNOME 50 / Wayland):
 
 ```bash
