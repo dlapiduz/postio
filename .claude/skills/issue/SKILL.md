@@ -163,35 +163,14 @@ scripts/issue-release.sh --stale          # sweep claims whose worktree is gone
 It refuses to remove a worktree with uncommitted changes. A pushed branch is
 recoverable; a deleted worktree is not.
 
-### Then start the next issue clean
+Then **claim the next issue, without asking.** Finishing an issue is not
+finishing a session, and "shall I pick up another?" is not a question — the
+answer is written down and it is yes. A session that stops to ask has thrown
+away the rest of its context waiting for a reply that may be hours away.
 
-**Clear the context between issues.** One issue's context is a liability on
-the next: you carry stale assumptions about which files matter, what `main`
-looked like, and what was already decided — and every one of those has caused
-a wrong conclusion in this repository. Confidence carried over from work that
-is already merged is not evidence.
-
-So, having merged and released the worktree:
-
-```
-/clear
-```
-
-then `scripts/issue-claim.sh` and start again from the issue text.
-
-**You cannot run `/clear` yourself** — it is a built-in of the CLI, not
-something a skill can invoke. So if nobody is at the keyboard, the equivalent
-is to **end the session cleanly** and let a fresh one take the next issue:
-say what you landed, say that the next issue wants a clean session, and stop.
-A fresh session that reads the issue beats a long one that half-remembers
-three others.
-
-**Do not ask whether to continue** — that is not the same question. The answer
-to "should more work happen" is always yes and is written down. This is only
-about *where* it happens: in a new context rather than on top of the old one.
-
-Stop for good only when `issue-claim.sh` reports nothing ready, or when a
-decision is genuinely the maintainer's. Land your work first in every case.
+Stop only when `issue-claim.sh` reports nothing ready, when a decision is
+genuinely the maintainer's, or when context is nearly gone. Land your work
+first in every case.
 
 ## When something is in the way
 
