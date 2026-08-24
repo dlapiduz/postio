@@ -94,18 +94,33 @@ pub fn install(window: &Window, wiring: &Wiring) {
         wiring.events,
         #[strong(rename_to = engine)]
         wiring.engine,
+        #[strong(rename_to = runtime)]
+        wiring.runtime,
         move |node, file| {
             let (Some(attachment), Some(message)) = (node.attachment, showing.get()) else {
                 return;
             };
             let (database, blobs, file) = (database.clone(), blobs.clone(), file.clone());
             let (events, engine) = (events.clone(), engine.get().cloned());
+            let runtime = runtime.clone();
             let _ = &window;
             glib::spawn_future_local(async move {
-                let outcome = match part_bytes(&database, &blobs, engine, message, attachment).await
-                {
-                    Ok(bytes) => write_part(&file, &bytes),
-                    Err(reason) => Err(reason),
+                // `part_bytes` is runtime work, not main-context work: it may
+                // ask the engine for a body that has not been downloaded and
+                // then wait for it on a `tokio::time::sleep`. Awaiting that
+                // here panicked with "there is no reactor running" -- the same
+                // fault as postio-66, on the path that saves an attachment
+                // whose message body is not local yet. So it goes over to the
+                // runtime and answers on a channel, like every other crossing.
+                let (sender, receiver) = async_channel::bounded(1);
+                runtime.spawn(async move {
+                    let bytes = part_bytes(&database, &blobs, engine, message, attachment).await;
+                    let _ = sender.send(bytes).await;
+                });
+                let outcome = match receiver.recv().await {
+                    Ok(Ok(bytes)) => write_part(&file, &bytes),
+                    Ok(Err(reason)) => Err(reason),
+                    Err(_) => Err("Postio's runtime stopped before that part arrived.".to_owned()),
                 };
                 if let Err(message) = outcome {
                     // Loud rather than silent: the user chose a filename and
