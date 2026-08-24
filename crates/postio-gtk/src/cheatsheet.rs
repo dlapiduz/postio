@@ -3,7 +3,7 @@
 //! # Generated, so it cannot be wrong
 //!
 //! A hand-written key reference is out of date by the next release — that is
-//! the whole reason [`postio_core::registry`] exists (spec.md §8: one table,
+//! the whole reason [`postio_core::registry`] exists (docs/PRODUCT.md §8: one table,
 //! every surface). This sheet is rendered from that table and from the live
 //! [`Keymap`], so rebinding a key in `config.toml` changes what the overlay
 //! says without anybody editing a list.

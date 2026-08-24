@@ -1,6 +1,6 @@
 //! The undo stack: *Archived 12 messages — Undo*.
 //!
-//! spec.md §16 and canvas 3b promise that a destructive action is reversible
+//! docs/PRODUCT.md §16 and canvas 3b promise that a destructive action is reversible
 //! from a toast, bound to `u`. Two properties make that promise honest.
 //!
 //! **A burst is one unit.** Archiving twelve messages with twelve keystrokes is

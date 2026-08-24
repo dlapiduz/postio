@@ -4,7 +4,7 @@
 - **Date:** 2026-08-24
 - **Issue:** [#7 AI subsystem: summarize, draft reply, semantic search](https://github.com/dlapiduz/postio/issues/7)
 - **Related:** [ADR 0002](0002-extensible-command-vocabulary.md) (the seam this
-  plugs into), `docs/ARCHITECTURE.md` §2, §11, §12, `spec.md` §12/§13,
+  plugs into), `docs/ARCHITECTURE.md` §2, §11, §12, `PRODUCT.md` §12/§13,
   [ADR 0010](0010-mcp-surface.md) (the same constraints, pointed outward)
 - **Decision:** `postio-ai` is an **engine-rank crate that cannot send mail,
   structurally**. It produces *proposals*, never actions. Semantic search is
@@ -21,7 +21,7 @@ Mail is attacker-controlled text, and an AI feature is a mechanism for turning
 attacker-controlled text into behaviour. Every decision below is downstream of
 two rules that are already written down:
 
-- **AI must never silently modify or send mail** (`spec.md` §12,
+- **AI must never silently modify or send mail** (`PRODUCT.md` §12,
   `ARCHITECTURE.md` §12).
 - **Nothing leaves this machine that the user did not ask for**
   (`ARCHITECTURE.md` §11).

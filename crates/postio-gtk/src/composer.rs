@@ -2,8 +2,8 @@
 //!
 //! # Why it is not a window
 //!
-//! `spec.md` §10 implies a separate compose window; canvas 2a is explicit that
-//! it is not, and where the two disagree the canvas wins. The composer
+//! The original brief implied a separate compose window; canvas 2a is explicit
+//! that it is not, and docs/PRODUCT.md §10 records that as settled. The composer
 //! replaces the *reader* and nothing else, so the message list stays exactly
 //! where it was — same scroll offset, same selection, same widths. Half of
 //! writing a reply is looking at what you are replying to and at what else is

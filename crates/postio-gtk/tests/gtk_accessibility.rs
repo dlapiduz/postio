@@ -1,6 +1,6 @@
 //! Every custom widget, as a screen reader meets it.
 //!
-//! spec.md §20 makes accessibility first-class, and the expensive way to
+//! docs/PRODUCT.md §20 makes accessibility first-class, and the expensive way to
 //! discover it was not is to open Orca after the fact. GTK ships the audit as
 //! a test API — `gtk_test_accessible_has_property` and friends — so the tree
 //! can be walked and checked without a screen reader in the loop, which is

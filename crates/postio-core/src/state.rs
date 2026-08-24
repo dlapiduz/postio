@@ -83,7 +83,7 @@ impl ViewMode {
 
 /// What an action will hit.
 ///
-/// Deliberately not a `Vec<MessageId>`. spec.md §18 says a mailbox is never
+/// Deliberately not a `Vec<MessageId>`. docs/PRODUCT.md §18 says a mailbox is never
 /// loaded into memory, and "select all" in a 100,000-message folder would
 /// defeat that with one keystroke if selecting meant naming every row. So the
 /// whole-mailbox case is a *predicate* — everything the list is showing, minus

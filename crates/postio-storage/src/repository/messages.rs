@@ -2,7 +2,7 @@
 //!
 //! # The list must never load a mailbox
 //!
-//! spec.md §18 and the `<16 ms` interaction budget in CLAUDE.md make this
+//! docs/PRODUCT.md §18 and the `<16 ms` interaction budget in CLAUDE.md make this
 //! structural rather than aspirational: the only way to read more than one
 //! message out of this repository is [`MessageRepository::page`], which returns
 //! at most [`ListQuery::limit`] rows of exactly the fields a list row renders.
@@ -160,7 +160,7 @@ impl ListQuery {
 /// `Selection::Everything { except }` keeps it that way up to the handler; this
 /// is where the same idea lands in SQL, so archiving a whole mailbox is one
 /// `UPDATE` over an index rather than a hundred thousand ids that something had
-/// to enumerate first. spec.md §18 forbids the enumeration outright, and the
+/// to enumerate first. docs/PRODUCT.md §18 forbids the enumeration outright, and the
 /// 16 ms interaction budget would not survive it either way.
 ///
 /// Both variants render to a `WHERE` fragment, so every bulk write in this

@@ -1,4 +1,4 @@
-//! The undo stack: spec.md §16 and canvas 3b — *Archived 12 messages — Undo*,
+//! The undo stack: docs/PRODUCT.md §16 and canvas 3b — *Archived 12 messages — Undo*,
 //! bound to `u`.
 //!
 //! Two things make that toast honest. Archiving twelve messages with twelve
@@ -62,7 +62,7 @@ fn one_archive_is_one_message() {
 
 #[test]
 fn a_burst_of_archives_is_one_undoable_unit() {
-    // Twelve keystrokes, one `u`. This is the toast spec.md §16 asks for.
+    // Twelve keystrokes, one `u`. This is the toast docs/PRODUCT.md §16 asks for.
     let mut stack = UndoStack::new();
     let start = Instant::now();
 

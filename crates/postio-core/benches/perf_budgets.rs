@@ -1,4 +1,4 @@
-//! Placeholder benches for the three spec.md §18 budgets: startup,
+//! Placeholder benches for the three docs/PRODUCT.md §18 budgets: startup,
 //! message-list scroll and search. Each workload here is a stand-in until the
 //! bead that owns the real thing lands and replaces it in place:
 //!

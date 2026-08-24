@@ -3,7 +3,7 @@
 //! Triage on an 81,717-message account is what these exist for. `Ctrl+A` then
 //! `a` has to reach SQLite as a query — one `UPDATE` and one `INSERT ...
 //! SELECT` — because the alternative is reading a mailbox into memory, which
-//! spec.md §18 forbids and the 16 ms interaction budget would not survive.
+//! docs/PRODUCT.md §18 forbids and the 16 ms interaction budget would not survive.
 //!
 //! The interesting assertions here are therefore about *statement counts and
 //! shapes*, not only about outcomes: a version of this that enumerated the

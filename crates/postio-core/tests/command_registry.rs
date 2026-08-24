@@ -1,6 +1,6 @@
 //! The command registry is the single source of truth behind the keymap, the
 //! command palette, the `?` cheat sheet, the context menu and the focused-row
-//! key hints. These tests encode the structural guarantees spec.md §8 asks for:
+//! key hints. These tests encode the structural guarantees docs/PRODUCT.md §8 asks for:
 //! every command has an id, a human title and a default binding, so the three
 //! surfaces cannot drift apart.
 
@@ -60,7 +60,7 @@ fn every_command_has_an_id_a_title_and_a_default_binding() {
         );
         assert!(
             !spec.default_binding.is_empty(),
-            "{} has no default binding; spec.md §8 requires every command to \
+            "{} has no default binding; docs/PRODUCT.md §8 requires every command to \
              have a keyboard shortcut",
             spec.id
         );
@@ -101,8 +101,9 @@ fn ids_and_defaults_match_the_config_crate_vocabulary() {
 }
 
 #[test]
-fn canvas_bindings_win_over_the_spec() {
-    // The design canvas is newer than spec.md; CLAUDE.md says the canvas wins.
+fn bindings_are_the_ones_the_canvas_settled_on() {
+    // docs/PRODUCT.md §8 records these as the resolved bindings; the canvas is
+    // where they were settled, over an earlier brief that proposed `r` reply.
     let expected = [
         ("reply", "e"),
         ("archive", "a"),
@@ -176,7 +177,7 @@ fn bindings_do_not_collide_within_a_context() {
 
 #[test]
 fn destructive_commands_offer_a_way_back() {
-    // spec.md §1: destructive operations require appropriate confirmation/undo.
+    // docs/PRODUCT.md §1: destructive operations require appropriate confirmation/undo.
     for spec in registry::all() {
         if spec.destructive {
             assert_ne!(

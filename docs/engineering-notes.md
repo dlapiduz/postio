@@ -31,17 +31,20 @@ WebKitGTK 6.0 locked down (JS off, network off, `cid:` custom scheme, injected
 Postio CSS). Storage is SQLite for metadata/threading/sync-state/FTS5 plus a
 content-addressed blob dir for raw messages and attachments — no
 maildir/mbox/notmuch and no store picker. AI is deliberately *not* in v1
-(spec.md §23) despite being a founding principle; it is epic E12 (now tracked
+(PRODUCT.md §23) despite being a founding principle; it is epic E12 (now
+tracked
 as GitHub issues under the [Postio Roadmap](https://github.com/users/dlapiduz/projects/2)
 project). Approved plan: `~/.claude/plans/ethereal-fluttering-kettle.md`.
 
 **Design source of truth.** `Design/Mail Client.dc.html` is a Claude Design
 canvas whose PLATE direction (option 1b — airy desktop, 40px rows, key hints
-on the focused row only) was chosen. Where it disagrees with spec.md, **the
-canvas wins**: keys are `e`=reply, `a`=archive, `A`=archive-thread, `u`=undo,
-`t`=thread (not spec.md §8's `r`=reply); compose takes over the reading pane
-rather than opening a window; the sidebar says "Flagged" not "Starred". Visual
-target is the Industry design system's *identity* (Barlow / Barlow Condensed /
+on the focused row only) was chosen. It settled several questions an earlier
+brief had answered differently, and **PRODUCT.md now records the resolution**
+rather than the argument: keys are `e`=reply, `a`=archive, `A`=archive-thread,
+`u`=undo, `t`=thread; compose takes over the reading pane rather than opening a
+window; the sidebar says "Flagged" not "Starred". The canvas remains the
+authority on *visual* detail, and that target is the Industry design system's
+*identity* (Barlow / Barlow Condensed /
 IBM Plex Mono, steel accent `#5980a6`, hairlines) *without* its wireframe
 chrome (no blueprint corner marks, no transparent line-drawing cards), keeping
 real Adwaita window chrome. The canvas path `~/.config/postmark/` is an
@@ -50,7 +53,7 @@ earlier project name — use `postio`.
 **Hard constraints from the user.** (1) TDD is mandatory — failing test
 first, then implementation. (2) The app must feel instant — transitions
 `<=100ms` or absent, pane switches and thread drill-in use *no* transition,
-and the spec.md §18 budgets (`<500ms` start, `<16ms` interaction, `<100ms`
+and the PRODUCT.md §18 budgets (`<500ms` start, `<16ms` interaction, `<100ms`
 search) are enforced by criterion benches that fail CI, not checked by hand
 at the end.
 
@@ -581,7 +584,7 @@ believing any timing measured interactively.
 **`VmRSS` alone is misleading for measuring Postio's memory use.** Measured:
 total resident set is 131 MiB on a 1,000-message store and 215 MiB on a
 100,000-message one, which reads exactly like the mailbox being loaded — the
-one thing spec.md §18 promises never happens. Split
+one thing PRODUCT.md §18 promises never happens. Split
 `/proc/<pid>/status` instead: `RssAnon` is 47 MiB at *both* sizes (what
 Postio itself allocates — the windowed list model, the widgets, the
 runtime), and the entire difference is `RssFile`, because `postio-storage`

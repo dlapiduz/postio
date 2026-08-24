@@ -1,6 +1,6 @@
 //! Contacts, accumulated from the addresses Postio has seen.
 //!
-//! v1 has no address book integration (spec.md): the recipient autocomplete
+//! v1 has no address book integration (docs/PRODUCT.md): the recipient autocomplete
 //! ranks from what has actually come through the mailbox. Every address on
 //! every message becomes a sighting, and a correspondent's score is how often
 //! and how recently they have been seen.
