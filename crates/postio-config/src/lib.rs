@@ -53,6 +53,7 @@ pub mod error;
 pub mod filters;
 pub mod keys;
 pub mod live;
+pub mod logging;
 pub mod paths;
 pub mod secrets;
 mod source;
@@ -73,6 +74,7 @@ pub use error::{ConfigError, Result};
 pub use filters::FilterConfig;
 pub use keys::KeyBindings;
 pub use live::{LiveConfig, Reload};
+pub use logging::{LogLevel, LoggingConfig};
 pub use sync::{BodyFetch, SyncConfig};
 pub use ui::{Density, Theme, UiConfig};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
@@ -104,6 +106,9 @@ pub struct Config {
     /// `[filters]` — named saved queries.
     #[serde(default)]
     pub filters: BTreeMap<String, FilterConfig>,
+    /// `[logging]` — how much Postio says about what it is doing.
+    #[serde(default)]
+    pub logging: LoggingConfig,
     /// Top-level keys this version of Postio does not know.
     #[serde(flatten)]
     pub extra: Extras,

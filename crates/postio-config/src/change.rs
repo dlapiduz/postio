@@ -49,6 +49,10 @@ pub struct ConfigChanged {
     pub sync: bool,
     /// `[filters]` — the saved queries in the sidebar.
     pub filters: bool,
+    /// `[logging]` — the level, so a running app can be made louder without
+    /// being restarted. This is the one section whose whole point is to be
+    /// changed while something is going wrong.
+    pub logging: bool,
 }
 
 impl ConfigChanged {
@@ -58,7 +62,7 @@ impl ConfigChanged {
     /// recognize — preserved verbatim, never dropped — compares equal on
     /// every field above and must not repaint anything.
     pub fn any(&self) -> bool {
-        self.ui || self.keys || self.accounts || self.sync || self.filters
+        self.ui || self.keys || self.accounts || self.sync || self.filters || self.logging
     }
 
     /// Compare two configurations section by section.
@@ -76,6 +80,7 @@ impl ConfigChanged {
             accounts: old.accounts != new.accounts,
             sync: old.sync != new.sync,
             filters: old.filters != new.filters,
+            logging: old.logging != new.logging,
         }
     }
 }
@@ -156,6 +161,26 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn raising_the_log_level_is_a_change_a_subsystem_watches() {
+        // The whole point of `[logging]` being a setting rather than only an
+        // environment variable: turning it up has to reach a process that is
+        // already running and already misbehaving.
+        let old = Config::default();
+        let new = config("[logging]\nlevel = \"debug\"\n");
+
+        let changed = ConfigChanged::between(&old, &new);
+
+        assert_eq!(
+            changed,
+            ConfigChanged {
+                logging: true,
+                ..Default::default()
+            }
+        );
+        assert!(changed.any());
     }
 
     #[test]
