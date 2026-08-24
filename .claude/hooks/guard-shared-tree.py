@@ -114,11 +114,11 @@ RULES: list[tuple[str, str]] = [
         "The --check forms are read-only and allowed.",
     ),
     (
-        r"git\s+push",
-        "Refusing 'git push': pushing is NOT standing-authorised in this "
-        "repository -- only commits are. Nothing has been published yet and "
-        "history was rewritten to scrub personal data. Ask the user first. "
-        "See 'Git authority' in CLAUDE.md.",
+        r"git\s+push\s+(?:[^|;&\n]*\s)?(?:--force\b|-f\b|--mirror\b|--delete\b)",
+        "Refusing a force push. History here has already been rewritten once to "
+        "scrub personal data, and several sessions commit to this branch -- a "
+        "force push discards whatever landed since you last fetched. Pull and "
+        "merge, or ask the user.",
     ),
     (
         r"git\s+remote\s+(?:add|set-url)",
