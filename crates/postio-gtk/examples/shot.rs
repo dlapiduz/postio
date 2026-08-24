@@ -422,6 +422,21 @@ fn main() -> glib::ExitCode {
             mode: postio_gtk::finder::Mode::Search,
             text: "from:lena has:attach after:aug1".into(),
         });
+        // Canvas 2b's own readout. Delivered through the same pacing the
+        // application uses — `flush` asks the question the debounce was
+        // about to ask, and the answer comes back under its sequence number,
+        // so what is rendered is what a real answer would look like.
+        if let Some(live) = window.finder().live() {
+            live.flush();
+            live.deliver(
+                live.outstanding(),
+                postio_gtk::search::Outcome {
+                    hits: 14,
+                    capped: false,
+                    elapsed: Duration::from_millis(11),
+                },
+            );
+        }
     }
     if flag("settings") {
         show_settings(&window);

@@ -110,6 +110,13 @@ fn search_field() -> (gtk::Widget, finder::Field) {
         .build();
     text.update_property(&[gtk::accessible::Property::Label("Search all mail")]);
 
+    // Canvas 2b puts the count at the right-hand end of the field, inside
+    // it: the answer sits where the question was asked. Empty and hidden
+    // until there is a search to report — `crate::search::Live` drives it.
+    let readout = gtk::Label::new(None);
+    readout.add_css_class("postio-readout");
+    readout.set_visible(false);
+
     let hint = gtk::Label::new(Some("/"));
     hint.add_css_class("postio-key");
     // The hint is decoration for the field's own label; announcing it would
@@ -122,6 +129,7 @@ fn search_field() -> (gtk::Widget, finder::Field) {
     frame.append(&icon);
     frame.append(&marker);
     frame.append(&text);
+    frame.append(&readout);
     frame.append(&hint);
 
     // Not `AdwClamp`: it centres its child, and the canvas has the field
@@ -138,6 +146,7 @@ fn search_field() -> (gtk::Widget, finder::Field) {
         icon,
         marker,
         text,
+        readout,
         hint,
     };
     (frame.upcast(), field)
