@@ -154,8 +154,12 @@ fn exclude_self_and_seen(
 /// `source`'s body with `> `, so an original signature's own `-- ` becomes
 /// `> -- ` and [`crate::signature::split`] never mistakes it for this draft's.
 ///
-/// HTML-only content is not quoted — quoting is plain text, matching the
-/// plain-text-only scope [`crate::signature`] documents for v1.
+/// Quoting is plain text, and this crate can only do plain text: turning
+/// markup into text needs a parser, `postio-body` is where that lives, and
+/// `postio-body` depends on *this* crate — so reaching for it here would be a
+/// cycle. A caller that has both converts first and hands the text down;
+/// `postio_gtk::composer::quotable` is the one that does. Before it existed,
+/// an HTML-only message quoted as an attribution line with nothing under it.
 fn quote_body(source: &Message) -> String {
     let attribution = format!(
         "On {}, {} wrote:",

@@ -256,12 +256,56 @@ type AttachHandler = Box<dyn Fn(std::path::PathBuf, AttachReady)>;
 /// are the only commands this maps, and only when the composer is not
 /// already open — replying to a reply in progress is not a thing.
 fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Draft> {
+    let source = quotable(source);
+    let source = source.as_ref();
     match id {
         CommandId::Reply => Some(reply::reply(source, account)),
         CommandId::ReplyAll => Some(reply::reply_all(source, account)),
         CommandId::Forward => Some(reply::forward(source, account)),
         _ => None,
     }
+}
+
+/// Give `source` a text body when all it has is markup.
+///
+/// `postio_model::reply` quotes plain text, and it cannot do otherwise:
+/// `postio-model` sits *below* `postio-body` in the layering — the body crate
+/// depends on the model, so the model cannot reach the parser without a
+/// cycle. Turning markup into text is therefore done here, in the crate that
+/// has both, and handed down as an ordinary text body.
+///
+/// Before this, replying to an HTML-only message produced an attribution line
+/// with nothing under it. Marketing mail, calendar invitations and anything
+/// composed in a webmail client are HTML-only, so "nothing to quote" was the
+/// common case rather than an edge one.
+///
+/// Borrowed unless there is something to add, so the ordinary path does not
+/// clone a message to change nothing about it.
+fn quotable(source: &Message) -> std::borrow::Cow<'_, Message> {
+    use std::borrow::Cow;
+
+    let has_text = source
+        .body
+        .text
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty());
+    if has_text {
+        return Cow::Borrowed(source);
+    }
+    let Some(html) = source.body.html.as_deref() else {
+        return Cow::Borrowed(source);
+    };
+    // `to_text` over the closed subset, never a general HTML-to-text pass:
+    // that is the function that makes most mail's plain-text part
+    // unreadable, and the reason `postio_body::Document` is a small closed
+    // set in the first place.
+    let text = postio_body::parse(html).to_text();
+    if text.trim().is_empty() {
+        return Cow::Borrowed(source);
+    }
+    let mut owned = source.clone();
+    owned.body.text = Some(text);
+    Cow::Owned(owned)
 }
 
 mod imp {
@@ -1637,6 +1681,14 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_set_body(&self, text: &str) {
         self.imp().body.buffer().set_text(text);
+    }
+
+    /// The draft `Reply` would open for `source`, without a window to press
+    /// a key in. Public so the quoting path can be driven directly.
+    #[doc(hidden)]
+    pub fn test_reply_draft(&self, source: &Message) -> Option<Draft> {
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        reply_draft(CommandId::Reply, source, &account)
     }
 
     /// Types `text` into `To`, firing recipient completion the same way the
