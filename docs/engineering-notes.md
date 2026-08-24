@@ -772,6 +772,17 @@ project looks like a commit somebody made rather than like weather: rustc
 nobody wrote — and it was unreproducible locally by construction. The check
 refuses a channel name in that file for this reason.
 
+**What the pin does not reach: the Flatpak release build.**
+`flatpak/dev.postio.Postio.json` builds against
+`org.freedesktop.Sdk.Extension.rust-stable`, which carries whatever rustc that
+extension ships for `runtime-version: 50`. There is no `rust-1.98.0`
+extension to name instead, so this one is pinned only indirectly, by the
+runtime version. It is a weaker exposure than CI's was — a release build
+either compiles or does not, and it is not a `-D warnings` gate that can turn
+main red on a new lint — but it does mean the *shipped* binary and the tested
+one may come from different compilers. `check-toolchain-pinned.py`
+deliberately does not flag it: there is no alternative to flag it toward.
+
 **Bumping it.** Change `rust-toolchain.toml`, change the mise pin to match,
 and expect a cold rebuild: a different compiler shares no artifacts with the
 old one, so the shared `target/` is dead weight the moment the pin moves.
