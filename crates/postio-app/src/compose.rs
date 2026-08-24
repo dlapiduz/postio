@@ -296,7 +296,7 @@ fn mime_type_of(path: &std::path::Path) -> String {
 /// body not yet — which is the ordinary state of a mailbox mid-backfill, not
 /// a fault. Replying to one just quotes nothing, the same way any degraded
 /// state here should: fewer words in the draft, never a broken one.
-fn load_body(
+pub(crate) fn load_body(
     connection: &postio_storage::PooledConnection,
     blobs: &BlobStore,
     id: MessageId,
