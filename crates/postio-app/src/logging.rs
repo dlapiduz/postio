@@ -177,6 +177,7 @@ const OURS: &[&str] = &[
     "postio_core",
     "postio_gtk",
     "postio_imap",
+    "postio_index",
     "postio_model",
     "postio_runtime",
     "postio_search",
