@@ -35,6 +35,7 @@ pub mod logging;
 pub mod notifications;
 pub mod onboarding;
 pub mod paths;
+pub mod reading;
 pub mod refresh;
 pub mod search;
 
@@ -421,6 +422,10 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         wiring.blobs.clone(),
         wiring.runtime.clone(),
     );
+
+    // The reading pane. After `compose::install`, because the two share the
+    // pane and the window wires their swap when the composer is installed.
+    reading::install(window, wiring);
 
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
