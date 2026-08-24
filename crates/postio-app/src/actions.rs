@@ -45,8 +45,8 @@ use postio_model::{
     AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    FlagSource, MailboxRepository, MessageRepository, MessageSet, OperationQueueRepository,
-    ThreadOrder, ThreadRepository,
+    ColumnFlag, FlagSource, MailboxRepository, MessageRepository, MessageSet,
+    OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection};
 
@@ -429,7 +429,126 @@ impl Actions {
         want: Option<bool>,
     ) -> Result<Applied, CommandError> {
         let mut connection = self.connect()?;
-        let rows = self.named(&connection, target)?;
+        match self.aim(&connection, target)? {
+            Aim::Rows(rows) => self.set_flag_rows(&mut connection, rows, flag, want),
+            Aim::Bulk { set, account, from } => {
+                self.set_flag_set(&mut connection, set, account, from, flag, want)
+            }
+        }
+    }
+
+    /// Set or clear one flag across a whole mailbox, without naming a row.
+    ///
+    /// The bulk twin of [`set_flag_rows`], and the flag half of `postio-agr.1`.
+    /// Two indexed counts and three statements, whatever the mailbox holds:
+    /// count both sides of the flag, write the queue rows, write the flag.
+    ///
+    /// # Why both sides get counted
+    ///
+    /// A toggle means *make them agree*, and over a predicate the only way to
+    /// know whether they already do is to ask how many disagree — which is a
+    /// `count(*)` over an index rather than a read. The other count is what
+    /// the toast says, and the two together are also how an empty mailbox and
+    /// a mailbox that already agrees tell themselves apart, which are
+    /// different sentences.
+    ///
+    /// # Why the queue rows are written over the rows that disagree
+    ///
+    /// The set narrowed by [`MessageSet::with_flag`] is exactly the rows this
+    /// changes. Enqueueing over the wider set would tell the server about
+    /// messages that already carried the flag and — because the run of queue
+    /// rows *is* the undo set — would make `u` clear a flag this action never
+    /// set.
+    ///
+    /// [`set_flag_rows`]: Actions::set_flag_rows
+    fn set_flag_set(
+        &self,
+        connection: &mut PooledConnection,
+        set: MessageSet,
+        account: AccountId,
+        from: MailboxId,
+        flag: Flag,
+        want: Option<bool>,
+    ) -> Result<Applied, CommandError> {
+        // Only the two flags with a column of their own can be written this
+        // way; nothing reaches here with another, because `Flag` and
+        // `MarkUnread` are the only verbs that flag anything.
+        let column = ColumnFlag::of(&flag)
+            .ok_or_else(|| CommandError::rejected("That flag does not work on a whole mailbox"))?;
+        let repository = MessageRepository::new(connection);
+        let carrying = |present: bool| set.clone().with_flag(column, present);
+        let without = repository
+            .count_set(&carrying(false))
+            .map_err(store_failure)? as usize;
+        let with = repository
+            .count_set(&carrying(true))
+            .map_err(store_failure)? as usize;
+        if without + with == 0 {
+            return Err(CommandError::rejected("There is nothing here to change"));
+        }
+
+        // The toggle rule, over a predicate: they disagree, so the flag goes
+        // on; they all carry it, so it comes off.
+        let wanted = want.unwrap_or(without > 0);
+        let changing = carrying(!wanted);
+        let count = if wanted { without } else { with };
+        if count == 0 {
+            return Err(CommandError::rejected("Already set"));
+        }
+
+        let one: FlagSet = std::iter::once(flag.clone()).collect();
+        let operation = if wanted {
+            Operation::SetFlags { flags: one }
+        } else {
+            Operation::ClearFlags { flags: one }
+        };
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        // Enqueue before writing, as a bulk move does: the predicate is "the
+        // rows that disagree", and after the write none of them do.
+        let range = OperationQueueRepository::new(&transaction)
+            .enqueue_set(account, &changing, &operation, at)
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("Already set"))?;
+        MessageRepository::new(&transaction)
+            .set_flag_on_set(&changing, column, wanted)
+            .map_err(store_failure)?;
+        transaction.commit().map_err(store_failure)?;
+
+        let target = MessageTarget::Batch { range, from };
+        let inverse = match flag {
+            Flag::Seen => Command::MarkUnread {
+                target,
+                unread: Some(wanted),
+            },
+            _ => Command::Flag {
+                target,
+                flagged: Some(!wanted),
+            },
+        };
+        Ok(Applied {
+            kind: kind_for(&flag, wanted),
+            messages: Vec::new(),
+            count,
+            removed: Vec::new(),
+            arrived: None,
+            // The rows did not go anywhere, but naming the ones that changed
+            // is the read this path exists to avoid — so the list reloads the
+            // folder rather than being handed eighty thousand ids.
+            reloaded: vec![from],
+            changed: Vec::new(),
+            inverse: vec![inverse],
+        })
+    }
+
+    /// Set or clear one flag across messages this handler has already read.
+    fn set_flag_rows(
+        &self,
+        connection: &mut PooledConnection,
+        rows: Vec<Message>,
+        flag: Flag,
+        want: Option<bool>,
+    ) -> Result<Applied, CommandError> {
         let account = rows[0].account_id;
         let wanted =
             want.unwrap_or_else(|| !rows.iter().all(|message| message.flags.contains(&flag)));
@@ -609,32 +728,21 @@ impl Actions {
         Ok(Aim::Bulk { set, account, from })
     }
 
-    /// The rows a verb that reads its messages acts on.
-    ///
-    /// Only reachable for a target that named them; a whole-mailbox selection
-    /// never arrives here. Verbs that cannot yet act on a predicate say so
-    /// through this, which is why it takes a resolution rather than a target.
-    fn named(
-        &self,
-        connection: &PooledConnection,
-        target: &MessageTarget,
-    ) -> Result<Vec<Message>, CommandError> {
-        match self.aim(connection, target)? {
-            Aim::Rows(rows) => Ok(rows),
-            // Flags over a whole mailbox need a bulk statement of their own —
-            // `\Seen` lives in a text column beside its denormalised boolean,
-            // so it is not the same `UPDATE` a move is. `postio-t3u9`.
-            Aim::Bulk { .. } => Err(CommandError::rejected(
-                "That does not work on a whole mailbox yet — archive, delete \
-                 and move do",
-            )),
-        }
-    }
-
     /// The thread `A` means: the one the focused message belongs to.
+    ///
+    /// A whole-mailbox selection has no such message — `Ctrl+A` then `A` is a
+    /// gesture with no answer rather than a bulk one, because "the thread of
+    /// everything" is not a thing — so it is asked for rather than guessed at.
     fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
         let connection = self.connect()?;
-        let rows = self.named(&connection, &MessageTarget::Selection)?;
+        let rows = match self.aim(&connection, &MessageTarget::Selection)? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk { .. } => {
+                return Err(CommandError::rejected(
+                    "Pick a message, and `A` archives its thread",
+                ));
+            }
+        };
         rows[0]
             .thread_id
             .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
@@ -823,6 +931,21 @@ mod tests {
                 .update(&self.quiet, |app: &mut AppState| app.open_mailbox(mailbox));
             self.state
                 .update(&self.quiet, |app: &mut AppState| app.select_all());
+        }
+
+        /// Puts one flag on a message that is already stored.
+        fn flag(&self, message: MessageId, flag: Flag) {
+            let connection = self.database.connection().expect("a connection");
+            let repository = MessageRepository::new(&connection);
+            let mut flags = repository
+                .get(message)
+                .expect("a read")
+                .expect("the message is still there")
+                .flags;
+            flags.insert(flag);
+            repository
+                .set_flags(message, &flags, FlagSource::Server)
+                .expect("dress the message");
         }
 
         fn count_in(&self, mailbox: MailboxId) -> u32 {
@@ -1327,22 +1450,189 @@ mod tests {
     }
 
     #[test]
-    fn flagging_a_whole_mailbox_says_it_cannot_yet_rather_than_loading_it() {
-        // `\Seen` and `\Flagged` live in a text column beside their
-        // denormalised booleans, so a bulk flag is not the same `UPDATE` a
-        // bulk move is. Until `postio-t3u9` writes it, this says so — which is
-        // not silence, and is not a mailbox-sized read either.
+    fn ctrl_a_then_mark_read_marks_the_whole_mailbox() {
+        // The second thing anyone does to an 81,717-message account, after
+        // archiving it. `\Seen` lives in a text column beside a denormalised
+        // boolean, so this is a different statement from a bulk move — but it
+        // is still one statement, and still never names a row.
         let world = world();
-        let message = world.message(world.inbox, &[]);
+        let messages: Vec<MessageId> = (0..25).map(|_| world.message(world.inbox, &[])).collect();
         world.everything_in(world.inbox);
 
-        let outcome = world.run(Command::Flag {
-            target: MessageTarget::Selection,
-            flagged: Some(true),
-        });
+        world
+            .run(Command::MarkUnread {
+                target: MessageTarget::Selection,
+                unread: Some(false),
+            })
+            .expect("mark the mailbox read");
 
-        assert!(matches!(outcome, Err(CommandError::Rejected(_))));
-        assert!(!world.flags_of(message).is_flagged());
+        for message in &messages {
+            assert!(world.flags_of(*message).is_seen());
+        }
+        assert_eq!(
+            world.queued().len(),
+            25,
+            "the server has to be told, once per message"
+        );
+        assert_eq!(
+            completion(&world.drained()),
+            Some(("Marked 25 messages as read", true))
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_flag_toggle_makes_them_agree() {
+        // The rule a toggle over more than one row follows, held over a
+        // mailbox: if every row already carries the flag it comes off them
+        // all, otherwise it goes onto them all. Deciding which is two indexed
+        // counts, not a read of the mailbox.
+        let world = world();
+        let messages: Vec<MessageId> = (0..6).map(|_| world.message(world.inbox, &[])).collect();
+        world.flag(messages[0], Flag::Flagged);
+        world.everything_in(world.inbox);
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: None,
+            })
+            .expect("toggle the mailbox");
+        for message in &messages {
+            assert!(world.flags_of(*message).is_flagged(), "they now agree");
+        }
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: None,
+            })
+            .expect("toggle it back");
+        for message in &messages {
+            assert!(
+                !world.flags_of(*message).is_flagged(),
+                "agreeing, the toggle takes it off them all"
+            );
+        }
+    }
+
+    #[test]
+    fn a_whole_mailbox_flag_only_queues_the_rows_it_changed() {
+        // A queue row for a message that already carried the flag tells the
+        // server nothing, and puts that message inside the run undo takes
+        // back — so `u` would clear a flag this action never set.
+        let world = world();
+        let already = world.message(world.inbox, &[Flag::Flagged]);
+        let rest: Vec<MessageId> = (0..4).map(|_| world.message(world.inbox, &[])).collect();
+        world.everything_in(world.inbox);
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            })
+            .expect("flag the mailbox");
+
+        let queued = world.queued();
+        assert_eq!(queued.len(), 4);
+        assert!(
+            !queued
+                .iter()
+                .any(|(target, _)| *target == OperationTarget::Message(already)),
+            "it was already flagged; there is nothing to tell the server"
+        );
+        assert_eq!(
+            completion(&world.drained()),
+            Some(("Flagged 4 messages", true)),
+            "the sentence counts what changed, not what was selected"
+        );
+        for message in &rest {
+            assert!(world.flags_of(*message).is_flagged());
+        }
+    }
+
+    #[test]
+    fn one_undo_takes_a_whole_mailbox_flag_back() {
+        let world = world();
+        let already = world.message(world.inbox, &[Flag::Flagged]);
+        let rest: Vec<MessageId> = (0..8).map(|_| world.message(world.inbox, &[])).collect();
+        world.everything_in(world.inbox);
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            })
+            .expect("flag the mailbox");
+        let _ = world.drained();
+
+        world.run(Command::Undo).expect("undo");
+
+        for message in &rest {
+            assert!(!world.flags_of(*message).is_flagged(), "all the way back");
+        }
+        assert!(
+            world.flags_of(already).is_flagged(),
+            "undo takes back what the action flagged, not what was flagged already"
+        );
+        assert_eq!(
+            world.run(Command::Undo),
+            Err(CommandError::rejected("Nothing to undo")),
+            "one entry, not eight"
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_already_agreeing_with_the_flag_says_so() {
+        let world = world();
+        world.message(world.inbox, &[Flag::Flagged]);
+        world.message(world.inbox, &[Flag::Flagged]);
+        world.everything_in(world.inbox);
+
+        assert_eq!(
+            world.run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            }),
+            Err(CommandError::rejected("Already set"))
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_flag_over_an_empty_mailbox_says_so() {
+        let world = world();
+        world.everything_in(world.inbox);
+
+        assert_eq!(
+            world.run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            }),
+            Err(CommandError::rejected("There is nothing here to change"))
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_flag_tells_the_list_to_reload_rather_than_naming_rows() {
+        let world = world();
+        world.message(world.inbox, &[]);
+        world.everything_in(world.inbox);
+
+        world
+            .run(Command::MarkUnread {
+                target: MessageTarget::Selection,
+                unread: Some(false),
+            })
+            .expect("mark the mailbox read");
+
+        let events = world.drained();
+        assert!(events.contains(&Event::MessageListChanged {
+            mailbox: world.inbox
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::MessagesChanged { .. })),
+            "naming the rows is exactly what this path must not do"
+        );
     }
 
     #[test]
