@@ -92,6 +92,16 @@ mod imp {
         pub parts: OnceCell<crate::parts::PartsPanel>,
         /// The pane that had the keyboard when the box opened.
         pub before_finder: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
+        /// Whether the box that is open was opened to answer a `Move`.
+        ///
+        /// `m` sends `Command::Move { to: None }`, and `None` means "ask the
+        /// user" — so the window opens the folder picker and has to remember
+        /// *why*, or the folder that comes back would be navigated to instead
+        /// of moved into. Established by
+        /// [`open_finder`](super::Window::open_finder), which is the one way
+        /// the box is ever opened, so a pick can never answer a move the user
+        /// abandoned two openings ago.
+        pub pending_move: std::cell::Cell<bool>,
         /// The context that had the keyboard before it went to the folders,
         /// so `Esc` puts it back where it was rather than guessing `List`.
         pub before_sidebar: std::cell::Cell<Option<Context>>,
@@ -442,6 +452,20 @@ impl Window {
             #[strong]
             show,
             move |id| {
+                // A folder answers whichever question the box was opened
+                // with. `m` asked where to move the selection; `#` asked
+                // where to go.
+                if window.imp().pending_move.take() {
+                    // Still `Selection`, not the ids behind it: the rows the
+                    // user marked have not moved while the box was up, and
+                    // keeping the reference is what lets `Ctrl+A` then `m`
+                    // move a whole mailbox as one command.
+                    window.act(postio_core::Command::Move {
+                        target: postio_core::MessageTarget::Selection,
+                        to: Some(id),
+                    });
+                    return;
+                }
                 window.sidebar().select(id);
                 show(id);
             }
@@ -1066,6 +1090,15 @@ impl Window {
 
     /// Run an invocation: the window's own commands first, then the handlers.
     pub fn act(&self, command: postio_core::Command) {
+        // A move with no destination is half a request: `None` means "ask the
+        // user", and this is the window asking. Matched on the whole command
+        // rather than its id because the *answered* move — from a drop, or
+        // from the pick below — is the same id and has to go straight out.
+        if matches!(command, postio_core::Command::Move { to: None, .. }) {
+            self.open_finder(Mode::Mailbox);
+            self.imp().pending_move.set(true);
+            return;
+        }
         // A command the window answers itself — closing an overlay, moving
         // the cursor — means the same thing however it was invoked, and stops
         // here either way.
@@ -1083,6 +1116,11 @@ impl Window {
     /// navigation rather than a mode you enter.
     pub fn open_finder(&self, mode: Mode) {
         let finder = self.finder();
+        // Whatever the last opening was for, this one is not it yet. Cleared
+        // here rather than on close so that the pick which *closes* the box
+        // can still see what the box was for — and so an abandoned move
+        // cannot be answered by an unrelated `#` jump later.
+        self.imp().pending_move.set(false);
         if !finder.is_open() {
             self.close_cheatsheet();
             self.close_settings();
