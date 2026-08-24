@@ -224,3 +224,109 @@ fn pump() {
         while context.iteration(false) {}
     }
 }
+
+#[test]
+fn at_finds_a_correspondent_and_searches_their_mail() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let finder = window.finder();
+
+    // -- with no contacts, the box says why rather than shrugging ---------
+
+    window.open_finder(Mode::Contact);
+    pump();
+    assert!(
+        empty_note(&window).contains("learns them from the mail"),
+        "an address book Postio has not built yet is not a query that missed: {:?}",
+        empty_note(&window)
+    );
+
+    // -- @ is a mode like the others --------------------------------------
+
+    finder.set_contacts(&correspondents());
+    finder.set_query(Query::new());
+    finder.set_query(Query::new().typed("@gh"));
+    pump();
+    assert_eq!(finder.mode(), Mode::Contact, "the prefix was absorbed");
+    assert_eq!(finder.query().text, "gh");
+
+    let hits = finder.matched_contacts();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].name, "Grace Hopper");
+
+    // -- picking one leaves an ordinary query the user can build on -------
+
+    finder.activate();
+    pump();
+    assert_eq!(
+        finder.mode(),
+        Mode::Search,
+        "the box does not strand you in a mode with nowhere to go"
+    );
+    assert_eq!(finder.query().text, "from:grace@example.com");
+    assert_eq!(
+        finder.chips().len(),
+        1,
+        "and it is a chip Backspace pops, like any other"
+    );
+
+    // -- a query that matches nobody is a different empty ------------------
+
+    finder.set_query(Query::in_mode(Mode::Contact));
+    finder.set_query(Query {
+        mode: Mode::Contact,
+        text: "zzzz".to_owned(),
+    });
+    pump();
+    assert!(
+        empty_note(&window).contains("No correspondent matches"),
+        "{:?}",
+        empty_note(&window)
+    );
+
+    window.destroy();
+}
+
+fn correspondents() -> Vec<postio_model::Contact> {
+    let person = |name: &str, address: &str, seen: u32| {
+        let mut contact =
+            postio_model::Contact::new(postio_model::EmailAddress::new(Some(name), address));
+        contact.times_seen = seen;
+        contact
+    };
+    vec![
+        person("Grace Hopper", "grace@example.com", 40),
+        person("Ada Lovelace", "ada@example.org", 12),
+    ]
+}
+
+/// What the plate says when it has no rows.
+fn empty_note(window: &Window) -> String {
+    fn walk(widget: &gtk::Widget) -> Option<gtk::Widget> {
+        if widget.has_css_class("postio-finder-empty") {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = walk(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    walk(&window.clone().upcast())
+        .and_then(|widget| widget.downcast::<gtk::Label>().ok())
+        .map(|label| label.text().to_string())
+        .unwrap_or_default()
+}

@@ -25,6 +25,14 @@
 //! | anything | [`Mode::Search`] | searches mail, operators become chips |
 //! | `>` | [`Mode::Command`] | fuzzy-matches the command registry |
 //! | `#` | [`Mode::Mailbox`] | jumps to a folder |
+//! | `@` | [`Mode::Contact`] | finds a correspondent, and searches their mail |
+//!
+//! Every one of them answers the same question — *where is the thing I am
+//! looking for* — which is why picking a contact searches their mail rather
+//! than composing to them. Composing is `c`, a verb of its own with a surface
+//! of its own; a mode that ended somewhere else would be a mode you could
+//! fall out of. Picking a contact leaves the box in [`Mode::Search`] holding
+//! `from:<address>`, which is an ordinary chip the user can then build on.
 //!
 //! A prefix typed into an empty box is *absorbed* — it leaves the text and
 //! becomes the mode, shown as a marker in the field. That is what makes the
@@ -46,6 +54,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
 use postio_core::{CommandId, Context, Keymap};
+use postio_model::Contact;
 use postio_model::ids::MailboxId;
 use postio_model::mailbox::Mailbox;
 use postio_search::ParsedQuery;
@@ -63,11 +72,13 @@ pub enum Mode {
     Command,
     /// Jump to a folder.
     Mailbox,
+    /// Find a correspondent, and search their mail.
+    Contact,
 }
 
 impl Mode {
     /// Every mode, in the order the cheat sheet should list them.
-    pub const ALL: [Mode; 3] = [Mode::Search, Mode::Command, Mode::Mailbox];
+    pub const ALL: [Mode; 4] = [Mode::Search, Mode::Command, Mode::Mailbox, Mode::Contact];
 
     /// The character that switches into this mode from an empty box.
     ///
@@ -78,6 +89,7 @@ impl Mode {
             Mode::Search => None,
             Mode::Command => Some('>'),
             Mode::Mailbox => Some('#'),
+            Mode::Contact => Some('@'),
         }
     }
 
@@ -96,6 +108,7 @@ impl Mode {
             Mode::Search => "/",
             Mode::Command => ">",
             Mode::Mailbox => "#",
+            Mode::Contact => "@",
         }
     }
 
@@ -105,6 +118,7 @@ impl Mode {
             Mode::Search => "Search all mail",
             Mode::Command => "Run a command",
             Mode::Mailbox => "Go to a folder",
+            Mode::Contact => "Find a correspondent",
         }
     }
 
@@ -116,7 +130,7 @@ impl Mode {
     pub const fn context(self) -> Context {
         match self {
             Mode::Search => Context::Search,
-            Mode::Command | Mode::Mailbox => Context::Palette,
+            Mode::Command | Mode::Mailbox | Mode::Contact => Context::Palette,
         }
     }
 
@@ -237,6 +251,95 @@ pub fn folders(mailboxes: &[Mailbox], query: &str) -> Vec<FolderHit> {
     found
 }
 
+/// One correspondent the box matched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContactHit {
+    /// What to call them: the name the user set, then the last name seen on
+    /// the address, then the address itself.
+    pub name: String,
+    /// The addr-spec, which is what `from:` will be given.
+    pub address: String,
+    /// How many messages this address has been seen on, for the cap beside
+    /// the row — a correspondent you write to daily reads differently from
+    /// one who mailed you once.
+    pub times_seen: u32,
+    /// Byte indices in `name` the query matched, for highlighting.
+    pub positions: Vec<usize>,
+    /// How well it matched. Rows come out highest first.
+    pub score: i32,
+}
+
+/// The correspondents matching `query`, best first.
+///
+/// Scored with the palette's own matcher over the *name*, and again over the
+/// address when the name did not match — people look for `grace`, and they
+/// look for `gh`, and they look for `@example.org`. One matcher across the
+/// whole box, so `gh` finds Grace Hopper here exactly as `wd` finds
+/// `wayland-devel` one mode over.
+///
+/// Ties break on how often the correspondent has been seen, which is the same
+/// ranking `ContactRepository::search` uses and the reason an empty query
+/// offers the people you actually write to.
+pub fn contacts(contacts: &[Contact], query: &str) -> Vec<ContactHit> {
+    let query = query.trim();
+    let mut found: Vec<ContactHit> = contacts
+        .iter()
+        .filter_map(|contact| {
+            let name = contact_name(contact);
+            let address = contact.address.address.clone();
+            // The name first, so the highlight lands on what the row shows.
+            // Falling back to the address means `@example.org` still finds
+            // people, and costs nothing when the name already matched.
+            let matched = match score(query, &name) {
+                Some(matched) => matched,
+                None => score(query, &address).map(|matched| crate::palette::Match {
+                    score: matched.score,
+                    positions: Vec::new(),
+                })?,
+            };
+            Some(ContactHit {
+                name,
+                address,
+                times_seen: contact.times_seen,
+                positions: matched.positions,
+                score: matched.score,
+            })
+        })
+        .collect();
+    found.sort_by_key(|hit| {
+        (
+            std::cmp::Reverse(hit.score),
+            std::cmp::Reverse(hit.times_seen),
+        )
+    });
+    found.truncate(crate::palette::MAX_ROWS);
+    found
+}
+
+/// What to call a correspondent: the name the user set, then the last display
+/// name seen on the address, then the address itself. Never empty, so a row
+/// always has something to say.
+fn contact_name(contact: &Contact) -> String {
+    contact
+        .name
+        .clone()
+        .or_else(|| contact.address.name.clone())
+        .unwrap_or_else(|| contact.address.address.clone())
+}
+
+/// The query picking `hit` puts in the box.
+///
+/// A `from:` chip, quoted if the address could not survive being typed back
+/// in. Deliberately *the query*, not a search that has already run: the point
+/// of landing in [`Mode::Search`] is that the user can go on building on it.
+pub fn contact_query(hit: &ContactHit) -> String {
+    if hit.address.chars().any(char::is_whitespace) {
+        format!("from:\"{}\"", hit.address.replace('"', ""))
+    } else {
+        format!("from:{}", hit.address)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The widget
 // ---------------------------------------------------------------------------
@@ -260,6 +363,7 @@ pub struct Field {
 
 type CommandHandler = Box<dyn Fn(CommandId)>;
 type FolderHandler = Box<dyn Fn(MailboxId)>;
+type ContactHandler = Box<dyn Fn(&ContactHit)>;
 type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
 
 mod imp {
@@ -278,18 +382,21 @@ mod imp {
         /// The workspace's context, for filtering which commands apply.
         pub(super) context: RefCell<Context>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
+        pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
         pub(super) parsed: RefCell<ParsedQuery>,
         /// The hit count and timing, once `attach` has a field to draw it in.
         pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<CommandId>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
+        pub(super) matched: RefCell<Vec<ContactHit>>,
         pub(super) open: Cell<bool>,
         /// Set while the box is rewriting its own entry, so absorbing a
         /// prefix does not read as the user typing again.
         pub(super) echoing: Cell<bool>,
         pub(super) on_command: RefCell<Vec<CommandHandler>>,
         pub(super) on_folder: RefCell<Vec<FolderHandler>>,
+        pub(super) on_contact: RefCell<Vec<ContactHandler>>,
         pub(super) on_search: RefCell<Vec<QueryHandler>>,
         pub(super) on_changed: RefCell<Vec<QueryHandler>>,
         pub(super) on_dismissed: RefCell<Vec<Box<dyn Fn()>>>,
@@ -310,15 +417,18 @@ mod imp {
                 // commands are filtered by until the window says otherwise.
                 context: RefCell::new(Context::List),
                 mailboxes: RefCell::new(Vec::new()),
+                contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
                 parsed: RefCell::new(ParsedQuery::default()),
                 live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
+                matched: RefCell::new(Vec::new()),
                 open: Cell::new(false),
                 echoing: Cell::new(false),
                 on_command: RefCell::new(Vec::new()),
                 on_folder: RefCell::new(Vec::new()),
+                on_contact: RefCell::new(Vec::new()),
                 on_search: RefCell::new(Vec::new()),
                 on_changed: RefCell::new(Vec::new()),
                 on_dismissed: RefCell::new(Vec::new()),
@@ -398,11 +508,21 @@ impl Finder {
         // because `open` grabs the focus — and grabbing it from inside the
         // handler that fired *because* focus arrived is a loop the frame
         // clock never gets out of.
+        //
+        // Only when the box is *closed*, though. Every other mode opens by
+        // grabbing the focus itself, so this handler fires a moment later for
+        // a box that is already open — and answering it with `Mode::Search`
+        // threw the mode away before the user could type into it. `>`, `#`
+        // and `@` all landed back in search that way.
         let focus = gtk::EventControllerFocus::new();
         focus.connect_enter(glib::clone!(
             #[weak(rename_to = finder)]
             self,
-            move |_| finder.begin(Mode::Search)
+            move |_| {
+                if !finder.is_open() {
+                    finder.begin(Mode::Search);
+                }
+            }
         ));
         field.text.add_controller(focus);
 
@@ -456,6 +576,18 @@ impl Finder {
         self.refresh();
     }
 
+    /// The correspondents `@` can find.
+    ///
+    /// The whole list, not a prefix query: the matcher is a subsequence one,
+    /// so `gh` has to be able to reach `Grace Hopper`, and no SQL `LIKE` will
+    /// find that. A mailbox's distinct correspondents are bounded by the
+    /// people who have written to it — thousands, not the millions of
+    /// messages — and [`crate::palette::MAX_ROWS`] bounds what is drawn.
+    pub fn set_contacts(&self, contacts: &[Contact]) {
+        *self.imp().contacts.borrow_mut() = contacts.to_vec();
+        self.refresh();
+    }
+
     /// Whether the box has the keyboard.
     pub fn is_open(&self) -> bool {
         self.imp().open.get()
@@ -503,6 +635,11 @@ impl Finder {
     /// The folders listed, best first.
     pub fn folders(&self) -> Vec<MailboxId> {
         self.imp().folders.borrow().clone()
+    }
+
+    /// The correspondents listed, best first.
+    pub fn matched_contacts(&self) -> Vec<ContactHit> {
+        self.imp().matched.borrow().clone()
     }
 
     /// Open the box in `mode`, with nothing typed, and put the keyboard in it.
@@ -600,6 +737,26 @@ impl Finder {
                     handler(id);
                 }
             }
+            Mode::Contact => {
+                let Some(hit) = self
+                    .selected_index()
+                    .and_then(|index| imp.matched.borrow().get(index).cloned())
+                else {
+                    return;
+                };
+                // The box stays the box. Picking a correspondent writes
+                // `from:<address>` into it and drops back into search, so what
+                // happens next is an ordinary query the user can build on —
+                // and the chip is poppable like any other. Emitted as well,
+                // for anything that wants to know who was picked.
+                self.set_query(Query {
+                    mode: Mode::Search,
+                    text: contact_query(&hit),
+                });
+                for handler in imp.on_contact.borrow().iter() {
+                    handler(&hit);
+                }
+            }
         }
     }
 
@@ -646,6 +803,15 @@ impl Finder {
     /// Called when a folder is chosen.
     pub fn connect_folder(&self, handler: impl Fn(MailboxId) + 'static) {
         self.imp().on_folder.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called when a correspondent is chosen.
+    ///
+    /// The box has already put `from:<address>` in itself by the time this
+    /// runs — this is for anything that wants to know *who*, not for deciding
+    /// what picking one means.
+    pub fn connect_contact(&self, handler: impl Fn(&ContactHit) + 'static) {
+        self.imp().on_contact.borrow_mut().push(Box::new(handler));
     }
 
     /// Called when a search is run.
@@ -728,6 +894,7 @@ impl Finder {
             Mode::Search => 0,
             Mode::Command => imp.commands.borrow().len(),
             Mode::Mailbox => imp.folders.borrow().len(),
+            Mode::Contact => imp.matched.borrow().len(),
         }
     }
 
@@ -789,6 +956,7 @@ impl Finder {
 
         imp.commands.borrow_mut().clear();
         imp.folders.borrow_mut().clear();
+        imp.matched.borrow_mut().clear();
         while let Some(row) = imp.list.first_child() {
             imp.list.remove(&row);
         }
@@ -829,6 +997,16 @@ impl Finder {
                     imp.list.append(&folder_row(hit));
                 }
                 *imp.folders.borrow_mut() = found.iter().map(|hit| hit.id).collect();
+            }
+            Mode::Contact => {
+                if let Some(live) = imp.live.borrow().as_ref() {
+                    live.clear();
+                }
+                let found = contacts(&imp.contacts.borrow(), &query.text);
+                for hit in &found {
+                    imp.list.append(&contact_row(hit));
+                }
+                *imp.matched.borrow_mut() = found;
             }
         }
 
@@ -893,6 +1071,15 @@ impl Finder {
             imp.empty.set_text(&match query.mode {
                 Mode::Command => format!("No command matches “{}”", query.text),
                 Mode::Mailbox => format!("No folder matches “{}”", query.text),
+                // Two different empties. Postio has no address book: contacts
+                // accumulate from the addresses that have come through the
+                // mailbox, so a box with none is a mailbox that has not synced
+                // rather than a query that missed — and saying which is the
+                // difference between a way forward and a shrug.
+                Mode::Contact if imp.contacts.borrow().is_empty() => {
+                    "No correspondents yet — Postio learns them from the mail it syncs.".to_string()
+                }
+                Mode::Contact => format!("No correspondent matches “{}”", query.text),
                 Mode::Search => String::new(),
             });
         }
@@ -920,6 +1107,24 @@ fn folder_row(hit: &FolderHit) -> gtk::ListBoxRow {
         0 => hit.name.clone(),
         unread => format!("{}, {unread} unread", hit.name),
     })]);
+    row
+}
+
+/// One correspondent: what to call them, and how often they have written.
+///
+/// The address is the accessible name rather than a second line, because two
+/// people called `Ada` are told apart by their address and a screen reader
+/// user has no other way to see it. The count is the cap, the same slot the
+/// folder rows use for unread.
+fn contact_row(hit: &ContactHit) -> gtk::ListBoxRow {
+    let seen = (hit.times_seen > 0).then(|| hit.times_seen.to_string());
+    let row = row_shell(&highlight(&hit.name, &hit.positions), seen.as_deref());
+    row.update_property(&[gtk::accessible::Property::Label(&match hit.times_seen {
+        0 => format!("{}, {}", hit.name, hit.address),
+        1 => format!("{}, {}, 1 message", hit.name, hit.address),
+        seen => format!("{}, {}, {seen} messages", hit.name, hit.address),
+    })]);
+    row.set_tooltip_text(Some(&hit.address));
     row
 }
 
@@ -1086,6 +1291,140 @@ mod tests {
             "an empty query offers every folder"
         );
         assert!(folders(&mailboxes, "zzz").is_empty());
+    }
+
+    // -- contacts ---------------------------------------------------------
+
+    fn correspondent(name: Option<&str>, address: &str, times_seen: u32) -> Contact {
+        let mut contact = Contact::new(postio_model::EmailAddress::new(name, address));
+        contact.times_seen = times_seen;
+        contact
+    }
+
+    #[test]
+    fn a_correspondent_is_found_the_way_a_folder_is() {
+        let people = [
+            correspondent(Some("Grace Hopper"), "grace@example.com", 40),
+            correspondent(Some("Ada Lovelace"), "ada@example.org", 12),
+        ];
+
+        // Subsequence, not substring: the same matcher every other mode uses.
+        let hits = contacts(&people, "gh");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "Grace Hopper");
+        assert_eq!(hits[0].address, "grace@example.com");
+        assert_eq!(hits[0].times_seen, 40);
+    }
+
+    #[test]
+    fn a_correspondent_is_findable_by_address_when_the_name_does_not_match() {
+        let people = [correspondent(Some("Grace Hopper"), "grace@example.org", 40)];
+
+        assert_eq!(contacts(&people, "example.org").len(), 1);
+        assert!(contacts(&people, "example.net").is_empty());
+    }
+
+    #[test]
+    fn a_correspondent_with_no_name_is_still_something_to_pick() {
+        let people = [correspondent(None, "buildbot@example.net", 900)];
+
+        let hits = contacts(&people, "build");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].name, "buildbot@example.net",
+            "a row with nothing to say is a row nobody can pick"
+        );
+    }
+
+    #[test]
+    fn a_name_the_user_set_beats_the_one_the_headers_carried() {
+        let mut contact = correspondent(Some("ADA N."), "ada@example.org", 3);
+        contact.name = Some("Ada Lovelace".to_owned());
+
+        assert_eq!(contacts(&[contact], "ada")[0].name, "Ada Lovelace");
+    }
+
+    #[test]
+    fn an_empty_query_offers_the_people_you_actually_write_to() {
+        let people = [
+            correspondent(Some("Once Only"), "once@example.com", 1),
+            correspondent(Some("Every Day"), "daily@example.com", 900),
+        ];
+
+        let hits = contacts(&people, "");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(
+            hits[0].name, "Every Day",
+            "with nothing typed, familiarity is the only ranking there is"
+        );
+    }
+
+    #[test]
+    fn picking_a_correspondent_writes_a_query_the_parser_reads_back() {
+        let hits = contacts(
+            &[correspondent(Some("Grace Hopper"), "grace@example.com", 40)],
+            "grace",
+        );
+        let query = contact_query(&hits[0]);
+        assert_eq!(query, "from:grace@example.com");
+
+        // It has to survive being typed back in as an ordinary chip.
+        let parsed = postio_search::parse(
+            &query,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 23).expect("a real date"),
+        );
+        let filters: Vec<_> = parsed
+            .filters()
+            .map(|clause| clause.filter.clone())
+            .collect();
+        assert_eq!(
+            filters,
+            vec![postio_search::query::Filter::From(
+                "grace@example.com".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn an_address_that_could_not_be_typed_back_is_quoted() {
+        let hits = contacts(
+            &[correspondent(Some("Odd One"), "odd one@example.com", 1)],
+            "odd",
+        );
+        assert_eq!(contact_query(&hits[0]), "from:\"odd one@example.com\"");
+    }
+
+    #[test]
+    fn at_is_a_mode_like_the_others() {
+        let box_ = Query::new();
+        let finding = box_.typed("@gra");
+
+        assert_eq!(finding.mode, Mode::Contact);
+        assert_eq!(finding.text, "gra");
+        assert_eq!(Mode::Contact.marker(), "@");
+        assert!(Mode::Contact.has_results());
+        assert_eq!(Mode::Contact.context(), Context::Palette);
+
+        // And backing out of it keeps what was typed, like every other mode.
+        let backed_out = finding
+            .backspace_at_start()
+            .expect("a mode is something to back out of");
+        assert_eq!(backed_out.mode, Mode::Search);
+        assert_eq!(backed_out.text, "gra");
+    }
+
+    #[test]
+    fn every_mode_has_a_prefix_of_its_own() {
+        let mut prefixes: Vec<char> = Mode::ALL.iter().filter_map(|mode| mode.prefix()).collect();
+        let count = prefixes.len();
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        assert_eq!(
+            prefixes.len(),
+            count,
+            "two modes on one prefix would make the box ambiguous"
+        );
+        assert_eq!(count, Mode::ALL.len() - 1, "only Search has no prefix");
     }
 
     #[test]
