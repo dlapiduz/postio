@@ -22,7 +22,7 @@
 //!   styling attribute is an attribute a sanitiser would then have to reason
 //!   about in both directions.
 //!
-//! That is why [`parse`] can be *total*. Its input on the quoting path is
+//! That is why [`fn@crate::parse`] can be *total*. Its input on the quoting path is
 //! attacker-controlled, and a parse error there would be a denial of service
 //! on replying to a hostile message. It never fails; it **narrows**.
 //!
@@ -57,7 +57,7 @@ impl Href {
 
     /// Parse `raw`, or refuse it.
     ///
-    /// Refuses anything without one of [`Href::SCHEMES`], and anything
+    /// Refuses anything without one of `http`, `https` or `mailto`, and anything
     /// carrying an ASCII control character *anywhere*. The control-character
     /// rule is not decoration: `java&#9;script:alert(1)` is a real bypass —
     /// HTML entity-decodes the tab, and a scheme check that ran before the

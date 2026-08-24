@@ -8,7 +8,7 @@
 //!
 //! Outgoing HTML is **generated**, never passed through. The only route a
 //! sender's markup can take into an outgoing body is the quoting path, and
-//! quoting runs [`crate::parse`] — into a type that cannot hold a script, a
+//! quoting runs [`fn@crate::parse`] — into a type that cannot hold a script, a
 //! remote image, an `iframe`, a `style` attribute or a `javascript:` href,
 //! because those have no variant. [`Document::to_html`] then emits from that
 //! type. **The subset is the allowlist**, enforced by the compiler on the way
@@ -20,7 +20,7 @@
 //! anything.** If it ever does, the serialiser has a bug and the right
 //! response is to fix the serialiser, not to be glad the filter caught it. A
 //! backstop that silently cleans up after a real defect is a backstop that
-//! hides one — so [`tests/outgoing.rs`] asserts it is a no-op over every
+//! hides one — so `tests/outgoing.rs` asserts it is a no-op over every
 //! document the serialiser can produce, including documents parsed from the
 //! hostile corpus.
 //!
