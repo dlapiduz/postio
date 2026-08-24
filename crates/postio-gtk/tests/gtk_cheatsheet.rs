@@ -11,7 +11,7 @@
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_core::{CommandId, Keymap};
+use postio_core::{ActionId, CommandId, Keymap};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 
@@ -60,7 +60,7 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
 
     let sections = window.cheatsheet().sections();
     assert!(!sections.is_empty(), "and it has something in it");
-    let listed: Vec<CommandId> = sections
+    let listed: Vec<ActionId> = sections
         .iter()
         // `filter_map`: a row's command is optional now, because the box's
         // prefixes are on the sheet and are not commands. Dropping the `None`s
@@ -107,7 +107,7 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
         .sections()
         .into_iter()
         .flat_map(|section| section.rows)
-        .find(|row| row.id == Some(CommandId::Archive))
+        .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
         .expect("archive");
     assert_eq!(archive.binding.as_deref(), Some("y"));
 
