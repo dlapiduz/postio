@@ -612,6 +612,22 @@ impl SyncTracker {
                 // the line reading `syncing 89%` on a folder that had finished,
                 // for as long as the account stayed connected.
                 self.status.progress = None;
+                // And the body queue's number, for the same reason: the
+                // engine announces a connection state at the boundaries, so
+                // any of them means the count on screen is no longer being
+                // made.
+                self.status.backfill = None;
+            }
+            Event::BackfillProgress { done, total, .. } => {
+                self.status.backfill = Some((*done, *total));
+                // Drained. Clear it rather than leaving `2000 of 2000` on
+                // screen -- the same trap `SyncProgress` documents above,
+                // and the same answer. `last_sync` is deliberately not
+                // touched: it means a *list* pass completed, and a body
+                // queue draining is not that.
+                if done >= total {
+                    self.status.backfill = None;
+                }
             }
             Event::SyncProgress { done, total, .. } => {
                 self.status.progress = Some((*done, *total));
@@ -955,6 +971,65 @@ mod tests {
             account: account(),
             state,
         }
+    }
+
+    /// Issue #74: the backfill's progress reached nobody, so the longest
+    /// phase of a first sync drew `idle`.
+    #[test]
+    fn a_backfill_moves_the_status_line_and_then_gets_out_of_the_way() {
+        let mut tracker = SyncTracker::new();
+        assert!(tracker.apply(&Event::ConnectionChanged {
+            account: AccountId::new(1),
+            state: ConnectionState::Online,
+        }));
+        assert_eq!(tracker.status().backfill, None);
+
+        assert!(
+            tracker.apply(&Event::BackfillProgress {
+                account: AccountId::new(1),
+                done: 412,
+                total: 2000,
+            }),
+            "the status changed and the tracker said it had not"
+        );
+        assert_eq!(tracker.status().backfill, Some((412, 2000)));
+
+        // Drained. It must clear itself the way `SyncProgress` does, or the
+        // line reads `downloading` for as long as the account stays up.
+        tracker.apply(&Event::BackfillProgress {
+            account: AccountId::new(1),
+            done: 2000,
+            total: 2000,
+        });
+        assert_eq!(
+            tracker.status().backfill,
+            None,
+            "a queue that has drained is not a backfill in progress"
+        );
+        assert_eq!(tracker.status().lines(Instant::now()).0, "idle · imap");
+    }
+
+    #[test]
+    fn a_backfill_does_not_pretend_to_be_a_sync() {
+        // `last_sync` is what "last sync 4h" reads, and it means a *list*
+        // pass completed. A backfill finishing is not that, and moving it
+        // would date the mailbox from the wrong event.
+        let mut tracker = SyncTracker::new();
+        tracker.apply(&Event::ConnectionChanged {
+            account: AccountId::new(1),
+            state: ConnectionState::Online,
+        });
+        let before = tracker.status().last_sync;
+        tracker.apply(&Event::BackfillProgress {
+            account: AccountId::new(1),
+            done: 2000,
+            total: 2000,
+        });
+        assert_eq!(
+            tracker.status().last_sync,
+            before,
+            "a drained body queue is not a completed sync"
+        );
     }
 
     #[test]
