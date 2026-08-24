@@ -626,6 +626,13 @@ scripts/test-headless.sh cargo test -p postio-gtk
 It is ~3.5x faster than a live session and will expose races a real compositor
 hides. If something passes on the desktop and fails there, suspect the code.
 
+**A test that needs a display goes in `tests/`, never in `src/`.** GTK may be
+initialized once per process and `cargo test` runs a crate's unit tests on a
+thread pool in one binary, so a second `adw::init()` does not fail a test — it
+kills the process, and every other test in that crate goes unreported.
+`crates/postio-gtk/tests/gtk_toast.rs` is the worked example;
+`scripts/check-no-gtk-init-in-unit-tests.py` enforces it. See #41.
+
 **Verify your tests can fail.** Inject the regression each one exists to catch
 and confirm it goes red. A session once closed a bug on four green runs of a
 test that failed half the time — four coin flips. An await-for-condition test
