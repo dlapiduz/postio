@@ -35,20 +35,50 @@ pub struct Preset {
     password_help_url: Option<&'static str>,
 }
 
+/// What a provider that refuses ordinary account passwords has to say before
+/// the password field, worded without naming anybody: the sentence is the
+/// same for every such provider, and a row that spelled out a vendor's name
+/// here would be a special case wearing a string's clothes.
+const APP_PASSWORD_NOTE: &str = "This provider requires an app-specific password: generate one in your \
+     account settings and paste it here. Your ordinary account password will \
+     not work.";
+
 /// The table. One row per provider, in display order.
-static PRESETS: &[Preset] = &[Preset {
-    display_name: "iCloud",
-    domains: &["icloud.com", "me.com", "mac.com"],
-    imap: ("imap.mail.me.com", 993, Encryption::Tls),
-    smtp: ("smtp.mail.me.com", 465, Encryption::Tls),
-    requires_app_password: true,
-    note: Some(
-        "This provider requires an app-specific password: generate one in your \
-         account settings and paste it here. Your ordinary account password will \
-         not work.",
-    ),
-    password_help_url: Some("https://appleid.apple.com/account/manage"),
-}];
+///
+/// Ordinary IMAP and SMTP with a password only. A provider that has turned
+/// password authentication off for good — the ones that now require OAuth —
+/// does not belong here while v1 speaks no OAuth: a prefilled form that
+/// cannot possibly authenticate is worse than the empty one, because the
+/// user blames the password they typed.
+static PRESETS: &[Preset] = &[
+    Preset {
+        display_name: "iCloud",
+        domains: &["icloud.com", "me.com", "mac.com"],
+        imap: ("imap.mail.me.com", 993, Encryption::Tls),
+        smtp: ("smtp.mail.me.com", 465, Encryption::Tls),
+        requires_app_password: true,
+        note: Some(APP_PASSWORD_NOTE),
+        password_help_url: Some("https://appleid.apple.com/account/manage"),
+    },
+    Preset {
+        display_name: "Gmail",
+        domains: &["gmail.com", "googlemail.com"],
+        imap: ("imap.gmail.com", 993, Encryption::Tls),
+        smtp: ("smtp.gmail.com", 465, Encryption::Tls),
+        requires_app_password: true,
+        note: Some(APP_PASSWORD_NOTE),
+        password_help_url: Some("https://myaccount.google.com/apppasswords"),
+    },
+    Preset {
+        display_name: "Fastmail",
+        domains: &["fastmail.com", "fastmail.fm"],
+        imap: ("imap.fastmail.com", 993, Encryption::Tls),
+        smtp: ("smtp.fastmail.com", 465, Encryption::Tls),
+        requires_app_password: true,
+        note: Some(APP_PASSWORD_NOTE),
+        password_help_url: Some("https://app.fastmail.com/settings/security/devicekeys"),
+    },
+];
 
 impl Preset {
     /// The provider's own display name.
@@ -69,6 +99,16 @@ impl Preset {
     /// The provider's submission host.
     pub fn smtp_host(&self) -> &'static str {
         self.smtp.0
+    }
+
+    /// The IMAP port to connect on.
+    pub fn imap_port(&self) -> u16 {
+        self.imap.1
+    }
+
+    /// The submission port to connect on.
+    pub fn smtp_port(&self) -> u16 {
+        self.smtp.1
     }
 
     /// Whether only an application-specific password will work.
@@ -192,6 +232,71 @@ mod tests {
         for preset in PRESETS.iter().filter(|p| p.requires_app_password) {
             let note = preset.note.expect("an app-password provider needs a note");
             assert!(note.contains("app-specific password"));
+        }
+    }
+
+    #[test]
+    fn the_named_providers_the_first_run_screen_has_to_cover_are_in_the_table() {
+        // These were a second, hardcoded table in
+        // `postio-app/examples/provision.rs::known` -- the same data in two
+        // places, only one of which the onboarding screen could reach.
+        // Issue #69 asks for one table both callers use.
+        for (domain, imap, smtp) in [
+            ("icloud.com", "imap.mail.me.com", "smtp.mail.me.com"),
+            ("me.com", "imap.mail.me.com", "smtp.mail.me.com"),
+            ("mac.com", "imap.mail.me.com", "smtp.mail.me.com"),
+            ("gmail.com", "imap.gmail.com", "smtp.gmail.com"),
+            ("googlemail.com", "imap.gmail.com", "smtp.gmail.com"),
+            ("fastmail.com", "imap.fastmail.com", "smtp.fastmail.com"),
+            ("fastmail.fm", "imap.fastmail.com", "smtp.fastmail.com"),
+        ] {
+            let settings = lookup(&address_in(domain), "a", domain)
+                .unwrap_or_else(|| panic!("{domain} is not in the table"));
+            assert_eq!(settings.imap.host, imap, "{domain}");
+            assert_eq!(settings.smtp.host, smtp, "{domain}");
+        }
+    }
+
+    #[test]
+    fn no_domain_is_claimed_by_two_providers() {
+        // Two rows matching one domain is a silent bug: `lookup` takes the
+        // first, and which row that is depends on table order.
+        let mut seen: Vec<&str> = Vec::new();
+        for preset in PRESETS {
+            for domain in preset.domains {
+                assert!(
+                    !seen.contains(domain),
+                    "{domain} appears in more than one row"
+                );
+                seen.push(domain);
+            }
+        }
+    }
+
+    #[test]
+    fn every_row_is_usable_as_written() {
+        // The table is data, and data gets typed. A row with an empty host or
+        // a zero port would reach the first-run screen as a prefilled form
+        // that cannot possibly connect.
+        for preset in PRESETS {
+            assert!(!preset.display_name.is_empty());
+            assert!(!preset.domains.is_empty(), "{}", preset.display_name);
+            for (label, (host, port, _)) in [("imap", preset.imap), ("smtp", preset.smtp)] {
+                assert!(
+                    host.contains('.') && !host.starts_with('.'),
+                    "{} {label} host is not a hostname: {host:?}",
+                    preset.display_name
+                );
+                assert!(port > 0, "{} {label} port is zero", preset.display_name);
+            }
+            for domain in preset.domains {
+                assert_eq!(
+                    *domain,
+                    domain.to_ascii_lowercase(),
+                    "{} lists {domain} in mixed case, which `lookup` folds and so never matches",
+                    preset.display_name
+                );
+            }
         }
     }
 
