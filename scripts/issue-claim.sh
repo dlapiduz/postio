@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claim a GitHub issue and get a private worktree to do it in.
 #
-# Replaces `bd ready` + `bd update --claim` + working in the shared tree.
+# Finds work, claims it, and gives you a tree of your own to do it in.
 #
 # The point of the worktree is that it makes the whole "Working in parallel"
 # hazard table in CLAUDE.md moot. Inside it, `git add -A`, `git commit -a`,
