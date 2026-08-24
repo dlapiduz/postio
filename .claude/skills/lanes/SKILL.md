@@ -21,12 +21,24 @@ git worktree list
 An issue labelled `in-progress` with a worktree under
 `~/src/postio-worktrees/issue-<n>` is someone's live work. Leave it alone.
 
-**An issue labelled `in-progress` with no worktree and no branch is a stale
-claim** — a session that was cut off mid-task. Release it:
+**A claim is not stale because it is quiet.** A session can spend hours on one
+issue — reading it, waiting on CI, running a suite — and leave no worktree
+commit or branch for most of that time. An issue claimed this morning is
+somebody's afternoon, not an abandoned lock.
+
+Treat a claim as abandoned only after **a day or more** with no worktree, no
+branch and no commits:
 
 ```bash
-scripts/issue-release.sh --stale        # sweeps every claim whose worktree is gone
+scripts/issue-release.sh --stale        # a day or more; the safe default
+scripts/issue-release.sh --stale 3      # a longer threshold
 ```
+
+It also clears left-over locks whose issue is no longer claimed — those are
+harmless-looking and make `issue-claim.sh` refuse that issue forever.
+
+Releasing live work is far worse than leaving a label up a day too long. When
+in doubt, leave it and say so.
 
 ## 2. What is in flight but not merged
 
