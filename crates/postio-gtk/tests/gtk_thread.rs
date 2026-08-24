@@ -133,7 +133,11 @@ fn t_drills_into_a_thread_and_esc_puts_the_list_back_exactly() {
 
     window.act(postio_core::Command::Back);
     pump();
-    settle(&window);
+    // Wait for the scroller to be back where it was, rather than for ten
+    // frames and a hope. See `settle_until` — under load the allocation is
+    // not finished when the frames run out, and the offset read then is
+    // stale rather than wrong.
+    settle_until(&window, || scroll_offset(&window) == scroll_before);
 
     assert!(!window.thread_open());
     assert!(list_is_showing(&window));
@@ -151,7 +155,10 @@ fn t_drills_into_a_thread_and_esc_puts_the_list_back_exactly() {
     assert_eq!(
         scroll_offset(&window),
         scroll_before,
-        "and the scroll position, to the pixel"
+        "and the scroll position, to the pixel — canvas 3a promises the round \
+         trip puts you back exactly, and `settle_until` has already waited \
+         for the allocation to finish, so this is a real loss of position \
+         rather than a frame that had not landed yet"
     );
 
     // -- and the column forgets the thread it was showing ------------------
@@ -288,6 +295,31 @@ fn settle(window: &Window) {
 fn pump() {
     let context = glib::MainContext::default();
     while context.iteration(false) {}
+}
+
+/// Drive the main loop until `done`, or give up after a deadline.
+///
+/// [`settle`] waits a fixed ten frame ticks, which is a bet that ten frames is
+/// long enough for whatever is being waited on. On an idle box it is; with
+/// four sessions building it is not, and a scrolled window that has not
+/// finished its allocation reports an offset that is merely stale rather than
+/// wrong (`postio-1ff`).
+///
+/// So: wait for the condition rather than for a number of frames. A genuine
+/// regression still fails — the deadline runs out and the assertion after this
+/// call reports the real values — but a slow machine only makes it slower,
+/// which is the difference between a test that is strict and one that is
+/// flaky.
+fn settle_until(window: &Window, done: impl Fn() -> bool) {
+    settle(window);
+    let context = glib::MainContext::default();
+    let heartbeat =
+        glib::timeout_add_local(Duration::from_millis(5), || glib::ControlFlow::Continue);
+    let deadline = Instant::now() + Duration::from_millis(3000);
+    while !done() && Instant::now() < deadline {
+        context.iteration(true);
+    }
+    heartbeat.remove();
 }
 
 /// Depth-first search of a widget tree.
