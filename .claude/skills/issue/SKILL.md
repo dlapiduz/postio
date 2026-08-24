@@ -76,6 +76,13 @@ scripts/test-headless.sh cargo test -p postio-gtk
 by hand. Be aware it is faster than a real session and will expose tests that
 race an async load — that is the test's bug, not the harness's.
 
+`main` moves while you work. `issue-land.sh` fetches and rebases onto it
+before pushing, so you do not have to — but **fetch before you reason about
+the tree**: `git log`, `git diff` and anything comparing against `origin/main`
+read a snapshot that may be hours old. Rebase a long branch as you go rather
+than only at the end, and re-read the issue before you finish it in case
+someone decided something while you worked.
+
 Still true, and not negotiable: **TDD** — write the failing test first;
 **no network in the default suite**; **no personal data in fixtures**; the
 [architectural invariants](../../../CLAUDE.md); and the perf and motion budgets.
