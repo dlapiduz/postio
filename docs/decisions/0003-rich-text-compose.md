@@ -1,8 +1,8 @@
 # ADR 0003 — Rich-text (HTML) compose
 
-- **Status:** Proposed — awaiting the maintainer's decision
+- **Status:** Accepted — **GO** (2026-08-24)
 - **Date:** 2026-08-24
-- **Issue:** [#3 Rich-text (HTML) compose](https://github.com/dlapiduz/postio/issues/3) (`needs-architecture`), under [#17 Epic: Compose](https://github.com/dlapiduz/postio/issues/17)
+- **Issue:** [#3 Rich-text (HTML) compose](https://github.com/dlapiduz/postio/issues/3), under [#17 Epic: Compose](https://github.com/dlapiduz/postio/issues/17)
 - **Related:** bead `postio-3o8f`; issues [#12](https://github.com/dlapiduz/postio/issues/12) (rich signatures), [#13](https://github.com/dlapiduz/postio/issues/13) (`$EDITOR`)
 - **Decision:** a true WYSIWYG editor, built on a **`contenteditable` WebView
   under a hardened profile**. A restricted HTML subset is the canonical draft
