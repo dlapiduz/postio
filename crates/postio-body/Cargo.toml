@@ -18,3 +18,6 @@ postio-model = { workspace = true }
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }
+
+[lints]
+workspace = true
