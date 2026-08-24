@@ -476,10 +476,29 @@ Use these rather than reconstructing the commands:
 | `/gtk-design` | Building it: tokens, GTK traps, motion, render-to-PNG |
 
 
-**Finishing an issue is not finishing a session.** Claim the next one. Stop
-only when `scripts/issue-claim.sh` says there is nothing ready, when a decision
-is genuinely the maintainer's, or when context is nearly gone — and land your
-work before you do.
+**Finishing an issue is not finishing a session.** Run
+`scripts/issue-claim.sh` and keep going. Keep going for as long as you can.
+
+**Do not ask whether to continue.** Nobody is waiting to be asked, and a
+session that stops to check has thrown away the rest of its context for
+nothing. "Shall I pick up another?", "Would you like me to keep going?" and
+"Let me know if you want me to take the next one" are all the same mistake:
+the answer is yes, it is written here, and asking costs a round trip that may
+not come back for hours.
+
+There are exactly three reasons to stop, and none of them is politeness:
+
+1. **`scripts/issue-claim.sh` says there is nothing ready.** Say so and stop.
+   Do not go hunting in the backlog; an issue without `ready` has not been
+   triaged, and `epic`, `icebox` and `needs-architecture` are deliberately
+   closed to you.
+2. **A decision is genuinely the maintainer's** — scope, product direction, or
+   a trade-off with no defensible default. Not "which of these two names is
+   nicer": make that call and say what you chose.
+3. **Context is nearly gone.** Land your work first, then say where you got to.
+
+Land what you have before you stop, whichever reason applies. Uncommitted work
+is unprotected work.
 
 ### Stay current
 
