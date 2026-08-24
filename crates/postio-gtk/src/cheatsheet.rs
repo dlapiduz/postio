@@ -26,7 +26,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
-use postio_core::{CommandId, Context, ContextSet, Keymap, registry};
+use postio_core::{ActionId, Context, ContextSet, Keymap, registry};
 
 use crate::finder::Mode;
 
@@ -39,7 +39,11 @@ pub struct Row {
     /// commands, they are what you type *inside* a surface a command opened.
     /// They belong on the sheet all the same — a user who never reads docs
     /// would otherwise never discover two thirds of the box.
-    pub id: Option<CommandId>,
+    ///
+    /// An [`ActionId`], so a command registered at runtime is taught here on
+    /// the same footing as a built-in. `?` is half of what makes this app
+    /// learnable, and a command absent from it is one the user will not find.
+    pub id: Option<ActionId>,
     /// Its title, as the registry gives it.
     pub title: &'static str,
     /// The binding in force. `None` means palette-only — still worth listing,
@@ -98,7 +102,7 @@ pub fn sections(keymap: &Keymap) -> Vec<Section> {
 
     for spec in registry::all() {
         let row = Row {
-            id: Some(spec.id),
+            id: Some(spec.id.into()),
             title: spec.title,
             binding: keymap.binding(spec.id).map(str::to_owned),
         };
@@ -129,7 +133,43 @@ pub fn sections(keymap: &Keymap) -> Vec<Section> {
         out.push(prefixes);
     }
     out.extend(sections.into_iter().filter(|s| !s.rows.is_empty()));
+    out.extend(extension_sections(keymap));
     out
+}
+
+/// One section per namespace, for the commands registered at runtime.
+///
+/// Grouped by where they came from rather than folded into the built-in
+/// sections by context, because provenance is the thing a user needs here:
+/// `?` answers "what can I do", and "this came from the MCP server you
+/// connected" is part of the answer in a way that "this works in the message
+/// list" already is for a built-in.
+///
+/// Last, and never interleaved. The built-in sheet is a stable thing people
+/// learn; a plugin must not be able to reorder it by registering early.
+fn extension_sections(keymap: &Keymap) -> Vec<Section> {
+    let mut sections: Vec<Section> = Vec::new();
+    for spec in registry::every_action() {
+        let ActionId::Ext(id) = spec.id else {
+            continue;
+        };
+        let row = Row {
+            id: Some(spec.id),
+            title: spec.title,
+            binding: keymap.binding(spec.id).map(str::to_owned),
+        };
+        match sections
+            .iter_mut()
+            .find(|section| section.title == id.namespace())
+        {
+            Some(section) => section.rows.push(row),
+            None => sections.push(Section {
+                title: id.namespace(),
+                rows: vec![row],
+            }),
+        }
+    }
+    sections
 }
 
 /// What the one box does with a leading `>`, `#` or `@`.
@@ -364,6 +404,7 @@ fn section_widget(section: &Section) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_core::CommandId;
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
@@ -371,14 +412,14 @@ mod tests {
 
     #[test]
     fn every_command_appears_exactly_once() {
-        let listed: Vec<CommandId> = sections(&defaults())
+        let listed: Vec<ActionId> = sections(&defaults())
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| row.id)
             .collect();
 
         for spec in registry::all() {
-            let count = listed.iter().filter(|id| **id == spec.id).count();
+            let count = listed.iter().filter(|id| **id == spec.id.into()).count();
             assert_eq!(
                 count, 1,
                 "`{}` appears {count} times; a reader wants one answer",
@@ -396,9 +437,9 @@ mod tests {
             .find(|section| section.title == EVERYWHERE)
             .expect("an Everywhere section");
 
-        let ids: Vec<CommandId> = everywhere.rows.iter().filter_map(|row| row.id).collect();
-        assert!(ids.contains(&CommandId::CommandPalette));
-        assert!(ids.contains(&CommandId::Back));
+        let ids: Vec<ActionId> = everywhere.rows.iter().filter_map(|row| row.id).collect();
+        assert!(ids.contains(&ActionId::Builtin(CommandId::CommandPalette)));
+        assert!(ids.contains(&ActionId::Builtin(CommandId::Back)));
         assert_eq!(
             sections.first().map(|section| section.title),
             Some(EVERYWHERE),
@@ -417,7 +458,7 @@ mod tests {
         assert!(
             list.rows
                 .iter()
-                .any(|row| row.id == Some(CommandId::Archive)),
+                .any(|row| row.id == Some(ActionId::Builtin(CommandId::Archive))),
             "archive works in the list, the thread and the reader; the sheet \
              says so once"
         );
@@ -430,7 +471,7 @@ mod tests {
             composing
                 .rows
                 .iter()
-                .any(|row| row.id == Some(CommandId::Send))
+                .any(|row| row.id == Some(ActionId::Builtin(CommandId::Send)))
         );
     }
 
@@ -450,7 +491,7 @@ mod tests {
         let archive = sections(&defaults())
             .into_iter()
             .flat_map(|section| section.rows)
-            .find(|row| row.id == Some(CommandId::Archive))
+            .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
             .expect("archive");
 
         assert_eq!(archive.binding.as_deref(), Some("a"));
@@ -466,7 +507,7 @@ mod tests {
         let archive = sections(&Keymap::resolve(&overrides))
             .into_iter()
             .flat_map(|section| section.rows)
-            .find(|row| row.id == Some(CommandId::Archive))
+            .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
             .expect("archive");
 
         assert_eq!(
@@ -500,7 +541,7 @@ mod tests {
     fn a_row_reads_as_a_sentence() {
         assert_eq!(
             spoken(&Row {
-                id: Some(CommandId::Archive),
+                id: Some(ActionId::Builtin(CommandId::Archive)),
                 title: "Archive",
                 binding: Some("a".to_owned()),
             }),
@@ -508,7 +549,7 @@ mod tests {
         );
         assert_eq!(
             spoken(&Row {
-                id: Some(CommandId::Archive),
+                id: Some(ActionId::Builtin(CommandId::Archive)),
                 title: "Archive",
                 binding: None,
             }),

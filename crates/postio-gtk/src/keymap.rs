@@ -634,7 +634,11 @@ impl Keymap {
         let mut keymap = Self::new();
         let mut problems = Vec::new();
 
-        for spec in registry::all() {
+        // The merged vocabulary, not just the built-in table: a key bound to
+        // a registered command has to reach the resolver like any other, and
+        // `bind` already takes the id as a string, so nothing below this line
+        // cares which half it came from.
+        for spec in registry::every_action() {
             for binding in commands.bindings(spec.id) {
                 let contexts: Vec<KeyContext> = if spec.contexts == ContextSet::ANY {
                     vec![KeyContext::Global]

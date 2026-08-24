@@ -28,7 +28,7 @@
 //! arrangement the canvas uses for the key hints on a focused row, so a key
 //! learned in the palette looks the same when it appears in the list.
 
-use postio_core::{CommandId, Context, Keymap, registry};
+use postio_core::{ActionId, Context, Keymap, registry};
 
 /// How many rows the palette will show at once.
 ///
@@ -147,7 +147,12 @@ fn starts_a_word(candidate: &str, index: usize) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// The command this row runs.
-    pub id: CommandId,
+    ///
+    /// An [`ActionId`], because `Ctrl+K` is where a registered command has to
+    /// be equal to a built-in: it has a query box, so it can absorb a
+    /// vocabulary that grows, which is exactly what the right-click menu
+    /// cannot do.
+    pub id: ActionId,
     /// Its title, as the registry gives it.
     pub title: &'static str,
     /// Its binding in force, or `None` when it is palette-only.
@@ -175,7 +180,7 @@ const ID_PENALTY: i32 = 40;
 /// the cheat sheet uses.
 pub fn entries(keymap: &Keymap, context: Context, query: &str) -> Vec<Entry> {
     let query = query.trim();
-    let mut found: Vec<Entry> = registry::for_context(context)
+    let mut found: Vec<Entry> = registry::reachable(context)
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
             let by_id = score(query, spec.id.as_str());
@@ -227,6 +232,7 @@ pub fn highlight(title: &str, positions: &[usize]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_core::CommandId;
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
@@ -296,7 +302,7 @@ mod tests {
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
         let listed = entries(&defaults(), Context::List, "");
-        let expected: Vec<CommandId> = registry::for_context(Context::List)
+        let expected: Vec<ActionId> = registry::reachable(Context::List)
             .map(|spec| spec.id)
             .collect();
 
@@ -312,7 +318,7 @@ mod tests {
             let reachable = Context::ALL.iter().any(|context| {
                 entries(&defaults(), *context, spec.title)
                     .iter()
-                    .any(|entry| entry.id == spec.id)
+                    .any(|entry| entry.id == spec.id.into())
             });
             assert!(reachable, "`{}` cannot be found in the palette", spec.id);
         }
@@ -324,7 +330,7 @@ mod tests {
         assert!(
             !from_the_list
                 .iter()
-                .any(|entry| entry.id == CommandId::Send),
+                .any(|entry| entry.id == ActionId::Builtin(CommandId::Send)),
             "offering to send from the message list is a row that can only disappoint"
         );
 
@@ -332,7 +338,7 @@ mod tests {
         assert!(
             from_the_composer
                 .iter()
-                .any(|entry| entry.id == CommandId::Send)
+                .any(|entry| entry.id == ActionId::Builtin(CommandId::Send))
         );
     }
 
@@ -342,16 +348,18 @@ mod tests {
 
         assert_eq!(
             found.first().map(|entry| entry.id),
-            Some(CommandId::ArchiveThread)
+            Some(ActionId::Builtin(CommandId::ArchiveThread))
         );
     }
 
     #[test]
     fn a_title_match_outranks_an_id_match_for_the_same_query() {
         let found = entries(&defaults(), Context::List, "archive");
-        let ranks: Vec<CommandId> = found.iter().map(|entry| entry.id).collect();
+        let ranks: Vec<ActionId> = found.iter().map(|entry| entry.id).collect();
 
-        let archive = ranks.iter().position(|id| *id == CommandId::Archive);
+        let archive = ranks
+            .iter()
+            .position(|id| *id == ActionId::Builtin(CommandId::Archive));
         assert_eq!(archive, Some(0), "{ranks:?}");
     }
 
@@ -360,7 +368,7 @@ mod tests {
         let listed = entries(&defaults(), Context::List, "archive");
         let archive = listed
             .iter()
-            .find(|entry| entry.id == CommandId::Archive)
+            .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
             .expect("archive");
 
         assert_eq!(archive.binding.as_deref(), Some("a"));
@@ -377,7 +385,7 @@ mod tests {
         let listed = entries(&keymap, Context::List, "archive");
         let archive = listed
             .iter()
-            .find(|entry| entry.id == CommandId::Archive)
+            .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
             .expect("archive");
 
         assert_eq!(
