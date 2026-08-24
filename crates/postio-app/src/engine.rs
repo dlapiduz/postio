@@ -13,6 +13,12 @@
 //! supervisor decides when to. So a Postio started with no network, or with
 //! a password the keyring will not give up, still opens its window and says
 //! so — which is the whole point of being local-first.
+//!
+//! [`NetworkSource::NetworkManager`] is asked for here rather than defaulted
+//! to inside the engine, because a listener that opened a system-bus
+//! connection on its own would make every test behave differently on a
+//! desktop and on a CI runner. A machine without NetworkManager loses nothing
+//! but the promptness of a reconnect.
 
 use std::sync::Arc;
 
@@ -20,7 +26,7 @@ use postio_imap::backend::MailBackend;
 use postio_imap::imap::{ConnectionSettings, ImapBackend, PoolConfig, RustlsConnector};
 use postio_imap::secret::{AccountKey, KeyringSecretStore, SecretStore};
 use postio_model::Account;
-use postio_runtime::engine::{Engine, EngineParts};
+use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
 use postio_storage::{BlobStore, Database};
 
 use postio_core::bridge::EventSink;
@@ -74,6 +80,7 @@ pub fn start(
         backfill: Default::default(),
         reconnect: Default::default(),
         watch: Default::default(),
+        network: NetworkSource::NetworkManager,
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {
