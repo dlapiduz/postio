@@ -324,7 +324,7 @@ mod imp {
         pub(super) blocked: gtk::Label,
         pub(super) tree: gtk::ListBox,
         /// The panel's own keys, drawn at the tree's foot — generated from
-        /// the live keymap by [`PartsPanel::set_keymap`] rather than typed
+        /// the live keymap by [`super::PartsPanel::set_keymap`] rather than typed
         /// in once, so a rebind in `config.toml` changes what this says.
         pub(super) keys: gtk::Label,
         pub(super) meta: gtk::Label,
@@ -657,7 +657,7 @@ impl PartsPanel {
     /// Regenerate the footer's key hints from the live keymap.
     ///
     /// A rebind changes what the footer says without a restart, the same
-    /// promise [`crate::row::Row::set_keymap`] already keeps for the
+    /// promise [`crate::row::MessageRowView::set_keymap`] already keeps for the
     /// message list's own hints.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.imp().keys.set_text(&hints_for(keymap));
