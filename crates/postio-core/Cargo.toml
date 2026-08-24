@@ -12,7 +12,11 @@ async-channel = "2.5.0"
 postio-config.workspace = true
 postio-model.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
-tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
+# `net` is what compiles tokio's IO driver in, and without it
+# `Builder::enable_io` does not even exist. Relying on another crate in
+# the graph to unify it in would make whether this runtime can open a
+# socket depend on who else is being built.
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time", "net"] }
 tracing = "0.1"
 
 [dev-dependencies]
