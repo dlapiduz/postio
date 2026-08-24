@@ -20,6 +20,8 @@
 //! [`MessageRepository::page_at`] does exist, for a scrolling `GListModel` that
 //! genuinely needs random access by row number, and it carries the caveat.
 
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, BlobId, BodyState, Disposition, EmailAddress, Flag, FlagSet, LabelId,
@@ -354,6 +356,9 @@ pub struct UpsertReport {
     pub inserted: usize,
     /// Messages that already had a row under the same server identity.
     pub updated: usize,
+    /// Messages this store already holds as a draft of its own, and therefore
+    /// did not store a second time. See [`MessageRepository::upsert_batch`].
+    pub own_drafts: usize,
 }
 
 /// The blob keys for a message's decoded content.
@@ -460,7 +465,8 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Inserts or updates every message in `batch`, in one transaction.
+    /// Inserts or updates every message in `batch`, in one transaction, and
+    /// removes from `batch` the ones this store already holds as drafts.
     ///
     /// This is the shape sync writes in: a `FETCH` returns a page of messages,
     /// some of which are already known. A message is "already known" when it
@@ -471,9 +477,42 @@ impl<'a> MessageRepository<'a> {
     /// One transaction rather than one per message: a resync of a thousand
     /// messages is a thousand `fsync`s otherwise, and a half-applied page is a
     /// mailbox the next sync would have to reconcile against itself.
-    pub fn upsert_batch(&self, batch: &mut [Message]) -> Result<UpsertReport> {
+    ///
+    /// # Why it takes a `Vec` and shortens it
+    ///
+    /// A draft is appended to the account's Drafts mailbox, and the next pass
+    /// over that folder fetches it straight back — so without this the same
+    /// unfinished message exists twice locally: once as the composer's live
+    /// `drafts` row, and once as a `messages` row that is a read-only snapshot
+    /// of a buffer still being typed into. The composer owns a draft this
+    /// client wrote (#51). A draft written by *another* client has no local
+    /// draft row, is not matched here, and stays an ordinary message — which
+    /// is the reason the folder is worth syncing at all.
+    ///
+    /// It is done here, rather than in the two sync passes that call this,
+    /// because the callers go on to thread each message and record its
+    /// correspondents. A skip that left the message in the batch would thread
+    /// a row that was never written; a skip each caller had to remember is one
+    /// a third caller would not. Shortening the `Vec` makes the batch mean
+    /// "what was stored", which is what those loops already assume.
+    pub fn upsert_batch(&self, batch: &mut Vec<Message>) -> Result<UpsertReport> {
         let transaction = super::Scope::open(self.connection)?;
         let mut report = UpsertReport::default();
+
+        // Read once for the batch rather than per message: a store holds a
+        // handful of drafts, and a page holds hundreds of messages.
+        let mine = own_draft_copies(&transaction)?;
+        let before = batch.len();
+        batch.retain(|message| {
+            match (message.server.uid, message.server.uid_validity) {
+                (Some(uid), Some(validity)) => {
+                    !mine.contains(&(message.mailbox_id, validity.get(), uid.get()))
+                }
+                // Nowhere to have landed, so nothing to be a second copy of.
+                _ => true,
+            }
+        });
+        report.own_drafts = before - batch.len();
 
         for message in batch.iter_mut() {
             let existing = match (message.server.uid, message.server.uid_validity) {
@@ -1464,6 +1503,34 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
         .collect::<Vec<_>>()
         .join(" || ");
     format!("trim({head} || ltrim({rest}))")
+}
+
+/// Where every draft this client has uploaded is sitting on the server.
+///
+/// `(mailbox, UIDVALIDITY, UID)` — the same identity `find_by_uid` matches on,
+/// because that is the only one the server guarantees. Scoped to the account's
+/// Drafts mailbox: UIDs are per-mailbox, so the message that happens to be
+/// number 7 in the inbox has nothing to do with the draft that is number 7 in
+/// Drafts. A draft whose append the server would not locate has no `uid` and
+/// is absent from this — `postio-sync` flags the folder for a resync instead
+/// of guessing which message is the one it just wrote.
+fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, u32, u32)>> {
+    let mut statement = connection.prepare(
+        "SELECT mailboxes.id, drafts.uid_validity, drafts.uid
+           FROM drafts
+           JOIN mailboxes ON mailboxes.account_id = drafts.account_id
+                         AND mailboxes.role = 'drafts'
+          WHERE drafts.uid IS NOT NULL AND drafts.uid_validity IS NOT NULL",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            MailboxId::new(row.get::<_, i64>(0)?),
+            row.get::<_, i64>(1)? as u32,
+            row.get::<_, i64>(2)? as u32,
+        ))
+    })?;
+    rows.collect::<rusqlite::Result<BTreeSet<_>>>()
+        .map_err(Into::into)
 }
 
 fn flag_text(flags: &FlagSet) -> String {

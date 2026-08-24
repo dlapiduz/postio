@@ -506,3 +506,197 @@ fn discarding_a_draft_that_is_already_gone_is_not_an_error() {
         "a retried discard is the expected case, not a failure"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The draft row and the message row are the same message
+// ---------------------------------------------------------------------------
+//
+// A draft is appended to the account's Drafts mailbox, and the next sync pass
+// over that folder fetches it straight back. Without this, the same unfinished
+// message exists twice locally — once as the composer's `drafts` row and once
+// as an ordinary `messages` row — and the second one is a read-only snapshot
+// of a buffer that is still being typed into. See #51.
+//
+// The composer owns a draft this client wrote. Another client's draft has no
+// local draft row and is the reason the folder is worth syncing at all, so it
+// stays an ordinary message.
+
+/// A message as sync would have built it: in `mailbox`, carrying the server
+/// identity the fetch reported.
+fn fetched(
+    account: postio_model::AccountId,
+    mailbox: postio_model::MailboxId,
+    uid: u32,
+    validity: u32,
+) -> Message {
+    let mut message = Message::new(account, mailbox, at(0));
+    message.subject = Some("Tide gate interlock".to_owned());
+    message.server.uid = Some(postio_model::Uid::new(uid));
+    message.server.uid_validity = Some(postio_model::UidValidity::new(validity));
+    message
+}
+
+/// A draft whose server copy is `uid` under `validity`.
+fn uploaded(
+    connection: &rusqlite::Connection,
+    account: postio_model::AccountId,
+    uid: u32,
+    validity: u32,
+) -> DraftId {
+    let mut draft = a_draft(account);
+    let drafts = DraftRepository::new(connection);
+    let id = drafts.save(&mut draft).expect("save the draft");
+    drafts
+        .set_server_copy(
+            id,
+            Some(postio_model::Uid::new(uid)),
+            Some(postio_model::UidValidity::new(validity)),
+        )
+        .expect("record where the append landed");
+    id
+}
+
+fn rows_in(connection: &rusqlite::Connection, mailbox: postio_model::MailboxId) -> u32 {
+    MessageRepository::new(connection)
+        .count_set(&postio_storage::repository::MessageSet::in_mailbox(mailbox))
+        .expect("a count")
+}
+
+#[test]
+fn a_draft_this_client_uploaded_does_not_come_back_as_a_message() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts) = account_with_drafts(&connection);
+    uploaded(&connection, account.id, 7, 1);
+
+    let mut batch = vec![fetched(account.id, drafts, 7, 1)];
+    let report = MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over Drafts");
+
+    assert_eq!(report.inserted, 0);
+    assert_eq!(report.own_drafts, 1);
+    assert!(
+        batch.is_empty(),
+        "the batch is what the caller goes on to thread and record contacts \
+         from, so a skipped message has to leave it"
+    );
+    assert_eq!(rows_in(&connection, drafts), 0);
+}
+
+#[test]
+fn a_draft_written_by_another_client_is_an_ordinary_message() {
+    // The reason the folder syncs at all. This one has no local draft row, so
+    // there is nothing for it to be a second copy of.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts) = account_with_drafts(&connection);
+    uploaded(&connection, account.id, 7, 1);
+
+    let mut batch = vec![
+        fetched(account.id, drafts, 7, 1),
+        fetched(account.id, drafts, 8, 1),
+    ];
+    let report = MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over Drafts");
+
+    assert_eq!(report.inserted, 1);
+    assert_eq!(report.own_drafts, 1);
+    assert_eq!(batch.len(), 1);
+    assert_eq!(batch[0].server.uid.map(postio_model::Uid::get), Some(8));
+    assert_eq!(rows_in(&connection, drafts), 1);
+}
+
+#[test]
+fn a_uid_that_matches_a_draft_in_a_different_folder_is_an_ordinary_message() {
+    // UIDs are per-mailbox, so message 7 in INBOX has nothing to do with the
+    // draft that is message 7 in Drafts. Matching on the number alone would
+    // hide a piece of the user's mail.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _drafts) = account_with_drafts(&connection);
+    let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+    uploaded(&connection, account.id, 7, 1);
+
+    let mut batch = vec![fetched(account.id, inbox, 7, 1)];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over INBOX");
+
+    assert_eq!(rows_in(&connection, inbox), 1);
+}
+
+#[test]
+fn a_draft_whose_append_was_never_located_hides_nothing() {
+    // No `UIDPLUS`, so `save` recorded that it does not know where the copy
+    // landed and flagged the folder for a resync instead. There is nothing to
+    // match on, and guessing which message in Drafts is ours is exactly what
+    // `postio-sync`'s draft module refuses to do.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts) = account_with_drafts(&connection);
+    let mut draft = a_draft(account.id);
+    DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save the draft");
+
+    let mut batch = vec![fetched(account.id, drafts, 7, 1)];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over Drafts");
+
+    assert_eq!(rows_in(&connection, drafts), 1);
+}
+
+#[test]
+fn a_draft_recorded_under_an_older_generation_hides_nothing() {
+    // A renumbered mailbox makes the old UID name some other message, which
+    // is the same reason `discard` carries its `UIDVALIDITY`.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts) = account_with_drafts(&connection);
+    uploaded(&connection, account.id, 7, 1);
+
+    let mut batch = vec![fetched(account.id, drafts, 7, 2)];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over a renumbered Drafts");
+
+    assert_eq!(rows_in(&connection, drafts), 1);
+}
+
+#[test]
+fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
+    // The race the skip alone does not close: a sync pass fetched the
+    // appended copy before `set_server_copy` had recorded where it landed, so
+    // the row was already there when the draft learned its own UID. Every
+    // later pass would then find the row and update it, and the duplicate
+    // would be permanent. Claiming the copy is therefore also what removes it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts) = account_with_drafts(&connection);
+    let elsewhere = test_support::mailbox(&connection, &account, "INBOX").id;
+    let mut first = vec![
+        fetched(account.id, drafts, 7, 1),
+        fetched(account.id, elsewhere, 7, 1),
+    ];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut first)
+        .expect("a pass that ran before the draft was linked");
+    assert_eq!(
+        rows_in(&connection, drafts),
+        1,
+        "the duplicate this repairs"
+    );
+
+    uploaded(&connection, account.id, 7, 1);
+
+    assert_eq!(rows_in(&connection, drafts), 0);
+    assert_eq!(
+        rows_in(&connection, elsewhere),
+        1,
+        "UIDs are per-mailbox; the inbox message that happens to be number 7 \
+         is somebody's mail"
+    );
+}
