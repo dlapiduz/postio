@@ -311,6 +311,33 @@ impl ThreadView {
         self.last_row();
     }
 
+    /// Replace the messages with the whole thread, keeping the cursor.
+    ///
+    /// [`ThreadView::open`] puts up what the message list already had, so the
+    /// column appears within a frame rather than after a read. This is the
+    /// rest of the conversation arriving — the messages filed in other
+    /// folders, and the ones the list had not paged in — and it must not
+    /// disturb what the user is doing: `open` ends by selecting the newest
+    /// message, and doing that again a moment later would move the cursor out
+    /// from under someone who had already pressed `k`.
+    ///
+    /// Ignores an answer for a thread the column is no longer showing. Two
+    /// drill-ins in quick succession are two reads in flight, and the second
+    /// one's answer is not the first one's.
+    pub fn fill(&self, thread: ThreadId, rows: Vec<Row>, total: u32) {
+        let imp = self.imp();
+        if imp.thread.get() != Some(thread) {
+            return;
+        }
+        let cursor = self.cursor();
+        imp.total.set(total.max(rows.len() as u32));
+        *imp.all.borrow_mut() = rows;
+        self.rebuild();
+        if let Some(message) = cursor {
+            self.focus_message(message);
+        }
+    }
+
     /// Empty the column.
     pub fn close(&self) {
         let imp = self.imp();
@@ -321,6 +348,16 @@ impl ThreadView {
         imp.unread_toggle.set_active(false);
         imp.order.set(Order::default());
         self.rebuild();
+    }
+
+    /// The header's second line, as drawn.
+    ///
+    /// [`summary`] is pure and unit-tested; this is what the column actually
+    /// put on screen after the last rebuild, which is the thing a test of the
+    /// drill-in wants to know about. The two disagreeing is exactly the bug
+    /// worth catching.
+    pub fn meta(&self) -> String {
+        self.imp().meta.text().to_string()
     }
 
     /// The messages on screen, in the order they are drawn.
