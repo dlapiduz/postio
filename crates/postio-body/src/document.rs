@@ -240,17 +240,21 @@ impl Document {
     /// and [`Inline::Text`] *is* a plain-text document — which is why v1 can
     /// ship a plain-text editor over the neutral model without restricting
     /// the model.
+    ///
+    /// **Lossless**, and paired exactly with [`Document::to_text`]:
+    /// `to_text(from_text(t)) == t` for any `t` with no carriage returns.
+    /// Empty paragraphs and trailing newlines are kept rather than tidied
+    /// away, because they are the user's. A reply opens with blank lines
+    /// above the signature for the user to type into, and a composer that
+    /// swallowed them on the first read would move the cursor out from under
+    /// them — which is what the `gtk_identity` test caught when this did tidy.
     pub fn from_text(text: &str) -> Self {
         let blocks = text
             .replace("\r\n", "\n")
             .split("\n\n")
-            .filter(|para| !para.trim().is_empty())
             .map(|para| {
                 let mut inlines = Vec::new();
-                // Trailing newlines are the separator, not a line: a body
-                // ending in "\n" is one paragraph, not one with an empty
-                // last line, and a stray `Break` would break the round trip.
-                for (index, line) in para.trim_end_matches('\n').split('\n').enumerate() {
+                for (index, line) in para.split('\n').enumerate() {
                     if index > 0 {
                         inlines.push(Inline::Break);
                     }
@@ -267,6 +271,24 @@ impl Document {
     /// Whether there is anything to send.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
+    }
+
+    /// Whether [`Document::to_text`] loses nothing.
+    ///
+    /// True for a document of nothing but paragraphs and unstyled text —
+    /// which is what a plain-text composer produces, and what
+    /// [`Document::from_text`] builds. The composer uses this to decide
+    /// whether a message needs an HTML alternative at all: sending
+    /// `multipart/alternative` for a message somebody typed as plain text
+    /// adds bytes, adds a second thing to get wrong, and is exactly what
+    /// mailing lists ask people not to do.
+    pub fn is_plain_text(&self) -> bool {
+        self.blocks.iter().all(|block| match block {
+            Block::Paragraph(inlines) => inlines
+                .iter()
+                .all(|inline| matches!(inline, Inline::Text(_) | Inline::Break)),
+            _ => false,
+        })
     }
 
     /// Render to the HTML subset.

@@ -217,7 +217,7 @@ fn a_plain_text_document_is_just_paragraphs() {
     // ADR 0004 Q6: v1 ships a plain-text editor over the neutral model. A
     // document of Paragraph/Text *is* a plain-text document, so the model
     // needs no restricting — the editor does.
-    let document = Document::from_text("first line\nsame paragraph\n\nsecond paragraph\n");
+    let document = Document::from_text("first line\nsame paragraph\n\nsecond paragraph");
 
     assert_eq!(
         document,
@@ -240,6 +240,30 @@ fn a_plain_text_document_is_just_paragraphs() {
         document.to_html(),
         "<p>first line<br>same paragraph</p><p>second paragraph</p>"
     );
+}
+
+#[test]
+fn plain_text_survives_the_composer_exactly() {
+    // `to_text(from_text(t)) == t`. The composer reads the buffer into a
+    // document and writes it back out, so anything this pair tidies is
+    // whitespace taken out from under the user's cursor. A reply opens with
+    // blank lines above the signature to type into, and those are the case.
+    for text in [
+        "",
+        "one line",
+        "\n\n-- \nLena\n",
+        "trailing newline\n",
+        "two trailing\n\n",
+        "\n\n\nleading blanks",
+        "a\n\nb\n\nc",
+        "  indented  \n\tand tabbed",
+    ] {
+        assert_eq!(
+            Document::from_text(text).to_text(),
+            *text,
+            "from_text/to_text is not lossless for {text:?}"
+        );
+    }
 }
 
 #[test]
@@ -295,5 +319,36 @@ fn parsing_never_panics_on_anything() {
     ] {
         let _ = parse(hostile).to_html();
         let _ = parse(hostile).to_text();
+    }
+}
+
+#[test]
+fn a_plain_document_is_recognised_and_a_structured_one_is_not() {
+    // What the composer asks before deciding whether the message needs an
+    // HTML alternative at all.
+    assert!(Document::from_text("just words\nand a line break").is_plain_text());
+    assert!(Document::new().is_plain_text());
+
+    for structured in [
+        Block::Heading {
+            level: HeadingLevel::One,
+            inlines: vec![Inline::Text("h".to_owned())],
+        },
+        Block::Quote(vec![]),
+        Block::Rule,
+        Block::Pre("x".to_owned()),
+        Block::Paragraph(vec![Inline::Strong(vec![Inline::Text("b".to_owned())])]),
+        Block::Paragraph(vec![Inline::Link {
+            href: Href::parse("https://example.com").unwrap(),
+            inlines: vec![],
+        }]),
+    ] {
+        let document = Document {
+            blocks: vec![structured.clone()],
+        };
+        assert!(
+            !document.is_plain_text(),
+            "{structured:?} is not plain text, so it needs an HTML alternative"
+        );
     }
 }

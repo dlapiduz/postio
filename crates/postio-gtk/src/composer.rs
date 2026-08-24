@@ -280,7 +280,30 @@ mod imp {
         pub identity_row: gtk::Box,
         pub identity: gtk::DropDown,
         pub identity_only: gtk::Label,
+        /// The editor surface. A **view** over [`Composer::document`], never
+        /// the body's state — see ADR 0004. Its own undo is turned off in
+        /// `build`, deliberately.
         pub body: gtk::TextView,
+        /// The body, as the model every frontend shares.
+        ///
+        /// `GtkTextBuffer`, `NSTextStorage` and a `contenteditable` DOM
+        /// disagree about what a rich text document is, so a composer whose
+        /// body state is "whatever is in the buffer" makes a second
+        /// frontend's composer a rewrite rather than a port. This is the
+        /// document; the widget draws it.
+        pub document: RefCell<postio_body::Document>,
+        /// Editing undo, over the document. Not `postio_core::undo`, which is
+        /// the *mail* undo bound to `u`; see ADR 0004 Q5.
+        pub history: RefCell<postio_body::EditHistory>,
+        /// The document the history believes is on screen, so a change knows
+        /// what it changed *from*.
+        pub baseline: RefCell<postio_body::Document>,
+        /// When the last edit landed, for coalescing a typing run into one
+        /// undo step rather than one per keystroke.
+        pub last_edit: Cell<Option<std::time::Instant>>,
+        /// Set while undo or redo is writing the buffer, so the change it
+        /// causes is not recorded as a fresh edit on top of itself.
+        pub restoring: Cell<bool>,
         pub send: gtk::Button,
         pub save: gtk::Button,
         pub warning: gtk::Label,
@@ -344,6 +367,11 @@ mod imp {
                 identity: gtk::DropDown::from_strings(&[]),
                 identity_only: gtk::Label::new(None),
                 body: gtk::TextView::new(),
+                document: RefCell::new(postio_body::Document::new()),
+                history: RefCell::new(postio_body::EditHistory::new()),
+                baseline: RefCell::new(postio_body::Document::new()),
+                last_edit: Cell::new(None),
+                restoring: Cell::new(false),
                 send: gtk::Button::new(),
                 save: gtk::Button::new(),
                 warning: gtk::Label::new(None),
@@ -551,15 +579,105 @@ impl Composer {
         draft.cc = parse_list(&imp.cc.text());
         draft.bcc = parse_list(&imp.bcc.text());
         draft.subject = imp.subject.text().to_string();
-        let buffer = imp.body.buffer();
+        draft.body = self.body();
+        draft
+    }
+
+    /// The body as the wire wants it, rendered from the document.
+    ///
+    /// `text` always; `html` only when the document carries structure that
+    /// `to_text` would lose. A message somebody typed as plain text is sent
+    /// as plain text: a `multipart/alternative` whose HTML half says exactly
+    /// what its text half says is bytes nobody asked for, a second thing to
+    /// get wrong, and the thing mailing lists ask people not to send.
+    ///
+    /// Note `html` is *regenerated*, never carried over. Before this it was
+    /// passed through from whatever the draft was opened with, so editing the
+    /// text of a reply left an HTML half describing the text before the edit.
+    fn body(&self) -> MessageBody {
+        let document = self.document();
+        let text = document.to_text();
+        MessageBody {
+            text: (!text.is_empty()).then_some(text),
+            html: (!document.is_plain_text()).then(|| postio_body::render(&document).1),
+        }
+    }
+
+    /// Fold the surface's current state into the editing history.
+    ///
+    /// Coalescing by time rather than by keystroke count: what a person means
+    /// by one undo is "the thing I was just typing", and that is a pause in
+    /// the typing, not a number of characters.
+    fn record_edit(&self) {
+        let imp = self.imp();
+        // Filling the fields is not an edit, and neither is undo writing the
+        // buffer -- recording that would push the state it just restored back
+        // on top of the stack and make Ctrl+Z a no-op.
+        if imp.filling.get() || imp.restoring.get() {
+            return;
+        }
+        let current = self.document();
+        let now = std::time::Instant::now();
+        let continuing = imp
+            .last_edit
+            .get()
+            .is_some_and(|last| now.duration_since(last) < EDIT_COALESCE);
+
+        let mut history = imp.history.borrow_mut();
+        if !(continuing && history.amend(current.clone())) {
+            let before = imp.baseline.borrow().clone();
+            history.record(before, current.clone());
+        }
+        drop(history);
+        *imp.baseline.borrow_mut() = current.clone();
+        *imp.document.borrow_mut() = current;
+        imp.last_edit.set(Some(now));
+    }
+
+    /// Step the body back one edit.
+    fn undo_edit(&self) -> glib::Propagation {
+        let restored = self.imp().history.borrow_mut().undo();
+        self.restore(restored)
+    }
+
+    /// Step it forward again.
+    fn redo_edit(&self) -> glib::Propagation {
+        let restored = self.imp().history.borrow_mut().redo();
+        self.restore(restored)
+    }
+
+    /// Put `document` on screen without it counting as a new edit.
+    fn restore(&self, document: Option<postio_body::Document>) -> glib::Propagation {
+        let Some(document) = document else {
+            // Nothing to step to. Swallowed rather than propagated: Ctrl+Z at
+            // the start of the history must not fall through to whatever else
+            // in the window would answer it.
+            return glib::Propagation::Stop;
+        };
+        let imp = self.imp();
+        imp.restoring.set(true);
+        imp.body.buffer().set_text(&document.to_text());
+        *imp.baseline.borrow_mut() = document.clone();
+        *imp.document.borrow_mut() = document;
+        imp.restoring.set(false);
+        // A restored state is a settled one: the next keystroke starts a new
+        // step rather than amending the one just undone.
+        imp.last_edit.set(None);
+        glib::Propagation::Stop
+    }
+
+    /// The body as it stands, with the editor's edits folded in.
+    ///
+    /// v1 edits plain text, so reading the surface back means rebuilding a
+    /// plain-text document -- which is exactly what a plain-text composer
+    /// does, and why ADR 0004 says the model needs no restricting for v1,
+    /// only the editor. A rich surface replaces this method and nothing else.
+    pub fn document(&self) -> postio_body::Document {
+        let buffer = self.imp().body.buffer();
         let text = buffer
             .text(&buffer.start_iter(), &buffer.end_iter(), false)
             .to_string();
-        draft.body = MessageBody {
-            text: (!text.is_empty()).then_some(text),
-            html: draft.body.html,
-        };
-        draft
+        postio_body::Document::from_text(&text)
     }
 
     /// What the composer will send from, once identities are set.
@@ -1111,9 +1229,17 @@ impl Composer {
         imp.cc.set_text(&format_list(&draft.cc));
         imp.bcc.set_text(&format_list(&draft.bcc));
         imp.subject.set_text(&draft.subject);
-        imp.body
-            .buffer()
-            .set_text(draft.body.text.as_deref().unwrap_or_default());
+        // The document first, then the view over it. An HTML body is parsed
+        // rather than shown raw -- which is what makes a reply to an
+        // HTML-only message editable at all.
+        let document = document_of(&draft.body);
+        imp.body.buffer().set_text(&document.to_text());
+        *imp.baseline.borrow_mut() = document.clone();
+        *imp.document.borrow_mut() = document;
+        // A different draft is a different history. Undoing across the swap
+        // would put one message's words into another's.
+        imp.history.borrow_mut().clear();
+        imp.last_edit.set(None);
         imp.heading.set_text(heading(draft.kind));
 
         // Cc and Bcc stay out of the way until there is something in them, or
@@ -1284,6 +1410,55 @@ impl Composer {
         imp.body.add_css_class("postio-compose-body");
         imp.body.set_wrap_mode(gtk::WrapMode::WordChar);
         imp.body.set_vexpand(true);
+        // Off, explicitly, and this comment is the point of the line.
+        //
+        // `GtkTextBuffer`'s own undo is free and it is the wrong undo. A
+        // `GtkTextBuffer` step is a typing run in a flat buffer; a
+        // `contenteditable` step is whatever the browser's editing command
+        // coalesced. Take the free one and the GTK composer and a future
+        // macOS or web composer disagree about what one Ctrl+Z does — which
+        // is precisely the class of divergence ADR 0004 exists to prevent,
+        // and leaving it on is the *silent* way to get it, because it works
+        // until there is a second frontend to disagree with.
+        //
+        // Editing undo is a `postio_body::EditHistory` over `Document`, and
+        // it is a different stack from `postio_core::undo`, which is the
+        // *mail* undo bound to `u` and carries its inverse as commands.
+        imp.body.buffer().set_enable_undo(false);
+
+        // Every change to the surface becomes a step on the document's
+        // history. Recorded here rather than from a key handler because an
+        // edit is an edit however it arrived -- typed, pasted, or dropped in.
+        imp.body.buffer().connect_changed(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.record_edit()
+        ));
+
+        // Ctrl+Z / Ctrl+Shift+Z, on the body only. The mail undo is `u` and
+        // lives in `Context::Normal`; the registry already refuses to bind
+        // the mail verbs in `Context::Composer`, and this is the other half
+        // of keeping the two stacks apart.
+        let editing = gtk::EventControllerKey::new();
+        editing.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, state| {
+                if !state.contains(gdk::ModifierType::CONTROL_MASK) {
+                    return glib::Propagation::Proceed;
+                }
+                let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+                match key {
+                    gdk::Key::z if !shift => composer.undo_edit(),
+                    gdk::Key::z | gdk::Key::Z if shift => composer.redo_edit(),
+                    gdk::Key::y => composer.redo_edit(),
+                    _ => glib::Propagation::Proceed,
+                }
+            }
+        ));
+        imp.body.add_controller(editing);
         // Tab moves to the next control rather than typing a tab: the body is
         // in the middle of the focus chain, and a keyboard user has to be able
         // to get out of it.
@@ -1456,6 +1631,12 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_set_subject(&self, text: &str) {
         self.imp().subject.set_text(text);
+    }
+
+    /// Types `text` into the body, the way a keystroke reaches the buffer.
+    #[doc(hidden)]
+    pub fn test_set_body(&self, text: &str) {
+        self.imp().body.buffer().set_text(text);
     }
 
     /// Types `text` into `To`, firing recipient completion the same way the
@@ -1790,6 +1971,26 @@ impl Completion {
         entry.set_position(-1);
         self.popover.popdown();
         true
+    }
+}
+
+/// How long a pause ends a typing run, for editing undo.
+///
+/// Long enough that ordinary typing is one step, short enough that going
+/// away and coming back is not. The same order as every editor's.
+const EDIT_COALESCE: std::time::Duration = std::time::Duration::from_millis(700);
+
+/// The document a draft's stored body means.
+///
+/// HTML is the record (ADR 0004 Q3), so a draft that has one is parsed from
+/// it: the typed form is derived, never stored. Falling back to the text half
+/// matters for every draft written before this existed, and for the plain
+/// messages that never grow an HTML half at all.
+fn document_of(body: &MessageBody) -> postio_body::Document {
+    match (&body.html, &body.text) {
+        (Some(html), _) => postio_body::parse(html),
+        (None, Some(text)) => postio_body::Document::from_text(text),
+        (None, None) => postio_body::Document::new(),
     }
 }
 

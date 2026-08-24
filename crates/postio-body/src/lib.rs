@@ -34,12 +34,14 @@
 //! [ADR 0004]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0004-composer-document-model.md
 
 pub mod document;
+pub mod edit;
 pub mod outgoing;
 pub mod parse;
 pub mod quote;
 pub mod sanitize;
 
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+pub use edit::{EditHistory, EditStep};
 pub use outgoing::{harden, render};
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
