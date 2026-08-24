@@ -105,7 +105,7 @@ fi
 
 if [ "$SHOT" = 1 ]; then
     OUT="$ROOT/shot-$SHA.png"
-    cargo run --release -p postio-gtk --example shot -- "$OUT" demo
+    cargo run --release -p postio-app --example shot -- "$OUT" demo
     echo "wrote $OUT"
     exit 0
 fi
