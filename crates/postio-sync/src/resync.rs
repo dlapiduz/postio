@@ -354,6 +354,18 @@ async fn incremental(
             .into_iter()
             .map(|message| message.into_message(mailbox.account_id, mailbox.id))
             .collect();
+        // One commit for the whole batch, for the reason `initial.rs` spells
+        // out at its own version of this loop: every repository call below
+        // releases a savepoint, and a release with nothing enclosing it is an
+        // fsync. Unenclosed, this wrote once for the upserts and then twice
+        // more per message. This is the path that runs on every start, for
+        // every folder, so it pays that on the ordinary case and not only on
+        // a first sync.
+        let committed = connection
+            .unchecked_transaction()
+            .map_err(postio_storage::Error::from)?;
+        let connection: &Connection = &committed;
+
         MessageRepository::new(connection).upsert_batch(&mut batch)?;
 
         let threading = ThreadingRepository::new(connection, mailbox.account_id);
@@ -378,6 +390,7 @@ async fn incremental(
                 }
             }
         }
+        committed.commit().map_err(postio_storage::Error::from)?;
     }
 
     let mut vanished_count = 0;
