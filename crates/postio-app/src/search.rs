@@ -149,6 +149,19 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
                     let Ok(Some(results)) = hits.recv().await else {
                         return;
                     };
+                    // Counts, a scope and a duration: never the query text or
+                    // what it matched, which are the user's mail. The same
+                    // line that tells a search which ran and found nothing
+                    // from one that never ran at all — the distinction that
+                    // took `postio-x4e` and `postio-qhz.7` far too long.
+                    tracing::debug!(
+                        ?scope,
+                        hits = results.hits.len(),
+                        total = results.total_hits,
+                        capped = results.total_hits_capped,
+                        elapsed_ms = results.elapsed.as_millis() as u64,
+                        "search answered"
+                    );
                     // The readout first: it is what the field is showing and
                     // what the user is waiting for.
                     if !live.deliver(sequence, Outcome::of(&results)) {
