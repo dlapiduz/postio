@@ -1,7 +1,7 @@
 # ADR 0002 — An extensible command vocabulary
 
-- **Status:** Proposed — awaiting the maintainer's decision
-- **Date:** 2026-08-24
+- **Status:** Accepted and implemented — `3e8102f` (core), `20a1424` (gtk)
+- **Date:** 2026-08-24, implemented 2026-08-24
 - **Bead:** `postio-plp4`, which blocks `postio-z3b.2` (MCP) and `postio-sgi` (AI)
 - **Decision:** keep `CommandId` closed and exactly as it is. Open the layer
   *above* it, which is already string-keyed.
@@ -295,6 +295,59 @@ this bead.
 - Split the correlation-id half into its own bead, blocked on the vocabulary.
 - `ARCHITECTURE.md` §2 gains a paragraph on how an extension command reaches
   the palette, once this is real rather than proposed.
+
+## What implementation changed
+
+Built as decided, with the measurement holding: `postio-app` needed **no
+change at all**, and `postio-gtk` compiled against the widened `postio-core`
+untouched — the keymap accessors take `impl Into<ActionId>`, so the many call
+sites passing a built-in read exactly as before.
+
+Three things this ADR got wrong or left open, corrected here rather than
+silently:
+
+**Titles are leaked, not `Cow`.** Decision 5 said `CommandSpec::title` becomes
+`Cow<'static, str>`, "required for owned titles". It is not required, and it
+has a cost this ADR did not price: `CommandSpec` is `Copy` and `Cow` is not, so
+that change would take `Copy` off the spec type to buy something the interner
+already pays for. Registration leaks the title instead — the same argument this
+ADR already accepts for `ExtId` ("append-only and bounded by the number of
+registrations"). `CommandSpec` is untouched, and so are the 26 test call sites
+over it. i18n is unaffected: a translated title is resolved at registration.
+
+**The `[keys]` ordering problem is solved by parsing, not by re-resolving.**
+This ADR preferred re-resolving the keymap on registration and asked for that
+to be confirmed workable. It *is* workable — `ConfigService` retains the
+overrides and re-resolves on `apply` — but it is the wrong mechanism, because
+`register` is a free function on a global with no access to `ConfigService`.
+Re-resolution would need either interior mutability behind `keymap()`, or an
+explicit call the application must remember; a forgotten call is a silently
+dead binding, which is the outcome the consequence section calls unacceptable.
+
+Interning does not depend on registration, so `Keymap::resolve` binds a
+namespaced id whether or not a command exists for it, and it starts reaching
+one the moment it registers. The binding was never lost — it pointed at
+something not yet there. Consequence to be deliberate about: an unregistered id
+has unknown contexts, so conflict detection treats it as `ContextSet::ANY`,
+protecting the user's explicit override from a built-in default, per the
+existing "a default is a suggestion; an override is not" rule.
+
+**The Q4 inventory missed `gtk/finder.rs`.** The palette's *widget* lives
+there, not in `palette.rs`, and its command channel was `CommandId`-typed end
+to end. Six gtk files, not five.
+
+Two things added that this ADR did not specify, both because a discoverable
+command that cannot run is the failure mode `ARCHITECTURE.md` §2 exists to
+prevent:
+
+- `Dispatcher::dispatch_ext` and `DispatcherBuilder::on_ext`, a parallel path
+  keyed on `ExtId`. Deliberately not a `Command` variant: `ExtInvocation`
+  carries an id and a sink and no payload, because nothing in this build knows
+  what payload it would have.
+- `Window::connect_ext_command`, the seam an application subscribes to in order
+  to route a registered command to that dispatcher. `Event::CommandRejected`
+  widened to `ActionId` so both halves are refused through one event;
+  `postio-app` destructures it with `..` and did not notice.
 
 ## What would falsify this
 
