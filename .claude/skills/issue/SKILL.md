@@ -28,6 +28,24 @@ by anything still open** — `blockedBy` is a real GitHub field, so this is not 
 convention that can drift. It never takes `epic` (a container), `icebox`
 (deferred), or `needs-architecture` (a human has to decide something first).
 
+**Know your own model before you claim.** The product-manager loop labels
+issues `opus` or `sonnet` — its read on which model the work actually needs
+(a concurrency race or a security-sensitive decision versus a mechanical fix
+with the diff already in the issue body). You already know which model you
+are from your own context; pass it so you only ever take work sized for you:
+
+```bash
+scripts/issue-claim.sh --label opus         # this session is Opus
+scripts/issue-claim.sh --label sonnet       # this session is Sonnet
+```
+
+`--label` is an exact match, so an issue the loop hasn't labelled yet (new,
+or an epic/container that's never claimable anyway) will not show up under
+either flag — that is a labelling gap for the product-manager loop to close,
+not something to work around by dropping the flag. If nothing matches, that
+is the same "stop and say so" case as no ready issues at all: do not fall
+back to claiming unlabelled work just to stay busy.
+
 Claiming is atomic: a `mkdir` under `~/.cache/postio/claims`, which either
 succeeds or fails with no window in between. **Assignee cannot be the lock** —
 every session authenticates as the same GitHub user, so `--add-assignee @me`
