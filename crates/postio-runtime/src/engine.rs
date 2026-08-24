@@ -49,7 +49,7 @@ use postio_sync::status::StatusTracker;
 use postio_sync::{
     Attention, Backfill, BackfillPolicy, BackfillProgress, Drainer, ReconnectPolicy, RetryPolicy,
     SmtpContext, Supervisor, SyncError, SyncStatus, Wake, Watch, WatchPolicy, Watcher, backfill,
-    initial, resync,
+    discover, initial, resync,
 };
 // The crate root's `Outcome` is the *resync* one; a body has its own.
 use postio_sync::backfill::Outcome;
@@ -407,6 +407,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
     {
         Ok(runtime) => runtime,
         Err(error) => {
+            tracing::error!(%error, "the sync engine has no runtime");
             parts.events.emit(Event::Error {
                 message: format!("the sync engine has no runtime: {error}"),
             });
@@ -414,121 +415,140 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
         }
     };
 
-    runtime.block_on(async move {
-        let mut state = State {
-            backfill: Backfill::new(parts.backfill),
-            supervisor: Supervisor::new(parts.reconnect),
-            status: StatusTracker::new(),
-            online: false,
-            to_sync: std::collections::VecDeque::new(),
-            watcher: None,
-        };
-        let mut ticker = tokio::time::interval(POLL_INTERVAL);
-        // The first tick fires immediately; skipping it would leave the link
-        // unexamined until the first interval elapsed.
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // One span around everything this thread does, so every line below can be
+    // attributed to an account without every line having to say so. A sync run
+    // spans a connection and many commands; flat lines cannot answer "which
+    // run was this".
+    let span = tracing::info_span!("engine", account = parts.account.get());
+    runtime.block_on(tracing::Instrument::instrument(
+        async move {
+            let mut state = State {
+                backfill: Backfill::new(parts.backfill),
+                supervisor: Supervisor::new(parts.reconnect),
+                status: StatusTracker::new(),
+                online: false,
+                to_sync: std::collections::VecDeque::new(),
+                watcher: None,
+            };
+            let mut ticker = tokio::time::interval(POLL_INTERVAL);
+            // The first tick fires immediately; skipping it would leave the link
+            // unexamined until the first interval elapsed.
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        // A channel rather than a job, so that a bus which is slow to answer —
-        // or absent — cannot hold up anything the user asked for. The listener
-        // task lives on this same runtime and stops with it.
-        let (network, mut network_changed) = tokio::sync::watch::channel(NetworkState::Unknown);
-        if parts.network == NetworkSource::NetworkManager {
-            tokio::spawn(crate::network::follow(network));
-        }
-
-        loop {
-            tokio::select! {
-                job = inbox.recv() => match job {
-                    Ok(job) => serve(job, &parts, &pool, &mut state).await,
-                    // Every handle dropped: nothing more will be asked.
-                    Err(_) => break,
-                },
-                _ = ticker.tick() => {
-                    let moved = state
-                        .supervisor
-                        .poll(parts.backend.as_ref(), Utc::now(), entropy())
-                        .await;
-                    announce_link(&parts, &mut state, moved);
-                }
-                // The machine's own opinion of the network. It only ever moves
-                // the link between waiting and offline — the attempt count is
-                // the supervisor's, because NetworkManager knows about the
-                // interface and not about whether the server answers.
-                Ok(()) = network_changed.changed() => {
-                    let reported = *network_changed.borrow_and_update();
-                    let moved = state.supervisor.set_network(reported, Utc::now());
-                    announce_link(&parts, &mut state, moved);
-                }
+            // A channel rather than a job, so that a bus which is slow to answer —
+            // or absent — cannot hold up anything the user asked for. The listener
+            // task lives on this same runtime and stops with it.
+            let (network, mut network_changed) = tokio::sync::watch::channel(NetworkState::Unknown);
+            if parts.network == NetworkSource::NetworkManager {
+                tokio::spawn(crate::network::follow(network));
             }
 
-            // Whatever the link just did, act on it before anything else: a
-            // queue that has been waiting for a connection should go out the
-            // moment there is one, not on the next thing the user happens to
-            // do.
-            if came_up(&mut state) {
-                let outcome = drain(&parts, &pool, &mut state).await;
-                announce_drain(&parts.events, &outcome);
-                // And find out what the server has been doing meanwhile.
-                queue_every_mailbox(&parts, &pool, &mut state);
-                start_watching(&parts, &pool, &mut state).await;
-            } else if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
-                // The queue is filled by whoever performed the action — a flag,
-                // an archive, a draft autosaved as it is typed — and none of
-                // them can tell this thread that they wrote a row. So it asks,
-                // and the cost of asking with an empty queue is one indexed
-                // read. Without this a mutation made while connected would wait
-                // for the next *reconnection* to go out, which on a machine
-                // that stays online is never.
-                let outcome = drain(&parts, &pool, &mut state).await;
-                announce_drain(&parts.events, &outcome);
-            }
-
-            // One mailbox at a time, inbox checked between each: a folder
-            // with forty thousand messages must not hold the engine away
-            // from a body the user is waiting for.
-            #[allow(clippy::never_loop)]
-            while inbox.is_empty()
-                && state.supervisor.link().is_online()
-                && let Some(mailbox) = state.to_sync.pop_front()
-            {
-                let outcome = sync(&parts, &pool, &mut state, mailbox).await;
-                if let Err(error) = outcome {
-                    parts.events.emit(Event::Error {
-                        message: error.message().to_string(),
-                    });
-                }
-            }
-
-            // Then fetch bodies, but only while nothing else is asking. One
-            // at a time and the inbox checked between each, so the longest a
-            // user waits behind the backfill is the one body already on the
-            // wire.
-            while inbox.is_empty()
-                && state.supervisor.link().is_online()
-                && pump_body(&parts, &pool, &mut state).await
-            {}
-
-            // Then wait to be told about mail. This is the branch that idles,
-            // so it goes last and races the inbox: a job arriving while an
-            // `IDLE` is held must not wait out the timeout.
-            if inbox.is_empty() && state.to_sync.is_empty() {
+            loop {
                 tokio::select! {
-                    biased;
-                    // Peeking rather than taking: whichever branch loses is
-                    // cancelled, and a job taken off the queue by a branch
-                    // that is then dropped is a job nobody serves.
-                    _ = wait_for_job(&inbox) => {}
-                    // A local mutation is not a job — nobody tells this thread
-                    // that a row was written — and an `IDLE` is held for
-                    // minutes. Without this branch, a flag set or a draft
-                    // autosaved while connected would wait out the whole watch
-                    // before going anywhere.
-                    _ = wait_for_queued_work(&parts, &pool) => {}
-                    _ = keep_watch(&parts, &mut state) => {}
+                    job = inbox.recv() => match job {
+                        Ok(job) => serve(job, &parts, &pool, &mut state).await,
+                        // Every handle dropped: nothing more will be asked.
+                        Err(_) => break,
+                    },
+                    _ = ticker.tick() => {
+                        let moved = state
+                            .supervisor
+                            .poll(parts.backend.as_ref(), Utc::now(), entropy())
+                            .await;
+                        announce_link(&parts, &mut state, moved);
+                    }
+                    // The machine's own opinion of the network. It only ever moves
+                    // the link between waiting and offline — the attempt count is
+                    // the supervisor's, because NetworkManager knows about the
+                    // interface and not about whether the server answers.
+                    Ok(()) = network_changed.changed() => {
+                        let reported = *network_changed.borrow_and_update();
+                        let moved = state.supervisor.set_network(reported, Utc::now());
+                        announce_link(&parts, &mut state, moved);
+                    }
+                }
+
+                // Whatever the link just did, act on it before anything else: a
+                // queue that has been waiting for a connection should go out the
+                // moment there is one, not on the next thing the user happens to
+                // do.
+                if came_up(&mut state) {
+                    let outcome = drain(&parts, &pool, &mut state).await;
+                    announce_drain(&parts.events, &outcome);
+                    // Before anything asks what is *in* a folder, find out which
+                    // folders there are. Everything below reads the local table,
+                    // and on a new account that table is empty until this runs.
+                    discover(&parts, &pool).await;
+                    // And find out what the server has been doing meanwhile.
+                    queue_every_mailbox(&parts, &pool, &mut state);
+                    start_watching(&parts, &pool, &mut state).await;
+                } else if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
+                    // The queue is filled by whoever performed the action — a flag,
+                    // an archive, a draft autosaved as it is typed — and none of
+                    // them can tell this thread that they wrote a row. So it asks,
+                    // and the cost of asking with an empty queue is one indexed
+                    // read. Without this a mutation made while connected would wait
+                    // for the next *reconnection* to go out, which on a machine
+                    // that stays online is never.
+                    let outcome = drain(&parts, &pool, &mut state).await;
+                    announce_drain(&parts.events, &outcome);
+                }
+
+                // One mailbox at a time, inbox checked between each: a folder
+                // with forty thousand messages must not hold the engine away
+                // from a body the user is waiting for.
+                #[allow(clippy::never_loop)]
+                while inbox.is_empty()
+                    && state.supervisor.link().is_online()
+                    && let Some(mailbox) = state.to_sync.pop_front()
+                {
+                    let outcome = sync(&parts, &pool, &mut state, mailbox).await;
+                    if let Err(error) = outcome {
+                        parts.events.emit(Event::Error {
+                            message: error.message().to_string(),
+                        });
+                    }
+                }
+
+                // Then fetch bodies, but only while nothing else is asking. One
+                // at a time and the inbox checked between each, so the longest a
+                // user waits behind the backfill is the one body already on the
+                // wire.
+                //
+                // The queue is checked between each too, and for the same reason:
+                // a body nobody has asked for is a guess about what the user will
+                // want next, and a queued operation is something they have already
+                // done. Speculation must not outrank it — a first sync of a large
+                // mailbox is thousands of bodies long.
+                while inbox.is_empty()
+                    && state.supervisor.link().is_online()
+                    && !has_queued_work(&parts, &pool)
+                    && pump_body(&parts, &pool, &mut state).await
+                {}
+
+                // Then wait to be told about mail. This is the branch that idles,
+                // so it goes last and races the inbox: a job arriving while an
+                // `IDLE` is held must not wait out the timeout.
+                if inbox.is_empty() && state.to_sync.is_empty() {
+                    tokio::select! {
+                        biased;
+                        // Peeking rather than taking: whichever branch loses is
+                        // cancelled, and a job taken off the queue by a branch
+                        // that is then dropped is a job nobody serves.
+                        _ = wait_for_job(&inbox) => {}
+                        // A local mutation is not a job — nobody tells this thread
+                        // that a row was written — and an `IDLE` is held for
+                        // minutes. Without this branch, a flag set or a draft
+                        // autosaved while connected would wait out the whole watch
+                        // before going anywhere.
+                        _ = wait_for_queued_work(&parts, &pool) => {}
+                        _ = keep_watch(&parts, &mut state) => {}
+                    }
                 }
             }
-        }
-    });
+        },
+        span,
+    ));
 }
 
 /// What the engine's thread keeps between jobs.
@@ -616,19 +636,40 @@ const WATCH_FLOOR: Duration = Duration::from_millis(50);
 ///
 /// The inbox gets the dedicated connection — it is the one mailbox worth one
 /// — and everything else is checked on an interval over the shared one.
+#[tracing::instrument(skip_all)]
 async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
-    let Ok(capabilities) = parts.backend.capabilities().await else {
-        return;
+    let capabilities = match parts.backend.capabilities().await {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the server's capabilities; not watching");
+            return;
+        }
     };
+    // The names themselves: which of QRESYNC, CONDSTORE and SPECIAL-USE the
+    // server offers is the first thing anyone asks when a resync misbehaves,
+    // and a capability list is the server's public advertisement, not the
+    // user's data.
+    tracing::debug!(
+        capabilities = ?capabilities.names(),
+        incremental = capabilities.supports_incremental_sync(),
+        "server capabilities"
+    );
     let mut watcher = Watcher::new(parts.watch, &capabilities);
 
     let Ok(connection) = pool.get() else {
+        tracing::warn!("no connection to read folders with; not watching");
         return;
     };
-    let Ok(mailboxes) = MailboxRepository::new(&connection).list_for_account(parts.account) else {
-        return;
+    let mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
+        Ok(mailboxes) => mailboxes,
+        Err(error) => {
+            tracing::error!(%error, "cannot read the account's folders; not watching");
+            return;
+        }
     };
+    let mut watching = 0;
     for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
+        watching += 1;
         let attention = if mailbox.role == postio_model::MailboxRole::Inbox {
             Attention::Push
         } else {
@@ -636,6 +677,7 @@ async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
         };
         watcher.watch(mailbox.id, mailbox.path.clone(), attention);
     }
+    tracing::info!(watching, "watching for new mail");
     state.watcher = Some(watcher);
 }
 
@@ -646,6 +688,16 @@ async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
 async fn keep_watch(parts: &EngineParts, state: &mut State) {
     if !state.supervisor.link().is_online() {
         // Nothing to watch over. Wait rather than spin.
+        //
+        // Said every tick, at `debug`: "the app is just sitting there" is a
+        // real report, and the reason it is sitting there is the answer. A
+        // `Blocked` link in particular never retries on its own — retrying a
+        // refused credential is how an account gets locked — so without this
+        // the silence is indistinguishable from a hang.
+        tracing::debug!(
+            link = %postio_model::address::redact_addresses(&format!("{:?}", state.supervisor.link())),
+            "not connected; nothing to watch"
+        );
         tokio::time::sleep(POLL_INTERVAL).await;
         return;
     }
@@ -716,21 +768,80 @@ fn step_mailbox(step: &Watch) -> Option<MailboxId> {
     }
 }
 
+/// Ask the server what folders the account has, and write them down.
+///
+/// Runs on every reconnection rather than only on the first, because folders
+/// are created, renamed and removed by other clients — and because the first
+/// connection of a brand-new account is the one where the local table is empty
+/// and *everything* below depends on it.
+///
+/// A failure is reported and not fatal: the folders already known still sync.
+/// A brand-new account with no folders yet is simply empty for another
+/// reconnection, which is what it already looks like.
+async fn discover(parts: &EngineParts, pool: &Pool) {
+    let connection = match pool.get() {
+        Ok(connection) => connection,
+        Err(error) => {
+            parts.events.emit(Event::Error {
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+
+    match discover::discover(&connection, parts.backend.as_ref(), parts.account).await {
+        Ok(report) => {
+            if report.changed() {
+                // The sidebar reads the folder table, and nothing else is
+                // going to tell it that the table just gained every folder
+                // the account has.
+                parts.events.emit(Event::MailboxesChanged {
+                    account: parts.account,
+                });
+            }
+        }
+        Err(error) => {
+            parts.events.emit(Event::Error {
+                message: error.to_string(),
+            });
+        }
+    }
+}
+
 /// Line every selectable folder up for a sync pass.
 fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
     let Ok(connection) = pool.get() else {
+        tracing::warn!("no connection to read folders with; syncing nothing this pass");
         return;
     };
-    let Ok(mailboxes) = MailboxRepository::new(&connection).list_for_account(parts.account) else {
-        return;
+    let mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
+        Ok(mailboxes) => mailboxes,
+        Err(error) => {
+            tracing::error!(%error, "cannot read the account's folders; syncing nothing");
+            return;
+        }
     };
     state.to_sync.clear();
     state.to_sync.extend(
         mailboxes
-            .into_iter()
+            .iter()
             .filter(|mailbox| mailbox.selectable)
             .map(|mailbox| mailbox.id),
     );
+    // The one line that answers "the account connected and nothing happened".
+    // Every folder-enumerating path here reads the *local* table, and nothing
+    // in the workspace fills it from the server yet — see `postio-755`.
+    tracing::info!(
+        known = mailboxes.len(),
+        queued = state.to_sync.len(),
+        "folders known locally, queued for sync"
+    );
+    if mailboxes.is_empty() {
+        tracing::warn!(
+            "the server's folder list has never been read, so there is nothing \
+             to sync (postio-755)"
+        );
+    }
 }
 
 /// How many bodies one finished sync pass queues for its mailbox.
@@ -842,6 +953,7 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
 }
 
 /// One drain pass, with SMTP wired in so `Operation::Send` can actually send.
+#[tracing::instrument(skip_all)]
 async fn drain(
     parts: &EngineParts,
     pool: &Pool,
@@ -876,6 +988,7 @@ async fn drain(
     let report = match drainer.drain(&connection, parts.account, Utc::now()).await {
         Ok(report) => report,
         Err(error) => {
+            tracing::warn!(%error, "the drain pass failed");
             // Noticed by the operation that hit it rather than by the next
             // tick: a session that died mid-drain has already cost the user
             // one action, and waiting five seconds to admit it costs another.
@@ -886,6 +999,16 @@ async fn drain(
             return Err(EngineError::new(error.to_string()));
         }
     };
+
+    tracing::debug!(
+        applied = report.applied,
+        coalesced = report.coalesced,
+        obsolete = report.obsolete,
+        deferred = report.deferred,
+        failed = report.failed.len(),
+        needs_resync = report.needs_resync.len(),
+        "drained the operation queue"
+    );
 
     Ok(DrainSummary {
         applied: report.applied,
@@ -906,6 +1029,7 @@ async fn drain(
 /// `sync_mailbox` the first time and `resync_mailbox` afterwards, decided by
 /// whether the mailbox has sync state — which is the record of a pass having
 /// completed, and the thing `resync_mailbox` needs to be incremental against.
+#[tracing::instrument(skip_all, fields(mailbox = mailbox.get(), path, incremental))]
 async fn sync(
     parts: &EngineParts,
     pool: &Pool,
@@ -934,6 +1058,12 @@ async fn sync(
         .get(mailbox)
         .map_err(|error| EngineError::new(error.to_string()))?
         .is_some();
+
+    // A folder *path* is a name the user chose for a container, not a message
+    // and not an address; it is what makes a per-mailbox line legible at all.
+    tracing::Span::current().record("path", record.path.as_str());
+    tracing::Span::current().record("incremental", synced_before);
+    tracing::info!("sync started");
 
     announce_status(parts, &state.status.on_sync_started(mailbox));
 
@@ -978,6 +1108,13 @@ async fn sync(
 
     match outcome {
         Ok(summary) => {
+            tracing::info!(
+                inserted = summary.inserted,
+                updated = summary.updated,
+                threaded = summary.threaded,
+                full = summary.full,
+                "sync finished"
+            );
             announce_status(parts, &state.status.on_sync_finished(now));
             if summary.changed() {
                 // The list showing this folder has to re-read it.
@@ -997,6 +1134,7 @@ async fn sync(
             Ok(summary)
         }
         Err(error) => {
+            tracing::warn!(%error, "sync failed");
             if let SyncError::Backend(backend) = &error {
                 let moved = state.supervisor.observe(backend, now);
                 announce_link(parts, state, moved);
@@ -1090,6 +1228,14 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
     let Some(link) = moved else {
         return;
     };
+    // Only transitions reach here, so this is one line per actual change
+    // rather than one per poll.
+    // Through `Debug`, then redacted: a `Blocked` link carries the reason it
+    // is blocked, and an unusable credential names the account.
+    tracing::info!(
+        link = %postio_model::address::redact_addresses(&format!("{link:?}")),
+        "connection state changed"
+    );
     let status = state.status.on_link(&link);
     let connection = match &status {
         SyncStatus::Offline => postio_core::ConnectionState::Offline,
@@ -1106,6 +1252,10 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
     // `ConnectionState::Failing` carries no reason of its own, deliberately.
     // The reason travels beside it, which is what the status line reads.
     if let SyncStatus::Error { reason, .. } = &status {
+        tracing::error!(
+            reason = %postio_model::address::redact_addresses(reason),
+            "connection failing"
+        );
         parts.events.emit(Event::Error {
             message: reason.clone(),
         });

@@ -686,6 +686,25 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     let drafts_mailbox = report
         .mailbox(MailboxRole::Drafts)
         .expect("the seed has a Drafts folder");
+
+    // Written before the engine exists. The engine's thread writes this same
+    // database — folder discovery on link-up, then the drain — and a shared
+    // in-memory SQLite answers a second writer with SQLITE_LOCKED rather than
+    // waiting on it. A running Postio is file-backed and does wait; only the
+    // test harness has this shape, so the test does its setup first rather
+    // than racing.
+    let mut identity = postio_model::Identity::new(
+        report.account.id,
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    identity.is_default = true;
+    {
+        let connection = database.connection().expect("checkout");
+        postio_storage::repository::IdentityRepository::new(&connection)
+            .create(&mut identity)
+            .expect("create the identity");
+    }
+
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(directory.keep()).expect("a blob store");
     let (sink, _events) = event_channel();
@@ -722,20 +741,6 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     .await
     .expect("the engine never connected");
 
-    // The seed writes no identity, and a draft has to be composed as
-    // somebody — the same requirement sending has.
-    let mut identity = postio_model::Identity::new(
-        report.account.id,
-        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
-    );
-    identity.is_default = true;
-    {
-        let connection = database.connection().expect("checkout");
-        postio_storage::repository::IdentityRepository::new(&connection)
-            .create(&mut identity)
-            .expect("create the identity");
-    }
-
     let mut draft = postio_model::Draft::new(report.account.id);
     draft.to = vec![postio_model::EmailAddress::new(
         None::<String>,
@@ -764,4 +769,79 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     .expect("the draft never reached the server on the engine's own initiative");
 
     assert_eq!(landed, 1, "one copy, uploaded once");
+}
+
+#[tokio::test]
+async fn a_fresh_account_learns_its_folders_from_the_server() {
+    // postio-755, and the reason the first live run reported success over an
+    // empty mailbox: every folder-enumerating path in the engine reads the
+    // local table, and nothing ever LISTed the server to fill it. An account
+    // that has never synced has no folders at all, so this is the pass
+    // everything else waits on.
+    let database = test_support::memory();
+    let account = {
+        let connection = database.connection().expect("checkout");
+        let mut account = postio_model::Account::new(
+            "Test",
+            postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+        );
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .expect("create the account");
+        account
+    };
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let (sink, _events) = event_channel();
+
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(MockMailbox::new("INBOX"))
+            .mailbox(MockMailbox::new("Sent Messages").attributes(["\\Sent"]))
+            .mailbox(MockMailbox::new("Deleted Messages").attributes(["\\Trash"]))
+            .build(),
+    );
+    let engine = Engine::spawn(EngineParts {
+        account: account.id,
+        database: database.clone(),
+        blobs,
+        backend,
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        events: sink,
+        retry: Default::default(),
+        backfill: Default::default(),
+        reconnect: Default::default(),
+        watch: Default::default(),
+        network: NetworkSource::Ignored,
+    })
+    .expect("the engine starts");
+
+    let folders = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let connection = database.connection().expect("checkout");
+            let found = postio_storage::repository::MailboxRepository::new(&connection)
+                .list_for_account(account.id)
+                .expect("list");
+            drop(connection);
+            if !found.is_empty() {
+                return found;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the engine connected and never wrote down a single folder");
+
+    assert_eq!(folders.len(), 3, "{folders:?}");
+    assert!(
+        folders
+            .iter()
+            .any(|mailbox| mailbox.role == MailboxRole::Sent),
+        "and the roles come from the server's attributes, so Sent is found \
+         however the account spells it: {folders:?}"
+    );
+    // Nothing was asked of the engine at any point — discovery is part of
+    // coming up, not something a caller has to remember.
+    drop(engine);
 }
