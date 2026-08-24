@@ -156,10 +156,16 @@ pub(crate) fn resolve_save(
         })
         .collect();
 
-    // No `in_reply_to` parent is resolved: the copy in Drafts exists so the
-    // *user* can find their unfinished words on another client, and threading
-    // headers are generated fresh by the send that finally goes out.
-    let built = outgoing::build(&draft, identity, &attachments, None);
+    // `build_draft` rather than `build`: this copy goes to the user's own
+    // Drafts folder and reaches nobody, so it keeps the `Bcc` the outgoing
+    // bytes must never carry. A draft picked up on another client with its
+    // bcc'd recipients silently gone would send to fewer people than the user
+    // asked for.
+    //
+    // No `in_reply_to` parent is resolved: the copy exists so the *user* can
+    // find their unfinished words elsewhere, and threading headers are
+    // generated fresh by the send that finally goes out.
+    let built = outgoing::build_draft(&draft, identity, &attachments, None);
 
     Ok(ResolvedDraft::Ready(Box::new(DraftJob::Save {
         draft: draft_id,
