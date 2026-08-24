@@ -613,7 +613,7 @@ impl Finder {
     /// These stopped being the same question the day search began leaving the
     /// field up after a query — "its results *are* the message list", so the
     /// box does not close itself and `is_open` stays true while the user goes
-    /// back to reading mail. [`Window::key_context`] asked `is_open`, so from
+    /// back to reading mail. `Window::key_context` asked `is_open`, so from
     /// the first search onwards the resolver was pinned to `Search`, where
     /// `?` and the rest are not bound, and every bare key was silently
     /// dropped for the rest of the session. That is `postio-73`, reported as
