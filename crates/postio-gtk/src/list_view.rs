@@ -132,7 +132,7 @@ mod imp {
         /// How a drag turns into files, when one is dropped outside Postio.
         ///
         /// Empty in a build that never wired it, which is why
-        /// [`crate::drag_out::MessageFiles`] refuses rather than handing over
+        /// [`crate::drag_out::LazyFiles`] refuses rather than handing over
         /// an empty drop.
         pub(super) export: RefCell<Option<crate::drag_out::Materialise>>,
     }
