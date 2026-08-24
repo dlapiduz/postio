@@ -160,6 +160,28 @@ jobs:
           fi
           echo "ok: no workflow opts into the live-server tests."
 
+  supply-chain:
+    name: Supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `Cargo.lock` holds ~405 packages and nothing checked any of them until
+      # #97. This is the "what is in the graph at all" question; the crate
+      # boundary check above asks which of *our* crates may reach which, and
+      # neither substitutes for the other.
+      #
+      # Its own job on ubuntu-latest rather than a step in `build`: it needs
+      # cargo metadata and no GTK, so it runs in seconds beside the other cheap
+      # checks instead of waiting on the workspace to compile.
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          # Pinned by major version, like actions/checkout and actions/cache
+          # elsewhere in this file.
+          arguments: --all-features
+
   build:
     name: Clippy and tests
     runs-on: ubuntu-26.04
