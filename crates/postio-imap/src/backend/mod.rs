@@ -30,9 +30,12 @@
 //! and no network at all.
 //!
 //! ```
-//! # use postio_imap::backend::{MailBackend, MailboxFilter, MockBackend};
+//! # use postio_imap::backend::{MailBackend, MailboxFilter, MockBackend, MockMailbox};
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let backend = MockBackend::new();
+//! // The folders are named here, deliberately: `MockBackend::new` has none,
+//! // so a test that needs an inbox has to say where it came from. See its
+//! // own docs for the bug that arrangement was hiding.
+//! let backend = MockBackend::builder().mailbox(MockMailbox::new("INBOX")).build();
 //! let capabilities = backend.connect().await?;
 //! let mailboxes = backend.list_mailboxes(&MailboxFilter::all()).await?;
 //!
