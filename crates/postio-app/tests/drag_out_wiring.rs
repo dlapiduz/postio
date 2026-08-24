@@ -105,6 +105,21 @@ fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
          bug postio-bl2 is about — check whether anything calls connect_export."
     );
 
+    // ── and Postio's own sidebar is still served ────────────────────────
+    // The offer became a union when files were added to it. If the string
+    // half were lost, dragging a message onto a folder — the thing that
+    // already worked — would quietly stop working, and no test of the new
+    // half would notice.
+    let payload = offer
+        .value(glib::types::Type::STRING)
+        .expect("the string half is still offered");
+    let payload: String = payload.get().expect("a string");
+    assert_eq!(
+        postio_gtk::list_view::dragged_messages(&payload),
+        Some(postio_gtk::list_view::Dragged::Selection),
+        "the sidebar drop reads this, and a selection must stay a reference to itself"
+    );
+
     // ── the drop lands ──────────────────────────────────────────────────
     let stream = gio::MemoryOutputStream::new_resizable();
     block_on(offer.write_mime_type_future("text/uri-list", &stream, glib::Priority::DEFAULT))
