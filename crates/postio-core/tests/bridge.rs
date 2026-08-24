@@ -300,3 +300,63 @@ fn dropping_the_bridge_shuts_it_down() {
     assert_eq!(description(&next_event(&events)), "refresh");
     assert!(commands.send(Command::Refresh).is_err());
 }
+
+/// The runtime the bridge builds can do IO.
+///
+/// It could not, until `dev.postio.Postio 0.1.0` panicked on first launch the
+/// moment onboarding tried to reach a server:
+///
+/// ```text
+/// thread 'postio-core' panicked at tokio/src/net/tcp/stream.rs:164:
+/// A Tokio 1.x context was found, but IO is disabled.
+/// Call `enable_io` on the runtime builder to enable IO.
+/// ```
+///
+/// `BridgeBuilder::build` called `enable_time()` and nothing else, so every
+/// socket opened on this runtime panicked — which is every socket the
+/// application opens, since this is the runtime the sync engine runs on.
+///
+/// Nothing in the default suite had ever opened one. The no-network rule means
+/// the handlers under test talk to `MockBackend`, so `enable_io` was exercised
+/// by exactly nothing and the gap was invisible to a green suite.
+///
+/// This binds a listener on loopback and connects to it. That is not network
+/// access — no name is resolved and no packet leaves the machine — and it is
+/// the smallest thing that proves the reactor is running.
+#[test]
+fn the_bridge_runtime_can_open_a_socket() {
+    let handler = handler_fn(|_command: Command, events| async move {
+        let outcome = async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let accept = tokio::spawn(async move { listener.accept().await });
+            tokio::net::TcpStream::connect(address).await?;
+            accept.await.expect("the accept task should not panic")?;
+            Ok::<_, std::io::Error>(())
+        }
+        .await;
+        events.emit(Event::ActionCompleted {
+            description: match outcome {
+                Ok(()) => "io ok".to_owned(),
+                Err(error) => format!("io failed: {error}"),
+            },
+            undoable: false,
+        });
+    });
+
+    let (bridge, events) = Bridge::builder()
+        .worker_threads(1)
+        .build(handler)
+        .expect("the runtime should start");
+    bridge
+        .commands()
+        .send(Command::Refresh)
+        .expect("the bridge should be running");
+
+    match next_event(&events) {
+        Event::ActionCompleted { description, .. } => {
+            assert_eq!(description, "io ok", "the bridge runtime refused a socket")
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
