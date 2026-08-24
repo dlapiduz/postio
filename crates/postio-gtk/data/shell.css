@@ -98,6 +98,17 @@ headerbar.postio-header button.toggle:checked {
   color: var(--postio-accent);
 }
 
+/* Canvas 2b: `14 hits · 11 ms`, at the right-hand end of the field. Mono and
+   dim — it is a measurement the app volunteers, not something to read before
+   the results. Hidden entirely until there is a search to report, so an
+   empty box never carries a stale number. */
+.postio-readout {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+  margin-left: 4px;
+}
+
 .postio-search-icon {
   color: var(--postio-accent);
   -gtk-icon-size: 16px;

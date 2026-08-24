@@ -25,7 +25,27 @@
 //! chips are now drawn. What stays here is the part that has nothing to do
 //! with either surface: reading a parsed query as chips, and deciding what
 //! Backspace means. Both are pure and tested without a display.
+//!
+//! # What else is here
+//!
+//! The rest of canvas 2b, in the order the eye meets it:
+//!
+//! | | |
+//! |---|---|
+//! | [`Live`] | the `14 hits · 11 ms` readout, and the pacing behind it |
+//! | [`Facets`] | the Scope column and the Refine chips down the left |
+//! | [`Preview`] | the focused result, with the match highlighted |
+//! | [`View`] | the three of them, mounted into the shell as one surface |
+//!
+//! Each has a pure core that is tested without a display — [`readout`],
+//! [`Pacer`], [`mark_html`] — and a widget that is only wiring.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::time::Duration;
+
+use gtk::glib;
+use gtk::prelude::*;
 use postio_search::ParsedQuery;
 use postio_search::query::{Field, TokenKind};
 
@@ -130,6 +150,346 @@ pub fn spoken(chip: &Chip) -> String {
         (true, true) => format!("not {field} {value}"),
         (false, false) => format!("{field}, no value yet"),
         (true, false) => format!("not {field}, no value yet"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The live readout — canvas 2b's `14 hits · 11 ms`
+// ---------------------------------------------------------------------------
+
+/// How long the box waits after a keystroke before it searches.
+///
+/// Short enough to read as instant — well under the ~100 ms at which a delay
+/// stops feeling like part of the keystroke — and long enough that a burst of
+/// typing costs one search rather than one per character. The debounce is
+/// what keeps typing inside the 16 ms interaction budget: the keystroke never
+/// waits for a search, it only ever reschedules one.
+pub const DEBOUNCE: Duration = Duration::from_millis(60);
+
+/// The slot the readout reserves, in characters.
+///
+/// Wide enough for the longest thing it can say — `10000+ hits · 100 ms` —
+/// so the number never has to be truncated and the slot never has to resize.
+const READOUT_CHARS: i32 = 20;
+
+/// What one search turned out to be.
+///
+/// The three numbers canvas 2b puts at the right-hand end of the field, and
+/// the same three [`postio_search::SearchResults`] carries — this is that,
+/// minus the hits themselves, because the readout does not need them and
+/// copying a page of results to draw a number would be silly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    /// How many messages matched.
+    pub hits: u64,
+    /// Whether `hits` is a floor rather than the true count. See
+    /// [`postio_search::SearchResults::total_hits_capped`].
+    pub capped: bool,
+    /// How long the search took.
+    pub elapsed: Duration,
+}
+
+impl Outcome {
+    /// Reads the outcome off a finished search.
+    pub fn of(results: &postio_search::SearchResults) -> Self {
+        Outcome {
+            hits: results.total_hits,
+            capped: results.total_hits_capped,
+            elapsed: results.elapsed,
+        }
+    }
+}
+
+/// The readout, as the canvas writes it: `14 hits · 11 ms`.
+///
+/// No thousands separators, because the canvas' own scope counts are written
+/// `4291` and two number formats in one column would read as two kinds of
+/// number. A capped count is written `10000+ hits` rather than a bare figure,
+/// so a floor never passes for a total.
+pub fn readout(outcome: &Outcome) -> String {
+    format!("{} · {}", hits(outcome), elapsed(outcome.elapsed))
+}
+
+/// The readout as a screen reader should hear it — the same facts, in words,
+/// because "·" and "ms" are punctuation and an abbreviation rather than
+/// something to read aloud.
+pub fn spoken_readout(outcome: &Outcome) -> String {
+    let elapsed = outcome.elapsed.as_millis();
+    match elapsed {
+        0 => format!("{}, in under a millisecond", hits(outcome)),
+        1 => format!("{}, in 1 millisecond", hits(outcome)),
+        _ => format!("{}, in {elapsed} milliseconds", hits(outcome)),
+    }
+}
+
+fn hits(outcome: &Outcome) -> String {
+    match (outcome.hits, outcome.capped) {
+        (_, true) => format!("{}+ hits", outcome.hits),
+        (0, _) => "no hits".to_string(),
+        (1, _) => "1 hit".to_string(),
+        (hits, _) => format!("{hits} hits"),
+    }
+}
+
+/// A duration, in the unit that makes it readable.
+///
+/// Sub-millisecond is written `<1 ms` rather than `0 ms`: the search did
+/// happen, and a zero would read as one that did not.
+fn elapsed(elapsed: Duration) -> String {
+    let millis = elapsed.as_millis();
+    match millis {
+        0 => "<1 ms".to_string(),
+        1..=9_999 => format!("{millis} ms"),
+        _ => format!("{:.1} s", elapsed.as_secs_f64()),
+    }
+}
+
+/// Which question is outstanding, so an answer to an older one can be thrown
+/// away instead of drawn.
+///
+/// Every run gets a sequence number, and only the newest one's answer is
+/// accepted. This is the same generation rule [`crate::feed`] uses for message
+/// pages and for the same reason: superseding a query is the *normal* case
+/// when results follow every keystroke, and without it the readout flickers
+/// backwards through the answers to queries nobody is asking any more.
+///
+/// Pure, and deliberately not a widget: the rule is worth testing on its own,
+/// and it is the whole of what "cancelled, not awaited" means.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pacer {
+    issued: u64,
+}
+
+impl Pacer {
+    /// The sequence number of the outstanding run.
+    pub fn issued(&self) -> u64 {
+        self.issued
+    }
+}
+
+impl Pacer {
+    /// Hands out the sequence number for a new run, superseding whatever was
+    /// in flight.
+    pub fn issue(&mut self) -> u64 {
+        self.issued += 1;
+        self.issued
+    }
+
+    /// Whether `sequence`'s answer is still the answer to the current
+    /// question.
+    pub fn accepts(&self, sequence: u64) -> bool {
+        sequence != 0 && sequence == self.issued
+    }
+
+    /// Gives up on whatever is in flight without asking anything new — the box
+    /// closed, or emptied.
+    pub fn abandon(&mut self) {
+        self.issued += 1;
+    }
+}
+
+/// What to run when a debounced query comes due.
+type RunHandler = Box<dyn Fn(&ParsedQuery, u64)>;
+
+/// The readout and the pacing behind it.
+///
+/// Drives one label. Every keystroke goes to [`Live::typed`], which
+/// reschedules the pending run rather than starting another one, and every
+/// answer comes back through [`Live::deliver`], which drops it if the question
+/// has moved on.
+///
+/// # What the readout does while a search is running
+///
+/// Nothing: it goes on showing the last answer. A spinner over a local read is
+/// the anti-pattern `/ux-architect` names outright, and a readout that blanked
+/// between keystrokes would flash on every one. The number is either the
+/// answer to what is typed or the answer to what was typed a few tens of
+/// milliseconds ago, and at that distance the difference is not visible.
+#[derive(Clone)]
+pub struct Live {
+    inner: Rc<LiveInner>,
+}
+
+struct LiveInner {
+    label: gtk::Label,
+    pacer: RefCell<Pacer>,
+    /// The debounce timer, cancelled by the next keystroke.
+    pending: RefCell<Option<glib::SourceId>>,
+    /// The query that timer will run when it fires.
+    queued: RefCell<Option<ParsedQuery>>,
+    /// The last query [`Live::typed`] was told about, so a redraw that did
+    /// not change the query does not read as a keystroke.
+    asked: RefCell<Option<ParsedQuery>>,
+    outcome: Cell<Option<Outcome>>,
+    run: RefCell<Vec<RunHandler>>,
+}
+
+impl Live {
+    /// Drives `label` — the readout at the right-hand end of the field.
+    pub fn new(label: gtk::Label) -> Self {
+        label.add_css_class("postio-readout");
+        // A fixed slot, right-aligned. The count changes width on almost
+        // every keystroke (`9 hits` to `1204 hits` to `no hits`), and a
+        // field that breathed in the header on every character would be the
+        // most distracting thing on the screen. Hidden at rest, so the
+        // resting field is still the canvas' own width — 2b draws the field
+        // wider while it is working, which is exactly what this is.
+        label.set_width_chars(READOUT_CHARS);
+        label.set_xalign(1.0);
+        // The number is decoration for the field's own label until there is
+        // one; `render` gives it a real description as soon as there is.
+        label.set_accessible_role(gtk::AccessibleRole::Status);
+        label.set_visible(false);
+        let live = Live {
+            inner: Rc::new(LiveInner {
+                label,
+                pacer: RefCell::new(Pacer::default()),
+                pending: RefCell::new(None),
+                queued: RefCell::new(None),
+                asked: RefCell::new(None),
+                outcome: Cell::new(None),
+                run: RefCell::new(Vec::new()),
+            }),
+        };
+        live.render();
+        live
+    }
+
+    /// Called when a debounced query comes due, with the sequence number its
+    /// answer has to come back under.
+    pub fn connect_run(&self, handler: impl Fn(&ParsedQuery, u64) + 'static) {
+        self.inner.run.borrow_mut().push(Box::new(handler));
+    }
+
+    /// The query changed.
+    ///
+    /// Reschedules the pending run and supersedes any run already in flight,
+    /// so the answer to the query being replaced is never drawn. Costs a timer
+    /// reset and nothing else, which is what keeps this inside the interaction
+    /// budget however fast the user types.
+    ///
+    /// A call that does not actually change the query does nothing at all.
+    /// The box redraws for reasons that have nothing to do with typing — the
+    /// keyboard context moved, the folder list arrived — and each of those
+    /// would otherwise cancel a search that was about to answer the question
+    /// still on screen.
+    pub fn typed(&self, query: &ParsedQuery) {
+        let inner = &self.inner;
+        if inner.asked.borrow().as_ref() == Some(query) {
+            return;
+        }
+        *inner.asked.borrow_mut() = Some(query.clone());
+        self.cancel_pending();
+        // Anything in flight is now answering a question nobody is asking.
+        inner.pacer.borrow_mut().abandon();
+
+        if query.is_empty() {
+            // Nothing is being asked, so there is no number to show. Not
+            // "0 hits": an empty box has not searched and must not claim to
+            // have found nothing.
+            inner.outcome.set(None);
+            *inner.queued.borrow_mut() = None;
+            self.render();
+            return;
+        }
+
+        *inner.queued.borrow_mut() = Some(query.clone());
+        let source = glib::timeout_add_local_once(
+            DEBOUNCE,
+            glib::clone!(
+                #[strong(rename_to = live)]
+                self,
+                move || {
+                    // Cleared before running, so `cancel_pending` never
+                    // removes a source that has already fired.
+                    *live.inner.pending.borrow_mut() = None;
+                    live.flush();
+                }
+            ),
+        );
+        *inner.pending.borrow_mut() = Some(source);
+    }
+
+    /// Runs the queued query now instead of waiting out the debounce.
+    ///
+    /// What `Enter` does, and what a test does instead of sleeping.
+    pub fn flush(&self) {
+        self.cancel_pending();
+        let Some(query) = self.inner.queued.borrow_mut().take() else {
+            return;
+        };
+        let sequence = self.inner.pacer.borrow_mut().issue();
+        for handler in self.inner.run.borrow().iter() {
+            handler(&query, sequence);
+        }
+    }
+
+    /// A run answered.
+    ///
+    /// Returns whether the answer was taken. `false` means the query was
+    /// superseded while it ran, and the caller should drop the rest of the
+    /// results too rather than filling the list with them.
+    pub fn deliver(&self, sequence: u64, outcome: Outcome) -> bool {
+        if !self.inner.pacer.borrow().accepts(sequence) {
+            return false;
+        }
+        self.inner.outcome.set(Some(outcome));
+        self.render();
+        true
+    }
+
+    /// Stop searching and take the readout down — the box closed.
+    pub fn clear(&self) {
+        self.cancel_pending();
+        self.inner.pacer.borrow_mut().abandon();
+        *self.inner.queued.borrow_mut() = None;
+        *self.inner.asked.borrow_mut() = None;
+        self.inner.outcome.set(None);
+        self.render();
+    }
+
+    /// The sequence number an answer must come back under to be drawn.
+    ///
+    /// Only useful to something answering synchronously — the ordinary path
+    /// takes it from [`Live::connect_run`], which is handed the number for
+    /// the run it is being asked to make.
+    pub fn outstanding(&self) -> u64 {
+        self.inner.pacer.borrow().issued()
+    }
+
+    /// What the readout is currently saying, if anything.
+    pub fn outcome(&self) -> Option<Outcome> {
+        self.inner.outcome.get()
+    }
+
+    /// Whether a run is scheduled or in flight.
+    pub fn is_running(&self) -> bool {
+        self.inner.queued.borrow().is_some()
+    }
+
+    fn cancel_pending(&self) {
+        if let Some(source) = self.inner.pending.borrow_mut().take() {
+            source.remove();
+        }
+    }
+
+    fn render(&self) {
+        let inner = &self.inner;
+        match inner.outcome.get() {
+            Some(outcome) => {
+                inner.label.set_text(&readout(&outcome));
+                inner
+                    .label
+                    .update_property(&[gtk::accessible::Property::Label(&spoken_readout(
+                        &outcome,
+                    ))]);
+                inner.label.set_visible(true);
+            }
+            None => {
+                inner.label.set_text("");
+                inner.label.set_visible(false);
+            }
+        }
     }
 }
 
@@ -346,6 +706,131 @@ mod tests {
             Backspace::Ordinary,
             "the caret is in `report`, not in the chip before it"
         );
+    }
+
+    // -- the readout ------------------------------------------------------
+
+    fn outcome(hits: u64, capped: bool, millis: u64) -> Outcome {
+        Outcome {
+            hits,
+            capped,
+            elapsed: Duration::from_millis(millis),
+        }
+    }
+
+    #[test]
+    fn the_readout_is_written_the_way_the_canvas_writes_it() {
+        assert_eq!(readout(&outcome(14, false, 11)), "14 hits · 11 ms");
+    }
+
+    #[test]
+    fn one_hit_is_not_one_hits() {
+        assert_eq!(readout(&outcome(1, false, 3)), "1 hit · 3 ms");
+    }
+
+    #[test]
+    fn nothing_found_says_so_rather_than_showing_a_zero() {
+        assert_eq!(readout(&outcome(0, false, 4)), "no hits · 4 ms");
+    }
+
+    #[test]
+    fn a_capped_count_never_passes_for_a_total() {
+        assert_eq!(readout(&outcome(10_000, true, 91)), "10000+ hits · 91 ms");
+    }
+
+    #[test]
+    fn a_search_too_fast_to_measure_still_took_some_time() {
+        assert_eq!(
+            readout(&outcome(3, false, 0)),
+            "3 hits · <1 ms",
+            "`0 ms` would read as a search that did not run"
+        );
+    }
+
+    #[test]
+    fn a_search_slow_enough_to_notice_changes_unit() {
+        let slow = Outcome {
+            hits: 2,
+            capped: false,
+            elapsed: Duration::from_millis(12_400),
+        };
+        assert_eq!(readout(&slow), "2 hits · 12.4 s");
+    }
+
+    #[test]
+    fn the_readout_reads_aloud_as_words() {
+        assert_eq!(
+            spoken_readout(&outcome(14, false, 11)),
+            "14 hits, in 11 milliseconds"
+        );
+        assert_eq!(
+            spoken_readout(&outcome(1, false, 1)),
+            "1 hit, in 1 millisecond"
+        );
+        assert_eq!(
+            spoken_readout(&outcome(0, false, 0)),
+            "no hits, in under a millisecond"
+        );
+    }
+
+    #[test]
+    fn an_outcome_is_read_straight_off_a_finished_search() {
+        let results = postio_search::SearchResults {
+            hits: Vec::new(),
+            total_hits: 14,
+            total_hits_capped: false,
+            elapsed: Duration::from_millis(11),
+        };
+        assert_eq!(Outcome::of(&results), outcome(14, false, 11));
+    }
+
+    // -- pacing -----------------------------------------------------------
+
+    #[test]
+    fn nothing_is_accepted_before_anything_is_asked() {
+        let pacer = Pacer::default();
+        assert!(!pacer.accepts(0));
+        assert!(!pacer.accepts(1));
+    }
+
+    #[test]
+    fn the_answer_to_the_current_question_is_accepted() {
+        let mut pacer = Pacer::default();
+        let first = pacer.issue();
+        assert!(pacer.accepts(first));
+    }
+
+    #[test]
+    fn a_superseded_query_is_dropped_rather_than_drawn() {
+        let mut pacer = Pacer::default();
+        let first = pacer.issue();
+        let second = pacer.issue();
+
+        assert!(
+            !pacer.accepts(first),
+            "the answer to what was typed two keystrokes ago is not an answer"
+        );
+        assert!(pacer.accepts(second));
+    }
+
+    #[test]
+    fn answers_that_come_back_out_of_order_do_not_move_the_readout_backwards() {
+        let mut pacer = Pacer::default();
+        let first = pacer.issue();
+        let second = pacer.issue();
+
+        // The newest answers first, then the older one straggles in.
+        assert!(pacer.accepts(second));
+        assert!(!pacer.accepts(first));
+    }
+
+    #[test]
+    fn abandoning_leaves_nothing_that_could_still_be_accepted() {
+        let mut pacer = Pacer::default();
+        let asked = pacer.issue();
+        pacer.abandon();
+
+        assert!(!pacer.accepts(asked));
     }
 
     // -- spoken -----------------------------------------------------------
