@@ -28,7 +28,7 @@ use postio_model::{
     OperationTarget, Uid, UidValidity,
 };
 use postio_storage::repository::{
-    MessageRepository, OperationQueueRepository, SyncStateRepository,
+    ContactRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
 };
 use postio_storage::test_support::{self, TempDatabase};
 use postio_storage::{BlobStore, PooledConnection};
@@ -262,6 +262,55 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
         .expect("look up")
         .expect("message 2");
     assert!(seen.flags.is_seen());
+}
+
+/// postio-66j: a rebuild (`Coverage::Everything`) re-reads every message the
+/// mailbox already holds, on purpose — that is what makes it trustworthy
+/// after a pull the incremental path could not verify. Every one of those
+/// re-reads must not look like a new sighting of its correspondent, or every
+/// rebuild would inflate `times_seen` for mail nobody just sent.
+#[tokio::test]
+async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_correspondents() {
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account_id, inbox, _archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let seen_before: Vec<(String, u32)> = ContactRepository::new(&connection)
+        .list(Some(account_id))
+        .expect("list contacts")
+        .into_iter()
+        .map(|contact| (contact.address.normalized(), contact.times_seen))
+        .collect();
+    assert!(
+        !seen_before.is_empty(),
+        "bootstrap must have recorded the corpus senders as contacts"
+    );
+
+    server.set_flags(INBOX, Uid::new(2), FlagSet::from_iter([Flag::Seen]));
+    server.quirk(Quirk::MalformedFetchSequenceNumber);
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+    assert!(
+        matches!(outcome, Outcome::Rebuilt { .. }),
+        "expected a rebuild, got {outcome:?}"
+    );
+
+    let seen_after: Vec<(String, u32)> = ContactRepository::new(&connection)
+        .list(Some(account_id))
+        .expect("list contacts")
+        .into_iter()
+        .map(|contact| (contact.address.normalized(), contact.times_seen))
+        .collect();
+    assert_eq!(
+        seen_before, seen_after,
+        "a rebuild re-reads messages already known; their correspondents' \
+         counts must be exactly what bootstrap left them at"
+    );
 }
 
 #[tokio::test]

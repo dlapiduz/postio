@@ -50,7 +50,9 @@ use std::collections::BTreeSet;
 use chrono::Utc;
 use postio_imap::backend::{BackendError, MailBackend, SelectMode, UidSet};
 use postio_model::{Mailbox, MailboxId, MailboxStatus, Message, Uid};
-use postio_storage::repository::{MessageRepository, SyncStateRepository, ThreadingRepository};
+use postio_storage::repository::{
+    AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
+};
 use rusqlite::Connection;
 
 use crate::drain::SyncError;
@@ -198,6 +200,12 @@ pub(crate) async fn enumerate(
         .map(Uid::get)
         .collect();
 
+    // Fetched once per pass, not per message: who a contact-sighting is
+    // recorded against never changes mid-pass. `None` (an orphaned mailbox
+    // row) just means no sightings are recorded, rather than failing sync
+    // over a nicety.
+    let account = AccountRepository::new(connection).get(mailbox.account_id)?;
+
     let mut missing: Vec<u32> = (1..=target)
         .filter(|uid| coverage == Coverage::Everything || !known.contains(uid))
         .collect();
@@ -237,6 +245,23 @@ pub(crate) async fn enumerate(
         for message in &messages {
             threading.thread(message)?;
             report.threaded += 1;
+        }
+
+        // Only messages that were not already known before this pass: a
+        // `Coverage::Everything` re-enumeration re-fetches messages already
+        // stored (that is its whole point, refreshing what an untrustworthy
+        // incremental pull may have missed), and recording those again would
+        // count the same correspondent twice for one message.
+        if let Some(account) = &account {
+            for message in &messages {
+                let is_new = message
+                    .server
+                    .uid
+                    .is_some_and(|uid| !known.contains(&uid.get()));
+                if is_new {
+                    crate::contacts::record(connection, account, message)?;
+                }
+            }
         }
 
         fetched_so_far += messages.len() as u32;
