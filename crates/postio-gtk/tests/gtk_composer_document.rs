@@ -100,4 +100,52 @@ fn the_body_round_trips_through_the_neutral_document() {
         !body.html.is_some_and(|html| html.contains("original")),
         "the HTML half still described the text before the edit"
     );
+
+    // ── replying to an HTML-only message quotes it ──────────────────────
+    // The user-visible win of #30's step 4. `postio_model::reply` quotes
+    // plain text and cannot do otherwise -- it sits below `postio-body` in
+    // the layering -- so an HTML-only message used to reply as an
+    // attribution line with nothing under it. Marketing mail, calendar
+    // invitations and anything composed in a webmail client are HTML-only,
+    // so that was the common case rather than an edge one.
+    let window = Window::default();
+    let composer = composer::install(&window);
+    let source = html_only_message();
+    let draft = composer.test_reply_draft(&source).expect("a reply draft");
+    let quoted = draft.body.text.expect("a quoted body");
+
+    assert!(
+        quoted.contains("> Hello there"),
+        "an HTML-only message replied with an empty quote: {quoted:?}"
+    );
+    assert!(
+        quoted.contains("wrote:"),
+        "the attribution line went missing: {quoted:?}"
+    );
+    assert!(
+        !quoted.contains('<'),
+        "markup reached the composer as markup: {quoted:?}"
+    );
+}
+
+/// A message with an HTML body and no text alternative, the way a webmail
+/// client or a marketing sender writes one.
+fn html_only_message() -> postio_model::Message {
+    use postio_model::ids::{AccountId, MailboxId};
+
+    let mut message =
+        postio_model::Message::new(AccountId::new(1), MailboxId::new(1), chrono::Utc::now());
+    message.rfc_message_id = Some(postio_model::ids::RfcMessageId::new(
+        "html-only@example.com",
+    ));
+    message.subject = Some("An HTML message".to_owned());
+    message.from = vec![postio_model::EmailAddress::new(
+        Some("Ada Lovelace"),
+        "ada@example.com",
+    )];
+    message.body = MessageBody {
+        text: None,
+        html: Some("<p>Hello <strong>there</strong></p><p>Second line.</p>".to_owned()),
+    };
+    message
 }

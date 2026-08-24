@@ -36,6 +36,7 @@ graph TD
 
     subgraph domain ["domain"]
         search["<b>postio-search</b><br/>query parser · highlighter · facets<br/><i>pure — no SQL, no toolkit</i>"]
+        body["<b>postio-body</b><br/>Document · HTML subset · quoting · sanitising<br/><i>owns ammonia — both directions</i>"]
         model["<b>postio-model</b><br/>domain types · JWZ threading"]
     end
 
@@ -43,6 +44,7 @@ graph TD
     app --> runtime
     gtk --> core
     gtk --> search
+    gtk --> body
     gtk --> config
     runtime --> sync
     runtime --> index
@@ -56,6 +58,7 @@ graph TD
     core --> config
     core --> model
     search --> model
+    body --> model
     storage --> model
     imap --> model
     smtp --> model
@@ -364,19 +367,31 @@ Two constraints already decided, before any of it is built:
 
 ### 13. The composer's document is not the toolkit's buffer
 
-**Decided, not yet built** (`postio-3o8f`). Today `composer.rs` uses a
-`gtk::TextView` and the body is plain text.
+**Built** ([#30](https://github.com/dlapiduz/postio/issues/30), ADR 0004). The
+document is `postio_body::Document`; `composer.rs`'s `gtk::TextView` is a view
+over it, and the buffer's own undo is turned off explicitly.
 
 `GtkTextBuffer`, `NSTextStorage` and a `contenteditable` DOM disagree about
 attribute runs versus nested spans, about what one undo step is, and about list
 and blockquote nesting. If the composer's state is "whatever is in the
 `TextBuffer`", a second frontend's composer is a rewrite rather than a port, and
-the two produce subtly different HTML from identical gestures. The document is
-modelled neutrally; each platform's editor is a *view* over it.
+the two produce subtly different HTML from identical gestures. So each
+platform's editor is a *view*, and an `EditStep` is a change to the document
+rather than to a widget.
 
-Sanitisation is **bidirectional**. The reader is well defended. Outgoing HTML
-needs its own discipline for a different reason: a reply quoting a hostile
-message re-emits that message's markup into the world.
+Sanitisation is **bidirectional**, and the two directions are not symmetrical.
+Incoming markup is *filtered* — ammonia, with the reader's allowlist. Outgoing
+markup is **generated** from a closed type and never passed through: the only
+route a sender's markup can take into an outgoing body is the quoting path,
+which runs `postio_body::parse` into a `Document` that has no variant capable
+of holding a script, a remote image or a `javascript:` href. The subset *is*
+the allowlist, enforced by the compiler on the way in rather than by a filter
+on the way out. The ammonia pass that still runs on outgoing HTML is a
+backstop with a test asserting it never changes anything.
+
+v1 ships a plain-text editor over that model: a `Document` of paragraphs and
+text *is* a plain-text document, so what is restricted is the editor, not the
+document. The rich editing surface stays in epic E10.
 
 ---
 
