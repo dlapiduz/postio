@@ -38,9 +38,44 @@ do not check and then avoid it out of caution.
 
 ## 2. Pick
 
+**We are finishing MVP. Take only `mvp`-labelled work.**
+
+```bash
+bd list --label mvp --status open
+```
+
+That label is the scope, and it is deliberately short — the last things between
+this and a mail client the maintainer uses daily:
+
+| | |
+|---|---|
+| `postio-5w1.1` | search hits reach the message list |
+| `postio-agr.1` | bulk actions over a whole-mailbox selection |
+| `postio-agr.2` | folder picker for move |
+| `postio-uoy` | the sidebar's Flagged folder |
+| `postio-v62` | the parts panel and attachment chips reach the app |
+| `postio-2ee` | the cheat sheet lists the box's prefixes |
+| `postio-qhz.6` | the sync status stops contradicting itself |
+
+Everything else — parallel sync, drag and drop, the accessibility pass,
+detached composer, filters, MCP — waits. They are real work and several are
+P1; that is not the same as being between here and a usable product.
+
+**If a bug you hit is genuinely in the way of an `mvp` bead, fix it and label it
+`mvp` too.** If it is merely nearby, file it unlabelled and move on. The
+distinction is whether the MVP item can land without it.
+
+When no `mvp` work is left, **stop and say so** — do not fall through to
+`bd ready`. Report what is done, what is left in the wider backlog, and let the
+maintainer decide what comes after MVP.
+
+<details>
+<summary>After MVP ships, the general rule below applies again.</summary>
+
 ```bash
 bd ready
 ```
+</details>
 
 Ignore `[epic]` rows — they are containers, not work. From the leaves, take the
 first that is **in your lane** and **unclaimed**, ranked by:
