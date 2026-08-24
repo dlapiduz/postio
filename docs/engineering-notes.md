@@ -403,6 +403,42 @@ the exact move that hid this. **If a test goes red after touching a fixture,
 the failure *is* the bug; do not restore the fixture's shortcut to make it
 pass.**
 
+**A received attachment's bytes are not in `Attachment::blob_id`.** That
+column is only ever filled on the way *out* — `postio_app::compose` puts a
+file the user attached into the blob store and records its key. Nothing in
+the receive path writes it, so for every message that arrived from a server
+it is `None`, and `parts::Node::downloaded` is correspondingly always false.
+What the backfill actually stores is the whole raw message under
+`Message::raw_blob_id` (`postio-sync/src/backfill.rs`), so a received part is
+extracted from that with `mime::parse` and matched by its MIME path
+(`Attachment::part_id`, e.g. `2.1`). `postio_app::reading::part_bytes` is the
+worked example. Anything written against `node.downloaded` or
+`attachment.blob_id` for incoming mail is reading a field that will never be
+set — including inline `cid:` resolution, which is why an inline image that
+"should obviously work" may quietly never render.
+
+**`Engine::request_body` queues; it does not fetch.** `Ok(true)` means "there
+was something to fetch", not "here it is" — the message goes to the front of
+the backfill and the bytes land when the engine's own loop claims the job. A
+caller that reads the store on the next line gets nothing, and gets it
+*intermittently*, because whether the loop has run yet depends on timing.
+Wait for the result: poll for the thing you actually need with a deadline
+(`postio_app::reading::wait_for_body`), or watch `backfill_progress` the way
+`postio-runtime/tests/engine.rs` does. While waiting, treat a failed read as
+"look again" rather than an error — the writer you are waiting for holds the
+table, so `SQLITE_LOCKED` there is a sign of progress, not of failure.
+
+**A body fetch replaces the message's attachment rows.** The parser re-reads
+the structure and `MessageRepository::update` writes the new set, so an
+`AttachmentId` does not survive the fetch it triggered — the row it named is
+gone and a new one with a different id describes the same part. The stable
+key across a fetch is the MIME path. Resolve an id to a `part_id` *before*
+asking for bytes, while the id still means something. Discovered wiring the
+parts panel (postio-v62): the save worked for parts already downloaded and
+failed only for the ones that had to be fetched, which is the half nobody
+tests by hand.
+
+
 ## Testing infrastructure
 
 **`postio_runtime::Engine` does not need a trait in front of it to be
