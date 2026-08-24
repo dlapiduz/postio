@@ -47,6 +47,7 @@ fn dragging_messages_out_hands_over_files() {
     }
 
     nothing_is_written_until_the_drop_asks();
+    the_panes_a_drag_crosses_can_scroll_under_it();
     the_sandboxed_spelling_is_offered_too();
     an_export_that_produced_nothing_refuses_the_drop();
     a_failed_export_fails_the_drop();
@@ -98,6 +99,51 @@ fn nothing_is_written_until_the_drop_asks() {
     assert!(
         written.contains("Lunch%20on%20Thursday.eml"),
         "the receiver was handed no usable uri: {written:?}"
+    );
+}
+
+/// A folder below the fold has to be reachable without putting the drag down.
+///
+/// What this proves is that the controller is *attached* — the failure it
+/// exists to catch is nobody calling `autoscroll::attach`, which leaves a
+/// perfectly correct ramp wired to nothing. How far each tick moves is
+/// `autoscroll`'s own unit tests; emitting a real drag motion needs a real
+/// drag, which no headless harness can start.
+fn the_panes_a_drag_crosses_can_scroll_under_it() {
+    fn scrolls_under_a_drag(widget: &gtk::Widget) -> bool {
+        let mut queue = vec![widget.clone()];
+        while let Some(current) = queue.pop() {
+            if current.downcast_ref::<gtk::ScrolledWindow>().is_some() {
+                let controllers = current.observe_controllers();
+                for index in 0..controllers.n_items() {
+                    if controllers
+                        .item(index)
+                        .and_downcast::<gtk::DropControllerMotion>()
+                        .is_some()
+                    {
+                        return true;
+                    }
+                }
+            }
+            let mut child = current.first_child();
+            while let Some(node) = child {
+                queue.push(node.clone());
+                child = node.next_sibling();
+            }
+        }
+        false
+    }
+
+    let sidebar = postio_gtk::sidebar::Sidebar::default();
+    assert!(
+        scrolls_under_a_drag(sidebar.upcast_ref()),
+        "a folder below the fold cannot be dropped on: the sidebar does not scroll under a drag"
+    );
+
+    let list = postio_gtk::list_view::MessageListView::default();
+    assert!(
+        scrolls_under_a_drag(list.upcast_ref()),
+        "the message list does not scroll under a drag"
     );
 }
 
