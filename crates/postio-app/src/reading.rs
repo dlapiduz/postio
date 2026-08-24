@@ -25,13 +25,13 @@
 //! Waiting on a socket to paint would put the UI on the network, which is the
 //! one thing the whole local-first shape exists to prevent.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::glib;
 use postio_gtk::reader::BlobSource;
 use postio_gtk::window::Window;
-use postio_model::MessageId;
+use postio_model::{Attachment, MessageId};
 use postio_storage::Database;
 use postio_storage::blob::BlobStore;
 use postio_storage::repository::MessageRepository;
@@ -48,6 +48,23 @@ pub fn install(window: &Window, wiring: &Wiring) {
     // is activated rather than when the body lands, so a reply that arrives
     // late can tell it is late.
     let showing: Rc<Cell<Option<MessageId>>> = Rc::new(Cell::new(None));
+    // What that message is made of, kept so a chip can open the tree without
+    // going back to the store. Metadata only — see `Opened`.
+    let opened: Rc<RefCell<Option<Opened>>> = Rc::new(RefCell::new(None));
+
+    // A chip does not act, it asks: the panel is where the verbs live. Wired
+    // once, and reads whichever message the pane is showing at the time.
+    window.reader().connect_attachment(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        opened,
+        move |_node| {
+            if let Some(opened) = opened.borrow().as_ref() {
+                window.open_parts(&opened.root, &opened.parts);
+            }
+        }
+    ));
 
     window.set_blob_source(cid_source(
         {
@@ -71,12 +88,25 @@ pub fn install(window: &Window, wiring: &Wiring) {
 
             let answer = crate::search::ask(&database, &runtime, {
                 let blobs = blobs.clone();
-                move |connection| Some(crate::compose::load_body(connection, &blobs, message))
+                move |connection| {
+                    // One crossing for both. The parts are metadata the
+                    // sync already stored -- `BODYSTRUCTURE`, not bytes --
+                    // so asking for them costs a row read and never a fetch.
+                    let body = crate::compose::load_body(connection, &blobs, message);
+                    let parts = MessageRepository::new(connection)
+                        .get(message)
+                        .ok()
+                        .flatten()
+                        .map(|message| message.attachments)
+                        .unwrap_or_default();
+                    Some((body, parts))
+                }
             });
             glib::spawn_future_local({
                 let showing = showing.clone();
+                let opened = opened.clone();
                 async move {
-                    let Ok(Some(body)) = answer.recv().await else {
+                    let Ok(Some((body, parts))) = answer.recv().await else {
                         return;
                     };
                     // Late. The cursor moved while the blob was read, and the
@@ -84,11 +114,50 @@ pub fn install(window: &Window, wiring: &Wiring) {
                     if showing.get() != Some(message) {
                         return;
                     }
+                    let root = root_type(&body, &parts);
+                    window.reader().set_attachments(&root, &parts);
+                    *opened.borrow_mut() = Some(Opened { root, parts });
                     window.show_message(&body, sender.as_deref());
                 }
             });
         }
     ));
+}
+
+/// What the message on screen is made of.
+///
+/// Held so activating a chip can open the tree without a second read, and so
+/// the panel and the chip row cannot disagree about what they are describing.
+struct Opened {
+    /// The message's own content type, which is the tree's root row.
+    root: String,
+    /// Its parts, as `BODYSTRUCTURE` described them. Bytes not included.
+    parts: Vec<Attachment>,
+}
+
+/// The message's own content type — the row the parts tree hangs off.
+///
+/// # Derived rather than stored, for now
+///
+/// `BODYSTRUCTURE` says what it is and the sync knows it at fetch time, but
+/// nothing keeps it: `messages` has no content-type column and [`Message`]
+/// has no field for one. So this reconstructs the shape from what *is*
+/// recorded, which is right for the cases the tree actually draws — a message
+/// with parts is `multipart/mixed`, one with two bodies is
+/// `multipart/alternative`, and one with neither is whichever body it has.
+///
+/// It can be wrong: a `multipart/related` with inline images reads as
+/// `multipart/mixed` here. That is a label on one row rather than a wrong
+/// tree, and `postio-roj4` records the real fix.
+///
+/// [`Message`]: postio_model::Message
+fn root_type(body: &postio_model::MessageBody, parts: &[Attachment]) -> String {
+    match (parts.is_empty(), body.text.is_some(), body.html.is_some()) {
+        (false, _, _) => "multipart/mixed".to_owned(),
+        (true, true, true) => "multipart/alternative".to_owned(),
+        (true, false, true) => "text/html".to_owned(),
+        _ => "text/plain".to_owned(),
+    }
 }
 
 /// Where a rendered message resolves its `cid:` parts from.
