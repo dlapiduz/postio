@@ -387,7 +387,10 @@ fn write_part(file: &gio::File, bytes: &[u8]) -> Result<(), String> {
 ///
 /// The deadline is what turns a server that never answers into a sentence
 /// rather than a spinner that never stops.
-async fn wait_for_body(database: &Database, message: MessageId) -> Result<BlobId, String> {
+pub(crate) async fn wait_for_body(
+    database: &Database,
+    message: MessageId,
+) -> Result<BlobId, String> {
     let deadline = std::time::Instant::now() + BODY_WAIT;
     loop {
         // A read that fails here is usually the writer we are waiting for
@@ -427,11 +430,14 @@ fn raw_and_part(
 }
 
 /// Just the raw-message blob key. What the wait watches for.
-fn raw_blob(database: &Database, message: MessageId) -> Result<Option<BlobId>, String> {
+pub(crate) fn raw_blob(database: &Database, message: MessageId) -> Result<Option<BlobId>, String> {
     Ok(read_message(database, message)?.raw_blob_id)
 }
 
-fn read_message(database: &Database, message: MessageId) -> Result<postio_model::Message, String> {
+pub(crate) fn read_message(
+    database: &Database,
+    message: MessageId,
+) -> Result<postio_model::Message, String> {
     let connection = database.connection().map_err(|error| error.to_string())?;
     MessageRepository::new(&connection)
         .get(message)
