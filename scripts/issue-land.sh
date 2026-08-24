@@ -61,7 +61,9 @@ for crate in $CRATES; do
     echo "--- clippy: $crate ---"
     cargo clippy -p "$crate" --all-targets -- -D warnings
     echo "--- test: $crate ---"
-    cargo test -p "$crate"
+    # On its own compositor: postio-gtk's tests present real windows, and on a
+    # live session they land on the maintainer's desktop and steal focus.
+    scripts/test-headless.sh cargo test -p "$crate"
 done
 
 echo "--- repository invariants ---"
