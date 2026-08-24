@@ -155,7 +155,7 @@ fn a_command_with_no_handler_is_rejected_out_loud() {
 
     match events.as_slice() {
         [Event::CommandRejected { command, reason }] => {
-            assert_eq!(*command, CommandId::Undo);
+            assert_eq!(*command, CommandId::Undo.into());
             assert!(!reason.is_empty(), "the rejection explains itself");
         }
         other => panic!("expected a rejection, got {other:?}"),
@@ -174,7 +174,7 @@ fn a_handler_that_declines_says_why() {
 
     match events.as_slice() {
         [Event::CommandRejected { command, reason }] => {
-            assert_eq!(*command, CommandId::Undo);
+            assert_eq!(*command, CommandId::Undo.into());
             assert_eq!(reason, "nothing to undo");
         }
         other => panic!("expected a rejection, got {other:?}"),

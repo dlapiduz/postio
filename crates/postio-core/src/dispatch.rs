@@ -31,7 +31,7 @@
 //! ```
 //! use postio_core::bridge::Bridge;
 //! use postio_core::dispatch::{CommandError, Dispatcher};
-//! use postio_core::{Command, CommandId, Event};
+//! use postio_core::{ActionId, Command, CommandId, Event};
 //!
 //! let dispatcher = Dispatcher::builder()
 //!     .on(CommandId::Undo, |_invocation| async move {
@@ -45,7 +45,7 @@
 //!
 //! assert!(matches!(
 //!     events.try_next(),
-//!     Some(Event::CommandRejected { command: CommandId::Undo, .. })
+//!     Some(Event::CommandRejected { command: ActionId::Builtin(CommandId::Undo), .. })
 //! ));
 //! ```
 
@@ -56,7 +56,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::bridge::{CommandHandler, EventSink, HandlerFuture};
-use crate::{Command, CommandId, Event, registry};
+use crate::{ActionId, Command, CommandId, Event, ExtId, registry};
 
 /// The future a command handler returns.
 pub type DispatchFuture = Pin<Box<dyn Future<Output = Result<(), CommandError>> + Send + 'static>>;
@@ -94,9 +94,16 @@ impl CommandError {
     }
 
     /// How this failure reaches the UI.
-    fn into_event(self, command: CommandId) -> Event {
+    ///
+    /// Takes anything that names an action, so a built-in and a registered
+    /// extension are refused through the same event and answered by the same
+    /// quiet hint.
+    fn into_event(self, command: impl Into<ActionId>) -> Event {
         match self {
-            CommandError::Rejected(reason) => Event::CommandRejected { command, reason },
+            CommandError::Rejected(reason) => Event::CommandRejected {
+                command: command.into(),
+                reason,
+            },
             CommandError::Failed(message) => Event::Error { message },
         }
     }
@@ -140,6 +147,58 @@ impl Invocation {
     }
 }
 
+/// One extension command, handed to its handler.
+///
+/// Deliberately not an [`Invocation`]: that carries a [`Command`], which is
+/// the closed vocabulary with a typed payload per variant. An extension
+/// command has no such payload — nothing in this build knows its shape — so it
+/// carries its id and the way to answer, and nothing else.
+///
+/// ADR 0002 keeps that distinction on purpose. If a real consumer turns out to
+/// need an extension command to carry a built-in-shaped payload, that is the
+/// signal the split is wrong, and it is the thing to revisit first.
+#[derive(Debug)]
+pub struct ExtInvocation {
+    id: ExtId,
+    events: EventSink,
+}
+
+impl ExtInvocation {
+    /// Which registered command is being handled.
+    pub fn id(&self) -> ExtId {
+        self.id
+    }
+
+    /// Tell the UI something changed. Never blocks; `false` means the frontend
+    /// has already gone away.
+    pub fn emit(&self, event: Event) -> bool {
+        self.events.emit(event)
+    }
+
+    /// A sink a spawned background task can keep reporting through.
+    pub fn events(&self) -> EventSink {
+        self.events.clone()
+    }
+}
+
+/// What the bus does with one extension command.
+pub trait ExtFn: Send + Sync + 'static {
+    /// Handle one invocation.
+    fn call(&self, invocation: ExtInvocation) -> DispatchFuture;
+}
+
+struct FnExt<F>(F);
+
+impl<F, Fut> ExtFn for FnExt<F>
+where
+    F: Fn(ExtInvocation) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), CommandError>> + Send + 'static,
+{
+    fn call(&self, invocation: ExtInvocation) -> DispatchFuture {
+        Box::pin((self.0)(invocation))
+    }
+}
+
 /// What the bus does with one command.
 ///
 /// Implement it for a struct that needs state of its own; closures go through
@@ -166,6 +225,9 @@ where
 #[derive(Default)]
 pub struct DispatcherBuilder {
     handlers: HashMap<CommandId, Arc<dyn CommandFn>>,
+    /// A parallel map, so the built-in path does not slow down or change
+    /// shape to accommodate a vocabulary it does not share.
+    ext: HashMap<ExtId, Arc<dyn ExtFn>>,
 }
 
 impl fmt::Debug for DispatcherBuilder {
@@ -227,10 +289,29 @@ impl DispatcherBuilder {
         self
     }
 
+    /// Register a handler for a command registered at runtime.
+    ///
+    /// The other half of `registry::register`: that makes the command
+    /// discoverable, this makes it run. Panics on a duplicate for the same
+    /// reason [`on`](Self::on) does.
+    #[track_caller]
+    pub fn on_ext<F, Fut>(mut self, command: ExtId, handler: F) -> Self
+    where
+        F: Fn(ExtInvocation) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), CommandError>> + Send + 'static,
+    {
+        assert!(
+            self.ext.insert(command, Arc::new(FnExt(handler))).is_none(),
+            "`{command}` already has a handler"
+        );
+        self
+    }
+
     /// Finish the bus.
     pub fn build(self) -> Dispatcher {
         Dispatcher {
             handlers: self.handlers,
+            ext: self.ext,
         }
     }
 }
@@ -242,6 +323,7 @@ impl DispatcherBuilder {
 #[derive(Clone)]
 pub struct Dispatcher {
     handlers: HashMap<CommandId, Arc<dyn CommandFn>>,
+    ext: HashMap<ExtId, Arc<dyn ExtFn>>,
 }
 
 impl fmt::Debug for Dispatcher {
@@ -261,6 +343,11 @@ impl Dispatcher {
     /// Whether this command has a handler.
     pub fn handles(&self, command: CommandId) -> bool {
         self.handlers.contains_key(&command)
+    }
+
+    /// Whether this registered command has a handler.
+    pub fn handles_ext(&self, command: ExtId) -> bool {
+        self.ext.contains_key(&command)
     }
 
     /// Every command that has one, in registry order.
@@ -284,7 +371,7 @@ impl Dispatcher {
             // Silence here would show up as a dead keystroke with nothing in
             // the log to explain it.
             events.emit(Event::CommandRejected {
-                command: id,
+                command: ActionId::Builtin(id),
                 reason: format!(
                     "`{}` is not wired up in this build",
                     registry::get(id).title
@@ -317,6 +404,43 @@ impl Dispatcher {
     }
 }
 
+impl Dispatcher {
+    /// Run one extension command to completion.
+    ///
+    /// The parallel of [`dispatch`](Self::dispatch), and the reason a
+    /// registered command is a command rather than a palette row that does
+    /// nothing. Every outcome becomes an event, exactly as for a built-in.
+    pub async fn dispatch_ext(&self, command: ExtId, events: EventSink) {
+        let title = registry::spec(ActionId::Ext(command))
+            .map(|spec| spec.title)
+            .unwrap_or_else(|| command.as_str());
+        let Some(handler) = self.ext.get(&command).cloned() else {
+            events.emit(Event::CommandRejected {
+                command: ActionId::Ext(command),
+                reason: format!("`{title}` is not wired up in this build"),
+            });
+            return;
+        };
+
+        let invocation = ExtInvocation {
+            id: command,
+            events: events.clone(),
+        };
+        match tokio::spawn(handler.call(invocation)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                events.emit(error.into_event(ActionId::Ext(command)));
+            }
+            Err(join_error) if join_error.is_panic() => {
+                events.emit(Event::Error {
+                    message: format!("{title} failed unexpectedly"),
+                });
+            }
+            Err(_) => {}
+        }
+    }
+}
+
 impl CommandHandler for Dispatcher {
     fn handle(&self, command: Command, events: EventSink) -> HandlerFuture {
         let bus = self.clone();
@@ -333,7 +457,7 @@ mod tests {
         assert_eq!(
             CommandError::rejected("nothing to undo").into_event(CommandId::Undo),
             Event::CommandRejected {
-                command: CommandId::Undo,
+                command: CommandId::Undo.into(),
                 reason: "nothing to undo".into(),
             }
         );
