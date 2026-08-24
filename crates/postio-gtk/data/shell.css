@@ -861,6 +861,160 @@ button.postio-compose {
   padding: 18px 28px 22px;
 }
 
+/* ── The parts panel (canvas 3g) ─────────────────────────────────────
+   A message's MIME tree, as an overlay on the workspace. The same plate the
+   palette and the cheat sheet use, so the three read as one kind of surface.
+   No transition — a panel that fades in is one you read before it is there. */
+.postio-parts {
+  min-width: 640px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.postio-parts-header {
+  min-height: 42px;
+  padding: 0 16px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* `multipart/mixed · 4 parts · 1.2 MB`. Mono: it is a type and two counts. */
+.postio-parts-summary {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
+/* The canvas' outline tag. Steel rather than red — nothing has gone wrong,
+   the reader did exactly what it promises to do. */
+.postio-parts-blocked {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  padding: 2px 7px;
+  border: 1px solid var(--postio-selected-border);
+  border-radius: var(--postio-radius-sm);
+  color: var(--postio-accent-text);
+}
+
+.postio-parts-column {
+  padding: 10px 0;
+  box-shadow: inset -1px 0 var(--postio-hairline);
+}
+
+.postio-parts-tree {
+  background: none;
+}
+
+/* 6px/14px from the artboard, and 11px on the left of a selected row so the
+   3px steel edge does not shift the tree sideways under the cursor. */
+.postio-parts-row {
+  min-height: 26px;
+  padding: 6px 14px;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+}
+
+.postio-parts-row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-parts-row:selected {
+  padding-left: 11px;
+  border-left: 3px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-strong-bg);
+  color: var(--postio-selected-fg);
+}
+
+/* Mono for the whole tree: the box drawing only lines up in a fixed pitch,
+   and a MIME type is an identifier rather than prose. */
+.postio-parts-name {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7841rem;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-parts-row:selected .postio-parts-name {
+  font-weight: 500;
+  color: var(--postio-selected-fg);
+}
+
+.postio-parts-size {
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
+.postio-parts-row:selected .postio-parts-size {
+  color: var(--postio-selected-accent-text);
+}
+
+/* The keys this column offers, at its foot, where the artboard draws them. */
+.postio-parts-keys {
+  padding: 12px 14px 4px;
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  line-height: 1.7;
+  color: var(--postio-faint);
+}
+
+.postio-parts-detail {
+  padding: 14px 16px;
+}
+
+.postio-parts-meta {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
+/* Why a part is held back, or not yet here. Prose, because it is a sentence
+   that has to be read rather than scanned. 13px rather than the canvas'
+   12.5px for the reason `.postio-thread-line` gives: at 12.5px and weight 400
+   the cap-height strokes wash out and `HTML` renders as `HIML`. */
+.postio-parts-note {
+  font-size: 0.8864rem;
+  line-height: 1.6;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-parts-action {
+  min-height: 26px;
+  padding: 4px 11px;
+  font-size: 0.7841rem;
+}
+
+/* Attachment chips under a message body (canvas 1b). Outline rather than
+   filled: they are things to look at, not actions — activating one opens the
+   parts panel, where the verbs are. */
+.postio-attachments {
+  padding: 12px 28px 16px;
+}
+
+.postio-attachment {
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-sm);
+  background: none;
+  box-shadow: none;
+}
+
+.postio-attachment:hover {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-attachment-name {
+  font-size: 0.7841rem;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-attachment-size {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
 /* ── Settings (canvas 3f) ────────────────────────────────────────────
    The panel and the file are the same thing: a plate over the raw TOML,
    the folder list's own selected-row treatment for its section nav, and a
