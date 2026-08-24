@@ -5,7 +5,7 @@
 //! anywhere in its dependency graph; whatever assembles the running
 //! application turns the feature on, and the view layer never does.
 
-use postio_model::ids::AccountId;
+use postio_model::ids::{AccountId, MessageId};
 use postio_model::mailbox::Mailbox;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -163,6 +163,20 @@ impl SqliteStore {
         .await
     }
 
+    /// No seek marks and no count: an explicit id list is not a window into
+    /// anything, so there is no position to remember and nothing to be
+    /// consistent with.
+    async fn read_rows(&self, ids: Vec<MessageId>) -> Result<Vec<MessageSummary>, StoreError> {
+        self.read(move |connection| {
+            let rows = MessageRepository::new(connection).rows_for(&ids)?;
+            let threads = ThreadRepository::new(connection);
+            rows.into_iter()
+                .map(|row| summarise(row, &threads))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+    }
+
     async fn read_count(&self, scope: ListScope) -> Result<u32, StoreError> {
         self.read(move |connection| {
             count(
@@ -292,6 +306,10 @@ impl MailStore for SqliteStore {
 
     fn message_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_count(scope))
+    }
+
+    fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
+        Box::pin(self.read_rows(ids))
     }
 
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>> {

@@ -327,3 +327,65 @@ async fn page_ids(
         .map(|row| row.id)
         .collect()
 }
+
+#[tokio::test]
+async fn a_ranked_set_of_ids_reads_back_in_that_order() {
+    let (database, report) = seeded();
+    let store = SqliteStore::new(&database);
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+
+    // Take real ids from a real read, so the ranking is over mail the store
+    // actually holds rather than over numbers.
+    let page = store
+        .message_page(PageRequest {
+            scope: ListScope::Mailbox(inbox),
+            offset: 0,
+            limit: 50,
+        })
+        .await
+        .expect("the inbox reads");
+    assert!(
+        page.rows.len() >= 4,
+        "the seed is too small to rank: {} rows",
+        page.rows.len()
+    );
+
+    // Date order is what `message_page` just returned. A ranking is not
+    // that, which is the whole reason this read exists.
+    let ranked: Vec<_> = [3usize, 0, 2, 1]
+        .iter()
+        .map(|at| page.rows[*at].id)
+        .collect();
+
+    let rows = store
+        .message_rows(ranked.clone())
+        .await
+        .expect("the hits read");
+
+    assert_eq!(
+        rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        ranked,
+        "the ranking was lost somewhere between the id list and the rows"
+    );
+
+    // Summaries, not stubs: these are what the list draws, and the thread
+    // count is the badge. `message_page` fills it, so this must too.
+    assert!(
+        rows.iter().all(|row| row.thread_count >= 1),
+        "a hit came back with no thread count, so its badge would vanish"
+    );
+    assert_eq!(
+        rows[0].subject, page.rows[3].subject,
+        "the row is not the message that was asked for"
+    );
+
+    // Nothing asked for, nothing read.
+    assert!(
+        store
+            .message_rows(Vec::new())
+            .await
+            .expect("empty")
+            .is_empty(),
+        "an empty id list should not reach SQLite at all"
+    );
+}

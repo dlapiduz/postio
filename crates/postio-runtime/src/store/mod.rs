@@ -164,6 +164,19 @@ pub trait MailStore: Send + Sync {
     /// How many rows the list would show, without reading any of them.
     fn message_count(&self, scope: ListScope) -> Read<'_, u32>;
 
+    /// The rows for an explicit, ranked set of ids, in the order given.
+    ///
+    /// For search hits, which no [`ListScope`] describes: they are ranked
+    /// rather than sorted, they can span folders, and there is no offset to
+    /// page by because the ids are the answer. The caller pages by slicing
+    /// the ids and asking for one slice at a time, so this stays as windowed
+    /// as the mailbox read.
+    ///
+    /// No total comes back, because the caller already knows it: the length
+    /// of the id list it holds. Ids the store no longer knows about are
+    /// dropped, so the answer may be shorter than the request.
+    fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>>;
+
     /// An account's folders, with their counts as of now.
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>>;
 }
