@@ -2309,6 +2309,7 @@ dependencies = [
  "postio-core",
  "postio-gtk",
  "postio-imap",
+ "postio-index",
  "postio-model",
  "postio-runtime",
  "postio-search",
