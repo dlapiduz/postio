@@ -26,6 +26,7 @@ use gtk::{AccessibleProperty, AccessibleRelation, AccessibleRole};
 use postio_gtk::feed::{
     MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
+use postio_gtk::finder;
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
@@ -85,7 +86,10 @@ impl MessageSource for Sample {
             let rows = (request.offset..end)
                 .map(|position| Row {
                     id: MessageId::new(position as i64 + 1),
-                    thread: None,
+                    // Real rows carry a thread, and `t` refuses to drill into
+                    // one that does not — a fixture without it quietly makes
+                    // the thread column unreachable.
+                    thread: Some(postio_model::ids::ThreadId::new(position as i64 + 1)),
                     from: Some(postio_model::address::EmailAddress::new(
                         Some("Ada Lovelace"),
                         "ada@example.com",
@@ -199,6 +203,198 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     );
 
     // ── and nothing in the tree is nameless or roleless ──────────────────
+    expect_usable(&window, "the three panes");
+
+    // ── including the surfaces that only exist once opened ───────────────
+    // The audit above walks whatever happens to be on screen, and in a
+    // default window that is three panes. Every other surface in the
+    // application — the ones reached by a key, which is most of them — was
+    // never looked at by anything. A pane that announces nothing is no
+    // better for being one keystroke away.
+    for surface in surfaces() {
+        (surface.open)(&window);
+        pump();
+        // An audit of a surface that never opened is an audit of the three
+        // panes again, and it passes. This repository has shipped a pane
+        // nothing could reach while every test was green, so each surface
+        // has to say how you can tell it is there — using the same predicate
+        // the application's own `Back` handler uses.
+        assert!(
+            (surface.shown)(&window),
+            "{}: it did not open, so the audit below would have walked the \
+             same tree as before and passed for free",
+            surface.name
+        );
+        expect_usable(&window, surface.name);
+        (surface.close)(&window);
+        pump();
+        assert!(
+            !(surface.shown)(&window),
+            "{}: it did not close, so every surface audited after it would \
+             be audited through this one",
+            surface.name
+        );
+    }
+
+    // ── the one exception is still an exception ──────────────────────────
+    // If libadwaita starts naming its dismiss button, `upstream_gap` stops
+    // matching and this fails — which is the point. An allowance nobody
+    // re-checks outlives the problem it was written for.
+    assert!(
+        UPSTREAM_GAPS_HIT.with(|hit| hit.get()) > 0,
+        "no widget needed the AdwToastWidget allowance — if libadwaita now \
+         names its dismiss button, delete `upstream_gap` rather than leaving \
+         a dead excuse in the audit"
+    );
+
+    window.destroy();
+}
+
+/// A surface that is not on screen until something opens it.
+struct Surface {
+    name: &'static str,
+    open: fn(&Window),
+    /// Whether it is on screen — the application's own notion of open, not
+    /// a guess made from the widget tree.
+    shown: fn(&Window) -> bool,
+    close: fn(&Window),
+}
+
+/// Every surface reachable in the running application, in the state a user
+/// meets it in.
+///
+/// Opened through the same `Window` methods the command handlers call, so a
+/// surface that stops being reachable stops compiling here rather than
+/// quietly dropping out of the audit.
+///
+/// Not yet covered: the named list states — inbox zero, offline, sync
+/// failure, a search with no results — which `list_state.rs` builds and
+/// which only appear over an *empty* list, so they need a feed of their own
+/// rather than the populated one this test installs. Tracked separately.
+fn surfaces() -> Vec<Surface> {
+    vec![
+        Surface {
+            name: "the cheat sheet",
+            open: |window| window.open_cheatsheet(),
+            shown: |window| window.cheatsheet().is_visible(),
+            close: |window| window.close_cheatsheet(),
+        },
+        Surface {
+            name: "settings",
+            open: |window| window.open_settings(),
+            shown: |window| window.settings().is_visible(),
+            close: |window| window.close_settings(),
+        },
+        Surface {
+            name: "the finder, searching",
+            open: |window| window.open_finder(finder::Mode::Search),
+            shown: |window| window.finder().is_open(),
+            close: |window| window.close_finder(),
+        },
+        Surface {
+            name: "the finder, running a command",
+            open: |window| window.open_finder(finder::Mode::Command),
+            shown: |window| window.finder().is_open(),
+            close: |window| window.close_finder(),
+        },
+        Surface {
+            name: "the finder, jumping to a folder",
+            open: |window| window.open_finder(finder::Mode::Mailbox),
+            shown: |window| window.finder().is_open(),
+            close: |window| window.close_finder(),
+        },
+        Surface {
+            name: "the finder, finding a correspondent",
+            open: |window| window.open_finder(finder::Mode::Contact),
+            shown: |window| window.finder().is_open(),
+            close: |window| window.close_finder(),
+        },
+        Surface {
+            name: "the parts panel",
+            open: |window| {
+                window.open_parts(
+                    "text/plain",
+                    &[postio_model::Attachment {
+                        id: postio_model::ids::AttachmentId::new(1),
+                        message_id: MessageId::new(1),
+                        filename: Some("minutes.pdf".into()),
+                        mime_type: "application/pdf".into(),
+                        size: 8_192,
+                        content_id: None,
+                        disposition: postio_model::attachment::Disposition::Attachment,
+                        part_id: Some("2".into()),
+                        blob_id: None,
+                    }],
+                )
+            },
+            shown: |window| window.parts().is_visible(),
+            close: |window| window.close_parts(),
+        },
+        Surface {
+            name: "a thread drilled into",
+            open: |window| {
+                // The cursor is what `t` drills into, so put it somewhere
+                // first — reaching past it into the model would test a path
+                // no keystroke takes.
+                window.list().first_row();
+                let row = window
+                    .list()
+                    .cursor_row()
+                    .expect("the list has rows, so it has a cursor row");
+                window.open_thread(&row);
+            },
+            shown: |window| window.thread_open(),
+            close: |window| window.close_thread(),
+        },
+        Surface {
+            name: "the composer",
+            open: |window| {
+                window
+                    .composer()
+                    .open(postio_model::Draft::new(AccountId::new(1)))
+            },
+            shown: |window| window.composer().is_open(),
+            close: |window| {
+                window.composer().discard();
+            },
+        },
+        Surface {
+            name: "an undoable action's toast",
+            open: |window| window.show_action_completed("Archived 1 message", true),
+            shown: |window| showing(window, "AdwToastWidget"),
+            close: |window| {
+                if let Some(toast) = find(window.upcast_ref::<gtk::Widget>(), "AdwToastWidget") {
+                    toast.set_visible(false);
+                }
+            },
+        },
+    ]
+}
+
+/// Whether a widget of this type is on screen.
+///
+/// For surfaces the `Window` keeps no handle to — a toast belongs to the
+/// overlay that shows it, and asking the tree is the only way to ask.
+fn showing(window: &Window, type_name: &str) -> bool {
+    find(window.upcast_ref::<gtk::Widget>(), type_name).is_some()
+}
+
+fn find(widget: &gtk::Widget, type_name: &str) -> Option<gtk::Widget> {
+    if widget.is_visible() && widget.type_().name() == type_name {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = find(&current, type_name) {
+            return Some(found);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
+/// Audit everything currently on screen, and say which surface it was.
+fn expect_usable(window: &Window, surface: &str) {
     let mut problems = Vec::new();
     audit(
         window.upcast_ref::<gtk::Widget>(),
@@ -208,12 +404,10 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     );
     assert!(
         problems.is_empty(),
-        "{} widget(s) a screen reader cannot use:\n  {}",
+        "{surface}: {} widget(s) a screen reader cannot use:\n  {}",
         problems.len(),
         problems.join("\n  ")
     );
-
-    window.destroy();
 }
 
 /// Walk the tree and collect what a screen reader could not use.
@@ -227,15 +421,18 @@ fn audit(widget: &gtk::Widget, path: &str, inside: bool, problems: &mut Vec<Stri
     let role = widget.accessible_role();
     let here = format!("{path} > {}", widget.type_().name());
     let named = named(widget);
+    let classes = widget.css_classes().join(".");
 
-    if widget.is_visible() && !inside {
+    if widget.is_visible() && !inside && !upstream_gap(widget) {
         if NEEDS_A_NAME.contains(&role) && !named {
-            problems.push(format!("{here}: a {role:?} with no name"));
+            problems.push(format!("{here}[{classes}]: a {role:?} with no name"));
         }
         // Anything the keyboard can land on has to say something when it
         // gets there — a role, or failing that a name.
         if widget.is_focusable() && SAYS_NOTHING.contains(&role) && !named {
-            problems.push(format!("{here}: focusable, and announces nothing"));
+            problems.push(format!(
+                "{here}[{classes}]: focusable, and announces nothing"
+            ));
         }
     }
 
@@ -245,6 +442,40 @@ fn audit(widget: &gtk::Widget, path: &str, inside: bool, problems: &mut Vec<Stri
         audit(&current, &here, inside, problems);
         child = current.next_sibling();
     }
+}
+
+/// Widgets this application does not build and cannot name.
+///
+/// `AdwToastWidget` grows its own dismiss button, icon-only, carrying a
+/// tooltip and no accessible label — and a tooltip is not a name: GTK leaves
+/// the LABEL property undefined, verified against plain GTK outside this
+/// codebase. libadwaita exposes no API for it and the button is reachable
+/// only by walking into another library's internals, which would break on
+/// its next release. Postio's own button on that toast — *Undo* — is named,
+/// and that is the one that does something.
+///
+/// Kept as a list of one rather than a loosened rule, because
+/// `every_exception_is_still_needed` re-checks it: when libadwaita names the
+/// button, this entry stops being reached and the audit says so instead of
+/// carrying a dead excuse forever.
+fn upstream_gap(widget: &gtk::Widget) -> bool {
+    let gap = widget
+        .parent()
+        .is_some_and(|parent| parent.type_().name() == "AdwToastWidget")
+        && widget
+            .downcast_ref::<gtk::Button>()
+            .and_then(|button| button.icon_name())
+            .is_some_and(|icon| icon == "window-close-symbolic");
+    if gap {
+        UPSTREAM_GAPS_HIT.with(|hit| hit.set(hit.get() + 1));
+    }
+    gap
+}
+
+thread_local! {
+    /// How many times [`upstream_gap`] excused a widget, so the excuse can be
+    /// shown to still be load-bearing.
+    static UPSTREAM_GAPS_HIT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Fail unless GTK is actually recording accessible properties.

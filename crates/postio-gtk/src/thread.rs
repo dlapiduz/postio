@@ -53,6 +53,11 @@ use crate::list::Row;
 /// once, here: the header already says `Esc back to Inbox`, which is the same
 /// key and names where it goes, and a 404px column has room for the two view
 /// toggles beside this or for a hint it has already given, not both.
+/// What the thread's message column announces itself as. One constant
+/// because the scroll region around it is a separate tab stop and must say
+/// the same thing.
+const ROWS_NAME: &str = "Messages in this thread";
+
 const THREAD_KEYS: &str = "j/k in thread · A archive thread";
 
 /// What the column says when a filter has hidden everything.
@@ -616,7 +621,7 @@ impl ThreadView {
         imp.rows.set_single_click_activate(false);
         imp.rows.set_vexpand(true);
         imp.rows
-            .update_property(&[gtk::accessible::Property::Label("Messages in this thread")]);
+            .update_property(&[gtk::accessible::Property::Label(ROWS_NAME)]);
         imp.cursor.set_autoselect(false);
         imp.cursor.connect_selected_notify(glib::clone!(
             #[weak(rename_to = view)]
@@ -636,6 +641,11 @@ impl ThreadView {
             .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         imp.scroller.set_vexpand(true);
         imp.scroller.set_child(Some(&imp.rows));
+        // The scroll area is a tab stop of its own — a keyboard has to be
+        // able to scroll it — so it is reached before the rows are and has to
+        // announce the same thing rather than nothing.
+        imp.scroller
+            .update_property(&[gtk::accessible::Property::Label(ROWS_NAME)]);
 
         imp.empty.add_css_class("postio-thread-empty");
         imp.empty.set_xalign(0.0);
