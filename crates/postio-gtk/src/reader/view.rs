@@ -36,10 +36,10 @@ use webkit6::prelude::*;
 
 use super::allowlist::RemoteImageAllowList;
 use super::banner::RemoteImageBanner;
-use super::quote;
-use super::sanitize::{self, RemoteImages};
 use super::scheme::{self, BlobSource};
 use crate::resources;
+use postio_body::quote;
+use postio_body::sanitize::{self, RemoteImages};
 
 /// The security origin every rendered message loads under.
 ///

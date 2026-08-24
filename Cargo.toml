@@ -4,6 +4,7 @@ members = [
     "crates/postio-model",
     "crates/postio-storage",
     "crates/postio-search",
+    "crates/postio-body",
     "crates/postio-index",
     "crates/postio-config",
     "crates/postio-imap",
@@ -61,6 +62,7 @@ missing_docs = "warn"
 postio-model   = { path = "crates/postio-model" }
 postio-storage = { path = "crates/postio-storage" }
 postio-search  = { path = "crates/postio-search" }
+postio-body    = { path = "crates/postio-body" }
 postio-index   = { path = "crates/postio-index" }
 postio-config  = { path = "crates/postio-config" }
 postio-imap    = { path = "crates/postio-imap" }

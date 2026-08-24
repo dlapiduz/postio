@@ -16,11 +16,11 @@ use std::rc::Rc;
 
 use webkit6::{URISchemeRequest, WebContext};
 
-use super::sanitize::{CID_SCHEME, percent_decode};
+use postio_body::sanitize::{CID_SCHEME, percent_decode};
 
 /// Resolves a `Content-ID` to its bytes and MIME type.
 ///
-/// A `Content-ID` is passed exactly as `sanitize::percent_decode` recovered
+/// A `Content-ID` is passed exactly as `postio_body::sanitize::percent_decode` recovered
 /// it: without the `cid:` prefix and without the angle brackets some senders
 /// wrap it in (`sanitize_body` already strips those before encoding).
 ///
