@@ -499,6 +499,16 @@ impl Window {
         self.list_state().set_status(status.clone(), rows, rows, 0);
     }
 
+    /// Say that the list is showing results for `query`, or a mailbox again.
+    ///
+    /// Told rather than inferred from the query box: the box stays up with
+    /// the query still in it after `Esc` puts the folder back, so "there is
+    /// text in the box" and "the list is showing that text's results" are
+    /// different facts and only the second one belongs here.
+    pub fn set_searching(&self, query: Option<&str>) {
+        self.list_state().set_searching(query.map(str::to_owned));
+    }
+
     fn build(&self) {
         self.set_title(Some("Postio"));
         self.add_css_class("postio-window");
