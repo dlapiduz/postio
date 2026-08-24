@@ -194,22 +194,14 @@ pub fn run() -> glib::ExitCode {
             sync_config.clone(),
         );
 
-        if first_account(&wiring.database).is_some() {
-            open_account(&window, wiring, &state, &wired, &streams, &notifier);
-        } else {
-            // `postio-hiy`: nothing to feed yet. The screen replaces the
-            // window's content and finishes the same sequence
-            // `open_account` runs, once it has written the two things an
-            // account needs.
-            onboarding::install(
-                &window,
-                wiring,
-                state.clone(),
-                wired.clone(),
-                Rc::clone(&streams),
-                notifier,
-            );
-        }
+        open_or_onboard(
+            &window,
+            wiring,
+            state.clone(),
+            wired.clone(),
+            Rc::clone(&streams),
+            notifier,
+        );
     });
 
     let code = application.run();
@@ -217,6 +209,71 @@ pub fn run() -> glib::ExitCode {
         bridge.shutdown();
     }
     code
+}
+
+/// Open the account, or ask for the one thing that is missing.
+///
+/// The whole of `activate`'s decision, in a function rather than in a
+/// closure, so that something other than a running application can drive
+/// it. `postio-bl2` is the bead for what happens when the composition root
+/// is only reachable by launching the binary: every layer under it was
+/// tested and eight capabilities were wired to nothing.
+///
+/// Which branch this takes depends on the keyring, and the keyring is a
+/// tokio future — so it is asked on the runtime and answered on the main
+/// context, the crossing `feed.rs` describes. The window is already up by
+/// then, which is the point: a blocking keyring read would trade
+/// `postio-67`'s wrong guess for a startup that stalls on a locked keyring.
+#[allow(clippy::too_many_arguments)]
+pub fn open_or_onboard(
+    window: &Window,
+    wiring: &Wiring,
+    state: SharedState,
+    wired: Vec<postio_core::CommandId>,
+    streams: Rc<std::cell::RefCell<Vec<Option<postio_core::bridge::EventStream>>>>,
+    notifier: notifications::Notifier,
+) {
+    let (sender, receiver) = async_channel::bounded(1);
+    {
+        let database = wiring.database.clone();
+        let secrets = wiring.secrets.clone();
+        wiring.runtime.spawn(async move {
+            let _ = sender
+                .send(startup_route(&database, secrets.as_ref()).await)
+                .await;
+        });
+    }
+    glib::spawn_future_local({
+        let window = window.clone();
+        let wiring = wiring.clone();
+        async move {
+            let route = receiver.recv().await.unwrap_or_else(|_| {
+                // The runtime went away before it answered. There is no
+                // account this process can open without one, and the screen
+                // at least says what Postio is waiting for.
+                tracing::error!("the runtime stopped before startup could read the keyring");
+                Startup::Onboard(None)
+            });
+            match route {
+                Startup::Ready(_) => {
+                    open_account(&window, &wiring, &state, &wired, &streams, &notifier)
+                }
+                // `postio-hiy`: nothing to feed yet, or nothing that can
+                // authenticate. The screen replaces the window's content and
+                // finishes the same sequence `open_account` runs, once it has
+                // written the two things an account needs.
+                Startup::Onboard(repairing) => onboarding::install(
+                    &window,
+                    &wiring,
+                    state,
+                    wired,
+                    streams,
+                    notifier,
+                    repairing.map(|account| *account),
+                ),
+            }
+        }
+    });
 }
 
 /// Point the window at `wiring` and wire every gesture to a real handler.
@@ -274,6 +331,16 @@ pub struct Wiring {
     pub commands: postio_core::bridge::CommandSender,
     /// Where the engine goes once it is running, so `Refresh` can find it.
     pub engine: refresh::EngineSlot,
+    /// Where account passwords live.
+    ///
+    /// A part rather than something the modules that need it construct, for
+    /// the reason `engine.rs` gives about every other part: which keyring
+    /// this installation uses is a choice about *this installation*, and a
+    /// module that reaches for `KeyringSecretStore::default()` itself cannot
+    /// be driven by a test without a Secret Service session. Both credential
+    /// paths — the one onboarding writes and the one startup reads — hang
+    /// off this.
+    pub secrets: Arc<dyn postio_imap::secret::SecretStore>,
 }
 
 impl Wiring {
@@ -297,7 +364,18 @@ impl Wiring {
             events,
             commands,
             engine: refresh::EngineSlot::default(),
+            secrets: Arc::new(postio_imap::secret::KeyringSecretStore::default()),
         }
+    }
+
+    /// The same wiring, reading and writing passwords somewhere else.
+    ///
+    /// The seam a test needs: `MemorySecretStore` stands in for a keyring
+    /// that has no D-Bus session behind it, and `MemorySecretStore::locked`
+    /// for one nobody has unlocked.
+    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
+        self.secrets = secrets;
+        self
     }
 }
 
@@ -454,6 +532,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         &wiring.database,
         wiring.blobs.clone(),
         wiring.events.clone(),
+        wiring.secrets.clone(),
     ) else {
         return;
     };
@@ -534,6 +613,66 @@ fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
 /// downloads itself on first run.
 const BACKFILL_PER_MAILBOX: u32 = 200;
 
+/// What startup should do with the account this installation has, if any.
+///
+/// The distinction the 0.1.0 routing did not make. It asked whether an
+/// account *row* existed, and one row was enough — so an installation whose
+/// credential write had failed opened an account that could not
+/// authenticate, could not sync, and could not be repaired from inside the
+/// app, because onboarding is the only thing that writes a credential and
+/// onboarding never ran again.
+///
+/// An account is something to open only when the store holds a row **and**
+/// the keyring will give up a password for it. That also covers the
+/// credential being deleted, or the keyring being reset, later — which no
+/// amount of care at write time prevents.
+#[derive(Debug)]
+pub enum Startup {
+    /// Open it: there is a row, and a password to authenticate with.
+    Ready(Box<postio_model::Account>),
+    /// Show the first-run screen, prefilled from the row when there is one.
+    ///
+    /// `Some` is a *repair*: the account is configured and only its
+    /// credential is missing, so the screen already knows the address and
+    /// the servers and needs a password. `None` is a genuine first run.
+    Onboard(Option<Box<postio_model::Account>>),
+}
+
+/// Decide which of the two startup does.
+///
+/// Async because reading the keyring is: [`KeyringSecretStore`] reaches the
+/// Secret Service over D-Bus and bounds the round trip with a timeout, so
+/// this must be polled on the engine runtime and answered over a channel —
+/// never awaited on the GTK main context. `feed.rs` explains the rule.
+///
+/// A keyring that will not answer therefore costs the window a moment, not
+/// the session: the timeout inside `retrieve` turns silence into an error,
+/// and an error means onboarding rather than a window that never decides.
+pub async fn startup_route(
+    database: &Database,
+    secrets: &dyn postio_imap::secret::SecretStore,
+) -> Startup {
+    let Some(account) = first_account(database) else {
+        return Startup::Onboard(None);
+    };
+    let key = postio_imap::secret::AccountKey::new(account.address.address.clone());
+    // The account's domain, never the local part, for the same reason
+    // `feed_the_window` logs only that.
+    let domain = account.address.domain().unwrap_or("unknown").to_owned();
+    match secrets.retrieve(&key).await {
+        Ok(password) if !password.is_empty() => Startup::Ready(Box::new(account)),
+        Ok(_) => {
+            tracing::warn!(%domain, "the keyring holds an empty password; asking for it again");
+            Startup::Onboard(Some(Box::new(account)))
+        }
+        Err(error) => {
+            // Safe to log verbatim: no `SecretError` carries a password.
+            tracing::warn!(%domain, %error, "no usable password for the account; asking for it again");
+            Startup::Onboard(Some(Box::new(account)))
+        }
+    }
+}
+
 /// The account to open, if the store holds one.
 ///
 /// Read straight off a connection rather than through [`MailStore`]: which
@@ -551,4 +690,102 @@ pub fn first_account(database: &Database) -> Option<postio_model::Account> {
         .ok()?
         .into_iter()
         .next()
+}
+
+#[cfg(test)]
+mod tests {
+    //! What startup decides, without a display or a keyring.
+    //!
+    //! [`startup_route`] is the whole of the decision `run()`'s `activate`
+    //! handler makes, factored out so it can be driven against a
+    //! [`MemorySecretStore`] rather than only against a real Secret Service
+    //! on a real first run.
+
+    use super::*;
+    use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+
+    /// A store with one enabled account in it, and the key its credential
+    /// would be filed under.
+    fn provisioned() -> (Database, AccountKey) {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("a connection");
+        let account = postio_storage::test_support::account(&connection);
+        drop(connection);
+        let key = AccountKey::new(account.address.address.clone());
+        (database, key)
+    }
+
+    #[tokio::test]
+    async fn an_account_with_its_password_is_opened() {
+        let (database, key) = provisioned();
+        let secrets = MemorySecretStore::new();
+        secrets
+            .store(&key, &Password::new("app-specific"))
+            .await
+            .expect("the credential should store");
+
+        assert!(matches!(
+            startup_route(&database, &secrets).await,
+            Startup::Ready(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_account_whose_password_never_landed_goes_back_to_onboarding() {
+        // The bug this test exists for: onboarding wrote the row, the keyring
+        // write failed, and every launch after that opened an account that
+        // could not authenticate and could not be repaired.
+        let (database, _) = provisioned();
+
+        match startup_route(&database, &MemorySecretStore::new()).await {
+            Startup::Onboard(Some(prefill)) => assert_eq!(
+                prefill.address.address, "test@example.com",
+                "the screen has to come back prefilled, not empty"
+            ),
+            other => panic!("a row with no credential is not an account to open: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_locked_keyring_goes_back_to_onboarding_too() {
+        // Not the same fault, and the same dead end: a credential that cannot
+        // be read is a credential the account does not have. The store here
+        // *has* the item; it just will not open.
+        let (database, key) = provisioned();
+        let locked = MemorySecretStore::locked();
+        assert!(
+            locked.retrieve(&key).await.is_err(),
+            "the double has to refuse, or this test cannot fail"
+        );
+
+        assert!(matches!(
+            startup_route(&database, &locked).await,
+            Startup::Onboard(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_empty_password_is_no_password() {
+        let (database, key) = provisioned();
+        let secrets = MemorySecretStore::new();
+        secrets
+            .store(&key, &Password::new(""))
+            .await
+            .expect("the credential should store");
+
+        assert!(matches!(
+            startup_route(&database, &secrets).await,
+            Startup::Onboard(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_fresh_installation_has_nothing_to_prefill_with() {
+        let database = postio_storage::test_support::memory();
+
+        assert!(matches!(
+            startup_route(&database, &MemorySecretStore::new()).await,
+            Startup::Onboard(None)
+        ));
+    }
 }
