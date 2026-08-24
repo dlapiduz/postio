@@ -223,7 +223,24 @@ fn submit(
 
             // Only now, with the credentials known good. Writing first would
             // leave a broken account behind every failed attempt.
-            if let Err(reason) = save(&wiring.database, &submission).await {
+            if let Err(reason) = save(&wiring.database, &submission) {
+                screen.set_status(Status::Failed(reason));
+                return;
+            }
+
+            // The credential goes over D-Bus from the runtime, and the answer
+            // comes back over a channel — the same crossing the connection
+            // test above makes, and for the same reason.
+            let (sender, receiver) = async_channel::bounded(1);
+            let address = submission.address.clone();
+            let password = Password::new(submission.password.clone());
+            wiring.runtime.spawn(async move {
+                let _ = sender.send(store_credential(address, password).await).await;
+            });
+            let stored = receiver.recv().await.unwrap_or_else(|_| {
+                Err("Postio's runtime stopped before the keyring answered.".to_owned())
+            });
+            if let Err(reason) = stored {
                 screen.set_status(Status::Failed(reason));
                 return;
             }
@@ -241,12 +258,13 @@ fn submit(
     });
 }
 
-/// The two writes: the account row, then the credential.
+/// The first of the two writes: the account row.
 ///
-/// In that order, and the failure of the second is reported rather than
-/// swallowed: an account with no password in the keyring cannot sync, and a
-/// silent one would look like a Postio bug rather than a locked keyring.
-async fn save(database: &Database, submission: &Submission) -> Result<(), String> {
+/// Synchronous, and deliberately separate from the credential. The keyring
+/// is reached over D-Bus by a future that needs a tokio runtime to be polled
+/// at all, and this runs on the GTK main context where there is none — see
+/// [`store_credential`].
+fn save(database: &Database, submission: &Submission) -> Result<(), String> {
     let address = submission.address.clone();
     let email = EmailAddress::new(None::<String>, address.clone());
     let mut account = Account::new(address.clone(), email.clone());
@@ -270,12 +288,25 @@ async fn save(database: &Database, submission: &Submission) -> Result<(), String
         .create(&mut account)
         .map_err(|error| format!("Postio could not write the account: {error}"))?;
 
-    let secrets = KeyringSecretStore::default();
-    secrets
-        .store(
-            &AccountKey::new(address),
-            &Password::new(submission.password.clone()),
-        )
+    Ok(())
+}
+
+/// The second write: the credential, into the keyring.
+///
+/// **Must be polled on the engine runtime, not the GTK main context.** It
+/// reaches the Secret Service over D-Bus and bounds the round trip with
+/// `tokio::time::timeout`, so awaiting it from `glib::spawn_future_local`
+/// panics with "there is no reactor running" — which is what 0.1.0 did, on
+/// the main thread, immediately after a successful login. `feed.rs` explains
+/// the rule this broke: neither loop can drive the other, so runtime work is
+/// spawned and answered over a channel.
+///
+/// The failure is reported rather than swallowed: an account with no password
+/// in the keyring cannot sync, and a silent failure would look like a Postio
+/// bug rather than a locked keyring.
+async fn store_credential(address: String, password: Password) -> Result<(), String> {
+    KeyringSecretStore::default()
+        .store(&AccountKey::new(address), &password)
         .await
         .map_err(|error| {
             format!(
