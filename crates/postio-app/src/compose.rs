@@ -310,6 +310,97 @@ pub(crate) fn load_body(
     }
 }
 
+/// A message's body, or which kind of "no body" this is.
+///
+/// [`load_body`] answers `MessageBody::default()` for four situations that
+/// are not the same situation, and the reading pane used to render all four
+/// as a blank column (issue #70, Cause A). Replying does not care — quoting
+/// nothing is the right degraded behaviour either way — so `load_body` keeps
+/// its shape and this sits beside it for the caller that has to *show*
+/// something.
+pub(crate) enum Body {
+    /// Bytes are on this machine, and these are them.
+    Ready(postio_model::MessageBody),
+    /// There are none, for this reason.
+    Absent(postio_gtk::reader::Absent),
+}
+
+/// As [`load_body`], but distinguishing the ways a body can be missing.
+///
+/// The message's own [`BodyState`] is what says whether a body was ever
+/// fetched, and it has to be: `body_blobs` answers a row naming no blobs for
+/// a message nobody has downloaded *and* for one that was downloaded and had
+/// no body in it. Those two look identical at the blob layer and are opposite
+/// things to a reader — one is worth waiting for and one is finished.
+///
+/// So:
+///
+/// * **not fetched** (`NotFetched`, `HeadersOnly`) — the backfill has not
+///   been here. The ordinary state of a mailbox that has just been added,
+///   and not a fault.
+/// * **fetched, naming no blobs** — the message really has neither a text
+///   nor an HTML part.
+/// * **fetched, naming blobs that will not read** — the database and the
+///   blob directory disagree. Rare, and a genuine fault.
+///
+/// [`Absent::Offline`] is deliberately not produced here: telling it from
+/// `Partial` needs the engine's `ConnectionState`, which does not reach this
+/// crate yet. The pane says "downloading" in both cases meanwhile, which is
+/// true but less useful than it should be — see the follow-up issue on #70.
+///
+/// [`BodyState`]: postio_model::message::BodyState
+/// [`Absent::Offline`]: postio_gtk::reader::Absent::Offline
+pub(crate) fn load_body_or_reason(
+    connection: &postio_storage::PooledConnection,
+    blobs: &BlobStore,
+    id: MessageId,
+) -> Body {
+    use postio_gtk::reader::Absent;
+
+    let repository = MessageRepository::new(connection);
+
+    // Has anything been downloaded for this message at all?
+    match repository.get(id) {
+        Ok(Some(message)) if !message.sync.body_state.has_body() => {
+            return Body::Absent(Absent::Partial);
+        }
+        Ok(Some(_)) => {}
+        // The row is gone, or unreadable. Either way there is nothing to
+        // wait for, so do not tell the user to wait.
+        Ok(None) => return Body::Absent(Absent::Missing),
+        Err(error) => {
+            tracing::warn!(message = id.get(), %error, "cannot read a message row");
+            return Body::Absent(Absent::Missing);
+        }
+    }
+
+    let blob_ids = match repository.body_blobs(id) {
+        Ok(Some(blob_ids)) => blob_ids,
+        // Fetched, and nothing recorded to show for it.
+        Ok(None) => return Body::Absent(Absent::Empty),
+        Err(error) => {
+            tracing::warn!(message = id.get(), %error, "cannot read a message's body record");
+            return Body::Absent(Absent::Missing);
+        }
+    };
+
+    if blob_ids.text.is_none() && blob_ids.html.is_none() {
+        return Body::Absent(Absent::Empty);
+    }
+
+    let body = postio_model::MessageBody {
+        text: blob_ids.text.and_then(|id| read_blob_text(blobs, &id)),
+        html: blob_ids.html.and_then(|id| read_blob_text(blobs, &id)),
+    };
+    if body.text.is_none() && body.html.is_none() {
+        // Blobs were named and none of them read back. `read_blob_text` has
+        // already logged why; what the user needs is to be told the pane is
+        // empty because something is wrong, not because they should wait.
+        return Body::Absent(Absent::Missing);
+    }
+    Body::Ready(body)
+}
+
 fn read_blob_text(blobs: &BlobStore, id: &postio_model::ids::BlobId) -> Option<String> {
     let bytes = blobs
         .get(id)

@@ -152,3 +152,47 @@ mark.postio-match {
   color: inherit;
   border-radius: 2px;
 }
+
+/* The pane explaining why it has no body — issue #70, Cause A.
+   `Reader::show_absent` renders these; `reader/view.rs::absent_html` writes
+   the words.
+
+   Centred and dim on purpose: this is a *state*, not content, and it must
+   not read as a message whose body happens to be one short line. The whole
+   plate sits well inside the pane so it cannot be mistaken for a header. */
+.postio-absent {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 60vh;
+  padding: 0 2.5em;
+  text-align: center;
+}
+
+.postio-absent-heading {
+  font-family: "Barlow Condensed", "Barlow", sans-serif;
+  font-size: 1.15em;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--r-ink-secondary);
+  margin: 0 0 0.35em 0;
+}
+
+.postio-absent-detail {
+  max-width: 34em;
+  color: var(--r-dim);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* The retry key, named the way the rest of the app names keys. Monospace
+   because every count and key in Postio is IBM Plex Mono. */
+.postio-absent kbd {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9em;
+  padding: 0.05em 0.35em;
+  border: 1px solid var(--r-hairline);
+  border-radius: 3px;
+  color: var(--r-ink-secondary);
+}

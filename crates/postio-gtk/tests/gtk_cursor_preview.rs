@@ -90,17 +90,39 @@ fn the_cursor_reports_every_row_it_lands_on() {
     window.present();
     pump();
 
+    // ── the autoselect is not somebody looking at a message ─────────────
+    // `SingleSelection` puts the cursor on row 0 as soon as the model has
+    // rows. Nobody chose that, so the reading pane must not fill on startup
+    // -- and once #71's dwell timer exists, filling here would mark the
+    // newest message read for the sole reason that the app was opened.
     pane.model().set_source(Rc::new(Pages));
+    pump();
+    assert!(
+        seen.borrow().is_empty(),
+        "the autoselect reported a landing nobody asked for"
+    );
+
+    // ── a real move onto a page that has not arrived reports nothing yet ──
+    // The rows are still placeholders: `set_source` sizes the model before
+    // `deliver` fills it. There is no message to show, so there is nothing
+    // to say.
+    pane.first_row();
+    pump();
+    assert!(
+        seen.borrow().is_empty(),
+        "a placeholder is not a message and must not be reported as one"
+    );
+
+    // ── and reports it the moment the page lands ─────────────────────────
+    // This is what the `items_changed` hookup is for: the cursor was already
+    // where it belongs, so `notify::selected` has been and gone.
     pane.model().deliver(0, (0..ROWS).map(row).collect());
     pump();
-
-    // ── the first page landing is itself a landing ───────────────────────
-    // This is the startup case of #70: a window whose first page has just
-    // arrived must show that message, not an empty pane waiting for Return.
     assert_eq!(
         *seen.borrow(),
         vec![MessageId::new(1)],
-        "the cursor's first resting place should have reached the reader"
+        "the page arrived under a cursor the user had moved, and the reader \
+         was never told"
     );
 
     // ── `j` down the list reports each row, in order ─────────────────────
