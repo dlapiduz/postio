@@ -9,10 +9,15 @@
 //! # Use
 //!
 //! ```sh
-//! export POSTIO_ADDRESS='you@icloud.com'
+//! export POSTIO_ADDRESS='you@your-provider.example'
 //! read -rs POSTIO_APP_PASSWORD && export POSTIO_APP_PASSWORD
 //! scripts/run-isolated.sh HEAD --provision
 //! ```
+//!
+//! The domain has to be one `known` recognises; it names the alternative if
+//! it does not. A reserved domain here rather than a real provider because
+//! `scripts/check-no-personal-data.py` holds every address in the repository
+//! to RFC 2606, usage strings included.
 //!
 //! The password is read from the environment, never from a file and never
 //! from argv — argv is visible to every process on the machine via `ps`. It
@@ -67,9 +72,7 @@ fn known(domain: &str) -> Option<(&'static str, u16, &'static str, u16)> {
             // working iCloud client configuration.
             Some(("imap.mail.me.com", 993, "smtp.mail.me.com", 465))
         }
-        "gmail.com" | "googlemail.com" => {
-            Some(("imap.gmail.com", 993, "smtp.gmail.com", 465))
-        }
+        "gmail.com" | "googlemail.com" => Some(("imap.gmail.com", 993, "smtp.gmail.com", 465)),
         "fastmail.com" | "fastmail.fm" => {
             Some(("imap.fastmail.com", 993, "smtp.fastmail.com", 465))
         }
@@ -83,7 +86,7 @@ fn env(name: &str) -> Option<String> {
 
 fn main() -> ExitCode {
     let Some(address) = env("POSTIO_ADDRESS") else {
-        eprintln!("set POSTIO_ADDRESS to the address to add, e.g. you@icloud.com");
+        eprintln!("set POSTIO_ADDRESS to the address to add, e.g. you@your-provider.example");
         return ExitCode::FAILURE;
     };
     let Some(password) = env("POSTIO_APP_PASSWORD") else {
