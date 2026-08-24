@@ -32,6 +32,7 @@ mod compose;
 mod engine;
 mod feed;
 mod paths;
+mod refresh;
 
 use std::sync::Arc;
 
@@ -78,15 +79,21 @@ fn main() -> glib::ExitCode {
     // brings it into step with the window in the instant before a command is
     // sent; nothing else writes it.
     let state = SharedState::default();
-    let bus = match &store {
-        Some((database, _)) => {
-            actions::dispatcher(actions::Actions::new(database.clone(), state.clone()))
-        }
-        // No store, so no verb can do anything. An empty bus still answers —
-        // every command comes back as "not wired up in this build" — which is
-        // a sentence on screen rather than a key that does nothing.
-        None => Dispatcher::builder().build(),
+    // Filled in when the window is fed and an engine actually starts, which is
+    // later than this and may not happen at all. `Refresh` reads it at the
+    // moment it is pressed.
+    let engine = refresh::EngineSlot::default();
+    let builder = match &store {
+        Some((database, _)) => actions::wire(
+            Dispatcher::builder(),
+            actions::Actions::new(database.clone(), state.clone()),
+        ),
+        // No store, so no local verb can do anything. An empty bus still
+        // answers — every command comes back as "not wired up in this build" —
+        // which is a sentence on screen rather than a key that does nothing.
+        None => Dispatcher::builder(),
     };
+    let bus = refresh::wire(builder, engine.clone(), state.clone()).build();
 
     // What the bus answers, asked before it is handed over: the window's
     // action seam carries *every* gesture, and the ones another consumer owns
@@ -127,6 +134,7 @@ fn main() -> glib::ExitCode {
             runtime: bridge.handle(),
             events: sink.clone(),
             commands: bridge.commands(),
+            engine,
         });
     application.connect_activate(move |application| {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
@@ -172,6 +180,8 @@ struct Wiring {
     runtime: tokio::runtime::Handle,
     events: EventSink,
     commands: postio_core::bridge::CommandSender,
+    /// Where the engine goes once it is running, so `Refresh` can find it.
+    engine: refresh::EngineSlot,
 }
 
 /// Open the local store, or explain why there is none.
@@ -223,6 +233,9 @@ fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed:
         // process, and dropping it at exit would stop the engine a moment
         // before the process ends anyway.
         let sync: &'static _ = Box::leak(Box::new(sync));
+        // `Refresh` is the one command that needs it, and it is pressed long
+        // after the bus was built.
+        wiring.engine.fill(sync.clone());
         seed_the_backfill(sync, wiring);
         fetch_what_is_opened(window, sync, wiring.runtime.clone());
     }
