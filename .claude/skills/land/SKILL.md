@@ -79,6 +79,23 @@ git commit --only crates/<your-crate> Cargo.lock -m "..."
 Adding two named new files is a far smaller race window than `git add -A`, and
 `--only` still scopes the commit to your paths.
 
+**`--only` does not protect a file someone else is editing.** It commits the
+*working-tree* version of every path you name, so if another session has
+uncommitted changes in a file you list, those changes go into your commit. That
+happened on `postio-app/src/engine.rs` and briefly broke HEAD. `--only` saves
+you from what others have **staged elsewhere**; it cannot save you from a file
+you both touch.
+
+So before committing, look at what you are about to take:
+
+```bash
+git status --porcelain <your paths>      # every line here must be yours
+git diff <your paths>                    # if you did not write it, do not commit it
+```
+
+If a shared file has someone else's work in it, wait, or commit your other
+paths and leave that one.
+
 ## 3. Write the message
 
 ```
