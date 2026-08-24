@@ -27,4 +27,4 @@ pub mod view;
 pub use allowlist::RemoteImageAllowList;
 pub use sanitize::RemoteImages;
 pub use scheme::BlobSource;
-pub use view::Reader;
+pub use view::{Absent, Reader};
