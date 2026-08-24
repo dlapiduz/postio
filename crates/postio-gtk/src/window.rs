@@ -989,9 +989,16 @@ impl Window {
     }
 }
 
+/// What the key resolver could not make sense of.
+///
+/// `debug`, not `warn`: every one of these is a binding the *user* wrote that
+/// the resolver dropped, the application carries on with the rest, and the
+/// settings panel shows the same problems where they can be fixed. A level
+/// that fires on somebody's half-edited `config.toml` is not a level anyone
+/// keeps reading.
 fn report(problems: &[String]) {
     for problem in problems {
-        eprintln!("postio: {problem}");
+        tracing::debug!(problem, "keymap");
     }
 }
 
@@ -1213,7 +1220,9 @@ impl Window {
             sidebar_visible: shell.sidebar_visible(),
         };
         if let Err(error) = state.save() {
-            eprintln!("postio: cannot save the window state: {error}");
+            // Losing a divider position is a shrug; saying nothing about why
+            // it keeps happening is not.
+            tracing::warn!(%error, "cannot save the window state");
         }
     }
 }

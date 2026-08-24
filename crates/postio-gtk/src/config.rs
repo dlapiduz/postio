@@ -56,7 +56,7 @@ use crate::window::Window;
 /// would be a worse answer than one whose settings need a restart.
 pub fn install(window: &Window) {
     let Ok(path) = postio_config::paths::config_path() else {
-        eprintln!("postio: no configuration directory; using the built-in defaults");
+        tracing::warn!("no configuration directory; using the built-in defaults");
         return;
     };
     install_at(window, &path);
@@ -95,7 +95,7 @@ pub fn install_at(window: &Window, path: &Path) {
     }) {
         Ok(watcher) => watcher,
         Err(error) => {
-            eprintln!("postio: {path:?} will not be watched: {error}");
+            tracing::warn!(path = %path.display(), %error, "config will not be watched; edits need a restart");
             return;
         }
     };
@@ -106,12 +106,20 @@ pub fn install_at(window: &Window, path: &Path) {
         // reading from it. Dropping it stops the thread.
         let _watcher = watcher;
         while let Ok(checked) = receiver.recv().await {
+            // One span per reload, so the problems a file produced are
+            // attributable to *that* reload rather than to whichever of the
+            // day's edits happened to be nearest in the log. Nothing here
+            // awaits, so entering it for the body is sound.
+            let reload = tracing::info_span!("config_reload", path = %service.path().display());
+            let _entered = reload.enter();
+
             let update = service.apply(checked);
             for event in &update.events {
                 if let Event::Error { message } = event {
-                    eprintln!("postio: {message}");
+                    tracing::warn!(message, "rejected");
                 }
             }
+            tracing::debug!(keys = update.changed.keys, "applied",);
             let Some(window) = weak.upgrade() else {
                 break;
             };
@@ -135,9 +143,14 @@ pub fn install_at(window: &Window, path: &Path) {
     });
 }
 
+/// What the configuration file on disk got wrong.
+///
+/// `warn`: unlike a dropped key binding, these are the reason a setting the
+/// user wrote is not in force, and there is nowhere else they surface at
+/// startup — the settings panel only shows them once it is opened.
 fn report(errors: &[postio_config::validate::ValidationError]) {
     for error in errors {
-        eprintln!("postio: {error}");
+        tracing::warn!(%error, "config");
     }
 }
 
@@ -168,17 +181,18 @@ fn report(errors: &[postio_config::validate::ValidationError]) {
 /// fallback — it already edits the same file.
 fn spawn_editor(path: &Path) {
     let Some(editor) = std::env::var_os("VISUAL").or_else(|| std::env::var_os("EDITOR")) else {
-        eprintln!(
-            "postio: neither $VISUAL nor $EDITOR is set; cannot open {}",
-            path.display()
+        tracing::warn!(
+            path = %path.display(),
+            "neither $VISUAL nor $EDITOR is set, so there is no editor to open"
         );
         return;
     };
     if let Err(error) = std::process::Command::new(&editor).arg(path).spawn() {
-        eprintln!(
-            "postio: cannot launch {} on {}: {error}",
-            editor.to_string_lossy(),
-            path.display()
+        tracing::warn!(
+            editor = %editor.to_string_lossy(),
+            path = %path.display(),
+            %error,
+            "cannot launch the editor"
         );
     }
 }
