@@ -14,7 +14,7 @@
 //! would mean a person picking up five hundred messages and putting them
 //! straight back down had just written five hundred files for nothing.
 //!
-//! So [`MessageFiles`] holds a description of what was dragged and a callback,
+//! So [`LazyFiles`] holds a description of what was dragged and a callback,
 //! and GDK only calls that callback when a receiving application asks for the
 //! bytes — which is to say, on the drop.
 //!
