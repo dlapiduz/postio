@@ -111,11 +111,25 @@ jobs:
         # where it would silently win over rust-toolchain.toml. Issue #38.
         run: python3 scripts/check-toolchain-pinned.py
 
+      - name: Refuse GTK initialization from a unit test
+        # `cargo test` runs a crate's unit tests on a thread pool in one
+        # process, and GTK may be initialized from one thread per process.
+        # A second one aborts the whole binary on a signal, taking every
+        # other test in the crate with it -- which is how this job first
+        # reported zero of postio-gtk's 305 passing tests. See #41.
+        run: python3 scripts/check-no-gtk-init-in-unit-tests.py
+
       - name: Prove the boundary check actually fails when violated
         run: python3 scripts/test-check-crate-boundaries.py
 
       - name: Prove the toolchain check actually fails when violated
         run: python3 scripts/test-check-toolchain-pinned.py
+
+      - name: Prove the GTK-init check actually fails when violated
+        # The tree is clean, so this check passes whether it works or not.
+        # Its own failure modes -- including the brace scanner that decides
+        # where a test module ends -- are exercised instead.
+        run: python3 scripts/test-check-no-gtk-init-in-unit-tests.py
 
       - name: Prove the tracking check actually fails when violated
         # It guards something that does not exist yet, so on a clean tree it

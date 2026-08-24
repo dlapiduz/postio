@@ -333,6 +333,11 @@ mod tests {
     //! crate: `adw::init()` and a display are process-wide state, and
     //! `cargo test` runs every unit test in one process unless told
     //! otherwise. Add a second one here only with that in mind.
+    //!
+    //! POSTIO-GTK-INIT: the paragraph above is the argument. A binary crate
+    //! has nothing for `tests/` to link against, so this one cannot move out
+    //! the way `postio-gtk`'s toast tests did. See issue #41 and
+    //! `scripts/check-no-gtk-init-in-unit-tests.py`.
 
     use gtk::gdk;
 
