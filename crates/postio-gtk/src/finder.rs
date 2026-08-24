@@ -53,7 +53,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_core::{CommandId, Context, Keymap};
+use postio_core::{ActionId, Context, Keymap};
 use postio_model::Contact;
 use postio_model::ids::MailboxId;
 use postio_model::mailbox::Mailbox;
@@ -361,7 +361,7 @@ pub struct Field {
     pub hint: gtk::Label,
 }
 
-type CommandHandler = Box<dyn Fn(CommandId)>;
+type CommandHandler = Box<dyn Fn(ActionId)>;
 type FolderHandler = Box<dyn Fn(MailboxId)>;
 type ContactHandler = Box<dyn Fn(&ContactHit)>;
 type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
@@ -387,7 +387,7 @@ mod imp {
         pub(super) parsed: RefCell<ParsedQuery>,
         /// The hit count and timing, once `attach` has a field to draw it in.
         pub(super) live: RefCell<Option<Live>>,
-        pub(super) commands: RefCell<Vec<CommandId>>,
+        pub(super) commands: RefCell<Vec<ActionId>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
         pub(super) matched: RefCell<Vec<ContactHit>>,
         pub(super) open: Cell<bool>,
@@ -628,7 +628,7 @@ impl Finder {
     }
 
     /// The commands listed, best first.
-    pub fn commands(&self) -> Vec<CommandId> {
+    pub fn commands(&self) -> Vec<ActionId> {
         self.imp().commands.borrow().clone()
     }
 
@@ -796,7 +796,7 @@ impl Finder {
     }
 
     /// Called when a command is chosen.
-    pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
+    pub fn connect_command(&self, handler: impl Fn(ActionId) + 'static) {
         self.imp().on_command.borrow_mut().push(Box::new(handler));
     }
 

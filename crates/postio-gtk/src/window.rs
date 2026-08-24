@@ -26,7 +26,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
-use postio_core::{CommandId, Context};
+use postio_core::{ActionId, CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
 use crate::feed::{Feeds, Folders, MailboxSource, MessageSource};
@@ -45,6 +45,10 @@ type CommandHandler = Box<dyn Fn(CommandId)>;
 
 /// What to call with a whole invocation — the verb *and* what it is aimed at.
 type ActionHandler = Box<dyn Fn(postio_core::Command)>;
+
+/// What a subscriber to a *registered* command is handed: its id, and nothing
+/// else. See [`Window::connect_ext_command`].
+type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -132,6 +136,9 @@ mod imp {
         /// Handlers for whole invocations, which the mouse produces — see
         /// [`Window::connect_action`](super::Window::connect_action).
         pub actions: std::cell::RefCell<Vec<ActionHandler>>,
+        /// Handlers for commands registered at runtime — see
+        /// [`Window::connect_ext_command`](super::Window::connect_ext_command).
+        pub ext_commands: std::cell::RefCell<Vec<ExtCommandHandler>>,
     }
 
     #[glib::object_subclass]
@@ -896,11 +903,11 @@ impl Window {
             self,
             move |id| {
                 window.close_finder();
-                // Through `run`, not straight out: a command the window
-                // answers itself means the same thing chosen from the
+                // Through `run_action`, not straight out: a command the
+                // window answers itself means the same thing chosen from the
                 // palette as it does typed, and the bus must not hear it
                 // twice.
-                window.run(id);
+                window.run_action(id);
             }
         ));
         // Arriving somewhere is the end of asking where to go, so the box
@@ -971,13 +978,18 @@ impl Window {
                 .press(&chord, context, typing, std::time::Instant::now());
 
         match outcome {
-            Outcome::Command(id) => match id.parse::<CommandId>() {
+            // Not a built-in parse any more: a key can be bound to a
+            // registered command too, and the id the resolver carries is a
+            // string precisely so this layer decides what it names.
+            Outcome::Command(id) => match id.parse::<ActionId>() {
                 Ok(id) => {
-                    self.run(id);
+                    self.run_action(id);
                     glib::Propagation::Stop
                 }
-                // A binding for a command this build does not know: leave the
-                // key alone rather than swallowing it.
+                // A binding for a command this build does not know — a
+                // `[keys]` entry written by a newer Postio, or an extension
+                // that never loaded: leave the key alone rather than
+                // swallowing it.
                 Err(_) => glib::Propagation::Proceed,
             },
             // A half-typed sequence is consumed so its first chord does not also
@@ -996,6 +1008,29 @@ impl Window {
     /// kept in step.
     fn run(&self, id: CommandId) {
         self.act(postio_core::Command::default_for(id));
+    }
+
+    /// Acts on any action a surface resolved to, built-in or registered.
+    ///
+    /// A built-in becomes the invocation its registry default implies. A
+    /// registered command has no such invocation — `Command` is the closed
+    /// vocabulary and `default_for` cannot answer for an id this build has
+    /// never seen — so it goes out through
+    /// [`connect_ext_command`](Self::connect_ext_command) instead, for
+    /// whoever owns the bus to dispatch.
+    ///
+    /// This is where the two vocabularies stay distinguishable to the
+    /// compiler while being equal to the user, which is the whole shape of
+    /// ADR 0002.
+    fn run_action(&self, id: ActionId) {
+        match id {
+            ActionId::Builtin(id) => self.run(id),
+            ActionId::Ext(id) => {
+                for handler in self.imp().ext_commands.borrow().iter() {
+                    handler(id);
+                }
+            }
+        }
     }
 
     /// Swaps the list column for the thread, or back, and says what the
@@ -1220,6 +1255,20 @@ impl Window {
     /// Called with every command a key press resolves to.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.imp().commands.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called with every *registered* command a key or a palette row reaches.
+    ///
+    /// The extension counterpart of [`connect_action`](Self::connect_action).
+    /// Separate rather than folded in because the two carry different things:
+    /// a built-in arrives as a `Command` with the registry's default target
+    /// resolved, and a registered command arrives as an id with no payload at
+    /// all, because nothing in this build knows what payload it would have.
+    ///
+    /// The application subscribes here and routes to
+    /// `Dispatcher::dispatch_ext`.
+    pub fn connect_ext_command(&self, handler: impl Fn(postio_core::ExtId) + 'static) {
+        self.imp().ext_commands.borrow_mut().push(Box::new(handler));
     }
 
     /// Called with every *invocation* — a command and what it is aimed at.

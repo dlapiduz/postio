@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_core::{CommandId, Context};
+use postio_core::{ActionId, CommandId, Context};
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::shell::Pane;
 use postio_gtk::window::Window;
@@ -102,7 +102,7 @@ fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
     pump();
     assert_eq!(
         finder.commands().first(),
-        Some(&CommandId::Archive),
+        Some(&ActionId::Builtin(CommandId::Archive)),
         "fuzzy matching puts the obvious answer first: {:?}",
         finder.commands()
     );
