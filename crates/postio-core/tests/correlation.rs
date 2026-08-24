@@ -368,3 +368,99 @@ fn a_completion_survives_a_serde_round_trip() {
     let json = serde_json::to_string(&event).expect("serialises");
     assert_eq!(serde_json::from_str::<Event>(&json).expect("parses"), event);
 }
+
+// -- The extension path ------------------------------------------------------
+
+#[test]
+fn a_registered_command_is_trackable_too() {
+    // Extension commands do not travel the command queue — they are dispatched
+    // with a sink of the caller's own — so they need their own way in, and the
+    // same guarantee: exactly one ending, whatever happens.
+    use postio_core::bridge::event_channel;
+    use postio_core::registry::{self, ExtCommand};
+    use postio_core::{Context, ContextSet, Recovery};
+
+    let ext = registry::register(ExtCommand {
+        id: "correlation:tracked".to_string(),
+        title: "Tracked".to_string(),
+        default_binding: None,
+        alternate_bindings: Vec::new(),
+        contexts: ContextSet::from_slice(&[Context::List]),
+        destructive: false,
+        recovery: Recovery::None,
+    })
+    .expect("it registers");
+
+    let dispatcher = Dispatcher::builder()
+        .on_ext(ext, |invocation: postio_core::dispatch::ExtInvocation| {
+            let seen = invocation.invocation_id();
+            async move {
+                invocation.emit(Event::Error {
+                    message: format!("{seen:?}"),
+                });
+                Ok(())
+            }
+        })
+        .build();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime");
+    let (sink, events) = event_channel();
+    let mine = InvocationId::next();
+    runtime.block_on(dispatcher.dispatch_ext(ext, sink.with_origin(mine)));
+
+    let ours: Vec<Event> = std::iter::from_fn(|| events.try_next_tracked())
+        .filter(|envelope| envelope.is_from(mine))
+        .map(|envelope| envelope.event)
+        .collect();
+
+    assert!(
+        matches!(
+            ours.as_slice(),
+            [
+                Event::Error { message },
+                Event::InvocationFinished {
+                    outcome: InvocationOutcome::Completed,
+                    ..
+                }
+            ] if message.contains(&mine.get().to_string())
+        ),
+        "the handler must see the id and the dispatch must end it: {ours:?}"
+    );
+}
+
+#[test]
+fn an_untracked_registered_command_announces_no_completion() {
+    use postio_core::bridge::event_channel;
+    use postio_core::registry::{self, ExtCommand};
+    use postio_core::{Context, ContextSet, Recovery};
+
+    let ext = registry::register(ExtCommand {
+        id: "correlation:untracked".to_string(),
+        title: "Untracked".to_string(),
+        default_binding: None,
+        alternate_bindings: Vec::new(),
+        contexts: ContextSet::from_slice(&[Context::List]),
+        destructive: false,
+        recovery: Recovery::None,
+    })
+    .expect("it registers");
+
+    let dispatcher = Dispatcher::builder()
+        .on_ext(ext, |_: postio_core::dispatch::ExtInvocation| async {
+            Ok(())
+        })
+        .build();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime");
+    let (sink, events) = event_channel();
+    runtime.block_on(dispatcher.dispatch_ext(ext, sink));
+
+    assert!(
+        events.try_next_tracked().is_none(),
+        "an untracked extension dispatch must stay as quiet as it was"
+    );
+}
