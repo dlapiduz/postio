@@ -7,9 +7,9 @@ use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
     Attachment, Draft, DraftId, DraftKind, DraftState, EmailAddress, Message, MessageBody,
-    MessageId, ThreadId,
+    MessageId, Operation, OperationTarget, ThreadId,
 };
-use postio_storage::repository::{DraftRepository, MessageRepository};
+use postio_storage::repository::{DraftRepository, MessageRepository, OperationQueueRepository};
 use postio_storage::test_support;
 
 fn at(minutes: i64) -> DateTime<Utc> {
@@ -368,5 +368,141 @@ fn enumerations_are_stored_with_the_spelling_the_model_documents() {
             .expect("the draft")
             .is_sendable(),
         "a failed draft is editable again"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Queueing the server copy
+// ---------------------------------------------------------------------------
+//
+// A draft is durable on this machine the moment `save` returns, and reaches
+// the account's Drafts mailbox later, through the same queue every other
+// mutation goes through. These are the enqueue half; `postio-sync`'s
+// `tests/drafts.rs` is the drain half.
+
+/// An account with the Drafts mailbox a draft is filed into.
+fn account_with_drafts(
+    connection: &rusqlite::Connection,
+) -> (postio_model::Account, postio_model::MailboxId) {
+    let account = test_support::account(connection);
+    let drafts = test_support::mailbox(connection, &account, "Drafts");
+    assert_eq!(
+        drafts.role,
+        postio_model::MailboxRole::Drafts,
+        "the fixture depends on the role being derived from the path"
+    );
+    (account, drafts.id)
+}
+
+#[test]
+fn saving_a_draft_queues_it_for_the_server_in_the_same_write() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    let queued = drafts
+        .save_and_sync(&mut draft, at(0))
+        .expect("save and queue")
+        .expect("a queue row");
+
+    assert_eq!(
+        queued.operation,
+        Operation::SaveDraft {
+            mailbox: drafts_mailbox
+        }
+    );
+    assert_eq!(queued.target, OperationTarget::Draft(draft.id));
+    assert!(
+        drafts.get(draft.id).expect("get").is_some(),
+        "the local row is written whether or not the server ever hears about it"
+    );
+}
+
+#[test]
+fn a_draft_with_nowhere_to_go_is_still_saved_locally() {
+    // No Drafts mailbox: the account has not been synced far enough to know
+    // one exists. Local-first means the draft is kept anyway, and the next
+    // save after the folder turns up is what files it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    let queued = drafts.save_and_sync(&mut draft, at(0)).expect("save");
+
+    assert!(queued.is_none(), "there is no folder to file it in");
+    assert!(drafts.get(draft.id).expect("get").is_some());
+}
+
+#[test]
+fn discarding_a_draft_removes_it_locally_and_queues_the_server_copy() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    draft.server.uid = Some(postio_model::Uid::new(41));
+    draft.server.uid_validity = Some(postio_model::UidValidity::new(9));
+    drafts.save(&mut draft).expect("save");
+
+    let queued = drafts
+        .discard(draft.id, at(1))
+        .expect("discard")
+        .expect("a queue row");
+
+    assert_eq!(
+        queued.operation,
+        Operation::DiscardDraft {
+            mailbox: drafts_mailbox,
+            uid: postio_model::Uid::new(41),
+            uid_validity: postio_model::UidValidity::new(9),
+        },
+        "the operation carries the copy to remove, because the row that knew \
+         it is about to be gone"
+    );
+    assert!(
+        drafts.get(draft.id).expect("get").is_none(),
+        "the draft is gone here the moment the user says so"
+    );
+}
+
+#[test]
+fn discarding_a_draft_the_server_never_saw_queues_nothing() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+
+    assert!(
+        drafts.discard(draft.id, at(1)).expect("discard").is_none(),
+        "nothing was uploaded, so there is nothing to remove"
+    );
+    assert!(drafts.get(draft.id).expect("get").is_none());
+    let pending = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(2))
+        .expect("pending");
+    assert!(pending.is_empty(), "and no round trip is spent saying so");
+}
+
+#[test]
+fn discarding_a_draft_that_is_already_gone_is_not_an_error() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    assert!(
+        drafts
+            .discard(DraftId::new(404), at(1))
+            .expect("discard")
+            .is_none(),
+        "a retried discard is the expected case, not a failure"
     );
 }

@@ -46,6 +46,14 @@
 //! path: resolving the draft, building the message, the transport, and
 //! filing the local Sent copy.
 //!
+//! # Drafts
+//!
+//! [`Operation::SaveDraft`] and [`Operation::DiscardDraft`] keep the account's
+//! Drafts mailbox in step with the composer. They are steps like any other,
+//! except that neither names a message: one is resolved against the draft row,
+//! and the other carries its own `UID` because by then the row is gone. See
+//! [`crate::drafts`].
+//!
 //! # Not here yet
 //!
 //! [`Operation::Append`] needs the blob store, which the drainer does not
@@ -61,6 +69,7 @@ use postio_imap::backend::{
     BackendError, Capabilities, Capability, FlagChange, MailBackend, UidSet,
 };
 use postio_model::{AccountId, MailboxId, Operation, OperationId, OperationTarget};
+use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository, OperationQueueRepository};
 use rusqlite::Connection;
 
@@ -146,6 +155,10 @@ pub struct Drainer<'a> {
     backend: &'a dyn MailBackend,
     policy: RetryPolicy,
     smtp: Option<SmtpContext<'a>>,
+    /// Where a draft's attachments are read from. Set by [`Drainer::with_smtp`]
+    /// as well, since sending needs the same store — a drainer that can send
+    /// can always save a draft.
+    blobs: Option<&'a BlobStore>,
 }
 
 impl<'a> Drainer<'a> {
@@ -158,6 +171,7 @@ impl<'a> Drainer<'a> {
             backend,
             policy: RetryPolicy::default(),
             smtp: None,
+            blobs: None,
         }
     }
 
@@ -167,6 +181,7 @@ impl<'a> Drainer<'a> {
             backend,
             policy,
             smtp: None,
+            blobs: None,
         }
     }
 
@@ -174,7 +189,18 @@ impl<'a> Drainer<'a> {
     /// the account's credentials, and the blob store attachments and the
     /// sent copy read and write through.
     pub fn with_smtp(mut self, smtp: SmtpContext<'a>) -> Self {
+        self.blobs = Some(smtp.blobs);
         self.smtp = Some(smtp);
+        self
+    }
+
+    /// Gives this drainer the blob store a draft's attachments are read from.
+    ///
+    /// [`Drainer::with_smtp`] already does this, so this is for a drainer that
+    /// keeps drafts in step with the server without being able to send —
+    /// which is every drainer built for a test that has nothing to send.
+    pub fn with_blobs(mut self, blobs: &'a BlobStore) -> Self {
+        self.blobs = Some(blobs);
         self
     }
 
@@ -245,6 +271,10 @@ impl<'a> Drainer<'a> {
                 }
                 Pending::Settled(Outcome::Obsolete { reason })
             }
+            Resolved::Later(reason) => Pending::Settled(Outcome::Retry {
+                reason,
+                after: None,
+            }),
             Resolved::Impossible(reason) => Pending::Settled(Outcome::Failed { reason }),
         })
     }
@@ -297,6 +327,14 @@ impl<'a> Drainer<'a> {
                         context.operation.op_type()
                     ),
                 };
+            }
+            Operation::SaveDraft { .. } | Operation::DiscardDraft { .. } => {
+                let job = context
+                    .draft
+                    .as_ref()
+                    .expect("resolve() always attaches a DraftJob to a Ready draft context");
+                return crate::drafts::run(connection, self.backend, capabilities, resync, job)
+                    .await;
             }
             Operation::Send { .. } => {
                 let job = context
@@ -351,6 +389,7 @@ impl<'a> Drainer<'a> {
                         uids: UidSet::new(),
                         mailbox: MailboxId::UNASSIGNED,
                         send: Some(job),
+                        draft: None,
                     }),
                     crate::send::ResolvedSend::Obsolete(reason) => Resolved::Obsolete {
                         reason,
@@ -359,6 +398,9 @@ impl<'a> Drainer<'a> {
                     crate::send::ResolvedSend::Impossible(reason) => Resolved::Impossible(reason),
                 },
             );
+        }
+        if let Some(resolved) = self.resolve_draft(connection, step)? {
+            return Ok(resolved);
         }
         if matches!(step.operation, Operation::Append { .. }) {
             // Resolved as ready so `send` can report it uniformly; there is no
@@ -370,6 +412,7 @@ impl<'a> Drainer<'a> {
                 uids: UidSet::new(),
                 mailbox: MailboxId::UNASSIGNED,
                 send: None,
+                draft: None,
             }));
         }
 
@@ -393,7 +436,10 @@ impl<'a> Drainer<'a> {
                     });
                 }
             },
-            Operation::Append { .. } | Operation::Send { .. } => unreachable!("handled above"),
+            Operation::Append { .. }
+            | Operation::Send { .. }
+            | Operation::SaveDraft { .. }
+            | Operation::DiscardDraft { .. } => unreachable!("handled above"),
         };
 
         let uids = match step.target {
@@ -446,6 +492,61 @@ impl<'a> Drainer<'a> {
             uids,
             mailbox,
             send: None,
+            draft: None,
+        }))
+    }
+
+    /// Resolves the two operations that keep the Drafts mailbox in step, or
+    /// `None` when this step is not one of them.
+    ///
+    /// Split out rather than folded into [`Drainer::resolve`]'s match because
+    /// neither names a message: a draft has no row in `messages` and, in the
+    /// discard case, no row anywhere at all by the time this runs.
+    fn resolve_draft(&self, connection: &Connection, step: &Step) -> Result<Option<Resolved>> {
+        let resolved = match (&step.operation, step.target) {
+            (Operation::SaveDraft { mailbox }, OperationTarget::Draft(draft)) => {
+                crate::drafts::resolve_save(connection, self.blobs, draft, *mailbox)?
+            }
+            (
+                Operation::DiscardDraft {
+                    mailbox,
+                    uid,
+                    uid_validity,
+                },
+                _,
+            ) => crate::drafts::resolve_discard(
+                connection,
+                *mailbox,
+                crate::drafts::ServerCopy {
+                    uid: *uid,
+                    uid_validity: *uid_validity,
+                },
+            )?,
+            // A draft operation whose target is not a draft is a row written
+            // by hand or by a newer Postio; it names nothing this build can
+            // act on.
+            (Operation::SaveDraft { .. }, _) => crate::drafts::ResolvedDraft::Impossible(
+                "a draft operation that does not name a draft".to_owned(),
+            ),
+            _ => return Ok(None),
+        };
+
+        Ok(Some(match resolved {
+            crate::drafts::ResolvedDraft::Ready(job) => Resolved::Ready(Context {
+                operation: step.operation.clone(),
+                path: String::new(),
+                destination: None,
+                uids: UidSet::new(),
+                mailbox: MailboxId::UNASSIGNED,
+                send: None,
+                draft: Some(job),
+            }),
+            crate::drafts::ResolvedDraft::Obsolete(reason) => Resolved::Obsolete {
+                reason,
+                mailbox: None,
+            },
+            crate::drafts::ResolvedDraft::Later(reason) => Resolved::Later(reason),
+            crate::drafts::ResolvedDraft::Impossible(reason) => Resolved::Impossible(reason),
         }))
     }
 
@@ -546,6 +647,10 @@ struct Context {
     /// by far the largest field here and every other operation leaves it
     /// `None`.
     send: Option<Box<crate::send::SendJob>>,
+    /// Resolved only for the two operations that keep the Drafts mailbox in
+    /// step, and boxed for the same reason as `send`: by the time the backend
+    /// call is made there is nothing left to look up.
+    draft: Option<Box<crate::drafts::DraftJob>>,
 }
 
 /// Whether a step still has to go to the server.
@@ -563,6 +668,11 @@ enum Resolved {
         /// The mailbox to resynchronize, when one is implicated.
         mailbox: Option<MailboxId>,
     },
+    /// Not sendable *yet*, and no server was asked: something local is still
+    /// being written. Deferred like a transient failure, so it comes back with
+    /// the same backoff and the same attempt limit rather than inventing a
+    /// second waiting mechanism.
+    Later(String),
     /// Cannot be sent and never will be.
     Impossible(String),
 }
@@ -584,7 +694,7 @@ pub(crate) enum Outcome {
 }
 
 impl Outcome {
-    fn from_error(error: BackendError) -> Self {
+    pub(crate) fn from_error(error: BackendError) -> Self {
         let reason = error.to_string();
         if error.requires_full_resync() {
             // The UID space was renumbered, so the UID this operation carries

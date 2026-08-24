@@ -16,13 +16,15 @@
 //! it was last given, and the attachment ids the user's attachments already
 //! had.
 
+use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, AttachmentId, BlobId, Disposition, Draft, DraftId, DraftKind,
-    DraftState, EmailAddress, IdentityId, MessageBody, MessageId, ModSeq, ServerIdentifiers,
-    ThreadId, Uid, UidValidity,
+    DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
+    OperationTarget, ServerIdentifiers, ThreadId, Uid, UidValidity,
 };
 use rusqlite::{Connection, Row, params};
 
+use super::{OperationQueueRepository, QueuedOperation};
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
 
@@ -47,6 +49,17 @@ impl<'a> DraftRepository<'a> {
     /// This is what autosave calls. It is idempotent: the draft's id, and the
     /// ids of the attachments already on it, do not change from one save to the
     /// next, so nothing the composer is holding goes stale.
+    ///
+    /// # The server identifiers are not the composer's to write
+    ///
+    /// `uid`, `uid_validity`, `mod_seq` and `remote_id` are only ever cleared
+    /// by [`set_server_copy`](Self::set_server_copy), never by a save that
+    /// simply does not know them. The composer holds a [`Draft`] for as long as
+    /// the window is open and autosaves the same value repeatedly; the drainer
+    /// writes where the server copy landed *while it is holding it*. Without
+    /// this, every autosave after an upload would wipe the id of the copy on
+    /// the server, and the next upload would add a second one instead of
+    /// replacing the first.
     pub fn save(&self, draft: &mut Draft) -> Result<DraftId> {
         let transaction = super::Scope::open(self.connection)?;
 
@@ -55,8 +68,12 @@ impl<'a> DraftRepository<'a> {
                 "UPDATE drafts
                     SET account_id = ?2, identity_id = ?3, kind = ?4,
                         in_reply_to_message_id = ?5, thread_id = ?6, subject = ?7,
-                        body_text = ?8, body_html = ?9, state = ?10, uid = ?11,
-                        uid_validity = ?12, mod_seq = ?13, remote_id = ?14, updated_at = ?15
+                        body_text = ?8, body_html = ?9, state = ?10,
+                        uid = coalesce(?11, uid),
+                        uid_validity = coalesce(?12, uid_validity),
+                        mod_seq = coalesce(?13, mod_seq),
+                        remote_id = coalesce(?14, remote_id),
+                        updated_at = ?15
                   WHERE id = ?1",
                 params![
                     draft.id.get(),
@@ -123,6 +140,93 @@ impl<'a> DraftRepository<'a> {
         Ok(draft.id)
     }
 
+    /// Saves a draft and queues its server copy to be brought up to date.
+    ///
+    /// This is [`save`](Self::save) plus the enqueue, in one write, which is
+    /// the local-first rule stated in [`OperationQueueRepository`]: a local
+    /// write without its queue row never reaches the server, and a queue row
+    /// without its local write tells the server about something the user never
+    /// saw happen.
+    ///
+    /// Returns `None` — having still saved the draft — when the account has no
+    /// Drafts mailbox yet, which is the ordinary state of an account that has
+    /// not finished its first sync. The draft is durable here regardless, and
+    /// the next save after the folder turns up files it.
+    pub fn save_and_sync(
+        &self,
+        draft: &mut Draft,
+        at: DateTime<Utc>,
+    ) -> Result<Option<QueuedOperation>> {
+        let scope = super::Scope::open(self.connection)?;
+
+        DraftRepository::new(&scope).save(draft)?;
+        let queued = match super::MailboxRepository::new(&scope)
+            .by_role(draft.account_id, MailboxRole::Drafts)?
+        {
+            Some(mailbox) => Some(OperationQueueRepository::new(&scope).enqueue(
+                draft.account_id,
+                OperationTarget::Draft(draft.id),
+                &Operation::SaveDraft {
+                    mailbox: mailbox.id,
+                },
+                at,
+            )?),
+            None => None,
+        };
+
+        scope.commit()?;
+        Ok(queued)
+    }
+
+    /// Deletes a draft and queues the removal of its server copy.
+    ///
+    /// The local row goes now: discarding a draft is local-first like every
+    /// other mutation, and the composer must not wait for a server to agree.
+    /// That is why the queued [`Operation::DiscardDraft`] carries the `UID` and
+    /// its generation rather than naming the draft — by the time it drains
+    /// there is no row left to read them from.
+    ///
+    /// Returns `None` when nothing needed queueing: the draft was already gone,
+    /// it never reached the server, or the account has no Drafts mailbox.
+    pub fn discard(&self, id: DraftId, at: DateTime<Utc>) -> Result<Option<QueuedOperation>> {
+        let scope = super::Scope::open(self.connection)?;
+        let drafts = DraftRepository::new(&scope);
+
+        let Some(draft) = drafts.get(id)? else {
+            // A retried discard, or one racing a send that already cleared the
+            // row. Both are the expected case rather than a failure.
+            scope.commit()?;
+            return Ok(None);
+        };
+
+        let queued = match server_copy(&draft) {
+            Some((uid, uid_validity)) => {
+                match super::MailboxRepository::new(&scope)
+                    .by_role(draft.account_id, MailboxRole::Drafts)?
+                {
+                    Some(mailbox) => Some(OperationQueueRepository::new(&scope).enqueue(
+                        draft.account_id,
+                        OperationTarget::Draft(id),
+                        &Operation::DiscardDraft {
+                            mailbox: mailbox.id,
+                            uid,
+                            uid_validity,
+                        },
+                        at,
+                    )?),
+                    None => None,
+                }
+            }
+            // Never uploaded, so there is nothing on the server to remove and
+            // no round trip worth spending to say so.
+            None => None,
+        };
+
+        drafts.delete(id)?;
+        scope.commit()?;
+        Ok(queued)
+    }
+
     /// One draft, with its recipients and attachments.
     pub fn get(&self, id: DraftId) -> Result<Option<Draft>> {
         let mut statement = self
@@ -171,6 +275,36 @@ impl<'a> DraftRepository<'a> {
             "WHERE thread_id = ?1 ORDER BY updated_at DESC, id DESC",
             [thread_id.get()],
         )
+    }
+
+    /// Records where the draft's server copy landed, or that it has none.
+    ///
+    /// Narrower than [`save`](Self::save) on purpose: this runs when a queued
+    /// [`Operation::SaveDraft`] drains, which is minutes after the text it
+    /// uploaded was typed and quite possibly while the user is still typing.
+    /// Writing the whole row back from what the drainer read would undo
+    /// whatever they have added since.
+    pub fn set_server_copy(
+        &self,
+        id: DraftId,
+        uid: Option<Uid>,
+        uid_validity: Option<UidValidity>,
+    ) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE drafts SET uid = ?2, uid_validity = ?3 WHERE id = ?1",
+            params![
+                id.get(),
+                uid.map(|uid| i64::from(uid.get())),
+                uid_validity.map(|validity| i64::from(validity.get())),
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "draft",
+                id: id.get(),
+            });
+        }
+        Ok(())
     }
 
     /// Moves a draft through its life cycle.
@@ -264,6 +398,16 @@ impl<'a> DraftRepository<'a> {
         draft.attachments = rows.collect::<Result<_, _>>()?;
         Ok(())
     }
+}
+
+/// The server copy of a draft, when it has one.
+///
+/// Both halves or neither: a `UID` is only an identity together with the
+/// generation it was observed under, and both arrive together from the append
+/// that created the copy. Half of the pair means the row predates that append
+/// or was written by hand, and acting on it would be guessing.
+fn server_copy(draft: &Draft) -> Option<(Uid, UidValidity)> {
+    Some((draft.server.uid?, draft.server.uid_validity?))
 }
 
 /// Rewrites a draft's recipient rows.

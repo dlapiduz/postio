@@ -85,6 +85,11 @@ pub(crate) struct SendJob {
     raw: Vec<u8>,
     sent_mailbox: MailboxId,
     sent_mailbox_path: String,
+    /// The draft's copy in the Drafts mailbox, when it reached the server —
+    /// resolved here because after the send the local row that knew about it
+    /// is deleted, and a draft left behind in Drafts is the user's sent
+    /// message showing up as still unfinished.
+    drafts_copy: Option<(MailboxId, String, crate::drafts::ServerCopy)>,
 }
 
 /// What resolving a `Send` operation against local storage found.
@@ -172,6 +177,15 @@ pub(crate) fn resolve(
         ));
     };
 
+    // Resolved before the send, like everything else here: after the SMTP
+    // transaction nothing may fail, so nothing may still need looking up.
+    let drafts_copy = match crate::drafts::server_copy(&draft) {
+        Some(copy) => MailboxRepository::new(connection)
+            .by_role(account.id, MailboxRole::Drafts)?
+            .map(|mailbox| (mailbox.id, mailbox.path, copy)),
+        None => None,
+    };
+
     let recipients = draft
         .all_recipients()
         .map(|address| address.address.clone())
@@ -198,6 +212,7 @@ pub(crate) fn resolve(
         raw: built.raw,
         sent_mailbox: sent.id,
         sent_mailbox_path: sent.path,
+        drafts_copy,
     })))
 }
 
@@ -304,6 +319,30 @@ async fn file_sent_copy(
     let _ = messages.set_body_blobs(message.id, &blobs, postio_model::BodyState::Full);
 
     let _ = DraftRepository::new(connection).delete(job.draft);
+    remove_drafts_copy(backend, resync, job).await;
+}
+
+/// Takes the draft's copy out of the Drafts mailbox now that it has been sent.
+///
+/// Best-effort like everything else after the transaction: a copy left behind
+/// is the user's sent message still showing as unfinished on their phone,
+/// which a resync of that folder reconciles — and which is a great deal better
+/// than a second delivery.
+async fn remove_drafts_copy(backend: &dyn MailBackend, resync: &mut BTreeSet<i64>, job: &SendJob) {
+    let Some((mailbox, path, copy)) = &job.drafts_copy else {
+        return;
+    };
+    let Ok(capabilities) = backend.capabilities().await else {
+        resync.insert(mailbox.get());
+        return;
+    };
+    match crate::drafts::remove(backend, &capabilities, path, *copy).await {
+        // Removed, or somebody else got there first.
+        Ok(crate::drafts::Removal::Removed | crate::drafts::Removal::Gone) => {}
+        _ => {
+            resync.insert(mailbox.get());
+        }
+    }
 }
 
 /// Classifies an [`SmtpError`](postio_smtp::error::SmtpError) the same way
