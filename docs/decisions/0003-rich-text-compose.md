@@ -115,15 +115,23 @@ is worse than not shipping one.
 
 ### The cost, stated plainly
 
-This is a **change to Postio's privacy posture** and must be recognised as one.
-`ARCHITECTURE.md` §11 currently says the reader's WebView has JavaScript off
-and network off. A `contenteditable` editor needs JS: `contenteditable` alone
-gives typing, but toolbar commands, selection queries and reading the markup
-back go through the Selection/`execCommand` APIs, and WebKitGTK will not run
-host-injected script into a JS-disabled view either.
+A `contenteditable` editor needs JavaScript: `contenteditable` alone gives
+typing, but toolbar commands, selection queries and reading the markup back go
+through the Selection/`execCommand` APIs, and WebKitGTK will not run
+host-injected script into a JS-disabled view either. So compose needs a
+**second WebView with JS enabled**, and that view will hold quoted content
+derived from attacker-controlled mail.
 
-So compose needs a **second WebView with JS enabled**, and that view will hold
-quoted content derived from attacker-controlled mail.
+`ARCHITECTURE.md` §11 was refined for this (2026-08-24, at the maintainer's
+direction) and now states the principle rather than the mechanism: **script
+that arrived in a message never executes, in either direction**, while Postio's
+own bundled editor script is not message content and is therefore permitted.
+
+That is a sharper rule than "the WebView has JS off", not a weaker one — it
+closes a gap the old wording missed entirely. The old rule said nothing about
+**outbound** script, so a reply or forward could have re-emitted a sender's
+markup to a third party while remaining technically compliant. The requirements
+below are what make the refined rule true rather than aspirational.
 
 ### Hardening requirements — non-negotiable
 
@@ -147,12 +155,15 @@ acceptance criteria, not advice.
    into `Document`. The DOM is a working copy; it is never trusted as the
    record. This is the property that keeps the canonical subset canonical even
    if WebKit normalises markup unexpectedly.
-6. **`postio-qhz.2`'s request log covers the composer**, so "no network from
+6. **Replies and forwards carry no script outward**, and this gets its own
+   tests. A forward is the sharpest case: `reply.rs:193`'s `forward_body`
+   currently takes `source.body.text`, so it is safe by accident today —
+   the moment forwarding carries HTML, an unsanitised path would re-emit a
+   sender's markup to a third party. Postio must never make a recipient run
+   something its own user was protected from. Test it against a hostile corpus
+   fixture, in both the reply and forward paths.
+7. **`postio-qhz.2`'s request log covers the composer**, so "no network from
    compose" is a proven claim rather than an asserted one.
-
-`ARCHITECTURE.md` §11 must be amended to describe this two-view arrangement
-when the work lands. A reader who finds "JavaScript off" there and a
-JS-enabled composer in the code would rightly conclude the doc is a lie.
 
 ## Q3 — How does replying to an HTML message quote it?
 
@@ -230,7 +241,9 @@ advantages are precisely the costs this design accepts:
   formatting commands; `composer.rs:554` stops synthesising `MessageBody` from
   a `GtkTextBuffer`.
 - **`postio-storage`** needs no migration — `drafts.body_html` already exists.
-- **`ARCHITECTURE.md` §11 must be amended** (see Q2).
+- **`ARCHITECTURE.md` §11 already covers this** — refined 2026-08-24 to scope
+  the no-script rule to message-derived content in both directions. The
+  hardening requirements in Q2 are what implement it.
 - **Issue #12 (rich signatures)** gains a real HTML variant but inherits
   `signature.rs`'s constraint: RFC 3676 says `-- ` means *everything after this
   is signature*, so it must be last, and `apply()`'s idempotent replace has to
@@ -267,4 +280,6 @@ actually produces.
 
 Second risk: if the hardening requirements in Q2 cannot all be met
 simultaneously, the honest response is to reopen the editor choice, not to
-quietly drop a requirement.
+quietly drop a requirement. Requirement 6 in particular is not negotiable —
+outbound script in a forward is a harm to someone who never chose to use
+Postio at all.
