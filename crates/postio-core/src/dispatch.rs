@@ -56,6 +56,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::bridge::{CommandHandler, EventSink, HandlerFuture};
+use crate::invocation::{InvocationId, InvocationOutcome};
 use crate::{ActionId, Command, CommandId, Event, ExtId, registry};
 
 /// The future a command handler returns.
@@ -109,6 +110,15 @@ impl CommandError {
     }
 }
 
+impl From<CommandError> for InvocationOutcome {
+    fn from(error: CommandError) -> Self {
+        match error {
+            CommandError::Rejected(reason) => InvocationOutcome::Rejected { reason },
+            CommandError::Failed(message) => InvocationOutcome::Failed { message },
+        }
+    }
+}
+
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.message())
@@ -132,6 +142,15 @@ impl Invocation {
     /// The registry id being handled.
     pub fn id(&self) -> CommandId {
         self.command.id()
+    }
+
+    /// The tracked send this is answering, if there is one.
+    ///
+    /// `None` for a fire-and-forget command, which is every command the GTK
+    /// frontend sends. A handler needs this only to write the id into a log
+    /// line — the events it emits are tagged for it either way.
+    pub fn invocation_id(&self) -> Option<InvocationId> {
+        self.events.origin()
     }
 
     /// Tell the UI something changed. Never blocks; `false` means the frontend
@@ -167,6 +186,11 @@ impl ExtInvocation {
     /// Which registered command is being handled.
     pub fn id(&self) -> ExtId {
         self.id
+    }
+
+    /// The tracked send this is answering, if there is one.
+    pub fn invocation_id(&self) -> Option<InvocationId> {
+        self.events.origin()
     }
 
     /// Tell the UI something changed. Never blocks; `false` means the frontend
@@ -370,13 +394,15 @@ impl Dispatcher {
         let Some(handler) = self.handlers.get(&id).cloned() else {
             // Silence here would show up as a dead keystroke with nothing in
             // the log to explain it.
+            let reason = format!(
+                "`{}` is not wired up in this build",
+                registry::get(id).title
+            );
             events.emit(Event::CommandRejected {
                 command: ActionId::Builtin(id),
-                reason: format!(
-                    "`{}` is not wired up in this build",
-                    registry::get(id).title
-                ),
+                reason: reason.clone(),
             });
+            finish(&events, InvocationOutcome::Rejected { reason });
             return;
         };
 
@@ -388,19 +414,38 @@ impl Dispatcher {
         // instead of unwinding the pump and taking the whole bus with it.
         // Awaiting it right here keeps dispatch serialized.
         match tokio::spawn(handler.call(invocation)).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => finish(&events, InvocationOutcome::Completed),
             Ok(Err(error)) => {
-                events.emit(error.into_event(id));
+                events.emit(error.clone().into_event(id));
+                finish(&events, error.into());
             }
             Err(join_error) if join_error.is_panic() => {
+                let message = format!("{} failed unexpectedly", registry::get(id).title);
                 events.emit(Event::Error {
-                    message: format!("{} failed unexpectedly", registry::get(id).title),
+                    message: message.clone(),
                 });
+                finish(&events, InvocationOutcome::Failed { message });
             }
             // Cancelled: the runtime is shutting down and there is no one left
             // to tell.
             Err(_) => {}
         }
+    }
+}
+
+/// Announce the end of an invocation, if anybody is tracking it.
+///
+/// Untracked commands emit nothing here, which is what keeps the frontend's
+/// stream exactly as it was. A tracked one always gets an ending — including
+/// the panic and the missing-handler cases, because a caller waiting on an
+/// answer that never arrives is a hang, and a hang is a worse failure than
+/// the one being reported.
+fn finish(events: &EventSink, outcome: InvocationOutcome) {
+    if let Some(invocation) = events.origin() {
+        events.emit(Event::InvocationFinished {
+            invocation,
+            outcome,
+        });
     }
 }
 
@@ -415,10 +460,12 @@ impl Dispatcher {
             .map(|spec| spec.title)
             .unwrap_or_else(|| command.as_str());
         let Some(handler) = self.ext.get(&command).cloned() else {
+            let reason = format!("`{title}` is not wired up in this build");
             events.emit(Event::CommandRejected {
                 command: ActionId::Ext(command),
-                reason: format!("`{title}` is not wired up in this build"),
+                reason: reason.clone(),
             });
+            finish(&events, InvocationOutcome::Rejected { reason });
             return;
         };
 
@@ -427,14 +474,17 @@ impl Dispatcher {
             events: events.clone(),
         };
         match tokio::spawn(handler.call(invocation)).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => finish(&events, InvocationOutcome::Completed),
             Ok(Err(error)) => {
-                events.emit(error.into_event(ActionId::Ext(command)));
+                events.emit(error.clone().into_event(ActionId::Ext(command)));
+                finish(&events, error.into());
             }
             Err(join_error) if join_error.is_panic() => {
+                let message = format!("{title} failed unexpectedly");
                 events.emit(Event::Error {
-                    message: format!("{title} failed unexpectedly"),
+                    message: message.clone(),
                 });
+                finish(&events, InvocationOutcome::Failed { message });
             }
             Err(_) => {}
         }
