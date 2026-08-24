@@ -223,6 +223,14 @@ raw_blob_id";
 /// The sender comes from a correlated lookup rather than a join so the plan
 /// stays "walk the list index, then one index seek per row shown" — bounded by
 /// the window, never by the mailbox.
+/// How many ids one `IN (...)` carries.
+///
+/// Well under `SQLITE_MAX_VARIABLE_NUMBER`, which is 32766 on anything
+/// current and 999 on builds old enough to matter. A page of hits is 50 and a
+/// whole result set is capped at 200, so one chunk is the normal case — this
+/// is here for the day one of those numbers moves, not for today.
+const ID_CHUNK: usize = 500;
+
 pub(crate) const LIST_COLUMNS: &str = "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
 messages.seen, messages.flagged, messages.answered, messages.draft, messages.has_attachments,
@@ -347,6 +355,48 @@ impl<'a> MessageRepository<'a> {
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(page_arguments(query)), read_list_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The list rows for `ids`, in the order given.
+    ///
+    /// For a set of search hits, which none of the [`ListScope`]s fits: they
+    /// are ranked rather than sorted, they can span folders, and there is no
+    /// offset to page by because the ids themselves are the answer.
+    ///
+    /// **The order is restored after the read, and that is the point.** SQL
+    /// answers an `IN` in whatever order it walks the rows, which for the
+    /// `messages` primary key is id order — near enough to date order that a
+    /// lost ranking would look right in every fixture and be wrong exactly
+    /// where relevance was what the user wanted.
+    ///
+    /// Ids the store no longer holds are dropped rather than faked. A message
+    /// deleted between the search and this read is a shorter answer, not an
+    /// error — the index and the store are allowed to disagree for a moment,
+    /// and the list can render 199 rows perfectly well.
+    pub fn rows_for(&self, ids: &[MessageId]) -> Result<Vec<MessageListRow>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut found: std::collections::HashMap<MessageId, MessageListRow> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(ID_CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT {LIST_COLUMNS} FROM messages WHERE messages.id IN ({placeholders})"
+            );
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(
+                params_from_iter(chunk.iter().map(|id| id.get())),
+                read_list_row,
+            )?;
+            for row in rows {
+                let row = row?;
+                found.insert(row.id, row);
+            }
+        }
+
+        Ok(ids.iter().filter_map(|id| found.get(id).cloned()).collect())
     }
 
     /// How many messages the list would show. Ignores the window.
