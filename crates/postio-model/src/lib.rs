@@ -41,9 +41,6 @@
 //! Flags have exactly one canonical representation, keywords compare
 //! case-insensitively, and `\Recent` is never persisted. See [`Flag`].
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-
 pub mod account;
 pub mod address;
 pub mod attachment;

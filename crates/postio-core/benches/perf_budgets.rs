@@ -33,6 +33,12 @@
 //! committed to the repository (it is machine-specific). Compare a later run
 //! against it with `--baseline main`.
 
+#![allow(missing_docs)]
+// `criterion_group!` expands to a `pub fn`, and the workspace lint floor now
+// reaches bench targets -- the old per-crate `#![warn(missing_docs)]` in
+// `lib.rs` never did. A bench is not public API, so documenting a
+// macro-generated item would be ceremony rather than information.
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use postio_core::perf_budget::{INTERACTION_BUDGET, SEARCH_BUDGET, STARTUP_BUDGET, check_budget};
 use std::hint::black_box;

@@ -47,9 +47,6 @@
 //!   connection of its own, interval polling everywhere else, and a periodic
 //!   reconciliation that keeps a silently deaf `IDLE` from hiding new mail.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-
 pub mod backfill;
 pub mod coalesce;
 pub mod connect;

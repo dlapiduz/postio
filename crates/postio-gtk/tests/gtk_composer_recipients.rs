@@ -12,6 +12,11 @@
 //! (`Composer::test_accept_recipient_suggestion` calls exactly what `Enter`
 //! would), and that nothing shows without a candidate to offer.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::composer;

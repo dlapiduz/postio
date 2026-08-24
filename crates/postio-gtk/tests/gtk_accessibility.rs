@@ -16,6 +16,11 @@
 //! One test function, for the reason `gtk_style.rs` gives. Skips without a
 //! display. Nothing here touches the network.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};

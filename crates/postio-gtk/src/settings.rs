@@ -769,7 +769,10 @@ idle = true
     #[test]
     fn a_path_under_home_is_shown_with_a_tilde() {
         // SAFETY: single-threaded test; nothing else reads `HOME` here.
-        unsafe { std::env::set_var("HOME", "/home/example") };
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("HOME", "/home/example")
+        };
         assert_eq!(
             display_path(Path::new("/home/example/.config/postio/config.toml")),
             "~/.config/postio/config.toml"
@@ -779,7 +782,10 @@ idle = true
     #[test]
     fn a_path_outside_home_is_shown_verbatim() {
         // SAFETY: single-threaded test; nothing else reads `HOME` here.
-        unsafe { std::env::set_var("HOME", "/home/example") };
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("HOME", "/home/example")
+        };
         assert_eq!(
             display_path(Path::new("/etc/postio/config.toml")),
             "/etc/postio/config.toml"

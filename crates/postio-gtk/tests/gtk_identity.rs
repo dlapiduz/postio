@@ -12,6 +12,11 @@
 //! draft rather than to the composer — closing and reopening still sends from
 //! the address the user chose.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::composer;

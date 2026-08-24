@@ -17,6 +17,11 @@
 //! selection and a scroll offset states it without dragging storage into a
 //! widget test.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;

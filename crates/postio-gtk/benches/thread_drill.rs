@@ -39,6 +39,12 @@
 //! is a developer machine running four other builds — check `uptime` before
 //! believing a number this prints.
 
+#![allow(missing_docs)]
+// `criterion_group!` expands to a `pub fn`, and the workspace lint floor now
+// reaches bench targets -- the old per-crate `#![warn(missing_docs)]` in
+// `lib.rs` never did. A bench is not public API, so documenting a
+// macro-generated item would be ceremony rather than information.
+
 use std::hint::black_box;
 use std::time::Instant;
 

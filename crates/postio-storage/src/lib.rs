@@ -36,9 +36,6 @@
 //! `test_support` (behind the `test-support` feature) for throwaway databases in
 //! tests.
 
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-
 pub mod blob;
 pub mod db;
 pub mod error;

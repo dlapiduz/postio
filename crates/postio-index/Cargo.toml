@@ -22,3 +22,6 @@ postio-storage = { workspace = true, features = ["test-support"] }
 [[bench]]
 name = "search_budget"
 harness = false
+
+[lints]
+workspace = true
