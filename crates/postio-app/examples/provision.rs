@@ -45,21 +45,6 @@ use postio_model::{Account, EmailAddress, Identity};
 use postio_storage::Database;
 use postio_storage::repository::AccountRepository;
 
-fn known(domain: &str) -> Option<(&'static str, u16, &'static str, u16)> {
-    match domain {
-        "icloud.com" | "me.com" | "mac.com" => {
-            // 465 with implicit TLS, not 587/STARTTLS: verified against a
-            // working iCloud client configuration.
-            Some(("imap.mail.me.com", 993, "smtp.mail.me.com", 465))
-        }
-        "gmail.com" | "googlemail.com" => Some(("imap.gmail.com", 993, "smtp.gmail.com", 465)),
-        "fastmail.com" | "fastmail.fm" => {
-            Some(("imap.fastmail.com", 993, "smtp.fastmail.com", 465))
-        }
-        _ => None,
-    }
-}
-
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
@@ -83,15 +68,21 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    // Explicit settings win over the table, so a custom domain works without
-    // teaching the table about it. postio-hiy will run the real autoconfig
-    // probe instead; this helper is not the place to reimplement it.
-    let preset = known(&domain);
-    let imap_host = match env("POSTIO_IMAP_HOST").or_else(|| preset.map(|p| p.0.to_owned())) {
-        Some(host) => host,
-        None => {
-            eprintln!(
-                "postio: no built-in settings for {domain}, so the servers must be given:\n\
+    // The same table the first-run screen reads, rather than a second copy of
+    // it. This helper had its own three-provider version, so a provider added
+    // for the screen was invisible here and the two could disagree about the
+    // same domain -- issue #69 asks for one table both callers use.
+    //
+    // Explicit settings still win, so a custom domain works without teaching
+    // the table about it. The real autoconfig probe belongs to the first-run
+    // screen; this helper is not the place to reimplement it.
+    let preset = postio_imap::discovery::preset_for_domain(&domain);
+    let imap_host =
+        match env("POSTIO_IMAP_HOST").or_else(|| preset.map(|p| p.imap_host().to_owned())) {
+            Some(host) => host,
+            None => {
+                eprintln!(
+                    "postio: no built-in settings for {domain}, so the servers must be given:\n\
                  \x20   export POSTIO_IMAP_HOST='imap.example.com'\n\
                  \x20   export POSTIO_SMTP_HOST='smtp.example.com'\n\
                  \x20   export POSTIO_USERNAME='...'   # if login differs from the address\n\
@@ -99,17 +90,17 @@ fn main() -> ExitCode {
                  For an iCloud custom domain those are imap.mail.me.com and \
                  smtp.mail.me.com, with POSTIO_USERNAME set to the Apple ID \
                  address rather than the custom one."
-            );
-            return ExitCode::FAILURE;
-        }
-    };
+                );
+                return ExitCode::FAILURE;
+            }
+        };
     let smtp_host = env("POSTIO_SMTP_HOST")
-        .or_else(|| preset.map(|p| p.2.to_owned()))
+        .or_else(|| preset.map(|p| p.smtp_host().to_owned()))
         .unwrap_or_else(|| imap_host.replacen("imap.", "smtp.", 1));
     let port =
         |name: &str, fallback: u16| env(name).and_then(|v| v.parse().ok()).unwrap_or(fallback);
-    let imap_port = port("POSTIO_IMAP_PORT", preset.map_or(993, |p| p.1));
-    let smtp_port = port("POSTIO_SMTP_PORT", preset.map_or(465, |p| p.3));
+    let imap_port = port("POSTIO_IMAP_PORT", preset.map_or(993, |p| p.imap_port()));
+    let smtp_port = port("POSTIO_SMTP_PORT", preset.map_or(465, |p| p.smtp_port()));
     // Login name, when it is not the address mail arrives at.
     let username = env("POSTIO_USERNAME").unwrap_or_else(|| address.clone());
 
