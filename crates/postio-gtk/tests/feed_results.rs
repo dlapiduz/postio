@@ -25,7 +25,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{
-    Feed, MessageSource, Page, PageFuture, PageRequest, ResultSource, RowsFuture,
+    Feed, FeedScope, MessageSource, Page, PageFuture, PageRequest, ResultSource, RowsFuture,
 };
 use postio_gtk::list::{MessageList, MessageRow, PAGE_SIZE, Row};
 use postio_model::ids::{MailboxId, MessageId};
@@ -50,6 +50,15 @@ struct Fake {
     total: RefCell<u32>,
 }
 
+/// The folder a request names. These tests open folders, not smart folders —
+/// `gtk_flagged.rs` is where the query scope is exercised.
+fn scope_mailbox(request: &PageRequest) -> MailboxId {
+    request
+        .scope
+        .mailbox()
+        .expect("these tests open folders, not queries")
+}
+
 impl Fake {
     fn holding(total: u32) -> Rc<Self> {
         Rc::new(Fake {
@@ -71,7 +80,7 @@ impl MessageSource for Fake {
     fn fetch(&self, request: PageRequest) -> PageFuture {
         self.mailbox_asked.borrow_mut().push(request);
         let total = *self.total.borrow();
-        let mailbox = request.mailbox;
+        let mailbox = scope_mailbox(&request);
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
             let rows = (request.offset..end)
@@ -167,7 +176,7 @@ fn search_hits_reach_the_message_list() {
         let source = Fake::holding(4_000);
         let list = MessageList::new();
         let feed = Feed::new(&list, source.clone());
-        feed.open(MailboxId::new(INBOX));
+        feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
         settle();
         source.drain_mailbox();
 
@@ -184,7 +193,7 @@ fn search_hits_reach_the_message_list() {
     let feed = Feed::new(&list, source.clone());
     feed.set_result_source(source.clone());
 
-    feed.open(MailboxId::new(INBOX));
+    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
     settle();
     assert_eq!(list.n_items(), 4_000);
     source.drain_mailbox();
