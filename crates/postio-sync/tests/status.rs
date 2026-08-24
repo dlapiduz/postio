@@ -48,7 +48,7 @@ async fn a_full_pass_leaves_the_tracker_idle_with_a_last_sync_time() {
     .await
     .expect("sync");
     let finished_at = chrono::Utc::now();
-    let final_status = tracker.on_sync_finished(finished_at);
+    let final_status = tracker.on_sync_finished(inbox.id, finished_at);
 
     assert!(
         !reported.is_empty(),

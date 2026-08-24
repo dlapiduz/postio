@@ -1230,7 +1230,7 @@ async fn sync(
                 full = summary.full,
                 "sync finished"
             );
-            announce_status(parts, &state.status.on_sync_finished(now));
+            announce_status(parts, &state.status.on_sync_finished(mailbox, now));
             if summary.changed() {
                 // The list showing this folder has to re-read it.
                 parts.events.emit(Event::MessageListChanged { mailbox });
@@ -1260,7 +1260,7 @@ async fn sync(
                 let moved = state.supervisor.observe(backend, now);
                 announce_link(parts, state, moved);
             }
-            announce_status(parts, &state.status.on_sync_finished(now));
+            announce_status(parts, &state.status.on_sync_finished(mailbox, now));
             Err(EngineError::new(error.to_string()))
         }
     }
