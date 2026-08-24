@@ -372,6 +372,112 @@ fn enqueueing_marks_the_message_as_having_work_outstanding() {
 }
 
 // ---------------------------------------------------------------------------
+// Enqueueing a named list at once
+// ---------------------------------------------------------------------------
+//
+// The multi-select twin of `enqueue_set`: a selection built by clicking is a
+// list of ids rather than a mailbox predicate, but it still must not cost one
+// statement per message the way looping over `enqueue` does.
+
+#[test]
+fn enqueueing_many_writes_one_row_per_message_naming_each_one() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let fixture = fixture(&connection);
+    let messages: Vec<MessageId> = (0..5)
+        .map(|_| insert_message(&connection, fixture.inbox))
+        .collect();
+    let queue = OperationQueueRepository::new(&connection);
+    let archive = Operation::Move {
+        from: fixture.inbox,
+        to: fixture.archive,
+    };
+
+    queue
+        .enqueue_many(fixture.account.id, &messages, &archive, at(9))
+        .expect("enqueue many");
+
+    let rows = queue.pending(fixture.account.id, at(9)).expect("pending");
+    assert_eq!(
+        rows.iter().map(|row| row.target).collect::<Vec<_>>(),
+        messages
+            .iter()
+            .map(|id| OperationTarget::Message(*id))
+            .collect::<Vec<_>>(),
+        "every row names the message whose UID the drainer will need"
+    );
+    for row in &rows {
+        assert_eq!(row.operation, archive);
+        assert_eq!(row.state, OperationState::Pending);
+        assert_eq!(row.mailbox_id, Some(fixture.inbox));
+        assert_eq!(
+            row.inverse,
+            archive.inverse(),
+            "the inverse is decided at enqueue time here as it is anywhere else"
+        );
+    }
+}
+
+#[test]
+fn enqueueing_many_marks_every_message_as_having_work_outstanding() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let fixture = fixture(&connection);
+    let messages: Vec<MessageId> = (0..3)
+        .map(|_| insert_message(&connection, fixture.inbox))
+        .collect();
+    let queue = OperationQueueRepository::new(&connection);
+
+    for message in &messages {
+        assert!(!has_pending_column(&connection, *message));
+    }
+
+    queue
+        .enqueue_many(
+            fixture.account.id,
+            &messages,
+            &Operation::SetFlags {
+                flags: flags("\\Seen"),
+            },
+            at(9),
+        )
+        .expect("enqueue many");
+
+    for message in &messages {
+        assert!(
+            has_pending_column(&connection, *message),
+            "the list reads this column rather than joining the queue"
+        );
+    }
+}
+
+#[test]
+fn enqueueing_many_with_no_ids_writes_nothing() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let fixture = fixture(&connection);
+    let queue = OperationQueueRepository::new(&connection);
+
+    queue
+        .enqueue_many(
+            fixture.account.id,
+            &[],
+            &Operation::SetFlags {
+                flags: flags("\\Seen"),
+            },
+            at(9),
+        )
+        .expect("enqueue many, of nothing");
+
+    assert!(
+        queue
+            .pending(fixture.account.id, at(9))
+            .expect("pending")
+            .is_empty()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Order, and surviving a restart
 // ---------------------------------------------------------------------------
 
