@@ -83,7 +83,8 @@ than checked by hand:
 |---|---|---|
 | Startup to usable UI (populated DB) | < 500 ms | **147 ms** |
 | Ordinary UI interaction | < 16 ms | **~2 ms** |
-| Local search | < 100 ms | *not yet measured* |
+| Local search | < 100 ms | **29 ms** |
+| Memory, 100,000 messages | no full-mailbox load | **47 MiB**, flat |
 
 Transitions are ≤ 100 ms or absent entirely, and `prefers-reduced-motion`
 is always honored. A mailbox is never loaded into memory in full — the
@@ -101,6 +102,7 @@ POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
 
 cargo bench -p postio-runtime --bench store_reads   # the database read
 cargo bench -p postio-gtk     --bench list_scroll   # the row draw
+cargo bench -p postio-search  --bench search_budget --features index
 ```
 
 Startup, on a 20,000-message store with an account and six folders:
@@ -123,10 +125,46 @@ thousand costs. The exception is a *jump* to a page nobody has scrolled
 through — the store has no boundary to seek from and falls back to walking
 — which happens once per jump, and every page after it is the 176 µs row.
 
-Search is unmeasured against a realistic index; `postio-search` has a bench
-harness and nothing has run it on real volume. Memory on a large mailbox is
-bounded by the list model's own cache, which its tests assert, but resident
-size has not been measured.
+Search, over a 120,000-message index, by query shape:
+
+| Query shape | Measured |
+|---|---|
+| Composed — an operator plus free text, what the search bar usually produces | 0.4 ms |
+| Simple term — a word matching about 1% of the corpus | 4.5 ms |
+| Operator only — `from:`, no free text and no FTS join | 9.7 ms |
+| Common word — a word in every message, the worst case | 18.4 ms |
+| Common word, with facet counts | 29.4 ms |
+
+The worst shape is the one to watch: `MATCH` and the `count(*)` behind it
+have to walk effectively the whole corpus, and it is where a missing index
+would show up first.
+
+#### Memory, and the claim it tests
+
+A mailbox is never loaded into memory in full. Measured rather than
+asserted, by sampling `/proc/<pid>/status` while the application is open on
+a store of each size:
+
+| | 1,000 messages | 100,000 messages |
+|---|---|---|
+| Anonymous — the application's own heap | 47 MiB | 47 MiB |
+| File-backed — mapped store, WAL, shared libraries | 83 MiB | 167 MiB |
+| Resident total | 131 MiB | 215 MiB |
+
+**The anonymous figure is the claim.** It is what Postio itself allocates —
+the windowed list model, the widgets, the runtime — and it does not move
+between a thousand messages and a hundred thousand. The file-backed half
+grows because `PRAGMA mmap_size` is 256 MiB and SQLite maps as much of the
+store as it touches; those are reclaimable page-cache pages, not mail the
+application is holding on to.
+
+Reproduce it:
+
+```sh
+cargo run --release -p postio-runtime --example seed_store -- /tmp/big.db 100000
+POSTIO_STORE=/tmp/big.db cargo run --release -p postio-app &
+grep -E '^(VmRSS|RssAnon|RssFile):' /proc/$!/status
+```
 
 ## Configuration
 
