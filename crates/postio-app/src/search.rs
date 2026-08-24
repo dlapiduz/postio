@@ -52,7 +52,7 @@ use postio_index::{SearchRequest, search};
 use postio_model::ids::AccountId;
 use postio_search::facets::{Facets, Scope};
 use postio_search::{ParsedQuery, SearchResults};
-use postio_storage::repository::{ContactRepository, MessageRepository};
+use postio_storage::repository::ContactRepository;
 use postio_storage::{BlobStore, Database, PooledConnection};
 
 use crate::Wiring;
@@ -98,7 +98,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
 /// it — or a connection that could not be checked out — reaches the caller as
 /// `None`, which every caller here treats as "draw nothing", because a search
 /// that could not run has no answer and must not invent one.
-fn ask<T, F>(database: &Database, runtime: &tokio::runtime::Handle, work: F) -> Answer<T>
+pub(crate) fn ask<T, F>(database: &Database, runtime: &tokio::runtime::Handle, work: F) -> Answer<T>
 where
     T: Send + 'static,
     F: FnOnce(&PooledConnection) -> Option<T> + Send + 'static,
@@ -474,47 +474,18 @@ fn results_label(count: u32) -> String {
 /// Resolve `cid:` parts, and open what the preview asks to open.
 fn install_preview(view: &View, wiring: &Wiring) {
     let preview = view.preview();
-    preview.set_blob_source(cid_source(
-        preview.clone(),
+    preview.set_blob_source(crate::reading::cid_source(
+        {
+            // The preview and the reading pane have the same problem and
+            // different notions of "the message on screen", which is why the
+            // shared helper takes a closure rather than a widget.
+            let preview = preview.clone();
+            move || preview.focused()
+        },
         wiring.database.clone(),
         wiring.blobs.clone(),
     ));
     install_open(&preview, wiring.commands.clone());
-}
-
-/// Where the preview's inline images come from.
-///
-/// The local blob store and nowhere else. The hardened view has JavaScript and
-/// network access off, so a `cid:` part whose bytes are not already on this
-/// machine simply does not draw — which is the privacy commitment working
-/// rather than a failure to handle.
-///
-/// Scoped to the message being previewed, because a `Content-ID` is only
-/// meaningful inside the message that declares it: resolving one globally
-/// would let a sender address another sender's parts. `BlobSource` carries no
-/// message, so the preview is asked which one it is showing at the moment the
-/// scheme handler runs.
-///
-/// Reads the whole message to get at its parts. That is more than is needed
-/// and it is what the repository offers from here; a `content_id` lookup
-/// belongs in `postio-storage`, which is not this bead's crate.
-fn cid_source(
-    preview: postio_gtk::search::Preview,
-    database: Database,
-    blobs: BlobStore,
-) -> Rc<dyn postio_gtk::reader::BlobSource> {
-    Rc::new(move |content_id: &str| {
-        let message = preview.focused()?;
-        let connection = database.connection().ok()?;
-        let part = MessageRepository::new(&connection)
-            .get(message)
-            .ok()??
-            .attachments
-            .into_iter()
-            .find(|part| part.content_id.as_deref() == Some(content_id))?;
-        let bytes = blobs.get(&part.blob_id?).ok()?;
-        Some((bytes, part.mime_type))
-    })
 }
 
 /// `Enter` on a previewed result opens it in the reader.
