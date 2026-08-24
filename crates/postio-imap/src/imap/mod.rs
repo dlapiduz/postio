@@ -89,7 +89,8 @@ pub use self::selection::{select, status};
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
 pub use self::skip_counter::{
     exclusive_measurement as skip_counter_exclusive_measurement, install as install_skip_counter,
-    skipped_untagged_responses,
+    install_forwarding_to as install_skip_counter_forwarding_to,
+    is_counting as skip_counter_is_counting, skipped_untagged_responses,
 };
 pub use self::transport::{
     ConnectionLog, ImapConnector, ImapScript, ImapStream, RustlsConnector, ScriptedConnector,
