@@ -389,10 +389,10 @@ mod tests {
         // An iCloud custom domain logs in as the Apple ID, which is the case
         // `examples/provision.rs` needs POSTIO_USERNAME for.
         let mut wanted = submission("imap.mail.me.com", true);
-        wanted.settings.login = "lena@icloud.com".to_owned();
+        wanted.settings.login = "lena@example.net".to_owned();
 
         let settings = connection_settings(&wanted);
-        assert_eq!(settings.username, "lena@icloud.com");
+        assert_eq!(settings.username, "lena@example.net");
         assert_eq!(settings.host, "imap.mail.me.com");
         assert_eq!(settings.port, 993);
         assert_eq!(settings.security, TransportSecurity::Tls);
