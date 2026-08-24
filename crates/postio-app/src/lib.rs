@@ -640,7 +640,7 @@ pub enum Startup {
 
 /// Decide which of the two startup does.
 ///
-/// Async because reading the keyring is: [`KeyringSecretStore`] reaches the
+/// Async because reading the keyring is: `KeyringSecretStore` reaches the
 /// Secret Service over D-Bus and bounds the round trip with a timeout, so
 /// this must be polled on the engine runtime and answered over a channel —
 /// never awaited on the GTK main context. `feed.rs` explains the rule.

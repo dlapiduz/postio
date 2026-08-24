@@ -184,7 +184,7 @@ impl MessageListView {
 
     /// Feed this pane from `source`.
     ///
-    /// The returned [`Feed`] is what opens a mailbox and what the runtime's
+    /// The returned `Feed` is what opens a mailbox and what the runtime's
     /// events are handed to; the pane itself stays ignorant of where rows
     /// come from, which is what keeps `rusqlite` out of this crate.
     pub fn feed(&self, source: std::rc::Rc<dyn crate::feed::MessageSource>) -> crate::feed::Feed {

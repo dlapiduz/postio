@@ -11,7 +11,7 @@
 //! `attachments`, and the body text is not in SQLite at all — it lives in
 //! the content-addressed blob store (CLAUDE.md, "No BLOB columns anywhere").
 //!
-//! So [`messages_fts`] points at [`search_documents`], a table this crate
+//! So `messages_fts` points at `search_documents`, a table this crate
 //! owns: one flattened row per message, kept current by triggers on
 //! `messages`, `recipients` and `attachments` for the metadata columns, and
 //! by [`index_body`] for the body text, since nothing in SQL can compute

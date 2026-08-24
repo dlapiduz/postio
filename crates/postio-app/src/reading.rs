@@ -1,8 +1,8 @@
 //! The reading pane: a message the user picked, rendered.
 //!
 //! `postio-gtk` may not read the store, so a body cannot get into the reader
-//! without this crate. The window mounts a [`Reader`] and knows how to show a
-//! [`MessageBody`]; what it cannot do is get one, because that means SQLite
+//! without this crate. The window mounts a `Reader` and knows how to show a
+//! `MessageBody`; what it cannot do is get one, because that means SQLite
 //! and the blob store. This is the join.
 //!
 //! # The guard is the load-bearing part
@@ -211,7 +211,7 @@ const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 ///
 /// # Why this is the seam rather than the save handler
 ///
-/// [`PartsPanel::save_part`] runs the portal dialog itself and hands back the
+/// `PartsPanel::save_part` runs the portal dialog itself and hands back the
 /// file the user chose, so the only part worth testing is what happens next —
 /// and that half is nothing to do with GTK. Keeping it here, taking store
 /// handles and returning bytes, makes "saves a part that was never
