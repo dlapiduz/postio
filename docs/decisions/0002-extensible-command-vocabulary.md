@@ -258,6 +258,42 @@ single consumer today. If a second consumer arrives (an MCP server alongside
 the window), the fan-out story has to be decided then, not assumed. That is not
 this bead.
 
+### Implemented — issue #33
+
+Built as sketched, with `Invocation::id()` becoming `invocation_id()` because
+`id()` was already taken by the `CommandId` accessor. The shape landed in
+`crates/postio-core/src/invocation.rs`:
+
+- `CommandSender::send_tracked(cmd) -> InvocationId`, alongside an unchanged
+  `send`.
+- The *sink* carries the origin, not the command and not the handler. The
+  pump tags the `EventSink` it hands to a handler, so a handler that never
+  heard of correlation still emits attributable events, and a task it spawns
+  keeps the attribution after that handler has returned. `CommandHandler` did
+  not change; neither did any call site outside `postio-core`, which the
+  "purely additive" claim required and a `cargo build --workspace` confirmed.
+- The channel carries an `EventEnvelope { event, origin }`.
+  `EventStream::next`/`try_next`/`next_blocking` still yield a bare `Event`
+  and discard the envelope; the `*_tracked` accessors hand it over.
+
+One thing the sketch did not have, added because the acceptance criterion
+needs it. A caller told to "observe the outcome of THAT invocation" must have
+an outcome to observe, and a handler that succeeds silently emits nothing at
+all — so correlation alone leaves a caller unable to tell success from *still
+running*. `Event::InvocationFinished { invocation, outcome }` is therefore
+emitted **once per tracked send, and only for a tracked send**: completed,
+rejected, or failed, including when the handler panicked and when no handler
+was registered. A programmatic caller awaiting an answer that never arrives
+is a hang, which is a worse failure than the one being reported. The
+untracked path emits nothing new, so the GTK frontend's stream is unchanged
+event for event.
+
+The fan-out constraint above is untouched and still the next decision: there
+is still exactly one `EventStream`, so a tracked caller and the window cannot
+both read it. That holds while the only tracked callers are tests and a
+future headless consumer, and it is the first thing to settle when an MCP
+server wants to sit beside a running window.
+
 ---
 
 ## Consequences
