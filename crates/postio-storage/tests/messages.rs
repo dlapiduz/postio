@@ -929,3 +929,82 @@ fn paging_stays_flat_over_a_hundred_thousand_messages() {
         100_000
     );
 }
+
+// ---------------------------------------------------------------------------
+// Reading an explicit, ranked set of ids
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rows_for_answers_in_the_order_it_was_asked() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    // Created oldest first, so id order and received_at order agree. That is
+    // what makes "came back in the order asked" a claim about the argument
+    // rather than a coincidence of how SQLite walked the table.
+    let mut ids = Vec::new();
+    for step in 0..5 {
+        let mut message = a_message(inbox, account.id, step * 10);
+        messages.create(&mut message).expect("create");
+        ids.push(message.id);
+    }
+
+    // A ranking is neither of those orders. This one is deliberately not
+    // sorted, not reverse-sorted, and not contiguous.
+    let ranked = vec![ids[3], ids[0], ids[4], ids[1]];
+    let rows = messages.rows_for(&ranked).expect("rows");
+
+    assert_eq!(
+        rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        ranked,
+        "the rows came back in the store's order rather than the ranking"
+    );
+    // Real rows, not stubs: the list draws these.
+    assert_eq!(rows[0].subject.as_deref(), Some("Re: Subject 30"));
+    assert_eq!(
+        rows[0].from.as_ref().map(|from| from.address.as_str()),
+        Some("ada@example.com")
+    );
+    assert!(rows[0].seen, "the flags did not come with the row");
+}
+
+#[test]
+fn rows_for_drops_what_the_store_no_longer_holds() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut ids = Vec::new();
+    for step in 0..3 {
+        let mut message = a_message(inbox, account.id, step * 10);
+        messages.create(&mut message).expect("create");
+        ids.push(message.id);
+    }
+
+    // The index and the store are allowed to disagree for a moment: a search
+    // can hand back a message deleted between the query and this read. That
+    // is a shorter answer, not an error, and certainly not a fabricated row.
+    messages.delete(&[ids[1]]).expect("delete");
+
+    let rows = messages.rows_for(&ids).expect("rows");
+    assert_eq!(
+        rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![ids[0], ids[2]],
+        "a deleted hit was faked or the survivors were reordered"
+    );
+
+    // Nothing asked for, nothing read -- and no SQL with an empty `IN ()`,
+    // which SQLite rejects outright.
+    assert!(messages.rows_for(&[]).expect("rows").is_empty());
+
+    // An id that was never real is the same case.
+    assert!(
+        messages
+            .rows_for(&[MessageId::new(999_999)])
+            .expect("rows")
+            .is_empty()
+    );
+}
