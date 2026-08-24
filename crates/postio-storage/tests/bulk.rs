@@ -16,7 +16,7 @@ use postio_model::{
     Account, MailboxId, MessageId, Operation, OperationRange, OperationState, OperationTarget,
 };
 use postio_storage::repository::{
-    MessageRepository, MessageSet, OperationQueueRepository, QueuedOperation,
+    ColumnFlag, MessageRepository, MessageSet, OperationQueueRepository, QueuedOperation,
 };
 use postio_storage::test_support;
 
@@ -416,5 +416,323 @@ fn an_empty_run_names_nothing() {
             .count_set(&MessageSet::Queued(empty))
             .expect("a count"),
         0
+    );
+}
+
+// ── Flags ────────────────────────────────────────────────────────────────
+//
+// A bulk flag write is not the same statement a bulk move is. `\Seen` and
+// `\Flagged` live in a text column *and* in a denormalised boolean beside it,
+// so the write has to keep the two agreeing without reading a row — and the
+// toggle has to know whether the rows already agree, which is a count rather
+// than a scan.
+
+/// The `flags` text a row is holding, straight out of the column.
+fn flag_text(connection: &Connection, message: MessageId) -> String {
+    connection
+        .query_row(
+            "SELECT flags FROM messages WHERE id = ?1",
+            [message.get()],
+            |row| row.get(0),
+        )
+        .expect("the message is still there")
+}
+
+fn boolean(connection: &Connection, message: MessageId, column: &str) -> bool {
+    connection
+        .query_row(
+            &format!("SELECT {column} FROM messages WHERE id = ?1"),
+            [message.get()],
+            |row| row.get::<_, i64>(0).map(|value| value != 0),
+        )
+        .expect("the message is still there")
+}
+
+/// Puts `text` in the flags column and the booleans that shadow it, the way a
+/// repository write would have left them.
+fn wearing(connection: &Connection, message: MessageId, text: &str) {
+    let has = |flag: &str| text.split_whitespace().any(|word| word == flag);
+    connection
+        .execute(
+            "UPDATE messages SET flags = ?2, seen = ?3, flagged = ?4, answered = ?5,
+                                 draft = ?6, deleted = ?7
+              WHERE id = ?1",
+            rusqlite::params![
+                message.get(),
+                text,
+                has("\\Seen"),
+                has("\\Flagged"),
+                has("\\Answered"),
+                has("\\Draft"),
+                has("\\Deleted"),
+            ],
+        )
+        .expect("dress the message");
+}
+
+#[test]
+fn marking_a_whole_mailbox_read_is_one_statement_over_the_index() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let messages = fill(&connection, world.inbox, 20);
+    let elsewhere = fill(&connection, world.archive, 3);
+
+    let changed = MessageRepository::new(&connection)
+        .set_flag_on_set(&MessageSet::in_mailbox(world.inbox), ColumnFlag::Seen, true)
+        .expect("a bulk flag write");
+
+    assert_eq!(changed, 20);
+    for message in &messages {
+        assert!(boolean(&connection, *message, "seen"));
+        assert_eq!(flag_text(&connection, *message), "\\Seen");
+    }
+    for message in &elsewhere {
+        assert!(
+            !boolean(&connection, *message, "seen"),
+            "the predicate is the mailbox, not the account"
+        );
+    }
+}
+
+#[test]
+fn a_bulk_flag_write_keeps_the_text_and_its_booleans_agreeing() {
+    // The column is denormalised *from* the text — the list filters on the
+    // boolean and the sync engine sends the text, so a write that moved one
+    // and not the other would show one thing and tell the server another.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let message = fill(&connection, world.inbox, 1)[0];
+    wearing(&connection, message, "\\Answered $Work");
+
+    MessageRepository::new(&connection)
+        .set_flag_on_set(
+            &MessageSet::in_mailbox(world.inbox),
+            ColumnFlag::Flagged,
+            true,
+        )
+        .expect("a bulk flag write");
+
+    assert!(boolean(&connection, message, "flagged"));
+    assert_eq!(
+        flag_text(&connection, message),
+        "\\Answered \\Flagged $Work",
+        "canonical spellings in FlagSet order, which is what the schema promises"
+    );
+}
+
+#[test]
+fn clearing_a_flag_in_bulk_leaves_every_other_flag_alone() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let message = fill(&connection, world.inbox, 1)[0];
+    wearing(&connection, message, "\\Seen \\Answered \\Flagged $Work");
+
+    MessageRepository::new(&connection)
+        .set_flag_on_set(
+            &MessageSet::in_mailbox(world.inbox),
+            ColumnFlag::Seen,
+            false,
+        )
+        .expect("a bulk flag write");
+
+    assert!(!boolean(&connection, message, "seen"));
+    assert_eq!(
+        flag_text(&connection, message),
+        "\\Answered \\Flagged $Work"
+    );
+    assert!(
+        boolean(&connection, message, "answered"),
+        "marking unread is not a reset"
+    );
+}
+
+#[test]
+fn a_bulk_flag_write_marks_its_rows_as_ahead_of_the_server() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let message = fill(&connection, world.inbox, 1)[0];
+
+    MessageRepository::new(&connection)
+        .set_flag_on_set(&MessageSet::in_mailbox(world.inbox), ColumnFlag::Seen, true)
+        .expect("a bulk flag write");
+
+    assert!(
+        boolean(&connection, message, "flags_dirty"),
+        "a local flag change has to be pushed, exactly as `set_flags` records"
+    );
+}
+
+#[test]
+fn the_rows_a_flag_write_would_change_are_a_set_of_their_own() {
+    // The rows that *disagree* with the write are the ones the queue must
+    // carry, or undo would take back rows the action never touched. Asking
+    // which they are stays a count, not a read.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let messages = fill(&connection, world.inbox, 6);
+    for message in &messages[..4] {
+        wearing(&connection, *message, "\\Seen");
+    }
+
+    let unread = MessageSet::WithFlag {
+        set: Box::new(MessageSet::in_mailbox(world.inbox)),
+        flag: ColumnFlag::Seen,
+        present: false,
+    };
+    let repository = MessageRepository::new(&connection);
+
+    assert_eq!(repository.count_set(&unread).expect("a count"), 2);
+    assert_eq!(
+        repository
+            .set_flag_on_set(&unread, ColumnFlag::Seen, true)
+            .expect("a bulk flag write"),
+        2,
+        "the four that already agreed are not written again"
+    );
+    assert_eq!(repository.count_set(&unread).expect("a count"), 0);
+}
+
+#[test]
+fn a_flag_set_still_honours_the_rows_taken_back_out_of_the_selection() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let messages = fill(&connection, world.inbox, 5);
+
+    let set = MessageSet::WithFlag {
+        set: Box::new(MessageSet::InMailbox {
+            mailbox: world.inbox,
+            except: vec![messages[1]],
+        }),
+        flag: ColumnFlag::Seen,
+        present: false,
+    };
+
+    assert_eq!(
+        MessageRepository::new(&connection)
+            .set_flag_on_set(&set, ColumnFlag::Seen, true)
+            .expect("a bulk flag write"),
+        4
+    );
+    assert!(!boolean(&connection, messages[1], "seen"));
+}
+
+#[test]
+fn a_flag_set_composes_with_the_queued_run_undo_names() {
+    // The undo half of a bulk flag: the run of queue rows the action wrote is
+    // the set, narrowed to the rows that still carry what it put on them.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let messages = fill(&connection, world.inbox, 4);
+    let untouched = fill(&connection, world.inbox, 2);
+    for message in &untouched {
+        wearing(&connection, *message, "\\Flagged");
+    }
+
+    let unflagged = MessageSet::WithFlag {
+        set: Box::new(MessageSet::in_mailbox(world.inbox)),
+        flag: ColumnFlag::Flagged,
+        present: false,
+    };
+    let range = OperationQueueRepository::new(&connection)
+        .enqueue_set(
+            world.account.id,
+            &unflagged,
+            &Operation::SetFlags {
+                flags: [postio_model::Flag::Flagged].into_iter().collect(),
+            },
+            at(9),
+        )
+        .expect("a bulk enqueue")
+        .expect("four rows disagreed");
+    let repository = MessageRepository::new(&connection);
+    repository
+        .set_flag_on_set(&unflagged, ColumnFlag::Flagged, true)
+        .expect("a bulk flag write");
+
+    let taken_back = repository
+        .set_flag_on_set(
+            &MessageSet::WithFlag {
+                set: Box::new(MessageSet::Queued(range)),
+                flag: ColumnFlag::Flagged,
+                present: true,
+            },
+            ColumnFlag::Flagged,
+            false,
+        )
+        .expect("a bulk flag write back");
+
+    assert_eq!(taken_back, 4);
+    for message in &messages {
+        assert!(!boolean(&connection, *message, "flagged"));
+    }
+    for message in &untouched {
+        assert!(
+            boolean(&connection, *message, "flagged"),
+            "undo takes back what the action flagged, not what was flagged already"
+        );
+    }
+}
+
+#[test]
+fn a_bulk_flag_write_moves_the_cached_mailbox_counts() {
+    // The sidebar reads these rather than counting rows, so a bulk write that
+    // did not move them would show an unread badge over a folder the user has
+    // just marked read.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    fill(&connection, world.inbox, 7);
+
+    MessageRepository::new(&connection)
+        .set_flag_on_set(&MessageSet::in_mailbox(world.inbox), ColumnFlag::Seen, true)
+        .expect("a bulk flag write");
+
+    let unread: i64 = connection
+        .query_row(
+            "SELECT unread_count FROM mailboxes WHERE id = ?1",
+            [world.inbox.get()],
+            |row| row.get(0),
+        )
+        .expect("a count");
+    assert_eq!(unread, 0);
+}
+
+#[test]
+fn the_flags_with_columns_are_the_five_that_sort_first() {
+    // The guard under `set_flag_on_set`. It rebuilds the flags text as "the
+    // five system flags, in column order, then the keywords", which is only
+    // the same string `FlagSet` would have produced while those five remain
+    // the five lowest-ranked persistable flags. Add a sixth system flag ahead
+    // of them in `Flag::rank` and every bulk flag write starts writing the
+    // text out of order — silently, because nothing reads it back in order.
+    let everything: postio_model::FlagSet = [
+        postio_model::Flag::parse("Work"),
+        postio_model::Flag::NotJunk,
+        postio_model::Flag::Junk,
+        postio_model::Flag::Forwarded,
+        postio_model::Flag::Recent,
+        postio_model::Flag::Draft,
+        postio_model::Flag::Deleted,
+        postio_model::Flag::Flagged,
+        postio_model::Flag::Answered,
+        postio_model::Flag::Seen,
+    ]
+    .into_iter()
+    .collect();
+
+    let persistable = everything.persistable();
+    let spellings: Vec<&str> = persistable.iter().map(postio_model::Flag::as_str).collect();
+
+    assert_eq!(
+        &spellings[..5],
+        &["\\Seen", "\\Answered", "\\Flagged", "\\Deleted", "\\Draft"],
+        "the columns `set_flag_on_set` rebuilds the head from, in that order"
     );
 }
