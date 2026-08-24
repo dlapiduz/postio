@@ -36,6 +36,7 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Composer => "composer",
             Context::Search => "search",
             Context::Palette => "palette",
+            Context::Sidebar => "folder list",
         })
         .collect();
     let mut sentence = names.join(", ");

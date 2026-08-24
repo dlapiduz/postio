@@ -92,6 +92,9 @@ mod imp {
         pub parts: OnceCell<crate::parts::PartsPanel>,
         /// The pane that had the keyboard when the box opened.
         pub before_finder: std::cell::Cell<Option<(Context, crate::shell::Pane)>>,
+        /// The context that had the keyboard before it went to the folders,
+        /// so `Esc` puts it back where it was rather than guessing `List`.
+        pub before_sidebar: std::cell::Cell<Option<Context>>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -511,6 +514,34 @@ impl Window {
         sidebar.set_vexpand(true);
         shell.sidebar().append(&sidebar);
 
+        // The context follows the keyboard, however the keyboard got there.
+        // Clicking a folder gives the row focus, and if the context did not
+        // follow, `j` would scroll the message list while the focus ring sat
+        // visibly on a folder — keys doing one thing and the screen saying
+        // another, which is worse than either alone.
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_enter(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() != Context::Sidebar {
+                    window.imp().before_sidebar.set(Some(window.context()));
+                    window.set_context(Context::Sidebar);
+                }
+            }
+        ));
+        focus.connect_leave(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() == Context::Sidebar {
+                    let previous = window.imp().before_sidebar.take();
+                    window.set_context(previous.unwrap_or(Context::List));
+                }
+            }
+        ));
+        sidebar.add_controller(focus);
+
         // A message dragged onto a folder is the `m` key with the destination
         // already answered — the same registry command, so it is undoable the
         // same way and reaches the server through the same queue.
@@ -838,6 +869,9 @@ impl Window {
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.finder().is_open() => self.close_finder(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
+            // Nearer than a selection made before the keyboard went to the
+            // folders: `Esc` in the sidebar means "back to the messages".
+            CommandId::Back if self.context() == Context::Sidebar => self.leave_sidebar(),
             // Not while a thread has the column: `Esc` there means "back to
             // the list", which is nearer than a selection made before the
             // drill-in. It falls through to `follow_drill_in`, which needs to
@@ -863,9 +897,53 @@ impl Window {
             CommandId::ExtendSelectionDown => self.list().extend_down(),
             CommandId::ExtendSelectionUp => self.list().extend_up(),
             CommandId::SelectAll => self.list().select_all(),
+
+            // The folders. `j`/`k` reach these only in `Context::Sidebar`,
+            // which is why the sidebar had to become a real context rather
+            // than a focus flag — see `postio-cfd.2`.
+            CommandId::FocusSidebar => self.enter_sidebar(),
+            CommandId::NextFolder => {
+                self.sidebar().step(1);
+            }
+            CommandId::PrevFolder => {
+                self.sidebar().step(-1);
+            }
             _ => return false,
         }
         true
+    }
+
+    /// Put the keyboard in the folder list.
+    ///
+    /// Remembers where it came from, so leaving restores it. Does nothing
+    /// when there are no folders yet: sending the keyboard into an empty
+    /// pane on a first run would strand it somewhere with no rows to move
+    /// between and nothing to say why.
+    fn enter_sidebar(&self) {
+        if self.context() == Context::Sidebar {
+            return;
+        }
+        // A hidden sidebar has to come back before it can take the keyboard,
+        // or the command would silently do nothing at the narrow breakpoint.
+        if !self.shell().sidebar_visible() {
+            self.shell().set_sidebar_visible(true);
+        }
+        if !self.sidebar().focus_folders() {
+            return;
+        }
+        self.imp().before_sidebar.set(Some(self.context()));
+        self.set_context(Context::Sidebar);
+    }
+
+    /// Give the keyboard back to whatever had it before the folders.
+    fn leave_sidebar(&self) {
+        let previous = self.imp().before_sidebar.take().unwrap_or(Context::List);
+        self.set_context(previous);
+        if self.thread_open() {
+            self.thread().grab_focus();
+        } else {
+            self.list().grab_focus();
+        }
     }
 
     /// Hand one invocation to everything listening, in both shapes.

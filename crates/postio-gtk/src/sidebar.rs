@@ -396,6 +396,87 @@ impl Sidebar {
         imp.echoing.set(false);
     }
 
+    /// Every folder row, both sections, in the order they are drawn.
+    ///
+    /// The two `GtkListBox`es are a *visual* split — special-use folders,
+    /// then a rule, then the rest — and the keyboard must not know about it.
+    /// `j` at the bottom of the first section goes to the top of the second,
+    /// because that is the next folder on screen.
+    fn rows(&self) -> Vec<gtk::ListBoxRow> {
+        let imp = self.imp();
+        let mut rows = Vec::new();
+        for list in [&imp.special, &imp.ordinary] {
+            let mut index = 0;
+            while let Some(row) = list.row_at_index(index) {
+                rows.push(row);
+                index += 1;
+            }
+        }
+        rows
+    }
+
+    /// Put the keyboard in the folder list.
+    ///
+    /// On the selected folder, or the first one when nothing is selected —
+    /// never nowhere. Returns whether there was a folder to land on, so the
+    /// caller can leave the keyboard where it was rather than sending it into
+    /// an empty pane on a first run.
+    pub fn focus_folders(&self) -> bool {
+        let rows = self.rows();
+        let landing = self
+            .selected()
+            .and_then(|id| {
+                rows.iter()
+                    .find(|row| MailboxId::new(unsafe { row_id(row) }) == id)
+            })
+            .or_else(|| rows.first());
+        match landing {
+            Some(row) => {
+                row.grab_focus();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Move the selection `delta` rows and report the folder landed on.
+    ///
+    /// Selection *is* the open folder here, exactly as it is for the mouse: a
+    /// click selects and opens, so `j` selects and opens. Making the keyboard
+    /// move a cursor that has to be confirmed would be a second idiom for
+    /// the same pane.
+    ///
+    /// Stops at the ends rather than wrapping. Wrapping a short list is how
+    /// you end up in Trash when you meant to stop at Inbox.
+    pub fn step(&self, delta: i32) -> Option<MailboxId> {
+        let rows = self.rows();
+        if rows.is_empty() {
+            return None;
+        }
+        let current = self.selected().and_then(|id| {
+            rows.iter()
+                .position(|row| MailboxId::new(unsafe { row_id(row) }) == id)
+        });
+        let next = match current {
+            Some(index) => (index as i32 + delta).clamp(0, rows.len() as i32 - 1) as usize,
+            // Nothing selected: `j` starts at the top and `k` at the bottom,
+            // so both keys reach a folder from a standing start.
+            None if delta > 0 => 0,
+            None => rows.len() - 1,
+        };
+        let row = &rows[next];
+        row.grab_focus();
+        let id = MailboxId::new(unsafe { row_id(row) });
+        self.select(id);
+        // `select` is deliberately quiet — it is what the window calls to
+        // echo a folder it opened — so the keyboard has to announce its own
+        // move, the same way a click does.
+        for handler in self.imp().selected.borrow().iter() {
+            handler(id);
+        }
+        Some(id)
+    }
+
     /// Called when the user picks a folder, by click or by keyboard.
     /// Called when messages are dropped on a folder.
     ///
@@ -607,13 +688,24 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
         None => count.set_visible(false),
     }
 
-    // The row announces both halves; the count alone would be a bare number.
-    row.update_property(&[gtk::accessible::Property::Label(
-        &match count_for(mailbox) {
-            Some(value) => format!("{}, {value}", display_name(mailbox)),
-            None => display_name(mailbox),
-        },
-    )]);
+    // The row announces both halves, and says what the number *is*. Sighted
+    // readers get that from the column it sits in; a screen reader given
+    // "Inbox, 12" is given a bare number, and the same digit means unread in
+    // one folder and total in another — see `count_for`.
+    row.update_property(&[gtk::accessible::Property::Label(&announce(mailbox))]);
+}
+
+/// What a screen reader says for a folder row.
+fn announce(mailbox: &Mailbox) -> String {
+    let name = display_name(mailbox);
+    let Some(count) = count_for(mailbox) else {
+        return name;
+    };
+    match mailbox.role {
+        MailboxRole::Drafts => format!("{name}, {count} drafts"),
+        MailboxRole::Flagged => format!("{name}, {count} flagged"),
+        _ => format!("{name}, {count} unread"),
+    }
 }
 
 /// What a folder is called in the sidebar.

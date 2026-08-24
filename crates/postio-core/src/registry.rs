@@ -426,6 +426,39 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
     },
     CommandSpec {
+        id: CommandId::FocusSidebar,
+        title: "Focus the folder list",
+        // `g` is already the "go to" prefix — `g g` is the first message — so
+        // "go to folders" reads as one idiom rather than a second one.
+        default_binding: "g f",
+        alternate_bindings: &[],
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::NextFolder,
+        title: "Next folder",
+        // The same keys the message list moves by, in a context where they
+        // mean a different thing. One idiom for "move down", two verbs —
+        // rather than reusing `next_message` for something that is not a
+        // message, which is how a registry stops meaning anything.
+        default_binding: "j",
+        alternate_bindings: &["Down"],
+        contexts: ctx(&[Context::Sidebar]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::PrevFolder,
+        title: "Previous folder",
+        default_binding: "k",
+        alternate_bindings: &["Up"],
+        contexts: ctx(&[Context::Sidebar]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
         id: CommandId::Refresh,
         title: "Refresh",
         default_binding: "F5",

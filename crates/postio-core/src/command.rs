@@ -123,6 +123,12 @@ command_ids! {
     EditConfig => "edit_config",
     /// Show or hide the sidebar.
     ToggleSidebar => "toggle_sidebar",
+    /// Put the keyboard in the folder list.
+    FocusSidebar => "focus_sidebar",
+    /// Move to the next folder in the sidebar.
+    NextFolder => "next_folder",
+    /// Move to the previous folder in the sidebar.
+    PrevFolder => "prev_folder",
     /// Ask the sync engine to check for new mail now.
     Refresh => "refresh",
 }
@@ -340,6 +346,12 @@ pub enum Command {
     EditConfig,
     /// Show or hide the sidebar.
     ToggleSidebar,
+    /// Put the keyboard in the folder list.
+    FocusSidebar,
+    /// Move to the next folder.
+    NextFolder,
+    /// Move to the previous folder.
+    PrevFolder,
     /// Check for new mail now.
     Refresh,
 }
@@ -407,6 +419,9 @@ impl Command {
             Command::Settings => CommandId::Settings,
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
+            Command::FocusSidebar => CommandId::FocusSidebar,
+            Command::NextFolder => CommandId::NextFolder,
+            Command::PrevFolder => CommandId::PrevFolder,
             Command::Refresh => CommandId::Refresh,
         }
     }
@@ -468,6 +483,9 @@ impl Command {
             CommandId::Settings => Command::Settings,
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
+            CommandId::FocusSidebar => Command::FocusSidebar,
+            CommandId::NextFolder => Command::NextFolder,
+            CommandId::PrevFolder => Command::PrevFolder,
             CommandId::Refresh => Command::Refresh,
         }
     }
