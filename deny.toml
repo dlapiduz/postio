@@ -1,0 +1,93 @@
+# Supply-chain rules for a mail client.
+#
+# `Cargo.lock` holds ~405 packages and, until this file existed, nothing
+# checked any of them. That matters more here than in an average Rust project:
+# Postio holds the user's credentials in the OS keyring and their whole mailbox
+# on disk, so a compromised transitive dependency has the highest-value target
+# the project owns within reach. ADR 0001 also pins `io-imap` deliberately, so
+# an advisory against it will never arrive as a routine `cargo update`.
+#
+# This is the "what is in the graph at all" question.
+# `scripts/check-crate-boundaries.py` asks the other one -- which of *our*
+# crates may reach which -- and neither substitutes for the other.
+#
+# Run it locally with:  cargo deny check
+
+[graph]
+# Every target Postio is actually built for. v1 is Linux only
+# (docs/PRODUCT.md §2), so the Windows and macOS crates in the graph are
+# unreachable and are not worth auditing as though they shipped.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+]
+all-features = true
+
+[advisories]
+version = 2
+# Vulnerabilities are always denied under version 2; these are the knobs left.
+unmaintained = "workspace"
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Postio ships under MIT. Everything here is compatible with distributing a
+# MIT-licensed binary; anything not listed fails the build, which is the point.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    # Public-domain dedications. `notify` (the config file watcher),
+    # `blake3` and `constant_time_eq` are here.
+    "CC0-1.0",
+    # File-level copyleft, and the only copyleft in the graph: `cssparser` and
+    # `dtoa-short`, both pulled in by the HTML sanitizer's stack. MPL-2.0
+    # obliges publishing changes *to those files*; Postio does not modify them,
+    # and linking is explicitly permitted. Allowed deliberately rather than by
+    # omission -- if a third MPL crate appears, this comment is the record of
+    # what was decided and why.
+    "MPL-2.0",
+    # The Mozilla CA certificate bundle (`webpki-root-certs`). A data licence,
+    # not a code one.
+    "CDLA-Permissive-2.0",
+]
+# A licence expression Postio cannot read confidently is one nobody has
+# checked. Fail rather than guess.
+confidence-threshold = 0.93
+
+[bans]
+# 20 crates currently appear at more than one version, and almost all of them
+# are Windows target shims and `getrandom`/`rand`/`hashbrown` generations that
+# a Linux build never compiles. Denying that today would mean twenty `skip`
+# entries that rot into noise nobody reads.
+#
+# `warn` reports it without failing, which is the honest starting point: the
+# number is visible, it can be driven down deliberately, and this becomes
+# "deny" when it is low enough to mean something.
+multiple-versions = "warn"
+wildcards = "deny"
+# ...except between Postio's own crates. `postio-config.workspace = true`
+# resolves to a path dependency carrying no version requirement, which is a
+# wildcard by cargo-deny's reckoning -- 32 of them across the workspace. They
+# are not a supply-chain question: that code is in this repository, and pinning
+# sibling crates to versions nobody bumps would be churn that buys nothing.
+# External wildcards are still denied, which is the case this rule is for.
+#
+# `io-imap` is pinned to an exact version on purpose (ADR 0001); a `=`
+# requirement is not a wildcard, so it is unaffected either way.
+allow-wildcard-paths = true
+
+[sources]
+# Everything comes from crates.io. A git or path dependency arriving in the
+# graph is a change to where Postio's code comes from, and should be a decision
+# somebody made rather than a line in a lockfile diff.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
