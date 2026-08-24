@@ -506,6 +506,10 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // pane and the window wires their swap when the composer is installed.
     reading::install(window, wiring);
 
+    // Dragging messages out to another application. Nothing is written until
+    // a drop actually asks, so this costs nothing until it is used.
+    export::install(window, wiring);
+
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
