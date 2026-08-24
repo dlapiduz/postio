@@ -219,6 +219,49 @@ fn show_folders(window: &Window) {
     window.sidebar().set_mailboxes(&folders);
 }
 
+/// Canvas 3e's own first-run screen.
+///
+/// Put in as the window's content, which is how `postio-app` shows it: one
+/// window, no new navigation level, and nothing behind it to go back to.
+fn show_onboarding(window: &Window, manual: bool, failed: bool) {
+    use postio_gtk::onboarding::{Onboarding, Server, Settings, Status};
+
+    let screen = Onboarding::new();
+    screen.set_address("lena@example.com");
+    // An iCloud address, because it is the case the whole screen is shaped
+    // around: the password that will not work unless you are told.
+    screen.set_status(Status::Found(Settings {
+        imap: Server {
+            host: "imap.mail.me.com".to_owned(),
+            port: 993,
+            tls: true,
+        },
+        smtp: Server {
+            host: "smtp.mail.me.com".to_owned(),
+            port: 465,
+            tls: true,
+        },
+        login: "lena@example.com".to_owned(),
+        requires_app_password: true,
+        note: Some(
+            "iCloud does not accept your Apple ID password here. Make an \
+             app-specific password and paste that instead."
+                .to_owned(),
+        ),
+        help_url: Some("https://appleid.apple.com/account/manage".to_owned()),
+        source: "Postio's provider list".to_owned(),
+    }));
+    if failed {
+        screen.set_status(Status::Failed(
+            "imap.mail.me.com rejected that password. iCloud needs an \
+             app-specific password, not your Apple ID password."
+                .to_owned(),
+        ));
+    }
+    screen.show_manual(manual);
+    window.set_content(Some(&screen));
+}
+
 /// How many frames to let the window paint before the shot is taken.
 const SETTLE_FRAMES: u32 = 8;
 
@@ -309,6 +352,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("folders") {
         show_folders(&window);
+    }
+    if flag("onboarding") {
+        show_onboarding(&window, flag("manual"), flag("failed"));
     }
     window.present();
     settle(&window);
