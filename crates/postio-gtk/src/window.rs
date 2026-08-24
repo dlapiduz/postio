@@ -314,15 +314,39 @@ impl Window {
         if let Some(pane) = self.imp().list_pane.get() {
             pane.set_visible(true);
         }
-        // Focus first, then put the offset back — and put it back on the
-        // *next* turn of the loop. Grabbing the keyboard queues a scroll of
-        // the cursor row into view, which GTK performs during the layout pass
-        // after this one; restoring inside this call would simply be undone
-        // by it. Measured at two rows of drift on a 200-message list.
-        self.list().grab_focus();
+        // Focus first, then put the offset back — on a frame tick, not on an
+        // idle.
+        //
+        // Grabbing the keyboard scrolls the cursor row into view, and "into
+        // view" is not the pixel offset the user left: two rows of drift on a
+        // 200-message list, 84px of it here.
+        //
+        // So the offset has to go back *after* that scroll. `idle_add` is the
+        // obvious way and it is not ordered against the frame clock, which
+        // drives the layout pass that performs the scroll — so it restored
+        // correctly about half the time and left exactly those two rows the
+        // other half (`postio-1ff`: 6 of 12 runs on an idle box, always the
+        // same 84px). Restoring *before* the grab does not work either: the
+        // scroll-into-view happens regardless of whether the row is already
+        // visible, so a synchronous restore is simply overwritten — that
+        // variant failed 20 of 20.
+        //
+        // A tick callback is ordered: it runs on the frame clock, so waiting
+        // one full frame puts this strictly after the layout pass that did
+        // the scrolling. The first tick can be the one the scroll happens in,
+        // which is why it takes two.
         let offset = self.imp().list_scroll.get();
         let list = self.list();
-        glib::idle_add_local_once(move || list.set_scroll_offset(offset));
+        list.grab_focus();
+        let ticks = std::cell::Cell::new(0u8);
+        list.clone().add_tick_callback(move |list, _| {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() < 2 {
+                return glib::ControlFlow::Continue;
+            }
+            list.set_scroll_offset(offset);
+            glib::ControlFlow::Break
+        });
         self.set_context(Context::List);
     }
 
