@@ -63,6 +63,18 @@ impl MailStore for Fake {
         Box::pin(async move { Ok(total) })
     }
 
+    fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
+        // Keyed off the position the id encodes, so the answer is in the
+        // order asked rather than the order the fake happens to iterate.
+        let rows = ids
+            .iter()
+            .filter_map(|id| u32::try_from(id.get() - 1).ok())
+            .filter(|position| *position < self.total)
+            .map(|position| self.row(position))
+            .collect();
+        Box::pin(async move { Ok(rows) })
+    }
+
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>> {
         let mut inbox = Mailbox::new(account, "INBOX", Some('/'));
         inbox.id = MailboxId::new(INBOX);
@@ -143,6 +155,9 @@ async fn a_read_that_fails_carries_a_sentence_rather_than_a_sql_error() {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn message_count(&self, _: ListScope) -> Read<'_, u32> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
+        fn message_rows(&self, _: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn mailboxes(&self, _: AccountId) -> Read<'_, Vec<Mailbox>> {
