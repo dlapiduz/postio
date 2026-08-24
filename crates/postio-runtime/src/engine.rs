@@ -829,8 +829,9 @@ fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
             .map(|mailbox| mailbox.id),
     );
     // The one line that answers "the account connected and nothing happened".
-    // Every folder-enumerating path here reads the *local* table, and nothing
-    // in the workspace fills it from the server yet — see `postio-755`.
+    // Every folder-enumerating path here reads the *local* table; `discover`
+    // is what fills it from the server on link-up, and a count of zero here
+    // means that has not happened yet or found nothing.
     tracing::info!(
         known = mailboxes.len(),
         queued = state.to_sync.len(),
@@ -838,8 +839,8 @@ fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
     );
     if mailboxes.is_empty() {
         tracing::warn!(
-            "the server's folder list has never been read, so there is nothing \
-             to sync (postio-755)"
+            "no folders are known locally, so there is nothing to sync; either \
+             discovery has not run yet or the server listed none"
         );
     }
 }
