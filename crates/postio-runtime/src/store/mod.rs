@@ -48,6 +48,13 @@ pub enum ListScope {
     Account(AccountId),
     /// The sidebar's "Flagged" view.
     Flagged(AccountId),
+    /// One conversation, wherever its messages are filed.
+    ///
+    /// The drill-in used to build the thread from the rows the message list
+    /// model already held, which is why it worked at all and why it was never
+    /// the whole thread: a message filed elsewhere is not in this folder's
+    /// model, and a page the list has not scrolled to is not resident.
+    Thread(ThreadId),
 }
 
 /// Which rows are wanted.

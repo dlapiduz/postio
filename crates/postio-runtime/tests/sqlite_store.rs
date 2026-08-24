@@ -389,3 +389,79 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
         "an empty id list should not reach SQLite at all"
     );
 }
+
+#[tokio::test]
+async fn a_thread_reads_across_every_folder_it_touches() {
+    // The acceptance criterion of #44, through the runtime's own boundary
+    // rather than against a fake: a conversation half of which has been
+    // archived is still one conversation, and the drill-in reads it as one.
+    use postio_model::ids::ThreadId;
+    use postio_storage::repository::MessageRepository;
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    connection
+        .execute(
+            "INSERT INTO threads (id, account_id) VALUES (1, ?1)",
+            [account.id.get()],
+        )
+        .expect("a thread");
+
+    let messages = MessageRepository::new(&connection);
+    let mut filed = Vec::new();
+    for (index, mailbox) in [inbox, archive.id, inbox, archive.id]
+        .into_iter()
+        .enumerate()
+    {
+        let mut message = postio_model::Message::new(
+            account.id,
+            mailbox,
+            chrono::Utc::now() - chrono::Duration::minutes(index as i64),
+        );
+        message.subject = Some("the whole conversation".into());
+        let id = messages.create(&mut message).expect("create");
+        messages
+            .set_thread(id, Some(ThreadId::new(1)))
+            .expect("assign");
+        filed.push((id, mailbox));
+    }
+    drop(connection);
+
+    let store = SqliteStore::new(&database);
+    let page = store
+        .message_page(PageRequest {
+            scope: ListScope::Thread(ThreadId::new(1)),
+            offset: 0,
+            limit: 50,
+        })
+        .await
+        .expect("the thread reads");
+
+    assert_eq!(
+        page.total, 4,
+        "the thread spans two folders and the scope has to span them too"
+    );
+    let read: std::collections::BTreeSet<_> = page.rows.iter().map(|row| row.id).collect();
+    let expected: std::collections::BTreeSet<_> = filed.iter().map(|(id, _)| *id).collect();
+    assert_eq!(
+        read, expected,
+        "every message of the thread, and only those"
+    );
+
+    // And a mailbox-scoped read of the same thread cannot see it whole --
+    // which is what the drill-in used to be limited to.
+    let in_the_inbox = store
+        .message_page(PageRequest {
+            scope: ListScope::Mailbox(inbox),
+            offset: 0,
+            limit: 50,
+        })
+        .await
+        .expect("the inbox reads");
+    assert_eq!(
+        in_the_inbox.total, 2,
+        "the fixture is wrong if one folder already holds the whole thread"
+    );
+}

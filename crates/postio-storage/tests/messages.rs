@@ -820,6 +820,56 @@ fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_second_qu
     );
 }
 
+#[test]
+fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_folder() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    let messages = MessageRepository::new(&connection);
+    connection
+        .execute(
+            "INSERT INTO threads (id, account_id) VALUES (1, ?1), (2, ?1)",
+            [account.id.get()],
+        )
+        .expect("two threads");
+
+    // A conversation half of which has been archived, which is what an
+    // ordinary thread looks like after anyone has tidied up — plus a second
+    // thread in the same folder, so a scope that ignored the thread entirely
+    // would be caught rather than passing by luck.
+    let mut ours = Vec::new();
+    for (mailbox, minute) in [(inbox, 10), (archive.id, 20), (inbox, 30), (archive.id, 40)] {
+        let mut message = a_message(mailbox, account.id, minute);
+        let id = messages.create(&mut message).expect("create");
+        messages
+            .set_thread(id, Some(ThreadId::new(1)))
+            .expect("assign");
+        ours.push(id);
+    }
+    let mut other = a_message(inbox, account.id, 50);
+    let elsewhere = messages.create(&mut other).expect("create");
+    messages
+        .set_thread(elsewhere, Some(ThreadId::new(2)))
+        .expect("assign");
+
+    let thread = ListQuery::thread(ThreadId::new(1));
+    assert_eq!(
+        messages.count(&thread).expect("count"),
+        4,
+        "the thread spans two folders and the scope has to span them too"
+    );
+
+    let page = messages.page(&thread).expect("page");
+    let mut found: Vec<_> = page.iter().map(|row| row.id).collect();
+    found.sort_by_key(|id| id.get());
+    assert_eq!(found, ours, "every message of the thread, and only those");
+    assert!(
+        !page.iter().any(|row| row.id == elsewhere),
+        "another thread in the same folder must not come along"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Acceptance: flat in time and memory over a large mailbox
 // ---------------------------------------------------------------------------
@@ -859,6 +909,7 @@ fn the_message_list_plan_never_sorts() {
             "flagged",
             ListQuery::flagged(postio_model::AccountId::new(1)),
         ),
+        ("thread", ListQuery::thread(ThreadId::new(1))),
     ] {
         for (kind, sql) in [
             ("first page", messages.explain(&query)),
