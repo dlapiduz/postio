@@ -94,7 +94,7 @@ impl MessageSource for Store {
         // for.
         let mailbox = match request.scope {
             FeedScope::Mailbox(id) => id,
-            FeedScope::Flagged(_) => MailboxId::new(0),
+            FeedScope::Flagged(_) | FeedScope::Thread(_) => MailboxId::new(0),
         };
         // Each mailbox holds a different amount of mail, so "the list shows
         // the folder you picked" is checkable by counting.

@@ -81,6 +81,9 @@ impl MessageSource for Store {
             FeedScope::Flagged(_) => 7,
             FeedScope::Mailbox(id) if id.get() == INBOX => 940,
             FeedScope::Mailbox(_) => 0,
+            // This store is about which scope the sidebar asked for; a
+            // drill-in is `gtk_thread_scope.rs`.
+            FeedScope::Thread(_) => 0,
         };
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
