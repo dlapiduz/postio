@@ -568,6 +568,53 @@ impl MessageListView {
         imp.model.peek(imp.cursor.selected())
     }
 
+    /// Put the cursor on `message`, once its row is resident.
+    ///
+    /// What a notification's click needs: the mailbox has usually just been
+    /// switched to, so nothing is resident yet. If the row is already
+    /// there, this moves the cursor immediately; otherwise it asks for the
+    /// first page — new mail lands at the top of a mailbox
+    /// (`MessageList::inserted_at_top`), so that is normally exactly where
+    /// the message is — and waits for it to land. If it still is not there
+    /// once page 0 actually arrives (moved, deleted, or overtaken by
+    /// something else entirely), this gives up rather than paging through
+    /// the whole mailbox hunting for one row: the cursor stays wherever it
+    /// already was, which is never worse than doing nothing.
+    ///
+    /// Opening a folder fires `items_changed` twice before a row exists —
+    /// once when the count arrives, again when `deliver` fills it in — so
+    /// this cannot stop listening on the first signal. It keeps waiting
+    /// until page 0 is actually resident, whether or not it turned out to
+    /// hold `message`.
+    pub fn select_message(&self, message: MessageId) {
+        if let Some(position) = self.imp().model.position_of(message) {
+            self.move_cursor_to(position);
+            return;
+        }
+        let _ = self.model().item(0);
+        let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
+        let id = self.imp().model.connect_items_changed(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            #[strong]
+            handler,
+            move |model, _, _, _| {
+                if let Some(position) = model.position_of(message) {
+                    pane.move_cursor_to(position);
+                } else if !model.resident_pages().contains(&0) {
+                    // The page that would hold it has not landed yet -- this
+                    // was the count arriving, or an unrelated page. Keep
+                    // waiting for the one that matters.
+                    return;
+                }
+                if let Some(id) = handler.borrow_mut().take() {
+                    pane.imp().model.disconnect(id);
+                }
+            }
+        ));
+        *handler.borrow_mut() = Some(id);
+    }
+
     /// Extend the selection one row in `step`'s direction, taking the cursor
     /// with it.
     ///
