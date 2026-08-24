@@ -86,13 +86,29 @@ impl SyncStatus {
             ConnectionState::Offline => "offline".to_string(),
             ConnectionState::Connecting => "connecting".to_string(),
             ConnectionState::Failing => "error".to_string(),
-            // A percentage only while there is a resync to be a percentage of.
-            ConnectionState::Online => match self.progress {
-                Some((done, total)) if total > 0 && done < total => {
-                    format!("syncing {}%", (done as u64 * 100 / total as u64).min(99))
-                }
-                _ => "idle".to_string(),
-            },
+            ConnectionState::Online if self.syncing().is_some() => "syncing".to_string(),
+            ConnectionState::Online => "idle".to_string(),
+        }
+    }
+
+    /// How many messages the pass that is running has fetched, if one is.
+    ///
+    /// One question, asked once, and both lines answer from it — which is the
+    /// whole of `postio-qhz.6`. The first live sync said "0% synced" and
+    /// "never synced" together because the two lines were reading different
+    /// sources: progress from `SyncProgress`, "never synced" from a
+    /// `last_synced_at` that only moves when a pass *completes*. Neither was
+    /// wrong on its own terms and the pair was useless.
+    ///
+    /// `progress` is `Some` exactly while a pass is in flight — `SyncTracker`
+    /// clears it on any connection change and when `done` reaches `total` —
+    /// so its presence is the answer to "is anything happening".
+    fn syncing(&self) -> Option<u32> {
+        match self.progress {
+            // A pass with nothing to reach never started.
+            Some((_, 0)) => None,
+            Some((done, total)) if done < total => Some(done),
+            _ => None,
         }
     }
 
@@ -105,6 +121,20 @@ impl SyncStatus {
             && let Some(detail) = &self.detail
         {
             return detail.clone();
+        }
+        // A pass that is running says what it has, not when it last finished
+        // and not a percentage. The denominator is `UIDNEXT - 1` — the highest
+        // UID the pass *could* reach, which expunged messages leave gaps in —
+        // so a pass routinely finishes well short of it and a percentage of it
+        // is a number that does not mean what it looks like. A count that
+        // climbs answers "is anything happening", which is the only question
+        // this line is being asked during a first sync.
+        //
+        // No thousands separator: the folder counts beside it are written
+        // `4291`, and two number formats in one column read as two kinds of
+        // number.
+        if let Some(fetched) = self.syncing() {
+            return format!("fetched {fetched}");
         }
         match self.last_sync {
             Some(at) => format!("last sync {}", age(now.saturating_duration_since(at))),
@@ -907,8 +937,8 @@ mod tests {
             ..SyncStatus::default()
         };
 
-        assert_eq!(syncing(0, 400).lines(now).0, "syncing 0% · imap");
-        assert_eq!(syncing(168, 400).lines(now).0, "syncing 42% · imap");
+        assert_eq!(syncing(0, 400).lines(now).0, "syncing · imap");
+        assert_eq!(syncing(168, 400).lines(now).0, "syncing · imap");
         assert_eq!(
             syncing(400, 400).lines(now).0,
             "idle · imap",
@@ -917,7 +947,91 @@ mod tests {
         assert_eq!(
             syncing(4, 0).lines(now).0,
             "idle · imap",
-            "a total of zero is not a percentage"
+            "a pass with nothing to reach is not a pass in progress"
+        );
+    }
+
+    #[test]
+    fn a_first_sync_in_progress_does_not_also_claim_it_never_synced() {
+        // `postio-qhz.6`: the first live sync reported "0% synced" and "never
+        // synced" at the same time. Both were true by their own measure —
+        // progress came from `SyncProgress`, "never synced" from a
+        // `last_synced_at` that stays unset until a pass *completes* — and
+        // together they told the user nothing about whether anything was
+        // happening.
+        let now = Instant::now();
+        let first_sync = SyncStatus {
+            state: ConnectionState::Online,
+            progress: Some((1204, 60_000)),
+            last_sync: None,
+            ..SyncStatus::default()
+        };
+
+        let (state, detail) = first_sync.lines(now);
+
+        assert_eq!(state, "syncing · imap");
+        assert_eq!(
+            detail, "fetched 1204",
+            "a pass that is running has to say so on both lines, not report \
+             progress on one and deny it on the other"
+        );
+        assert!(
+            !detail.contains("never"),
+            "still claiming it never synced while it is syncing: {detail}"
+        );
+    }
+
+    #[test]
+    fn a_percentage_is_never_shown_against_an_upper_bound() {
+        // The denominator is `UIDNEXT - 1` — the highest UID a pass *could*
+        // reach, which expunged messages leave gaps in. A pass routinely
+        // finishes well short of it, so a percentage of it is a number that
+        // does not mean what it looks like. The count does.
+        let now = Instant::now();
+        let syncing = SyncStatus {
+            state: ConnectionState::Online,
+            progress: Some((9, 60_000)),
+            ..SyncStatus::default()
+        };
+
+        let (state, detail) = syncing.lines(now);
+
+        assert!(!state.contains('%'), "still a percentage: {state}");
+        assert!(!detail.contains('%'), "still a percentage: {detail}");
+        assert_eq!(detail, "fetched 9");
+    }
+
+    #[test]
+    fn a_finished_pass_says_when_rather_than_how_many() {
+        let now = Instant::now();
+        let synced = SyncStatus {
+            state: ConnectionState::Online,
+            last_sync: now.checked_sub(Duration::from_secs(12)),
+            progress: None,
+            ..SyncStatus::default()
+        };
+
+        assert_eq!(
+            synced.lines(now),
+            ("idle · imap".into(), "last sync 12s".into())
+        );
+    }
+
+    #[test]
+    fn a_failure_still_wins_over_a_pass_that_was_running() {
+        // The reason is what the user has to act on. A count of what had been
+        // fetched before it broke is not.
+        let now = Instant::now();
+        let failing = SyncStatus {
+            state: ConnectionState::Failing,
+            progress: Some((40, 400)),
+            detail: Some("the password was refused".into()),
+            ..SyncStatus::default()
+        };
+
+        assert_eq!(
+            failing.lines(now),
+            ("error · imap".into(), "the password was refused".into())
         );
     }
 
