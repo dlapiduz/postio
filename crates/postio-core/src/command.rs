@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use postio_model::{DraftId, LabelId, MailboxId, MessageId, ThreadId};
+use postio_model::{DraftId, LabelId, MailboxId, MessageId, OperationRange, ThreadId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {
@@ -201,6 +201,24 @@ pub enum MessageTarget {
     Messages(Vec<MessageId>),
     /// Every message in this thread.
     Thread(ThreadId),
+    /// Every message a run of queue rows named.
+    ///
+    /// Only undo builds one of these, and only to take back a whole-mailbox
+    /// action. A bulk archive writes one queue row per message in a single
+    /// statement, so the run those rows occupy names all of them in two
+    /// integers — which is what lets one `u` reverse 81,717 messages without
+    /// anything holding 81,717 ids. See [`OperationRange`].
+    Batch {
+        /// The queue rows the bulk action wrote.
+        range: OperationRange,
+        /// The mailbox those messages are in now.
+        ///
+        /// Carried rather than derived because the handler needs it only to
+        /// say which list has to reload, and asking the store "where are these
+        /// 81,717 messages" to answer that would be the read this whole shape
+        /// exists to avoid.
+        from: MailboxId,
+    },
 }
 
 /// One invocation of a command.

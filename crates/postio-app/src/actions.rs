@@ -45,8 +45,8 @@ use postio_model::{
     AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    FlagSource, MailboxRepository, MessageRepository, OperationQueueRepository, ThreadOrder,
-    ThreadRepository,
+    FlagSource, MailboxRepository, MessageRepository, MessageSet, OperationQueueRepository,
+    ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection};
 
@@ -83,19 +83,49 @@ enum Destination {
     Mailbox(MailboxId),
 }
 
+/// What a verb is aimed at, once app state and the store have both had a say.
+///
+/// The second variant is the whole of `postio-agr.1`. A whole-mailbox
+/// selection arrives here as a predicate and has to leave here as a predicate:
+/// turning it into rows — even briefly, even only to count them — is the
+/// mailbox-sized read spec.md §18 forbids and the 16 ms budget cannot afford.
+enum Aim {
+    /// These messages, read out of the store.
+    Rows(Vec<Message>),
+    /// A predicate the store resolves in one statement.
+    Bulk {
+        /// What to act on.
+        set: MessageSet,
+        /// Whose account it is. Read from the mailbox rather than from a row,
+        /// because there is no row to read.
+        account: AccountId,
+        /// The folder those messages are in now.
+        from: MailboxId,
+    },
+}
+
 /// What a verb did, once it had done it.
 ///
 /// Separated from announcing it so undo can replay the same work without
 /// offering to undo the undo.
 struct Applied {
     kind: UndoKind,
-    /// Every message the unit touched, in the order it touched them.
+    /// Every message the unit touched, in the order it touched them — empty
+    /// for a bulk unit, which knows how many it touched and not which.
     messages: Vec<MessageId>,
+    /// How many messages it touched. `messages.len()` unless it was bulk.
+    count: usize,
     /// Rows that left a mailbox, grouped by the mailbox they left.
     removed: Vec<(MailboxId, Vec<MessageId>)>,
     /// The mailbox that gained rows, when one did. The list showing it has to
     /// reload or an undone archive would not reappear until the next sync.
     arrived: Option<MailboxId>,
+    /// Mailboxes whose contents changed wholesale.
+    ///
+    /// A bulk action reports itself this way instead of through `removed`: the
+    /// list has to reload the folder, because naming the eighty thousand rows
+    /// that left it is the read the predicate exists to avoid.
+    reloaded: Vec<MailboxId>,
     /// Rows that changed in place: flags, read state.
     changed: Vec<MessageId>,
     /// What takes it back.
@@ -225,9 +255,97 @@ impl Actions {
         kind: UndoKind,
     ) -> Result<Applied, CommandError> {
         let mut connection = self.connect()?;
-        let rows = self.rows(&connection, target)?;
+        match self.aim(&connection, target)? {
+            Aim::Rows(rows) => self.relocate_rows(&mut connection, rows, to, kind),
+            Aim::Bulk { set, account, from } => {
+                self.relocate_set(&mut connection, set, account, from, to, kind)
+            }
+        }
+    }
+
+    /// Move a whole mailbox's worth of messages, without ever naming them.
+    ///
+    /// Four statements, whatever the mailbox holds: count it for the toast,
+    /// write the queue rows, move the messages, and — on the way back — the
+    /// same again against the run of queue rows the first pass wrote. That run
+    /// is what makes one `u` enough: see [`OperationRange`].
+    ///
+    /// [`OperationRange`]: postio_model::OperationRange
+    fn relocate_set(
+        &self,
+        connection: &mut PooledConnection,
+        set: MessageSet,
+        account: AccountId,
+        from: MailboxId,
+        to: Destination,
+        kind: UndoKind,
+    ) -> Result<Applied, CommandError> {
+        let destination = mailbox_for(connection, account, to)?;
+        if destination == from {
+            return Err(CommandError::rejected("Already there"));
+        }
+        // The one number a bulk action is allowed to know, and the only thing
+        // that needs it is the sentence in the toast.
+        let count = MessageRepository::new(connection)
+            .count_set(&set)
+            .map_err(store_failure)? as usize;
+        if count == 0 {
+            return Err(CommandError::rejected("There is nothing here to move"));
+        }
+
+        let operation = match kind {
+            UndoKind::Delete => Operation::Delete {
+                from,
+                trash: destination,
+            },
+            _ => Operation::Move {
+                from,
+                to: destination,
+            },
+        };
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        // Enqueue before moving: the predicate for a whole-mailbox selection
+        // is "the rows in this folder", and after the move there are none.
+        let range = OperationQueueRepository::new(&transaction)
+            .enqueue_set(account, &set, &operation, at)
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("There is nothing here to move"))?;
+        MessageRepository::new(&transaction)
+            .move_set(&set, destination)
+            .map_err(store_failure)?;
+        transaction.commit().map_err(store_failure)?;
+
+        Ok(Applied {
+            kind,
+            messages: Vec::new(),
+            count,
+            removed: Vec::new(),
+            arrived: None,
+            // Both ends reload. Neither can be told which rows moved, and the
+            // one they moved into is as changed as the one they left.
+            reloaded: vec![from, destination],
+            changed: Vec::new(),
+            inverse: vec![Command::Move {
+                target: MessageTarget::Batch {
+                    range,
+                    from: destination,
+                },
+                to: Some(from),
+            }],
+        })
+    }
+
+    /// Move messages this handler has already read.
+    fn relocate_rows(
+        &self,
+        connection: &mut PooledConnection,
+        rows: Vec<Message>,
+        to: Destination,
+        kind: UndoKind,
+    ) -> Result<Applied, CommandError> {
         let account = rows[0].account_id;
-        let destination = mailbox_for(&connection, account, to)?;
+        let destination = mailbox_for(connection, account, to)?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
         for message in &rows {
@@ -275,12 +393,14 @@ impl Actions {
         transaction.commit().map_err(store_failure)?;
 
         let removed: Vec<(MailboxId, Vec<MessageId>)> = by_source.into_iter().collect();
+        let messages: Vec<MessageId> = removed
+            .iter()
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect();
         Ok(Applied {
             kind,
-            messages: removed
-                .iter()
-                .flat_map(|(_, ids)| ids.iter().copied())
-                .collect(),
+            count: messages.len(),
+            messages,
             inverse: removed
                 .iter()
                 .map(|(source, ids)| Command::Move {
@@ -289,6 +409,7 @@ impl Actions {
                 })
                 .collect(),
             arrived: Some(destination),
+            reloaded: Vec::new(),
             changed: Vec::new(),
             removed,
         })
@@ -308,7 +429,7 @@ impl Actions {
         want: Option<bool>,
     ) -> Result<Applied, CommandError> {
         let mut connection = self.connect()?;
-        let rows = self.rows(&connection, target)?;
+        let rows = self.named(&connection, target)?;
         let account = rows[0].account_id;
         let wanted =
             want.unwrap_or_else(|| !rows.iter().all(|message| message.flags.contains(&flag)));
@@ -369,9 +490,11 @@ impl Actions {
         };
         Ok(Applied {
             kind: kind_for(&flag, wanted),
+            count: changed.len(),
             messages: changed.clone(),
             removed: Vec::new(),
             arrived: None,
+            reloaded: Vec::new(),
             changed,
             inverse: vec![inverse],
         })
@@ -393,6 +516,9 @@ impl Actions {
             // at the next sync.
             events.emit(Event::MessageListChanged { mailbox });
         }
+        for mailbox in &applied.reloaded {
+            events.emit(Event::MessageListChanged { mailbox: *mailbox });
+        }
         if !applied.changed.is_empty() {
             events.emit(Event::MessagesChanged {
                 messages: applied.changed.clone(),
@@ -401,7 +527,14 @@ impl Actions {
         if recording == Recording::Replay {
             return;
         }
-        let entry = UndoEntry::new(applied.kind, applied.messages, applied.inverse);
+        // A bulk unit knows its size and not its members, so it is recorded as
+        // one — `UndoEntry::new` would take the count from a list of rows that
+        // is deliberately empty and the toast would say nothing happened.
+        let entry = if applied.messages.len() == applied.count {
+            UndoEntry::new(applied.kind, applied.messages, applied.inverse)
+        } else {
+            UndoEntry::bulk(applied.kind, applied.count, applied.inverse)
+        };
         // The description comes back from the stack rather than from the
         // entry handed to it: a burst coalesces into the unit already there,
         // and the toast has to say twelve when the unit holds twelve.
@@ -422,9 +555,8 @@ impl Actions {
     fn rows(
         &self,
         connection: &PooledConnection,
-        target: &MessageTarget,
+        ids: Vec<MessageId>,
     ) -> Result<Vec<Message>, CommandError> {
-        let ids = self.messages(connection, target)?;
         let repository = MessageRepository::new(connection);
         let mut rows = Vec::with_capacity(ids.len());
         for id in ids {
@@ -442,27 +574,59 @@ impl Actions {
         Ok(rows)
     }
 
-    fn messages(
+    /// What a verb will act on: rows, or a predicate over them.
+    ///
+    /// The two whole-mailbox cases never become rows here. `Everything` is the
+    /// selection the user built with `Ctrl+A`; `Batch` is undo taking one of
+    /// those back. Both carry through to the store as SQL.
+    fn aim(
         &self,
         connection: &PooledConnection,
         target: &MessageTarget,
-    ) -> Result<Vec<MessageId>, CommandError> {
+    ) -> Result<Aim, CommandError> {
         let resolved = self
             .state
             .read(|app| app.resolve(target))
             .ok_or_else(|| CommandError::rejected("Nothing selected"))?;
-        match resolved {
-            Resolved::Messages(ids) => Ok(ids),
-            Resolved::Thread(thread) => thread_messages(connection, thread),
-            // The predicate is the point: `Everything` must reach the store as
-            // a query, not as the hundred thousand ids it stands for. Doing
-            // that needs a bulk statement `postio-storage` does not have yet,
-            // and undo needs one too — an entry that named every row would be
-            // the same mailbox-sized read by another door. `postio-agr.1`
-            // carries both halves; until then it says so rather than
-            // pretending.
-            Resolved::Everything { .. } => Err(CommandError::rejected(
-                "Acting on a whole mailbox at once is not wired up yet",
+        let (set, from) = match resolved {
+            Resolved::Messages(ids) => return self.rows(connection, ids).map(Aim::Rows),
+            Resolved::Thread(thread) => {
+                let ids = thread_messages(connection, thread)?;
+                return self.rows(connection, ids).map(Aim::Rows);
+            }
+            Resolved::Everything { mailbox, except } => {
+                (MessageSet::InMailbox { mailbox, except }, mailbox)
+            }
+            Resolved::Batch { range, from } => (MessageSet::Queued(range), from),
+        };
+        // One row read, and it is a folder rather than a message: the account
+        // is needed to find the Archive, and there is no message to ask.
+        let account = MailboxRepository::new(connection)
+            .get(from)
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That folder is no longer here"))?
+            .account_id;
+        Ok(Aim::Bulk { set, account, from })
+    }
+
+    /// The rows a verb that reads its messages acts on.
+    ///
+    /// Only reachable for a target that named them; a whole-mailbox selection
+    /// never arrives here. Verbs that cannot yet act on a predicate say so
+    /// through this, which is why it takes a resolution rather than a target.
+    fn named(
+        &self,
+        connection: &PooledConnection,
+        target: &MessageTarget,
+    ) -> Result<Vec<Message>, CommandError> {
+        match self.aim(connection, target)? {
+            Aim::Rows(rows) => Ok(rows),
+            // Flags over a whole mailbox need a bulk statement of their own —
+            // `\Seen` lives in a text column beside its denormalised boolean,
+            // so it is not the same `UPDATE` a move is. `postio-t3u9`.
+            Aim::Bulk { .. } => Err(CommandError::rejected(
+                "That does not work on a whole mailbox yet — archive, delete \
+                 and move do",
             )),
         }
     }
@@ -470,7 +634,7 @@ impl Actions {
     /// The thread `A` means: the one the focused message belongs to.
     fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
         let connection = self.connect()?;
-        let rows = self.rows(&connection, &MessageTarget::Selection)?;
+        let rows = self.named(&connection, &MessageTarget::Selection)?;
         rows[0]
             .thread_id
             .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
@@ -651,6 +815,21 @@ mod tests {
             self.state.update(&self.quiet, |app: &mut AppState| {
                 app.select(selected.to_vec(), focus)
             });
+        }
+
+        /// What `Ctrl+A` mirrors: a folder open, and the predicate over it.
+        fn everything_in(&self, mailbox: MailboxId) {
+            self.state
+                .update(&self.quiet, |app: &mut AppState| app.open_mailbox(mailbox));
+            self.state
+                .update(&self.quiet, |app: &mut AppState| app.select_all());
+        }
+
+        fn count_in(&self, mailbox: MailboxId) -> u32 {
+            let connection = self.database.connection().expect("a connection");
+            MessageRepository::new(&connection)
+                .count_set(&MessageSet::in_mailbox(mailbox))
+                .expect("a count")
         }
 
         fn run(&self, command: Command) -> Result<(), CommandError> {
@@ -967,25 +1146,203 @@ mod tests {
         assert_eq!(world.mailbox_of(message), world.inbox);
     }
 
+    // ── The whole mailbox at once ────────────────────────────────────────
+
     #[test]
-    fn a_whole_mailbox_selection_says_so_rather_than_loading_it() {
-        // `Everything` has to reach the store as a query, not as the rows it
-        // stands for. Until it can, it says so — which is not silence.
+    fn ctrl_a_then_archive_files_the_whole_mailbox() {
+        // The bead: triage on an 81,717-message account. Everything below is
+        // about this staying a *query* — but first it has to work.
+        let world = world();
+        let messages: Vec<MessageId> = (0..30).map(|_| world.message(world.inbox, &[])).collect();
+        world.everything_in(world.inbox);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive the mailbox");
+
+        for message in &messages {
+            assert_eq!(world.mailbox_of(*message), world.archive);
+        }
+        assert_eq!(world.queued().len(), 30, "the server has to be told too");
+        assert_eq!(
+            completion(&world.drained()),
+            Some(("Archived 30 messages", true)),
+            "one gesture, one sentence, and an undo behind it"
+        );
+    }
+
+    #[test]
+    fn one_undo_takes_a_whole_mailbox_back() {
+        // The half the bead called harder. The inverse is a predicate over the
+        // run of queue rows the archive wrote, so `u` names thirty thousand
+        // messages with two integers.
+        let world = world();
+        let messages: Vec<MessageId> = (0..20).map(|_| world.message(world.inbox, &[])).collect();
+        let elsewhere = world.message(world.archive, &[]);
+        world.everything_in(world.inbox);
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive the mailbox");
+        let _ = world.drained();
+
+        world.run(Command::Undo).expect("undo");
+
+        for message in &messages {
+            assert_eq!(world.mailbox_of(*message), world.inbox, "all the way back");
+        }
+        assert_eq!(
+            world.mailbox_of(elsewhere),
+            world.archive,
+            "undo puts back what the action moved, not everything that was in \
+             the folder it moved things into"
+        );
+        assert_eq!(
+            world.run(Command::Undo),
+            Err(CommandError::rejected("Nothing to undo")),
+            "one entry, not twenty"
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_archive_is_one_undo_entry_even_beside_its_neighbours() {
+        // `postio-cy0`'s coalescing decides what one `u` covers, and a bulk
+        // unit stands alone in it: it cannot say which rows it holds, so
+        // folding the next archive into it would hide a separate action
+        // behind the same single keystroke.
+        let world = world();
+        for _ in 0..5 {
+            world.message(world.inbox, &[]);
+        }
+        let other = world.message(world.trash, &[]);
+        world.everything_in(world.inbox);
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive the mailbox");
+        world.looking_at(world.trash, &[], Some(other));
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive one more");
+        let _ = world.drained();
+
+        world.run(Command::Undo).expect("undo the single one");
+        assert_eq!(world.mailbox_of(other), world.trash);
+
+        world.run(Command::Undo).expect("undo the bulk one");
+        assert_eq!(
+            world.count_in(world.inbox),
+            5,
+            "the two gestures come back separately"
+        );
+    }
+
+    #[test]
+    fn the_rows_taken_back_out_of_a_select_all_stay_where_they_are() {
+        let world = world();
+        let messages: Vec<MessageId> = (0..6).map(|_| world.message(world.inbox, &[])).collect();
+        world.everything_in(world.inbox);
+        world.state.update(&world.quiet, |app: &mut AppState| {
+            app.toggle_selection(messages[2])
+        });
+
+        world
+            .run(Command::Delete {
+                target: MessageTarget::Selection,
+            })
+            .expect("delete the rest");
+
+        assert_eq!(world.mailbox_of(messages[2]), world.inbox);
+        assert_eq!(world.mailbox_of(messages[0]), world.trash);
+        assert_eq!(
+            completion(&world.drained()),
+            Some(("Deleted 5 messages", true))
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_action_tells_both_lists_to_reload() {
+        // It cannot name the rows that left, so `MessagesRemoved` is not
+        // available to it — and a list that was not told to reload would go on
+        // showing eighty thousand messages that are no longer there.
+        let world = world();
+        world.message(world.inbox, &[]);
+        world.everything_in(world.inbox);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive the mailbox");
+
+        let events = world.drained();
+        assert!(events.contains(&Event::MessageListChanged {
+            mailbox: world.inbox
+        }));
+        assert!(events.contains(&Event::MessageListChanged {
+            mailbox: world.archive
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::MessagesRemoved { .. })),
+            "naming the rows is exactly what this path must not do"
+        );
+    }
+
+    #[test]
+    fn archiving_a_whole_mailbox_that_is_already_the_archive_is_refused() {
+        let world = world();
+        world.message(world.archive, &[]);
+        world.everything_in(world.archive);
+
+        assert_eq!(
+            world.run(Command::Archive {
+                target: MessageTarget::Selection,
+            }),
+            Err(CommandError::rejected("Already there"))
+        );
+    }
+
+    #[test]
+    fn a_whole_mailbox_selection_over_an_empty_mailbox_says_so() {
+        // `Selection::Everything` is never empty as far as app state is
+        // concerned — counting it there would be the read it exists to avoid —
+        // so the store is the first thing that can tell, and it has to.
+        let world = world();
+        world.everything_in(world.inbox);
+
+        assert_eq!(
+            world.run(Command::Archive {
+                target: MessageTarget::Selection,
+            }),
+            Err(CommandError::rejected("There is nothing here to move"))
+        );
+    }
+
+    #[test]
+    fn flagging_a_whole_mailbox_says_it_cannot_yet_rather_than_loading_it() {
+        // `\Seen` and `\Flagged` live in a text column beside their
+        // denormalised booleans, so a bulk flag is not the same `UPDATE` a
+        // bulk move is. Until `postio-t3u9` writes it, this says so — which is
+        // not silence, and is not a mailbox-sized read either.
         let world = world();
         let message = world.message(world.inbox, &[]);
-        world.state.update(&world.quiet, |app: &mut AppState| {
-            app.open_mailbox(world.inbox)
-        });
-        world
-            .state
-            .update(&world.quiet, |app: &mut AppState| app.select_all());
+        world.everything_in(world.inbox);
 
-        let outcome = world.run(Command::Archive {
+        let outcome = world.run(Command::Flag {
             target: MessageTarget::Selection,
+            flagged: Some(true),
         });
 
         assert!(matches!(outcome, Err(CommandError::Rejected(_))));
-        assert_eq!(world.mailbox_of(message), world.inbox);
+        assert!(!world.flags_of(message).is_flagged());
     }
 
     #[test]

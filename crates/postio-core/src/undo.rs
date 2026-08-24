@@ -83,6 +83,12 @@ impl UndoKind {
 pub struct UndoEntry {
     kind: UndoKind,
     messages: Vec<MessageId>,
+    /// How many messages the unit covers.
+    ///
+    /// Equal to `messages.len()` for a unit that names its rows, and larger
+    /// for a whole-mailbox one, which knows its size from a `count(*)` and
+    /// deliberately does not know its members. See [`UndoEntry::bulk`].
+    count: usize,
     inverse: Vec<Command>,
 }
 
@@ -94,9 +100,33 @@ impl UndoEntry {
     pub fn new(kind: UndoKind, messages: Vec<MessageId>, inverse: Vec<Command>) -> Self {
         UndoEntry {
             kind,
+            count: messages.len(),
             messages,
             inverse,
         }
+    }
+
+    /// Record that `kind` happened to `count` messages that this entry does
+    /// not name, and that `inverse` takes it back.
+    ///
+    /// The whole-mailbox case. *Archived 81,717 messages* needs the number and
+    /// nothing else needs the rows: the inverse is
+    /// [`MessageTarget::Batch`](crate::MessageTarget::Batch), which is a
+    /// predicate the store resolves in one statement. Naming the rows here
+    /// would be the mailbox-sized read the predicate exists to avoid, arriving
+    /// through the undo stack instead of through the selection.
+    pub fn bulk(kind: UndoKind, count: usize, inverse: Vec<Command>) -> Self {
+        UndoEntry {
+            kind,
+            messages: Vec::new(),
+            count,
+            inverse,
+        }
+    }
+
+    /// Whether this unit covers rows it cannot name.
+    pub fn is_bulk(&self) -> bool {
+        self.count != self.messages.len()
     }
 
     /// What sort of action this was.
@@ -119,17 +149,30 @@ impl UndoEntry {
     /// Derived from the kind and the count rather than stored, so a unit that
     /// grows by coalescing always describes itself correctly.
     pub fn description(&self) -> String {
-        self.kind.describe(self.messages.len())
+        self.kind.describe(self.count)
     }
 
-    fn touches(&self, messages: &[MessageId]) -> bool {
-        messages
-            .iter()
-            .any(|message| self.messages.contains(message))
+    /// Whether this unit and `other` overlap, which would make replaying their
+    /// inverses in recorded order wrong.
+    ///
+    /// A whole-mailbox unit always answers yes. It cannot say which rows it
+    /// covers — that is the point of it — so there is no honest way to check,
+    /// and the conservative answer is also the right one for the user:
+    /// `Ctrl+A` then `a` is a gesture on its own, and folding the next archive
+    /// into it would put a row the user acted on separately behind the same
+    /// single `u`.
+    fn overlaps(&self, other: &UndoEntry) -> bool {
+        self.is_bulk()
+            || other.is_bulk()
+            || other
+                .messages
+                .iter()
+                .any(|message| self.messages.contains(message))
     }
 
     fn absorb(&mut self, other: UndoEntry) {
         self.messages.extend(other.messages);
+        self.count += other.count;
         self.inverse.extend(other.inverse);
     }
 }
@@ -219,7 +262,7 @@ impl UndoStack {
             && now.duration_since(last.at) <= self.coalesce_within
             // Independence within a unit is what lets the inverses replay in
             // the order they were recorded.
-            && !last.entry.touches(&entry.messages)
+            && !last.entry.overlaps(&entry)
         {
             last.entry.absorb(entry);
             // The window runs from the last action, so holding a key down
@@ -285,6 +328,45 @@ mod tests {
         let merged = stack.record_at(entry(UndoKind::Flag, 2), now);
 
         assert_eq!(merged.description(), "Flagged 2 messages");
+    }
+
+    #[test]
+    fn a_whole_mailbox_unit_counts_what_it_will_not_name() {
+        // *Archived 81,717 messages* from a `count(*)` and an inverse that is
+        // a predicate. Putting the rows in here would be the mailbox-sized
+        // read the selection predicate exists to avoid, arriving by another
+        // door.
+        let entry = UndoEntry::bulk(UndoKind::Archive, 81_717, vec![Command::Undo]);
+
+        assert_eq!(entry.description(), "Archived 81717 messages");
+        assert!(entry.messages().is_empty(), "it names none of them");
+        assert!(entry.is_bulk());
+    }
+
+    #[test]
+    fn a_whole_mailbox_unit_never_coalesces_with_anything() {
+        // It cannot say which rows it covers, so there is no honest way to
+        // check whether the next action overlaps it — and folding them would
+        // put a row the user acted on separately behind the same single `u`.
+        let mut stack = UndoStack::new();
+        let now = Instant::now();
+        stack.record_at(
+            UndoEntry::bulk(UndoKind::Archive, 40_000, vec![Command::Undo]),
+            now,
+        );
+        let next = stack.record_at(entry(UndoKind::Archive, 1), now);
+
+        assert_eq!(next.description(), "Archived 1 message");
+        assert_eq!(stack.depth(), 2, "two gestures, two units");
+        assert_eq!(
+            stack.undo_at(now).map(|entry| entry.description()),
+            Some("Archived 1 message".into())
+        );
+        assert_eq!(
+            stack.undo_at(now).map(|entry| entry.description()),
+            Some("Archived 40000 messages".into()),
+            "and the bulk one is still behind it, whole"
+        );
     }
 
     #[test]

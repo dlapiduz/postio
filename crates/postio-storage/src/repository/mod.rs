@@ -50,7 +50,7 @@ pub use threads::{
 
 pub use messages::{
     BackfillCandidate, BodyBlobs, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,
-    MessageListRow, MessageRepository, UpsertReport,
+    MessageListRow, MessageRepository, MessageSet, UpsertReport,
 };
 
 use chrono::{DateTime, Utc};
