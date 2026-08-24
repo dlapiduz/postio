@@ -481,6 +481,31 @@ only when `scripts/issue-claim.sh` says there is nothing ready, when a decision
 is genuinely the maintainer's, or when context is nearly gone — and land your
 work before you do.
 
+### Stay current
+
+`main` moves while you work. Several sessions land to it, and a long piece of
+work can easily be five commits behind by the time it is ready — one recent
+change was rebased onto four commits that arrived mid-task.
+
+The scripts handle the two moments that matter: `issue-claim.sh` cuts your
+branch from a freshly fetched `origin/main`, and `issue-land.sh` fetches and
+rebases onto it before pushing. You do not need to think about either.
+
+What is left to you:
+
+- **Fetch before you reason about the tree.** `git log`, `git diff` and
+  anything comparing against `origin/main` are reading a snapshot that may be
+  hours old. `git fetch origin main` first, or you will draw conclusions from
+  a repository that no longer exists — which has already produced one confident
+  and wrong report here.
+- **Rebase a long-running branch as you go**, not only at the end. A day's
+  work rebased once is a merge conflict; rebased as you go it is nothing.
+- **Re-read an issue before you finish it.** Someone may have commented,
+  decided something, or closed it while you worked.
+- **If a push is rejected as non-fast-forward, that is this**, not a mistake:
+  fetch, rebase, push again. Never force-push — the guard hook refuses it, and
+  on a shared branch it discards whatever landed since you last looked.
+
 ### Say it in the issue, not in the terminal
 
 **GitHub is where this project talks to itself.** An issue comment, a PR body,

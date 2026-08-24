@@ -45,6 +45,11 @@ if [ -z "$ISSUE" ]; then
     exit 2
 fi
 
+# Everything below compares against origin/main, and nothing here had been
+# fetching it -- so the crate list, the PR body and the rebase were all reading
+# whatever the last fetch happened to leave behind.
+git fetch --quiet origin main
+
 # Which crates actually changed, so the gates run over those rather than the
 # whole workspace. CI proves the workspace; this proves your own work fast.
 CRATES=$(git diff --name-only origin/main...HEAD; git status --porcelain \
@@ -101,6 +106,25 @@ if [ -n "$(git status --porcelain)" ]; then
 Refs: #$ISSUE"
 else
     echo "no local changes to commit"
+fi
+
+# Rebase onto current main before pushing. Other sessions land while you
+# work -- four commits arrived during one recent piece of work -- and a branch
+# built on a stale base means CI tests a combination that will never exist,
+# the merge is a surprise, and the push can be rejected outright.
+BEHIND=$(git rev-list --count HEAD..origin/main)
+if [ "$BEHIND" -gt 0 ]; then
+    echo "main moved $BEHIND commit(s) while you worked; rebasing onto it"
+    if ! git rebase origin/main; then
+        git rebase --abort 2>/dev/null || true
+        echo >&2
+        echo "Rebase onto origin/main hit a conflict. Nothing was pushed." >&2
+        echo "Resolve it here, then run this script again:" >&2
+        echo "    git rebase origin/main" >&2
+        exit 1
+    fi
+    echo "rebased. The gates above ran on the previous base -- CI is what"
+    echo "checks the combination, which is why this waits for it."
 fi
 
 git push -u origin "$BRANCH"
