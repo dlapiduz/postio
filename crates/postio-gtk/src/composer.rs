@@ -164,6 +164,10 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
 }
 
 /// What the status line says before anything has happened to the draft.
+/// What the body field announces itself as. One constant because the scroll
+/// region around it is a separate tab stop and must say the same thing.
+const BODY_NAME: &str = "Message body";
+
 const UNSAVED: &str = "draft is in the composer only";
 
 /// What the status line says when opening compose came back to a kept draft.
@@ -1285,12 +1289,16 @@ impl Composer {
         // to get out of it.
         imp.body.set_accepts_tab(false);
         imp.body
-            .update_property(&[gtk::accessible::Property::Label("Message body")]);
+            .update_property(&[gtk::accessible::Property::Label(BODY_NAME)]);
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .child(&imp.body)
             .build();
+        // The scroll area is a tab stop in its own right — a keyboard has to
+        // be able to scroll it — so it is reached before the body itself and
+        // has to announce the same thing rather than nothing.
+        scroller.update_property(&[gtk::accessible::Property::Label(BODY_NAME)]);
 
         imp.warning.add_css_class("postio-compose-warning");
         imp.warning.set_xalign(0.0);
