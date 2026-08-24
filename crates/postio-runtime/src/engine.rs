@@ -427,6 +427,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
         async move {
             let mut state = State {
                 backfill: Backfill::new(parts.backfill),
+                backfill_announced: None,
                 supervisor: Supervisor::new(parts.reconnect),
                 status: RefCell::new(StatusTracker::new()),
                 online: false,
@@ -555,6 +556,13 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
 /// What the engine's thread keeps between jobs.
 struct State {
     backfill: Backfill,
+    /// When the body queue last said how far it had got.
+    ///
+    /// A status line redraws a few times a second at most, and a backfill
+    /// against a fast server settles bodies far quicker than that, so this
+    /// throttles the same way `StatusTracker` throttles a sync pass's
+    /// batches and for the same reason. See [`announce_backfill`].
+    backfill_announced: Option<std::time::Instant>,
     supervisor: Supervisor,
     /// The account's status line.
     ///
@@ -1029,7 +1037,63 @@ async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool 
         parts.events.emit(Event::BodyLoaded { message });
     }
     state.backfill.finished(message, outcome);
+    announce_backfill(parts, state);
     true
+}
+
+/// Say how far the body queue has got.
+///
+/// Pushed rather than waited for. `Engine::backfill_progress` has always been
+/// able to answer this and nothing ever asked, so the longest phase of a
+/// first sync — the bodies, not the list — was drawn as `idle`: not merely
+/// unreported but reported as nothing happening, which reads as stuck
+/// (issue #74).
+///
+/// # Throttled, because a body is not a redraw
+///
+/// Called after every settled body, and against a fast server that is far
+/// more often than a status line can redraw for. `StatusTracker` throttles a
+/// sync pass's batches for exactly this reason and this follows its policy:
+/// the same 250 ms floor, and the same rule that the update which *finishes*
+/// the work is never dropped — an account is not allowed to sit at
+/// `bodies 1994 of 2000` because the last body landed inside the window.
+///
+/// Emitting per body without this was measurably not free: it turned
+/// `sync_wave.rs`'s INBOX-first test red about half the time, because the
+/// events a 2000-message archive produced crowded out the work the engine
+/// was supposed to be doing.
+///
+/// The other update never dropped is the first one after the queue was
+/// empty, which is seeding: that is when the denominator becomes known, and
+/// a line that appears only once a fetch has completed is silent for exactly
+/// the stretch someone is most likely to be watching it.
+fn announce_backfill(parts: &EngineParts, state: &mut State) {
+    const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+    let progress = state.backfill.progress();
+    let done = progress.settled();
+    let total = done + progress.pending + progress.in_flight;
+
+    let drained = progress.pending == 0 && progress.in_flight == 0;
+    let opening = state.backfill_announced.is_none();
+    let now = std::time::Instant::now();
+    let due = state
+        .backfill_announced
+        .is_none_or(|last| now.duration_since(last) >= MIN_INTERVAL);
+
+    if !(drained || opening || due) {
+        return;
+    }
+    // Forget the clock once the queue is empty, so the next backfill's first
+    // report is prompt rather than waiting out a window that started during
+    // the last one.
+    state.backfill_announced = if drained { None } else { Some(now) };
+
+    parts.events.emit(Event::BackfillProgress {
+        account: parts.account,
+        done: done as u32,
+        total: total as u32,
+    });
 }
 
 async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
@@ -1048,6 +1112,11 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
                 backfill::seed(connection, &mut state.backfill, mailbox, limit)
                     .map_err(|error| EngineError::new(error.to_string()))
             });
+            // Say it now, not after the first body lands. Seeding is when the
+            // denominator becomes known, and a status line that appears only
+            // once a fetch has completed is silent for exactly the stretch
+            // the user is most likely to be watching it.
+            announce_backfill(parts, state);
             let _ = reply.send(outcome);
         }
         Job::RequestBody { message, reply } => {
@@ -1055,6 +1124,7 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
                 backfill::request_body(connection, &mut state.backfill, message)
                     .map_err(|error| EngineError::new(error.to_string()))
             });
+            announce_backfill(parts, state);
             let _ = reply.send(outcome);
         }
         Job::RetryNow { reply } => {
@@ -1775,6 +1845,7 @@ mod tests {
     fn empty_state() -> State {
         State {
             backfill: Backfill::new(BackfillPolicy::default()),
+            backfill_announced: None,
             supervisor: Supervisor::new(ReconnectPolicy::default()),
             status: RefCell::new(StatusTracker::new()),
             online: false,
