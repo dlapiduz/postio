@@ -71,12 +71,87 @@ pub struct Reader {
     banner: Rc<RemoteImageBanner>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
+    /// Which [`Absent`] the pane is explaining, when it has no body to draw.
+    /// `None` whenever a body is on screen — the two are exclusive, and
+    /// `render` and `clear` both say so.
+    absent: Rc<std::cell::Cell<Option<Absent>>>,
     /// Terms to paint where they appear in the body. Empty for ordinary
     /// reading; set while a search is what put the message on screen.
     highlight: Rc<RefCell<Vec<String>>>,
     /// What came with the message, per canvas 1b — and the way into the
     /// parts panel. See [`crate::parts::Chips`].
     chips: crate::parts::Chips,
+}
+
+/// Why the reading pane has no body to draw.
+///
+/// Issue #70, Cause A: all four of these used to render as a blank pane, so
+/// a mailbox mid-backfill was indistinguishable from a broken application.
+/// They are separate because the right response differs — three are worth
+/// waiting for and one is finished, and only two are worth retrying.
+///
+/// This is the reader's half of the "partial" state every Postio surface
+/// owes: headers synced, body not yet, which is the *ordinary* condition of
+/// a mailbox that has just been added rather than a fault.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Absent {
+    /// Headers are synced and the backfill has not reached the body yet.
+    ///
+    /// The overwhelmingly common one, and not an error: `request_body`
+    /// queues a fetch and returns, so every message is in this state until
+    /// the queue drains.
+    Partial,
+    /// Not downloaded, and nothing is downloading — the engine is offline.
+    Offline,
+    /// A body was recorded but its bytes are not in the blob store.
+    ///
+    /// Rare, and a real fault: the database and the blob directory disagree.
+    Missing,
+    /// Downloaded, and the message genuinely has no text or HTML part.
+    Empty,
+}
+
+/// What the pane says for each [`Absent`], as the document's body.
+///
+/// A free function returning a string so the words and the key are testable
+/// without a display — the assertions that matter here are "these four do
+/// not say the same thing" and "the retryable ones name the retry key",
+/// neither of which needs WebKit to have painted anything.
+fn absent_html(state: Absent) -> String {
+    // `R` is the registry's alternate binding for `Refresh`, and already the
+    // canvas' retry key for the list's empty and error plates. One retry key
+    // for the whole application, not one per surface.
+    const RETRY: &str = "Press <kbd>R</kbd> to check for new mail now.";
+    let (heading, detail) = match state {
+        Absent::Partial => (
+            "Downloading this message",
+            "Its headers are here; the body has not arrived yet. It will              appear as soon as it does."
+                .to_owned(),
+        ),
+        Absent::Offline => (
+            "Not downloaded yet",
+            format!(
+                "Postio is offline, so this message's body is not on this                  machine. It will arrive when the connection returns. {RETRY}"
+            ),
+        ),
+        Absent::Missing => (
+            "This message's body is missing",
+            format!(
+                "The message is in the local store but its body is not, so                  there is nothing here to show. {RETRY}"
+            ),
+        ),
+        Absent::Empty => (
+            "This message has no body",
+            "Nothing arrived with it but the headers — that is the whole              message, not a fault."
+                .to_owned(),
+        ),
+    };
+    format!(
+        "<div class=\"postio-absent\">\
+         <p class=\"postio-absent-heading\">{heading}</p>\
+         <p class=\"postio-absent-detail\">{detail}</p>\
+         </div>"
+    )
 }
 
 impl Reader {
@@ -134,6 +209,7 @@ impl Reader {
             banner,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
+            absent: Rc::new(std::cell::Cell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
             chips,
         };
@@ -226,6 +302,7 @@ impl Reader {
     /// allow" is used — both re-render through this same [`Open`] state, so
     /// a caller never has to.
     pub fn render(&self, body: &MessageBody, sender: Option<&str>) {
+        self.absent.set(None);
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
@@ -277,9 +354,37 @@ impl Reader {
         *self.highlight.borrow_mut() = terms;
     }
 
+    /// Say why there is no body, instead of drawing nothing.
+    ///
+    /// The pane follows the cursor now (#70, Cause B), so this is reached on
+    /// most cursor movements in a mailbox that has not finished backfilling.
+    /// It stays inside the same hardened `WebView` rather than becoming an
+    /// overlay: one widget owns the pane, and the document is built by the
+    /// same [`wrap_document`] with remote images blocked, so a state plate
+    /// can no more reach the network than a message can.
+    pub fn show_absent(&self, state: Absent) {
+        *self.open.borrow_mut() = None;
+        self.absent.set(Some(state));
+        self.banner.set_visible(false);
+        self.view.load_html(
+            &wrap_document(&absent_html(state), RemoteImages::Blocked),
+            Some(DOCUMENT_BASE_URI),
+        );
+    }
+
+    /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
+    ///
+    /// The seam the wiring tests assert on: proving the *application* stopped
+    /// drawing blank panes means asking what the reader was told, which does
+    /// not require driving WebKit to a paint.
+    pub fn absent(&self) -> Option<Absent> {
+        self.absent.get()
+    }
+
     /// Empty the pane — nothing selected, or the selection closed.
     pub fn clear(&self) {
         *self.open.borrow_mut() = None;
+        self.absent.set(None);
         self.banner.set_visible(false);
         self.view.load_html(
             &wrap_document("", RemoteImages::Blocked),
@@ -522,6 +627,66 @@ fn content_security_policy(remote: RemoteImages) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #70, Cause A. Every one of these used to be the same thing on
+    /// screen -- a blank pane -- and the pane following the cursor turned
+    /// that from an edge case into the common one. Each must now say which
+    /// situation it is, because "not downloaded yet" and "the store lost the
+    /// body" call for completely different things from the reader.
+    #[test]
+    fn every_absent_body_says_which_kind_of_absent_it_is() {
+        let said: Vec<String> = [
+            Absent::Partial,
+            Absent::Offline,
+            Absent::Missing,
+            Absent::Empty,
+        ]
+        .iter()
+        .map(|state| absent_html(*state))
+        .collect();
+
+        for (state, html) in [
+            Absent::Partial,
+            Absent::Offline,
+            Absent::Missing,
+            Absent::Empty,
+        ]
+        .iter()
+        .zip(&said)
+        {
+            assert!(
+                !html.trim().is_empty(),
+                "{state:?} rendered nothing, which is the bug"
+            );
+        }
+
+        for (a, first) in said.iter().enumerate() {
+            for (b, second) in said.iter().enumerate() {
+                assert!(
+                    a == b || first != second,
+                    "two different reasons produced the same words, so the pane                      cannot be telling the user which one they are looking at"
+                );
+            }
+        }
+    }
+
+    /// "Nothing is a dead end": a state the user can act on names the key.
+    #[test]
+    fn the_states_worth_retrying_name_the_retry_key() {
+        // `R` is the registry's own alternate binding for `Refresh`, and the
+        // canvas' retry key for the list's empty and error plates. The
+        // reading pane must not invent a second one.
+        assert!(absent_html(Absent::Offline).contains('R'));
+        assert!(absent_html(Absent::Missing).contains('R'));
+    }
+
+    /// A message that genuinely has no body is finished, not pending. Telling
+    /// someone to retry would be telling them to wait for nothing.
+    #[test]
+    fn a_message_with_no_body_is_not_offered_a_retry() {
+        let html = absent_html(Absent::Empty);
+        assert!(!html.contains("check for new mail"), "{html}");
+    }
 
     #[test]
     fn an_empty_body_produces_empty_content() {
