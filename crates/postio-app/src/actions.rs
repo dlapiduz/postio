@@ -543,7 +543,7 @@ fn kind_for(flag: &Flag, wanted: bool) -> UndoKind {
 /// The sentence on screen says what happened without saying what to; the
 /// detail goes to stderr, where it carries SQL rather than anyone's mail.
 fn store_failure(error: impl std::fmt::Display) -> CommandError {
-    eprintln!("postio: the local store refused that: {error}");
+    tracing::error!(%error, "the local store refused a write");
     CommandError::failed("Could not save that change")
 }
 

@@ -17,13 +17,16 @@ postio-smtp.workspace = true
 postio-storage.workspace = true
 postio-sync.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 criterion = "0.7.0"
+postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [[bench]]
 name = "store_reads"

@@ -48,14 +48,14 @@ pub fn start(
     let connector = match RustlsConnector::new() {
         Ok(connector) => Arc::new(connector),
         Err(error) => {
-            eprintln!("postio: no IMAP transport, so no sync: {error}");
+            tracing::error!(%error, "no IMAP transport, so no sync");
             return None;
         }
     };
     let smtp = match postio_smtp::transport::RustlsConnector::new() {
         Ok(connector) => Arc::new(connector),
         Err(error) => {
-            eprintln!("postio: no SMTP transport, so nothing can be sent: {error}");
+            tracing::error!(%error, "no SMTP transport, so nothing can be sent");
             return None;
         }
     };
@@ -84,7 +84,7 @@ pub fn start(
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {
-            eprintln!("postio: the sync engine did not start: {error}");
+            tracing::error!(%error, "the sync engine did not start");
             None
         }
     }

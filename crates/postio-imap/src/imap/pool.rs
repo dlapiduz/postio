@@ -515,10 +515,43 @@ impl ConnectionPool {
     }
 
     /// Opens and authenticates one connection.
+    ///
+    /// The endpoint is `host:port` — a server the user chose to talk to, which
+    /// is public information and the first thing anyone needs to know when a
+    /// connection will not come up. The password is not a field here and never
+    /// will be; `retrieve` returns it and it goes straight to the transport.
+    #[tracing::instrument(skip_all, fields(endpoint = %self.settings.endpoint()))]
     async fn open(&self) -> BackendResult<ImapSession> {
-        let password = self.store.retrieve(&self.key).await?;
+        let password = match self.store.retrieve(&self.key).await {
+            Ok(password) => password,
+            Err(error) => {
+                // Redacted: `SecretError` names the account so the *user* can
+                // see which one to fix, and that message is right on screen.
+                // A log is a different audience — it gets pasted into issues —
+                // so the domain survives and the local part does not.
+                tracing::error!(
+                    error = %postio_model::address::redact_addresses(&error.to_string()),
+                    "no credential for this account in the keyring"
+                );
+                return Err(error.into());
+            }
+        };
+        tracing::debug!("connecting");
         let mut session =
-            ImapSession::open(&self.settings, &password, self.connector.as_ref()).await?;
+            match ImapSession::open(&self.settings, &password, self.connector.as_ref()).await {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %postio_model::address::redact_addresses(&error.to_string()),
+                        "connection or authentication failed"
+                    );
+                    return Err(error);
+                }
+            };
+        tracing::info!(
+            capabilities = ?session.capabilities().names(),
+            "connected and authenticated"
+        );
         session.set_selection_policy(Arc::clone(&self.generations), self.config.selection_max_age);
         session.set_command_timeout(self.config.command_timeout);
 

@@ -140,11 +140,11 @@ fn main() -> ExitCode {
     println!("smtp:    {smtp_host}:{smtp_port} (implicit TLS)");
     println!("login:   {username}");
 
-    if let Some(parent) = store_path.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            eprintln!("postio: cannot create {}: {error}", parent.display());
-            return ExitCode::FAILURE;
-        }
+    if let Some(parent) = store_path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("postio: cannot create {}: {error}", parent.display());
+        return ExitCode::FAILURE;
     }
 
     let database = match Database::open(&store_path) {

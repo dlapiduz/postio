@@ -31,6 +31,7 @@ mod commands;
 mod compose;
 mod engine;
 mod feed;
+mod logging;
 mod paths;
 mod refresh;
 
@@ -51,8 +52,25 @@ use postio_storage::{BlobStore, Database};
 fn main() -> glib::ExitCode {
     let timeline = Timeline::start();
 
+    // Before anything else can have anything to say. Startup is exactly when
+    // a trace is worth having: an account that will not open, a store that
+    // will not migrate and a keyring that will not answer all happen before
+    // there is any UI to report them in.
+    let config_path = postio_config::paths::config_path().ok();
+    let logging = logging::init(
+        &config_path
+            .as_deref()
+            .map(logging::config_at)
+            .unwrap_or_default(),
+    );
+    // Held for the life of the process: dropping it stops the watch, and the
+    // whole point of the `[logging]` section is raising the level on a
+    // running Postio.
+    let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
+
     if adw::init().is_err() {
-        eprintln!("postio: no display; the UI needs a Wayland or X11 session");
+        tracing::error!("no display; the UI needs a Wayland or X11 session");
         return glib::ExitCode::FAILURE;
     }
     timeline.mark(Phase::Init);
@@ -61,7 +79,7 @@ fn main() -> glib::ExitCode {
     if let Err(error) = fonts::install() {
         // Recoverable: the design degrades to system fallbacks, which is ugly
         // but usable, and refusing to start over a font would be worse.
-        eprintln!("postio: {error}");
+        tracing::warn!(%error, "the embedded fonts did not install");
     }
     timeline.mark(Phase::Fonts);
 
@@ -105,7 +123,7 @@ fn main() -> glib::ExitCode {
     let (runtime, replies) = match Bridge::new(bus) {
         Ok((bridge, events)) => (Some(bridge), Some(events)),
         Err(error) => {
-            eprintln!("postio: no runtime, so no mail: {error}");
+            tracing::error!(%error, "no runtime, so no mail");
             (None, None)
         }
     };
@@ -195,7 +213,7 @@ fn open_store() -> Option<(Database, BlobStore)> {
     let database = match Database::open(&path) {
         Ok(database) => database,
         Err(error) => {
-            eprintln!("postio: cannot open {}: {error}", path.display());
+            tracing::error!(path = %path.display(), %error, "cannot open the store");
             return None;
         }
     };
@@ -204,7 +222,7 @@ fn open_store() -> Option<(Database, BlobStore)> {
     let blobs = match BlobStore::open(path.with_file_name("blobs")) {
         Ok(blobs) => blobs,
         Err(error) => {
-            eprintln!("postio: cannot open the blob store: {error}");
+            tracing::error!(%error, "cannot open the blob store");
             return None;
         }
     };
@@ -218,7 +236,20 @@ fn open_store() -> Option<(Database, BlobStore)> {
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
 fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::feed::Feeds> {
-    let account = first_account(&wiring.database)?;
+    let Some(account) = first_account(&wiring.database) else {
+        tracing::info!(
+            "no account configured; opening empty (see the provision example, or postio-hiy)"
+        );
+        return None;
+    };
+    // The account's *domain*, never the local part: enough to tell an iCloud
+    // problem from a Fastmail one in a log somebody pastes into an issue,
+    // and not enough to identify them.
+    tracing::info!(
+        account = account.id.get(),
+        domain = account.address.domain().unwrap_or("unknown"),
+        "opening account"
+    );
 
     // The engine is started before the panes are fed, so that the first
     // thing it does — bring the link up, drain whatever the last session
@@ -273,7 +304,7 @@ fn fetch_what_is_opened(
         let message = row.id;
         runtime.spawn(async move {
             if let Err(error) = sync.request_body(message).await {
-                eprintln!("postio: cannot fetch that message: {error}");
+                tracing::warn!(message = message.get(), %error, "cannot fetch that body");
             }
         });
     });
@@ -291,17 +322,33 @@ fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
     let Some(account) = first_account(&wiring.database) else {
         return;
     };
-    let Ok(mailboxes) = postio_storage::repository::MailboxRepository::new(&connection)
+    let mailboxes = match postio_storage::repository::MailboxRepository::new(&connection)
         .list_for_account(account.id)
-    else {
-        return;
+    {
+        Ok(mailboxes) => mailboxes,
+        Err(error) => {
+            tracing::error!(%error, "cannot read the account's folders");
+            return;
+        }
     };
     drop(connection);
+
+    let selectable = mailboxes.iter().filter(|m| m.selectable).count();
+    // The line that would have answered "why did sync produce nothing": every
+    // folder-enumerating path in the engine reads this same local table, and
+    // until `postio-755` lands nothing ever fills it from the server.
+    tracing::info!(known = mailboxes.len(), selectable, "folders known locally");
+    if mailboxes.is_empty() {
+        tracing::warn!(
+            "no folders are known locally, so nothing will sync; the server's \
+             folder list has never been read (postio-755)"
+        );
+    }
 
     for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
         wiring.runtime.spawn(async move {
             if let Err(error) = sync.seed_backfill(mailbox.id, BACKFILL_PER_MAILBOX).await {
-                eprintln!("postio: {}: {error}", mailbox.path);
+                tracing::warn!(mailbox = %mailbox.path, %error, "cannot seed the backfill");
             }
         });
     }
@@ -323,11 +370,11 @@ const BACKFILL_PER_MAILBOX: u32 = 200;
 fn first_account(database: &Database) -> Option<postio_model::Account> {
     let connection = database
         .connection()
-        .map_err(|error| eprintln!("postio: cannot read the accounts: {error}"))
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
         .ok()?;
     AccountRepository::new(&connection)
         .list_enabled()
-        .map_err(|error| eprintln!("postio: cannot read the accounts: {error}"))
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
         .ok()?
         .into_iter()
         .next()

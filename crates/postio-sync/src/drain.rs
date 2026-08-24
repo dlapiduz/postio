@@ -222,6 +222,12 @@ impl<'a> Drainer<'a> {
         }
 
         let plan = coalesce(&batch);
+        tracing::debug!(
+            pending = batch.len(),
+            steps = plan.steps.len(),
+            folded = plan.obsolete.len(),
+            "draining the operation queue"
+        );
         let mut report = DrainReport {
             coalesced: plan.obsolete.len(),
             ..DrainReport::default()
@@ -239,14 +245,30 @@ impl<'a> Drainer<'a> {
         let mut resync: BTreeSet<i64> = BTreeSet::new();
 
         for step in &plan.steps {
-            let outcome = self.run(connection, step, &capabilities, &mut resync)?;
-            let outcome = match outcome {
-                Pending::Settled(outcome) => outcome,
-                Pending::Send(context) => {
-                    self.send(connection, &context, &capabilities, &mut resync)
-                        .await
-                }
+            // One span per operation: the op type and the row it acts on, so a
+            // failure three retries deep can be traced back to the action the
+            // user took. The payload is never a field — a `Move` names two
+            // mailbox ids, an `Append` names a blob key, and neither carries
+            // anything of the message itself.
+            let span = tracing::debug_span!(
+                "operation",
+                op = step.operation.op_type(),
+                target = step.target.id()
+            );
+            let outcome = async {
+                let outcome = self.run(connection, step, &capabilities, &mut resync)?;
+                Ok::<_, crate::drain::SyncError>(match outcome {
+                    Pending::Settled(outcome) => outcome,
+                    Pending::Send(context) => {
+                        self.send(connection, &context, &capabilities, &mut resync)
+                            .await
+                    }
+                })
             };
+            let outcome = tracing::Instrument::instrument(outcome, span.clone()).await?;
+            let _entered = span.enter();
+            tracing::debug!(outcome = ?outcome, "operation settled");
+            drop(_entered);
             self.settle(connection, step, outcome, now, &mut report)?;
         }
 

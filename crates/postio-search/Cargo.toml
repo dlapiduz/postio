@@ -26,6 +26,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 postio-model = { workspace = true }
 rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 thiserror = { version = "2.0.20", optional = true }
+tracing = "0.1"
 
 [dev-dependencies]
 criterion = "0.7.0"
