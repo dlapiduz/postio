@@ -83,6 +83,7 @@ python3 scripts/check-crate-boundaries.py
 python3 scripts/check-no-personal-data.py
 python3 scripts/check-no-silent-tracking.py
 python3 scripts/check-toolchain-pinned.py
+python3 scripts/check-no-gtk-init-in-unit-tests.py
 
 # rust-toolchain.toml pins the compiler, so CI and this shell agree by
 # construction -- unless RUSTUP_TOOLCHAIN is exported, which beats the file.

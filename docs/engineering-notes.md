@@ -561,6 +561,37 @@ reliably headless.** The technique itself is sound — `WidgetPaintable` +
 new CSS state. Do not ship such a test without waiting on a real frame; the
 full record of what was ruled out is in #90.
 
+**GTK may be initialized once per process, so it can never be initialized
+from a unit test.** `cargo test` runs a crate's unit tests on a thread pool
+inside one binary. GTK's init is process-wide state guarded by a
+one-thread-only assertion, so two unit tests that both call `adw::init()` are
+two threads racing for it. The loser does not fail a test — it kills the
+process, and every other test in that binary is never reported at all.
+
+Found by #41: four unit tests in `crates/postio-gtk/src/toast.rs` did this.
+CI reported `signal: 6, SIGABRT` and zero of postio-gtk's 305 passing tests.
+It had survived every developer machine, because whether it aborts depends on
+which thread wins and on whether a display exists. Reinstating the four tests
+while working #41 reproduced it as **SIGSEGV on one run in three** under
+`scripts/test-headless.sh`, and not at all display-less. That ratio is the
+lesson: a crash this shape cannot be shown absent by running the suite again.
+
+What to do instead: put anything needing a display in `crates/<crate>/tests/`,
+where cargo gives each integration test file its own process.
+`crates/postio-gtk/tests/gtk_toast.rs` is the worked example, and every other
+`gtk_*.rs` beside it follows the same `if adw::init().is_err() || ...` guard.
+
+The one legitimate exception is a crate with no lib target — an integration
+test has nothing to link against. `postio-app` is a binary crate and keeps
+exactly one GTK-touching unit test in `src/compose.rs` for that reason.
+
+`scripts/check-no-gtk-init-in-unit-tests.py` enforces this in CI and in
+`issue-land.sh`. It reads `#[cfg(test)]`/`#[test]` spans rather than grepping
+for `adw::init`, so production code initializing GTK is untouched; the only
+way past it is a `POSTIO-GTK-INIT:` line in the file arguing why the test
+cannot move. Its own failure modes are exercised by
+`scripts/test-check-no-gtk-init-in-unit-tests.py`, since the tree is clean and
+a guard on a clean tree passes whether it works or not.
 
 **`postio_runtime::Engine` does not need a trait in front of it to be
 tested.** A proposal to add one was closed as not-needed after being written
