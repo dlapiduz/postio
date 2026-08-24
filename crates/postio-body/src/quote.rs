@@ -28,7 +28,7 @@
 /// `<blockquote>` is copied through untouched, byte for byte.
 ///
 /// Input is assumed to be well-formed, already-sanitized markup (see
-/// [`super::sanitize::sanitize_body`]): tags are matched by their literal
+/// [`crate::sanitize::sanitize_body`]): tags are matched by their literal
 /// spelling, not parsed, which is only safe because `ammonia`'s serializer
 /// never emits the literal text `<blockquote` inside an attribute value.
 pub fn fold_html_quotes(html: &str) -> String {
