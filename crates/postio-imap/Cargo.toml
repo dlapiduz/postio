@@ -71,3 +71,7 @@ postio-model = { path = "../postio-model", features = ["test-corpus"] }
 serde-xml-rs = "0.8"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
 toml = "1.1.4"
+
+[lints.rust]
+# Not the workspace floor: see EXCEPTIONS in scripts/check-lint-floor.py.
+unsafe_code = "deny"

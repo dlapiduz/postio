@@ -28,6 +28,11 @@
 //! Nothing here touches the network — `start_syncing` is the half that opens
 //! a socket, and this never calls it.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{Wiring, commands, ensure_search_index, feed_the_window};

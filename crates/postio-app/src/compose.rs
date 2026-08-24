@@ -458,7 +458,10 @@ mod tests {
             std::env::temp_dir().join(format!("postio-app-crash-recovery-{}", std::process::id()));
         std::fs::create_dir_all(&state_dir).unwrap();
         // SAFETY: first statement of a single-threaded test.
-        unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", &state_dir)
+        };
 
         if adw::init().is_err() || gdk::Display::default().is_none() {
             eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

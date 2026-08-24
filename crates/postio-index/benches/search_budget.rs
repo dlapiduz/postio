@@ -36,6 +36,12 @@
 //! cargo bench -p postio-index --bench search_budget -- --save-baseline main
 //! ```
 
+#![allow(missing_docs)]
+// `criterion_group!` expands to a `pub fn`, and the workspace lint floor now
+// reaches bench targets -- the old per-crate `#![warn(missing_docs)]` in
+// `lib.rs` never did. A bench is not public API, so documenting a
+// macro-generated item would be ceremony rather than information.
+
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 

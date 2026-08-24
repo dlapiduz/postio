@@ -13,6 +13,11 @@
 //! a running keymap, so reusing its `binding` helper here is the proof that
 //! the panel is not a second, parallel path to the same file.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use std::time::{Duration, Instant};
 
 use gtk::gdk;

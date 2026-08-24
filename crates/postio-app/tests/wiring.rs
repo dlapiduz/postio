@@ -27,6 +27,11 @@
 //! page replies are awaited on the thread-default main context, which the
 //! harness would otherwise drive from two threads at once.
 
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{Wiring, feed_the_window};
