@@ -2360,6 +2360,7 @@ dependencies = [
  "glib",
  "glib-build-tools",
  "gtk4",
+ "gtk4-sys",
  "libadwaita",
  "pango",
  "pangocairo",
