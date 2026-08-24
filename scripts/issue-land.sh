@@ -162,7 +162,14 @@ echo "$URL"
 # auto-merge would land the PR before CI had started.
 echo
 echo "--- waiting for checks ---"
-if ! gh pr checks --watch --fail-fast; then
+# A prose-only branch runs no workflow at all: ci.yml ignores docs, and
+# `gh pr checks` exits non-zero with "no checks reported" when nothing ran.
+# Without this, every docs PR would sit forever waiting for a check that was
+# deliberately never scheduled.
+CHECKS=$(gh pr checks 2>&1 || true)
+if printf '%s' "$CHECKS" | grep -qi "no checks reported"; then
+    echo "no checks scheduled — prose-only change, nothing to wait for."
+elif ! gh pr checks --watch --fail-fast; then
     echo
     echo "Checks failed. The PR is open at $URL and the branch is pushed." >&2
     echo "Fix it on this branch and run this script again -- do not open a" >&2
