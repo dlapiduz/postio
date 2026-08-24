@@ -1,6 +1,6 @@
 //! What an action will hit, and how the keyboard changes it.
 //!
-//! The constraint that shapes all of this: spec.md §18 says a mailbox is never
+//! The constraint that shapes all of this: docs/PRODUCT.md §18 says a mailbox is never
 //! loaded into memory, so "select all" in a 100,000-message folder must not be
 //! expressible only as 100,000 ids. It is a predicate instead, and the storage
 //! layer resolves it in one statement when an action finally lands.

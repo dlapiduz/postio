@@ -78,8 +78,9 @@ fn is_unread_and_is_flagged() {
 
 #[test]
 fn is_starred_is_accepted_as_a_synonym_for_flagged() {
-    // spec.md §7 said `is:starred`; the canvas renamed it to Flagged. Accept
-    // the old spelling so muscle memory from other clients still works.
+    // An earlier brief said `is:starred`; the canvas renamed it to Flagged, and
+    // docs/PRODUCT.md §7 keeps the old spelling so muscle memory from other
+    // clients still works.
     assert_eq!(filters("is:starred"), vec![Filter::Is(State::Flagged)]);
 }
 

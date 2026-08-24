@@ -161,7 +161,8 @@ fn operator(negated: bool, field: Field, value: String, today: NaiveDate) -> Tok
         Field::Is => match value.to_ascii_lowercase().as_str() {
             "unread" | "new" => filter(Filter::Is(State::Unread)),
             "read" | "seen" => filter(Filter::Is(State::Read)),
-            // spec.md §7 wrote `is:starred`; the canvas renamed it to Flagged.
+            // An earlier brief wrote `is:starred`; the canvas renamed it to
+            // Flagged, and docs/PRODUCT.md §7 keeps the old spelling as an alias.
             "flagged" | "starred" | "star" => filter(Filter::Is(State::Flagged)),
             _ => partial(value),
         },

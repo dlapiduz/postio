@@ -16,9 +16,9 @@ background. The UI never awaits the network.
 Postio is pre-release and under active development. The core mail
 experience — accounts, sync, threading, search, the three-pane reading
 layout, keyboard navigation, compose — is being built out epic by epic;
-see [`spec.md`](spec.md) for the full product spec and the design canvas
-at [`Design/Mail Client.dc.html`](Design/Mail%20Client.dc.html) for the
-visual target.
+see [`docs/PRODUCT.md`](docs/PRODUCT.md) for what Postio must do, and the
+design canvas at [`Design/Mail Client.dc.html`](Design/Mail%20Client.dc.html)
+for the visual target.
 
 **v1 scope:** Linux (GTK4/libadwaita) only, IMAP + SMTP only, targeting
 iCloud with an app-specific password (no OAuth). SQLite for metadata,

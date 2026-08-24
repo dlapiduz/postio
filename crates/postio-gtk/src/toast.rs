@@ -1,6 +1,6 @@
 //! Undo toasts: *Archived 12 messages — Undo*.
 //!
-//! spec.md §16 and canvas 3b. The undo stack itself — coalescing a burst of
+//! docs/PRODUCT.md §16 and canvas 3b. The undo stack itself — coalescing a burst of
 //! archives into one entry, remembering it for ten minutes — is
 //! `postio_core::undo::UndoStack`; this is only the two things a stack has
 //! no opinion about: how the confirmation looks, and where the mouse reaches

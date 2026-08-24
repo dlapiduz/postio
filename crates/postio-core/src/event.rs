@@ -156,7 +156,7 @@ pub enum Event {
     /// An action finished and should be announced.
     ///
     /// With `undoable`, this is the *"Archived 12 messages — Undo"* toast of
-    /// spec.md §16; the description is already user-facing prose.
+    /// docs/PRODUCT.md §16; the description is already user-facing prose.
     ActionCompleted {
         /// What happened, phrased for the user.
         description: String,

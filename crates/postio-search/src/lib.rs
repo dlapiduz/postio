@@ -2,7 +2,7 @@
 //! surfaces are built from.
 //!
 //! Search is one of the three things Postio has to do better than every other
-//! mail client (`spec.md` §25), and the query bar is its front door. This
+//! mail client (`docs/PRODUCT.md` §25), and the query bar is its front door. This
 //! crate provides the parser half of that: [`parse`] turns whatever is in the
 //! search entry — including a query that is half typed — into a
 //! [`ParsedQuery`].

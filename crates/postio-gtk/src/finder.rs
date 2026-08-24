@@ -6,7 +6,7 @@
 //! a `/` query bar — and the user had to know which box a given thing lived
 //! behind before they could reach it. That is exactly the friction the
 //! product exists to remove, and search is already the primary way to move
-//! around (spec.md §7). So they are one box, VS Code's way: one keypress, one
+//! around (docs/PRODUCT.md §7). So they are one box, VS Code's way: one keypress, one
 //! field, and a prefix that says which question you are asking.
 //!
 //! # Where the box is
