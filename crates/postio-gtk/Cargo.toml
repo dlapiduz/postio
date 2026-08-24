@@ -27,6 +27,7 @@ webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
 criterion = "0.7.0"
+gtk4-sys = "0.10.3"
 postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
 tempfile = "3.27.0"
