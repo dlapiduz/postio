@@ -125,14 +125,45 @@ pub fn lookup_binding(..) -> Option<&'static CommandSpec>
 `&'static`, so naively making `all()` return static ∪ dynamic changes that
 lifetime at all 48.
 
-That is the expensive move, and most of it is unnecessary. Many of those call
-sites *mean* "the built-in table" — `keybindings_doc.rs` renders shipped
-documentation, `command_registry.rs` asserts invariants over what shipped. They
-should keep seeing a static table and keep compiling untouched.
+Most of that is avoidable. Many call sites *mean* "the built-in table" —
+`keybindings_doc.rs` renders shipped documentation, `command_registry.rs`
+asserts invariants over what shipped. They should keep seeing a static table
+and keep compiling untouched.
 
-Only three surfaces genuinely need "everything the user can reach right now":
-the `Ctrl+K` palette (`palette.rs:178`), the `?` cheat sheet
-(`cheatsheet.rs:99`), and the row key hints (`list_view.rs:984`).
+But the sites that must change are **not** only view surfaces, and an earlier
+draft of this ADR was wrong to say so. The centre of the work is a type:
+
+```rust
+pub struct Keymap {
+    bindings: BTreeMap<CommandId, Vec<String>>,   // config.rs:51
+    problems: Vec<String>,
+}
+```
+
+`postio_core::Keymap` — the resolved `[keys]` table — **is keyed on
+`CommandId`**. So is `bindings()`, `command_for()` (which returns
+`Option<CommandId>`) and `holder_of()`. "Extension commands are bindable from
+`[keys]` with no new syntax" is therefore not free: it means `Keymap` becomes
+keyed on the wider id. That is the real cost of this feature, it lives in
+`postio-core`, and no amount of care at the view layer avoids it.
+
+The honest inventory of `src` sites that must move:
+
+| Where | What | Why |
+|---|---|---|
+| `core/config.rs:51` | `Keymap.bindings` map key | the binding table must hold extension ids |
+| `core/config.rs:64,77,99,120,379` | `resolve()` | builds that table |
+| `core/config.rs:143,150,159,175,179` | `bindings`, `command_for`, `holder_of` | accessors + conflict detection |
+| `core/dispatch.rs:290,310` | `registry::get(id).title` | error text for an extension command |
+| `core/command.rs:515` | `is_destructive()` | merged lookup |
+| `gtk/keymap.rs:637` | `from_commands` | resolver built from specs + bindings |
+| `gtk/window.rs:950` | `id.parse::<CommandId>()` | the one parse that is actually closed |
+| `gtk/palette.rs:178` | `Ctrl+K` rows | must list extensions |
+| `gtk/cheatsheet.rs:99` | `?` rows | must list extensions |
+| `gtk/list_view.rs:984,1011` | context menu + dispatch-by-name | menu is filtered by `is_message_action(CommandId)` |
+
+Roughly a dozen `src` sites across two crates, plus their tests — not three,
+and not 48.
 
 ---
 
@@ -159,10 +190,18 @@ parallel map for extensions, so the built-in path does not slow down or change
 shape.
 
 **4. Leave `registry::all()` alone; add a second accessor.** `all()` and
-`get()` keep meaning "the built-in table" and keep their `&'static`, so 45 of
-the 48 call sites are untouched. Add `registry::reachable(context)` yielding
-merged built-in + registered specs, and move exactly three consumers onto it —
-palette, cheat sheet, key hints.
+`get()` keep meaning "the built-in table" and keep their `&'static`, so every
+call site that documents or asserts over what *shipped* is untouched — which
+is most of the 26 in tests. Add `registry::reachable(context)` yielding merged
+built-in + registered specs, and move the consumers in the Q4 table onto it.
+
+**4a. `Keymap` becomes keyed on `ActionId`.** This is the load-bearing part and
+should be done first, because everything else in the gtk column follows from
+it. `command_for()` returns `Option<ActionId>`. `Keymap::resolve` already
+warns-and-continues on "a command this build does not know" (`config.rs:58`),
+which is the behaviour an unregistered extension id needs anyway — so the
+failure mode is already designed, and the ordering problem below is why it
+matters.
 
 **5. `CommandSpec::title` becomes `Cow<'static, str>`.** Required for owned
 titles; also the thing that unblocks i18n, which `&'static str` makes
@@ -225,8 +264,21 @@ this bead.
 
 - `postio-core` gains no dependencies. The interner is `std`.
   `ARCHITECTURE.md` §9 stands: no optional dependencies, ever.
-- `postio-gtk` changes in exactly three files, all of them replacing
-  `registry::all()` with `registry::reachable(context)`.
+- `postio-gtk` changes in five files — `keymap.rs`, `window.rs`,
+  `palette.rs`, `cheatsheet.rs`, `list_view.rs` — mostly replacing
+  `registry::all()` with `registry::reachable(context)` and widening the id
+  type. `postio-app` is expected to need no change at all: it registers
+  handlers through `DispatcherBuilder` keyed on built-in `CommandId`s, and
+  extensions register through their own door.
+- **An ordering problem this ADR does not solve:** `config.toml` is parsed and
+  `[keys]` resolved at startup, but extensions register later. A `[keys]` entry
+  naming an extension command will not find it at resolve time. `Keymap`'s
+  existing warn-and-continue path stops that being a crash, but "the binding
+  silently does nothing" is not acceptable either. Decide this during
+  implementation: either re-resolve the keymap when an extension registers, or
+  keep unresolved bindings and bind them late. Prefer the former — the config
+  watcher already re-resolves on file change (`ARCHITECTURE.md` § live reload),
+  so the machinery exists.
 - `[keys]` gains extension commands with **no syntax change** — bindings
   already name commands by string.
 - The `docs/keybindings.md` generator keeps rendering the built-in table only,
