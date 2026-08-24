@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prove the shared-tree guard denies what it must and allows what it must."""
 import json
+import os
 import subprocess
 import sys
 
@@ -70,8 +71,11 @@ ALLOW = [
 ]
 
 
-def decide(cmd: str) -> str:
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+def decide(cmd: str, cwd: str | None = None) -> str:
+    body = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    if cwd:
+        body["cwd"] = cwd
+    payload = json.dumps(body)
     r = subprocess.run(
         [sys.executable, HOOK], input=payload, capture_output=True, text=True
     )
@@ -83,6 +87,7 @@ def decide(cmd: str) -> str:
 
 
 failures = 0
+scoped = 0
 for cmd in DENY:
     got = decide(cmd)
     ok = got == "deny"
@@ -94,5 +99,29 @@ for cmd in ALLOW:
     failures += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} allow {cmd!r} -> {got}")
 
-print(f"\n{len(DENY) + len(ALLOW)} cases, {failures} failure(s)")
+# A private per-issue worktree is exempt: nothing else writes there, so the
+# commands that destroy a shared tree are the correct thing to run in it. The
+# comparison has to be by path -- .../postio-worktrees/issue-27 is a string
+# prefix match against .../postio and is emphatically not inside it.
+WORKTREE = os.path.expanduser("~/src/postio-worktrees/issue-27")
+SHARED = os.environ.get("CLAUDE_PROJECT_DIR") or os.path.expanduser("~/src/postio")
+os.makedirs(WORKTREE, exist_ok=True)
+
+for cmd in ["git add -A", "git stash", "cargo fmt --all", "git reset --hard"]:
+    got = decide(cmd, cwd=WORKTREE)
+    ok = got == "allow"
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} allow {cmd!r} in a worktree -> {got}")
+    scoped += 1
+
+    # The same command in the shared checkout must still be refused, and with
+    # no cwd at all the guard must fail closed rather than assume a worktree.
+    for where, label in ((SHARED, "shared tree"), (None, "no cwd")):
+        got = decide(cmd, cwd=where)
+        ok = got == "deny"
+        failures += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} in {label} -> {got}")
+        scoped += 1
+
+print(f"\n{len(DENY) + len(ALLOW) + scoped} cases, {failures} failure(s)")
 sys.exit(1 if failures else 0)
