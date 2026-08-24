@@ -668,173 +668,66 @@ impl ThreadView {
     }
 }
 
-/// Builds and rebinds one row: its place in the thread, who sent it, what it
-/// says, and when.
+/// Builds and rebinds one row.
 ///
-/// A `GtkBox` of labels rather than a custom `snapshot()`. The message list
-/// pays for one because it scrolls a mailbox at speed; this column recycles a
-/// screenful of widgets through the factory, so the per-row cost is paid once
-/// for about fifteen rows however long the thread is.
+/// One widget per row, not four labels in a box. `postio-p44` measured the
+/// difference on a `GtkListView`'s read-ahead window: 18.3ms against 6.8ms,
+/// which is the difference between sitting inside a 16ms frame and not. See
+/// [`crate::thread_row`].
 fn row_factory(now: Rc<Cell<chrono::DateTime<chrono::Local>>>) -> gtk::SignalListItemFactory {
+    let _ = now;
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        item.set_child(Some(&row_widget()));
+        item.set_child(Some(&crate::thread_row::ThreadRowView::new()));
         item.set_activatable(true);
+        // The cursor lives on the list item and its state flag does not reach
+        // the child, so it is handed down explicitly — and kept in step,
+        // because moving the cursor off this row is a change to this row.
+        item.connect_selected_notify(|item| {
+            if let Some(view) = item
+                .child()
+                .and_downcast::<crate::thread_row::ThreadRowView>()
+            {
+                view.set_selected(item.is_selected());
+            }
+        });
     });
-    factory.connect_bind(move |_, item| {
+    factory.connect_bind(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(line) = item.child().and_downcast::<gtk::Box>() else {
+        let Some(view) = item
+            .child()
+            .and_downcast::<crate::thread_row::ThreadRowView>()
+        else {
             return;
         };
         let row = item
             .item()
             .and_downcast::<crate::list::MessageRow>()
             .and_then(|item| item.row());
-        bind_row(&line, item, row.as_ref(), now.get());
+        // The canvas numbers the column `1..n`, which is a fact about what is
+        // drawn rather than about the message — so it comes off the list item
+        // and follows the order toggle for free.
+        view.set_row(row, item.position() + 1);
+        view.set_selected(item.is_selected());
+        item.set_accessible_label(&view.spoken());
     });
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             item.set_accessible_label("");
-            if let Some(line) = item.child().and_downcast::<gtk::Box>() {
-                line.remove_css_class("unread");
+            if let Some(view) = item
+                .child()
+                .and_downcast::<crate::thread_row::ThreadRowView>()
+            {
+                view.set_row(None, 0);
             }
         }
     });
     factory
-}
-
-/// The four labels a row is made of, in the canvas' order.
-fn row_widget() -> gtk::Box {
-    let number = gtk::Label::new(None);
-    number.add_css_class("postio-thread-index");
-    number.set_xalign(1.0);
-    number.set_width_chars(2);
-    number.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let sender = gtk::Label::new(None);
-    sender.add_css_class("postio-thread-sender");
-    sender.set_xalign(0.0);
-    sender.set_width_chars(SENDER_CHARS);
-    sender.set_max_width_chars(SENDER_CHARS);
-    sender.set_ellipsize(pango::EllipsizeMode::End);
-    sender.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let subject = gtk::Label::new(None);
-    subject.add_css_class("postio-thread-line");
-    subject.set_xalign(0.0);
-    subject.set_hexpand(true);
-    subject.set_ellipsize(pango::EllipsizeMode::End);
-    subject.set_max_width_chars(SUBJECT_CHARS);
-    subject.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let when = gtk::Label::new(None);
-    when.add_css_class("postio-thread-when");
-    when.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    line.add_css_class("postio-thread-row");
-    // Not focusable: the accessible row is the list item around this, and a
-    // child that took the keyboard out of it would leave a screen reader
-    // announcing a box rather than a message.
-    line.set_focusable(false);
-    line.append(&number);
-    line.append(&sender);
-    line.append(&subject);
-    line.append(&when);
-    line
-}
-
-/// Puts one message into a recycled row.
-fn bind_row(
-    line: &gtk::Box,
-    item: &gtk::ListItem,
-    row: Option<&Row>,
-    now: chrono::DateTime<chrono::Local>,
-) {
-    let labels: Vec<gtk::Label> = {
-        let mut labels = Vec::with_capacity(4);
-        let mut child = line.first_child();
-        while let Some(current) = child {
-            let next = current.next_sibling();
-            if let Ok(label) = current.downcast::<gtk::Label>() {
-                labels.push(label);
-            }
-            child = next;
-        }
-        labels
-    };
-    let [number, sender, subject, when] = labels.as_slice() else {
-        return;
-    };
-
-    let Some(row) = row else {
-        for label in [number, sender, subject, when] {
-            label.set_text("");
-        }
-        return;
-    };
-
-    // The canvas numbers the column `1..n`, which is the position in what is
-    // drawn rather than anything about the message — so it comes off the list
-    // item and follows the order toggle for free.
-    number.set_text(&(item.position() + 1).to_string());
-    sender.set_text(&sender_name(row));
-    subject.set_text(
-        row.subject
-            .as_deref()
-            .map(str::trim)
-            .filter(|subject| !subject.is_empty())
-            .unwrap_or("(no subject)"),
-    );
-    when.set_text(&crate::row::timestamp(row.received_at, now));
-
-    if row.seen {
-        line.remove_css_class("unread");
-    } else {
-        line.add_css_class("unread");
-    }
-
-    // The list's own row already knows how to say all of this; saying it the
-    // same way here means a screen reader hears one description of a message
-    // wherever it meets one. On the list *item*, which is the widget carrying
-    // the row role — see `crate::list_view`'s module docs.
-    item.set_accessible_label(&format!(
-        "{}. {}",
-        item.position() + 1,
-        crate::row::accessible_label(row)
-    ));
-}
-
-/// How wide the sender column is, in characters. The canvas' 104px.
-const SENDER_CHARS: i32 = 13;
-
-/// A cap on the subject's *natural* width, in characters.
-///
-/// The label ellipsizes, so this changes nothing about what is drawn — but a
-/// `GtkLabel` with no cap reports the whole subject as its natural width, and
-/// the `ScrolledWindow` around these rows is `PolicyType::Never` horizontally,
-/// which means it sizes to that natural width. Asking for it makes
-/// `GtkListView` measure every item in the model, which is how a 200-message
-/// thread came to instantiate 200 row widgets instead of the fifteen that
-/// fit.
-const SUBJECT_CHARS: i32 = 28;
-
-/// Who a message is from, as one line: the display name, or the address when
-/// there is no name, or a dash when there is neither.
-fn sender_name(row: &Row) -> String {
-    match row.from.as_ref() {
-        Some(from) => from
-            .name
-            .clone()
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| from.address.clone()),
-        None => "—".to_string(),
-    }
 }
 
 #[cfg(test)]
@@ -989,21 +882,5 @@ mod tests {
             summary(6, 2, 3, Some("Inbox")),
             "6 messages · 3 people · Esc back to Inbox"
         );
-    }
-
-    // -- the sender column -------------------------------------------------
-
-    #[test]
-    fn a_sender_with_no_name_is_shown_by_address() {
-        let mut row = message(1, "", "buildbot@example.net", 9, true);
-        row.from = Some(EmailAddress::new(None::<String>, "buildbot@example.net"));
-        assert_eq!(sender_name(&row), "buildbot@example.net");
-    }
-
-    #[test]
-    fn a_message_from_nobody_still_has_something_in_the_column() {
-        let mut row = message(1, "x", "x@example.net", 9, true);
-        row.from = None;
-        assert_eq!(sender_name(&row), "—");
     }
 }
