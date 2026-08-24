@@ -581,7 +581,12 @@ fn a_draft_this_client_uploaded_does_not_come_back_as_a_message() {
         "the batch is what the caller goes on to thread and record contacts \
          from, so a skipped message has to leave it"
     );
-    assert_eq!(rows_in(&connection, drafts), 0);
+    assert_eq!(
+        rows_in(&connection, drafts),
+        1,
+        "the one row is the one `save` wrote for the folder to list (#166); \
+         the copy that came back down added nothing"
+    );
 }
 
 #[test]
@@ -605,7 +610,11 @@ fn a_draft_written_by_another_client_is_an_ordinary_message() {
     assert_eq!(report.own_drafts, 1);
     assert_eq!(batch.len(), 1);
     assert_eq!(batch[0].server.uid.map(postio_model::Uid::get), Some(8));
-    assert_eq!(rows_in(&connection, drafts), 1);
+    assert_eq!(
+        rows_in(&connection, drafts),
+        2,
+        "the draft's own row, and the other client's draft beside it"
+    );
 }
 
 #[test]
@@ -646,7 +655,13 @@ fn a_draft_whose_append_was_never_located_hides_nothing() {
         .upsert_batch(&mut batch)
         .expect("a sync pass over Drafts");
 
-    assert_eq!(rows_in(&connection, drafts), 1);
+    assert_eq!(
+        rows_in(&connection, drafts),
+        2,
+        "the draft's own row, and the copy of it that came back down — \
+         nothing links the two, which is what `postio-sync::drafts` flags the \
+         folder for a resync over rather than guessing about"
+    );
 }
 
 #[test]
@@ -663,7 +678,12 @@ fn a_draft_recorded_under_an_older_generation_hides_nothing() {
         .upsert_batch(&mut batch)
         .expect("a sync pass over a renumbered Drafts");
 
-    assert_eq!(rows_in(&connection, drafts), 1);
+    assert_eq!(
+        rows_in(&connection, drafts),
+        2,
+        "the draft's own row, and the message that is number 7 under the new \
+         generation — which is not the same message at all"
+    );
 }
 
 #[test]
@@ -692,11 +712,206 @@ fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
 
     uploaded(&connection, account.id, 7, 1);
 
-    assert_eq!(rows_in(&connection, drafts), 0);
+    assert_eq!(
+        rows_in(&connection, drafts),
+        1,
+        "the stray row goes and the draft's own row is what is left, rather \
+         than the two of them sitting side by side"
+    );
     assert_eq!(
         rows_in(&connection, elsewhere),
         1,
         "UIDs are per-mailbox; the inbox message that happens to be number 7 \
          is somebody's mail"
     );
+}
+
+// ---------------------------------------------------------------------------
+// A draft's place in the Drafts folder
+// ---------------------------------------------------------------------------
+//
+// #51 stopped the synced copy of a draft becoming a second message row, which
+// left the Drafts folder listing other clients' drafts and nothing else — and
+// the sidebar badge, which reads the mailbox's cached count of message rows,
+// saying 0 while the composer held a draft. #166.
+//
+// A draft's list presence is therefore a `messages` row this repository writes,
+// not one sync brings back. That is the only source that is right immediately:
+// a draft has no server copy until an append has round-tripped, and a folder
+// that only listed your draft after a network exchange is exactly what
+// docs/PRODUCT.md §18's local-first rule forbids.
+
+/// What the message list would show for `mailbox`, subject first.
+fn folder(connection: &rusqlite::Connection, mailbox: postio_model::MailboxId) -> Vec<String> {
+    let query = postio_storage::repository::ListQuery {
+        scope: postio_storage::repository::ListScope::Mailbox(mailbox),
+        limit: 50,
+        after: None,
+    };
+    MessageRepository::new(connection)
+        .page(&query)
+        .expect("a page")
+        .into_iter()
+        .map(|row| row.subject.unwrap_or_default())
+        .collect()
+}
+
+/// The count the sidebar draws under "Drafts".
+fn badge(connection: &rusqlite::Connection, mailbox: postio_model::MailboxId) -> u32 {
+    postio_storage::repository::MailboxRepository::new(connection)
+        .counts(mailbox)
+        .expect("a read")
+        .expect("the mailbox")
+        .total
+}
+
+#[test]
+fn saving_a_draft_puts_it_in_the_drafts_folder_at_once() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+
+    let mut draft = a_draft(account.id);
+    DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save the draft");
+
+    assert_eq!(
+        folder(&connection, drafts_mailbox),
+        vec!["Tide gate interlock".to_owned()],
+        "no server round trip stands between typing and this"
+    );
+    assert_eq!(badge(&connection, drafts_mailbox), 1);
+}
+
+#[test]
+fn the_row_a_draft_owns_is_marked_as_a_draft_and_as_read() {
+    // The list already draws a draft mark and says "Draft" in the accessible
+    // label off `MessageListRow::draft`; unread is for mail that arrived.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+
+    let mut draft = a_draft(account.id);
+    DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save the draft");
+
+    let query = postio_storage::repository::ListQuery {
+        scope: postio_storage::repository::ListScope::Mailbox(drafts_mailbox),
+        limit: 50,
+        after: None,
+    };
+    let rows = MessageRepository::new(&connection)
+        .page(&query)
+        .expect("a page");
+    assert!(rows[0].draft, "the row the folder shows is a draft");
+    assert!(rows[0].seen, "your own draft is not unread mail");
+    assert_eq!(badge(&connection, drafts_mailbox), 1);
+}
+
+#[test]
+fn autosave_keeps_one_row_and_keeps_it_current() {
+    // The autosave rule this repository already holds for the draft row, held
+    // for its list row too: a keystroke is not a new draft.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    draft.subject = "Tide gate interlock, revised".to_owned();
+    draft.updated_at = at(5);
+    drafts.save(&mut draft).expect("save again");
+
+    assert_eq!(
+        folder(&connection, drafts_mailbox),
+        vec!["Tide gate interlock, revised".to_owned()]
+    );
+    assert_eq!(badge(&connection, drafts_mailbox), 1);
+}
+
+#[test]
+fn discarding_a_draft_takes_its_row_out_of_the_folder() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts.discard(draft.id, at(5)).expect("discard");
+
+    assert!(folder(&connection, drafts_mailbox).is_empty());
+    assert_eq!(badge(&connection, drafts_mailbox), 0);
+}
+
+#[test]
+fn sending_a_draft_takes_its_row_out_of_the_folder() {
+    // `postio-sync::send` finishes by deleting the draft, which is the single
+    // exit both it and discard go through.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    assert!(drafts.delete(draft.id).expect("delete"));
+
+    assert!(folder(&connection, drafts_mailbox).is_empty());
+    assert_eq!(badge(&connection, drafts_mailbox), 0);
+}
+
+#[test]
+fn an_account_with_no_drafts_folder_yet_still_saves_the_draft() {
+    // The ordinary state of an account that has not finished its first sync.
+    // The draft is durable regardless; it simply has nowhere to be listed.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+
+    let mut draft = a_draft(account.id);
+    DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("a draft is durable before the folder exists");
+
+    assert!(draft.id.is_assigned());
+}
+
+#[test]
+fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
+    // The two halves have to meet. The append lands, `set_server_copy` records
+    // where — and the row the folder is already showing becomes the row that
+    // names that copy, rather than a second one appearing beside it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .set_server_copy(
+            draft.id,
+            Some(postio_model::Uid::new(7)),
+            Some(postio_model::UidValidity::new(1)),
+        )
+        .expect("record where the append landed");
+
+    assert_eq!(folder(&connection, drafts_mailbox).len(), 1);
+
+    // And the sync pass that fetches the copy back still adds nothing: #51.
+    let mut batch = vec![fetched(account.id, drafts_mailbox, 7, 1)];
+    MessageRepository::new(&connection)
+        .upsert_batch(&mut batch)
+        .expect("a sync pass over Drafts");
+
+    assert_eq!(
+        folder(&connection, drafts_mailbox),
+        vec!["Tide gate interlock".to_owned()],
+        "one draft, one row, whichever half wrote it"
+    );
+    assert_eq!(badge(&connection, drafts_mailbox), 1);
 }

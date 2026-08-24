@@ -22,7 +22,7 @@ use postio_model::{
     DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
     OperationTarget, ServerIdentifiers, ThreadId, Uid, UidValidity,
 };
-use rusqlite::{Connection, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{OperationQueueRepository, QueuedOperation};
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
@@ -135,6 +135,7 @@ impl<'a> DraftRepository<'a> {
 
         write_recipients(&transaction, draft)?;
         write_attachments(&transaction, draft)?;
+        list_row(&transaction, draft)?;
 
         transaction.commit()?;
         Ok(draft.id)
@@ -304,17 +305,23 @@ impl<'a> DraftRepository<'a> {
                 id: id.get(),
             });
         }
-        // Claiming the copy is also what disowns any message row for it. A
-        // sync pass that fetched the appended draft before this ran left an
-        // ordinary row behind, and `upsert_batch`'s skip cannot reach it —
-        // that only declines to *create* one, and every later pass would find
-        // this row and keep it current for ever. See #51.
+        let scope = super::Scope::open(self.connection)?;
+        // The stray row goes first, and it has to: it is a row for this very
+        // copy, and `messages` is unique on (mailbox, UIDVALIDITY, UID), so
+        // attaching the UID below while it still exists is a constraint
+        // violation rather than a duplicate.
+        //
+        // It is a duplicate a sync pass made before this ran, and
+        // `upsert_batch`'s skip cannot reach it — that only declines to create
+        // one, and every later pass would find this row and keep it current
+        // for ever. See #51.
         //
         // Scoped to the account's Drafts mailbox because UIDs are per-mailbox:
         // the message that happens to be number 7 in the inbox is mail.
-        self.connection.execute(
+        scope.execute(
             "DELETE FROM messages
                WHERE uid = ?2 AND uid_validity = ?3
+                 AND id IS NOT (SELECT message_id FROM drafts WHERE id = ?1)
                  AND mailbox_id IN (SELECT mailboxes.id FROM mailboxes
                                       JOIN drafts ON drafts.account_id = mailboxes.account_id
                                      WHERE drafts.id = ?1 AND mailboxes.role = 'drafts')",
@@ -324,6 +331,22 @@ impl<'a> DraftRepository<'a> {
                 uid_validity.map(|validity| i64::from(validity.get())),
             ],
         )?;
+        // The row the folder is already showing becomes the row that names the
+        // server copy. It is the same message: this draft, listed since the
+        // moment it was first saved (#166), now with somewhere on the server
+        // to point at.
+        scope.execute(
+            "UPDATE messages
+                SET uid = ?2, uid_validity = ?3
+              WHERE id IN (SELECT message_id FROM drafts
+                            WHERE id = ?1 AND message_id IS NOT NULL)",
+            params![
+                id.get(),
+                uid.map(|uid| i64::from(uid.get())),
+                uid_validity.map(|validity| i64::from(validity.get())),
+            ],
+        )?;
+        scope.commit()?;
         Ok(())
     }
 
@@ -343,10 +366,21 @@ impl<'a> DraftRepository<'a> {
     }
 
     /// Deletes a draft and everything on it, returning whether there was one.
+    ///
+    /// Its row in the Drafts folder goes with it. This is the single exit both
+    /// discard and send go through — `postio-sync::send` finishes here — so it
+    /// is the one place that has to remember, and a draft that has been sent
+    /// must not go on being listed as unsent.
     pub fn delete(&self, id: DraftId) -> Result<bool> {
-        let deleted = self
-            .connection
-            .execute("DELETE FROM drafts WHERE id = ?1", [id.get()])?;
+        let scope = super::Scope::open(self.connection)?;
+        scope.execute(
+            "DELETE FROM messages
+              WHERE id IN (SELECT message_id FROM drafts
+                            WHERE id = ?1 AND message_id IS NOT NULL)",
+            [id.get()],
+        )?;
+        let deleted = scope.execute("DELETE FROM drafts WHERE id = ?1", [id.get()])?;
+        scope.commit()?;
         Ok(deleted > 0)
     }
 
@@ -428,6 +462,123 @@ impl<'a> DraftRepository<'a> {
 /// or was written by hand, and acting on it would be guessing.
 fn server_copy(draft: &Draft) -> Option<(Uid, UidValidity)> {
     Some((draft.server.uid?, draft.server.uid_validity?))
+}
+
+/// Keeps the draft's row in the Drafts folder in step with the draft.
+///
+/// # Why the list row is written here and not brought back by sync
+///
+/// The message list is a windowed query over `messages`, so a draft that is
+/// only a `drafts` row cannot appear in the folder the sidebar sends people to
+/// — and the badge, which reads the mailbox's cached count of message rows,
+/// says 0 while the composer holds a draft. #166.
+///
+/// The other way round — keeping the copy a sync pass brings back, which #51
+/// skips, and routing its activation to the composer — is cheaper and wrong: a
+/// draft has no server copy until an append has round-tripped, so the folder
+/// would list your draft only *after* a network exchange. docs/PRODUCT.md §18
+/// and the local-first rule both forbid exactly that. This row is written in
+/// the same transaction as the draft, offline and always.
+///
+/// # What the row says
+///
+/// `\Draft` and `\Seen`: the list already draws a draft mark and says "Draft"
+/// in the accessible label off `MessageListRow::draft`, and unread is a thing
+/// mail that arrived is. `received_at` is the draft's `updated_at`, so the
+/// folder orders by when it was last touched, which is the only ordering a
+/// draft has. There is no `uid` until [`DraftRepository::set_server_copy`]
+/// attaches one to *this* row.
+///
+/// Does nothing when the account has no Drafts mailbox yet — the ordinary
+/// state of an account that has not finished its first sync. The draft is
+/// durable regardless; it simply has nowhere to be listed, and the next save
+/// after the folder turns up files it.
+fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
+    let Some(mailbox) =
+        super::MailboxRepository::new(connection).by_role(draft.account_id, MailboxRole::Drafts)?
+    else {
+        return Ok(());
+    };
+    let existing: Option<i64> = connection
+        .query_row(
+            "SELECT message_id FROM drafts WHERE id = ?1",
+            [draft.id.get()],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+
+    let mut message = postio_model::Message::new(draft.account_id, mailbox.id, draft.updated_at);
+    message.subject = (!draft.subject.trim().is_empty()).then(|| draft.subject.clone());
+    message.preview = preview(draft.body.text.as_deref());
+    message.to = draft.to.clone();
+    message.cc = draft.cc.clone();
+    message.bcc = draft.bcc.clone();
+    message.from = sender(connection, draft)?.into_iter().collect();
+    message.flags = [postio_model::Flag::Draft, postio_model::Flag::Seen]
+        .into_iter()
+        .collect();
+    message.attachments = draft.attachments.clone();
+
+    let messages = super::MessageRepository::new(connection);
+    match existing {
+        // `update` rewrites the children, which is what makes a recipient
+        // removed in the composer disappear from the row.
+        Some(id) => {
+            message.id = MessageId::new(id);
+            messages.update(&mut message)?;
+        }
+        None => {
+            let id = messages.create(&mut message)?;
+            connection.execute(
+                "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
+                params![draft.id.get(), id.get()],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Who the draft will be from: the identity it picked, or the account's own
+/// address when it has not picked one.
+///
+/// Read rather than carried on [`Draft`], which holds an `identity_id` and not
+/// an address. One indexed point read per save, which is the same order as the
+/// recipient rewrite beside it.
+fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAddress>> {
+    let found: Option<(Option<String>, String)> = match draft.identity_id {
+        Some(identity) => connection
+            .query_row(
+                "SELECT display_name, address FROM identities WHERE id = ?1",
+                [identity.get()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?,
+        None => None,
+    };
+    let found = match found {
+        Some(found) => Some(found),
+        None => connection
+            .query_row(
+                "SELECT display_name, address FROM accounts WHERE id = ?1",
+                [draft.account_id.get()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?,
+    };
+    Ok(found.map(|(name, address)| EmailAddress::new(name, address)))
+}
+
+/// The snippet the list draws under the subject.
+///
+/// The same shape `postio-model`'s MIME reader produces for a received
+/// message, so a draft's row and a message's row read alike.
+fn preview(text: Option<&str>) -> Option<String> {
+    let flattened = text?.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flattened.is_empty() {
+        return None;
+    }
+    Some(flattened.chars().take(200).collect())
 }
 
 /// Rewrites a draft's recipient rows.
