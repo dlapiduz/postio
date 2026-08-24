@@ -23,8 +23,8 @@
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, BlobId, BodyState, Disposition, EmailAddress, Flag, FlagSet, LabelId,
-    LocalSyncState, MailboxId, Message, MessageId, ModSeq, RfcMessageId, ServerIdentifiers,
-    ThreadId, Uid, UidValidity, normalize_subject,
+    LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange, RfcMessageId,
+    ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
 };
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -148,6 +148,96 @@ impl ListQuery {
     pub fn after(mut self, cursor: ListCursor) -> Self {
         self.after = Some(cursor);
         self
+    }
+}
+
+/// A set of messages named by a predicate rather than by its members.
+///
+/// # Why this is not a `Vec<MessageId>`
+///
+/// `Ctrl+A` in an 81,717-message mailbox has to reach the statement that acts
+/// on it still shaped like a *query*. `postio-core`'s
+/// `Selection::Everything { except }` keeps it that way up to the handler; this
+/// is where the same idea lands in SQL, so archiving a whole mailbox is one
+/// `UPDATE` over an index rather than a hundred thousand ids that something had
+/// to enumerate first. spec.md §18 forbids the enumeration outright, and the
+/// 16 ms interaction budget would not survive it either way.
+///
+/// Both variants render to a `WHERE` fragment, so every bulk write in this
+/// crate is the same statement with a different predicate in the middle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageSet {
+    /// Every message a mailbox holds, less the rows taken back out of the
+    /// selection.
+    ///
+    /// Rows hidden pending a remote delete are excluded, because the set means
+    /// "what the list is showing" and the list does not show them.
+    InMailbox {
+        /// The folder the predicate is about.
+        mailbox: MailboxId,
+        /// Rows the user deselected. Built by clicking, so it is short.
+        except: Vec<MessageId>,
+    },
+    /// Every message a run of queue rows named.
+    ///
+    /// This is how undo takes back a bulk action without naming its rows: the
+    /// queue already wrote one row per message, in one numbered run, so the run
+    /// *is* the set. See [`OperationRange`].
+    Queued(OperationRange),
+}
+
+impl MessageSet {
+    /// Every message a mailbox holds.
+    pub fn in_mailbox(mailbox: MailboxId) -> Self {
+        MessageSet::InMailbox {
+            mailbox,
+            except: Vec::new(),
+        }
+    }
+
+    /// The folder the rows are in, when the set names one.
+    ///
+    /// `None` for [`MessageSet::Queued`], whose rows are wherever the operation
+    /// it names put them.
+    pub fn mailbox(&self) -> Option<MailboxId> {
+        match self {
+            MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
+            MessageSet::Queued(_) => None,
+        }
+    }
+
+    /// The `WHERE` fragment this set resolves to, and its arguments, using
+    /// numbered parameters from `?first` upwards.
+    ///
+    /// The fragment always constrains `messages`, so it composes into any
+    /// statement whose `FROM` names that table.
+    pub(crate) fn predicate(&self, first: usize) -> (String, Vec<i64>) {
+        match self {
+            MessageSet::InMailbox { mailbox, except } => {
+                let mut sql =
+                    format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
+                if !except.is_empty() {
+                    sql.push_str(&format!(
+                        " AND messages.id NOT IN ({})",
+                        placeholders(except.len(), first + 1)
+                    ));
+                }
+                let mut arguments = vec![mailbox.get()];
+                arguments.extend(except.iter().map(|id| id.get()));
+                (sql, arguments)
+            }
+            // The subquery is bounded by two integers, so SQLite seeks the
+            // queue's primary key rather than scanning it.
+            MessageSet::Queued(range) => (
+                format!(
+                    "messages.id IN (SELECT target_id FROM operation_queue
+                                      WHERE id BETWEEN ?{first} AND ?{}
+                                        AND target_kind = 'message')",
+                    first + 1
+                ),
+                vec![range.first.get(), range.last.get()],
+            ),
+        }
     }
 }
 
@@ -476,6 +566,47 @@ impl<'a> MessageRepository<'a> {
         let mut arguments = vec![mailbox_id.get()];
         arguments.extend(ids.iter().map(|id| id.get()));
         Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
+    }
+
+    /// Moves every message a [`MessageSet`] names into `mailbox_id`,
+    /// returning how many moved.
+    ///
+    /// The bulk twin of [`MessageRepository::move_to`], and the reason
+    /// `Ctrl+A` then `a` is affordable: one `UPDATE` over the mailbox index,
+    /// whatever the mailbox holds. Nothing is read first — not to count the
+    /// rows, not to name them — so the cost is the write and no more.
+    ///
+    /// The server identity is cleared for the same reason [`move_to`] clears
+    /// it: a UID belongs to the mailbox that issued it.
+    ///
+    /// [`move_to`]: MessageRepository::move_to
+    pub fn move_set(&self, set: &MessageSet, mailbox_id: MailboxId) -> Result<usize> {
+        let (predicate, arguments) = set.predicate(2);
+        let sql = format!(
+            "UPDATE messages
+                SET mailbox_id = ?1, uid = NULL, uid_validity = NULL, mod_seq = NULL,
+                    has_pending_operations = 1
+              WHERE {predicate}"
+        );
+        let mut parameters = vec![mailbox_id.get()];
+        parameters.extend(arguments);
+        Ok(self
+            .connection
+            .execute(&sql, params_from_iter(parameters))?)
+    }
+
+    /// How many messages a [`MessageSet`] names.
+    ///
+    /// One indexed `count(*)`. The undo toast needs a number — *Archived
+    /// 81,717 messages* — and this is the only thing about a bulk action that
+    /// has to know one.
+    pub fn count_set(&self, set: &MessageSet) -> Result<u32> {
+        let (predicate, arguments) = set.predicate(1);
+        let sql = format!("SELECT count(*) FROM messages WHERE {predicate}");
+        let count: i64 = self
+            .connection
+            .query_row(&sql, params_from_iter(arguments), |row| row.get(0))?;
+        Ok(count as u32)
     }
 
     /// Hides messages pending a remote delete or move, or brings them back.

@@ -82,7 +82,7 @@ pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
-pub use operation::{Operation, OperationState, OperationTarget};
+pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
 pub use outgoing::{BuiltMessage, OutgoingAttachment};
 pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};

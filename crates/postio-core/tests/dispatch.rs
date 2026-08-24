@@ -257,6 +257,8 @@ impl FakeMail {
             MessageTarget::Selection => self.selection.lock().unwrap().clone(),
             MessageTarget::Messages(messages) => messages.clone(),
             MessageTarget::Thread(_) => self.inbox.lock().unwrap().clone(),
+            // A predicate over the queue, which this fake has none of.
+            MessageTarget::Batch { .. } => Vec::new(),
         }
     }
 }

@@ -24,7 +24,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::flag::FlagSet;
-use crate::ids::{AccountId, BlobId, DraftId, MailboxId, MessageId, ThreadId, Uid, UidValidity};
+use crate::ids::{
+    AccountId, BlobId, DraftId, MailboxId, MessageId, OperationId, ThreadId, Uid, UidValidity,
+};
 
 /// What an operation acts on.
 ///
@@ -82,6 +84,43 @@ impl OperationTarget {
             "account" => Some(Self::Account(AccountId::new(id))),
             _ => None,
         }
+    }
+}
+
+/// A contiguous run of queue rows, written by one bulk enqueue.
+///
+/// # Why a range is the handle a bulk undo needs
+///
+/// Archiving an 81,717-message mailbox writes one queue row per message —
+/// each one carries the UID the drainer needs, so they cannot be folded into
+/// one — but it must not put 81,717 ids anywhere a human-scale data structure
+/// can hold them. The undo entry therefore names them the way the queue
+/// already numbered them: everything between two ids.
+///
+/// Both ends are inclusive, and the range is exact rather than merely
+/// contiguous — the writer takes `first` from the highest id present *before*
+/// its statement and `last` from the id its statement ended on, so a row
+/// another writer slipped in cannot widen it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationRange {
+    /// The first row of the run.
+    pub first: OperationId,
+    /// The last row of the run, inclusive.
+    pub last: OperationId,
+}
+
+impl OperationRange {
+    /// The run from `first` through `last`, both included.
+    pub fn new(first: OperationId, last: OperationId) -> Self {
+        Self { first, last }
+    }
+
+    /// Whether the run names no rows at all.
+    ///
+    /// A bulk enqueue over an empty mailbox writes nothing, and `last` then
+    /// sits below `first`.
+    pub fn is_empty(self) -> bool {
+        self.last.get() < self.first.get()
     }
 }
 
