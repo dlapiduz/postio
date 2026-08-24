@@ -162,18 +162,12 @@ echo "$URL"
 # auto-merge would land the PR before CI had started.
 echo
 echo "--- waiting for checks ---"
-# A prose-only branch runs no workflow at all: ci.yml ignores docs, and
-# `gh pr checks` exits non-zero with "no checks reported" when nothing ran.
-# Without this, every docs PR would sit forever waiting for a check that was
-# deliberately never scheduled.
-CHECKS=$(gh pr checks 2>&1 || true)
-if printf '%s' "$CHECKS" | grep -qi "no checks reported"; then
-    echo "no checks scheduled — prose-only change, nothing to wait for."
-elif ! gh pr checks --watch --fail-fast; then
-    echo
-    echo "Checks failed. The PR is open at $URL and the branch is pushed." >&2
-    echo "Fix it on this branch and run this script again -- do not open a" >&2
-    echo "second PR, and do not leave it sitting." >&2
+# Not inline, because this is the step that decides whether an unreviewed
+# commit reaches main and it needs a test of its own -- see
+# scripts/test-wait-for-checks.py's stubbed `gh`. It exits non-zero when a
+# check failed *or* when one was due and never registered; both mean the same
+# thing here, which is do not merge.
+if ! "$TREE/scripts/wait-for-checks.sh" "$URL"; then
     exit 1
 fi
 
