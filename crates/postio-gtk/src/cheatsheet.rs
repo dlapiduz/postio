@@ -61,6 +61,10 @@ fn heading(context: Context) -> &'static str {
         Context::Composer => "Composing",
         Context::Search => "Search",
         Context::Palette => "Command palette",
+        // "Folders" rather than "Sidebar": the vocabulary table says folder
+        // in UI copy, and the section is about what is in the pane, not about
+        // the pane.
+        Context::Sidebar => "Folders",
     }
 }
 
@@ -471,7 +475,8 @@ mod tests {
             vec![
                 EVERYWHERE,
                 heading(Context::List),
-                heading(Context::Composer)
+                heading(Context::Composer),
+                heading(Context::Sidebar),
             ],
             "no registry command is filed under Thread, Reading, Search or \
              Palette today; if one is, this test is how you find out"

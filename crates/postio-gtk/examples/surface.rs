@@ -364,6 +364,17 @@ fn main() -> glib::ExitCode {
         window.thread().focus_rows();
         settle(&window);
     }
+    // Same reason, and the point of the shot: the folder list's focus ring is
+    // what says the keyboard is in this pane, and it cannot be looked at
+    // without putting it there. `folders` on its own renders the pane at
+    // rest, which is the other half worth seeing.
+    if flag("folders") && flag("focused") {
+        window
+            .sidebar()
+            .select(postio_model::ids::MailboxId::new(3));
+        window.sidebar().focus_folders();
+        settle(&window);
+    }
 
     let (width, height) = (window.width(), window.height());
     let paintable = gtk::WidgetPaintable::new(Some(&window));
