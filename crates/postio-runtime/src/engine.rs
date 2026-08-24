@@ -33,7 +33,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use postio_imap::backend::MailBackend;
@@ -808,19 +808,28 @@ async fn discover(parts: &EngineParts, pool: &Pool) {
     }
 }
 
-/// Line every selectable folder up for a sync pass.
+/// Line every selectable folder up for a sync pass, INBOX first.
+///
+/// Sorted by [`postio_sync::order::sync_priority`], not by id and not by the
+/// order discovery happened to list them in — a large Archive queued ahead of
+/// INBOX left the user watching an empty inbox for as long as the archive took
+/// (`postio-0d9.6`). The one-mailbox-at-a-time drain loop above this function
+/// already finishes a mailbox before starting the next, so putting INBOX
+/// first here is also what keeps it readable while everything behind it is
+/// still syncing.
 fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
     let Ok(connection) = pool.get() else {
         tracing::warn!("no connection to read folders with; syncing nothing this pass");
         return;
     };
-    let mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
+    let mut mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
             tracing::error!(%error, "cannot read the account's folders; syncing nothing");
             return;
         }
     };
+    mailboxes.sort_by_key(|mailbox| postio_sync::order::sync_priority(mailbox.role));
     state.to_sync.clear();
     state.to_sync.extend(
         mailboxes
@@ -847,6 +856,56 @@ fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
 
 /// How many bodies one finished sync pass queues for its mailbox.
 const SEED_PER_MAILBOX: u32 = 200;
+
+/// How often a sync in progress tells the list that its mailbox has moved.
+///
+/// Each notification costs the list an invalidation and a page read, so one
+/// per committed batch would be three hundred reloads across a first sync of
+/// a large mailbox — the interaction budget spent entirely on repainting,
+/// during the one stretch where the application most needs to feel alive.
+/// Half a second is far below what reads as a delay and far above what reads
+/// as a flicker.
+const REPAINT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Tells the list a mailbox has moved, at most every [`REPAINT_INTERVAL`].
+///
+/// The *first* batch is announced immediately and every later one is
+/// throttled. That ordering is the whole point: the first screenful is what
+/// the user is waiting for, and making them wait half a second for rows that
+/// are already committed would be the same bug in miniature.
+struct Repaint {
+    events: EventSink,
+    mailbox: MailboxId,
+    last: Option<Instant>,
+}
+
+impl Repaint {
+    fn new(events: EventSink, mailbox: MailboxId) -> Self {
+        Repaint {
+            events,
+            mailbox,
+            last: None,
+        }
+    }
+
+    /// A batch reached the database. Announce it if it is time to.
+    fn batch_committed(&mut self, now: Instant) {
+        if !self.due(now) {
+            return;
+        }
+        self.last = Some(now);
+        self.events.emit(Event::MessageListChanged {
+            mailbox: self.mailbox,
+        });
+    }
+
+    fn due(&self, now: Instant) -> bool {
+        match self.last {
+            None => true,
+            Some(last) => now.saturating_duration_since(last) >= REPAINT_INTERVAL,
+        }
+    }
+}
 
 /// Fetch one queued body, if there is one and it is worth doing now.
 ///
@@ -1068,9 +1127,16 @@ async fn sync(
 
     announce_status(parts, &state.status.on_sync_started(mailbox));
 
-    // Progress is collected rather than emitted from inside the callback:
-    // `on_progress` is `FnMut` and borrows the tracker, which the emit would
-    // want too. A pass reports a handful of batches, not a stream.
+    // Every batch this pass commits is rows the list could already be
+    // drawing. Telling it as they land is the difference between a first
+    // sync that fills in front of you and one that shows nothing for minutes
+    // and then everything at once — which is what `postio-qhz.7` was.
+    //
+    // The status *tracker* still cannot be touched from in here: it needs
+    // `&mut`, and so does `batches`. That is fine — the event sink does not,
+    // and the list only needs to be told that the mailbox moved.
+    let mut repaint = Repaint::new(parts.events.clone(), mailbox);
+
     let mut batches: Vec<Progress> = Vec::new();
     let cancel = postio_imap::cancel::CancelToken::new();
     let outcome = if synced_before {
@@ -1079,7 +1145,10 @@ async fn sync(
             parts.backend.as_ref(),
             &record,
             &cancel,
-            |progress| batches.push(progress),
+            |progress| {
+                batches.push(progress);
+                repaint.batch_committed(Instant::now());
+            },
         )
         .await
         .map(summarise_resync)
@@ -1089,7 +1158,10 @@ async fn sync(
             parts.backend.as_ref(),
             &record,
             &cancel,
-            |progress| batches.push(progress),
+            |progress| {
+                batches.push(progress);
+                repaint.batch_committed(Instant::now());
+            },
         )
         .await
         .map(|report| SyncSummary {
@@ -1310,4 +1382,140 @@ fn with_connection<T>(
         .get()
         .map_err(|error| EngineError::new(error.to_string()))?;
     work(&connection)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postio_core::bridge::event_channel;
+
+    /// A `State` with nothing queued, for tests that only care about
+    /// [`queue_every_mailbox`]'s effect on `to_sync`.
+    fn empty_state() -> State {
+        State {
+            backfill: Backfill::new(BackfillPolicy::default()),
+            supervisor: Supervisor::new(ReconnectPolicy::default()),
+            status: StatusTracker::new(),
+            online: false,
+            to_sync: std::collections::VecDeque::new(),
+            watcher: None,
+        }
+    }
+
+    fn parts_over(database: Database) -> EngineParts {
+        let connection = database.connection().expect("checkout");
+        let account = postio_storage::test_support::account(&connection);
+        drop(connection);
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        EngineParts {
+            account: account.id,
+            database,
+            blobs,
+            backend: Arc::new(postio_imap::backend::MockBackend::new()),
+            smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+            secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+            events: sink,
+            retry: RetryPolicy::default(),
+            backfill: BackfillPolicy::default(),
+            reconnect: ReconnectPolicy::default(),
+            watch: WatchPolicy::default(),
+            network: NetworkSource::Ignored,
+        }
+    }
+
+    /// postio-0d9.6: a 37,699-message Archive was queued ahead of an
+    /// untouched INBOX because nothing ordered the sync queue across
+    /// mailboxes — it was whatever `list_for_account` happened to return.
+    /// `queue_every_mailbox` must put INBOX first, then the folders a person
+    /// reads next, then everything else, regardless of the order the
+    /// mailboxes were created in.
+    #[test]
+    fn queueing_every_mailbox_puts_inbox_first_and_orders_the_rest_by_role() {
+        let database = postio_storage::test_support::memory();
+        let parts = parts_over(database.clone());
+        let connection = database.connection().expect("checkout");
+
+        // Created deliberately out of role order, archive first, so a queue
+        // built from creation or discovery order would fail this test.
+        let archive =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Archive");
+        let regular =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Projects");
+        let trash =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Trash");
+        let sent = postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Sent");
+        let inbox =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "INBOX");
+        let junk = postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Junk");
+        let drafts =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Drafts");
+        let flagged =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Flagged");
+        drop(connection);
+
+        let mut state = empty_state();
+        queue_every_mailbox(&parts, database.pool(), &mut state);
+
+        let queued: Vec<MailboxId> = state.to_sync.into_iter().collect();
+        assert_eq!(
+            queued,
+            vec![
+                inbox.id, flagged.id, drafts.id, sent.id, archive.id, junk.id, trash.id,
+                regular.id,
+            ],
+            "INBOX must sync first and a large Archive must never outrank it"
+        );
+    }
+
+    fn account_of(parts: &EngineParts) -> postio_model::Account {
+        let connection = parts.database.connection().expect("checkout");
+        postio_storage::repository::AccountRepository::new(&connection)
+            .get(parts.account)
+            .expect("read the test account")
+            .expect("the test account exists")
+    }
+
+    /// The throttle behind [`Repaint`], driven by a clock the test owns.
+    ///
+    /// Time is a parameter rather than a read, for the same reason
+    /// `postio-search` takes `today`: a schedule you cannot step through is a
+    /// schedule you can only test by sleeping.
+    #[test]
+    fn the_first_batch_is_announced_at_once_and_the_rest_are_throttled() {
+        let (sink, events) = event_channel();
+        let mut repaint = Repaint::new(sink, MailboxId::new(4));
+        let start = Instant::now();
+
+        // The first screenful is what the user is waiting for.
+        repaint.batch_committed(start);
+        assert_eq!(events.len(), 1, "the first batch has to show immediately");
+
+        // Everything inside the window folds into it. This is the case that
+        // matters: three hundred batches of an initial sync must not be three
+        // hundred reloads.
+        for step in 1..=50 {
+            // Spread across the window without ever reaching its end.
+            let inside = REPAINT_INTERVAL / 100 * (step % 100);
+            repaint.batch_committed(start + inside);
+        }
+        assert_eq!(events.len(), 1, "batches inside the window must coalesce");
+
+        // And the next window opens.
+        repaint.batch_committed(start + REPAINT_INTERVAL);
+        assert_eq!(events.len(), 2);
+        repaint.batch_committed(start + REPAINT_INTERVAL * 2);
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn a_pass_that_commits_nothing_says_nothing() {
+        // An up-to-date resync reports no batches at all, and a list that
+        // reloaded anyway would be paying for a sync that changed nothing.
+        let (sink, events) = event_channel();
+        let _repaint = Repaint::new(sink, MailboxId::new(4));
+
+        assert_eq!(events.len(), 0);
+    }
 }

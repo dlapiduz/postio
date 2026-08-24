@@ -78,10 +78,24 @@ impl MessageSource for Sources {
             self.ask(move |store| Box::pin(async move { store.message_page(wanted).await }));
         Box::pin(async move {
             match answer.recv().await {
-                Ok(Ok(page)) => Ok(Page {
-                    total: page.total,
-                    rows: page.rows.into_iter().map(row).collect(),
-                }),
+                Ok(Ok(page)) => {
+                    // The list asking, and what it got. A list that draws
+                    // nothing is either a model that never asked or a store
+                    // that answered empty, and only this line tells them
+                    // apart — which is the whole of `postio-qhz.7`.
+                    tracing::debug!(
+                        mailbox = request.mailbox.get(),
+                        page = request.page,
+                        offset = request.offset,
+                        rows = page.rows.len(),
+                        total = page.total,
+                        "message page read"
+                    );
+                    Ok(Page {
+                        total: page.total,
+                        rows: page.rows.into_iter().map(row).collect(),
+                    })
+                }
                 Ok(Err(reason)) => Err(reason),
                 // The runtime went away mid-read. Rare, and still worth a
                 // sentence rather than a blank list.
@@ -96,7 +110,10 @@ impl MailboxSource for Sources {
         let answer = self.ask(move |store| Box::pin(async move { store.mailboxes(account).await }));
         Box::pin(async move {
             match answer.recv().await {
-                Ok(Ok(mailboxes)) => Ok(mailboxes),
+                Ok(Ok(mailboxes)) => {
+                    tracing::debug!(count = mailboxes.len(), "folder list read");
+                    Ok(mailboxes)
+                }
                 Ok(Err(reason)) => Err(reason),
                 Err(_) => Err("the runtime stopped before the folders arrived".to_string()),
             }
