@@ -96,6 +96,7 @@ pub fn install(
     state: SharedState,
     wired: Vec<CommandId>,
     streams: Rc<RefCell<Vec<Option<EventStream>>>>,
+    notifier: crate::notifications::Notifier,
 ) {
     let screen = Onboarding::new();
     let previous = window.content();
@@ -116,6 +117,7 @@ pub fn install(
         let state = state.clone();
         let wired = wired.clone();
         let streams = Rc::clone(&streams);
+        let notifier = notifier.clone();
         move |submission| {
             submit(
                 &screen,
@@ -126,6 +128,7 @@ pub fn install(
                 state.clone(),
                 wired.clone(),
                 Rc::clone(&streams),
+                notifier.clone(),
             )
         }
     });
@@ -181,6 +184,7 @@ fn submit(
     state: SharedState,
     wired: Vec<CommandId>,
     streams: Rc<RefCell<Vec<Option<EventStream>>>>,
+    notifier: crate::notifications::Notifier,
 ) {
     screen.set_status(Status::Connecting);
 
@@ -232,7 +236,7 @@ fn submit(
             // panes. Without that a window fed here would show mail and
             // answer no key, which is the shape of bug `postio-bl2` is
             // named for.
-            crate::open_account(&window, &wiring, &state, &wired, &streams);
+            crate::open_account(&window, &wiring, &state, &wired, &streams, &notifier);
         }
     });
 }

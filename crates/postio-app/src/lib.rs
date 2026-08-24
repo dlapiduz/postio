@@ -32,6 +32,7 @@ pub mod compose;
 pub mod engine;
 pub mod feed;
 pub mod logging;
+pub mod notifications;
 pub mod onboarding;
 pub mod paths;
 pub mod refresh;
@@ -77,6 +78,13 @@ pub fn run() -> glib::ExitCode {
     // running Postio.
     let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
+
+    // `[sync]`'s notification settings, read once here rather than kept
+    // live — see `notifications::config_at`.
+    let sync_config = config_path
+        .as_deref()
+        .map(notifications::config_at)
+        .unwrap_or_default();
 
     if adw::init().is_err() {
         tracing::error!("no display; the UI needs a Wayland or X11 session");
@@ -171,12 +179,22 @@ pub fn run() -> glib::ExitCode {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
             return;
         };
+        // Exists before the first notification can, and re-registering on a
+        // second `activate` (a second launch raising the window) just
+        // replaces it with itself.
+        notifications::install_action(application, &window);
         let Some(wiring) = &wiring else {
             return;
         };
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            sync_config.clone(),
+        );
 
         if first_account(&wiring.database).is_some() {
-            open_account(&window, wiring, &state, &wired, &streams);
+            open_account(&window, wiring, &state, &wired, &streams, &notifier);
         } else {
             // `postio-hiy`: nothing to feed yet. The screen replaces the
             // window's content and finishes the same sequence
@@ -188,6 +206,7 @@ pub fn run() -> glib::ExitCode {
                 state.clone(),
                 wired.clone(),
                 Rc::clone(&streams),
+                notifier,
             );
         }
     });
@@ -212,6 +231,7 @@ fn open_account(
     state: &SharedState,
     wired: &[postio_core::CommandId],
     streams: &Rc<std::cell::RefCell<Vec<Option<postio_core::bridge::EventStream>>>>,
+    notifier: &notifications::Notifier,
 ) {
     start_syncing(window, wiring);
     let Some(feeds) = feed_the_window(window, wiring) else {
@@ -232,7 +252,7 @@ fn open_account(
     // queues because there are two producers — the engine and the bus — and
     // one reader each.
     for stream in streams.borrow_mut().iter_mut().filter_map(Option::take) {
-        commands::drain(window, &feeds, stream);
+        commands::drain(window, &feeds, stream, notifier.clone());
     }
 }
 
@@ -365,8 +385,14 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<postio_gtk::f
         account.id,
         account.address.address.as_str(),
         sources.clone(),
-        sources,
+        sources.clone(),
     );
+    // The same store, read as a set of hits rather than a window over a
+    // mailbox. Set here rather than inside `install_feeds` because whether a
+    // window has a search is the composition root's business: postio-gtk
+    // deliberately holds no opinion, and a `Feed` without this goes on
+    // showing mailboxes and ignores `Event::SearchResults`.
+    feeds.messages.set_result_source(sources);
 
     compose::install(
         window,

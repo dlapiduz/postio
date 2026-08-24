@@ -129,7 +129,12 @@ pub fn install(
 }
 
 /// Apply one event to everything on screen.
-pub fn apply(window: &Window, feeds: &Feeds, event: &Event) {
+pub fn apply(
+    window: &Window,
+    feeds: &Feeds,
+    event: &Event,
+    notifier: &crate::notifications::Notifier,
+) {
     feeds.apply(event);
     match event {
         Event::ActionCompleted {
@@ -152,6 +157,7 @@ pub fn apply(window: &Window, feeds: &Feeds, event: &Event) {
         // Rows that have left the mailbox cannot stay selected: the next
         // action would be aimed at mail that is no longer there.
         Event::MessagesRemoved { .. } => window.list().clear_selection(),
+        Event::NewMail { mailbox, messages } => notifier.notify(window, *mailbox, messages),
         _ => {}
     }
 }
@@ -160,7 +166,12 @@ pub fn apply(window: &Window, feeds: &Feeds, event: &Event) {
 ///
 /// Awaited on the GTK main context, so what the UI does is take an event off
 /// a queue — never wait for one to be produced.
-pub fn drain(window: &Window, feeds: &Feeds, stream: EventStream) {
+pub fn drain(
+    window: &Window,
+    feeds: &Feeds,
+    stream: EventStream,
+    notifier: crate::notifications::Notifier,
+) {
     let window = window.downgrade();
     let feeds = feeds.clone();
     glib::spawn_future_local(async move {
@@ -168,7 +179,7 @@ pub fn drain(window: &Window, feeds: &Feeds, stream: EventStream) {
             let Some(window) = window.upgrade() else {
                 return;
             };
-            apply(&window, &feeds, &event);
+            apply(&window, &feeds, &event, &notifier);
         }
     });
 }
