@@ -30,6 +30,7 @@ pub mod actions;
 pub mod commands;
 pub mod compose;
 pub mod engine;
+pub mod export;
 pub mod feed;
 pub mod logging;
 pub mod notifications;
