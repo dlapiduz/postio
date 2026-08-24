@@ -1,0 +1,21 @@
+# Several Claude sessions build this workspace at the same time, on one
+# machine, sharing one target directory.
+#
+# Cargo defaults to one job per core. Four concurrent sessions on eight cores
+# therefore ask for ~32 parallel compile jobs, and linking postio-app pulls in
+# the whole GTK and WebKit stack — seven `rust-lld` processes at ~210 MB each
+# were once resident together, with 150 MB of 15 GB free. Nothing was slow;
+# everything was starved, and the machine spent its time in btrfs and dm-crypt
+# kworkers servicing the swap that followed.
+#
+# Two jobs per session leaves the box responsive with four sessions running.
+# Raise it when you are the only one building — `cargo build -j8`, or set
+# CARGO_BUILD_JOBS, both of which override this.
+[build]
+jobs = 2
+
+# Linking is the memory peak, not compiling. One fat binary that pulls in GTK,
+# WebKit and SQLite is where the resident set spikes, so keep the linker's own
+# parallelism modest too.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--threads=2"]
