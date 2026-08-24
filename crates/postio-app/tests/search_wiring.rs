@@ -20,7 +20,7 @@
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use postio_app::{Wiring, ensure_search_index};
+use postio_app::{Wiring, ensure_search_index, feed_the_window};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
@@ -86,7 +86,19 @@ fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
     while glib::MainContext::default().iteration(false) {}
 
     // ── the same call `run` makes ───────────────────────────────────────
-    let view = postio_app::search::install(&window, &wiring).expect("the store has an account");
+    //
+    // Through `feed_the_window`, because that is what makes it: search is
+    // installed against the `Feeds` that owns the message list, so the hits
+    // have somewhere to land. `search_results.rs` is what asserts they get
+    // there; this stays about the surfaces around the list.
+    //
+    // The `View` comes back from that same call rather than from a second
+    // `search::install`. Two installs put two handlers on the box, and the
+    // query answers into the one a test cannot see.
+    let view = feed_the_window(&window, &wiring)
+        .expect("the store has an account")
+        .search
+        .expect("search installed");
 
     // ── type ────────────────────────────────────────────────────────────
     let finder = window.finder();
