@@ -129,6 +129,9 @@ pub trait ResultSource {
 /// What to call when a page cannot be read.
 type ErrorHandler = Box<dyn Fn(String)>;
 
+/// What to call when a result set takes the list, with how many hits it holds.
+type ResultHandler = Box<dyn Fn(u32)>;
+
 struct Inner {
     /// Weak, because the list owns the [`PageSource`] that owns this.
     list: glib::WeakRef<MessageList>,
@@ -152,6 +155,14 @@ struct Inner {
     /// search wired to it, which is the only reason this is an `Option`.
     hits: RefCell<Option<Rc<dyn ResultSource>>>,
     errors: RefCell<Vec<ErrorHandler>>,
+    /// Told when a result set takes the list, with how many hits it holds.
+    ///
+    /// The `Feed` is what changes mode, so it is what says so. Anything that
+    /// has to follow the list into a search — the column header counting
+    /// results rather than naming a folder, whatever remembers the mailbox to
+    /// come back to — hangs off this rather than off the event, so it cannot
+    /// be told about a result set the list did not actually take.
+    on_results: RefCell<Vec<ResultHandler>>,
 }
 
 /// The `PageSource` the model holds.
@@ -290,6 +301,7 @@ impl Feed {
             results: RefCell::new(None),
             hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
+            on_results: RefCell::new(Vec::new()),
         }))
     }
 
@@ -338,6 +350,14 @@ impl Feed {
         self.0.results.borrow().is_some()
     }
 
+    /// Called when a result set takes the list, with how many hits it holds.
+    ///
+    /// Not called by [`close_results`](Self::close_results): leaving is a
+    /// gesture whoever wired it made on purpose, and it already knows.
+    pub fn connect_results(&self, handler: impl Fn(u32) + 'static) {
+        self.0.on_results.borrow_mut().push(Box::new(handler));
+    }
+
     /// Show `messages` — the hits, most relevant first — instead of the
     /// mailbox.
     ///
@@ -358,6 +378,12 @@ impl Feed {
             list.set_source(Rc::new(Source(inner.clone())));
         }
         inner.clone().request(0);
+        // After the list is the result set, not before: a handler that reads
+        // the list back — to remember what it was showing, or to size
+        // something against it — must not see the mailbox it just replaced.
+        for handler in inner.on_results.borrow().iter() {
+            handler(total);
+        }
     }
 
     /// Put the mailbox back. Returns whether there were results to leave.
