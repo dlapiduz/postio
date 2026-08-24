@@ -83,7 +83,7 @@ than checked by hand:
 |---|---|---|
 | Startup to usable UI (populated DB) | < 500 ms | **147 ms** |
 | Ordinary UI interaction | < 16 ms | **~2 ms** |
-| Local search | < 100 ms | **29 ms** |
+| Local search | < 100 ms | **27 ms** |
 | Memory, 100,000 messages | no full-mailbox load | **47 MiB**, flat |
 
 Transitions are ≤ 100 ms or absent entirely, and `prefers-reduced-motion`
@@ -129,11 +129,11 @@ Search, over a 120,000-message index, by query shape:
 
 | Query shape | Measured |
 |---|---|
-| Composed — an operator plus free text, what the search bar usually produces | 0.4 ms |
-| Simple term — a word matching about 1% of the corpus | 4.5 ms |
-| Operator only — `from:`, no free text and no FTS join | 9.7 ms |
-| Common word — a word in every message, the worst case | 18.4 ms |
-| Common word, with facet counts | 29.4 ms |
+| Composed — an operator plus free text, what the search bar usually produces | 0.45 ms |
+| Simple term — a word matching about 1% of the corpus | 7.0 ms |
+| Operator only — `from:`, no free text and no FTS join | 12.4 ms |
+| Common word — a word in every message, the worst case | 26.4 ms |
+| Common word, with facet counts | 27.5 ms |
 
 The worst shape is the one to watch: `MATCH` and the `count(*)` behind it
 have to walk effectively the whole corpus, and it is where a missing index
