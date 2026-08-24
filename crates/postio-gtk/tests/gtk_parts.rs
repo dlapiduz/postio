@@ -138,10 +138,15 @@ fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
         );
     }
 
-    // `s` and `S` put a portal dialog up, which nothing in a test can answer
-    // — so what is checked here is that the key is taken and that the panel
-    // still asked for nothing by itself. What the dialog hands back is
+    // `s` and `S` put a real GtkFileDialog up, which nothing in a test can
+    // answer — so what is checked here is that the key is taken and that the
+    // panel still asked for nothing by itself. What the dialog hands back is
     // `connect_save`'s business, and its shape is checked by the compiler.
+    //
+    // They must also be closed again. An unanswered dialog outlives the test:
+    // it was landing on the maintainer's desktop on every run and staying
+    // there, because a test process exiting does not dismiss a window the
+    // display server is already showing.
     let before = asked.borrow().len();
     assert!(panel.press(gdk::Key::s));
     assert!(panel.press(gdk::Key::S));
@@ -149,6 +154,10 @@ fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
         asked.borrow().len(),
         before,
         "nothing is saved until the user has said where"
+    );
+    assert!(
+        dismiss_dialogs(&window) > 0,
+        "pressing s should have opened a dialog to dismiss"
     );
 
     // -- and every one of them only *asked* ---------------------------------
@@ -260,6 +269,33 @@ fn note_text(window: &Window) -> String {
     .and_then(|widget| widget.downcast::<gtk::Label>().ok())
     .map(|label| label.text().to_string())
     .unwrap_or_default()
+}
+
+/// Close every toplevel except the test's own window, and say how many.
+///
+/// `save_part` and `save_all` construct a `GtkFileDialog` and hand it to the
+/// display server. A test has no reference to it and cannot answer it, and
+/// the process ending does not take it away — so without this, running the
+/// suite leaves a "Save cold.png" dialog on the developer's desktop, once per
+/// run, forever.
+///
+/// Closing every other toplevel rather than naming the dialog is deliberate:
+/// the test never constructed it and has no handle on it, and any *other*
+/// stray toplevel is equally something this test should not leave behind.
+fn dismiss_dialogs(keep: &Window) -> usize {
+    let mut closed = 0;
+    let toplevels = gtk::Window::toplevels();
+    let keep_window: gtk::Window = keep.clone().upcast();
+    for item in toplevels.into_iter().flatten() {
+        if let Ok(window) = item.downcast::<gtk::Window>()
+            && window != keep_window
+        {
+            window.destroy();
+            closed += 1;
+        }
+    }
+    pump();
+    closed
 }
 
 fn pump() {
