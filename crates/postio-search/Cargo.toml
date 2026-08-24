@@ -1,38 +1,12 @@
 [package]
 name = "postio-search"
-description = "FTS5 search index and the query-operator parser."
+description = "The query-operator parser, highlighter and result types postio-gtk uses directly."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-# The FTS5 index and query executor: `rusqlite`, the id types from
-# `postio-model`, and this crate's own error type. Off by default.
-#
-# `postio-gtk` depends on this crate for the pure query-operator parser only
-# (the search bar's chips: command down, event up) and must never pull in
-# `rusqlite` — `scripts/check-crate-boundaries.py` enforces this across the
-# *whole* workspace resolve, which is why the feature has to default off
-# rather than default on and be opted out downstream: a workspace member's
-# own default features are active in that resolve regardless of what any one
-# dependent asks for. Whoever wires the index and executor into the running
-# application enables this explicitly.
-index = ["dep:rusqlite", "dep:thiserror"]
-
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model = { workspace = true }
-rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
-thiserror = { version = "2.0.20", optional = true }
-tracing = "0.1"
-
-[dev-dependencies]
-criterion = "0.7.0"
-postio-storage = { workspace = true, features = ["test-support"] }
-
-[[bench]]
-name = "search_budget"
-harness = false
-required-features = ["index"]

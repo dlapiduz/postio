@@ -12,7 +12,7 @@
 //! A facet without a count is a guess, and half of them are dead ends — the
 //! rule in `/ux-architect` is that no surface may offer a step that leads
 //! nowhere. So [`Facets`] is *measured* against the live result set (see
-//! [`crate::executor::facets`]), and [`Facets::suggested`] then drops every
+//! `postio_index::executor::facets`), and [`Facets::suggested`] then drops every
 //! refinement that would match nothing (there is nothing behind it) or
 //! everything (it would narrow nothing). What survives is guaranteed to
 //! change the result set and guaranteed not to empty it.
@@ -23,8 +23,8 @@
 //! box would do the same thing, but then switching back to All mail means
 //! finding and deleting a token — and the acceptance criterion is that scope
 //! switching happens *without retyping*. So the scope rides alongside the
-//! query in [`SearchRequest`](crate::executor::SearchRequest), and the box
-//! keeps saying what the user typed.
+//! query in `postio_index::executor::SearchRequest`, and the box keeps saying
+//! what the user typed.
 //!
 //! Refinements are the opposite, and deliberately so: clicking one *appends a
 //! chip*, because it is a token the user could have typed and can pop with

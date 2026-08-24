@@ -1,9 +1,10 @@
-//! Postio's search: the FTS5 index and the query-operator parser.
+//! Postio's search: the query-operator parser, and the pure types the search
+//! surfaces are built from.
 //!
 //! Search is one of the three things Postio has to do better than every other
-//! mail client (`spec.md` §25), and the query bar is its front door. This crate
-//! currently provides the parser half of that: [`parse`] turns whatever is in
-//! the search entry — including a query that is half typed — into a
+//! mail client (`spec.md` §25), and the query bar is its front door. This
+//! crate provides the parser half of that: [`parse`] turns whatever is in the
+//! search entry — including a query that is half typed — into a
 //! [`ParsedQuery`].
 //!
 //! ```
@@ -45,38 +46,31 @@
 //! text. Dates accept ISO (`2026-01-01`), loose (`aug1`) and relative
 //! (`yesterday`, `last week`, `3m`) forms; sizes accept `K`/`M`/`G`.
 //!
-//! # The `index` feature
+//! # Where the FTS5 index and executor went
 //!
-//! [`index`] (the FTS5 schema and triggers) and [`executor`] (query execution,
-//! ranking and snippets) sit behind the `index` cargo feature, off by
-//! default. They pull in `rusqlite` and `postio-model`, which `postio-gtk`
-//! must never depend on (`scripts/check-crate-boundaries.py`) — it depends on
-//! this crate at its plain defaults, which is why this feature defaults off
-//! rather than on: `postio-gtk` needs only the parser above, and a workspace
-//! member's own default features are active across the whole workspace
-//! resolve regardless of what any one dependent asks for.
+//! The index (the FTS5 schema and triggers) and the query executor used to
+//! sit behind an `index` cargo feature here, off by default, on the theory
+//! that whoever wired search into the running application would enable it.
+//! Nobody could: Cargo resolves features as a union across the whole
+//! workspace resolve, and `postio-gtk` depends on this crate for the parser
+//! alone, so the moment anything turned `index` on, `rusqlite` landed in the
+//! view layer's graph and `scripts/check-crate-boundaries.py` failed —
+//! correctly (`postio-svx`). They now live in `postio-index`, a crate only
+//! the runtime side depends on; this crate stays pure and feature-free, and
+//! `postio-gtk` needs no change to keep reaching [`parse`], [`ParsedQuery`],
+//! [`facets`] and [`highlight`].
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod date;
-#[cfg(feature = "index")]
-pub mod error;
-#[cfg(feature = "index")]
-pub mod executor;
 pub mod facets;
 pub mod highlight;
-#[cfg(feature = "index")]
-pub mod index;
 mod parser;
 pub mod query;
 pub mod results;
 mod size;
 
-#[cfg(feature = "index")]
-pub use error::{Error, Result};
-#[cfg(feature = "index")]
-pub use executor::{SearchRequest, search};
 pub use facets::{Facets, Refinement, Scope};
 pub use highlight::Highlighted;
 pub use parser::parse;
