@@ -615,6 +615,40 @@ rather than in the `activate` closure, so a test can drive it over a real
 the 0.1.0 routing.
 
 
+**A bulk flag write rebuilds `messages.flags` rather than editing it.** The
+column is documented as canonical spellings in `FlagSet` order, and five of
+them — `\Seen`, `\Answered`, `\Flagged`, `\Deleted`, `\Draft` — are
+denormalised into booleans beside it so the list and the sidebar never parse a
+string. Those five are also, and not by accident, the five lowest-ranked
+persistable flags in `Flag::rank`. That is what makes a whole-mailbox flag
+write expressible without reading a row: the text is always "those five, in
+column order, then the keywords", so `MessageRepository::set_flag_on_set`
+rebuilds the head from the booleans and keeps the tail by stripping the five
+system spellings out of the text it already has.
+
+The tempting version — `replace` the flag out, append it back on — is one
+`replace` shorter and puts `\Seen` last. Nothing catches that, because
+everything reads the column back through `FlagSet`, which re-sorts. The
+invariant it breaks is the schema's, and it would surface as a diff against a
+server's flag list months later. `bulk::the_flags_with_columns_are_the_five_that_sort_first`
+is the guard: add a system flag ranked ahead of those five and it goes red.
+
+**A whole-mailbox flag has to enqueue over the rows that *disagree*, not over
+the selection.** `MessageSet::WithFlag` narrows a set by the denormalised
+column, which is a comparison rather than a read, and `Actions::set_flag_set`
+uses it for both the queue rows and the write. Enqueueing over the wider set
+looks harmless — the drainer would send a redundant `STORE` — but the run of
+queue rows *is* the undo set (`MessageSet::Queued`), so a message that already
+carried the flag would land inside it and `u` would clear a flag the action
+never set. The same reasoning applies to any future bulk verb whose effect is
+conditional on the row's current state.
+
+A toggle over a predicate means the same thing it means over a selection —
+*make them agree* — and deciding which way it goes is two indexed `count(*)`s,
+never a read. The two counts also separate "this mailbox is empty" from "these
+already agree", which are different sentences.
+
+
 ## Testing infrastructure
 
 **A tokio future awaited on the GTK main context type-checks, passes clippy,
