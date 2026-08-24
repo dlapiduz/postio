@@ -56,6 +56,13 @@ pub struct SyncStatus {
     pub last_sync: Option<Instant>,
     /// Completed and expected units of a long resync.
     pub progress: Option<(u32, u32)>,
+    /// Settled and queued message *bodies*, while a backfill is running.
+    ///
+    /// Kept apart from [`progress`](Self::progress) rather than folded into
+    /// it, because the two phases mean different things to someone looking
+    /// at the sidebar: a list still arriving cannot be read, and bodies
+    /// still arriving can. See issue #74.
+    pub backfill: Option<(u32, u32)>,
     /// Why the connection is failing, phrased for the user.
     pub detail: Option<String>,
 }
@@ -67,6 +74,7 @@ impl Default for SyncStatus {
             state: ConnectionState::Offline,
             last_sync: None,
             progress: None,
+            backfill: None,
             detail: None,
         }
     }
@@ -87,6 +95,12 @@ impl SyncStatus {
             ConnectionState::Connecting => "connecting".to_string(),
             ConnectionState::Failing => "error".to_string(),
             ConnectionState::Online if self.syncing().is_some() => "syncing".to_string(),
+            // The list is complete and the bodies are not. Its own word,
+            // because "syncing" already means the list and "idle" was the
+            // lie issue #74 was filed about. It matches what the reading
+            // pane says about a message it has no body for, which is the
+            // same fact seen from the other end.
+            ConnectionState::Online if self.filling().is_some() => "downloading".to_string(),
             ConnectionState::Online => "idle".to_string(),
         }
     }
@@ -108,6 +122,20 @@ impl SyncStatus {
             // A pass with nothing to reach never started.
             Some((_, 0)) => None,
             Some((done, total)) if done < total => Some(done),
+            _ => None,
+        }
+    }
+
+    /// How many bodies the backfill has settled, if one is running.
+    ///
+    /// `None` once the queue has drained, so a finished backfill falls back
+    /// to the ordinary idle line rather than sticking at `2000 of 2000` —
+    /// the same trap `syncing` fell into and the same answer.
+    fn filling(&self) -> Option<(u32, u32)> {
+        match self.backfill {
+            // A queue with nothing in it is not a backfill in progress.
+            Some((_, 0)) => None,
+            Some((done, total)) if done < total => Some((done, total)),
             _ => None,
         }
     }
@@ -135,6 +163,13 @@ impl SyncStatus {
         // number.
         if let Some(fetched) = self.syncing() {
             return format!("fetched {fetched}");
+        }
+        // Unlike the list pass, a backfill knows its real denominator: every
+        // message that has entered the queue is in exactly one of the counts
+        // `BackfillProgress` keeps. So this one can honestly say "of", which
+        // "fetched 1204" above deliberately cannot.
+        if let Some((done, total)) = self.filling() {
+            return format!("bodies {done} of {total}");
         }
         match self.last_sync {
             Some(at) => format!("last sync {}", age(now.saturating_duration_since(at))),
@@ -959,6 +994,71 @@ mod tests {
             "idle · imap",
             "a pass with nothing to reach is not a pass in progress"
         );
+    }
+
+    /// Issue #74. The long phase of a first sync was reported as nothing
+    /// happening, which is worse than saying nothing: a user watching `idle`
+    /// while the log fetches bodies concludes it is stuck.
+    #[test]
+    fn a_backfill_in_flight_is_not_reported_as_idle() {
+        let now = Instant::now();
+        let filling = SyncStatus {
+            state: ConnectionState::Online,
+            backfill: Some((412, 2000)),
+            last_sync: Some(now),
+            ..SyncStatus::default()
+        };
+
+        let (state, detail) = filling.lines(now);
+
+        assert_ne!(
+            state, "idle · imap",
+            "bodies are downloading and the line claims nothing is happening"
+        );
+        assert_eq!(state, "downloading · imap");
+        assert_eq!(
+            detail, "bodies 412 of 2000",
+            "the count is what answers `is anything happening`"
+        );
+    }
+
+    /// The list being incomplete matters more than the bodies being
+    /// incomplete: a mailbox mid-initial-sync is not usable yet, and one
+    /// whose bodies are still arriving is.
+    #[test]
+    fn an_initial_sync_outranks_a_backfill_on_the_status_line() {
+        let now = Instant::now();
+        let both = SyncStatus {
+            state: ConnectionState::Online,
+            progress: Some((1204, 60_000)),
+            backfill: Some((412, 2000)),
+            ..SyncStatus::default()
+        };
+
+        let (state, detail) = both.lines(now);
+
+        assert_eq!(state, "syncing · imap");
+        assert_eq!(detail, "fetched 1204");
+    }
+
+    /// A finished backfill is not a running one, and must fall back to the
+    /// ordinary idle line rather than sticking at `2000 of 2000`.
+    #[test]
+    fn a_settled_backfill_stops_claiming_to_be_downloading() {
+        let now = Instant::now();
+        for backfill in [Some((2000, 2000)), Some((0, 0)), None] {
+            let done = SyncStatus {
+                state: ConnectionState::Online,
+                backfill,
+                last_sync: Some(now),
+                ..SyncStatus::default()
+            };
+            let (state, _) = done.lines(now);
+            assert_eq!(
+                state, "idle · imap",
+                "backfill {backfill:?} is not in flight and must read idle"
+            );
+        }
     }
 
     #[test]
