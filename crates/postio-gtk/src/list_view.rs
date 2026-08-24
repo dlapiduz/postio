@@ -254,6 +254,50 @@ impl MessageListView {
         imp.meta.set_visible(unread > 0);
     }
 
+    /// Where the list is scrolled to, in pixels.
+    ///
+    /// Exposed for the thread drill-in, which has to put it back: re-focusing
+    /// the list on the way out scrolls the cursor row into view, and "into
+    /// view" is not the same pixel offset the user left. See
+    /// [`crate::window::Window::close_thread`].
+    pub fn scroll_offset(&self) -> f64 {
+        self.scroller()
+            .map(|scroller| scroller.vadjustment().value())
+            .unwrap_or(0.0)
+    }
+
+    /// Scroll to `offset`, clamped to what there is to scroll.
+    pub fn set_scroll_offset(&self, offset: f64) {
+        if let Some(scroller) = self.scroller() {
+            scroller.vadjustment().set_value(offset);
+        }
+    }
+
+    /// The `GtkScrolledWindow` the rows live in.
+    ///
+    /// Walked up rather than taken as the immediate parent: a
+    /// `GtkScrolledWindow` puts a `GtkViewport` between itself and a child
+    /// that is not scrollable, and whether it does is not something this
+    /// wants to depend on.
+    fn scroller(&self) -> Option<gtk::ScrolledWindow> {
+        let mut widget = self.imp().view.parent();
+        while let Some(current) = widget {
+            if let Ok(scroller) = current.clone().downcast::<gtk::ScrolledWindow>() {
+                return Some(scroller);
+            }
+            widget = current.parent();
+        }
+        None
+    }
+
+    /// What the list column is currently calling its mailbox.
+    ///
+    /// The thread drill-in draws it into `Esc back to Inbox`, so the way out
+    /// names where it goes rather than just promising there is one.
+    pub fn mailbox_name(&self) -> String {
+        self.imp().mailbox.borrow().clone()
+    }
+
     /// Switch every row to `density`, live.
     ///
     /// A re-measure of the rows already on screen, never a rebuilt widget
@@ -354,6 +398,18 @@ impl MessageListView {
     }
 
     /// The message the cursor is on, when the list has one.
+    /// The whole row the cursor is on, not just its id.
+    ///
+    /// What the thread drill-in needs: `t` acts on the row's *thread*, and
+    /// on its subject and thread count, none of which an id carries.
+    pub fn cursor_row(&self) -> Option<crate::list::Row> {
+        let position = self.cursor().selected();
+        self.model()
+            .item(position)
+            .and_then(|item| item.downcast::<crate::list::MessageRow>().ok())
+            .and_then(|item| item.row())
+    }
+
     pub fn cursor_id(&self) -> Option<MessageId> {
         let imp = self.imp();
         imp.model.peek(imp.cursor.selected())

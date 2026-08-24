@@ -64,6 +64,13 @@ mod imp {
         pub sidebar: OnceCell<Sidebar>,
         pub list_state: OnceCell<ListStateView>,
         pub list: OnceCell<MessageListView>,
+        /// The list and its named states, together — hidden as one thing
+        /// while a thread has the column.
+        pub list_pane: OnceCell<gtk::Overlay>,
+        /// The thread, where the list was. See [`crate::thread`].
+        pub thread: OnceCell<crate::thread::ThreadView>,
+        /// Where the list was scrolled to when the drill-in hid it.
+        pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
         /// Installed lazily, on first [`Window::composer`] — nothing before
@@ -150,6 +157,143 @@ impl Window {
     /// The message list: canvas 1b's header, and the rows under it.
     pub fn list(&self) -> MessageListView {
         self.imp().list.get().expect("built in constructed").clone()
+    }
+
+    /// The thread column, shown in the list's place while drilled in.
+    pub fn thread(&self) -> crate::thread::ThreadView {
+        self.imp()
+            .thread
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
+    /// Whether a thread has the list column.
+    pub fn thread_open(&self) -> bool {
+        self.imp()
+            .thread
+            .get()
+            .is_some_and(|thread| thread.thread().is_some())
+    }
+
+    /// Drill into `row`'s thread.
+    ///
+    /// The messages are the ones the list already holds for that thread — see
+    /// [`crate::thread`] for why that is both enough to be useful today and
+    /// not always the whole thread.
+    ///
+    /// Public so a test, and whoever wires a real thread read later, can put
+    /// the column up without synthesizing a key event.
+    pub fn open_thread(&self, row: &crate::list::Row) {
+        let Some(id) = row.thread else { return };
+        self.show_thread(
+            id,
+            row.subject.as_deref(),
+            self.thread_rows(id),
+            row.thread_count,
+        );
+    }
+
+    /// Put `thread` in the column, with the messages you name.
+    ///
+    /// The half of [`Window::open_thread`] that does not read the list model,
+    /// so a test or a render can put the column up without one — and does it
+    /// through the same swap the application makes, rather than beside it.
+    pub fn show_thread(
+        &self,
+        thread: postio_model::ids::ThreadId,
+        subject: Option<&str>,
+        rows: Vec<crate::list::Row>,
+        total: u32,
+    ) {
+        let view = self.thread();
+        // Shown *before* it is filled. A `GtkListView` with no allocation
+        // cannot know how many rows fit, so it binds far more of the model
+        // than a screenful — filling it while hidden was measured at 16ms for
+        // a 200-message thread against a 16ms interaction budget, and at
+        // under 1ms once the viewport had a height to answer with.
+        self.imp().list_scroll.set(self.list().scroll_offset());
+        if let Some(pane) = self.imp().list_pane.get() {
+            pane.set_visible(false);
+        }
+        view.set_visible(true);
+        view.open(
+            thread,
+            subject,
+            rows,
+            total,
+            Some(&self.list().mailbox_name()),
+        );
+
+        // The swap is a `set_visible` and nothing else: no reparenting, no
+        // revealer, no transition. The list keeps its model, its cursor and
+        // its selection because nothing here touches them, which is most of
+        // what makes `Esc` restore the position exactly rather than
+        // approximately. Hiding the *overlay* rather than the list takes the
+        // named states with it — an "Offline, reading local mail" panel that
+        // stayed up over the thread would be answering a question nobody
+        // asked.
+        //
+        // The scroll offset is the one thing that does not survive by itself,
+        // and it is worth being precise about why: nothing here moves it, but
+        // giving the list the keyboard back on the way out scrolls the cursor
+        // row into view, and "into view" is not the pixel offset the user
+        // left. Measured at two rows of drift on a 200-message list.
+        view.focus_rows();
+        self.set_context(Context::Thread);
+    }
+
+    /// Leave the thread and put the list back.
+    pub fn close_thread(&self) {
+        if !self.thread_open() {
+            return;
+        }
+        let thread = self.thread();
+        thread.set_visible(false);
+        thread.close();
+        if let Some(pane) = self.imp().list_pane.get() {
+            pane.set_visible(true);
+        }
+        // Focus first, then put the offset back — and put it back on the
+        // *next* turn of the loop. Grabbing the keyboard queues a scroll of
+        // the cursor row into view, which GTK performs during the layout pass
+        // after this one; restoring inside this call would simply be undone
+        // by it. Measured at two rows of drift on a 200-message list.
+        self.list().grab_focus();
+        let offset = self.imp().list_scroll.get();
+        let list = self.list();
+        glib::idle_add_local_once(move || list.set_scroll_offset(offset));
+        self.set_context(Context::List);
+    }
+
+    /// The first row the list is holding for `thread`, for its subject and
+    /// its thread count.
+    fn row_in_thread(&self, thread: postio_model::ids::ThreadId) -> Option<crate::list::Row> {
+        self.thread_rows(thread).into_iter().next()
+    }
+
+    /// The rows the list is holding for `thread`.
+    ///
+    /// Read off the model rather than asked for, which is what lets the
+    /// drill-in work without a thread query behind it. The model is windowed,
+    /// so this is what the list has paged in — the header says as much when
+    /// that is fewer than the row's own thread count.
+    fn thread_rows(&self, thread: postio_model::ids::ThreadId) -> Vec<crate::list::Row> {
+        let model = self.list().model();
+        let mut rows = Vec::new();
+        for index in 0..model.n_items() {
+            let Some(row) = model
+                .item(index)
+                .and_then(|item| item.downcast::<crate::list::MessageRow>().ok())
+                .and_then(|item| item.row())
+            else {
+                continue;
+            };
+            if row.thread == Some(thread) {
+                rows.push(row);
+            }
+        }
+        rows
     }
 
     /// The composer, installing it into the reading pane the first time
@@ -375,6 +519,24 @@ impl Window {
         list_overlay.add_overlay(&list_state);
         shell.list().append(&list_overlay);
 
+        // Canvas 3a: `t` turns this column into the thread. Built alongside
+        // the list rather than lazily, because the swap has to be a
+        // `set_visible` and nothing else — a pane that had to be constructed
+        // on the way in could not be instant, and the motion budget says pane
+        // switches do not animate at all.
+        let thread = crate::thread::ThreadView::new();
+        thread.set_vexpand(true);
+        shell.list().append(&thread);
+        thread.connect_back(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            // The button runs the registry's own `Back`, so leaving a thread
+            // is one path whether it was the mouse or `Esc` that asked.
+            move || window.run(CommandId::Back)
+        ));
+        let _ = self.imp().thread.set(thread);
+        let _ = self.imp().list_pane.set(list_overlay.clone());
+
         // The mouse runs the same commands the keyboard does, through the
         // same path: a button that acted directly would be a second
         // implementation of a verb the registry already owns.
@@ -570,13 +732,49 @@ impl Window {
     }
 
     /// Acts on the commands that are about the window, and passes on the rest.
+    /// A keystroke says only which verb it meant, so the registry's default
+    /// target — "the selection" — is the whole of the invocation.
+    ///
+    /// Everything else is [`Window::act`]'s, so the key and the click that
+    /// mean the same thing take the same path rather than two that have to be
+    /// kept in step.
     fn run(&self, id: CommandId) {
-        if self.handled_here(id) {
-            return;
+        self.act(postio_core::Command::default_for(id));
+    }
+
+    /// Swaps the list column for the thread, or back, and says what the
+    /// application should be told if it did.
+    ///
+    /// `None` means this was not a drill-in and the caller's own command
+    /// stands. Unlike `handled_here` this acts *and* lets the command go out:
+    /// the panes swap here, and `AppState` has to hear about it or its back
+    /// stack and its keyboard context drift out of step with what is on
+    /// screen.
+    fn follow_drill_in(&self, command: &postio_core::Command) -> Option<postio_core::Command> {
+        match command {
+            postio_core::Command::Thread { thread } if !self.thread_open() => {
+                // A keystroke names only the verb, so it means the row the
+                // cursor is on. An invocation that names a thread means that
+                // one, wherever the cursor happens to be.
+                let row = match thread {
+                    Some(id) => self.row_in_thread(*id)?,
+                    None => self.list().cursor_row()?,
+                };
+                // A message threading has not placed yet has no thread to
+                // drill into. Leave the key alone rather than opening a column
+                // that would have to explain itself.
+                let thread = row.thread?;
+                self.open_thread(&row);
+                Some(postio_core::Command::Thread {
+                    thread: Some(thread),
+                })
+            }
+            postio_core::Command::Back if self.thread_open() => {
+                self.close_thread();
+                None
+            }
+            _ => None,
         }
-        // A keystroke says only which verb it meant, so the registry's
-        // default target — "the selection" — is the whole of the invocation.
-        self.deliver(postio_core::Command::default_for(id));
     }
 
     /// Whether the window answered `id` itself.
@@ -597,11 +795,23 @@ impl Window {
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.finder().is_open() => self.close_finder(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
-            CommandId::Back if !self.list().selection().is_empty() => self.list().clear_selection(),
+            // Not while a thread has the column: `Esc` there means "back to
+            // the list", which is nearer than a selection made before the
+            // drill-in. It falls through to `follow_drill_in`, which needs to
+            // tell the application as well as move the panes.
+            CommandId::Back if !self.thread_open() && !self.list().selection().is_empty() => {
+                self.list().clear_selection()
+            }
 
             // Where the keyboard is, and what an action would hit. Two
             // different things, moved by two different sets of keys — see
             // `crate::selection`.
+            // `j`/`k` mean the same verb in both columns; which column they
+            // move is a fact about what is on screen, not a second binding.
+            CommandId::NextMessage if self.thread_open() => self.thread().next_row(),
+            CommandId::PrevMessage if self.thread_open() => self.thread().prev_row(),
+            CommandId::FirstMessage if self.thread_open() => self.thread().first_row(),
+            CommandId::LastMessage if self.thread_open() => self.thread().last_row(),
             CommandId::NextMessage => self.list().next_row(),
             CommandId::PrevMessage => self.list().prev_row(),
             CommandId::FirstMessage => self.list().first_row(),
@@ -724,6 +934,7 @@ impl Window {
         if self.handled_here(command.id()) {
             return;
         }
+        let command = self.follow_drill_in(&command).unwrap_or(command);
         self.deliver(command);
     }
 

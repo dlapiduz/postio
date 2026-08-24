@@ -300,6 +300,159 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* ── The thread column (canvas 3a) ───────────────────────────────────
+   Where the message list was, while `t` has drilled in. A shade off the
+   ground, as the artboard draws it: the column is the same 404px in the same
+   place, so the one signal that you are somewhere else has to be the surface
+   under it. Nothing here transitions — the swap is a `set_visible` and the
+   motion budget says pane switches do not animate. */
+.postio-thread {
+  background-color: var(--postio-surface);
+}
+
+.postio-thread-header {
+  padding: 14px 18px 12px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* The subject, in the heading face. Condensed, because a thread subject is
+   long and this column is 404px wide. */
+.postio-thread-subject {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.0227rem;
+  color: var(--postio-ink);
+}
+
+/* `6 messages · 4 people · Esc back to Inbox`. Mono, because it is counts
+   and a key. */
+.postio-thread-meta {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
+.postio-thread-back {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+
+/* Unread-only and the order toggle. Quiet until they are doing something —
+   an option that looks like a button you must press is one people press. */
+.postio-thread-toggle {
+  min-height: 22px;
+  padding: 2px 8px;
+  font-family: var(--postio-font-mono);
+  font-size: 0.6818rem;
+  color: var(--postio-dim);
+}
+
+.postio-thread-toggle:checked {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+.postio-thread-rows {
+  background: none;
+}
+
+/* The row widget a `GtkListView` wraps each item in. The selected state lives
+   here, not on the box inside it, so the tint and the steel edge are keyed off
+   the item and the box only carries the type. */
+.postio-thread-rows > row {
+  padding: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-thread-rows > row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* The same 3px steel edge the folder list and the message list use for their
+   selected row. One selection idiom across the application, not three. */
+.postio-thread-rows > row:selected {
+  border-left-color: var(--postio-selected-border);
+  background-color: var(--postio-selected-strong-bg);
+  color: var(--postio-selected-fg);
+}
+
+/* One line per message. 8px/18px from the artboard — the thread is a
+   transcript, and the hairline under each row is what makes it read as one
+   rather than as a second inbox. 15px on the left because the row's own 3px
+   steel edge makes up the rest, so the text does not shift when the cursor
+   lands on it. */
+.postio-thread-row {
+  min-height: 32px;
+  padding: 6px 18px 6px 15px;
+}
+
+.postio-thread-index {
+  font-family: var(--postio-font-mono);
+  font-size: 0.6818rem;
+  color: var(--postio-faint);
+}
+
+/* 13px, not the canvas' 12.5px. At 12.5px and weight 400 the cap-height
+   strokes of `D`, `R`, `O` and `5` fall between pixel rows and wash out
+   against the surface — a rendered column read `Uiogo Ferreira` and `Ke:`
+   where it should have read `Diogo Ferreira` and `Re:`. Ascenders were
+   untouched, so it was the rasterizer and not a clip. One step up fixes it,
+   and it is the same 13px the finder's own rows already use. */
+.postio-thread-sender,
+.postio-thread-line {
+  font-size: 0.8864rem;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-thread-when {
+  font-family: var(--postio-font-mono);
+  font-size: 0.6818rem;
+  color: var(--postio-faint);
+}
+
+/* Unread is weight, the way the message list says it — not a dot the eye has
+   to find in a column of thirty lines. */
+.postio-thread-row.unread .postio-thread-sender,
+.postio-thread-row.unread .postio-thread-line {
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+.postio-thread-rows > row:selected .postio-thread-index,
+.postio-thread-rows > row:selected .postio-thread-when {
+  color: var(--postio-selected-accent-text);
+}
+
+.postio-thread-rows > row:selected .postio-thread-sender,
+.postio-thread-rows > row:selected .postio-thread-line {
+  font-weight: 500;
+  color: var(--postio-selected-fg);
+}
+
+/* Why the column is empty, when a filter has emptied it. */
+.postio-thread-empty {
+  padding: 16px 18px;
+  font-size: 0.8523rem;
+  color: var(--postio-faint);
+}
+
+/* `j/k in thread · A archive thread · Esc back`, pinned to the foot the way
+   the artboard draws it. */
+.postio-thread-footer {
+  min-height: 28px;
+  padding: 3px 18px;
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+.postio-thread-keys {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-dim);
+}
+
 /* ── The message list's rows (canvas 1b) ─────────────────────────────
    `crate::row` draws a row in one `snapshot()` rather than out of nested
    boxes, because it is the most-rendered widget in the application and the
