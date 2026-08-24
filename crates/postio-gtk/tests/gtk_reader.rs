@@ -63,6 +63,13 @@ fn the_reader_renders_and_hardens_the_corpus() {
         RemoteImageAllowList::default(),
         allowlist_path.clone(),
     );
+
+    // What `postio_gtk::parts::PartsPanel::set_held_back` is wired from —
+    // every render's blocked-reference count, in order.
+    let rendered_counts: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
+    let counts_for_reader = Rc::clone(&rendered_counts);
+    reader.connect_rendered(move |count| counts_for_reader.borrow_mut().push(count));
+
     window.set_child(Some(&reader.widget()));
     window.present();
     pump();
@@ -105,6 +112,12 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "the banner should name the sender it would allow: {}",
         reader.banner_always_allow_label()
     );
+    assert_eq!(
+        rendered_counts.borrow().last().copied(),
+        Some(3),
+        "the fixture's three remote <img> tags should all be counted, \
+         not just flagged"
+    );
 
     // ── a newsletter with nothing remote gets no banner ────────────────────
     let newsletter = test_corpus::load("html-newsletter");
@@ -132,6 +145,12 @@ fn the_reader_renders_and_hardens_the_corpus() {
     assert!(
         !reader.banner_visible(),
         "the banner should drop once its own sender is allow-listed"
+    );
+    assert_eq!(
+        rendered_counts.borrow().last().copied(),
+        Some(0),
+        "nothing is held back any more once the sender is allowed, and the \
+         parts panel's badge has to hear about that re-render too"
     );
 
     let persisted = RemoteImageAllowList::load_from(&allowlist_path);
