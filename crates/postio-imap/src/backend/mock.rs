@@ -151,6 +151,7 @@ pub struct MockMailbox {
     subscribed: bool,
     uid_validity: UidValidity,
     highest_mod_seq: ModSeq,
+    starting_uid: u32,
     messages: Vec<MockMessage>,
 }
 
@@ -164,8 +165,21 @@ impl MockMailbox {
             subscribed: true,
             uid_validity: UidValidity::new(1),
             highest_mod_seq: ModSeq::new(1),
+            starting_uid: 1,
             messages: Vec::new(),
         }
+    }
+
+    /// Sets the UID the first message is given.
+    ///
+    /// Models a folder that has been in use for a while: everything below
+    /// `uid` was expunged years ago, so `UIDNEXT` is far larger than the
+    /// number of messages left. That gap is invisible in a mailbox seeded
+    /// from UID 1 — where the UID ceiling and the message count are the same
+    /// number — and it is exactly what `postio-qhz.9` was about.
+    pub fn starting_uid(mut self, uid: u32) -> Self {
+        self.starting_uid = uid.max(1);
+        self
     }
 
     /// Sets the hierarchy delimiter the server reports.
@@ -205,7 +219,8 @@ impl MockMailbox {
         self
     }
 
-    /// Adds a message. UIDs are assigned in insertion order from 1.
+    /// Adds a message. UIDs are assigned in insertion order, from
+    /// [`starting_uid`](Self::starting_uid).
     pub fn message(mut self, message: impl Into<MockMessage>) -> Self {
         self.messages.push(message.into());
         self
@@ -267,7 +282,7 @@ impl MailboxState {
                 ..summary
             },
             uid_validity: seed.uid_validity,
-            uid_next: 1,
+            uid_next: seed.starting_uid,
             highest_mod_seq: seed.highest_mod_seq.get(),
             messages: Vec::new(),
             pending: Vec::new(),
