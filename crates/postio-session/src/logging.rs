@@ -182,6 +182,7 @@ const OURS: &[&str] = &[
     "postio_model",
     "postio_runtime",
     "postio_search",
+    "postio_session",
     "postio_smtp",
     "postio_storage",
     "postio_sync",
