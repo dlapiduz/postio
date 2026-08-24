@@ -93,7 +93,15 @@
       "Bash(git remote add:*)",
       "Bash(git remote set-url:*)",
       "Bash(git reset --hard:*)",
-      "Bash(git clean:*)"
+      "Bash(git clean:*)",
+      "Bash(gh pr merge --admin:*)",
+      "Bash(gh pr merge:* --admin:*)"
+    ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "`gh pr merge` on an issue branch of this repository. Merging a reviewed pull request whose checks are green is the documented final step of the issue loop in CLAUDE.md -- claim, work, land, merge, release -- and an unmerged branch goes stale, conflicts with whatever lands next, and leaves its issue open. The branch is recoverable and the merge is revertable. This does NOT extend to `--admin`, which bypasses required checks and is denied outright, nor to pushing `main` directly, adding a remote, force-pushing, or rewriting history, all of which still require the maintainer to ask in the current session."
     ]
   }
 }
