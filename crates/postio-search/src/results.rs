@@ -1,9 +1,9 @@
 //! What a search produced: the hits, the count, and how long it took.
 //!
-//! Separate from [`executor`](crate::executor), and deliberately *not* behind
-//! the `index` cargo feature, because these types have two consumers with
-//! very different rights. The executor produces them and needs `rusqlite` to
-//! do it; the frontend consumes them and must never link SQLite at all
+//! Kept in this crate rather than alongside `postio-index`'s executor that
+//! produces them, because these types have two consumers with very different
+//! rights. The executor needs `rusqlite` to build them; the frontend consumes
+//! them and must never link SQLite at all
 //! (`scripts/check-crate-boundaries.py`). Keeping the shapes here lets
 //! `postio-gtk` name the thing it is drawing instead of maintaining a
 //! parallel copy of it that could drift.
