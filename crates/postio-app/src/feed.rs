@@ -23,10 +23,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use postio_gtk::feed::{
-    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest, ResultSource,
+    RowsFuture,
 };
 use postio_gtk::list::Row;
-use postio_model::ids::AccountId;
+use postio_model::ids::{AccountId, MessageId};
 use postio_runtime::store::{ListScope, MailStore, PageRequest as StoreRequest};
 
 /// The frontend's two sources, over one store.
@@ -100,6 +101,29 @@ impl MessageSource for Sources {
                 // The runtime went away mid-read. Rare, and still worth a
                 // sentence rather than a blank list.
                 Err(_) => Err("the runtime stopped before the page arrived".to_string()),
+            }
+        })
+    }
+}
+
+impl ResultSource for Sources {
+    fn rows(&self, ids: Vec<MessageId>) -> RowsFuture {
+        let wanted = ids.len();
+        let answer = self.ask(move |store| Box::pin(async move { store.message_rows(ids).await }));
+        Box::pin(async move {
+            match answer.recv().await {
+                Ok(Ok(rows)) => {
+                    // `wanted` and `rows` are logged together on purpose: the
+                    // store drops ids it no longer holds, so a short answer is
+                    // legitimate -- but it is also what a broken read looks
+                    // like, and only the two numbers side by side tell them
+                    // apart. Counts, never the query: a logged search is a
+                    // logged mailbox.
+                    tracing::debug!(wanted, rows = rows.len(), "search result page read");
+                    Ok(rows.into_iter().map(row).collect())
+                }
+                Ok(Err(reason)) => Err(reason),
+                Err(_) => Err("the runtime stopped before the results arrived".to_string()),
             }
         })
     }
