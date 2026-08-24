@@ -258,6 +258,9 @@ single consumer today. If a second consumer arrives (an MCP server alongside
 the window), the fan-out story has to be decided then, not assumed. That is not
 this bead.
 
+> **Settled:** [ADR 0013](0013-event-fanout.md) (2026-08-24) decides the
+> fan-out story — an event hub at the composition root, subscribed to by name.
+
 ### Implemented — issue #33
 
 Built as sketched, with `Invocation::id()` becoming `invocation_id()` because
@@ -293,6 +296,9 @@ is still exactly one `EventStream`, so a tracked caller and the window cannot
 both read it. That holds while the only tracked callers are tests and a
 future headless consumer, and it is the first thing to settle when an MCP
 server wants to sit beside a running window.
+
+> **Settled:** that decision is now [ADR 0013](0013-event-fanout.md) — every
+> consumer subscribes to one hub and receives its own `EventStream`.
 
 ---
 
