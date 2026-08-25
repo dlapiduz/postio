@@ -297,6 +297,9 @@ pub fn open_or_onboard(
                 // authenticate. The screen replaces the window's content and
                 // finishes the same sequence `open_account` runs, once it has
                 // written the two things an account needs.
+                // The real transport is built here, in the composition root,
+                // rather than inside the probe: that is what lets a test
+                // drive the same `install` over a mock (#282).
                 Startup::Onboard(repairing) => onboarding::install(
                     &window,
                     &wiring,
@@ -305,6 +308,7 @@ pub fn open_or_onboard(
                     events,
                     notifier,
                     repairing.map(|account| *account),
+                    std::sync::Arc::new(postio_imap::discovery::PimalayaTransport::new()),
                 ),
             }
         }
