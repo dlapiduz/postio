@@ -136,8 +136,7 @@ fn loaded(list: &MessageList, position: u32) -> Option<Row> {
         .and_then(|item| item.row())
 }
 
-#[test]
-fn the_message_list_is_fed_from_the_runtime() {
+pub fn the_message_list_is_fed_from_the_runtime() {
     // ── opening a mailbox shows its rows and only asks for what it draws ────
     let source = Fake::new().holding(INBOX, 100_000);
     let list = MessageList::new();

@@ -13,8 +13,7 @@ use gtk::prelude::*;
 use postio_gtk::sidebar::{SavedSearch, Sidebar};
 use postio_gtk::{fonts, style};
 
-#[test]
-fn saved_searches_list_keyboard_navigate_and_report_their_query() {
+pub fn saved_searches_list_keyboard_navigate_and_report_their_query() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

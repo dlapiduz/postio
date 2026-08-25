@@ -35,8 +35,7 @@ fn canvas_row() -> Row {
     }
 }
 
-#[test]
-fn the_row_draws_the_canvas_anatomy_at_every_density() {
+pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

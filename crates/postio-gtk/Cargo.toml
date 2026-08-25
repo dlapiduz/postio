@@ -44,6 +44,14 @@ harness = false
 name = "thread_drill"
 harness = false
 
+# The consolidated GTK suite: a custom harness, because GTK initializes on
+# exactly one thread and libtest runs tests on a pool — see
+# tests/gtk_suite.rs for the whole story. #329.
+[[test]]
+name = "gtk_suite"
+path = "tests/gtk_suite/main.rs"
+harness = false
+
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"

@@ -79,8 +79,7 @@ fn id(position: u32) -> MessageId {
     MessageId::new(position as i64 + 1)
 }
 
-#[test]
-fn the_cursor_and_the_selection_are_two_different_things() {
+pub fn the_cursor_and_the_selection_are_two_different_things() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

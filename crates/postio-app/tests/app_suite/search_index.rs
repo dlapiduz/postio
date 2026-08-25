@@ -19,8 +19,7 @@ use postio_session::ensure_search_index;
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
-#[test]
-fn a_store_the_application_opened_can_be_searched() {
+pub fn a_store_the_application_opened_can_be_searched() {
     // Seeded first and indexed after, which is the order every existing
     // account is in: the mail was there long before the index was.
     let database = test_support::memory();

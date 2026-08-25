@@ -65,6 +65,13 @@ criterion = "0.7.0"
 name = "action_round_trip"
 harness = false
 
+# The consolidated app suite: same custom harness as postio-gtk's
+# gtk_suite, same reasons -- see tests/app_suite/main.rs. #329.
+[[test]]
+name = "app_suite"
+path = "tests/app_suite/main.rs"
+harness = false
+
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"

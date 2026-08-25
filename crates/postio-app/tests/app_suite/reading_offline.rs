@@ -54,8 +54,7 @@ fn press_j(window: &Window) {
     window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
 }
 
-#[test]
-fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
+pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
     let state_dir = std::env::temp_dir().join(format!("postio-offline-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

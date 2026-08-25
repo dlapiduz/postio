@@ -128,8 +128,7 @@ impl MessageSource for Store {
     }
 }
 
-#[test]
-fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
+pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

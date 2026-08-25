@@ -26,8 +26,7 @@
 
 use gtk::gdk;
 
-#[test]
-fn ci_has_a_display_to_run_the_gtk_suites_on() {
+pub fn ci_has_a_display_to_run_the_gtk_suites_on() {
     // `CI` is set by GitHub Actions, and by essentially every other runner.
     // Absent means a person's machine, where skipping is the correct
     // behaviour and this test has nothing to say.

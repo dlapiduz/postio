@@ -66,8 +66,7 @@ fn folders() -> Vec<Mailbox> {
     ]
 }
 
-#[test]
-fn a_mailbox_can_be_chosen_without_touching_the_mouse() {
+pub fn a_mailbox_can_be_chosen_without_touching_the_mouse() {
     let state_dir =
         std::env::temp_dir().join(format!("postio-sidebar-keys-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();

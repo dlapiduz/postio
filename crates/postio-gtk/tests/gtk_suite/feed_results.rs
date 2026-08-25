@@ -165,8 +165,7 @@ fn subject_at(list: &MessageList, position: u32) -> Option<String> {
     loaded(list, position).and_then(|row| row.subject)
 }
 
-#[test]
-fn search_hits_reach_the_message_list() {
+pub fn search_hits_reach_the_message_list() {
     let found = hits(HITS);
 
     // ── a feed with no result source goes on showing the folder ─────────────

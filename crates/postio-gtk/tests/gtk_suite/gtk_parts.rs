@@ -39,8 +39,7 @@ fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
 }
 
-#[test]
-fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
+pub fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

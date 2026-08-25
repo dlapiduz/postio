@@ -62,8 +62,7 @@ fn press_j(window: &Window) {
     window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
 }
 
-#[test]
-fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
+pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
     let state_dir = std::env::temp_dir().join(format!("postio-cursor-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

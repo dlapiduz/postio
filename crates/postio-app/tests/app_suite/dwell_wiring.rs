@@ -68,8 +68,7 @@ fn is_read(database: &Database, message: MessageId) -> bool {
         .contains(&Flag::Seen)
 }
 
-#[test]
-fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
+pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     let state_dir = std::env::temp_dir().join(format!("postio-dwell-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

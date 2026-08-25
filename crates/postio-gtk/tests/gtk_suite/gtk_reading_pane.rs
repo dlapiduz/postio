@@ -48,8 +48,7 @@ use postio_gtk::{fonts, style};
 use postio_model::ids::AccountId;
 use postio_model::{Draft, MessageBody};
 
-#[test]
-fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
+pub fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

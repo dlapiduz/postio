@@ -78,7 +78,7 @@ unset DISPLAY            # or GDK falls back through XWayland to the real sessio
 export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 
 case "$(basename "${1:-}")" in
-gtk_reader-*|e2e-*)
+gtk_reader-*|e2e-*|gtk_suite-*|app_suite-*)
     # The binaries that talk to WebKit directly: gtk_reader has hung at
     # least four times, and postio-app's e2e suite builds a full window --
     # reader included -- around a live engine, so it inherits the risk.

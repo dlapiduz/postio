@@ -31,8 +31,7 @@ const ACCOUNT: i64 = 1;
 const INBOX: i64 = 1;
 const WAYLAND: i64 = 3;
 
-#[test]
-fn m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move() {
+pub fn m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;
