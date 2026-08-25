@@ -98,6 +98,11 @@ def land(root: Path, target: Path, *args: str) -> subprocess.CompletedProcess[st
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
     environment["CARGO_TARGET_DIR"] = str(target)
+    # No global identity: a CI runner has none, and the repo-local one set in
+    # `fresh_branch` is the thing under test -- this must not pass by
+    # accident on a machine that happens to have one of its own configured.
+    environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     return subprocess.run(
         ["bash", "scripts/issue-land.sh", "--wip", *args],
         cwd=root,
@@ -154,6 +159,11 @@ def main() -> int:
             subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
             build_sandbox(root, channel)
             git("init", "-q", "-b", "main", cwd=root)
+            # Local, not just the `-c` flags this helper passes on its own
+            # calls: issue-land.sh runs `git commit` directly, with no
+            # identity of its own, and a CI runner has no global one either.
+            git("config", "user.email", "test@example.com", cwd=root)
+            git("config", "user.name", "Test", cwd=root)
             git("add", "-A", cwd=root)
             git("commit", "-q", "-m", "init", cwd=root)
             git("remote", "add", "origin", str(origin), cwd=root)
