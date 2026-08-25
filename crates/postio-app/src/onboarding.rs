@@ -46,7 +46,7 @@ use postio_gtk::onboarding::{Onboarding, Server, Settings, Status, Submission};
 use postio_gtk::window::Window;
 use postio_imap::cancel::CancelToken;
 use postio_imap::discovery::{
-    AccountSettings, DiscoveryOutcome, DiscoveryReport, Encryption, PimalayaTransport, Probe,
+    AccountSettings, DiscoveryOutcome, DiscoveryReport, DiscoveryTransport, Encryption, Probe,
     ProbeOptions,
 };
 use postio_imap::imap::{ConnectionSettings, ImapSession, RustlsConnector};
@@ -110,6 +110,7 @@ pub fn install(
     events: Rc<RefCell<Option<EventStream>>>,
     notifier: crate::notifications::Notifier,
     repairing: Option<Account>,
+    transport: Arc<dyn DiscoveryTransport>,
 ) {
     let screen = Onboarding::new();
     let previous = window.content();
@@ -131,7 +132,15 @@ pub fn install(
         let screen = screen.clone();
         let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
-        move |address| probe(&screen, &runtime, address, &cancellation)
+        move |address| {
+            probe(
+                &screen,
+                &runtime,
+                address,
+                &cancellation,
+                Arc::clone(&transport),
+            )
+        }
     });
 
     screen.connect_submit({
@@ -241,11 +250,19 @@ fn status_for(report: &DiscoveryReport) -> Status {
 }
 
 /// Run the autoconfig probe for `address` and show what it found.
+///
+/// `transport` is supplied rather than constructed. It used to be built right
+/// here, inside the spawned task, which meant the only way to reach this
+/// function was to dial the network — and no test in the default suite may.
+/// The mapping had already been split out into [`status_for`] so *it* could be
+/// tested; everything around it, which is where the wiring lives, stayed
+/// uncovered (#282).
 fn probe(
     screen: &Onboarding,
     runtime: &tokio::runtime::Handle,
     address: &str,
     cancellation: &ProbeCancellation,
+    transport: Arc<dyn DiscoveryTransport>,
 ) {
     screen.set_status(Status::Probing);
 
@@ -253,7 +270,7 @@ fn probe(
     let email = address.to_owned();
     let cancel = cancellation.restart();
     runtime.spawn(async move {
-        let probe = Probe::with_options(Arc::new(PimalayaTransport::new()), probe_options());
+        let probe = Probe::with_options(transport, probe_options());
         let answer = probe.run(&email, &cancel).await;
         let _ = sender.send(answer).await;
     });
