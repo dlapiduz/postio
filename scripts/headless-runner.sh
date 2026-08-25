@@ -16,9 +16,11 @@
 #   * It reuses one compositor across every binary in a run rather than
 #     starting twenty.
 #
-# Note this also fronts `cargo run`. For the application itself use
-# scripts/run-isolated.sh, which executes the built binary directly and never
-# comes through here.
+# It fronts `cargo run` too, but passes it through: only cargo's test and
+# bench binaries -- the ones named with the 16-hex metadata suffix, like
+# deps/gtk_list-0123456789abcdef -- are sent to the compositor. A plain-named
+# binary (`cargo run -p postio-app`, an example) is someone launching a
+# program to look at it, and gets the real display. #315.
 set -uo pipefail
 
 exec_target() { exec "$@"; }
@@ -26,6 +28,19 @@ exec_target() { exec "$@"; }
 [ "${POSTIO_HEADLESS:-1}" = "0" ] && exec_target "$@"
 [ -n "${XDG_RUNTIME_DIR:-}" ]     || exec_target "$@"
 command -v mutter >/dev/null 2>&1 || exec_target "$@"
+
+# Only test and bench binaries belong on the hidden compositor. Cargo names
+# them with a 16-hex metadata suffix; everything else -- the application via
+# `cargo run`, examples -- is exec'd unchanged so it reaches the real display.
+SUFFIX="${1##*-}"
+case "$SUFFIX" in
+????????????????)
+    case "$SUFFIX" in
+    *[!0-9a-f]*) exec_target "$@" ;;   # 16 chars, but not a hash
+    esac
+    ;;
+*) exec_target "$@" ;;
+esac
 
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless}"
 SOCKET="$XDG_RUNTIME_DIR/$DISPLAY_NAME"
