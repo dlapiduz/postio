@@ -166,6 +166,14 @@ pub fn run() -> glib::ExitCode {
     // Connected *after* the frontend's own handler, so the window it makes is
     // already there to be fed. Signal handlers run in the order they were
     // connected, which is the whole of the arrangement.
+    // `[mailboxes]`, read once here alongside `[sync]` and for the same
+    // reason `notifications::config_at` gives. Which folder this server calls
+    // its archive is settled at discovery, and discovery runs inside the
+    // engine, so this is the moment it has to be known.
+    let mailbox_roles = config_path
+        .as_deref()
+        .map(postio_session::mailbox_roles_at)
+        .unwrap_or_default();
     let wiring = runtime
         .as_ref()
         .zip(store)
@@ -178,6 +186,7 @@ pub fn run() -> glib::ExitCode {
                 sink.clone(),
                 bridge.commands(),
             )
+            .with_mailbox_roles(mailbox_roles.clone())
         });
     application.connect_activate(move |application| {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
@@ -417,6 +426,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.blobs.clone(),
         wiring.events.clone(),
         wiring.secrets.clone(),
+        wiring.mailbox_roles.clone(),
     ) else {
         return;
     };

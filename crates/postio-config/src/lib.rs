@@ -86,7 +86,7 @@ pub use watch::{ConfigWatcher, WatchOptions};
 /// where mail arrives. `Regular` is not either — it is the absence of a role,
 /// and "this folder is an ordinary folder" is what happens anyway.
 ///
-/// Shared with [`validate`](crate::validate) so the section and its error
+/// Shared with [`validate`] so the section and its error
 /// messages cannot disagree about what is allowed.
 pub(crate) fn overridable(role: MailboxRole) -> bool {
     !matches!(role, MailboxRole::Inbox | MailboxRole::Regular)
@@ -152,7 +152,7 @@ impl Config {
     /// that folder itself in RFC 3501, so pointing it elsewhere would make
     /// Postio disagree with every other client on the same account about
     /// where mail arrives. Both are reported by
-    /// [`validate`](crate::validate).
+    /// [`validate`].
     pub fn role_overrides(&self) -> RoleOverrides {
         RoleOverrides::from_pairs(self.mailboxes.iter().filter_map(|(role, path)| {
             let role = MailboxRole::from_name(role)?;

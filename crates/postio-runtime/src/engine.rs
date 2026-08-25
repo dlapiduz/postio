@@ -41,6 +41,7 @@ use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use postio_imap::backend::{BackendError, MailBackend};
 use postio_imap::secret::SecretStore;
+use postio_model::RoleOverrides;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::repository::{
@@ -186,6 +187,14 @@ pub struct EngineParts {
     pub watch: WatchPolicy,
     /// Where the engine learns that the machine's network came or went.
     pub network: NetworkSource,
+    /// Folders the user has assigned a role to by hand, from `[mailboxes]`.
+    ///
+    /// Carried rather than read here for the reason every other policy on
+    /// this struct is: which folder is the archive is a fact about *this
+    /// installation*, and an engine that reached for a config file itself
+    /// could not be driven by a test. Empty is the ordinary case and costs
+    /// nothing — see [`RoleOverrides`].
+    pub mailbox_roles: RoleOverrides,
 }
 
 /// Who tells the engine about the network.
@@ -832,7 +841,14 @@ async fn discover(parts: &EngineParts, pool: &Pool) {
         }
     };
 
-    match discover::discover(&connection, parts.backend.as_ref(), parts.account).await {
+    match discover::discover(
+        &connection,
+        parts.backend.as_ref(),
+        parts.account,
+        &parts.mailbox_roles,
+    )
+    .await
+    {
         Ok(report) => {
             if report.changed() {
                 // The sidebar reads the folder table, and nothing else is
@@ -1968,6 +1984,7 @@ mod tests {
             reconnect: ReconnectPolicy::default(),
             watch: WatchPolicy::default(),
             network: NetworkSource::Ignored,
+            mailbox_roles: Default::default(),
         }
     }
 

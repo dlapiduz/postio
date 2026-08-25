@@ -168,6 +168,7 @@ fn no_message_content_reaches_the_log_at_any_level() {
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
 

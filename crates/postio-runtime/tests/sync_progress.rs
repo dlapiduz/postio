@@ -105,6 +105,7 @@ async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
 
