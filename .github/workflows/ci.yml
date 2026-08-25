@@ -235,6 +235,13 @@ jobs:
         # fuzz" -- naming neither the missing tool nor the fix. #277.
         run: python3 scripts/test-fuzz-missing-tool.py
 
+      - name: Prove a worktree lands back onto the base it was cut from
+        # Both scripts hardcoded `main` in five places. An initiative branch
+        # (multi-account, #1) needs work to land back onto it, and every one
+        # of those five was correct-looking -- so getting it wrong merged
+        # initiative work straight into main, silently. #290.
+        run: python3 scripts/test-issue-base-branch.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
