@@ -230,45 +230,38 @@ async fn the_backend_is_usable_behind_a_trait_object() {
     assert!(capabilities.contains(Capability::Idle));
 }
 
-/// Reads a directory, retrying briefly on a transient `NotFound`.
+/// The seam's sources, baked into this binary at compile time.
 ///
-/// `CARGO_MANIFEST_DIR` names this crate's own checked-out source, so the
-/// directory cannot legitimately be missing — but under the heavy concurrent
-/// filesystem writes several sessions building on one machine produce, a
-/// `read_dir` on it has been observed to spuriously report `NotFound` for a
-/// directory that plainly exists a moment later. #225.
-fn read_dir_retrying(dir: &std::path::Path) -> std::fs::ReadDir {
-    let mut last_error = None;
-    for _ in 0..5 {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => return entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                last_error = Some(error);
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Err(error) => panic!("{}: {error}", dir.display()),
-        }
-    }
-    panic!(
-        "{}: {}",
-        dir.display(),
-        last_error.expect("at least one attempt was made")
-    );
-}
+/// `include_str!` rather than a runtime `read_dir` (#225): a filesystem walk
+/// at test time raced this machine's normal condition of several sessions
+/// building at once — and worse, a binary served stale out of a shared
+/// target directory carried a `CARGO_MANIFEST_DIR` baked in a worktree that
+/// no longer existed, so the path was gone *for that binary, permanently*
+/// (#178). Baked contents cannot race and cannot dangle: the text checked is
+/// by construction the text this binary was compiled from.
+///
+/// A new module cannot dodge the list silently:
+/// [`no_io_imap_type_reaches_the_seam`] cross-checks it against `mod.rs`'s
+/// own `mod` declarations, which a new file must appear in to be compiled at
+/// all.
+const BACKEND_SOURCES: &[(&str, &str)] = &[
+    (
+        "capability.rs",
+        include_str!("../src/backend/capability.rs"),
+    ),
+    ("error.rs", include_str!("../src/backend/error.rs")),
+    ("message.rs", include_str!("../src/backend/message.rs")),
+    ("mock.rs", include_str!("../src/backend/mock.rs")),
+    ("mod.rs", include_str!("../src/backend/mod.rs")),
+    ("sink.rs", include_str!("../src/backend/sink.rs")),
+    ("uid_set.rs", include_str!("../src/backend/uid_set.rs")),
+];
 
 #[test]
 fn no_io_imap_type_reaches_the_seam() {
     // ADR 0001 rule 7. io-imap is pre-1.0 and reshuffles its public API every
     // fortnight; the whole point of this module is that the churn stops here.
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/backend");
-    let mut checked = 0;
-
-    for entry in read_dir_retrying(&dir) {
-        let path = entry.expect("dir entry").path();
-        if path.extension().is_none_or(|ext| ext != "rs") {
-            continue;
-        }
-        let source = std::fs::read_to_string(&path).expect("read source");
+    for (name, source) in BACKEND_SOURCES {
         for (number, line) in source.lines().enumerate() {
             // Prose may name the crate; code may not. This module's own
             // documentation explains the rule, and would otherwise trip it.
@@ -277,15 +270,36 @@ fn no_io_imap_type_reaches_the_seam() {
             }
             assert!(
                 !line.contains("io_imap") && !line.contains("imap_types"),
-                "{}:{} names a protocol crate; translate at the edge instead",
-                path.display(),
+                "src/backend/{name}:{} names a protocol crate; translate at \
+                 the edge instead",
                 number + 1
             );
         }
-        checked += 1;
     }
 
-    assert!(checked > 0, "no backend sources were checked");
+    // Completeness, without touching the filesystem: every module mod.rs
+    // declares must be in the baked list, so a file added to the seam cannot
+    // silently escape the scan. (One it stops declaring stops compiling, and
+    // a listed file that is deleted fails the include_str! at build time.)
+    let (_, mod_rs) = BACKEND_SOURCES
+        .iter()
+        .find(|(name, _)| *name == "mod.rs")
+        .expect("mod.rs is in the list");
+    for line in mod_rs.lines() {
+        let line = line.trim_start();
+        let Some(declared) = line
+            .strip_prefix("pub mod ")
+            .or_else(|| line.strip_prefix("mod "))
+        else {
+            continue;
+        };
+        let file = format!("{}.rs", declared.trim_end_matches(';').trim());
+        assert!(
+            BACKEND_SOURCES.iter().any(|(name, _)| *name == file),
+            "src/backend/{file} is compiled into the seam but missing from \
+             BACKEND_SOURCES, so nothing scans it -- add it to the list"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
