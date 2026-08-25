@@ -380,6 +380,9 @@ struct State {
     mailboxes: Vec<MailboxState>,
     /// `(call index to fire on, fault)`, in schedule order.
     faults: Vec<(u64, Fault)>,
+    /// A fault every call fails with until cleared. See
+    /// [`MockBackend::fail_all`].
+    persistent_fault: Option<Fault>,
     latency: Duration,
     calls: u64,
     /// Calls currently waiting out [`State::latency`].
@@ -421,6 +424,9 @@ impl State {
     }
 
     fn take_fault(&mut self, call: u64) -> Option<Fault> {
+        if let Some(fault) = &self.persistent_fault {
+            return Some(fault.clone());
+        }
         let position = self.faults.iter().position(|(at, _)| *at == call)?;
         Some(self.faults.remove(position).1)
     }
@@ -528,6 +534,33 @@ impl MockBackend {
         let mut state = self.state();
         let at = state.calls + after + 1;
         state.faults.push((at, fault));
+    }
+
+    /// Makes **every** call fail with `fault` until [`clear_faults`] is
+    /// called.
+    ///
+    /// Use this — not a counted [`inject_after`] — whenever the test means
+    /// "the server refuses this, whoever asks". [`inject_after`] schedules by
+    /// absolute call number, and a spawned engine's own loops (the watcher's
+    /// polls, the supervisor's dials) also call this backend on their own
+    /// schedule: under load their calls interleave with the test's, the
+    /// fault lands on the wrong call, and the test flakes (#210). A
+    /// persistent fault is order-immune by construction. The positional form
+    /// remains for tests that genuinely mean a positional fault — a
+    /// connection dying mid-drain.
+    ///
+    /// [`clear_faults`]: Self::clear_faults
+    /// [`inject_after`]: Self::inject_after
+    pub fn fail_all(&self, fault: Fault) {
+        self.state().persistent_fault = Some(fault);
+    }
+
+    /// Clears [`fail_all`](Self::fail_all)'s fault and any scheduled ones —
+    /// "the user fixed it", whatever it was.
+    pub fn clear_faults(&self) {
+        let mut state = self.state();
+        state.persistent_fault = None;
+        state.faults.clear();
     }
 
     /// Delays every call by `latency`.
@@ -765,6 +798,7 @@ impl MockBackendBuilder {
                 capabilities: self.capabilities,
                 mailboxes: self.mailboxes.into_iter().map(MailboxState::seed).collect(),
                 faults: Vec::new(),
+                persistent_fault: None,
                 latency: Duration::ZERO,
                 calls: 0,
                 in_flight: 0,
