@@ -1118,6 +1118,32 @@ Both scripts have self-tests that CI runs: `test-ci-expected-workflows.py`,
 and `test-wait-for-checks.py`, which drives the wait against a stubbed `gh`
 so the registration race is reproducible instead of something you wait for.
 
+## Landing work
+
+**`issue-land.sh`'s gates do not include `cargo doc`, and CI's do.** Moving
+code between crates is the case where that bites: a doc comment carries its
+intra-doc links with it, and a link that resolved in the crate it came from
+does not necessarily resolve in the crate it lands in. #82 moved `Wiring` out
+of `postio-app` and its `[`run`]` link went with it, pointing at a function
+that stayed behind — every local gate passed and CI failed on:
+
+```
+error: unresolved link to `run`
+  --> crates/postio-session/src/lib.rs:88:72
+```
+
+Worse, the link cannot simply be repointed: `postio-app` depends on
+`postio-session`, so rustdoc cannot resolve *upward* from the dependency to
+its dependent at all. The fix is to name the item in prose rather than link
+it, and say why it is not a link.
+
+So after moving code between crates, run CI's own doc gate before pushing:
+
+```sh
+RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
+    cargo doc --workspace --no-deps --document-private-items
+```
+
 ## The shared cargo target directory
 
 **It hands you other worktrees' artifacts, and the compile error then names a
