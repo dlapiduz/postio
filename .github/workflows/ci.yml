@@ -194,6 +194,14 @@ jobs:
         # a dirty tree with no -m must still refuse, but say so. #120.
         run: python3 scripts/test-issue-land-commit-guard.py
 
+      - name: Prove issue-land.sh's merge step survives main's worktree
+        # `gh pr merge --rebase --delete-branch` fails here every time,
+        # because deleting the local branch makes `gh` switch this worktree
+        # off it first, and `main` is permanently checked out elsewhere.
+        # The stubbed `gh` fails loudly, with the real error text, if it is
+        # ever asked for --delete-branch again. #167.
+        run: python3 scripts/test-issue-land-merge.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
