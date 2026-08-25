@@ -389,12 +389,17 @@ fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
 
 #[tokio::test]
 async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
-    // The whole of #51, end to end. The composer appends the draft; the next
-    // sync pass over Drafts fetches it straight back; without the skip the
-    // user's half-written message is in the folder twice — once as the live
-    // buffer they are typing into and once as a read-only snapshot of it.
+    // #51 end to end, updated for #166. The composer appends the draft, and
+    // #166 gave the draft its own `messages` row the moment it is saved — so
+    // the folder is expected to list it already, without waiting on a sync
+    // (docs/PRODUCT.md §18's local-first rule, and the whole point of #166:
+    // before it, a draft was invisible in the folder until it had round
+    // tripped). What #51's skip still has to prove is narrower: the next sync
+    // pass over Drafts fetches this draft's own append straight back, and
+    // that must not add a *second* row for it next to the one #166 already
+    // wrote.
     //
-    // The second message is another client's draft. It has no local draft row,
+    // The other message is another client's draft. It has no local draft row,
     // and it is the reason the folder is worth syncing at all.
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
@@ -436,10 +441,24 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     .await
     .expect("a sync pass over Drafts");
 
+    let mut after_sync = listed(&connection, drafts_mailbox);
+    after_sync.sort();
     assert_eq!(
-        listed(&connection, drafts_mailbox),
-        vec!["Written on the phone".to_owned()],
-        "the composer owns the draft this client wrote; the folder shows the \
-         one it did not"
+        after_sync,
+        vec![
+            "Tide gate interlock".to_owned(),
+            "Written on the phone".to_owned()
+        ],
+        "#166: the composer's own draft is already listed, from the row it \
+         was given at save time — sync must not remove it"
+    );
+    assert_eq!(
+        after_sync
+            .iter()
+            .filter(|subject| *subject == "Tide gate interlock")
+            .count(),
+        1,
+        "#51: the sync pass fetched this draft's own append straight back, \
+         and must not have added a second row for it"
     );
 }
