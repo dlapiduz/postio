@@ -1,0 +1,60 @@
+name: Pages
+
+# Deploys site/ (the hand-written landing page, #24) to GitHub Pages.
+#
+# Deliberately its own workflow rather than a job in ci.yml, for the same
+# reason release.yml is separate (docs/decisions/0011-docs-site.md Q6): it
+# says nothing about whether the Rust workspace builds, and it should not
+# sit in the critical path of a PR that never touched site/.
+#
+# One deployment, two surfaces, per ADR 0011: `/` is this landing page,
+# `/docs/` is the mdBook output #25 will add. Until #25 lands there is only
+# the landing page to build, so this job uploads site/ as-is -- it has no
+# build step by design (#24's own acceptance criterion) -- rather than
+# compiling anything. When #25 ships, this job grows an mdbook build step
+# whose output is copied into a docs/ subdirectory of the same artifact;
+# nothing about the trigger or the deploy step changes.
+#
+# This is a cheap job -- no cargo, no GTK, an upload and a deploy -- unlike
+# the reason ci.yml and bench.yml are paused (see CLAUDE.md's "CI is
+# paused"): those compile the whole workspace and ran the private repo out
+# of its free Actions minutes. Pushing to main with a site/ change is rare
+# enough, and this job light enough, that it stays on `push` rather than
+# joining them as workflow_dispatch-only.
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; a newer push should win over an in-flight
+# older one rather than queuing behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
