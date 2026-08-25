@@ -144,6 +144,33 @@ Do not flip it back without reading
 `crates/postio-core/tests/config.rs::an_override_takes_a_key_from_the_default_that_had_it`,
 which carries the reasoning.
 
+**A draft with no local buffer is another client's, and v1 does not adopt
+it.** (#175) Activating a Drafts-folder row whose `\Draft` flag is set but
+whose `DraftRepository::by_message` comes back `None` was left opening the
+reader by #166 — there is no composer buffer to resume, so there was nothing
+else to do. The gap #175 closed is narrower than it looks: the reader still
+cannot edit the message, but before this it would happily render the message
+as though it were an ordinary, readable one once the body backfilled, with no
+signal that the row was a dead end. `load_body_or_reason`
+(`crates/postio-app/src/compose.rs`) now checks `message.flags.is_draft()`
+*before* it looks at `BodyState`, and reports
+`postio_gtk::reader::Absent::ForeignDraft` regardless of whether the body has
+downloaded — a foreign draft is never "worth waiting for" the way
+`Absent::Partial` is, so it does not get a retry key either.
+
+Adopting the row into a local `Draft` — so it becomes editable — was
+considered and deliberately deferred rather than half-built. It is not one
+decision but several, each with a wrong answer that looks fine until someone
+hits it: autosaving an adopted draft moves it (`DraftRepository::save_and_sync`
+appends a new copy and expunges the old one, same as any other save), so
+picking a row up on this machine silently relocates the other client's
+in-progress work; the body and any attachments may not be backfilled yet, so
+adoption needs its own wait state distinct from the reader's; and two clients
+editing "the same" draft afterward have no lock and no merge story. None of
+those has an obvious default, which is why this stayed the cheap interim —
+say so on the row — rather than becoming a v1 feature. Revisit if multi-client
+drafting becomes a real workflow rather than an edge case.
+
 ## Post-v1 ideas captured (mostly now tracked as GitHub issues)
 
 These were captured from conversations with the user before the migration to

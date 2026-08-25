@@ -89,10 +89,16 @@ pub fn install(
 /// — a dead end with a signpost. The row now leads back to the draft, so it
 /// leads to the thing that can actually be done with it.
 ///
-/// A row with no local draft behind it is another client's draft. It opens in
-/// the reader, as it always has: there is no buffer to resume, and adopting
-/// somebody else's draft into one is a decision with its own questions (what
-/// becomes of their server copy?) rather than a detail of this. #175.
+/// A row with no local draft behind it is another client's draft. It still
+/// opens in the reader — there is no buffer to resume, and adopting somebody
+/// else's draft into one is a decision with its own questions (what becomes
+/// of their server copy? whose autosave wins?) that #175 chose to leave
+/// unopened for v1 rather than resolve as a side effect of this path. What
+/// changed under #175 is that the reader no longer pretends it is an
+/// ordinary, readable message: [`load_body_or_reason`] recognises `\Draft`
+/// with no local buffer and reports [`postio_gtk::reader::Absent::ForeignDraft`]
+/// instead, whatever the body's own download state is. See
+/// `docs/engineering-notes.md`.
 fn install_resume(
     window: &Window,
     composer: &Composer,
@@ -434,6 +440,15 @@ pub(crate) fn load_body_or_reason(
 
     // Has anything been downloaded for this message at all?
     match repository.get(id) {
+        // `\Draft` is set, but the `by_message` lookup above found no local
+        // buffer: this row belongs to another client's draft. Its body may
+        // well be sitting in the blob store already, but showing it as an
+        // ordinary, readable message would be exactly the dead end #175
+        // exists to close -- there is nothing here this machine can edit,
+        // whatever state the body is in.
+        Ok(Some(message)) if message.flags.is_draft() => {
+            return Body::Absent(Absent::ForeignDraft);
+        }
         Ok(Some(message)) if !message.sync.body_state.has_body() => {
             let reason = if is_offline {
                 Absent::Offline
@@ -596,6 +611,38 @@ mod tests {
         assert!(matches!(
             load_body_or_reason(&connection, &blobs, id, true),
             Body::Absent(postio_gtk::reader::Absent::Empty)
+        ));
+    }
+
+    /// #175: a draft's row with `\Draft` set but no local `Draft` buffer
+    /// behind it (`DraftRepository::by_message` is `None`) was written by
+    /// another client. Even once its body backfills, opening it must not
+    /// look like an ordinary, readable message -- there is nothing here that
+    /// can be edited, and pretending otherwise is the dead end #175 exists
+    /// to close.
+    #[test]
+    fn a_foreign_drafts_row_says_so_even_once_its_body_has_arrived() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().unwrap();
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
+        message.flags.insert(postio_model::Flag::Draft);
+        message.sync.body_state = postio_model::BodyState::Full;
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .unwrap();
+        drop(connection);
+
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+        let connection = database.connection().unwrap();
+
+        // No local `DraftRepository` row exists for this message, which is
+        // exactly what makes it another client's draft rather than one this
+        // machine is editing.
+        assert!(matches!(
+            load_body_or_reason(&connection, &blobs, id, false),
+            Body::Absent(postio_gtk::reader::Absent::ForeignDraft)
         ));
     }
 
