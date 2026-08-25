@@ -9,20 +9,29 @@
 //! `None`. A mail client that refuses to show a broken message is worse than one
 //! that shows what arrived.
 //!
-//! That promise is now *enforced* rather than merely asserted. [`mail_parser`]
-//! itself can unwind on malformed input — #277 found a `debug_assert!` in its
-//! multipart walk that a 144-byte message reaches — so `parse_inner` runs it
-//! inside [`std::panic::catch_unwind`] and treats an unwind as "nothing could
-//! be recovered". These bytes arrive from a server during sync, chosen by
+//! That promise is enforced rather than merely stated. [`mail_parser`] can
+//! unwind on malformed input — #277 found an assertion in its multipart walk
+//! that a 144-byte message reaches — so [`try_parse`] runs it inside
+//! [`std::panic::catch_unwind`] and [`parse`] reports a contained failure as
+//! an empty message. These bytes arrive from a server during sync, chosen by
 //! whoever sent the mail, so the guarantee has to hold against hostile input
 //! and not only against untidy input.
 //!
-//! What it does **not** do is tell anyone apart from the caller. A message
-//! that could not be parsed is indistinguishable here from one that genuinely
-//! carried no text and no HTML part, because `mail_parser` gives no signal
-//! that survives a release build — its `debug_assert!` compiles out, and what
-//! comes back is a thin but ordinary-looking message. Saying "this did not
-//! parse" on screen needs that signal to exist first; see #277.
+//! Use [`try_parse`] where the difference between "nothing parsed" and
+//! "nothing was there" is something a person will read: the reading pane says
+//! *this message has no body* for the second, and that is a lie about the
+//! first.
+//!
+//! **The signal is weaker than it looks, and the reason is worth knowing.**
+//! The assertion #277 found is a `debug_assert!`, so it fires in this
+//! workspace's dev and test profiles and in the `-Cdebug-assertions` build
+//! `cargo fuzz` makes — and *not* in a release build, where it compiles out
+//! and the parser returns a thin but ordinary-looking message instead. So
+//! `try_parse` reports `Err` for that input under test and `Ok` in a shipped
+//! binary. It is still the right seam for a real `panic!` in a future version
+//! of the dependency; it is not a way to detect this particular bug in
+//! production. The crash that *was* unconditional was ours — see
+//! [`part_paths`].
 //!
 //! # Why this lives in `postio-model`
 //!
@@ -182,11 +191,35 @@ impl ParsedMessage {
     }
 }
 
+/// Raw bytes the parser could not make a message of at all.
+///
+/// Not "a message with missing fields" — that is the ordinary case and
+/// [`ParsedMessage`] represents it with `None`s. This is the parser giving up
+/// entirely, which today means it panicked and [`try_parse`] caught it.
+///
+/// Carries nothing. What went wrong is a fact about a dependency's internals,
+/// not something a caller can act on differently, and the one thing a caller
+/// *does* need — "do not tell the user to wait for this" — is the whole
+/// message of the type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Unparseable;
+
+impl std::fmt::Display for Unparseable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the message could not be parsed")
+    }
+}
+
+impl std::error::Error for Unparseable {}
+
 /// Parses raw RFC 5322 bytes, body and attachments included.
 ///
-/// Infallible: see the [module docs](self).
+/// Infallible: see the [module docs](self). A message that cannot be parsed at
+/// all yields an empty [`ParsedMessage`] carrying only its `size`, which is
+/// the same shape as a message with nothing in it — use [`try_parse`] when the
+/// difference matters, as the reading pane's does.
 pub fn parse(raw: &[u8]) -> ParsedMessage {
-    parse_inner(raw, false)
+    try_parse(raw).unwrap_or_else(|_| empty(raw, false))
 }
 
 /// Parses only the header block, buffering no body and no attachment bytes.
@@ -195,7 +228,73 @@ pub fn parse(raw: &[u8]) -> ParsedMessage {
 /// later. The result's [`ParsedMessage::body_state`] is
 /// [`BodyState::HeadersOnly`], so a [`Message`] built from it says so.
 pub fn parse_headers(raw: &[u8]) -> ParsedMessage {
-    parse_inner(raw, true)
+    try_parse_headers(raw).unwrap_or_else(|_| empty(raw, true))
+}
+
+/// As [`parse`], but says so when nothing could be parsed.
+///
+/// # Why this exists (#277)
+///
+/// The module has always documented [`parse`] as never panicking, and it did
+/// panic: `mail-parser` 0.11.8 aborts with "Invalid part ID, could not find
+/// multipart" on a malformed multipart, and the unwind came straight out of
+/// here. That is not a cosmetic contract violation — this runs on bytes the
+/// server handed us, during sync, before anyone has opened anything, so the
+/// input is chosen by whoever sent the mail and the crash lands on arrival.
+/// A message that kills the client on sight is re-delivered by every sync.
+///
+/// The containment is [`std::panic::catch_unwind`] rather than validation:
+/// the panic is inside a dependency's own state machine, and no shape of
+/// pre-check here could predict which inputs reach it. Validation would be
+/// guessing; catching is a fact.
+///
+/// Callers that only need a message use [`parse`]. Callers that must tell
+/// "nothing parsed" from "nothing was there" — the reading pane, which
+/// otherwise says "this message has no body" about a parser bug — use this.
+pub fn try_parse(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
+    contain(|| parse_inner(raw, false))
+}
+
+/// As [`parse_headers`], but says so when nothing could be parsed.
+pub fn try_parse_headers(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
+    contain(|| parse_inner(raw, true))
+}
+
+/// Run `parse` and turn an unwind into an [`Unparseable`].
+///
+/// `AssertUnwindSafe` is honest here rather than a shrug: the closure borrows
+/// only the input slice and returns an owned [`ParsedMessage`], so there is no
+/// state that a half-finished parse could leave visibly broken. `MessageParser`
+/// is constructed inside and dropped with the unwind.
+///
+/// The panic still reaches the process's panic hook on its way past, so a
+/// contained failure is visible on stderr rather than silent. That is
+/// deliberate — the message is the dependency's own text and names no mail —
+/// but it means a caller that expects this should log the outcome itself, at
+/// a level that says "handled".
+fn contain<F>(parse: F) -> Result<ParsedMessage, Unparseable>
+where
+    F: FnOnce() -> ParsedMessage,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(parse)).map_err(|_| Unparseable)
+}
+
+/// What a caller gets when nothing could be parsed: the size, and nothing
+/// claimed that was not read.
+///
+/// `size` is still the truth — those bytes did arrive — and everything else
+/// stays at its default, which is the same "we do not know" the ordinary
+/// parser produces for a field it could not fill.
+fn empty(raw: &[u8], headers_only: bool) -> ParsedMessage {
+    ParsedMessage {
+        size: raw.len() as u64,
+        body_state: if headers_only {
+            BodyState::HeadersOnly
+        } else {
+            BodyState::Full
+        },
+        ..ParsedMessage::default()
+    }
 }
 
 fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
@@ -226,22 +325,23 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     // was built above — a true `size`, an empty everything else, which is the
     // "yields whatever could be recovered" the module docs promise.
     //
-    // Deliberately silent. Logging it would mean a `tracing` dependency on
-    // the crate the whole workspace waits on to compile, which CLAUDE.md
-    // guards for the reason ADR 0004 Q1 and ADR 0007 give, and the default
-    // panic hook already reports the debug-build case that actually unwinds.
-    // If a release build ever needs this to be observable, that is the moment
-    // to reopen the dependency question, not before.
-    let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let parser = MessageParser::default();
-        if headers_only {
-            parser.parse_headers(raw)
-        } else {
-            parser.parse(raw)
-        }
-    }));
-    let Ok(parsed) = parsed else {
-        return message;
+    // The containment used to be here, around the parser call alone. It moved
+    // out to `contain`, which wraps this whole function: catching here means
+    // `parse_inner` always returns a value, so `try_parse` can only ever say
+    // `Ok` and the reading pane loses the one signal that lets it say "this
+    // did not parse" rather than "this has no body". Wrapping the outside
+    // also covers the mapping below, not just the dependency.
+    //
+    // Still deliberately silent about the failure at this layer: logging it
+    // would mean a `tracing` dependency on the crate the whole workspace waits
+    // on to compile, which CLAUDE.md guards for the reason ADR 0004 Q1 and
+    // ADR 0007 give. The callers that care log it — see `postio-sync`'s
+    // backfill and `postio-app`'s reading pane.
+    let parser = MessageParser::default();
+    let parsed = if headers_only {
+        parser.parse_headers(raw)
+    } else {
+        parser.parse(raw)
     };
 
     // `None` means not even a header block could be found — an empty buffer, or

@@ -809,3 +809,101 @@ fn no_fixture_decodes_to_replacement_characters_in_its_subject() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// #277: infallible means infallible
+// ---------------------------------------------------------------------------
+
+/// A malformed multipart that made `mail-parser` 0.11.8 panic
+/// (`Invalid part ID, could not find multipart`, `parsers/message.rs:485`),
+/// straight out of `mime::parse`.
+///
+/// Found by the `parse_message` fuzz target added in #147 and shrunk with
+/// `cargo fuzz tmin`, so it is mutated corpus rather than anyone's mail: a
+/// `multipart/` whose subtype is NUL-padded, a header block broken by a bare
+/// CR, and nested `message/rfc822` parts announcing boundaries that never
+/// open. Kept inline rather than added to the `.eml` corpus because it is a
+/// regression input, not a message with behaviour worth describing — the
+/// corpus is walked by tests that assert things about what parsed, and this
+/// one exists precisely because nothing does.
+const UNPARSEABLE_MULTIPART: &[u8] = &[
+    82, 101, 116, 117, 114, 110, 45, 80, 97, 111, 110, 58, 32, 49, 46, 48, 13, 10, 67, 111, 110,
+    116, 101, 110, 116, 45, 84, 121, 112, 101, 58, 32, 109, 117, 108, 116, 105, 112, 97, 114, 116,
+    47, 0, 0, 0, 0, 0, 0, 0, 114, 101, 112, 111, 59, 13, 116, 119, 10, 9, 98, 111, 117, 110, 100,
+    97, 114, 121, 61, 34, 61, 95, 114, 101, 112, 111, 114, 116, 95, 101, 51, 97, 49, 34, 13, 10,
+    10, 13, 10, 45, 45, 61, 95, 114, 101, 112, 111, 114, 116, 95, 101, 51, 97, 49, 117, 115, 58,
+    32, 97, 49, 13, 10, 67, 111, 110, 116, 101, 110, 116, 45, 84, 121, 112, 101, 58, 32, 109, 101,
+    115, 115, 97, 103, 101, 47, 114, 102, 99, 56, 50, 50, 13, 10, 67, 108, 32, 97, 115, 32, 119,
+    101, 108, 108, 46, 13, 10, 13, 10, 45, 45, 61, 116, 97, 116, 97, 49, 13, 10, 67, 111, 110, 116,
+    101, 110, 116, 45, 84, 121, 112, 101, 58, 32, 109, 101, 115, 115, 97, 103, 101, 47, 114, 102,
+    99, 56, 50, 50, 13, 10, 67, 111, 13, 10, 13, 10, 82, 101, 115, 32, 119, 101, 108, 108, 46, 13,
+    10, 13, 10, 45, 45, 61, 95, 114, 101, 112, 111, 114, 116, 95, 101, 51, 97, 49, 45, 45, 13, 10,
+];
+
+/// The promise the module doc has always made — "never returns an error and
+/// never panics" — held against an input that broke it. The containment is
+/// `catch_unwind` in `parse_inner`, because the panic is three crates down in
+/// a dependency and there is no shape of input validation here that could
+/// have predicted it.
+#[test]
+fn a_malformed_multipart_does_not_panic_out_of_parse() {
+    let parsed = mime::parse(UNPARSEABLE_MULTIPART);
+    assert_eq!(
+        parsed.size,
+        UNPARSEABLE_MULTIPART.len() as u64,
+        "the size is what arrived, whether or not it parsed"
+    );
+
+    let headers_only = mime::parse_headers(UNPARSEABLE_MULTIPART);
+    assert_eq!(headers_only.size, UNPARSEABLE_MULTIPART.len() as u64);
+}
+
+/// And the caller that needs to *know* can ask — `postio-sync`'s backfill logs
+/// the outcome rather than storing an empty body in silence.
+///
+/// **The signal is build-dependent, and this test says so rather than hiding
+/// it.** The site in `mail-parser` is a `debug_assert!`, so it unwinds under
+/// `cargo test` and `cargo fuzz` (both of which enable debug assertions) and
+/// compiles out of a release build, where the parser instead returns a thin
+/// message. A test asserting `Err` unconditionally would fail under
+/// `cargo test --release` for a reason that is not a regression.
+#[test]
+fn try_parse_reports_the_failure_rather_than_swallowing_it() {
+    if cfg!(debug_assertions) {
+        assert_eq!(
+            mime::try_parse(UNPARSEABLE_MULTIPART),
+            Err(mime::Unparseable),
+            "a message that cannot be parsed must say so"
+        );
+    } else {
+        assert!(
+            mime::try_parse(UNPARSEABLE_MULTIPART).is_ok(),
+            "with debug assertions off the parser returns rather than unwinding"
+        );
+    }
+
+    // The header block of the same bytes parses fine, and that is worth
+    // pinning rather than glossing: `parse_headers` never walks the multipart
+    // tree, so it never reaches the state that panics. The initial sync —
+    // which fetches headers newest-first — was therefore never at risk. Only
+    // the body backfill was, which is why the crash showed up as sync dying
+    // some time after a message arrived rather than as it arrived.
+    assert!(
+        mime::try_parse_headers(UNPARSEABLE_MULTIPART).is_ok(),
+        "headers-only parsing does not reach the multipart walk"
+    );
+}
+
+/// The other direction, and the one that would rot silently: every fixture in
+/// the corpus still parses. A containment that started reporting ordinary
+/// mail as unparseable would turn a crash into a blank pane for everyone.
+#[test]
+fn every_corpus_fixture_still_parses() {
+    for fixture in test_corpus::all() {
+        assert!(
+            mime::try_parse(fixture.bytes()).is_ok(),
+            "{} should parse",
+            fixture.name()
+        );
+    }
+}

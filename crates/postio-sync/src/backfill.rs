@@ -558,7 +558,21 @@ pub async fn fetch_body(
 
     let raw = sink.into_inner();
     let bytes = raw.len() as u64;
-    let parsed = mime::parse(&raw);
+    // The ingest boundary of #277. `mime::parse` contains the panic itself, so
+    // this is not what keeps sync alive -- it is what keeps the failure
+    // visible. Without it a message whose bytes defeat the parser stores no
+    // body blobs and is indistinguishable, in a log, from one that genuinely
+    // had none.
+    //
+    // Ids and sizes only: the bytes that caused this are somebody's mail.
+    let parsed = mime::try_parse(&raw).unwrap_or_else(|_| {
+        tracing::warn!(
+            message = request.message.get(),
+            bytes,
+            "a fetched body could not be parsed; storing it with no body parts"
+        );
+        mime::parse(&raw)
+    });
 
     let stored = BodyBlobs {
         text: put_text(blobs, parsed.body.text.as_deref())?,
