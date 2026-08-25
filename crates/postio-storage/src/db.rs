@@ -40,7 +40,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OpenFlags};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::migrations;
 
 /// How many connections a [`Pool`] opens before callers start waiting.
@@ -391,9 +391,14 @@ impl Database {
     /// Opens (or creates) the database at `path`, creating parent directories,
     /// and migrates it to the latest schema version.
     ///
+    /// The parent directory is created (or repaired) `0700` and the database
+    /// file `0600`: this is the user's mail, and `$XDG_DATA_HOME` is commonly
+    /// world-traversable, so without this everything here inherits whatever
+    /// the process umask says. See [`crate::perm`].
+    ///
     /// # Errors
     ///
-    /// [`Error::Io`] if the parent directory cannot be created, or any error
+    /// [`Error::Io`](crate::error::Error::Io) if the parent directory cannot be created, or any error
     /// [`migrate`](crate::migrate) can return.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with(path, DEFAULT_MAX_CONNECTIONS)
@@ -406,12 +411,14 @@ impl Database {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         {
-            std::fs::create_dir_all(parent).map_err(|source| Error::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
+            crate::perm::ensure_private_dir(parent)?;
         }
-        Self::from_location(Location::File(path.to_path_buf()), max_connections)
+        let database = Self::from_location(Location::File(path.to_path_buf()), max_connections)?;
+        // After from_location: that call is what actually creates the file
+        // (SQLite opens it lazily, on the pool's first checkout), so there is
+        // nothing to tighten before it exists.
+        crate::perm::tighten_file(path)?;
+        Ok(database)
     }
 
     /// Opens a private in-memory database, migrated to head.
