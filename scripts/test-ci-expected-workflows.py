@@ -284,6 +284,12 @@ on:
     # was a five-crate change that the old heuristic called prose and merged
     # before CI existed. If this repository's own ci.yml ever stops expecting
     # a check for a change like that, this is the case that says so.
+    #
+    # PAUSED 2026-08-25: ci.yml's `push`/`pull_request` triggers are commented
+    # out (private-repo minutes, see ci.yml's own note), so nothing is
+    # expected for *any* change right now, prose or not -- that is
+    # workflow_dispatch-only, correctly. When those triggers come back,
+    # restore this to the pre-pause assertion: exit 0 and "CI" in stdout.
     real = REPO / ".github" / "workflows"
     if real.is_dir():
         proc = subprocess.run(
@@ -302,9 +308,10 @@ on:
             text=True,
             stdin=subprocess.DEVNULL,
         )
-        if proc.returncode != 0 or "CI" not in proc.stdout:
+        if proc.returncode != 1 or proc.stdout.strip():
             FAILURES.append(
-                "a five-crate change against the real workflows must expect CI "
+                "a five-crate change against the real workflows must expect "
+                "nothing while CI is paused "
                 f"(exit {proc.returncode}, stdout {proc.stdout!r})"
             )
         prose = subprocess.run(
