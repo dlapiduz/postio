@@ -1,0 +1,45 @@
+name: Feature request
+description: Something Postio should do that it does not.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [`docs/PRODUCT.md`](../../docs/PRODUCT.md) and the
+        [roadmap](https://github.com/users/dlapiduz/projects/2) first — a
+        lot is already decided or deliberately deferred (OAuth,
+        multi-platform, AI features), and a request that engages with the
+        recorded decision goes further than one that re-opens it cold.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and where Postio stops you. The problem, not the solution — there may be a better shape for the fix than the one you have in mind.
+      placeholder: I triage from search results, and there is no way to archive everything a query matches.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What Postio would do, described as behaviour a test could check. Keyboard path included — every command here has a binding, a palette entry, and a cheat-sheet line.
+    validations:
+      required: true
+  - type: textarea
+    id: fit
+    attributes:
+      label: How it fits
+      description: |
+        Postio's non-negotiables, so proposals can be checked against them: local-first (the
+        UI never awaits the network), keyboard-first, and private — nothing leaves the machine
+        the user did not ask for. Say how the feature holds these, especially if it wants a
+        network request.
+  - type: textarea
+    id: agent-prompt
+    attributes:
+      label: Agent prompt (optional)
+      description: |
+        A self-contained prompt an AI coding agent could run in this repository to build it —
+        the behaviour, the acceptance criteria, the surfaces it touches. See CONTRIBUTING.md
+        for what makes a prompt runnable. For anything non-trivial the maintainer decides
+        scope first, but a good prompt shortens everything after that decision.
