@@ -1747,8 +1747,52 @@ Two lessons, and the second is the expensive one:
   false; saying otherwise needs a signal upstream does not give, so the fix
   stopped at containment.
 
-`catch_unwind` in `parse_inner` is still right regardless: the module documents
-`parse` as infallible, and it has to hold against the next such bug too.
+`catch_unwind` is still right regardless: the module documents `parse` as
+infallible, and it has to hold against the next such bug too. It moved out of
+`parse_inner` to wrap the whole function as `try_parse`, so the outcome can
+reach a caller that wants to log it — catching inside meant `parse_inner`
+always returned a value and nothing downstream could tell a contained failure
+from an ordinary empty message. `postio-sync`'s backfill is the caller that
+cares; the reading pane deliberately is **not**, for the reason above.
+
+**Fixing a crash uncovers the crash behind it, and the next one was ours.**
+With the panic contained, `parse_message` ran further into the same inputs and
+found a stack overflow — `postio_model::mime`'s own `part_paths` walked the
+MIME tree by recursing once per level, and nesting costs a sender nothing:
+`multipart/mixed` inside `multipart/mixed`, as deep as they care to type.
+
+That one had none of the previous bug's mitigations. It is not a
+`debug_assert!`, so it is in the shipped build; and a stack overflow is a
+`SIGSEGV` rather than an unwind, so `catch_unwind` cannot contain it and
+neither can any caller. It was the real remote denial of service the issue had
+been filed about, hiding behind a bug that only looked like one.
+
+The walk is an explicit worklist now, not a depth limit. A limit is a number
+somebody has to be right about — too low and a legitimately baroque forwarded
+thread loses its attachments, too high and the crash is still reachable —
+whereas iteration has no such number, and the heap it uses is bounded by a
+message already in memory. **When input decides how deep a recursion goes,
+that is the input deciding how much stack you use**; prefer a worklist to a
+`fn` that calls itself anywhere on the ingest path.
+
+Two process points from this: **re-run a fuzz target after every fix** rather
+than assuming the target is done, and note that the target could not see the
+second bug until the first was gone.
+
+**`fuzz_target!` aborts on *any* panic, including one you caught.**
+libfuzzer-sys installs a panic hook that calls `process::abort()`, on purpose:
+aborting before the stack unwinds is what lets libFuzzer tell one crash from
+another. The side effect is that `std::panic::catch_unwind` never runs inside a
+fuzz target — the hook fires first — so `parse_message` kept reporting a
+contained panic as a crash after it had been fixed.
+`postio_fuzz::allow_contained_panics` replaces the hook with one that does
+nothing and lets the unwind proceed. **An uncaught panic is still a crash**,
+which is the part to check rather than assume: it unwinds out of the target
+closure into libFuzzer's `extern "C"` frame, and Rust aborts rather than unwind
+across that boundary. Verified by injecting a failing assertion and confirming
+libFuzzer still reported "deadly signal" — do that again if the hook handling
+is ever touched, because the failure mode is a target that reports nothing
+forever.
 
 ## Logging & privacy
 

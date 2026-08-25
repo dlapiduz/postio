@@ -8,18 +8,24 @@
 //! The judgement is in `postio_fuzz::check_parse_message`; see that crate's
 //! docs for why it is not in here.
 //!
-//! # This target is known red
+//! # Why this one restores the panic hook
 //!
-//! It finds #277 within a few minutes: `mail-parser` panics on a malformed
-//! multipart, and the panic comes straight out of `mime::parse`, which is
-//! documented as infallible. That is a real remotely-triggerable crash, not a
-//! flaw in this target, and it is deliberately not worked around here — a
-//! target taught to ignore a genuine find is worth less than no target. If
-//! this stops at "Invalid part ID, could not find multipart", that is #277 and
-//! not something you just broke.
+//! This target found #277: `mail-parser` panics on a malformed multipart and
+//! the unwind came straight out of `mime::parse`, which is documented as
+//! infallible. That is fixed — `parse` contains it now, and in the shipping
+//! application such a message reads as one with no body rather than taking
+//! sync down.
+//!
+//! A fuzz target cannot see that on its own. `fuzz_target!` installs a panic
+//! hook that aborts before unwinding, so `catch_unwind` never runs and a
+//! contained panic still looks like a crash. Without
+//! [`postio_fuzz::allow_contained_panics`] this target would report a fixed
+//! bug forever, which is the same uselessness as a target that ignores a real
+//! one. Uncaught panics are still crashes — see that function's docs.
 
 #![no_main]
 
 libfuzzer_sys::fuzz_target!(|raw: &[u8]| {
+    postio_fuzz::allow_contained_panics();
     postio_fuzz::check_parse_message(raw);
 });
