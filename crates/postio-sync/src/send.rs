@@ -241,6 +241,11 @@ pub(crate) async fn send(
             };
         }
     };
+    // Exactly one `to_owned`, for the reason `postio_imap`'s own credential
+    // copy gives: `SecretString::from` goes through `String::into_boxed_str`,
+    // which reallocates whenever capacity exceeds length and frees the buffer
+    // holding the password without overwriting it. `str::to_owned` allocates
+    // exactly `len`, so this moves instead. #144.
     let password = SecretString::from(password.expose().to_owned());
 
     let mut session = match SmtpSession::open(&job.outgoing, &password, smtp.connector).await {

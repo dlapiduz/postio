@@ -183,7 +183,7 @@ impl ImapSession {
         let credentials = SaslPlainCreds {
             authzid: None,
             authcid: settings.username.clone(),
-            passwd: password.expose().to_owned().into(),
+            passwd: credential_copy(password).into(),
         };
 
         let mut coroutine = ImapSessionOpen::new(transport, Some(credentials), options);
@@ -512,10 +512,50 @@ fn is_rejection_imap_login(error: &ImapLoginError) -> bool {
     )
 }
 
+/// The password, copied out of [`Password`] for the handshake.
+///
+/// The one copy of the secret this module makes. #144 asked whether it
+/// outlives the handshake unprotected; checked against io-sasl 0.1.0 and
+/// io-imap 0.6.0, it does not. `SaslPlainCreds::passwd` is a
+/// `secrecy::SecretString` — `SecretBox<str>`, zeroized on drop — and io-imap
+/// makes one further copy of its own inside `ImapAuthPlain::new`, which is
+/// another `SecretString` and therefore also zeroized. Two copies, both
+/// protected.
+///
+/// What is *not* obvious is why this must stay exactly one `to_owned`.
+/// `SecretString::from(String)` goes through `String::into_boxed_str`, which
+/// reallocates whenever capacity exceeds length — and reallocating frees the
+/// buffer holding the secret **without overwriting it**, which is the leak
+/// this whole issue is about, reintroduced one layer down. `str::to_owned`
+/// allocates exactly `len`, so the buffer moves rather than being copied and
+/// abandoned; io-imap's own `to_string()` on a `&str` does the same. Anything
+/// that builds this with spare capacity — a `String::with_capacity`, a
+/// `push_str`, a `format!` — breaks that silently, which is what the test
+/// below exists to catch.
+fn credential_copy(password: &Password) -> String {
+    password.expose().to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::Capability;
+
+    #[test]
+    fn the_handshake_copy_of_a_password_has_no_spare_capacity() {
+        // See `credential_copy`: spare capacity here makes
+        // `SecretString::from` reallocate, and the abandoned buffer still
+        // holds the password.
+        let copy = credential_copy(&Password::new("hunter2"));
+        assert_eq!(copy, "hunter2");
+        assert_eq!(
+            copy.capacity(),
+            copy.len(),
+            "the copy handed to io-sasl has spare capacity, so building a \
+             SecretString from it reallocates and leaves the secret behind in \
+             the freed buffer"
+        );
+    }
 
     #[test]
     fn the_wire_capability_list_maps_onto_ours_without_losing_names() {
