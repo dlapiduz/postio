@@ -144,7 +144,9 @@ for by clicking *Sign in*, which is the test `ARCHITECTURE.md` §11 sets. The
 listener binds only on demand and only on loopback. The refresh token goes
 straight to the keyring; the access token is a `Password` (zeroizing) and is
 never written to disk. `scripts/check-no-silent-tracking.py` should learn about
-this flow so that "Postio opened a connection" stays an enumerable list.
+this flow so that "Postio opened a connection" stays an enumerable list — and
+the flow's requests belong in the egress log (#151) that turns that list from
+an assertion into a record the user can read.
 
 ---
 
@@ -193,6 +195,30 @@ scopes    = ["https://…/mail"]
 # `builtin` is only present for providers Postio has a verified client for.
 sources   = ["builtin", "broker", "own-client"]
 ```
+
+> **Amended 2026-08-24 (#152), before the schema was implemented.** As
+> written above, `authorize`, `token` and `scopes` are hand-carried in every
+> row. [ADR 0005](0005-multiple-accounts.md) Q7's survey found that
+> unnecessary: `io-pim-discovery` — already in the graph for autoconfig —
+> ships `rfc8414` (OAuth 2.0 authorization-server metadata), so for any
+> provider that publishes metadata those endpoints can be **discovered
+> instead of maintained**. Three hand-kept fields per provider become zero,
+> and an endpoint a provider rotates keeps working without a Postio release.
+>
+> The amended shape: the `[provider.oauth]` endpoint fields are **one source
+> of two, and metadata wins when both exist**. A row may carry an `issuer`
+> from which RFC 8414 metadata is fetched — during the add-account flow the
+> user initiated, the same consent footing as the autoconfig probe, so §11's
+> "did the user ask for it" test passes for the same reason. Explicit
+> `authorize`/`token`/`scopes` remain the offline and no-metadata path, and
+> the row still owns what metadata cannot supply: the `sources` list, the
+> client id reference, and the preference order in `auth`. The user-overlay
+> semantics are unchanged.
+>
+> Consequence for the implementation (#191): the parser accepts `issuer`,
+> endpoint fields, or both — but a row with an OAuth entry in `auth` and
+> *neither* is a validation error, said at load time rather than discovered
+> at sign-in.
 
 **The user file is what makes this real.** A self-hosted provider, a corporate
 IdP, a provider Postio has never heard of: one row in a file the user owns, no
