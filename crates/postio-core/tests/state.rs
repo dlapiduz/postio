@@ -12,7 +12,7 @@ use std::sync::Arc;
 use postio_core::ActionId;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::{CommandError, Dispatcher};
-use postio_core::state::{AppState, SharedState, ViewMode};
+use postio_core::state::{AppState, Scope, SharedState, ViewMode};
 use postio_core::{Command, CommandId, ConnectionState, Context, Event};
 use postio_model::{AccountId, DraftId, MailboxId, MessageId, ThreadId};
 
@@ -103,6 +103,57 @@ fn switching_mailboxes_drops_a_selection_that_is_no_longer_visible() {
         }),
         "{events:?}"
     );
+}
+
+// -- Scope (#182, ADR 0005 Q4) -----------------------------------------------
+//
+// `AppState.account: Option<AccountId>` carried two meanings at once -- "no
+// account configured" and "no account chosen" -- and the second stops being
+// expressible the moment a unified view exists, because "all of them" is a
+// choice and `None` cannot say it. `Scope` says it.
+
+#[test]
+fn a_fresh_state_is_scoped_to_everything() {
+    // Unified over zero accounts is an empty view, which is exactly what a
+    // fresh window shows -- so the default carries no account id it would
+    // have to invent.
+    assert_eq!(*AppState::new().scope(), Scope::Unified);
+}
+
+#[test]
+fn opening_an_account_narrows_the_scope_to_it() {
+    let mut state = AppState::new();
+    state.open_account(AccountId::new(1));
+    assert_eq!(*state.scope(), Scope::Account(AccountId::new(1)));
+    assert_eq!(state.account(), Some(AccountId::new(1)));
+}
+
+#[test]
+fn widening_to_unified_drops_the_position_like_switching_accounts_does() {
+    // The rows on screen belong to one account's mailbox; a unified list is a
+    // different set. Keeping the selection would let an action land on a
+    // message the user cannot see -- the same rule `open_account` already
+    // applies when switching between two accounts.
+    let mut state = in_the_inbox();
+
+    state.open_scope(Scope::Unified);
+
+    assert_eq!(*state.scope(), Scope::Unified);
+    assert_eq!(state.account(), None, "no single account is on screen");
+    assert_eq!(state.mailbox(), None, "a unified view is not a mailbox");
+    assert!(state.selection().is_empty());
+    assert_eq!(state.focus(), None);
+}
+
+#[test]
+fn reopening_the_same_scope_changes_nothing_and_announces_nothing() {
+    let mut state = in_the_inbox();
+    let before = state.clone();
+
+    let events = state.open_scope(Scope::Account(AccountId::new(1)));
+
+    assert_eq!(state, before, "same scope, same state");
+    assert!(events.is_empty(), "{events:?}");
 }
 
 #[test]

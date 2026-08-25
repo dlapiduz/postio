@@ -26,6 +26,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
+use postio_core::state::Scope;
 use postio_core::{ActionId, Context, ContextSet, Keymap, registry};
 
 use crate::finder::Mode;
@@ -87,7 +88,7 @@ fn heading(context: Context) -> &'static str {
 ///
 /// Empty sections are dropped: a heading with nothing under it is worse than no
 /// heading, and which sections have content depends on what the registry holds.
-pub fn sections(keymap: &Keymap) -> Vec<Section> {
+pub fn sections(keymap: &Keymap, scope: Scope) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
     let mut everywhere = Section {
         title: EVERYWHERE,
@@ -102,6 +103,12 @@ pub fn sections(keymap: &Keymap) -> Vec<Section> {
     }
 
     for spec in registry::all() {
+        // The same gate the palette applies (#182): `?` answers "what can I
+        // do", and a command the current scope withholds is not something
+        // you can do. Printing it anyway would teach a key that does nothing.
+        if !spec.scope_gate.allows(scope) {
+            continue;
+        }
         let row = Row {
             id: Some(spec.id.into()),
             title: spec.title,
@@ -215,6 +222,9 @@ pub fn spoken(row: &Row) -> String {
 // ---------------------------------------------------------------------------
 
 mod imp {
+    use postio_core::state::Scope;
+    use std::cell::Cell;
+
     use std::cell::RefCell;
 
     use super::*;
@@ -222,6 +232,7 @@ mod imp {
     pub struct CheatSheet {
         pub columns: gtk::Box,
         pub keymap: RefCell<Keymap>,
+        pub scope: Cell<Scope>,
         pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
     }
 
@@ -230,6 +241,10 @@ mod imp {
             Self {
                 columns: gtk::Box::new(gtk::Orientation::Horizontal, 32),
                 keymap: RefCell::new(Keymap::default()),
+                // Unified until the composition root says otherwise: over
+                // zero accounts that is the truthful state, and it never
+                // offers a command the real scope would withhold.
+                scope: Cell::new(Scope::Unified),
                 dismissed: RefCell::new(Vec::new()),
             }
         }
@@ -286,9 +301,16 @@ impl CheatSheet {
         self.rebuild();
     }
 
+    /// What the window is showing mail from. The sheet is rebuilt, because
+    /// a command the scope withholds must leave the printed page too.
+    pub fn set_scope(&self, scope: Scope) {
+        self.imp().scope.set(scope);
+        self.rebuild();
+    }
+
     /// What the sheet currently lists.
     pub fn sections(&self) -> Vec<Section> {
-        sections(&self.imp().keymap.borrow())
+        sections(&self.imp().keymap.borrow(), self.imp().scope.get())
     }
 
     /// Called when the user presses `Escape` or `?` again.
@@ -407,13 +429,35 @@ mod tests {
     use super::*;
     use postio_core::CommandId;
 
+    /// A scope with one real account on screen -- today's only shipping state.
+    fn account_scope() -> Scope {
+        Scope::Account(postio_model::ids::AccountId::new(1))
+    }
+
+    #[test]
+    fn unified_scope_leaves_move_off_the_printed_page() {
+        // #182: `?` answers "what can I do", and Move is not something you
+        // can do from the unified view. Printing it anyway teaches a key
+        // that does nothing.
+        let ids = |scope| -> Vec<ActionId> {
+            sections(&defaults(), scope)
+                .iter()
+                .flat_map(|section| section.rows.iter())
+                .filter_map(|row| row.id)
+                .collect()
+        };
+        let move_id = ActionId::Builtin(postio_core::CommandId::Move);
+        assert!(ids(account_scope()).contains(&move_id));
+        assert!(!ids(Scope::Unified).contains(&move_id));
+    }
+
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
     }
 
     #[test]
     fn every_command_appears_exactly_once() {
-        let listed: Vec<ActionId> = sections(&defaults())
+        let listed: Vec<ActionId> = sections(&defaults(), account_scope())
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| row.id)
@@ -432,7 +476,7 @@ mod tests {
 
     #[test]
     fn a_command_reachable_everywhere_is_filed_under_everywhere() {
-        let sections = sections(&defaults());
+        let sections = sections(&defaults(), account_scope());
         let everywhere = sections
             .iter()
             .find(|section| section.title == EVERYWHERE)
@@ -450,7 +494,7 @@ mod tests {
 
     #[test]
     fn a_command_is_filed_under_the_broadest_context_it_applies_in() {
-        let sections = sections(&defaults());
+        let sections = sections(&defaults(), account_scope());
         let list = sections
             .iter()
             .find(|section| section.title == heading(Context::List))
@@ -478,7 +522,7 @@ mod tests {
 
     #[test]
     fn no_section_is_printed_empty() {
-        for section in sections(&defaults()) {
+        for section in sections(&defaults(), account_scope()) {
             assert!(
                 !section.rows.is_empty(),
                 "`{}` has no keys under it",
@@ -489,7 +533,7 @@ mod tests {
 
     #[test]
     fn rows_carry_the_binding_in_force() {
-        let archive = sections(&defaults())
+        let archive = sections(&defaults(), account_scope())
             .into_iter()
             .flat_map(|section| section.rows)
             .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
@@ -505,7 +549,7 @@ mod tests {
             .overrides_mut()
             .insert("archive".to_owned(), "y".to_owned());
 
-        let archive = sections(&Keymap::resolve(&overrides))
+        let archive = sections(&Keymap::resolve(&overrides), account_scope())
             .into_iter()
             .flat_map(|section| section.rows)
             .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
@@ -525,7 +569,7 @@ mod tests {
         // Commands only: the box's prefixes are also rows, but `>` is not a
         // binding the keymap has any say over — it is a character you type
         // into a surface — so an empty keymap does not silence one.
-        let listed: Vec<Row> = sections(&Keymap::default())
+        let listed: Vec<Row> = sections(&Keymap::default(), account_scope())
             .into_iter()
             .flat_map(|section| section.rows)
             .filter(|row| row.id.is_some())
@@ -564,7 +608,7 @@ mod tests {
         // box's prefixes are not commands — so `>`, `#` and `@` appeared
         // nowhere in the app's own teaching. A user who never reads docs
         // would never discover two thirds of the box.
-        let section = sections(&defaults())
+        let section = sections(&defaults(), account_scope())
             .into_iter()
             .find(|section| section.title == IN_THE_BOX)
             .expect("the sheet has no section for the box's prefixes");
@@ -608,7 +652,7 @@ mod tests {
         // It is what the box already is; the key that opens it is `/`, which
         // the registry lists as a command.
         assert_eq!(Mode::Search.prefix(), None);
-        let section = sections(&defaults())
+        let section = sections(&defaults(), account_scope())
             .into_iter()
             .find(|section| section.title == IN_THE_BOX)
             .expect("a prefix section");
@@ -623,7 +667,7 @@ mod tests {
 
     #[test]
     fn the_sections_are_the_ones_the_registry_actually_uses() {
-        let titles: Vec<&str> = sections(&defaults())
+        let titles: Vec<&str> = sections(&defaults(), account_scope())
             .iter()
             .map(|section| section.title)
             .collect();

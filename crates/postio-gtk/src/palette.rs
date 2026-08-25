@@ -28,6 +28,7 @@
 //! arrangement the canvas uses for the key hints on a focused row, so a key
 //! learned in the palette looks the same when it appears in the list.
 
+use postio_core::state::Scope;
 use postio_core::{ActionId, Context, Keymap, registry};
 
 /// How many rows the palette will show at once.
@@ -178,9 +179,9 @@ const ID_PENALTY: i32 = 40;
 /// the message list is a row the user can only be disappointed by. An empty
 /// query returns everything applicable, in registry order, which is the order
 /// the cheat sheet uses.
-pub fn entries(keymap: &Keymap, context: Context, query: &str) -> Vec<Entry> {
+pub fn entries(keymap: &Keymap, context: Context, scope: Scope, query: &str) -> Vec<Entry> {
     let query = query.trim();
-    let mut found: Vec<Entry> = registry::reachable(context)
+    let mut found: Vec<Entry> = registry::reachable_in(context, scope)
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
             let by_id = score(query, spec.id.as_str());
@@ -299,9 +300,43 @@ mod tests {
 
     // -- entries ----------------------------------------------------------
 
+    /// A scope with one real account on screen -- today's only shipping state.
+    fn account_scope() -> Scope {
+        Scope::Account(postio_model::ids::AccountId::new(1))
+    }
+
+    #[test]
+    fn unified_scope_withholds_move_and_nothing_else() {
+        // #182: the palette must not offer a destination picker over no
+        // destination tree. The registry decides *which* commands are gated;
+        // this holds that the palette actually consults it, because a surface
+        // that filters by context alone shows Move in Unified and every one
+        // of its rows is a disappointment.
+        let unified: Vec<ActionId> = entries(&defaults(), Context::List, Scope::Unified, "")
+            .iter()
+            .map(|entry| entry.id)
+            .collect();
+        let account: Vec<ActionId> = entries(&defaults(), Context::List, account_scope(), "")
+            .iter()
+            .map(|entry| entry.id)
+            .collect();
+
+        let move_id = ActionId::Builtin(postio_core::CommandId::Move);
+        assert!(account.contains(&move_id));
+        assert!(!unified.contains(&move_id), "{unified:?}");
+        assert_eq!(
+            account
+                .iter()
+                .filter(|id| **id != move_id)
+                .collect::<Vec<_>>(),
+            unified.iter().collect::<Vec<_>>(),
+            "the scope gate must hide Move and only Move"
+        );
+    }
+
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
-        let listed = entries(&defaults(), Context::List, "");
+        let listed = entries(&defaults(), Context::List, account_scope(), "");
         let expected: Vec<ActionId> = registry::reachable(Context::List)
             .map(|spec| spec.id)
             .collect();
@@ -316,7 +351,7 @@ mod tests {
     fn every_registry_command_is_reachable_from_some_context() {
         for spec in registry::all() {
             let reachable = Context::ALL.iter().any(|context| {
-                entries(&defaults(), *context, spec.title)
+                entries(&defaults(), *context, account_scope(), spec.title)
                     .iter()
                     .any(|entry| entry.id == spec.id.into())
             });
@@ -326,7 +361,7 @@ mod tests {
 
     #[test]
     fn the_context_filter_hides_what_does_not_apply() {
-        let from_the_list = entries(&defaults(), Context::List, "send");
+        let from_the_list = entries(&defaults(), Context::List, account_scope(), "send");
         assert!(
             !from_the_list
                 .iter()
@@ -334,7 +369,7 @@ mod tests {
             "offering to send from the message list is a row that can only disappoint"
         );
 
-        let from_the_composer = entries(&defaults(), Context::Composer, "send");
+        let from_the_composer = entries(&defaults(), Context::Composer, account_scope(), "send");
         assert!(
             from_the_composer
                 .iter()
@@ -344,7 +379,7 @@ mod tests {
 
     #[test]
     fn a_command_is_findable_by_its_id_as_well_as_its_title() {
-        let found = entries(&defaults(), Context::List, "archive_th");
+        let found = entries(&defaults(), Context::List, account_scope(), "archive_th");
 
         assert_eq!(
             found.first().map(|entry| entry.id),
@@ -354,7 +389,7 @@ mod tests {
 
     #[test]
     fn a_title_match_outranks_an_id_match_for_the_same_query() {
-        let found = entries(&defaults(), Context::List, "archive");
+        let found = entries(&defaults(), Context::List, account_scope(), "archive");
         let ranks: Vec<ActionId> = found.iter().map(|entry| entry.id).collect();
 
         let archive = ranks
@@ -365,7 +400,7 @@ mod tests {
 
     #[test]
     fn rows_carry_the_binding_in_force() {
-        let listed = entries(&defaults(), Context::List, "archive");
+        let listed = entries(&defaults(), Context::List, account_scope(), "archive");
         let archive = listed
             .iter()
             .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
@@ -382,7 +417,7 @@ mod tests {
             .insert("archive".to_owned(), "y".to_owned());
         let keymap = Keymap::resolve(&overrides);
 
-        let listed = entries(&keymap, Context::List, "archive");
+        let listed = entries(&keymap, Context::List, account_scope(), "archive");
         let archive = listed
             .iter()
             .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
@@ -397,12 +432,12 @@ mod tests {
 
     #[test]
     fn a_query_that_matches_nothing_lists_nothing() {
-        assert!(entries(&defaults(), Context::List, "zzzzz").is_empty());
+        assert!(entries(&defaults(), Context::List, account_scope(), "zzzzz").is_empty());
     }
 
     #[test]
     fn the_list_is_capped() {
-        let listed = entries(&defaults(), Context::List, "");
+        let listed = entries(&defaults(), Context::List, account_scope(), "");
 
         assert!(listed.len() <= MAX_ROWS);
     }

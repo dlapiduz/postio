@@ -1540,6 +1540,20 @@ impl Window {
         }
     }
 
+    /// What the window is showing mail from: one account, or all of them.
+    ///
+    /// The composition root calls this when the scope changes — opening an
+    /// account, or entering the unified view. The palette and the cheat
+    /// sheet re-filter from it, so a command the scope withholds (Move in
+    /// Unified, #182) is absent from both at once rather than from whichever
+    /// remembered to check.
+    pub fn set_scope(&self, scope: postio_core::state::Scope) {
+        self.finder().set_scope(scope);
+        if let Some(sheet) = self.imp().cheatsheet.get() {
+            sheet.set_scope(scope);
+        }
+    }
+
     /// Called with every command a key press resolves to.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.imp().commands.borrow_mut().push(Box::new(handler));

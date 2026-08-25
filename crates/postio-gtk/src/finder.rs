@@ -53,6 +53,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
+use postio_core::state::Scope;
 use postio_core::{ActionId, Context, Keymap};
 use postio_model::Contact;
 use postio_model::ids::MailboxId;
@@ -369,6 +370,8 @@ type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
 mod imp {
     use std::cell::{Cell, RefCell};
 
+    use postio_core::state::Scope;
+
     use super::*;
 
     pub struct Finder {
@@ -381,6 +384,10 @@ mod imp {
         pub(super) keymap: RefCell<Keymap>,
         /// The workspace's context, for filtering which commands apply.
         pub(super) context: RefCell<Context>,
+        /// What the window is showing mail from. Unified until the
+        /// composition root says otherwise, which over zero accounts is the
+        /// truthful state and never offers what the real scope withholds.
+        pub(super) scope: Cell<Scope>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
@@ -416,6 +423,7 @@ mod imp {
                 // The list is where the box opens from, and the context the
                 // commands are filtered by until the window says otherwise.
                 context: RefCell::new(Context::List),
+                scope: Cell::new(Scope::Unified),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
@@ -567,6 +575,16 @@ impl Finder {
     /// The workspace context, which decides what commands apply.
     pub fn set_context(&self, context: Context) {
         *self.imp().context.borrow_mut() = context;
+        self.refresh();
+    }
+
+    /// What the window is showing mail from.
+    ///
+    /// The command mode refilters, so a command the scope withholds — Move in
+    /// Unified (#182) — leaves the palette the moment the scope changes, not
+    /// on the next keystroke.
+    pub fn set_scope(&self, scope: Scope) {
+        self.imp().scope.set(scope);
         self.refresh();
     }
 
@@ -1029,7 +1047,12 @@ impl Finder {
                 if let Some(live) = imp.live.borrow().as_ref() {
                     live.clear();
                 }
-                let found = entries(&imp.keymap.borrow(), *imp.context.borrow(), &query.text);
+                let found = entries(
+                    &imp.keymap.borrow(),
+                    *imp.context.borrow(),
+                    imp.scope.get(),
+                    &query.text,
+                );
                 for entry in &found {
                     imp.list.append(&command_row(entry));
                 }
