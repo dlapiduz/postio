@@ -284,7 +284,10 @@ The machine:
     uptime; df -h /home; du -sh target
     pgrep -af 'rustc|cargo|target/debug/deps' | head
 Four concurrent builds saturate this box. Test binaries that outlive
-their run have hung twice — `gtk_reader` both times.
+their run have hung four-plus times — `gtk_reader` every time; since
+#272 the headless runner kills that binary's whole process group after
+`POSTIO_TEST_WATCHDOG` (default 300s) and dumps thread wchans first, so
+a hang you find in `pgrep` now is news worth pasting into that issue.
 
 ## Read the work, not the labels
 

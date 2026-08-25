@@ -1019,6 +1019,23 @@ the list showing the previous folder. Click the row instead.
 
 ## Testing infrastructure
 
+**`gtk_reader` hanging at 0% CPU with no output runs under a watchdog
+now (#272).** The one test binary that talks to WebKit directly wedged at
+least four times during gate runs — silent, 0% CPU, killed by hand each
+time, twice while the box carried several sessions' concurrent builds. The
+test's own waits are all deadline-bounded, so the block is inside a
+toolkit or WebKit call; the standing suspect is WebKit's DMA-BUF renderer
+negotiating GPU buffers with the nested headless mutter. Two changes in
+`scripts/headless-runner.sh`: `WEBKIT_DISABLE_DMABUF_RENDERER=1` pins
+WebKit to its software path under the test compositor (tests need no GPU
+web rendering), and `gtk_reader-*` binaries run in their own process group
+under a hard deadline — `POSTIO_TEST_WATCHDOG`, default 300s — that dumps
+every thread's kernel `wchan` before killing the group, WebProcess
+children included. So the next hang costs five minutes and leaves a
+diagnosis in the log instead of an unbounded wait that only a human ends.
+A 25-iteration loop under concurrent build load did not reproduce the
+hang; if the wchan dump ever shows one, paste it into #272.
+
 **A test that skips when there is no display reports success, and CI had no
 display.** Sixty test files in this workspace open with some spelling of
 `if adw::init().is_err() || gdk::Display::default().is_none() { return; }`.
