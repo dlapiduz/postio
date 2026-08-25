@@ -21,11 +21,27 @@
 # looks finished and is not: it goes stale, it conflicts with whatever lands
 # next, and the issue it closes stays open. The session that wrote it is the
 # one that knows what to do if the checks fail, so it is the one that waits.
+#
+# This script rebases the tree it lives in, so a rebase that brings in new
+# landing machinery would otherwise be invisible to the very run that pulled
+# it in. When that happens it hands over -- execs the copy the rebase brought
+# in, from the top -- so the gates and the merge decision are both the new
+# machinery's. See the rebase step below and #160.
 set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 MAIN_CHECKOUT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
+# How many times one landing may hand over to a rebased copy of itself before
+# it gives up rather than merging. Two is enough for the case this exists for
+# -- machinery landing while a branch is being landed -- and a run that needs
+# a third is one where main is moving faster than a landing takes, which a
+# session should look at rather than a script should push through.
+REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
+
+# Kept whole, because the handover below re-runs this script with exactly what
+# this run was asked for; the loop underneath shifts them away.
+ORIGINAL_ARGS=("$@")
 
 MSG=""; WIP=0; GATES_ONLY=0; MERGE=1
 while [ $# -gt 0 ]; do
@@ -154,6 +170,10 @@ fi
 BEHIND=$(git rev-list --count HEAD..origin/main)
 if [ "$BEHIND" -gt 0 ]; then
     echo "main moved $BEHIND commit(s) while you worked; rebasing onto it"
+    # Both sides of the comparison are read before the rebase runs, because
+    # after it the question cannot be asked honestly any more.
+    BEFORE_HEAD=$(git rev-parse HEAD)
+    BEFORE_SCRIPTS=$(git rev-parse "HEAD:scripts" 2>/dev/null || echo none)
     if ! git rebase origin/main; then
         git rebase --abort 2>/dev/null || true
         echo >&2
@@ -162,8 +182,47 @@ if [ "$BEHIND" -gt 0 ]; then
         echo "    git rebase origin/main" >&2
         exit 1
     fi
-    echo "rebased. The gates above ran on the previous base -- CI is what"
-    echo "checks the combination, which is why this waits for it."
+    echo "rebased."
+
+    # This script has just rebased the tree it lives in, so every line below
+    # is being decided by a copy that no longer matches what is on disk. That
+    # is how #50 merged a three-crate change without waiting for CI: the fix
+    # that would have stopped it arrived in that run's own rebase, and the run
+    # kept executing the copy bash already had open. It is worse than stale --
+    # bash reads a script by byte offset as it goes, so a file rewritten
+    # underneath it does not even reliably behave like the old version.
+    #
+    # So the run hands over: exec the machinery the rebase brought in, from
+    # the top, with the same arguments. The commit is already made and the
+    # tree is now zero behind, so the new run re-runs the gates against the
+    # combination CI will actually see and skips straight past both -- which
+    # is also the only way the gates and the merge decision can be talking
+    # about the same tree. Nothing has been pushed at this point, so a
+    # handover cannot double anything.
+    #
+    # The whole decision lives inside this `if`, which bash parsed before the
+    # rebase touched anything: that is what makes it reachable at all.
+    AFTER_SCRIPTS=$(git rev-parse "HEAD:scripts" 2>/dev/null || echo none)
+    if [ "$BEFORE_SCRIPTS" != "$AFTER_SCRIPTS" ]; then
+        DEPTH="${POSTIO_LAND_REEXEC_DEPTH:-0}"
+        echo "the rebase brought in the landing machinery itself:"
+        git diff --name-only "$BEFORE_HEAD" HEAD -- scripts/ | sed 's/^/    /'
+        if [ "$DEPTH" -ge "$REEXEC_LIMIT" ] || [ ! -f "$TREE/scripts/issue-land.sh" ]; then
+            echo >&2
+            echo "Refusing to merge: after $DEPTH handover(s) the machinery is" >&2
+            echo "still moving underneath this run, so it cannot say which copy" >&2
+            echo "of itself would be deciding. Nothing was pushed. Run this" >&2
+            echo "script again on the rebased tree -- #160." >&2
+            exit 1
+        fi
+        echo "handing over to the landing machinery this rebase brought in (#160)."
+        export POSTIO_LAND_REEXEC_DEPTH=$((DEPTH + 1))
+        exec bash "$TREE/scripts/issue-land.sh" \
+            ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
+    fi
+
+    echo "the gates above ran on the previous base -- CI is what checks the"
+    echo "combination, which is why this waits for it."
 fi
 
 git push -u origin "$BRANCH"
