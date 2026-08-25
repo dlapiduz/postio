@@ -333,6 +333,32 @@ pub enum Command {
         /// The state to set; `None` toggles.
         unread: Option<bool>,
     },
+    /// Mark one message read because the cursor rested on it long enough to
+    /// have been read — not because anyone asked.
+    ///
+    /// # Why this is a variant rather than a command of its own
+    ///
+    /// It is the *same verb*: [`id`](Command::id) answers
+    /// [`CommandId::MarkUnread`], so it routes to the same handler, appears in
+    /// the registry once, and does not invent a second spelling of "mark
+    /// read" for the palette and the cheat sheet to disagree about. What
+    /// differs is only who asked — and that changes exactly one thing, which
+    /// is that it is not recorded on the undo stack. A registry command would
+    /// also have had to carry a key binding it would never be reached by;
+    /// `tests/command_registry.rs` requires one of every entry.
+    ///
+    /// # Why it is not undoable
+    ///
+    /// `u` takes back what *you* did. Reading a mailbox produces one of these
+    /// per message rested on, so recording them would bury the archive you
+    /// actually want back under a drift of marks you never asked for, and
+    /// `u` would stop meaning anything predictable. The reversal is `U`
+    /// (mark unread), which is bound, in the palette and on the cheat sheet.
+    /// See #71.
+    MarkReadOnDwell {
+        /// The message the cursor rested on.
+        message: MessageId,
+    },
     /// Attach a label.
     AddLabel {
         /// What to label.
@@ -447,7 +473,9 @@ impl Command {
             Command::Delete { .. } => CommandId::Delete,
             Command::Move { .. } => CommandId::Move,
             Command::Flag { .. } => CommandId::Flag,
-            Command::MarkUnread { .. } => CommandId::MarkUnread,
+            // The same verb, invoked by the app rather than by the user — see
+            // `MarkReadOnDwell`'s own docs.
+            Command::MarkUnread { .. } | Command::MarkReadOnDwell { .. } => CommandId::MarkUnread,
             Command::AddLabel { .. } => CommandId::AddLabel,
             Command::Search { .. } => CommandId::Search,
             Command::Compose { .. } => CommandId::Compose,

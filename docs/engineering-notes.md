@@ -193,6 +193,49 @@ and `postio-app`; `postio-index` owns `rusqlite` and the FTS5 executor.
 
 ## GTK & UI gotchas
 
+**A change the app makes on the user's behalf does not go on the undo stack**
+(#71). The dwell mark is the first of these and the rule generalises: `u` takes
+back *what you did*, so anything the application decides on its own has to
+apply, repaint, and stay off the stack — otherwise the verb the user actually
+wants back gets buried under a drift of things they never asked for, and `u`
+stops meaning anything predictable. It gets no toast either, for the same
+reason at a different scale: reading a mailbox produces one dwell mark per
+message rested on, and a toast each would be a banner that never clears.
+
+`postio_session::actions::Recording` is where this lives — `Record`,
+`Replay`, and now `Incidental`. The reversal for a dwell mark is `U` (mark
+unread), which is already bound, in the palette and on the cheat sheet, so
+nothing is unreachable; it is only not on the *stack*.
+
+Two shapes follow from it and are worth copying:
+- **The command is the same verb, not a new one.**
+  `Command::MarkReadOnDwell` answers `CommandId::MarkUnread` from
+  `Command::id()`, so it routes to the same handler and the registry still
+  holds one "mark read". A registry entry of its own would also have needed a
+  key binding it could never be reached by —
+  `postio-core/tests/command_registry.rs` requires one of every entry, and
+  rightly.
+- **A convergent verb swallows its own rejection.** `set_flag` rejects with
+  "Already set" when nothing changes, which is a correct quiet hint for `U`
+  and constant noise for a dwell: the cursor resting on mail that has already
+  been read is the *ordinary* case. `Actions::run` maps a `Rejected` from the
+  dwell to `Ok`, and lets a `Failed` through, because a store that will not
+  write is still worth hearing about.
+
+**A dwell timer must be cancelled by anything that makes "in front of a
+person" untrue**, not only by the cursor moving. `MessageListView::cancel_dwell`
+is called by the window on focus loss (`is-active`) and whenever the composer
+takes the reading pane (`sync_reading_pane`). Both are facts about the window
+rather than the list, which is why they are pushed in rather than watched for
+in the pane. Without the focus one, a machine left alone overnight comes back
+with whatever the cursor happened to be on marked read.
+
+The autoselect case was already handled before this landed: `SingleSelection`
+parks the cursor on row 0 as soon as the model has rows, and `report_cursor`'s
+`landed` flag keeps that from counting as a landing. That is what stops merely
+launching Postio from marking the newest message read — see the comment on
+`imp::MessageListView::landed`, which anticipated this issue by name.
+
 **To assert on what a widget *draws*, wait for frames and then wait for the
 pixels to stop moving.** Neither half is optional, and #90 spent two attempts
 learning it.
