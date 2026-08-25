@@ -521,7 +521,7 @@ mod tests {
     //! POSTIO-GTK-INIT: the paragraph above is the argument. A binary crate
     //! has nothing for `tests/` to link against, so this one cannot move out
     //! the way `postio-gtk`'s toast tests did. See issue #41 and
-    //! `scripts/check-no-gtk-init-in-unit-tests.py`.
+    //! `scripts/checks/check-no-gtk-init-in-unit-tests.py`.
 
     use gtk::gdk;
 

@@ -185,7 +185,7 @@ falls out of the arrangement rather than needing care. The dialogue host is a
 GTK presenter; the probe, the account write, the keyring entry and the engine
 start all happen in `postio-app`, which is where `compose.rs`, `feed.rs` and
 the existing `onboarding.rs` already join the two halves.
-`scripts/check-crate-boundaries.py` proves it on every push, over the resolved
+`scripts/checks/check-crate-boundaries.py` proves it on every push, over the resolved
 dependency graph rather than over source text.
 
 ---

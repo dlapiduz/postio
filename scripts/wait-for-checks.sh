@@ -44,7 +44,7 @@ if [ -n "${POSTIO_CI_WORKFLOWS_DIR:-}" ]; then
     CI_EXPECTED_ARGS+=(--workflows "$POSTIO_CI_WORKFLOWS_DIR")
 fi
 EXPECTED=$(git diff --name-only origin/main...HEAD \
-    | python3 "$HERE/ci-expected-workflows.py" "${CI_EXPECTED_ARGS[@]}")
+    | python3 "$HERE/checks/ci-expected-workflows.py" "${CI_EXPECTED_ARGS[@]}")
 SCHEDULED=$?
 
 case "$SCHEDULED" in

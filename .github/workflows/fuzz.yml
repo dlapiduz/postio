@@ -73,7 +73,7 @@ jobs:
       # libFuzzer needs `-Z sanitizer=address`, which does not exist on stable
       # at any version. The date is what keeps it a pin -- a bare `nightly`
       # here would float exactly like the `rustup default stable` that #38 is
-      # about, and `scripts/check-toolchain-pinned.py` still refuses that
+      # about, and `scripts/checks/check-toolchain-pinned.py` still refuses that
       # spelling. Keep this in step with fuzz/rust-toolchain.toml.
       - name: Install the fuzzing toolchain
         run: rustup toolchain install nightly-2026-08-24 --profile minimal

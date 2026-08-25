@@ -12,7 +12,7 @@
 //! end in detail: Cargo resolves one feature set per package across the
 //! workspace, so a `default-features = false` edge from `postio-core` to
 //! `postio-imap` does not stop `io-imap` reaching `postio-gtk` through it,
-//! and `scripts/check-crate-boundaries.py` fails. That is a real constraint
+//! and `scripts/checks/check-crate-boundaries.py` fails. That is a real constraint
 //! and it is not worked around here — it is simply the wrong place to have
 //! looked. The composition root already depends on `postio-imap` with its
 //! default features, is guarded against nothing, and is where `compose.rs`

@@ -16,7 +16,7 @@
 //!
 //! The domain has to be one `known` recognises; it names the alternative if
 //! it does not. A reserved domain here rather than a real provider because
-//! `scripts/check-no-personal-data.py` holds every address in the repository
+//! `scripts/checks/check-no-personal-data.py` holds every address in the repository
 //! to RFC 2606, usage strings included.
 //!
 //! The password is read from the environment, never from a file and never

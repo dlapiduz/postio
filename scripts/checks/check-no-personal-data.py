@@ -24,7 +24,7 @@ In CI, set POSTIO_DENY_NAMES from a repository secret; a runner's git config
 is the bot's, not a maintainer's, so the git fallback no-ops there. GitHub
 masks secret values in logs, which is a second layer under the redaction.
 
-Run: python3 scripts/check-no-personal-data.py [--reveal] [path ...]
+Run: python3 scripts/checks/check-no-personal-data.py [--reveal] [path ...]
      Paths narrow the scan; without them every tracked file is checked.
 """
 
@@ -51,14 +51,14 @@ ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # Files whose whole point is to name what is forbidden, or which carry
 # legitimate upstream addresses.
 SKIP_PATHS = (
-    "scripts/check-no-personal-data.py",
+    "scripts/checks/check-no-personal-data.py",
     # Its self-test has to hold a forbidden address to prove this fires on
     # one, exactly as the check above has to name what it forbids.
-    "scripts/test-check-no-personal-data.py",
+    "scripts/tests/test-check-no-personal-data.py",
     # Same reasoning, for issue-land.sh's staging-order regression test: it
     # plants a real-shaped address in a throwaway sandbox file to prove the
     # gate now sees a file staged on the same landing that adds it.
-    "scripts/test-issue-land-personal-data.py",
+    "scripts/tests/test-issue-land-personal-data.py",
     # The copyright line names the holder on purpose.
     "LICENSE",
     # Hook sources and their test fixtures must name what they forbid.
@@ -188,7 +188,7 @@ def main() -> int:
             "Use a reserved domain and invent the people:\n"
             "    Ada Lovelace <ada@example.com>\n"
             "\nValues are redacted: this output is public in CI. Run\n"
-            "    python3 scripts/check-no-personal-data.py --reveal\n"
+            "    python3 scripts/checks/check-no-personal-data.py --reveal\n"
             "locally to see them."
         )
         return 1

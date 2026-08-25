@@ -18,7 +18,7 @@ So the script checks first and says what to install. Two things are asserted
 here, and the second is the one that matters: it must fail **before** touching
 cargo at all, because the download is most of the wasted time.
 
-Usage: scripts/test-fuzz-missing-tool.py
+Usage: scripts/tests/test-fuzz-missing-tool.py
 Exit status: 0 the script behaved, 1 otherwise.
 """
 
@@ -30,7 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 FUZZ = HERE / "fuzz.sh"
 
 FAILURES: list[str] = []

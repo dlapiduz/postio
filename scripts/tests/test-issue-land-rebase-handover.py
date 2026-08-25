@@ -27,7 +27,7 @@ real throughout against a bare local remote, and only `gh` is stubbed.
 Case B is the one that proves the third acceptance criterion: the gates and
 the merge decision have to agree about which tree they are talking about.
 
-Usage: scripts/test-issue-land-rebase-handover.py
+Usage: scripts/tests/test-issue-land-rebase-handover.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -40,11 +40,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
-CI_EXPECTED_WORKFLOWS = HERE / "ci-expected-workflows.py"
+CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
 
 STUB_CHECKS = [
     "check-crate-boundaries.py",
@@ -148,14 +148,18 @@ def build_sandbox(root: Path, channel: str) -> None:
 
     scripts = root / "scripts"
     scripts.mkdir()
+    (scripts / "checks").mkdir()
+    shutil.copy(HERE / "check.sh", scripts / "check.sh")
+    (scripts / "check.sh").chmod(0o755)
     for source in (ISSUE_LAND, WAIT_FOR_CHECKS, CI_EXPECTED_WORKFLOWS):
-        shutil.copy(source, scripts / source.name)
-        (scripts / source.name).chmod(0o755)
+        into = scripts / "checks" if source.parent.name == "checks" else scripts
+        shutil.copy(source, into / source.name)
+        (into / source.name).chmod(0o755)
     for name in STUB_CHECKS:
-        (scripts / name).write_text(
+        (scripts / "checks" / name).write_text(
             "#!/usr/bin/env python3\nraise SystemExit(0)\n", encoding="utf-8"
         )
-        (scripts / name).chmod(0o755)
+        (scripts / "checks" / name).chmod(0o755)
 
 
 def marked_issue_land() -> str:
@@ -315,7 +319,7 @@ def main() -> int:
             base,
             channel,
             "b",
-            {"scripts/check-crate-boundaries.py": failing_boundary_check()},
+            {"scripts/checks/check-crate-boundaries.py": failing_boundary_check()},
         )
         if "pr merge" in calls:
             FAILURES.append(

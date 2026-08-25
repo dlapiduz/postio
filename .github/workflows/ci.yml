@@ -128,7 +128,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Enforce architectural invariants
-        run: python3 scripts/check-crate-boundaries.py
+        run: python3 scripts/checks/check-crate-boundaries.py
 
       - name: Enforce no personal data in the repository
         # Output is redacted by default -- these logs are public. Run the
@@ -138,26 +138,26 @@ jobs:
         # cannot see a maintainer's name; set the secret to enable that rule.
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
-        run: python3 scripts/check-no-personal-data.py
+        run: python3 scripts/checks/check-no-personal-data.py
 
       - name: Refuse email's tracking mechanisms without recorded consent
         # Read receipts and List-Unsubscribe One-Click both tell a sender that
         # a real person read the message. Neither exists in Postio; this is
         # what notices the day one arrives inside a patch about something
-        # else. See scripts/check-no-silent-tracking.py and postio-qhz.2.
-        run: python3 scripts/check-no-silent-tracking.py
+        # else. See scripts/checks/check-no-silent-tracking.py and postio-qhz.2.
+        run: python3 scripts/checks/check-no-silent-tracking.py
 
       - name: Enforce the lint floor
         # `[workspace.lints]` is the only place the floor is set. This is what
         # notices a new crate that forgets to inherit it -- a missing lint
         # produces no output at all, so nothing else would. See #95.
-        run: python3 scripts/check-lint-floor.py
+        run: python3 scripts/checks/check-lint-floor.py
 
       - name: Refuse a floating rustc
         # CI and every session must agree on one compiler. This is what
         # notices a `rustup default stable` coming back into a workflow,
         # where it would silently win over rust-toolchain.toml. Issue #38.
-        run: python3 scripts/check-toolchain-pinned.py
+        run: python3 scripts/checks/check-toolchain-pinned.py
 
       - name: Refuse GTK initialization from a unit test
         # `cargo test` runs a crate's unit tests on a thread pool in one
@@ -165,40 +165,40 @@ jobs:
         # A second one aborts the whole binary on a signal, taking every
         # other test in the crate with it -- which is how this job first
         # reported zero of postio-gtk's 305 passing tests. See #41.
-        run: python3 scripts/check-no-gtk-init-in-unit-tests.py
+        run: python3 scripts/checks/check-no-gtk-init-in-unit-tests.py
 
       - name: Refuse a tokio await on the GTK main context
         # `spawn_future_local` runs on the glib main loop, which has no tokio
         # reactor. 0.1.0 awaited the keyring there and panicked with "there is
         # no reactor running" the instant a login succeeded, with every gate
-        # green. See scripts/check-runtime-crossings.py and #66.
-        run: python3 scripts/check-runtime-crossings.py
+        # green. See scripts/checks/check-runtime-crossings.py and #66.
+        run: python3 scripts/checks/check-runtime-crossings.py
 
       - name: Prove the boundary check actually fails when violated
-        run: python3 scripts/test-check-crate-boundaries.py
+        run: python3 scripts/tests/test-check-crate-boundaries.py
 
       - name: Prove the toolchain check actually fails when violated
-        run: python3 scripts/test-check-toolchain-pinned.py
+        run: python3 scripts/tests/test-check-toolchain-pinned.py
 
       - name: Prove RUSTUP_TOOLCHAIN cannot reach a gate
         # The pin only guarantees anything if a session's own environment
         # cannot override it; this exercises issue-land.sh and
         # test-headless.sh with an uninstalled toolchain named in
         # RUSTUP_TOOLCHAIN and checks that neither one lets it through. #112.
-        run: python3 scripts/test-rustup-toolchain-cleared.py
+        run: python3 scripts/tests/test-rustup-toolchain-cleared.py
 
       - name: Prove issue-land.sh's commit guard only fires when needed
         # A clean tree with commits already on the branch -- the state
         # "commit as you go" leaves a session in -- must land with no -m;
         # a dirty tree with no -m must still refuse, but say so. #120.
-        run: python3 scripts/test-issue-land-commit-guard.py
+        run: python3 scripts/tests/test-issue-land-commit-guard.py
 
       - name: Prove issue-land.sh stages before the personal-data gate runs
         # check-no-personal-data.py reads `git ls-files` -- tracked files
         # only -- and used to run before `git add -A`, so a file this
         # session was adding was invisible to it on the very landing that
         # added it. That is how #269's PNG got through unscanned. #270.
-        run: python3 scripts/test-issue-land-personal-data.py
+        run: python3 scripts/tests/test-issue-land-personal-data.py
 
       - name: Prove issue-land.sh's merge step survives main's worktree
         # `gh pr merge --rebase --delete-branch` fails here every time,
@@ -206,14 +206,14 @@ jobs:
         # off it first, and `main` is permanently checked out elsewhere.
         # The stubbed `gh` fails loudly, with the real error text, if it is
         # ever asked for --delete-branch again. #167.
-        run: python3 scripts/test-issue-land-merge.py
+        run: python3 scripts/tests/test-issue-land-merge.py
 
       - name: Prove issue-claim.sh's blockedBy check reads the real field
         # `gh issue list --json blockedBy` never emits `closed` -- it emits
         # `state: "OPEN"|"CLOSED"`. Reading the wrong key made `not False`
         # always true, so every issue with any blockedBy entry was reported
         # blocked forever, even once its blocker closed. #247.
-        run: python3 scripts/test-issue-claim-blocked-by.py
+        run: python3 scripts/tests/test-issue-claim-blocked-by.py
 
       - name: Prove issue-land.sh's gates do not share a target directory
         # #178 gave every worktree its own target/ because sharing one
@@ -221,35 +221,35 @@ jobs:
         # defaulting to the main checkout's, so the one run a merge is staked
         # on was the one still sharing. This builds a real crate through
         # --gates-only and looks at where the artifacts landed. #253.
-        run: python3 scripts/test-issue-land-target-dir.py
+        run: python3 scripts/tests/test-issue-land-target-dir.py
 
       - name: Prove issue-land.sh hands over to the machinery it rebases in
         # It rebases the tree it lives in, so a fix to the landing machinery
         # was invisible to the first run that pulled it in -- which is how a
         # three-crate change merged without waiting for CI. #160.
-        run: python3 scripts/test-issue-land-rebase-handover.py
+        run: python3 scripts/tests/test-issue-land-rebase-handover.py
 
       - name: Prove fuzz.sh says what is missing instead of failing late
         # Without cargo-fuzz it ran `cargo fuzz`, which made rustup download
         # a whole nightly toolchain and then failed with "no such command:
         # fuzz" -- naming neither the missing tool nor the fix. #277.
-        run: python3 scripts/test-fuzz-missing-tool.py
+        run: python3 scripts/tests/test-fuzz-missing-tool.py
 
       - name: Prove a worktree lands back onto the base it was cut from
         # Both scripts hardcoded `main` in five places. An initiative branch
         # (multi-account, #1) needs work to land back onto it, and every one
         # of those five was correct-looking -- so getting it wrong merged
         # initiative work straight into main, silently. #290.
-        run: python3 scripts/test-issue-base-branch.py
+        run: python3 scripts/tests/test-issue-base-branch.py
 
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
         # where a test module ends -- are exercised instead.
-        run: python3 scripts/test-check-no-gtk-init-in-unit-tests.py
+        run: python3 scripts/tests/test-check-no-gtk-init-in-unit-tests.py
 
       - name: Prove the lint-floor check actually fails when violated
-        run: python3 scripts/test-check-lint-floor.py
+        run: python3 scripts/tests/test-check-lint-floor.py
 
       - name: Prove the personal-data check reads the right files
         # It read every tracked file as UTF-8 with errors="ignore", binaries
@@ -257,29 +257,29 @@ jobs:
         # what sat either side into an address that exists nowhere in the
         # file. A screenshot's compressed pixels did exactly that and blocked
         # every landing in the repository. #144.
-        run: python3 scripts/test-check-no-personal-data.py
+        run: python3 scripts/tests/test-check-no-personal-data.py
 
       - name: Prove the tracking check actually fails when violated
         # It guards something that does not exist yet, so on a clean tree it
         # passes whether it works or not. That is the shape of check that
         # rots silently, so its own failure modes are exercised too.
-        run: python3 scripts/test-check-no-silent-tracking.py
+        run: python3 scripts/tests/test-check-no-silent-tracking.py
 
       - name: Prove the CI-expectation predicate answers both ways
         # It decides whether issue-land.sh may merge without seeing a check.
         # Wrong one way it costs a re-run; wrong the other it merges code CI
         # never looked at, which is what happened on #135. See #139.
-        run: python3 scripts/test-ci-expected-workflows.py
+        run: python3 scripts/tests/test-ci-expected-workflows.py
 
       - name: Prove the check-wait refuses to merge when a check never appears
         # Drives scripts/wait-for-checks.sh against a stubbed `gh`, including
         # the registration race in both directions.
-        run: python3 scripts/test-wait-for-checks.py
+        run: python3 scripts/tests/test-wait-for-checks.py
 
       - name: Prove the runtime-crossing check catches the bug it exists for
         # Its first case is the 0.1.0 defect verbatim in shape. A guard that
         # would not have caught the fault it was written for is worth nothing.
-        run: python3 scripts/test-check-runtime-crossings.py
+        run: python3 scripts/tests/test-check-runtime-crossings.py
 
       - name: Assert CI never runs the network-touching tests
         run: |

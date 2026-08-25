@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/check-no-personal-data.py.
+"""Self-test for scripts/checks/check-no-personal-data.py.
 
 The check guards something that is usually absent, so on a clean tree it
 passes whether it works or not — the shape of check that rots silently. It
@@ -27,7 +27,7 @@ script is: proving the guard fires on a forbidden address means holding one.
 The addresses below are invented and the domain is not reserved on purpose --
 that is the whole point of them.
 
-Usage: scripts/test-check-no-personal-data.py
+Usage: scripts/tests/test-check-no-personal-data.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -39,8 +39,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CHECK = HERE / "check-no-personal-data.py"
+HERE = Path(__file__).resolve().parent.parent
+CHECK = HERE / "checks" / "check-no-personal-data.py"
 
 FAILURES: list[str] = []
 

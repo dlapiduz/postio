@@ -30,7 +30,7 @@ not GitHub -- and nothing here writes to the real main checkout: the fake one
 is a directory in the sandbox, which is exactly what makes "did anything appear
 under it" a usable assertion.
 
-Usage: scripts/test-issue-land-target-dir.py
+Usage: scripts/tests/test-issue-land-target-dir.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -43,7 +43,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 
@@ -99,13 +99,16 @@ def build_sandbox(root: Path, channel: str) -> None:
 
     scripts = root / "scripts"
     scripts.mkdir()
+    (scripts / "checks").mkdir()
+    shutil.copy(HERE / "check.sh", scripts / "check.sh")
+    (scripts / "check.sh").chmod(0o755)
     shutil.copy(ISSUE_LAND, scripts / ISSUE_LAND.name)
     (scripts / ISSUE_LAND.name).chmod(0o755)
     for name in STUB_CHECKS:
-        (scripts / name).write_text(
+        (scripts / "checks" / name).write_text(
             "#!/usr/bin/env python3\nraise SystemExit(0)\n", encoding="utf-8"
         )
-        (scripts / name).chmod(0o755)
+        (scripts / "checks" / name).chmod(0o755)
 
 
 def git(*args: str, cwd: Path) -> None:

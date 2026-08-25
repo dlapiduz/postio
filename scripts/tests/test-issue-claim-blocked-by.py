@@ -16,7 +16,7 @@ issues are wrongly hidden and the script reports nothing ready at all; after
 the fix the CLOSED-blocker issue is offered despite being lower priority, and
 the OPEN-blocker issue is named in a "note: ... skipped: blocked" line.
 
-Usage: scripts/test-issue-claim-blocked-by.py
+Usage: scripts/tests/test-issue-claim-blocked-by.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -29,7 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 ISSUE_CLAIM = HERE / "issue-claim.sh"
 
 # Shaped exactly like the real `gh issue list --json ...,blockedBy,...`

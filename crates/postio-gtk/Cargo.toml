@@ -45,5 +45,5 @@ name = "thread_drill"
 harness = false
 
 [lints.rust]
-# Not the workspace floor: see EXCEPTIONS in scripts/check-lint-floor.py.
+# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"

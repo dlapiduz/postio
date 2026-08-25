@@ -13,7 +13,7 @@
 //! across everything being built, so the moment one crate in the workspace
 //! turns that feature on, every crate depending on `postio-core` has SQLite
 //! in its graph — including the view layer, which
-//! `scripts/check-crate-boundaries.py` refuses outright. That is not a
+//! `scripts/checks/check-crate-boundaries.py` refuses outright. That is not a
 //! checker being fussy. In a workspace build the view layer really would
 //! link the SQL.
 //!

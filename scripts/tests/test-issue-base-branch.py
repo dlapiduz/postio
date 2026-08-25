@@ -16,7 +16,7 @@ Only `gh` is stubbed. `git` is real throughout, against a bare local remote,
 so what is asserted is where the branch actually sits and what base the PR was
 actually opened against — not a stubbed opinion about either.
 
-Usage: scripts/test-issue-base-branch.py
+Usage: scripts/tests/test-issue-base-branch.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -29,7 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 CLAIM = HERE / "issue-claim.sh"
 LAND = HERE / "issue-land.sh"
 
@@ -112,12 +112,16 @@ def build_repo(root: Path, channel: str) -> None:
 
     scripts = root / "scripts"
     scripts.mkdir()
-    for source in (CLAIM, LAND, HERE / "wait-for-checks.sh", HERE / "ci-expected-workflows.py"):
-        shutil.copy(source, scripts / source.name)
-        (scripts / source.name).chmod(0o755)
+    (scripts / "checks").mkdir()
+    shutil.copy(HERE / "check.sh", scripts / "check.sh")
+    (scripts / "check.sh").chmod(0o755)
+    for source in (CLAIM, LAND, HERE / "wait-for-checks.sh", HERE / "checks" / "ci-expected-workflows.py"):
+        into = scripts / "checks" if source.parent.name == "checks" else scripts
+        shutil.copy(source, into / source.name)
+        (into / source.name).chmod(0o755)
     for name in STUB_CHECKS:
-        (scripts / name).write_text("#!/usr/bin/env python3\nraise SystemExit(0)\n", encoding="utf-8")
-        (scripts / name).chmod(0o755)
+        (scripts / "checks" / name).write_text("#!/usr/bin/env python3\nraise SystemExit(0)\n", encoding="utf-8")
+        (scripts / "checks" / name).chmod(0o755)
 
 
 def world(base: Path, channel: str, issue: int) -> tuple[Path, Path, Path]:

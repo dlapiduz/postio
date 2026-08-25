@@ -525,7 +525,7 @@ If a new GTK test passes on the first try against code you haven't fixed yet,
 check it isn't sharing a binary.
 
 **`postio-gtk` examples/tests cannot read a store.**
-`scripts/check-crate-boundaries.py` counts a crate's *own* dev-dependencies,
+`scripts/checks/check-crate-boundaries.py` counts a crate's *own* dev-dependencies,
 and an example is built from that graph — so `postio-gtk` cannot have an
 example (or test) that touches `postio-storage`, because `rusqlite` would
 land in the view layer's graph and fail CI. This is why the render-to-PNG
@@ -1171,7 +1171,7 @@ the glib main loop, which has no reactor, so
 shipped in 0.1.0 and made the app unable to add an account with every gate
 green. The rule was already written down in `postio-app/src/feed.rs` and
 followed everywhere except the one path no test could reach, which is why the
-guard is now static: `scripts/check-runtime-crossings.py` refuses any `.await`
+guard is now static: `scripts/checks/check-runtime-crossings.py` refuses any `.await`
 inside a `spawn_future_local` block that is not a channel receive. Nested
 `runtime.spawn(..)` blocks are exempt — that is the crossing working. An await
 that is safe without being a receive needs a `POSTIO-GLIB-SAFE:` comment
@@ -1265,12 +1265,12 @@ The one legitimate exception is a crate with no lib target — an integration
 test has nothing to link against. `postio-app` is a binary crate and keeps
 exactly one GTK-touching unit test in `src/compose.rs` for that reason.
 
-`scripts/check-no-gtk-init-in-unit-tests.py` enforces this in CI and in
+`scripts/checks/check-no-gtk-init-in-unit-tests.py` enforces this in CI and in
 `issue-land.sh`. It reads `#[cfg(test)]`/`#[test]` spans rather than grepping
 for `adw::init`, so production code initializing GTK is untouched; the only
 way past it is a `POSTIO-GTK-INIT:` line in the file arguing why the test
 cannot move. Its own failure modes are exercised by
-`scripts/test-check-no-gtk-init-in-unit-tests.py`, since the tree is clean and
+`scripts/tests/test-check-no-gtk-init-in-unit-tests.py`, since the tree is clean and
 a guard on a clean tree passes whether it works or not.
 
 **A test that builds a `Window` reads the developer's own `$XDG_STATE_HOME`,
@@ -1430,7 +1430,7 @@ Consequences, in rough order of how badly they bite:
   the landing gates — the one run a merge is staked on — were exposed to it
   too. #253 removed that default: the script now builds in the calling
   worktree's own `target/` and only honours `CARGO_TARGET_DIR` when a caller
-  has genuinely set one. `scripts/test-issue-land-target-dir.py` holds it
+  has genuinely set one. `scripts/tests/test-issue-land-target-dir.py` holds it
   there, by building a real crate through `--gates-only` and looking at where
   the artifacts landed.
 
@@ -1610,7 +1610,7 @@ cause:
 
 **Why `fuzz/` is its own workspace.** Nightly and `-Z sanitizer=address` must
 not leak into the pinned build, and the instrumented build is expensive enough
-that `cargo test --workspace` must never touch it. `scripts/check-toolchain-
+that `cargo test --workspace` must never touch it. `scripts/checks/check-toolchain-
 pinned.py` was taught that a *dated* nightly (`nightly-2026-08-24`) is a pin
 rather than a float — it names one compiler as exactly as `1.98.0` does, and
 there is no stable spelling of what libFuzzer needs. A bare `nightly` is still
@@ -1917,7 +1917,7 @@ repository pin moves, **that file has to move with it**, or nothing local
 changes. This was found while fixing issue #38 — the pin was added, the check
 passed, and `rustc --version` still printed the old compiler.
 
-`scripts/check-toolchain-pinned.py` reports the skew rather than failing on
+`scripts/checks/check-toolchain-pinned.py` reports the skew rather than failing on
 it, and `--strict` makes it fatal for anyone who wants that. It is deliberately
 not fatal by default: a check whose exit status depends on a developer's shell
 would make CI's verdict depend on the runner's environment, which is the
@@ -1932,7 +1932,7 @@ and `issue-land.sh` still prints the captured value afterward so the skew is
 visible rather than silently corrected. This turns the warning into a
 guarantee for the two paths that matter; it cannot reach a session's
 interactive shell, where `rustc --version` still answers however
-`RUSTUP_TOOLCHAIN` says to. `scripts/test-rustup-toolchain-cleared.py` proves
+`RUSTUP_TOOLCHAIN` says to. `scripts/tests/test-rustup-toolchain-cleared.py` proves
 it with a `RUSTUP_TOOLCHAIN` naming a toolchain rustup has never installed —
 that makes `rustc`/`cargo` refuse outright, so a regression here fails loudly
 rather than silently drifting back. Issue #112.
@@ -2001,7 +2001,7 @@ a `gh pr merge` stub that printed `Merged` and moved nothing, so none of them
 could ever have caught this; the new verification failed all three the moment
 it landed, which is how the gap showed up. They now push the branch into the
 bare test remote, as a real rebase-merge does.
-`scripts/test-issue-land-312.py` is the regression test: a merged PR on the
+`scripts/tests/test-issue-land-312.py` is the regression test: a merged PR on the
 same head branch, and a merge that reports success while doing nothing.
 
 
@@ -2018,7 +2018,7 @@ thing (#139, #131).
 
 The fix is that **the branch's own diff decides, not `gh`**. The workflows'
 `on.pull_request` path filters are the authority on what a change schedules,
-and `scripts/ci-expected-workflows.py` reads them — including the `&prose`
+and `scripts/checks/ci-expected-workflows.py` reads them — including the `&prose`
 anchor/`*prose` alias that `ci.yml` uses to share one ignore list between its
 `push` and `pull_request` triggers. `scripts/wait-for-checks.sh` then polls
 for the checks it predicted and **refuses to merge** if one was due and never
@@ -2078,7 +2078,7 @@ than clever:
   against the combination CI will actually see, which is the only way the
   gates and the merge decision can be talking about the same tree.
 
-`scripts/test-issue-land-rebase-handover.py` covers all four orderings
+`scripts/tests/test-issue-land-rebase-handover.py` covers all four orderings
 (machinery rewritten, a *called* check tightened, an ordinary rebase, and the
 bound reached) against a real bare remote with only `gh` stubbed. Its case A
 is the #50 incident verbatim in shape.
@@ -2299,3 +2299,4 @@ untidy commit — the content is all there and nothing is lost. When you
 notice it after the fact (`git show --stat` on your own commit lists paths
 you didn't intend), verify the swept-in change is intact and the affected
 crate still builds, note it honestly, and move on.
+

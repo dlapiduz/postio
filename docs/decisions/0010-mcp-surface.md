@@ -74,7 +74,7 @@ That requires the extraction the gaps table describes:
 ```
 
 `postio-session` gets the same boundary rule `postio-core` has: **no `gtk4`,
-no `libadwaita`**, checked by `scripts/check-crate-boundaries.py`. That rule is
+no `libadwaita`**, checked by `scripts/checks/check-crate-boundaries.py`. That rule is
 the whole deliverable — without it, `actions.rs` re-acquires GTK the first time
 someone adds a verb in a hurry.
 
