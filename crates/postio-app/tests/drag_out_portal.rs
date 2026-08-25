@@ -91,10 +91,36 @@ fn retrieve_files(key: &str) -> Result<Vec<String>, glib::Error> {
     Ok(files)
 }
 
+/// Refuse to skip. Set `POSTIO_REQUIRE_PORTAL=1` when the whole point of the
+/// run is this test.
+///
+/// A skip is the right answer on a machine with no portal and the wrong one
+/// inside `flatpak run`, where skipping quietly turns the sandbox check into
+/// a green result that checked nothing — which is the failure this test was
+/// written to stop happening to *drops*, reappearing one level up.
+/// `scripts/check-portal-drag-flatpak.sh` always sets it.
+fn skipping_is_allowed() -> bool {
+    !matches!(
+        std::env::var("POSTIO_REQUIRE_PORTAL").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+/// Skip, or fail if this run was told the portal is the point.
+fn skip(reason: &str) {
+    assert!(
+        skipping_is_allowed(),
+        "POSTIO_REQUIRE_PORTAL is set, so this run exists to exercise the \
+         portal and must not skip: {reason}"
+    );
+    eprintln!("skipping: {reason}");
+}
+
 /// Is there a document portal on this bus at all?
 ///
 /// CI has no session bus and no portal, and a test that cannot run must say
-/// so rather than fail. This is the one thing that legitimately skips.
+/// so rather than fail. This is the one thing that legitimately skips — see
+/// [`skipping_is_allowed`] for when it stops being allowed.
 fn portal_available() -> bool {
     let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
         return false;
@@ -128,13 +154,13 @@ fn a_dragged_message_survives_the_portal() {
     }
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+        skip("no display (run under scripts/test-headless.sh)");
         return;
     }
     if !portal_available() {
-        eprintln!(
-            "skipping: no org.freedesktop.portal.Documents on this session bus. \
-             This test is the sandboxed drag path; it needs a desktop portal."
+        skip(
+            "no org.freedesktop.portal.Documents on this session bus. \
+             This test is the sandboxed drag path; it needs a desktop portal.",
         );
         return;
     }
