@@ -586,7 +586,9 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
         announced(&events).iter().any(|event| matches!(
             event,
             Event::ConnectionChanged {
-                state: postio_core::ConnectionState::Failing,
+                state: postio_core::ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
                 ..
             }
         )),
@@ -616,7 +618,9 @@ async fn a_refused_password_blocks_and_a_new_one_unblocks() {
         announced(&events).iter().any(|event| matches!(
             event,
             Event::ConnectionChanged {
-                state: postio_core::ConnectionState::Failing,
+                state: postio_core::ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
                 ..
             }
         )),
