@@ -245,6 +245,13 @@ mod imp {
         /// only before anything has ever validated, which in practice means
         /// never: even a missing file validates to defaults.
         pub last_good: RefCell<Option<String>>,
+        /// What the key resolver could not make sense of, as of the last time
+        /// [`super::SettingsPanel::set_keymap_problems`] was told. `window.rs`
+        /// computes these -- they need the full command registry, which this
+        /// module has no reason to depend on -- and hands them over so they
+        /// render where `[keys]` is actually edited rather than only in a log
+        /// line nobody watches interactively.
+        pub keymap_problems: RefCell<Vec<String>>,
     }
 
     impl Default for SettingsPanel {
@@ -262,6 +269,7 @@ mod imp {
                 write_source: RefCell::new(None),
                 dismissed: RefCell::new(Vec::new()),
                 last_good: RefCell::new(None),
+                keymap_problems: RefCell::new(Vec::new()),
             }
         }
     }
@@ -428,10 +436,36 @@ impl SettingsPanel {
             imp.tag.add_css_class("invalid");
         }
 
-        imp.status.set_label(&format!(
+        let mut status = format!(
             "{} · applied live · nothing to save",
             checked.validation.status_line()
-        ));
+        );
+        let problems = imp.keymap_problems.borrow();
+        if !problems.is_empty() {
+            status.push_str(&format!(
+                " · {} keymap {}: {}",
+                problems.len(),
+                if problems.len() == 1 {
+                    "problem"
+                } else {
+                    "problems"
+                },
+                problems.join("; ")
+            ));
+        }
+        imp.status.set_label(&status);
+    }
+
+    /// Tells the panel which `[keys]` bindings the resolver dropped, so they
+    /// show up on the footer line -- the same place TOML validity does --
+    /// rather than only in a debug log.
+    ///
+    /// `window.rs` calls this with `Resolver::apply_commands`'s and
+    /// `Resolver::from_commands`'s return value on every keymap build and
+    /// every live reload, whether or not this panel happens to be open.
+    pub fn set_keymap_problems(&self, problems: &[String]) {
+        *self.imp().keymap_problems.borrow_mut() = problems.to_vec();
+        self.refresh_validity();
     }
 
     /// Records `text` as the last configuration known to load without error,
