@@ -58,6 +58,17 @@ SKIP_PATHS = (
     ".claude/",
     "Design/",
     "crates/postio-gtk/data/fonts/",
+    # Same font files, copied for the landing page (#24) rather than shared
+    # at build time -- see site/assets/css/site.css.
+    "site/assets/fonts/",
+    # Rendered PNG screenshots. Binary bytes decoded as UTF-8 with errors
+    # ignored can coincidentally spell something ADDRESS matches -- found
+    # when a compose.png produced by `cargo run --example shot` (#24) hit
+    # this by chance. No screenshot's whole point is to name a person, the
+    # way LICENSE's and the fonts' OFL.txt's is, so this is the same
+    # exemption for a different reason: nothing here is text in the first
+    # place.
+    "site/assets/img/",
 )
 # Upstream/maintainer addresses that belong in a licence or manifest.
 ALLOW_EXACT = {
