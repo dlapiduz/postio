@@ -201,8 +201,23 @@ fi
 # Rebase, not squash. This history is linear and the project's convention is
 # small focused commits; squashing a multi-commit branch throws away exactly
 # the structure the commit rules exist to produce.
-gh pr merge --rebase --delete-branch
+#
+# Not --delete-branch: it deletes the *local* branch too, which makes `gh`
+# switch this worktree off it first (to `main`, the PR's base) -- and `main`
+# is permanently checked out in the shared checkout, so git refuses the
+# checkout and `gh pr merge` reports failure even though the merge already
+# went through on GitHub. #167. issue-release.sh already deletes the local
+# branch once the worktree it belongs to is removed, so only the remote copy
+# is left for this script to clean up, and that half never needed the local
+# checkout at all.
+gh pr merge --rebase
 echo
-echo "merged and branch deleted."
+echo "merged."
+if git push origin --delete "$BRANCH" 2>&1; then
+    echo "remote branch deleted."
+else
+    echo "warning: could not delete the remote branch $BRANCH -- it may" >&2
+    echo "already be gone. Not fatal: the merge above already succeeded." >&2
+fi
 echo "Now: scripts/issue-release.sh $ISSUE   (removes the worktree)"
 echo "Then claim the next one -- finishing an issue is not finishing a session."
