@@ -219,6 +219,29 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
     },
+    CommandSpec {
+        id: CommandId::ToggleThreadUnread,
+        title: "Unread only",
+        // `u` is Undo and `U` is Mark unread in every message surface
+        // including this one -- both taken before this command exists, so
+        // neither is available to it.
+        default_binding: "n",
+        alternate_bindings: &[],
+        // Only meaningful with a thread column on screen: there is nothing
+        // else in the application this filter could apply to.
+        contexts: ctx(&[Context::Thread]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleThreadOrder,
+        title: "Toggle order",
+        default_binding: "o",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Thread]),
+        destructive: false,
+        recovery: Recovery::None,
+    },
     // -- Message actions -------------------------------------------------
     CommandSpec {
         id: CommandId::Reply,
