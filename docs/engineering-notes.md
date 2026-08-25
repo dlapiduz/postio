@@ -786,6 +786,33 @@ deliberate other half of this decision rather than an oversight.
 
 ## Testing infrastructure
 
+**A test that skips when there is no display reports success, and CI had no
+display.** Sixty test files in this workspace open with some spelling of
+`if adw::init().is_err() || gdk::Display::default().is_none() { return; }`.
+That is correct for a contributor on a headless shell and wrong for a runner:
+CI installed no display server, so every one of those sixty returned early and
+the job went green having run none of them. The accessibility audit that
+`docs/PRODUCT.md` §20 depends on is one of the sixty (#114).
+
+The fix is in two halves, and the second is the one that lasts:
+
+- `ci.yml` now gives the suites a display. It does that by handing
+  `scripts/headless-runner.sh` what it already wants — `mutter` on PATH and an
+  `XDG_RUNTIME_DIR` — rather than working around it, so CI exercises the same
+  Wayland configuration developers do instead of a second one that behaves
+  differently. Xvfb is started too, as a backstop: a runner has no logind seat
+  or session bus, so `mutter --headless` may refuse to start, and the runner
+  then fails open and execs the test binary unchanged with the `DISPLAY` set.
+- `crates/postio-gtk/tests/gtk_display_required.rs` fails the build when `CI`
+  is set and there is no display. One test rather than sixty edits: if a
+  display is present none of the sixty skip, so "CI has a display" is the
+  whole property and it is asserted once.
+
+The general rule, which is worth applying to any skip: **a skip that is right
+locally and wrong in CI has to know which one it is in.** A skip nobody can
+distinguish from a pass is not a test.
+
+
 **A tokio future awaited on the GTK main context type-checks, passes clippy,
 and panics the first time the line is reached.** `spawn_future_local` runs on
 the glib main loop, which has no reactor, so
@@ -1260,6 +1287,32 @@ The same run had produced a second symptom earlier —
 `no variant ... named DetachComposer found for enum postio_core::CommandId`,
 against a `command.rs` that declares it four times — from worktrees still on
 an older `main`. Both are the same fault wearing different clothes.
+
+**The worst instance so far did not look like a build problem at all.** It
+looked like a broken `main`. `postio-gtk`'s
+`cheatsheet::tests::the_sections_are_the_ones_the_registry_actually_uses`
+failed *deterministically* — every run, filtered to that one test, single
+threaded, in a fresh worktree and in the shared checkout — reporting an extra
+"Thread" section holding two commands, "Unread only" and "Toggle order".
+Neither string existed anywhere in the worktree under test. Both existed in
+the `issue-61` worktree, where a session was adding them. The test binary had
+linked *that* `postio-core`.
+
+Two things make this the dangerous shape. It was **repeatable**, so the usual
+"run it again" tell was absent. And it presented as exactly the case
+CLAUDE.md's **CI is paused** section says to respond to by pulling `ready`
+off every open issue — a disruptive, repository-wide stop, triggered by a
+regression that did not exist. Rebuilding in a private `CARGO_TARGET_DIR`
+passed first time.
+
+So add one step before believing a red `main`: **grep the sibling worktrees
+for the symbol in the error.**
+
+```sh
+grep -rl "<symbol from the failure>" ~/src/postio-worktrees/*/crates/
+```
+
+If it turns up in a worktree that is not yours, the error is about the build.
 
 Three things follow, and the third is the one that costs time:
 
