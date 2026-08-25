@@ -828,7 +828,16 @@ impl Window {
                 if feed.mailbox().is_some() {
                     return;
                 }
-                if let Some(id) = sidebar.selected().or_else(|| folders.default_mailbox()) {
+                // Only a *real* folder counts as "already picked". The
+                // sidebar's virtual rows carry sentinel ids (Flagged is -1),
+                // and GtkListBox auto-selects the first row it gets — so on
+                // a fresh account, whose folders arrive a beat after the
+                // virtual rows, the sentinel used to win here and the window
+                // opened into an empty Flagged view instead of the inbox.
+                // Caught by tests/e2e.rs in postio-app, the first time
+                // anything drove a first sync into a real window.
+                let picked = sidebar.selected().filter(|id| id.get() > 0);
+                if let Some(id) = picked.or_else(|| folders.default_mailbox()) {
                     sidebar.select(id);
                     show(id);
                 }
