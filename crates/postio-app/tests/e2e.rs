@@ -62,6 +62,7 @@ use postio_storage::{BlobStore, test_support};
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
 
 const INBOX_PATH: &str = "INBOX";
+const ARCHIVE_PATH: &str = "Archive";
 
 #[test]
 fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
@@ -191,15 +192,14 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         );
     }
 
-    // ── 2. key → wire: `s` ends with the flag on the server's copy ────────
+    // ── 2. key → wire: `a` ends with the message in the server's Archive ──
     //
-    // The flag verb, not archive, and the choice is load-bearing: this
-    // suite's first run found that a local move nulls the uid the drainer
-    // later reads, so every archive is classified "never uploaded" and
-    // silently skipped — #289. Flag writes keep their uid and drain
-    // correctly, so they prove the key→wire direction today; #289's
-    // definition of done includes flipping this phase to `a` and asserting
-    // the message lands in the server's Archive.
+    // The archive verb, deliberately: this suite's first run proved a local
+    // move nulls the uid the drainer later reads, so every archive was
+    // classified "never uploaded" and silently skipped — #289. The queue row
+    // now snapshots the server coordinates at enqueue, and this phase is the
+    // proof the whole path holds over a real wire: key press, local-first
+    // move, drain, MOVE on the server.
     window.handle_key(
         gdk::Key::from_name("j").unwrap(),
         gdk::ModifierType::empty(),
@@ -219,33 +219,24 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             .expect("a synced row carries its server uid")
     };
     assert!(
-        !server
-            .flags(INBOX_PATH, uid)
-            .contains(&postio_model::Flag::Flagged),
-        "the fixture arrives unflagged, or flagging it proves nothing"
+        server.uids(ARCHIVE_PATH).is_empty(),
+        "the fixture's Archive starts empty, or archiving proves nothing"
     );
 
     window.handle_key(
-        gdk::Key::from_name("s").unwrap(),
+        gdk::Key::from_name("a").unwrap(),
         gdk::ModifierType::empty(),
     );
 
-    // Local-first means the star appears immediately; the *server's* copy
-    // changing is the queue draining over the wire, which is what no other
-    // test can see.
+    // Local-first means the row leaves the list immediately; the *server's*
+    // copy moving is the queue draining over the wire, which is what no
+    // other test can see.
     let deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < deadline
-        && !server
-            .flags(INBOX_PATH, uid)
-            .contains(&postio_model::Flag::Flagged)
-    {
+    while Instant::now() < deadline && server.uids(ARCHIVE_PATH).is_empty() {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(Duration::from_millis(20));
     }
-    if !server
-        .flags(INBOX_PATH, uid)
-        .contains(&postio_model::Flag::Flagged)
-    {
+    if server.uids(ARCHIVE_PATH).is_empty() {
         let connection = database.connection().expect("a connection");
         let states: String = connection
             .prepare("SELECT op_type, state, coalesce(last_error,'-') FROM operation_queue")
@@ -263,10 +254,16 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             .unwrap_or_else(|e| format!("? ({e})"));
         let tail: Vec<String> = server.commands().into_iter().rev().take(6).collect();
         panic!(
-            "the flag never landed on the server: queue [{states}], server flags for uid {uid:?}: {:?}, last commands={tail:?}",
-            server.flags(INBOX_PATH, uid),
+            "the archive never landed on the server: queue [{states}], server INBOX={:?} Archive={:?}, last commands={tail:?}",
+            server.uids(INBOX_PATH),
+            server.uids(ARCHIVE_PATH),
         );
     }
+    assert!(
+        !server.uids(INBOX_PATH).contains(&uid),
+        "the message reached Archive but was never taken out of INBOX: {:?}",
+        server.uids(INBOX_PATH)
+    );
 
     // ── 3. server → window: a delivery mid-watch grows the list ───────────
     let shown_before = list.model().n_items();
