@@ -190,12 +190,26 @@ pub struct Pool {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
 struct Inner {
     location: Location,
     max_connections: usize,
     state: Mutex<State>,
     returned: Condvar,
+    /// Something that must live exactly as long as the pool — the temporary
+    /// directory a scratch database sits in (`test_support::memory`). `None`
+    /// for every real database. Declared last so the connections in `state`
+    /// close before whatever this owns is torn down.
+    _guard: Option<Box<dyn std::any::Any + Send + Sync>>,
+}
+
+impl std::fmt::Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("location", &self.location)
+            .field("max_connections", &self.max_connections)
+            .field("guarded", &self._guard.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug)]
@@ -214,7 +228,11 @@ struct State {
 }
 
 impl Pool {
-    fn new(location: Location, max_connections: usize) -> Result<Self> {
+    fn new(
+        location: Location,
+        max_connections: usize,
+        guard: Option<Box<dyn std::any::Any + Send + Sync>>,
+    ) -> Result<Self> {
         assert!(max_connections > 0, "a pool needs at least one connection");
 
         let keeper = match location {
@@ -232,6 +250,7 @@ impl Pool {
                     _keeper: keeper,
                 }),
                 returned: Condvar::new(),
+                _guard: guard,
             }),
         })
     }
@@ -423,9 +442,19 @@ impl Database {
 
     /// Opens a private in-memory database, migrated to head.
     ///
-    /// Every connection the pool opens sees the *same* database, and it lives
-    /// exactly as long as this handle does. Intended for tests; see
-    /// `postio_storage::test_support` for the one-call form.
+    /// Every connection the pool opens sees the *same* database — via
+    /// SQLite's `cache=shared` — and it lives exactly as long as this handle
+    /// does.
+    ///
+    /// # Concurrency caveat
+    ///
+    /// Shared cache brings **table-level locking**: a read transaction on
+    /// one pooled connection makes a concurrent write on another fail
+    /// immediately with `SQLITE_LOCKED`, and `busy_timeout` does not apply
+    /// to that lock (it covers the file lock only). This is fine for a
+    /// single-connection caller and wrong for anything that overlaps a
+    /// reader and a writer — which is why `test_support::memory` is
+    /// file-backed rather than built on this (#204).
     pub fn open_in_memory() -> Result<Self> {
         Self::open_in_memory_with(DEFAULT_MAX_CONNECTIONS)
     }
@@ -435,8 +464,40 @@ impl Database {
         Self::from_location(Location::memory(), max_connections)
     }
 
+    /// [`Database::open`] for a scratch database whose backing storage is
+    /// owned by `guard` — the temporary directory `test_support::memory`
+    /// creates. The pool keeps the guard alive for as long as any clone of
+    /// this handle exists, so a lazily opened connection never finds the
+    /// path already deleted.
+    pub(crate) fn open_file_with_guard(
+        path: &Path,
+        guard: Box<dyn std::any::Any + Send + Sync>,
+    ) -> Result<Self> {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            crate::perm::ensure_private_dir(parent)?;
+        }
+        let database = Self::from_location_with_guard(
+            Location::File(path.to_path_buf()),
+            DEFAULT_MAX_CONNECTIONS,
+            Some(guard),
+        )?;
+        crate::perm::tighten_file(path)?;
+        Ok(database)
+    }
+
     fn from_location(location: Location, max_connections: usize) -> Result<Self> {
-        let pool = Pool::new(location, max_connections)?;
+        Self::from_location_with_guard(location, max_connections, None)
+    }
+
+    fn from_location_with_guard(
+        location: Location,
+        max_connections: usize,
+        guard: Option<Box<dyn std::any::Any + Send + Sync>>,
+    ) -> Result<Self> {
+        let pool = Pool::new(location, max_connections, guard)?;
         let mut connection = pool.get()?;
         migrations::migrate(&mut connection)?;
         drop(connection);

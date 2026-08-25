@@ -868,6 +868,36 @@ locally and wrong in CI has to know which one it is in.** A skip nobody can
 distinguish from a pass is not a test.
 
 
+**"database table is locked" on a line that is only a fixture** meant the
+scratch database, not your test. Until #204, `test_support::memory()` was
+`:memory:` with `cache=shared`, whose *table-level* locks return
+`SQLITE_LOCKED` immediately — `busy_timeout` covers only the file lock, so
+no pragma waited it out, and the failure rate tracked machine load. A read
+transaction on one pooled connection (a list page mid-iteration) failed a
+plain write on another, in a test about something else entirely. Fixed by
+making `memory()` file-backed in a self-cleaning tempdir (`/dev/shm` where
+present, so it still costs RAM); the tempdir rides inside the pool via a
+guard slot, so clones of the `Database` keep it alive. If that error string
+ever reappears, something reintroduced shared cache — start at
+`Database::open_in_memory`'s doc comment, which now records the caveat.
+
+**Tests that fail under load and pass alone are a family, and the fixes are
+a doctrine** (#55, #80, #109, #122, #125, #210, #219 — the same lesson,
+re-learned): *assert order and causality, never wall-clock overlap* (a
+"still running when X finished" assertion goes vacuous exactly when the
+machine is slow — record sequence in the mock and compare positions);
+*liveness deadlines are minutes, not budgets* (a timeout exists to catch a
+hang; performance claims live in the benches); *faults persist, not
+positional* (`inject_after` schedules by absolute call count, and an
+autonomous engine loop's own backend calls shift which call the fault
+lands on — a test that means "the server refuses X, whoever asks" wants a
+persistent fault); and *reproduce under `cargo test --workspace
+--no-fail-fast` with something else compiling before fixing*, because a fix
+verified on a quiet box proves nothing about the only condition that fails.
+`tokio::time::pause` is not the escape hatch for any test doing real I/O
+(engine + SQLite threads, in-process sockets): auto-advance misfires with
+real blocking work in the loop.
+
 **A tokio future awaited on the GTK main context type-checks, passes clippy,
 and panics the first time the line is reached.** `spawn_future_local` runs on
 the glib main loop, which has no reactor, so
