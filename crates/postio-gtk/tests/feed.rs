@@ -231,6 +231,7 @@ fn the_message_list_is_fed_from_the_runtime() {
     });
 
     feed.apply(&Event::NewMail {
+        account: postio_model::AccountId::new(1),
         mailbox: MailboxId::new(INBOX),
         messages: vec![MessageId::new(9_001), MessageId::new(9_002)],
     });
@@ -250,6 +251,7 @@ fn the_message_list_is_fed_from_the_runtime() {
 
     // Nothing about another mailbox moves this one.
     feed.apply(&Event::NewMail {
+        account: postio_model::AccountId::new(1),
         mailbox: MailboxId::new(ARCHIVE),
         messages: vec![MessageId::new(9_003)],
     });
@@ -275,6 +277,7 @@ fn the_message_list_is_fed_from_the_runtime() {
     let changed = item.id().unwrap();
 
     feed.apply(&Event::MessagesChanged {
+        account: postio_model::AccountId::new(1),
         messages: vec![changed, MessageId::new(404_404)],
     });
 
@@ -305,6 +308,7 @@ fn the_message_list_is_fed_from_the_runtime() {
     source.totals.borrow_mut().clear();
     source.totals.borrow_mut().push((INBOX, 0));
     feed.apply(&Event::MessagesRemoved {
+        account: postio_model::AccountId::new(1),
         mailbox: MailboxId::new(INBOX),
         messages: (1..=120).map(MessageId::new).collect(),
     });

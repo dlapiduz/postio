@@ -478,7 +478,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // do.
                 if came_up(&mut state) {
                     let outcome = drain(&parts, &pool, &mut state).await;
-                    announce_drain(&parts.events, &outcome);
+                    announce_drain(&parts.events, parts.account, &outcome);
                     // Before anything asks what is *in* a folder, find out which
                     // folders there are. Everything below reads the local table,
                     // and on a new account that table is empty until this runs.
@@ -495,7 +495,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                     // for the next *reconnection* to go out, which on a machine
                     // that stays online is never.
                     let outcome = drain(&parts, &pool, &mut state).await;
-                    announce_drain(&parts.events, &outcome);
+                    announce_drain(&parts.events, parts.account, &outcome);
                 }
 
                 // A few mailboxes at a time, highest priority first, and the
@@ -892,14 +892,16 @@ const REPAINT_INTERVAL: Duration = Duration::from_millis(500);
 /// are already committed would be the same bug in miniature.
 struct Repaint {
     events: EventSink,
+    account: AccountId,
     mailbox: MailboxId,
     last: Option<Instant>,
 }
 
 impl Repaint {
-    fn new(events: EventSink, mailbox: MailboxId) -> Self {
+    fn new(events: EventSink, account: AccountId, mailbox: MailboxId) -> Self {
         Repaint {
             events,
+            account,
             mailbox,
             last: None,
         }
@@ -920,6 +922,7 @@ impl Repaint {
         }
         self.last = Some(now);
         self.events.emit(Event::MessageListChanged {
+            account: self.account,
             mailbox: self.mailbox,
         });
     }
@@ -1034,7 +1037,10 @@ async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool 
     // The reading pane is waiting on exactly this for whatever the user just
     // opened, so it is worth saying the moment the bytes are local.
     if matches!(outcome, Outcome::Stored { .. }) {
-        parts.events.emit(Event::BodyLoaded { message });
+        parts.events.emit(Event::BodyLoaded {
+            account: parts.account,
+            message,
+        });
     }
     state.backfill.finished(message, outcome);
     announce_backfill(parts, state);
@@ -1100,7 +1106,7 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
     match job {
         Job::Drain { reply } => {
             let outcome = drain(parts, pool, state).await;
-            announce_drain(&parts.events, &outcome);
+            announce_drain(&parts.events, parts.account, &outcome);
             let _ = reply.send(outcome);
         }
         Job::SeedBackfill {
@@ -1479,7 +1485,7 @@ async fn sync_pass(
     let mut committed = Committed {
         parts,
         status,
-        repaint: Repaint::new(parts.events.clone(), mailbox),
+        repaint: Repaint::new(parts.events.clone(), parts.account, mailbox),
     };
     // Populated only by the incremental branch below: a first sync or a
     // rebuild can insert thousands of messages that are new to *this
@@ -1558,10 +1564,14 @@ async fn sync_pass(
         let described_by_arrivals = only_arrivals && !arrived.is_empty();
         if summary.changed() && !described_by_arrivals {
             // The list showing this folder has to re-read it.
-            parts.events.emit(Event::MessageListChanged { mailbox });
+            parts.events.emit(Event::MessageListChanged {
+                account: parts.account,
+                mailbox,
+            });
         }
         if !arrived.is_empty() {
             parts.events.emit(Event::NewMail {
+                account: parts.account,
                 mailbox,
                 messages: arrived,
             });
@@ -1787,13 +1797,20 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
 }
 
 /// Say what a drain did, so the UI hears it the way it hears everything else.
-fn announce_drain(events: &EventSink, outcome: &Result<DrainSummary, EngineError>) {
+fn announce_drain(
+    events: &EventSink,
+    account: AccountId,
+    outcome: &Result<DrainSummary, EngineError>,
+) {
     match outcome {
         Ok(summary) => {
             // A mailbox the server disagreed with has to be re-read, and the
             // list showing it is the thing that has to know.
             for mailbox in &summary.needs_resync {
-                events.emit(Event::MessageListChanged { mailbox: *mailbox });
+                events.emit(Event::MessageListChanged {
+                    account,
+                    mailbox: *mailbox,
+                });
             }
             // Never silently empty: an operation given up on is one the user
             // believes happened.
@@ -1937,7 +1954,7 @@ mod tests {
     #[test]
     fn the_first_batch_is_announced_at_once_and_the_rest_are_throttled() {
         let (sink, events) = event_channel();
-        let mut repaint = Repaint::new(sink, MailboxId::new(4));
+        let mut repaint = Repaint::new(sink, AccountId::new(1), MailboxId::new(4));
         let start = Instant::now();
 
         // The first screenful is what the user is waiting for.
@@ -1966,7 +1983,7 @@ mod tests {
         // An up-to-date resync reports no batches at all, and a list that
         // reloaded anyway would be paying for a sync that changed nothing.
         let (sink, events) = event_channel();
-        let _repaint = Repaint::new(sink, MailboxId::new(4));
+        let _repaint = Repaint::new(sink, AccountId::new(1), MailboxId::new(4));
 
         assert_eq!(events.len(), 0);
     }

@@ -294,7 +294,7 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
     assert!(
         announced(&events).iter().any(|event| matches!(
             event,
-            Event::MessageListChanged { mailbox: changed } if *changed == mailbox.id
+            Event::MessageListChanged { mailbox: changed, .. } if *changed == mailbox.id
         )),
         "nothing told the open list its mailbox had changed"
     );
@@ -346,7 +346,9 @@ async fn a_resync_that_finds_new_mail_announces_it() {
     let arrived = announced(&events)
         .into_iter()
         .find_map(|event| match event {
-            Event::NewMail { mailbox, messages } => Some((mailbox, messages)),
+            Event::NewMail {
+                mailbox, messages, ..
+            } => Some((mailbox, messages)),
             _ => None,
         })
         .expect("the delivery must be announced as new mail");
@@ -403,14 +405,14 @@ async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
     assert!(
         seen.iter().any(|event| matches!(
             event,
-            Event::NewMail { mailbox: to, messages } if *to == mailbox.id && messages.len() == 1
+            Event::NewMail { mailbox: to, messages, .. } if *to == mailbox.id && messages.len() == 1
         )),
         "the arrival itself must still be announced: {seen:?}"
     );
     assert!(
         !seen.iter().any(|event| matches!(
             event,
-            Event::MessageListChanged { mailbox: changed } if *changed == mailbox.id
+            Event::MessageListChanged { mailbox: changed, .. } if *changed == mailbox.id
         )),
         "a pass that only delivered mail also demanded a full reload, which \
          throws away every visible row widget and re-reads every page while \

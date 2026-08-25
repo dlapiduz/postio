@@ -279,6 +279,7 @@ fn search_hits_reach_the_message_list() {
     // match the query above one that does.
     let before = list.n_items();
     feed.apply(&Event::NewMail {
+        account: postio_model::AccountId::new(1),
         mailbox: MailboxId::new(INBOX),
         messages: vec![MessageId::new(999_001), MessageId::new(999_002)],
     });
@@ -295,6 +296,7 @@ fn search_hits_reach_the_message_list() {
     // mailbox-shaped event a result set does care about.
     source.drain_hits();
     feed.apply(&Event::MessagesChanged {
+        account: postio_model::AccountId::new(1),
         messages: vec![found[0]],
     });
     settle();
