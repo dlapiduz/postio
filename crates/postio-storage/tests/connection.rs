@@ -379,3 +379,65 @@ fn reopening_a_database_keeps_its_rows_and_does_not_remigrate() {
         .expect("count");
     assert_eq!(count, 1);
 }
+
+// ---------------------------------------------------------------------------
+// This is the user's mail: the directory and the file are private
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+mod private_by_default {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    fn mode_of(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[test]
+    fn a_freshly_created_store_is_0700_directory_0600_file() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        // A parent that does not exist yet either, the way
+        // `$XDG_DATA_HOME/postio` does on a first run: nothing has ever
+        // created it, only `Database::open` will.
+        let path = directory.path().join("postio").join("postio.db");
+
+        let database = Database::open(&path).expect("open");
+        drop(database);
+
+        assert_eq!(
+            mode_of(path.parent().expect("a parent")),
+            0o700,
+            "the data directory must not be at the process umask"
+        );
+        assert_eq!(mode_of(&path), 0o600, "nor the database file itself");
+    }
+
+    #[test]
+    fn an_existing_store_that_was_loose_is_repaired_on_reopen() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = directory.path().join("postio");
+        let path = store.join("postio.db");
+
+        // A store from before this existed: created, then loosened, the way
+        // a pre-fix Postio -- or a stray `chmod -R` -- would leave it.
+        let _ = Database::open(&path).expect("first open");
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o755))
+            .expect("loosen the directory");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("loosen the file");
+
+        Database::open(&path).expect("reopen");
+
+        assert_eq!(
+            mode_of(&store),
+            0o700,
+            "the directory is repaired, not just guarded on creation"
+        );
+        assert_eq!(mode_of(&path), 0o600, "and so is the file");
+    }
+}
