@@ -151,12 +151,23 @@ while IFS=$'\t' read -r NUM TITLE; do
         continue
     fi
 
-    git -C "$REPO_ROOT" fetch --quiet origin "$BASE"
+    # Never adopt an existing worktree. A directory already at this path may
+    # be another session's live tree -- a claim lock can go missing while its
+    # session works (#328) -- and two sessions in one worktree trample each
+    # other with the very commands that are safe everywhere else.
     if [ -d "$TREE" ]; then
-        echo "reusing existing worktree $TREE"
-    else
-        git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
+        rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
+        echo "#$NUM already has a worktree at $TREE; not adopting it -- a session may be in it." >&2
+        if [ -n "$WANT" ]; then
+            echo "If it is truly abandoned, release it first (refuses if dirty):" >&2
+            echo "    scripts/issue-release.sh $NUM" >&2
+            exit 2
+        fi
+        echo "trying the next candidate." >&2
+        continue
     fi
+    git -C "$REPO_ROOT" fetch --quiet origin "$BASE"
+    git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
     # Recorded rather than retyped. `issue-land.sh` reads this back, so a
     # session that claimed from an initiative branch lands onto it without
     # having to remember a flag -- and forgetting *this* flag is a merge to

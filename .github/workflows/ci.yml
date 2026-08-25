@@ -194,6 +194,16 @@ jobs:
         # instruction launches the app invisibly. #315.
         run: python3 scripts/tests/test-headless-runner.py
 
+      - name: Prove issue-claim.sh never adopts an existing worktree
+        # A claim lock can go missing while its session works; adopting the
+        # worktree it protected puts two sessions in one tree. #328.
+        run: python3 scripts/tests/test-issue-claim-no-adoption.py
+
+      - name: Prove the stale sweep spares any claim whose worktree exists
+        # The orphaned-lock branch used to trust the in-progress label alone,
+        # which is how live claims got swept. #328.
+        run: python3 scripts/tests/test-issue-release-stale.py
+
       - name: Prove issue-land.sh's commit guard only fires when needed
         # A clean tree with commits already on the branch -- the state
         # "commit as you go" leaves a session in -- must land with no -m;
