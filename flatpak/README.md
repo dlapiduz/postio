@@ -44,7 +44,7 @@ flatpak run dev.postio.Postio
 
 The `postio` module's source is `type: dir` pointing at the repository root
 (`..`, since the manifest lives in `flatpak/`), skipping `target/`, `.git/`,
-`.beads/` and `flatpak/` itself. That means **the build sees whatever is on
+`flatpak/` itself. That means **the build sees whatever is on
 disk, uncommitted changes included** — commit or stash first if you want a
 build that matches `HEAD`.
 

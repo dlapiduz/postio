@@ -16,7 +16,9 @@
 # Beads' interaction log. The tracker is retired and nothing reads this, but
 # the file is still written locally and dirtied the tree on every session --
 # blocking rebases and interrupting pushes. Kept on disk, out of git.
-.beads/interactions.jsonl
+# The retired beads tracker's local state, if the bd tool ever runs here
+# again. Nothing from it is tracked.
+.beads/
 
 # Python bytecode, including the agent hooks .
 __pycache__/

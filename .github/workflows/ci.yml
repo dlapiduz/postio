@@ -44,7 +44,6 @@ on:
   #   paths-ignore: &prose
   #     - '*.md'
   #     - '.claude/**'
-  #     - '.beads/**'
   #     - 'Design/**'
   #     - 'docs/decisions/**'
   #     - 'docs/images/**'
