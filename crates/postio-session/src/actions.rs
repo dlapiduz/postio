@@ -72,6 +72,21 @@ enum Recording {
     Record,
     /// Undo is doing this. It is already history.
     Replay,
+    /// The app did this on the user's behalf, and nobody asked for it.
+    ///
+    /// Repaints like any other change, but raises no toast and takes no place
+    /// on the undo stack. The dwell mark (#71) is the case: one per message
+    /// the cursor rests on, so recording them would bury the verb the user
+    /// actually wants `u` to reach, and a toast each would be a banner that
+    /// never goes away.
+    Incidental,
+}
+
+impl Recording {
+    /// Whether this belongs on the undo stack and deserves a toast.
+    fn records(self) -> bool {
+        self == Recording::Record
+    }
 }
 
 /// Where a relocation is sending its messages.
@@ -166,6 +181,21 @@ impl Actions {
     pub fn run(&self, command: &Command, events: &EventSink) -> Result<(), CommandError> {
         match command {
             Command::Undo => self.undo(events),
+            // Same verb, different provenance — see `Command::MarkReadOnDwell`.
+            // The `Recording` is most of the difference; the rest is that a
+            // rejection is not worth saying out loud. `set_flag` rejects with
+            // "Already set" when nothing changes, and the cursor resting on
+            // mail that has already been read is the *ordinary* case once a
+            // mailbox has been worked through — a quiet hint every time would
+            // be a hint that never stops. A vanished row rejects the same way
+            // and deserves the same silence. A `Failed` still gets through,
+            // because a store that will not write is worth hearing about.
+            dwell @ Command::MarkReadOnDwell { .. } => {
+                match self.act(dwell, events, Recording::Incidental) {
+                    Err(CommandError::Rejected(_)) => Ok(()),
+                    other => other,
+                }
+            }
             other => self.act(other, events, Recording::Record),
         }
     }
@@ -214,6 +244,13 @@ impl Actions {
             Command::MarkUnread { target, unread } => {
                 self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?
             }
+            // Deliberately `Some(true)` rather than a toggle: a dwell says
+            // "this was read", never "flip whatever it was".
+            Command::MarkReadOnDwell { message } => self.set_flag(
+                &MessageTarget::Messages(vec![*message]),
+                Flag::Seen,
+                Some(true),
+            )?,
             other => {
                 return Err(CommandError::rejected(format!(
                     "`{}` is not wired up yet",
@@ -658,7 +695,7 @@ impl Actions {
                 messages: applied.changed.clone(),
             });
         }
-        if recording == Recording::Replay {
+        if !recording.records() {
             return;
         }
         // A bulk unit knows its size and not its members, so it is recorded as
@@ -1266,6 +1303,108 @@ mod tests {
         assert_eq!(
             completion(&world.drained()),
             Some(("Marked 1 message as unread", true))
+        );
+    }
+
+    // ── Marking read because you looked at it (#71) ──────────────────────
+
+    #[test]
+    fn a_dwell_mark_reads_the_message_and_tells_the_server() {
+        // The same local-first shape as every other verb: the flag lands
+        // locally and the `\Seen` goes on the queue for the server. Nobody
+        // pressed anything — the cursor rested — but the mail still has to be
+        // read on every other client afterwards.
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+
+        world
+            .run(Command::MarkReadOnDwell { message })
+            .expect("the dwell mark applies");
+
+        assert!(world.flags_of(message).is_seen());
+        assert!(
+            matches!(
+                world.queued().first(),
+                Some((_, Operation::SetFlags { .. }))
+            ),
+            "the server has to hear about it, or the message is unread again \
+             on the next device"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_leaves_the_undo_stack_alone() {
+        // `u` takes back what *you* did. Reading a mailbox produces one dwell
+        // mark per message rested on, so recording them would bury the verb
+        // the user actually wants back. Here the archive must still be what
+        // `u` reaches, with a dwell mark sitting on top of it.
+        let world = world();
+        let archived = world.message(world.inbox, &[]);
+        let read = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(archived));
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive");
+        assert_ne!(world.mailbox_of(archived), world.inbox);
+
+        world
+            .run(Command::MarkReadOnDwell { message: read })
+            .expect("the dwell mark applies");
+
+        world.run(Command::Undo).expect("undo");
+        assert_eq!(
+            world.mailbox_of(archived),
+            world.inbox,
+            "`u` reached the dwell mark instead of the archive, so reading a \
+             mailbox now costs the user their undo"
+        );
+        assert!(
+            world.flags_of(read).is_seen(),
+            "and the dwell mark itself is not something `u` takes back"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_raises_no_toast() {
+        // One per message rested on, so a toast each would be a permanent
+        // banner over the message list. The row turning from unread to read
+        // is the feedback, and it is feedback the user is already looking at.
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+
+        world
+            .run(Command::MarkReadOnDwell { message })
+            .expect("the dwell mark applies");
+
+        let events = world.drained();
+        assert_eq!(completion(&events), None, "{events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::MessagesChanged { .. })),
+            "the row still has to repaint, or the list goes on showing it unread"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_on_a_message_already_read_queues_nothing() {
+        // The cursor resting on mail you have read is the ordinary case once
+        // a mailbox has been worked through, and it must not cost a queue row
+        // the server would have to be told about.
+        let world = world();
+        let message = world.message(world.inbox, &[Flag::Seen]);
+
+        world
+            .run(Command::MarkReadOnDwell { message })
+            .expect("a no-op is not an error");
+
+        assert!(world.flags_of(message).is_seen());
+        assert!(
+            world.queued().is_empty(),
+            "an already-read message must not put a redundant \\Seen on the queue"
         );
     }
 
