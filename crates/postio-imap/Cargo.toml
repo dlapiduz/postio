@@ -41,6 +41,11 @@ test-corpus = ["postio-model/test-corpus"]
 test-server = ["test-corpus"]
 
 [dependencies]
+# Not a choice about error handling in this crate: io-pim-discovery's
+# `with_factory` hook is typed `FnMut(&Url) -> anyhow::Result<S>`, so
+# supplying a stream of our own (discovery/transport.rs, #57) means naming
+# the type. Already in the graph underneath that crate, so it costs nothing.
+anyhow = "1.0.104"
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 io-imap = { version = "=0.6.0", default-features = false, features = ["client"], optional = true }

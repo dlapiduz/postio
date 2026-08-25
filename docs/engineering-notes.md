@@ -1502,6 +1502,42 @@ the code is giving this test the same `XDG_STATE_HOME` override the others
 already use, which `postio-14b` did not do because the wiring under test was
 someone else's, landed mid-rebase.
 
+**A dropped `JoinHandle` detaches a `spawn_blocking` task; it does not abort
+it — so cancel the *socket*, not the task.** `tokio::select!` losing a race
+drops the losing future, and for `spawn_blocking` that means the blocking
+thread keeps running with whatever socket it opened. Nothing in tokio can
+interrupt a thread parked in `read`. The autoconfig probe raced a
+`CancelToken` against its steps for a year and cancelled nothing but its own
+waiting (#57, found by the `postio-iigq` audit).
+
+The way out, where the blocking work is somebody else's crate: take the
+stream. `io-pim-discovery`'s `DiscoveryStream` is `Read + Write` and nothing
+more, and both of its std clients expose `with_factory(scheme, ..)` — so
+`postio-imap`'s `discovery::transport` hands them a wrapper that checks the
+token before every read and write and fails with
+`io::ErrorKind::ConnectionAborted`. The detached task then unwinds through
+the client's own error path and drops the socket. The protocol stays
+upstream's; the stream becomes ours.
+
+Three things that are easy to get wrong here:
+
+- **Never report `ErrorKind::Interrupted` for a cancellation.** It means
+  "retry me" throughout `std` — `read_to_end` and friends loop on it — so a
+  cancelled stream reporting it spins forever instead of stopping. Exactly
+  backwards, and it looks right. `ConnectionAborted` is the one nothing
+  retries.
+- **A check between reads does nothing while a read is parked**, so the
+  token needs a deadline beside it. `pimalaya-stream`'s default `Retry` is
+  60 seconds *per read*, and the DNS path armed no socket deadline at all —
+  hence `DISCOVERY_IO_TIMEOUT`, and `TcpStream::connect_timeout` in place of
+  `connect` on the DNS side. `Stream::connect_tcp`/`connect_tls` still take
+  no connect deadline, so the HTTPS connect phase keeps the OS default.
+- **A cancellable transport that nobody cancels changes nothing.** The
+  composition root was passing `Probe::run` a `CancelToken::new()` and
+  dropping it, so no probe in the shipping application was cancellable
+  whatever the layers below could do. `ProbeCancellation` in
+  `postio-app/src/onboarding.rs` is the half that does the cancelling.
+
 ## Logging & privacy
 
 **`Zeroizing<String>` protects the password; the buffers around it are where
