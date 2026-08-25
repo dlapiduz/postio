@@ -181,6 +181,12 @@ jobs:
         # RUSTUP_TOOLCHAIN and checks that neither one lets it through. #112.
         run: python3 scripts/test-rustup-toolchain-cleared.py
 
+      - name: Prove issue-land.sh's commit guard only fires when needed
+        # A clean tree with commits already on the branch -- the state
+        # "commit as you go" leaves a session in -- must land with no -m;
+        # a dirty tree with no -m must still refuse, but say so. #120.
+        run: python3 scripts/test-issue-land-commit-guard.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
