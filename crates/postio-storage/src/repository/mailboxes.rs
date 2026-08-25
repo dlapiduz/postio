@@ -210,9 +210,19 @@ impl<'a> MailboxRepository<'a> {
 
     /// Recomputes a mailbox's counts from its messages and caches them.
     ///
-    /// The sidebar reads the cached columns so it never counts rows; this is
-    /// what makes them true. Call it after a batch of writes rather than after
-    /// every one — it is a scan of one mailbox's index, not a free operation.
+    /// **A repair tool, not routine maintenance.** Migration 0003's triggers
+    /// keep `total_count`, `unread_count` and `flagged_count` correct on
+    /// every write to `messages` — that is what made `recount` and
+    /// [`recount_account`](Self::recount_account) dead code with no
+    /// production caller in the first place (postio-qhz.7), and calling
+    /// either after an ordinary write only redoes what the trigger already
+    /// did. What is left for these to be good for: repairing a store the
+    /// triggers were not there for (the migration's own backfill), and
+    /// standing as the independent, scan-based ground truth a test can check
+    /// the trigger-maintained columns against — see
+    /// `a_seeded_store_still_agrees_with_a_recount` in
+    /// `tests/mailbox_counts.rs`, which is what would notice if the two ever
+    /// drifted apart. postio-qhz.8.
     pub fn recount(&self, id: MailboxId) -> Result<MailboxCounts> {
         let counts = self.connection.query_row(
             &format!(
@@ -235,6 +245,11 @@ impl<'a> MailboxRepository<'a> {
     }
 
     /// Recomputes every mailbox in an account, in one pass over its messages.
+    ///
+    /// [`recount`](Self::recount)'s repair-path doc applies here too: the
+    /// triggers maintain these columns on every write, so this is for
+    /// repairing an account whose counts have drifted, not something a
+    /// normal write path should call.
     pub fn recount_account(&self, account_id: AccountId) -> Result<()> {
         self.connection.execute(
             &format!(
