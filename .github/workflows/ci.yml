@@ -187,6 +187,13 @@ jobs:
         # RUSTUP_TOOLCHAIN and checks that neither one lets it through. #112.
         run: python3 scripts/tests/test-rustup-toolchain-cleared.py
 
+      - name: Prove the headless runner sends only test binaries to the compositor
+        # The runner fronts every binary cargo executes. Test binaries (the
+        # 16-hex metadata suffix) go headless; `cargo run -p postio-app` and
+        # examples must reach the real display, or the README's own run
+        # instruction launches the app invisibly. #315.
+        run: python3 scripts/tests/test-headless-runner.py
+
       - name: Prove issue-land.sh's commit guard only fires when needed
         # A clean tree with commits already on the branch -- the state
         # "commit as you go" leaves a session in -- must land with no -m;
