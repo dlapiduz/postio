@@ -1966,6 +1966,45 @@ accumulate — that directory reached 232 GB before anyone looked.
 
 ## Landing work
 
+**`gh pr merge` exits 0 when it merges nothing, and `gh pr view` finds a PR
+that is already merged.** Put together, `issue-land.sh` announced `merged.`,
+deleted the remote branch, and exited 0 while the commits never reached
+`main` — twice in one session on #277, caught only by checking `origin/main`
+by hand afterwards.
+
+The sequence needs nothing unusual. `issue-claim.sh` generates the branch name
+from the issue title, so two sessions on one issue produce the same name by
+construction — which is the normal state of this repository. The second
+session pushes, `gh pr view --json number` resolves the *first* session's
+merged PR (it returns the most recent PR for the head branch whatever its
+state), the script reads that as "PR already open; the push updated it",
+`gh pr merge --rebase` prints `! Pull request #N was already merged` and exits
+**0**, and the script believes it. The branch is then deleted from the remote
+and the operator is told to run `issue-release.sh`, which removes the worktree
+holding the only remaining copy.
+
+Two things guard it now, and the second is the general one:
+
+- The PR's **state** is what decides, not its existence. Only `OPEN` means
+  "the push updated it"; a merged or closed PR on the same head branch means
+  the name was reused, and the script opens a new one.
+- **The merge is verified before it is believed.** Note that ancestry cannot
+  answer this — the merge is a rebase, so every commit lands with a new hash
+  and the local tip is never an ancestor of the base even on complete success.
+  Commit *subjects* survive a rebase, so the check is that each subject being
+  landed appears in `origin/<base>` afterwards. On failure the script exits
+  non-zero and deliberately leaves the remote branch alone, because at that
+  point it may be the only copy.
+
+**A stub that lies passes forever.** Three of the `issue-land` self-tests had
+a `gh pr merge` stub that printed `Merged` and moved nothing, so none of them
+could ever have caught this; the new verification failed all three the moment
+it landed, which is how the gap showed up. They now push the branch into the
+bare test remote, as a real rebase-merge does.
+`scripts/test-issue-land-312.py` is the regression test: a merged PR on the
+same head branch, and a merge that reports success while doing nothing.
+
+
 **`gh pr checks` cannot tell "nothing will run" from "nothing has run yet",
 and `issue-land.sh` used to merge on the ambiguity.** It printed `no checks
 reported` in both cases, and the script read that as "prose-only change,

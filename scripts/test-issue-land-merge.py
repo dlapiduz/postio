@@ -92,6 +92,12 @@ if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
                 ;;
         esac
     done
+    # Actually move the base, as a real rebase-merge does. #312 taught this
+    # stub to stop lying: the script now verifies that the work reached
+    # `main` before reporting success, so a stub that says "Merged" without
+    # merging fails the very check that exists to catch a merge which did
+    # not happen.
+    git push -q "$ORIGIN" "HEAD:refs/heads/main" || exit 1
     echo "Merged"
     exit 0
 fi
@@ -157,7 +163,9 @@ def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
     )
 
 
-def land(root: Path, target: Path, stub_dir: Path) -> subprocess.CompletedProcess[str]:
+def land(
+    root: Path, target: Path, stub_dir: Path, origin: Path
+) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
     environment["CARGO_TARGET_DIR"] = str(target)
@@ -165,6 +173,8 @@ def land(root: Path, target: Path, stub_dir: Path) -> subprocess.CompletedProces
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
+    # The bare remote the `pr merge` stub pushes into; see GH_STUB.
+    environment["ORIGIN"] = str(origin)
     # A real merge, watched briefly: the fixture schedules no workflow, so
     # this settles in POSTIO_CHECKS_GRACE seconds rather than the real
     # default's 30.
@@ -212,7 +222,7 @@ def main() -> int:
         git("checkout", "-q", "-b", "issue-1-x", cwd=root)
         (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
 
-        result = land(root, target, stub_dir)
+        result = land(root, target, stub_dir, origin)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
 
         if result.returncode != 0:
