@@ -227,7 +227,9 @@ fn a_query_puts_the_matching_messages_in_the_list() {
     // re-sorted on the way through would still hold the right ids — it would
     // look right in every test that only checked membership, and be wrong
     // exactly where ranking is the thing the user searched for.
-    let account = postio_app::first_account(&database)
+    let account = postio_app::enabled_accounts(&database)
+        .into_iter()
+        .next()
         .expect("the seeded store has an account")
         .id;
     // The scope column starts on All Mail — `search_wiring.rs` asserts that —

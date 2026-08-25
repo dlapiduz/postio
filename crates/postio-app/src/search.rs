@@ -76,7 +76,11 @@ const HIT_LIMIT: u32 = 200;
 /// is taken by reference here rather than found, because which `Feeds` a
 /// window has is the composition root's business, the same as the source.
 pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> {
-    let account = crate::first_account(&wiring.database)?;
+    // The panes' single-account cut, as in `feed_the_window`; #186 gives
+    // search a real scope and this choice goes with it.
+    let account = crate::enabled_accounts(&wiring.database)
+        .into_iter()
+        .next()?;
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
 

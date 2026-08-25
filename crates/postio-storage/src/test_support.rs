@@ -69,6 +69,28 @@ pub fn memory() -> Database {
         .expect("a scratch database must always open")
 }
 
+/// [`memory`], with an explicit pool size.
+///
+/// For tests exercising the connection budget (#183): the budget is a fact
+/// about the pool, so a test that wants to run out of it has to say how big
+/// the pool is.
+///
+/// # Panics
+///
+/// If the directory or the database cannot be created or migrated.
+pub fn memory_with(max_connections: usize) -> Database {
+    let shm = Path::new("/dev/shm");
+    let directory = if shm.is_dir() {
+        tempfile::tempdir_in(shm)
+    } else {
+        tempfile::tempdir()
+    }
+    .expect("a scratch directory must always open");
+    let path = directory.path().join("postio.db");
+    Database::open_file_with_guard_sized(&path, max_connections, Box::new(directory))
+        .expect("a scratch database must always open")
+}
+
 /// A migrated database in a temporary directory that deletes itself.
 ///
 /// The [`TempDir`] is kept alive by the returned handle, so the caller does not

@@ -124,7 +124,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
                 return;
             };
             let (database, blobs, file) = (database.clone(), blobs.clone(), file.clone());
-            let (events, engine) = (events.clone(), engine.get().cloned());
+            let (events, engine) = (events.clone(), engine.single());
             let runtime = runtime.clone();
             let _ = &window;
             glib::spawn_future_local(async move {
@@ -176,13 +176,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         wiring.engine,
         move |node| {
             let always_ask = !postio_gtk::parts::previewable(&node.mime);
-            opener.open_externally(
-                &window,
-                showing.get(),
-                engine.get().cloned(),
-                node,
-                always_ask,
-            );
+            opener.open_externally(&window, showing.get(), engine.single(), node, always_ask);
         }
     ));
 
@@ -199,7 +193,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong(rename_to = engine)]
         wiring.engine,
         move |node| {
-            opener.open_externally(&window, showing.get(), engine.get().cloned(), node, true);
+            opener.open_externally(&window, showing.get(), engine.single(), node, true);
         }
     ));
 
@@ -233,7 +227,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
                 .collect();
             let leaves_len = leaves.len();
             let (database, blobs) = (database.clone(), blobs.clone());
-            let (events, engine) = (events.clone(), engine.get().cloned());
+            let (events, engine) = (events.clone(), engine.single());
             let runtime = runtime.clone();
             glib::spawn_future_local(async move {
                 // `save_all_parts` is runtime work for the same reason
@@ -275,7 +269,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         let runtime = wiring.runtime.clone();
         std::rc::Rc::new(move |node: postio_gtk::parts::Node| {
             let (database, blobs) = (database.clone(), blobs.clone());
-            let (engine, runtime) = (engine.get().cloned(), runtime.clone());
+            let (engine, runtime) = (engine.single(), runtime.clone());
             let message = showing.get();
             Box::pin(async move {
                 let message = message.ok_or("There is no message open to take a part from")?;
