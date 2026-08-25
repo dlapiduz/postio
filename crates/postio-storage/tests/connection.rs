@@ -441,3 +441,29 @@ mod private_by_default {
         assert_eq!(mode_of(&path), 0o600, "and so is the file");
     }
 }
+
+#[test]
+fn a_reader_mid_transaction_does_not_fail_a_concurrent_writer() {
+    // #204. The scratch databases tests run on used to be `:memory:` with
+    // `cache=shared`, where a read transaction on one pooled connection makes
+    // a write on another fail *immediately* with SQLITE_LOCKED — a
+    // table-level lock that `busy_timeout` does not cover, so the failure
+    // rate tracked machine load rather than anything in the test. The shape
+    // below is the minimal reproduction: a reader holding a snapshot (a list
+    // page mid-iteration, in real code) while a fixture writes.
+    let database = postio_storage::test_support::memory();
+    let reader = database.connection().expect("a reader");
+    let writer = database.connection().expect("a writer");
+
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM accounts;")
+        .expect("a read transaction opens");
+
+    // Under shared cache this panics inside the helper with "database table
+    // is locked" — the exact symptom from the field, on a line that is only
+    // a fixture. On the file-backed scratch database it must simply work.
+    let account = postio_storage::test_support::account(&writer);
+
+    reader.execute_batch("COMMIT").expect("the reader finishes");
+    assert!(account.id.get() > 0, "the write landed");
+}
