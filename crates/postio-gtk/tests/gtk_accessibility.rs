@@ -29,10 +29,11 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::{AccessibleProperty, AccessibleRelation, AccessibleRole};
 use postio_gtk::feed::{
-    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    Feeds, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::finder;
 use postio_gtk::list::Row;
+use postio_gtk::list_state::State;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId, MessageId};
@@ -115,6 +116,99 @@ impl MessageSource for Sample {
             Ok(Page { total, rows })
         })
     }
+}
+
+/// A mailbox with one folder and never any rows in it.
+///
+/// `list_state.rs`'s four named states only appear over an empty list, and
+/// [`Sample`] above always answers with up to 300 rows — so they need a feed
+/// of their own rather than the populated window every other assertion in
+/// this file shares.
+struct Empty;
+
+impl MailboxSource for Empty {
+    fn mailboxes(&self, account: AccountId) -> MailboxFuture {
+        let mut mailbox = Mailbox::new(account, "INBOX", Some('/'));
+        mailbox.id = MailboxId::new(1);
+        mailbox.role = MailboxRole::Inbox;
+        Box::pin(async move { Ok(vec![mailbox]) })
+    }
+}
+
+impl MessageSource for Empty {
+    fn fetch(&self, _request: PageRequest) -> PageFuture {
+        Box::pin(async move {
+            Ok(Page {
+                total: 0,
+                rows: Vec::new(),
+            })
+        })
+    }
+}
+
+/// One of `list_state.rs`'s named states, and how to reach it.
+struct ListState {
+    name: &'static str,
+    enter: fn(&Window, &Feeds),
+    /// Whether `derive()` actually produced this state, using the exact
+    /// accessor `Window::refresh_list_state` reads — not a guess made from
+    /// the widget tree, the same discipline `Surface::shown` uses.
+    matches: fn(&Window) -> bool,
+}
+
+/// The four states `list_state.rs` builds, in the order a user could
+/// plausibly meet them: mail arrives to nothing left, the link drops, the
+/// link fails outright, a search comes up empty.
+fn named_list_states() -> Vec<ListState> {
+    vec![
+        ListState {
+            name: "inbox zero",
+            enter: |_window, feeds| {
+                feeds.apply(&postio_core::Event::ConnectionChanged {
+                    account: AccountId::new(2),
+                    state: postio_core::ConnectionState::Online,
+                });
+            },
+            matches: |window| matches!(window.list_state().state(), Some(State::InboxZero { .. })),
+        },
+        ListState {
+            name: "offline",
+            enter: |_window, feeds| {
+                feeds.apply(&postio_core::Event::ConnectionChanged {
+                    account: AccountId::new(2),
+                    state: postio_core::ConnectionState::Offline,
+                });
+            },
+            matches: |window| matches!(window.list_state().state(), Some(State::Offline { .. })),
+        },
+        ListState {
+            name: "sync failure",
+            enter: |_window, feeds| {
+                feeds.apply(&postio_core::Event::ConnectionChanged {
+                    account: AccountId::new(2),
+                    state: postio_core::ConnectionState::Failing {
+                        reason: postio_core::FailureReason::Auth,
+                    },
+                });
+            },
+            matches: |window| matches!(window.list_state().state(), Some(State::Failing { .. })),
+        },
+        ListState {
+            name: "a search with no results",
+            enter: |window, feeds| {
+                // Reconnected first, so this state is reached for the reason
+                // its own name gives -- a search that matched nothing --
+                // rather than riding in on whatever connection state the
+                // previous case left behind.
+                feeds.apply(&postio_core::Event::ConnectionChanged {
+                    account: AccountId::new(2),
+                    state: postio_core::ConnectionState::Online,
+                });
+                window.set_searching(Some("a query with no matches"));
+            },
+            matches: |window| matches!(window.list_state().state(), Some(State::NoMatches { .. })),
+        },
+    ]
 }
 
 #[test]
@@ -241,6 +335,48 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
         );
     }
 
+    // ── the named list states, over a mailbox with nothing in it ─────────
+    // `list_state.rs`'s four named states -- inbox zero, offline, sync
+    // failure, a search with no results -- only ever appear over an empty
+    // list, so `Sample`'s 300 rows above can never reach them. A window of
+    // their own, fed by `Empty`, is what does.
+    let empty_window = Window::default();
+    empty_window.present();
+    let empty = Rc::new(Empty);
+    let empty_feeds =
+        empty_window.install_feeds(AccountId::new(2), "empty@example.com", empty.clone(), empty);
+    pump_until(|| empty_window.list_state().state().is_some());
+
+    for list_state in named_list_states() {
+        (list_state.enter)(&empty_window, &empty_feeds);
+        pump();
+        assert!(
+            (list_state.matches)(&empty_window),
+            "{}: derive() did not produce the expected state, so the audit \
+             below would have checked whatever was on screen before it",
+            list_state.name
+        );
+        // `expect_usable` walks the tree for roles it recognises, and the
+        // pane's own `Status` role is not one of them — nor could it be:
+        // a live region says something by *changing* its own Label, which
+        // is exactly the property a generic tree walk cannot tell apart
+        // from a name computed from a visible child, the way a button's
+        // is. Ask the one question that matters for a live region
+        // directly, on the exact widget a screen reader is watching.
+        let pane = empty_window.list_state();
+        let widget = pane.upcast_ref::<gtk::Widget>();
+        assert!(
+            gtk::test_accessible_has_property(widget, AccessibleProperty::Label)
+                && !labelled_empty(widget),
+            "{}: the list state pane's Label property is unset or empty, so \
+             a screen reader watching this live region hears nothing",
+            list_state.name
+        );
+        expect_usable(&empty_window, list_state.name);
+    }
+
+    empty_window.destroy();
+
     // ── the one exception is still an exception ──────────────────────────
     // If libadwaita starts naming its dismiss button, `upstream_gap` stops
     // matching and this fails — which is the point. An allowance nobody
@@ -272,10 +408,10 @@ struct Surface {
 /// surface that stops being reachable stops compiling here rather than
 /// quietly dropping out of the audit.
 ///
-/// Not yet covered: the named list states — inbox zero, offline, sync
-/// failure, a search with no results — which `list_state.rs` builds and
-/// which only appear over an *empty* list, so they need a feed of their own
-/// rather than the populated one this test installs. Tracked separately.
+/// The named list states `list_state.rs` builds are not here: they only
+/// appear over an *empty* list, so they need a feed of their own rather than
+/// the populated one this test installs, and get it further down in
+/// [`named_list_states`].
 fn surfaces() -> Vec<Surface> {
     vec![
         Surface {
