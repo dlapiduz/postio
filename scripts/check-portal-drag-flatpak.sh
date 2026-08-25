@@ -123,8 +123,15 @@ if [ "$WATCH" = 0 ]; then
         # GDK_BACKEND pins Wayland for the same reason test-headless.sh pins
         # it: a stray DISPLAY would pull the window back onto the real
         # session through XWayland while looking like it had worked.
-        RUN_ENV+=(--env=WAYLAND_DISPLAY="$DISPLAY_NAME" --env=GDK_BACKEND=wayland)
-        RUN_ENV+=(--env=GTK_A11Y=none)
+        # `--env=WAYLAND_DISPLAY=...` alone is not enough, and the reason is
+        # worth writing down: `--socket=wayland` binds the socket named by
+        # the *host's* WAYLAND_DISPLAY into the sandbox. Naming a different
+        # one only inside the sandbox points at a socket flatpak never bound,
+        # and the test then reports "no display" from within a working
+        # compositor. So the host environment of `flatpak run` is what has to
+        # name the headless display; the --env is what the app then reads.
+        HOST_WAYLAND_DISPLAY="$DISPLAY_NAME"
+        RUN_ENV+=(--env=GDK_BACKEND=wayland --env=GTK_A11Y=none)
         echo "--- running on the headless compositor ($DISPLAY_NAME) ---"
     else
         echo "--- no headless compositor; running on the live display ---" >&2
@@ -134,4 +141,7 @@ else
 fi
 
 echo
-flatpak run "${RUN_ENV[@]}" --command="$CHECK_BIN" "$APP_ID" --nocapture --test-threads=1
+# HOST_WAYLAND_DISPLAY, not just --env: see the note above.
+WAYLAND_DISPLAY="${HOST_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}" \
+    flatpak run "${RUN_ENV[@]}" --command="$CHECK_BIN" "$APP_ID" \
+    --nocapture --test-threads=1
