@@ -58,7 +58,6 @@ SKIP_PATHS = (
     ".claude/",
     "Design/",
     "crates/postio-gtk/data/fonts/",
-    ".beads/",
 )
 # Upstream/maintainer addresses that belong in a licence or manifest.
 ALLOW_EXACT = {

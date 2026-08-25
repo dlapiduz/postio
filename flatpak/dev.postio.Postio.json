@@ -41,7 +41,6 @@
                     "skip": [
                         "target",
                         ".git",
-                        ".beads",
                         "flatpak"
                     ]
                 },

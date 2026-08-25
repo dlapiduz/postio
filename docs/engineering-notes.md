@@ -1,11 +1,9 @@
 # Engineering notes
 
 Hard-won lessons that aren't obvious from reading the code — the kind of thing
-that used to live in `bd remember` / `bd memories`. This doc replaces that: as
-issue tracking moves from beads to GitHub, this is where that knowledge has to
-live instead, since it isn't tied to any single issue or PR and a future
-session (or contributor) has no other way to trip over it before they hit the
-same wall.
+that isn't tied to any single issue or PR. A future session (or contributor)
+has no other way to trip over it before hitting the same wall, which is why it
+lives here rather than in any tracker.
 
 **Adding to this file**: when you learn something the hard way — a trap that
 looks like a bug but isn't, an invariant that isn't visible from the type
@@ -1553,7 +1551,7 @@ true for anyone still on the shared directory.
 
 ## Working in a shared git tree
 
-These matter regardless of whether work is tracked in beads or GitHub Issues
+These matter regardless of where work is tracked
 — they're about several sessions sharing one working tree and one git index,
 not about the tracker.
 
