@@ -1485,22 +1485,26 @@ file — WAL behaviour... because an in-memory database has no journal"); the
 part worth remembering is that "about the file" includes any test running a
 concurrent writer, not only tests that reopen or inspect the file directly.
 
-**A reader test with no `XDG_STATE_HOME` override reads and writes the real
+**A reader test with no allow-list override reads and writes the real
 machine's remote-image allow list.** `Reader::new` calls
 `RemoteImageAllowList::load()`/`::path()`, which resolve through
 `glib::user_state_dir()` — the actual `$XDG_STATE_HOME` of whatever process
-runs the test, not a scratch directory, unless the test sets one before
-`adw::init()` the way `gtk_composer_recipients.rs` does. `gtk_reading_pane.rs`
-does not, so a sender address it sends through the banner's "always allow"
-path — or one another test or session left `true` in
-`~/.local/state/postio/remote-images.ini` on this shared machine — makes
-`the_reading_pane_shows_a_message_and_yields_it_to_the_composer` fail with
-"the reader held a remote image back and the panel never heard about it": the
-sender is already on the (real, stale) allow list, so nothing gets blocked
-and the count is 0. The fix in the moment is deleting that file; the fix in
-the code is giving this test the same `XDG_STATE_HOME` override the others
-already use, which `postio-14b` did not do because the wiring under test was
-someone else's, landed mid-rebase.
+runs the test, not a scratch directory. Two sessions diagnosed this
+independently from opposite ends; the full account, and the fix that landed,
+are under "A test that builds a `Window` reads the developer's own
+`$XDG_STATE_HOME`" above. In short, `gtk_reading_pane.rs` failed with "the
+reader held a remote image back and the panel never heard about it" because
+its sender was already on the real, stale allow list, so nothing was blocked
+and the count was 0.
+
+Two ways to give a test a list of its own, and they are not equivalent.
+Setting `XDG_STATE_HOME` before `adw::init()`, the way
+`gtk_composer_recipients.rs` does, moves *every* state file at once and is
+right when a test touches several. `Window::set_allowlist_path` (#215) moves
+only this one and takes no dependency on process-global environment or on
+running before GLib has cached the state directory — which is why it is what
+`gtk_reading_pane.rs` uses. Reach for the env override when you want the whole
+state directory; reach for the seam when you want one file.
 
 **A dropped `JoinHandle` detaches a `spawn_blocking` task; it does not abort
 it — so cancel the *socket*, not the task.** `tokio::select!` losing a race
@@ -1537,6 +1541,142 @@ Three things that are easy to get wrong here:
   dropping it, so no probe in the shipping application was cancellable
   whatever the layers below could do. `ProbeCancellation` in
   `postio-app/src/onboarding.rs` is the half that does the cancelling.
+## Fuzzing the hostile-input pipeline
+
+Every message Postio parses is attacker-controlled, and the `.eml` corpus —
+excellent as it is — only contains inputs somebody thought of. `fuzz/` is
+three libFuzzer targets for the inputs nobody thought of: `parse_message`
+(raw bytes through `postio_model::mime`), `sanitize_html` (bytes through
+`postio_body`'s incoming sanitizer), and `parse_query` (a string through
+`postio_search`'s parser). Added by #147.
+
+**Running one.**
+
+```bash
+scripts/fuzz.sh parse_query                       # until you stop it
+scripts/fuzz.sh parse_message -- -max_total_time=300
+scripts/fuzz.sh --list
+```
+
+Use the script rather than `cargo fuzz` directly. Two things stand between a
+shell on this workstation and a working fuzz run, and neither error names its
+cause:
+
+- **libFuzzer needs nightly, and `RUSTUP_TOOLCHAIN` beats a toolchain file.**
+  `fuzz/rust-toolchain.toml` pins a dated nightly, but this machine exports
+  `RUSTUP_TOOLCHAIN` from `~/.config/mise/config.toml`, and rustup reads the
+  environment first — so the build gets 1.98.0 and fails with *"the option `Z`
+  is only accepted on the nightly compiler"*, which reads like a missing
+  toolchain and is a winning environment variable. Same trap as the one the
+  landing gates clear; see the `RUSTUP_TOOLCHAIN` entry above.
+- **rustup picks a toolchain file by the working directory, not by the
+  manifest.** `cargo fuzz --fuzz-dir fuzz` from the repository root still gets
+  the *root's* pin. The script `cd`s into `fuzz/` for exactly this reason.
+
+**Why `fuzz/` is its own workspace.** Nightly and `-Z sanitizer=address` must
+not leak into the pinned build, and the instrumented build is expensive enough
+that `cargo test --workspace` must never touch it. `scripts/check-toolchain-
+pinned.py` was taught that a *dated* nightly (`nightly-2026-08-24`) is a pin
+rather than a float — it names one compiler as exactly as `1.98.0` does, and
+there is no stable spelling of what libFuzzer needs. A bare `nightly` is still
+refused, and so is `stable`.
+
+**The corpus is generated, not committed.** `scripts/fuzz-seed.sh` fills
+`fuzz/corpus/<target>/` from `crates/postio-model/tests/corpus/*.eml` and from
+`fuzz/seeds/`. The `.eml` fixtures stay in one place, where `/add-fixture`
+maintains them, rather than being copied into the tree twice and drifting.
+Seeding matters more than it sounds: from random bytes a fuzzer will never
+generate a valid MIME boundary, so an unseeded `parse_message` run explores
+almost nothing.
+
+**What it found in its first hour**, which is the argument for having it:
+
+- **Remote-image blocking was case-sensitive.** `postio_body`'s `is_remote`
+  compared schemes with `starts_with("https://")`, but RFC 3986 §3.1 makes
+  schemes case-insensitive and WebKit resolves them that way. A tracking pixel
+  spelled `HTTPS://` was left in the document *and* reported as nothing held
+  back — so the reader fetched it and the badge said zero. A privacy promise a
+  sender defeats by holding shift. Fixed in #147.
+- **`save_name` did not strip control characters.** A NUL reaches an
+  attachment filename both from a literal `filename="a\0b.txt"` and from one
+  base64'd inside an RFC 2047 encoded word; the name then goes to
+  `FileDialog::initial_name`, which converts a `&str` to a C string. Fixed in
+  #147.
+- **`mime::parse` is not infallible.** `mail-parser` panics on a malformed
+  multipart and the panic comes out of ingest. #277 — see below.
+- **And one bug in the fix for the first one**, 71 executions after it was
+  written: comparing a scheme with `value[..8]` panics when byte 8 lands
+  inside a multi-byte character, and an attribute value is attacker-controlled
+  text that can start with any character at all. `str::get(..n)` is the
+  spelling that cannot. Worth noticing as a pattern — a hostile-input fix is
+  itself hostile-input code, and the fuzzer is the thing that will tell you.
+
+**Triaging a find.** The reproducer lands in
+`fuzz/artifacts/<target>/crash-<hash>`. Shrink it first — `cd fuzz && cargo
+fuzz tmin <target> artifacts/<target>/<file>` — then read it. **Do not paste
+it into an issue.** For `parse_message` it is a whole message, mutated out of
+the corpus but message-shaped, and this repository is public; the CI job
+uploads it as an artifact and deliberately never prints it, for the same
+reason `check-no-personal-data.py` redacts by default. Describe the shape and
+add a fixture through `/add-fixture` if the input deserves to become a
+permanent test.
+
+**Then ask which layer the property belongs to.** All three of the first
+findings were the checker being wrong rather than Postio, and all three were
+still worth having:
+
+- *`javascript:` survived the sanitizer.* It had not. `&#x6a;avascript&colon;`
+  decodes to the literal text `javascript:` inside a `<p>` — visible, inert,
+  not a URL. So the scheme check moved into the per-attribute URL pass, where
+  a scheme name means something. Tag names stay a whole-document scan, and
+  soundly: `<` is escaped to `&lt;` everywhere in text, so a literal `<script`
+  in the output can only be an element. The same input also *confirmed*
+  something worth knowing — an entity-encoded `&#104;ttps://` in a `src` is
+  decoded before the attribute filter sees it, so blocking is not dodged by
+  spelling.
+- *A remote `src` survived a blocked render.* Also text. The mutation had
+  deleted the `<` before `img`, leaving `img src="https://..."` sitting in a
+  paragraph as escaped, inert characters. Same root cause as the first: a
+  substring scan cannot tell an attribute from text that resembles one. The
+  scanner now walks `<...>` interiors only, which is sound *because* of what
+  the sanitizer guarantees — ammonia escapes `<` and `>` everywhere in text
+  and in attribute values, so in sanitized output an unescaped `<` starts a
+  tag. Note that this makes the scanner correct **only** on already-sanitized
+  input, which is the only thing it is called on.
+- *A path separator in an attachment filename.* Also correct behaviour:
+  `mime::parse` reports the filename the sender wrote, and laundering it is
+  `postio_gtk::parts::save_name`'s promise, not the parser's. Asserting it in
+  the fuzz target demanded that the model launder data it exists to report
+  faithfully. **The find still paid for itself**: it sent someone to read
+  `save_name`, which stripped separators and dots but not control characters —
+  and a NUL reaches a filename both from a literal `filename="a\0b.txt"` and
+  from one base64'd inside an RFC 2047 encoded word. That name goes to
+  `FileDialog::initial_name`, which converts a `&str` to a C string on the
+  way. Fixed in #147, with the tests beside `save_name` where the promise is.
+
+The general rule that came out of it: **a fuzz property must be a promise the
+function under test actually makes.** When a find looks like a bug, the first
+question is not "where is the bug" but "which layer promised this", and the
+answer is often a layer the target does not call.
+
+**`parse_message` is known red, and deliberately.** It finds #277 within
+minutes: `mail-parser` 0.11.8 panics on a malformed multipart
+(`Invalid part ID, could not find multipart`), and the panic comes straight
+out of `postio_model::mime::parse`, which the module documents as infallible.
+That is a remotely-triggerable client crash — ingest runs on bytes from the
+server, during sync, before anyone opens anything — and it is exactly what
+this target was built to find. It is **not** worked around in the target: a
+fuzz target taught to ignore a real find is worth less than no target at all.
+Containing it needs a decision about what the application shows for a message
+that did not parse, which is why #277 carries the design options rather than a
+patch. Until that lands, a red `parse_message` leg means #277, not a
+regression you introduced.
+
+**The scheduled job is paused.** `.github/workflows/fuzz.yml` is
+`workflow_dispatch`-only, for the reason `ci.yml` and `bench.yml` are: a
+weekly run spends this private repository's limited free minutes whether it
+finds anything or not. Uncomment its `schedule` when the repo goes public.
+Until then, running it by hand — or locally — is what happens.
 
 ## Logging & privacy
 

@@ -1,0 +1,13 @@
+# libFuzzer needs nightly; the rest of the repository needs the pin in the
+# root `rust-toolchain.toml` and must not get nightly by accident. A directory
+# of its own with a toolchain file of its own is how those two coexist:
+# `cargo fuzz run` inside `fuzz/` gets this, everything else gets 1.98.0.
+#
+# An exact dated nightly rather than the `nightly` channel, for the reason the
+# root file gives about `stable`: a floating channel makes the compiler change
+# under the project look like weather instead of like a commit. A fuzz find
+# that reproduces on one nightly and not the next is a day nobody gets back.
+[toolchain]
+channel = "nightly-2026-08-24"
+profile = "minimal"
+components = ["rustfmt", "rust-src"]

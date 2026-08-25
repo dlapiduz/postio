@@ -1,0 +1,65 @@
+# The fuzz targets: hostile input, on purpose.
+#
+# Its own workspace, and excluded from the root one, for two reasons. libFuzzer
+# needs a nightly compiler and `-Z sanitizer`, which the pinned stable
+# toolchain in `rust-toolchain.toml` deliberately does not offer; and the
+# instrumented build is expensive enough that it must cost `cargo test
+# --workspace` nothing. Nobody building Postio builds this.
+#
+# See docs/engineering-notes.md, "Fuzzing the hostile-input pipeline", for how
+# to run these and how to triage a find.
+[package]
+name = "postio-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+postio-model = { path = "../crates/postio-model" }
+postio-body = { path = "../crates/postio-body" }
+postio-search = { path = "../crates/postio-search" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# Only the property tests read the `.eml` corpus; the fuzz binaries are built
+# without dev-dependencies, so `test-corpus` stays out of their graph and the
+# instrumented build does not carry 39 embedded fixtures it never looks at.
+[dev-dependencies]
+postio-model = { path = "../crates/postio-model", features = ["test-corpus"] }
+
+# The properties every target asserts, kept out of the targets themselves so
+# they can be unit-tested. A fuzz target is unusually hard to test — it only
+# runs under libFuzzer — so the checkers it calls are ordinary functions with
+# ordinary tests, and the target is the thin part.
+[lib]
+name = "postio_fuzz"
+path = "src/lib.rs"
+test = true
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_message"
+path = "fuzz_targets/parse_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sanitize_html"
+path = "fuzz_targets/sanitize_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_query"
+path = "fuzz_targets/parse_query.rs"
+test = false
+doc = false
+bench = false
