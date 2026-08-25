@@ -1246,9 +1246,14 @@ Consequences, in rough order of how badly they bite:
   against a library your change never reached.
 - It is a *race*, so it is intermittent. Re-running often "fixes" it, which is
   the worst possible property — it trains you to re-run instead of to look.
-- `scripts/issue-land.sh` shares the target directory by default
+- `scripts/issue-land.sh` used to share the target directory by default
   (`export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$MAIN_CHECKOUT/target}"`), so
-  the landing gates are exposed to it too.
+  the landing gates — the one run a merge is staked on — were exposed to it
+  too. #253 removed that default: the script now builds in the calling
+  worktree's own `target/` and only honours `CARGO_TARGET_DIR` when a caller
+  has genuinely set one. `scripts/test-issue-land-target-dir.py` holds it
+  there, by building a real crate through `--gates-only` and looking at where
+  the artifacts landed.
 
 What to do, until #76 settles it properly:
 
@@ -1263,10 +1268,19 @@ What to do, until #76 settles it properly:
   directory of your own: `CARGO_TARGET_DIR=$PWD/target-verify cargo test …`.
   It costs one full build of the third-party crates and nothing after that.
 
-CLAUDE.md and the `/issue` skill both recommend
+CLAUDE.md and the `/issue` skill used to recommend
 `export CARGO_TARGET_DIR=~/src/postio/target` to keep the GTK and WebKit
-builds warm. That advice is still right about the cost it is avoiding — it
-just is not free, and this is the bill.
+builds warm. That advice was right about the cost it was avoiding — it just
+was not free, and the above is the bill. #178 settled it the other way:
+every worktree gets its own `target/`, and the ~400 third-party crates stay
+warm through `export RUSTC_WRAPPER=sccache` instead, which keys on exact
+compiler inputs and so cannot produce this confusion at all.
+
+The lesson generalises past cargo: when a fix removes a shared resource,
+grep for the places that *default* to it, not just the places that name it.
+#178 changed both instruction documents and left `issue-land.sh`'s default
+in place for #253 to find — and a default is worse than an instruction,
+because nobody has to read it for it to fire.
 
 **"A single cargo invocation is safe" (above) is about the target directory,
 not the source tree — a long build run directly in the shared checkout can
