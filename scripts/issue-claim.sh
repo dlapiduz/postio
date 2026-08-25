@@ -144,6 +144,10 @@ while IFS=$'\t' read -r NUM TITLE; do
     else
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" origin/main
     fi
+    # .cargo/config.toml points TMPDIR at target/tmp (relative), and nothing
+    # else creates it in a fresh worktree -- without this, the first
+    # tempfile::tempdir() in a test fails with NotFound (#178, #219).
+    mkdir -p "$TREE/target/tmp"
 
     gh issue edit "$NUM" --add-assignee @me --add-label in-progress >/dev/null
 
@@ -151,7 +155,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     echo
     echo "  tree:   $TREE"
     echo "  branch: $BRANCH"
-    echo "  target: shared with the main checkout (deps stay warm)"
+    echo "  target: this worktree's own; export RUSTC_WRAPPER=sccache (deps come from the machine-wide cache)"
     echo
     echo "Work in that directory from here on:  cd $TREE"
     echo "Land it with:                         scripts/issue-land.sh"

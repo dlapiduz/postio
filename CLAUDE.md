@@ -65,10 +65,10 @@ the defaults above are what they are:
 - **`cargo fmt` was the single most-run gate.** It is not verification -- it is
   a formatter. Run it once before you commit, not after every edit.
 - **`cargo test --workspace` compiles and runs all nine crates, including GTK.**
-  With several sessions active it also serialises on the shared target
-  directory, so a habitual workspace test is the largest wall-clock cost in the
-  build. Verify your own crate; the periodic full-suite run described in **CI
-  is paused** is what proves the workspace while per-PR CI is off.
+  It links ~25 GTK-and-WebKit test binaries, which makes a habitual workspace
+  test the largest wall-clock cost in the build even with warm caches. Verify
+  your own crate; the periodic full-suite run described in **CI is paused**
+  is what proves the workspace while per-PR CI is off.
 
 Always pass `--no-fail-fast` to a workspace test. Plain `cargo test` aborts
 remaining targets after the first failure, so one broken crate hides a thousand
@@ -494,7 +494,7 @@ own, land it as a PR, take the next one.
 ```bash
 scripts/issue-claim.sh                  # next ready issue, highest priority first
 cd ~/src/postio-worktrees/issue-<n>
-export CARGO_TARGET_DIR=~/src/postio/target   # keeps GTK and WebKit warm
+export RUSTC_WRAPPER=sccache   # one machine-wide compile cache; see below
 # ... write the failing test, then the code ...
 scripts/issue-land.sh -m "feat(gtk): ..."     # gates, commit, push, PR, merge
 scripts/issue-release.sh <n>            # remove the worktree
@@ -666,8 +666,21 @@ one piece of work rather than a handoff.
 
 Three things are still shared, and still bite:
 
-- **One cargo target directory.** Builds serialise on it rather than running in
-  parallel. That is contention, not breakage. `Cargo.lock` churn is expected.
+- **Target directories are per worktree now (#178).** Sharing one
+  `CARGO_TARGET_DIR` was the advice here for a long time, and it turned out
+  to compile one worktree's crate against another's: a type error in a file
+  that is visibly correct, and a test binary linked against a sibling's
+  library (#76). Let cargo default to the worktree's own `target/` — the
+  claim script already creates `target/tmp` there, which `.cargo/config.toml`
+  points TMPDIR at — and set `export RUSTC_WRAPPER=sccache`, so the ~400
+  third-party crates still compile once per *machine* rather than once per
+  worktree. sccache keys on exact compiler inputs, which makes it immune to
+  the very confusion sharing caused. Missing on a fresh box:
+  `mise use -g sccache`. The first build in a new worktree pays workspace
+  crates and linking only; never point a worktree at the main checkout's
+  target again. That legacy directory stays for the sessions still on it and
+  for the main checkout itself; the maintainer reclaims its disk once the
+  tree is quiet. `Cargo.lock` churn is still expected.
 - **One machine.** Four concurrent builds saturate eight cores; `.cargo/config.toml`
   pins `jobs = 2` for that reason. Never run `scripts/run-isolated.sh` while
   others are building — it links `--release` in a target directory of its own,
