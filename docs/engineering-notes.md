@@ -195,6 +195,49 @@ and `postio-app`; `postio-index` owns `rusqlite` and the FTS5 executor.
 
 ## GTK & UI gotchas
 
+**To assert on what a widget *draws*, wait for frames and then wait for the
+pixels to stop moving.** Neither half is optional, and #90 spent two attempts
+learning it.
+
+`pump()` is not a wait — `MainContext::iteration(false)` returns immediately
+when nothing is pending, so a pump loop can spin its whole budget without the
+frame clock ticking once. A CSS state change (focus, hover, a class added)
+reaches the pixels only through a frame, so a test that pumps and then
+snapshots is sampling whichever side of that frame it landed on. Count real
+frames with a tick callback instead; `gtk_focus_visible.rs::frames` is the
+worked example.
+
+Counting frames is still not enough. A fixed budget is a guess that holds
+until the machine is loaded, and the symptom is nasty: the first focus test
+gave **796, 796, 796, 0, 0** changed pixels across five runs of one build —
+never a value in between. Binary, not partial, which is worth knowing because
+it rules out every explanation about thresholds, clipped outlines or colours
+being too subtle, and points at ordering. Sample repeatedly until two
+consecutive renders agree, then compare.
+
+Keep stability as the *precondition* and never as the assertion. Waiting for
+"the pixels differ from before" would be waiting for the thing under test —
+the exact way an await-for-condition test quietly becomes one that cannot
+fail. Settle, then assert.
+
+**`has_focus()` is false on a focused widget in a headless window.** GTK gates
+`has-focus` on the toplevel being *active*, and a headless window never is, so
+it reads false on a row GTK has put in `FOCUSED` state and is drawing the ring
+for. It fails before any rendering happens and reads exactly like "focus never
+landed", which cost an hour. Ask the question the CSS asks:
+
+```rust
+widget.state_flags().contains(gtk::StateFlags::FOCUSED)
+```
+
+**A control worth keeping for pixel tests.** Before believing a render
+comparison that reports no change, push a deliberately loud override through a
+`GtkCssProvider` — a background colour plus a fat outline. If that reports the
+whole surface changed and the real rule reports nothing, the harness works and
+the finding is real. If the loud one reports nothing either, the harness is
+broken and the finding is not.
+
+
 **`AdwWindow` draws no titlebar of its own.** `set_content(widget)` on an
 `adw::Window` gives a window with no title, no close button and nothing to
 drag it by — a stray rectangle rather than a window. The content has to
