@@ -559,11 +559,12 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
     let (engine, database, report, events, backend) = engine_with_backend();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     let message = queue_a_flag_change(&database, &report, inbox.id);
-    // Twice: the engine asks `capabilities` first — the cheap question that
-    // answers from a session already open — and only dials when that says
-    // there is none. Both have to fail for there to be no session at all.
-    backend.inject(Fault::AuthFailed);
-    backend.inject_after(1, Fault::AuthFailed);
+    // Persistent, for the same reason as
+    // `a_refused_password_blocks_and_a_new_one_unblocks`: the running
+    // engine's own calls interleave with drain's, so counted faults land on
+    // the wrong call under load (#210). A server refusing credentials
+    // refuses everyone.
+    backend.fail_all(Fault::AuthFailed);
 
     let error = engine
         .drain()
@@ -602,8 +603,11 @@ async fn a_refused_password_blocks_and_a_new_one_unblocks() {
     // it until someone says the credentials have changed. That is the one
     // thing `retry_now` is for.
     let (engine, _database, _report, events, backend) = engine_with_backend();
-    backend.inject(Fault::AuthFailed);
-    backend.inject_after(1, Fault::AuthFailed);
+    // Persistent, not positional: the engine's own watcher and supervisor
+    // also call this backend on their own schedule, so a fault aimed at "the
+    // next call" lands on the wrong one under load (#210). The server
+    // refusing authentication refuses it to whoever asks.
+    backend.fail_all(Fault::AuthFailed);
 
     engine
         .drain()
@@ -627,7 +631,9 @@ async fn a_refused_password_blocks_and_a_new_one_unblocks() {
         "the status line was not told"
     );
 
-    // A new password, and the link is worth trying again.
+    // A new password — the right one this time — and the link is worth
+    // trying again.
+    backend.clear_faults();
     let moved = engine.retry_now().await.expect("the engine answers");
     assert!(
         !matches!(moved, Link::Blocked(_)),
