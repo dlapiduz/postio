@@ -1,0 +1,1 @@
+before:2026-01-01 after:2025-06-30 larger:10M

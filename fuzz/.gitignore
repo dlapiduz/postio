@@ -1,0 +1,9 @@
+# libFuzzer's working state, none of which belongs in git.
+#
+# `corpus/` is generated: `scripts/fuzz-seed.sh` fills it from the `.eml`
+# corpus and from `seeds/`, and libFuzzer then grows it with whatever it
+# discovers. The seeds are tracked; the grown corpus is not.
+corpus/
+artifacts/
+coverage/
+target/
