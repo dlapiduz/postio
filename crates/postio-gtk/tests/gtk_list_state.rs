@@ -73,7 +73,14 @@ fn offline_becomes_a_banner_over_rows_and_a_full_plate_over_none() {
     assert!(view.vexpands());
 
     // ── Failing behaves the same way as Offline ───────────────────────────
-    view.set_status(status(ConnectionState::Failing), 12, 4000, 0);
+    view.set_status(
+        status(ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        }),
+        12,
+        4000,
+        0,
+    );
     settle();
     assert!(view.has_css_class("postio-liststate-banner"));
 

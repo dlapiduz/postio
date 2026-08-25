@@ -1731,24 +1731,46 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
         });
         return;
     }
-    let connection = match status {
+    parts.events.emit(Event::ConnectionChanged {
+        account: parts.account,
+        state: connection_of(status),
+    });
+    // The typed category rides on the state; the prose travels beside it,
+    // which is what the status line reads.
+    if let SyncStatus::Error { reason, .. } = status {
+        parts.events.emit(Event::Error {
+            message: reason.clone(),
+        });
+    }
+}
+
+/// The frontend's summary of where an account stands.
+///
+/// One function rather than two inline matches, because a link change and a
+/// sync pass must agree — and because the `Failing` reason (ADR 0005 Q10) is
+/// a mapping worth testing on its own. `needs_credentials` is how
+/// `postio-sync` distinguishes its two blockers: a refused credential is
+/// `Auth` (the user signs in again; the blocked link never retries on a
+/// timer), and everything else a retry cannot fix is `Config` (the user
+/// edits a setting). `Network` and `Server` are reserved: transient trouble
+/// is `Connecting` while the backoff works, and a per-operation server
+/// failure belongs to the operation queue, not the link.
+fn connection_of(status: &SyncStatus) -> postio_core::ConnectionState {
+    match status {
         SyncStatus::Offline => postio_core::ConnectionState::Offline,
         SyncStatus::Connecting => postio_core::ConnectionState::Connecting,
         SyncStatus::Idle { .. } | SyncStatus::Syncing { .. } => {
             postio_core::ConnectionState::Online
         }
-        SyncStatus::Error { .. } => postio_core::ConnectionState::Failing,
-    };
-    parts.events.emit(Event::ConnectionChanged {
-        account: parts.account,
-        state: connection,
-    });
-    // `ConnectionState::Failing` carries no reason of its own, deliberately.
-    // The reason travels beside it, which is what the status line reads.
-    if let SyncStatus::Error { reason, .. } = status {
-        parts.events.emit(Event::Error {
-            message: reason.clone(),
-        });
+        SyncStatus::Error {
+            needs_credentials, ..
+        } => postio_core::ConnectionState::Failing {
+            reason: if *needs_credentials {
+                postio_core::FailureReason::Auth
+            } else {
+                postio_core::FailureReason::Config
+            },
+        },
     }
 }
 
@@ -1771,20 +1793,12 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
         "connection state changed"
     );
     let status = state.status.borrow_mut().on_link(&link);
-    let connection = match &status {
-        SyncStatus::Offline => postio_core::ConnectionState::Offline,
-        SyncStatus::Connecting => postio_core::ConnectionState::Connecting,
-        SyncStatus::Idle { .. } | SyncStatus::Syncing { .. } => {
-            postio_core::ConnectionState::Online
-        }
-        SyncStatus::Error { .. } => postio_core::ConnectionState::Failing,
-    };
     parts.events.emit(Event::ConnectionChanged {
         account: parts.account,
-        state: connection,
+        state: connection_of(&status),
     });
-    // `ConnectionState::Failing` carries no reason of its own, deliberately.
-    // The reason travels beside it, which is what the status line reads.
+    // The typed category rides on the state; the prose travels beside it,
+    // which is what the status line reads.
     if let SyncStatus::Error { reason, .. } = &status {
         tracing::error!(
             reason = %postio_model::address::redact_addresses(reason),
@@ -1854,6 +1868,43 @@ fn with_connection<T>(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_refused_credential_fails_as_auth_and_anything_else_as_config() {
+        // ADR 0005 Q10: the reason is what the *user* can do. postio-sync's
+        // blocked link tells its two cases apart with `needs_credentials`,
+        // and both must surface typed rather than as prose to parse.
+        let auth = super::connection_of(&postio_sync::SyncStatus::Error {
+            reason: "the server refused the password".into(),
+            needs_credentials: true,
+        });
+        let config = super::connection_of(&postio_sync::SyncStatus::Error {
+            reason: "certificate does not verify".into(),
+            needs_credentials: false,
+        });
+
+        assert_eq!(
+            auth,
+            postio_core::ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth
+            }
+        );
+        assert_eq!(
+            config,
+            postio_core::ConnectionState::Failing {
+                reason: postio_core::FailureReason::Config
+            }
+        );
+    }
+
+    #[test]
+    fn transient_trouble_is_connecting_not_failing() {
+        // Backoff that will retry on its own is not a person-shaped problem.
+        assert_eq!(
+            super::connection_of(&postio_sync::SyncStatus::Connecting),
+            postio_core::ConnectionState::Connecting
+        );
+    }
     use super::*;
     use postio_core::bridge::event_channel;
 

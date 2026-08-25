@@ -141,7 +141,9 @@ fn the_sidebar_lists_folders_and_says_where_sync_stands() {
     assert!(!status_labels(&sidebar)[0].has_css_class("error"));
 
     sidebar.set_status(SyncStatus {
-        state: ConnectionState::Failing,
+        state: ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        },
         last_sync: now.checked_sub(Duration::from_secs(12)),
         detail: Some("app-specific password rejected".into()),
         ..SyncStatus::default()

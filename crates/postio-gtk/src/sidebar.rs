@@ -93,7 +93,7 @@ impl SyncStatus {
         match self.state {
             ConnectionState::Offline => "offline".to_string(),
             ConnectionState::Connecting => "connecting".to_string(),
-            ConnectionState::Failing => "error".to_string(),
+            ConnectionState::Failing { .. } => "error".to_string(),
             ConnectionState::Online if self.syncing().is_some() => "syncing".to_string(),
             // The list is complete and the bodies are not. Its own word,
             // because "syncing" already means the list and "idle" was the
@@ -145,7 +145,7 @@ impl SyncStatus {
     /// The reason wins. "last sync 4h" is not what someone needs to read when
     /// the password has expired.
     fn detail_line(&self, now: Instant) -> String {
-        if self.state == ConnectionState::Failing
+        if matches!(self.state, ConnectionState::Failing { .. })
             && let Some(detail) = &self.detail
         {
             return detail.clone();
@@ -583,7 +583,7 @@ impl Sidebar {
         set_class(
             &imp.status_state,
             "error",
-            status.state == ConnectionState::Failing,
+            matches!(status.state, ConnectionState::Failing { .. }),
         );
 
         // Re-arm at the granularity the line is actually showing, so an age in
@@ -972,7 +972,14 @@ mod tests {
             "connecting · imap"
         );
         assert_eq!(at(ConnectionState::Online).lines(now).0, "idle · imap");
-        assert_eq!(at(ConnectionState::Failing).lines(now).0, "error · imap");
+        assert_eq!(
+            at(ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth
+            })
+            .lines(now)
+            .0,
+            "error · imap"
+        );
 
         // Offline still says when it last worked: that is the useful half.
         assert_eq!(at(ConnectionState::Offline).lines(now).1, "last sync 1m");
@@ -1138,7 +1145,9 @@ mod tests {
         // fetched before it broke is not.
         let now = Instant::now();
         let failing = SyncStatus {
-            state: ConnectionState::Failing,
+            state: ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth,
+            },
             progress: Some((40, 400)),
             detail: Some("the password was refused".into()),
             ..SyncStatus::default()
@@ -1154,7 +1163,9 @@ mod tests {
     fn an_error_says_why_instead_of_when() {
         let now = Instant::now();
         let status = SyncStatus {
-            state: ConnectionState::Failing,
+            state: ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth,
+            },
             last_sync: now.checked_sub(Duration::from_secs(4 * 3600)),
             detail: Some("app-specific password rejected".to_string()),
             ..SyncStatus::default()
