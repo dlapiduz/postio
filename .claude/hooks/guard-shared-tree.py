@@ -139,6 +139,45 @@ RULES: list[tuple[str, str]] = [
     ),
 ]
 
+# Rules that apply in EVERY tree, private worktree included.
+#
+# #130. Every rule in `RULES` is about the shared working tree -- one index,
+# one branch, one target directory -- so a private worktree is exempt from all
+# of them, correctly. A push is not like that. It does not touch the tree at
+# all; it touches the *remote*, which every session shares no matter whose
+# checkout the command was typed in. The worktree exemption was hiding that,
+# and the gap was not the `--force-with-lease` spelling the issue suspected:
+# in the shared checkout both spellings were already refused, and inside a
+# worktree bare `--force` was permitted just as freely.
+#
+# `--force-with-lease` is deliberately absent, and is the whole point of
+# splitting these out. It refuses if the remote holds anything the pusher has
+# not seen, which is the protection the blanket rule is reaching for -- and
+# `scripts/issue-land.sh` rebases onto origin/main before pushing, so the
+# second push of an already-pushed branch is necessarily non-fast-forward.
+# Refusing both spellings would not make the landing flow safe, it would make
+# it impossible. Refusing bare `--force` and permitting the leased form is
+# what makes "rebase, then push again" work without also permitting the
+# spelling that discards whatever landed while you were not looking.
+#
+# It stays refused in the shared checkout, through `RULES` below: `main` is
+# the branch every session commits to, and "nothing landed since I last
+# fetched" is a far weaker promise there than on a branch one session owns.
+REMOTE_RULES: list[tuple[str, str]] = [
+    (
+        r"git\s+push\s+(?:[^|;&\n]*\s)?"
+        r"(?:--force(?!-with-lease)\b|-f\b|--mirror\b|--delete\b)",
+        "Refusing a force push. The remote is shared by every session, in a "
+        "way a private worktree is not -- a bare --force discards whatever "
+        "landed on the branch since you last fetched, and cannot tell that "
+        "from your own rebase. If you rebased your own issue branch and the "
+        "push was rejected as non-fast-forward, that is what "
+        "--force-with-lease is for: it does the same thing and refuses if the "
+        "remote has moved. Anything else -- --mirror, --delete, or a force "
+        "onto a branch you do not own -- needs the user.",
+    ),
+]
+
 # Start of string, or just after a shell command separator.
 ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
 
@@ -388,24 +427,35 @@ def main() -> int:
     destination = cd_destination(command, cwd)
     where = destination if is_worktree(worktrees, destination) else cwd
 
-    if is_worktree(worktrees, where):
-        return 0
-    if project and where and not contains(project, where):
-        return 0
-
     haystack = strip_quoted(strip_heredocs(command))
 
     matched: tuple[str, str] | None = None
-    for pattern, reason in RULES:
+
+    # Checked before the worktree exemption, never after it: these are about
+    # the remote, which a private worktree shares with everybody else. See
+    # REMOTE_RULES.
+    for pattern, reason in REMOTE_RULES:
         if re.search(ANCHOR + pattern, haystack):
             matched = (pattern, reason)
             break
-    else:
-        # Not a pattern rule: the one rule that needs two-part logic, because
-        # whether a rustfmt is safe depends on where its file list came from.
-        why = unscoped_rustfmt(command, haystack)
-        if why:
-            matched = ("unscoped-rustfmt", why)
+
+    if matched is None:
+        if is_worktree(worktrees, where):
+            return 0
+        if project and where and not contains(project, where):
+            return 0
+
+        for pattern, reason in RULES:
+            if re.search(ANCHOR + pattern, haystack):
+                matched = (pattern, reason)
+                break
+        else:
+            # Not a pattern rule: the one rule that needs two-part logic,
+            # because whether a rustfmt is safe depends on where its file list
+            # came from.
+            why = unscoped_rustfmt(command, haystack)
+            if why:
+                matched = ("unscoped-rustfmt", why)
 
     if matched is None:
         return 0
