@@ -66,6 +66,13 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
+/// Presses `key` exactly as the window's own top-level controller would.
+/// `GTK4` gives no supported way to synthesize a real key event, so this
+/// drives the same entry point one would deliver to -- see `postio-14b`.
+fn press(window: &Window, key: gdk::Key) -> bool {
+    window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
+}
+
 #[test]
 fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     let state_dir = std::env::temp_dir().join(format!("postio-parts-open-{}", std::process::id()));
@@ -145,7 +152,7 @@ fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     let panel = window.parts();
     while panel.cursor().map(|node| node.mime) != Some("text/csv".to_owned()) {
         assert!(
-            panel.press(gdk::Key::j),
+            press(&window, gdk::Key::j),
             "walked off the end of the tree before finding the attachment"
         );
     }
@@ -154,7 +161,7 @@ fn opening_and_open_with_ing_a_part_reach_the_desktop() {
 
     // ── `Ret`: connect_open ──────────────────────────────────────────────
     assert!(!saved.exists(), "nothing should be there before Ret");
-    assert!(panel.press(gdk::Key::Return));
+    assert!(press(&window, gdk::Key::Return));
     assert!(
         settle_until(|| saved.exists()),
         "pressing Ret in the parts panel never produced a file. Every layer \
@@ -169,7 +176,7 @@ fn opening_and_open_with_ing_a_part_reach_the_desktop() {
 
     // ── `x`: connect_external, independently of `Ret` ────────────────────
     std::fs::remove_file(&saved).expect("the fixture cleans up its own file");
-    assert!(panel.press(gdk::Key::x));
+    assert!(press(&window, gdk::Key::x));
     assert!(
         settle_until(|| saved.exists()),
         "pressing x (\"Open with…\") in the parts panel never produced a \

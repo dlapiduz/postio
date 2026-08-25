@@ -1449,6 +1449,23 @@ file — WAL behaviour... because an in-memory database has no journal"); the
 part worth remembering is that "about the file" includes any test running a
 concurrent writer, not only tests that reopen or inspect the file directly.
 
+**A reader test with no `XDG_STATE_HOME` override reads and writes the real
+machine's remote-image allow list.** `Reader::new` calls
+`RemoteImageAllowList::load()`/`::path()`, which resolve through
+`glib::user_state_dir()` — the actual `$XDG_STATE_HOME` of whatever process
+runs the test, not a scratch directory, unless the test sets one before
+`adw::init()` the way `gtk_composer_recipients.rs` does. `gtk_reading_pane.rs`
+does not, so a sender address it sends through the banner's "always allow"
+path — or one another test or session left `true` in
+`~/.local/state/postio/remote-images.ini` on this shared machine — makes
+`the_reading_pane_shows_a_message_and_yields_it_to_the_composer` fail with
+"the reader held a remote image back and the panel never heard about it": the
+sender is already on the (real, stale) allow list, so nothing gets blocked
+and the count is 0. The fix in the moment is deleting that file; the fix in
+the code is giving this test the same `XDG_STATE_HOME` override the others
+already use, which `postio-14b` did not do because the wiring under test was
+someone else's, landed mid-rebase.
+
 ## Logging & privacy
 
 **`Zeroizing<String>` protects the password; the buffers around it are where
