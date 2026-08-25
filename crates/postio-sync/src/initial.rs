@@ -53,7 +53,7 @@ use postio_model::{Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::drain::SyncError;
 use postio_imap::cancel::CancelToken;
@@ -266,8 +266,20 @@ pub(crate) async fn enumerate(
         // nothing to release, and leaves exactly one commit per batch. The
         // durability story is unchanged: a batch was already the unit an
         // interrupted pass resumed from.
-        let batch = connection
-            .unchecked_transaction()
+        //
+        // IMMEDIATE, not DEFERRED, and this is the load-bearing part (#79).
+        // The first statement below is a SELECT, so a deferred transaction
+        // would be holding a *read* lock by the time it wrote and would have
+        // to promote — and SQLite refuses to make a promotion wait, because
+        // blocking a connection that already holds a read lock could deadlock
+        // against the writer it is waiting for. It returns SQLITE_BUSY without
+        // invoking the busy handler at all, so `busy_timeout` never gets a
+        // say. The other writer is not another sync pass (the engine is
+        // single-threaded and nothing awaits between BEGIN and COMMIT) but the
+        // UI thread, which writes local-first on every flag, archive and draft
+        // autosave through this same pool. Taking the write lock up front is
+        // what puts this back inside the five-second timeout.
+        let batch = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
             .map_err(postio_storage::Error::from)?;
         let connection: &Connection = &batch;
 

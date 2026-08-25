@@ -17,11 +17,12 @@
 //!   because "already gone" is the expected outcome of a retried operation.
 //! * **A write that spans tables runs in one transaction.** An account and its
 //!   identities, a mailbox and its sync state: never half of one. Repositories
-//!   open that transaction as a [`Scope`], which is a `SAVEPOINT` rather than a
-//!   `BEGIN` — so the same call also composes inside a transaction the *caller*
-//!   opened. The sync engine depends on that: the messages it fetched and the
-//!   sync state describing them have to commit together, and they are written
-//!   by two different repositories.
+//!   open that transaction as a [`Scope`], which becomes a `SAVEPOINT` when it
+//!   is nested — so the same call also composes inside a transaction the
+//!   *caller* opened. The sync engine depends on that: the messages it fetched
+//!   and the sync state describing them have to commit together, and they are
+//!   written by two different repositories. An outermost `Scope` is a
+//!   `BEGIN IMMEDIATE` instead, which is not an optimisation — see [`Scope`].
 //! * **Timestamps are integer milliseconds, UTC**, and enums are stored as the
 //!   `as_str` spelling the model documents, which the schema's `CHECK`
 //!   constraints then enforce.
@@ -58,23 +59,51 @@ use rusqlite::Connection;
 
 use crate::error::{Error, Result};
 
-/// An atomic write scope: a `SAVEPOINT` that rolls back unless it is committed.
+/// An atomic write scope that rolls back unless it is committed.
 ///
 /// # Why not `Connection::transaction`
 ///
 /// SQLite has no nested `BEGIN`, so a repository that opens a transaction of
 /// its own cannot be called from inside one — and every mutating action in
 /// Postio is local-first, which means the interesting writes are exactly the
-/// ones that span repositories. A savepoint nests, and behaves like a plain
-/// transaction when there is nothing to nest inside, so one spelling covers
-/// both.
+/// ones that span repositories. A savepoint nests, so one type covers both the
+/// enclosing write and the repository call inside it.
 ///
 /// Dropping without [`Scope::commit`] rolls back, so an early `?` cannot leave
 /// half a write behind.
+///
+/// # The outermost scope is `BEGIN IMMEDIATE`, and that is load-bearing
+///
+/// A bare `SAVEPOINT` outside any transaction *starts* one, and the one it
+/// starts is deferred — it takes no lock until something asks for one. Every
+/// scope in this module then reads before it writes, because that is what a
+/// read-modify-write is: `SyncStateRepository::mutate` loads the state before
+/// saving it, `upsert_batch` looks a UID up before deciding insert or update.
+/// So a deferred scope is holding a *read* lock by the time it writes and has
+/// to promote — and SQLite will not let a promotion wait. Blocking a
+/// connection that already holds a read lock could deadlock against the writer
+/// it would be waiting for, so it returns `SQLITE_BUSY` and deliberately does
+/// not invoke the busy handler, which is the exemption
+/// `sqlite3_busy_handler`'s own documentation describes. `PRAGMA busy_timeout`
+/// (see [`crate::db::PRAGMAS`]) never gets a say and the write fails on the
+/// spot.
+///
+/// Postio always has a second writer — the UI thread, writing local-first on
+/// every flag, archive and draft autosave — so this is not theoretical: issue
+/// #79 found a sync pass losing its very first batch to a `f` keystroke.
+/// Taking the write lock up front, before any read, is what puts these writes
+/// back inside the five-second timeout.
+///
+/// A nested scope stays a plain `SAVEPOINT`: the transaction enclosing it has
+/// already resolved the question, and asking again would be a second `BEGIN`.
+/// Every scope in this module encloses a write, so there is no read-only
+/// caller paying for a write lock it did not need.
 #[derive(Debug)]
 pub(crate) struct Scope<'a> {
     connection: &'a Connection,
     committed: bool,
+    /// Whether this scope began the transaction, and so has to end it.
+    outermost: bool,
 }
 
 /// One name for every scope. SQLite resolves `RELEASE`/`ROLLBACK TO` against
@@ -84,11 +113,26 @@ const SAVEPOINT: &str = "postio_scope";
 
 impl<'a> Scope<'a> {
     /// Opens a scope on `connection`.
+    ///
+    /// Takes the write lock up front when nothing else has already opened a
+    /// transaction on this connection — see the type's own docs for why that
+    /// is not an optimisation.
     pub(crate) fn open(connection: &'a Connection) -> Result<Self> {
-        connection.execute_batch(&format!("SAVEPOINT {SAVEPOINT}"))?;
+        // `is_autocommit` is false exactly when a transaction is already open,
+        // which is what "am I nested" means here — whether the enclosing
+        // transaction came from another `Scope` or from a caller's own
+        // `BEGIN` makes no difference to what this one has to do.
+        let outermost = connection.is_autocommit();
+        let sql = if outermost {
+            "BEGIN IMMEDIATE".to_owned()
+        } else {
+            format!("SAVEPOINT {SAVEPOINT}")
+        };
+        connection.execute_batch(&sql)?;
         Ok(Self {
             connection,
             committed: false,
+            outermost,
         })
     }
 
@@ -98,8 +142,12 @@ impl<'a> Scope<'a> {
     /// is nested, it becomes part of the enclosing scope's fate.
     pub(crate) fn commit(mut self) -> Result<()> {
         self.committed = true;
-        self.connection
-            .execute_batch(&format!("RELEASE {SAVEPOINT}"))?;
+        let sql = if self.outermost {
+            "COMMIT".to_owned()
+        } else {
+            format!("RELEASE {SAVEPOINT}")
+        };
+        self.connection.execute_batch(&sql)?;
         Ok(())
     }
 }
@@ -117,11 +165,14 @@ impl Drop for Scope<'_> {
         if self.committed {
             return;
         }
+        let sql = if self.outermost {
+            "ROLLBACK".to_owned()
+        } else {
+            format!("ROLLBACK TO {SAVEPOINT}; RELEASE {SAVEPOINT}")
+        };
         // Best effort: the caller is already unwinding an error, and a failure
         // to roll back is reported by the next statement on this connection.
-        let _ = self
-            .connection
-            .execute_batch(&format!("ROLLBACK TO {SAVEPOINT}; RELEASE {SAVEPOINT}"));
+        let _ = self.connection.execute_batch(&sql);
     }
 }
 
