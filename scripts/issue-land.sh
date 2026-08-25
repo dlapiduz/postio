@@ -103,6 +103,15 @@ unset RUSTUP_TOOLCHAIN
 echo "--- rustfmt ---"
 cargo fmt --all
 
+# Stage now, before the invariants below rather than after them: this tree
+# is private, so staging is safe this early too. check-no-personal-data.py
+# and three of its neighbours read `git ls-files`, which only sees tracked
+# files -- so a file this session is adding was invisible to them until
+# some later, unrelated branch happened to run the same check once it was
+# already on `main`. That is exactly how #269's PNG got through unscanned,
+# and would have done the same for a real leak. #270.
+git add -A
+
 for crate in $CRATES; do
     [ -d "$TREE/crates/$crate" ] || continue
     echo "--- clippy: $crate ---"
@@ -142,9 +151,7 @@ if [ -n "$(git status --porcelain)" ]; then
         echo "or commit them yourself first." >&2
         exit 2
     fi
-    # Safe here in a way it never is in the shared checkout: this tree belongs
-    # to this agent and nothing else is writing to it.
-    git add -A
+    # Already staged, above -- before the invariants ran rather than here.
     git commit -m "$MSG
 
 Refs: #$ISSUE"
