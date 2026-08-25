@@ -1089,6 +1089,37 @@ async fn idle_returns_empty_when_cancelled() {
     assert!(events.unwrap().is_empty());
 }
 
+/// How many `IDLE` commands the server has logged so far.
+fn idle_armings(server: &TestServer) -> usize {
+    server
+        .commands()
+        .iter()
+        .filter(|command| command.contains("IDLE"))
+        .count()
+}
+
+/// Waits until the server has seen at least `count` `IDLE` arm-ups.
+///
+/// Observed rather than scheduled (#80): the property under test is "the
+/// watcher re-arms before the server's patience runs out", which is a fact
+/// about how many times `IDLE` was sent, not about how much real time
+/// passed. A sleep long enough to outlast the server's limit on a quiet
+/// machine is also long enough to be outlasted *by* the limit on a loaded
+/// one — the two wall-clock budgets blur together under exactly the load
+/// this project's own CLAUDE.md says is ordinary. Waiting for the count
+/// directly means a slow re-arm only makes the test slower, never wrong; the
+/// timeout here is a liveness bound for a genuinely deaf watcher, not a
+/// measurement.
+async fn wait_for_idle_armings(server: &TestServer, count: usize) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while idle_armings(server) < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the watcher never armed IDLE the expected number of times");
+}
+
 #[tokio::test]
 async fn idle_re_arms_before_the_server_gets_impatient() {
     // The failure this guards is silent: a server drops an IDLE that has run
@@ -1096,7 +1127,10 @@ async fn idle_re_arms_before_the_server_gets_impatient() {
     // simply stops appearing.
     let server = TestServer::builder()
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
-        .idle_limit(Duration::from_millis(500))
+        // 50x the refresh interval below, not 5x: the margin is what used to
+        // blur under load, not the property itself (re-arm cadence < server
+        // limit is unchanged either way). #80.
+        .idle_limit(Duration::from_secs(5))
         .start()
         .await;
     let pool = pool_with(
@@ -1112,20 +1146,16 @@ async fn idle_re_arms_before_the_server_gets_impatient() {
     let (events, _) = tokio::join!(
         idle(&pool, "INBOX", Duration::from_secs(5), &token),
         async {
-            // Well past the point where a single IDLE would have been
-            // dropped, and far enough from the refresh interval that a
-            // loaded machine cannot blur the two.
-            tokio::time::sleep(Duration::from_millis(1_200)).await;
+            // Deliver once the watcher has demonstrably re-armed at least
+            // once beyond its first IDLE, rather than sleeping past where
+            // that "should" have happened by now.
+            wait_for_idle_armings(&server, 2).await;
             server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
         }
     );
 
     assert!(!events.unwrap().is_empty(), "the watcher went deaf");
-    let armings = server
-        .commands()
-        .iter()
-        .filter(|command| command.contains("IDLE"))
-        .count();
+    let armings = idle_armings(&server);
     assert!(
         armings > 1,
         "IDLE was armed {armings} times, never re-armed"
