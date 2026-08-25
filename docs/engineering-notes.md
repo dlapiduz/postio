@@ -1678,6 +1678,43 @@ weekly run spends this private repository's limited free minutes whether it
 finds anything or not. Uncomment its `schedule` when the repo goes public.
 Until then, running it by hand — or locally — is what happens.
 
+**A panic your fuzzer finds in a dependency may be a `debug_assert!`, and
+then it is not in the shipped product at all.** #277 was filed as a remote
+denial of service: a malformed multipart panics `mail_parser` inside
+`mime::parse`, which runs on bytes off the socket during sync, before anyone
+opens anything. The panic is real. Measured both ways against
+`mail-parser` 0.11.8, with a 144-byte reproducer:
+
+| build | `debug_assertions` | `mime::parse` |
+|---|---|---|
+| dev, test, CI, fuzz | on | **panics** |
+| release (what ships) | off | returns, recovering nothing usable |
+
+The site is `debug_assert!(false, "Invalid part ID, could not find
+multipart.")` at `parsers/message.rs:485`. `debug_assert!` compiles out
+whenever `debug-assertions` is off, which is the default for
+`[profile.release]` and not overridden here — so the shipped binary never had
+the crash. **cargo-fuzz builds with debug assertions on**, which is why the
+fuzzer found it and why the `parse_message` leg was red.
+
+Two lessons, and the second is the expensive one:
+
+- **Check the panic site before believing the severity.** The line number in
+  the backtrace is enough: open the dependency's source. A `debug_assert!` and
+  a `panic!` read identically in a fuzz report and mean completely different
+  things about what users experience.
+- **A signal that only exists in debug builds cannot drive a user-facing
+  state.** The first plan for #277 was to catch the unwind and show the reader
+  "this message could not be parsed". In release there is no unwind to catch —
+  `mail_parser` returns a thin, ordinary-looking message — so that state would
+  have been unreachable in the only build that ships. What release actually
+  does is show `Absent::Empty`, "genuinely has no text or HTML part", which is
+  false; saying otherwise needs a signal upstream does not give, so the fix
+  stopped at containment.
+
+`catch_unwind` in `parse_inner` is still right regardless: the module documents
+`parse` as infallible, and it has to hold against the next such bug too.
+
 ## Logging & privacy
 
 **`Zeroizing<String>` protects the password; the buffers around it are where

@@ -9,6 +9,21 @@
 //! `None`. A mail client that refuses to show a broken message is worse than one
 //! that shows what arrived.
 //!
+//! That promise is now *enforced* rather than merely asserted. [`mail_parser`]
+//! itself can unwind on malformed input — #277 found a `debug_assert!` in its
+//! multipart walk that a 144-byte message reaches — so `parse_inner` runs it
+//! inside [`std::panic::catch_unwind`] and treats an unwind as "nothing could
+//! be recovered". These bytes arrive from a server during sync, chosen by
+//! whoever sent the mail, so the guarantee has to hold against hostile input
+//! and not only against untidy input.
+//!
+//! What it does **not** do is tell anyone apart from the caller. A message
+//! that could not be parsed is indistinguishable here from one that genuinely
+//! carried no text and no HTML part, because `mail_parser` gives no signal
+//! that survives a release build — its `debug_assert!` compiles out, and what
+//! comes back is a thin but ordinary-looking message. Saying "this did not
+//! parse" on screen needs that signal to exist first; see #277.
+//!
 //! # Why this lives in `postio-model`
 //!
 //! CLAUDE.md keeps this crate free of storage and protocol dependencies, and
@@ -184,13 +199,6 @@ pub fn parse_headers(raw: &[u8]) -> ParsedMessage {
 }
 
 fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
-    let parser = MessageParser::default();
-    let parsed = if headers_only {
-        parser.parse_headers(raw)
-    } else {
-        parser.parse(raw)
-    };
-
     let mut message = ParsedMessage {
         size: raw.len() as u64,
         body_state: if headers_only {
@@ -199,6 +207,41 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             BodyState::Full
         },
         ..ParsedMessage::default()
+    };
+
+    // `mail_parser` can unwind, and this function promises it does not (#277).
+    //
+    // A malformed multipart reaches a `debug_assert!` in `mail-parser`'s part
+    // walk — "Invalid part ID, could not find multipart", `message.rs:485` in
+    // 0.11.8 — and before this guard the unwind went straight out of `parse`.
+    // These bytes come off the socket during sync, before anyone opens
+    // anything, so the input is chosen by whoever sent the mail. A parser
+    // documented infallible has to be infallible against that, and against
+    // whatever the next such bug in a dependency turns out to be.
+    //
+    // `AssertUnwindSafe` is honest here rather than a shrug: nothing crosses
+    // the boundary. The parser is constructed inside the closure, `raw` is a
+    // shared slice this function does not mutate, and on the unwind path
+    // every partial result is dropped and `message` is returned exactly as it
+    // was built above — a true `size`, an empty everything else, which is the
+    // "yields whatever could be recovered" the module docs promise.
+    //
+    // Deliberately silent. Logging it would mean a `tracing` dependency on
+    // the crate the whole workspace waits on to compile, which CLAUDE.md
+    // guards for the reason ADR 0004 Q1 and ADR 0007 give, and the default
+    // panic hook already reports the debug-build case that actually unwinds.
+    // If a release build ever needs this to be observable, that is the moment
+    // to reopen the dependency question, not before.
+    let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let parser = MessageParser::default();
+        if headers_only {
+            parser.parse_headers(raw)
+        } else {
+            parser.parse(raw)
+        }
+    }));
+    let Ok(parsed) = parsed else {
+        return message;
     };
 
     // `None` means not even a header block could be found — an empty buffer, or
