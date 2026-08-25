@@ -85,9 +85,11 @@ pub struct Wiring {
 impl Wiring {
     /// Everything the panes need, over an already-open store.
     ///
-    /// `runtime`, `events` and `commands` come from the `Bridge` in [`run`];
-    /// a test supplies its own, which is the whole point of this being
-    /// constructible from outside.
+    /// `runtime`, `events` and `commands` come from the `Bridge` that
+    /// `postio_app::run` builds at startup; a test supplies its own, which is
+    /// the whole point of this being constructible from outside. Not a link:
+    /// `postio-app` depends on this crate and not the other way round, which
+    /// is the split, and rustdoc cannot resolve upward.
     pub fn new(
         database: Database,
         blobs: BlobStore,
