@@ -1000,17 +1000,60 @@ fn a_fetched_message_becomes_a_domain_message() {
 }
 
 #[test]
+fn a_fetched_message_with_a_body_structure_carries_its_own_content_type() {
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/related",
+        [PartNode::new("1", "text/html", 512)],
+    );
+    let fetched = FetchedMessage {
+        uid: Uid::new(1),
+        uid_validity: UidValidity::new(1),
+        mod_seq: None,
+        flags: FlagSet::new(),
+        internal_date: Utc.with_ymd_and_hms(2026, 8, 20, 9, 31, 0).unwrap(),
+        size: 100,
+        envelope: None,
+        structure: Some(structure),
+    };
+
+    let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
+
+    assert_eq!(message.content_type.as_deref(), Some("multipart/related"));
+}
+
+#[test]
+fn a_fetched_message_with_no_body_structure_has_no_content_type() {
+    let fetched = FetchedMessage {
+        uid: Uid::new(1),
+        uid_validity: UidValidity::new(1),
+        mod_seq: None,
+        flags: FlagSet::new(),
+        internal_date: Utc.with_ymd_and_hms(2026, 8, 20, 9, 31, 0).unwrap(),
+        size: 100,
+        envelope: None,
+        structure: None,
+    };
+
+    let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
+
+    assert_eq!(message.content_type, None);
+}
+
+#[test]
 fn a_body_structure_becomes_attachment_metadata_without_any_bytes() {
-    let structure = postio_imap::backend::BodyStructure::from_parts([
-        PartNode::new("1", "text/plain", 512),
-        PartNode::new("2", "text/html", 2_048),
-        PartNode::new("3", "application/pdf", 91_233)
-            .with_filename("quarterly.pdf")
-            .with_disposition(Disposition::Attachment),
-        PartNode::new("4", "image/png", 8_100)
-            .with_content_id("<logo@example.com>")
-            .with_disposition(Disposition::Inline),
-    ]);
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            PartNode::new("1", "text/plain", 512),
+            PartNode::new("2", "text/html", 2_048),
+            PartNode::new("3", "application/pdf", 91_233)
+                .with_filename("quarterly.pdf")
+                .with_disposition(Disposition::Attachment),
+            PartNode::new("4", "image/png", 8_100)
+                .with_content_id("<logo@example.com>")
+                .with_disposition(Disposition::Inline),
+        ],
+    );
 
     assert_eq!(structure.text_part().map(PartNode::section), Some("1"));
     assert_eq!(structure.html_part().map(PartNode::section), Some("2"));

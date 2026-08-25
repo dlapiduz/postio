@@ -343,13 +343,13 @@ impl Fill {
                 // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
                 // for them costs a row read and never a fetch.
                 let body = crate::compose::load_body_or_reason(connection, &blobs, message);
-                let parts = MessageRepository::new(connection)
+                let (content_type, parts) = MessageRepository::new(connection)
                     .get(message)
                     .ok()
                     .flatten()
-                    .map(|message| message.attachments)
+                    .map(|message| (message.content_type, message.attachments))
                     .unwrap_or_default();
-                Some((body, parts))
+                Some((body, content_type, parts))
             }
         });
         glib::spawn_future_local({
@@ -357,7 +357,7 @@ impl Fill {
             let opened = self.opened.clone();
             let window = window.clone();
             async move {
-                let Ok(Some((body, parts))) = answer.recv().await else {
+                let Ok(Some((body, content_type, parts))) = answer.recv().await else {
                     return;
                 };
                 // Late. The cursor moved while the blob was read, and the
@@ -369,7 +369,7 @@ impl Fill {
                 }
                 match body {
                     crate::compose::Body::Ready(body) => {
-                        let root = root_type(&body, &parts);
+                        let root = root_type(content_type.as_deref(), &body, &parts);
                         window.reader().set_attachments(&root, &parts);
                         *opened.borrow_mut() = Some(Opened { root, parts });
                         window.show_message(&body, sender.as_deref());
@@ -381,7 +381,11 @@ impl Fill {
                         // still say what came with it -- which is worth more
                         // than a blank pane, and is the one part of this
                         // state that is not a wait.
-                        let root = root_type(&postio_model::MessageBody::default(), &parts);
+                        let root = root_type(
+                            content_type.as_deref(),
+                            &postio_model::MessageBody::default(),
+                            &parts,
+                        );
                         window.reader().set_attachments(&root, &parts);
                         *opened.borrow_mut() = Some(Opened { root, parts });
                         window.show_absent(reason);
@@ -405,21 +409,31 @@ struct Opened {
 
 /// The message's own content type — the row the parts tree hangs off.
 ///
-/// # Derived rather than stored, for now
+/// # Read when it is there, derived otherwise
 ///
-/// `BODYSTRUCTURE` says what it is and the sync knows it at fetch time, but
-/// nothing keeps it: `messages` has no content-type column and [`Message`]
-/// has no field for one. So this reconstructs the shape from what *is*
-/// recorded, which is right for the cases the tree actually draws — a message
-/// with parts is `multipart/mixed`, one with two bodies is
+/// `BODYSTRUCTURE` says what it is and `postio-imap` records it in
+/// [`Message::content_type`] at fetch time (`postio-roj4`), so `stored` is
+/// the honest answer whenever a sync has actually filled it in. `stored` is
+/// `None` for a row synced before that column existed and never refetched
+/// since — the composer's own in-progress drafts too — and for those this
+/// falls back to reconstructing a plausible shape from what *is* recorded: a
+/// message with parts is `multipart/mixed`, one with two bodies is
 /// `multipart/alternative`, and one with neither is whichever body it has.
 ///
-/// It can be wrong: a `multipart/related` with inline images reads as
+/// The fallback can be wrong in exactly the case the real value fixes: a
+/// `multipart/related` with inline images has parts, so it reads as
 /// `multipart/mixed` here. That is a label on one row rather than a wrong
-/// tree, and `postio-roj4` records the real fix.
+/// tree, which is why it was P3 rather than a bug.
 ///
-/// [`Message`]: postio_model::Message
-fn root_type(body: &postio_model::MessageBody, parts: &[Attachment]) -> String {
+/// [`Message::content_type`]: postio_model::Message::content_type
+fn root_type(
+    stored: Option<&str>,
+    body: &postio_model::MessageBody,
+    parts: &[Attachment],
+) -> String {
+    if let Some(content_type) = stored {
+        return content_type.to_owned();
+    }
     match (parts.is_empty(), body.text.is_some(), body.html.is_some()) {
         (false, _, _) => "multipart/mixed".to_owned(),
         (true, true, true) => "multipart/alternative".to_owned(),
@@ -759,6 +773,41 @@ mod tests {
     use postio_storage::{BlobStore, Database, test_support};
 
     use super::*;
+
+    #[test]
+    fn root_type_reads_the_stored_content_type_when_there_is_one() {
+        // The case the derivation below gets wrong: a `multipart/related`
+        // carrying inline images has parts, so the old heuristic always read
+        // it as `multipart/mixed`. A stored value settles it outright.
+        assert_eq!(
+            root_type(
+                Some("multipart/related"),
+                &postio_model::MessageBody::default(),
+                &[]
+            ),
+            "multipart/related"
+        );
+    }
+
+    #[test]
+    fn root_type_falls_back_to_derivation_when_nothing_is_stored() {
+        // A row synced before `content_type` existed, or resynced and not
+        // yet refetched -- the reconstruction `postio-roj4` describes.
+        let with_html = postio_model::MessageBody {
+            text: Some("plain".to_owned()),
+            html: Some("<p>html</p>".to_owned()),
+        };
+        assert_eq!(
+            root_type(None, &with_html, &[]),
+            "multipart/alternative",
+            "two bodies and no parts is the alternative case"
+        );
+        assert_eq!(
+            root_type(None, &postio_model::MessageBody::default(), &[]),
+            "text/plain",
+            "neither body present falls back to plain"
+        );
+    }
 
     const BODY: &str = "the bytes that had to travel to get here";
     const ATTACHED: &str = "not a pdf";

@@ -407,7 +407,7 @@ const MESSAGE_COLUMNS: &str = "\
 id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_ids, subject,
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
-raw_blob_id";
+raw_blob_id, content_type";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -1101,7 +1101,7 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
                 draft = ?18, deleted = ?19, has_attachments = ?20, uid = ?21,
                 uid_validity = ?22, mod_seq = ?23, remote_id = ?24, body_state = ?25,
                 flags_dirty = ?26, has_pending_operations = ?27, deleted_locally = ?28,
-                last_synced_at = ?29, raw_blob_id = ?30
+                last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31
           WHERE id = ?1",
         params_from_iter(row_values(id, message)),
     )?;
@@ -1126,9 +1126,9 @@ fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
                                received_at, preview, size, flags, seen, flagged, answered,
                                draft, deleted, has_attachments, uid, uid_validity, mod_seq,
                                remote_id, body_state, flags_dirty, has_pending_operations,
-                               deleted_locally, last_synced_at, raw_blob_id)
+                               deleted_locally, last_synced_at, raw_blob_id, content_type)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
         params_from_iter(row_values(0, message)),
     )?;
     Ok(MessageId::new(connection.last_insert_rowid()))
@@ -1200,6 +1200,7 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
                 .as_ref()
                 .map(|id| id.as_str().to_owned()),
         ),
+        maybe_text(message.content_type.clone()),
     ]
 }
 
@@ -1380,6 +1381,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
             last_synced_at: row.get::<_, Option<i64>>(22)?.map(from_millis),
         },
         raw_blob_id: row.get::<_, Option<String>>(23)?.map(BlobId::new),
+        content_type: row.get(24)?,
     })
 }
 
