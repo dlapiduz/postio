@@ -397,5 +397,5 @@ If a real MCP or AI consumer turns out to need an extension command to be
 dispatchable through `Command::default_for` — that is, to carry a *payload*
 shaped like a built-in's rather than an opaque one — then `ActionId` is the
 wrong split and the extension path needs its own `Command` variant too. Nothing
-here has been built against a real consumer; that is the main weakness of this
-ADR and the reason its status is Proposed.
+here has been built against a real consumer yet; that is the main weakness of
+what shipped.

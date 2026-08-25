@@ -216,7 +216,7 @@ wearing a different hat.
 | A search | A query | Built |
 | A saved search | A query with a name | Schema built, not wired |
 | A virtual folder in the sidebar | A saved search that is pinned | Schema built, not wired |
-| A filter / rule | A saved search plus actions, evaluated on arrival | Not built (`postio-z3b.1`) |
+| A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[filters]` query rather than `[filters]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)) |
 
 `crates/postio-config/src/filters.rs` already implements the schema and names
 it exactly this way — *"`[filters]` — named saved queries"* — with a `pinned`
@@ -304,7 +304,7 @@ the graph of every crate depending on `postio-core` the moment anything turned
 it on — the view layer included. `postio-core` therefore has **no optional
 dependencies at all.**
 
-The macOS frontend bead is deferred indefinitely (`postio-xfm`). The invariant
+The macOS frontend is deferred indefinitely ([#15](https://github.com/dlapiduz/postio/issues/15)). The invariant
 stays regardless: it costs nothing to maintain, and it is what makes the option
 survive.
 
@@ -418,11 +418,19 @@ linked GTK and no headless frontend was possible. [#82](https://github.com/dlapi
 split `postio-session` out and gave it the same CI-enforced rule
 `postio-core` has, which is the part that makes it stay true.
 
-| Gap | Effect | Bead |
+**Also closed:** `postio-plp4`'s two halves and `postio-3o8f`, all from the
+retired bead tracker. The extension vocabulary and correlation ids both landed
+as [ADR 0002](decisions/0002-extensible-command-vocabulary.md) (issue #33) —
+including `CommandSpec.title` staying `&'static str`, with a translated title
+leaked at registration rather than needing `Cow`, which answers what used to
+be `postio-plp4`'s localisation half. The composer's document model is
+[ADR 0004](decisions/0004-composer-document-model.md) ([#30](https://github.com/dlapiduz/postio/issues/30)),
+covered in §13 below. What ADR 0002's own implementation left open is the
+first row of the table that follows.
+
+| Gap | Effect | Issue |
 |---|---|---|
-| `CommandId` is a closed enum; no correlation ids on commands/events | No command can exist without recompiling `postio-core`; a programmatic caller cannot await its own invocation. The wall MCP and AI hit. | `postio-plp4` (P0) |
-| Composer document model undecided | Rich text becomes a per-platform rewrite | `postio-3o8f` (P0) |
-| ~3,400 lines of toolkit-free logic live in `postio-gtk` — keymap, selection, sanitize, quote, tokens | A second frontend must reimplement, fork, or link GTK to borrow them | — |
+| Exactly one `EventStream` — a tracked caller and the window cannot both read it | Blocks the second half of ADR 0002's correlation-id work: an MCP server or other headless consumer cannot sit beside a running window. [ADR 0013](decisions/0013-event-fanout.md) decided the fix (a hub, N subscribers); it is not yet built. | [#176](https://github.com/dlapiduz/postio/issues/176) |
+| ~2,850 lines of toolkit-free logic live in `postio-gtk` — keymap, selection, tokens | A second frontend must reimplement, fork, or link GTK to borrow them. Smaller than it once measured: `postio-body` (ADR 0004) already pulled the sanitizer and the quote folder out. | — |
 | Boundary rules guard two crates, not the graph | Nothing stops `postio-search` re-acquiring `rusqlite` and undoing the index split | — |
-| `CommandSpec.title` is `&'static str` | Localisation is impossible | folded into `postio-plp4` |
-| `first_account()` in `postio-app/src/lib.rs` | Single account, though model/storage/engine are all account-aware. An appropriate MVP cut. | `postio-he2` |
+| `first_account()` in `postio-app/src/lib.rs` | Single account, though model/storage/engine are all account-aware. An appropriate MVP cut. | [#1](https://github.com/dlapiduz/postio/issues/1) |
