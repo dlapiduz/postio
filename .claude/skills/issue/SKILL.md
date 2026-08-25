@@ -60,12 +60,22 @@ work in the backlog; an unlabelled issue has not been triaged as agent-ready.
 `cd` into the worktree and stay there. It is a real checkout on its own branch,
 cut from `origin/main`.
 
-Point cargo at the shared target directory so the 400-odd third-party crates
-(GTK, WebKit — the expensive ones) stay warm instead of rebuilding:
+Let cargo build into this worktree's own `target/`, and keep the 400-odd
+third-party crates (GTK, WebKit — the expensive ones) warm through the
+machine-wide compile cache instead:
 
 ```bash
-export CARGO_TARGET_DIR=~/src/postio/target
+export RUSTC_WRAPPER=sccache    # `mise use -g sccache` if it is not installed
 ```
+
+Check it is there before you export it. `RUSTC_WRAPPER` naming a binary that
+does not exist does not degrade to an ordinary build — cargo fails outright,
+`cargo metadata` included, so even the invariant checks stop working.
+
+This used to say `export CARGO_TARGET_DIR=~/src/postio/target`. Sharing one
+target directory between worktrees compiles one worktree's crate against
+another's — see #178 and `docs/engineering-notes.md`. sccache keys on exact
+compiler inputs, so it is immune to that.
 
 **The parallel-work hazard table in CLAUDE.md does not apply in here.** That
 table exists because sessions shared one tree and one index. This tree is
