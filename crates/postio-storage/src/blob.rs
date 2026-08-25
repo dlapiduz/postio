@@ -111,7 +111,7 @@ impl BlobStore {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`](crate::error::Error::Io) if the directory tree cannot be created.
+    /// [`crate::error::Error::Io`] if the directory tree cannot be created.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         // Named explicitly rather than left to `create_dir_all(&temporary)`

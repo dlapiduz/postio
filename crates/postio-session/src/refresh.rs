@@ -200,6 +200,7 @@ mod tests {
                 reconnect: Default::default(),
                 watch: Default::default(),
                 network: NetworkSource::Ignored,
+                mailbox_roles: Default::default(),
             })
             .expect("the engine starts"),
         );

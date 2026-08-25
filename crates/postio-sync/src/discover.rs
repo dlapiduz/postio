@@ -37,7 +37,7 @@
 //! right place.
 
 use postio_imap::backend::{MailBackend, MailboxFilter, MailboxSummary};
-use postio_model::{AccountId, Mailbox, MailboxId};
+use postio_model::{AccountId, Mailbox, MailboxId, RoleOverrides};
 use postio_storage::repository::MailboxRepository;
 use rusqlite::Connection;
 
@@ -75,9 +75,10 @@ pub async fn discover(
     connection: &Connection,
     backend: &dyn MailBackend,
     account: AccountId,
+    overrides: &RoleOverrides,
 ) -> Result<DiscoveryReport> {
     let listed = backend.list_mailboxes(&MailboxFilter::all()).await?;
-    Ok(reconcile(connection, account, &listed)?)
+    Ok(reconcile(connection, account, &listed, overrides)?)
 }
 
 /// The local half of [`discover`], with the server's answer already in hand.
@@ -89,6 +90,7 @@ pub fn reconcile(
     connection: &Connection,
     account: AccountId,
     listed: &[MailboxSummary],
+    overrides: &RoleOverrides,
 ) -> std::result::Result<DiscoveryReport, postio_storage::Error> {
     let mailboxes = MailboxRepository::new(connection);
     let mut report = DiscoveryReport::default();
@@ -97,7 +99,7 @@ pub fn reconcile(
         match mailboxes.by_path(account, &summary.path)? {
             Some(existing) => {
                 let mut updated = existing.clone();
-                apply(&mut updated, summary);
+                apply(&mut updated, summary, overrides);
                 // Written only when something actually differs: an unchanged
                 // folder tree is the common case on every reconnection, and a
                 // write per folder per reconnect is a write nobody asked for.
@@ -108,7 +110,7 @@ pub fn reconcile(
             }
             None => {
                 let mut mailbox = Mailbox::new(account, &summary.path, summary.delimiter);
-                apply(&mut mailbox, summary);
+                apply(&mut mailbox, summary, overrides);
                 mailboxes.create(&mut mailbox)?;
                 report.added += 1;
             }
@@ -131,12 +133,18 @@ pub fn reconcile(
 /// Counts, sync state and the local id are deliberately untouched: the server's
 /// `LIST` says what folders exist and what they are for, and nothing about what
 /// has been synced out of them.
-fn apply(mailbox: &mut Mailbox, summary: &MailboxSummary) {
+fn apply(mailbox: &mut Mailbox, summary: &MailboxSummary, overrides: &RoleOverrides) {
     let named = Mailbox::new(mailbox.account_id, &summary.path, summary.delimiter);
     mailbox.name = named.name;
     mailbox.path = summary.path.clone();
     mailbox.delimiter = summary.delimiter;
-    mailbox.role = summary.role;
+    // The user's own mapping outranks both tiers the summary already went
+    // through -- see `RoleOverrides`. Resolved here rather than at the IMAP
+    // edge where `MailboxRole::resolve` runs, because that layer parses what
+    // the *server* said and has no business reading a config file. Written
+    // on every reconcile, so a mapping edited between runs takes effect on
+    // the next discovery without anything having to notice it changed.
+    mailbox.role = overrides.resolve(&summary.attributes, &summary.path);
     mailbox.selectable = summary.selectable;
     mailbox.subscribed = summary.subscribed;
 }
