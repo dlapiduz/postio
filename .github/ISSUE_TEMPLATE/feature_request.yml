@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Check [`docs/PRODUCT.md`](../../docs/PRODUCT.md) and the
+        Check [`docs/PRODUCT.md`](https://github.com/dlapiduz/postio/blob/main/docs/PRODUCT.md) and the
         [roadmap](https://github.com/users/dlapiduz/projects/2) first — a
         lot is already decided or deliberately deferred (OAuth,
         multi-platform, AI features), and a request that engages with the
