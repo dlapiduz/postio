@@ -1185,6 +1185,42 @@ cannot move. Its own failure modes are exercised by
 `scripts/test-check-no-gtk-init-in-unit-tests.py`, since the tree is clean and
 a guard on a clean tree passes whether it works or not.
 
+**A test that builds a `Window` reads the developer's own `$XDG_STATE_HOME`,
+and that decides what the test sees.** #215 was reported as "`gtk_reading_pane`
+is red on `main`" — consistently, on every commit and every branch — and the
+report pointed at the headless runner. It was not the runner.
+`Window::reader()` built its `Reader`
+with `Reader::new`, which loads the standing remote-image allow list from
+`$XDG_STATE_HOME/postio/remote-images.ini`. The test renders a body with a
+remote `<img>` from `ada@example.com` and asserts the parts panel hears that
+one reference was held back. On a machine where that sender had an "always
+allow" exception, the body rendered with its images *permitted* — so nothing
+was held back, `set_held_back(0, 0)` hid the badge, and the assertion failed.
+The `connect_rendered` callback the reporter concluded "never arrives" arrived
+every time, carrying `0`, which is why replacing the assertion with a
+ten-second await did not help either.
+
+The signature to recognise: **red for one person on every commit, green for
+everyone else, and a bisect that finds nothing** means the cause is not in the
+tree. Reproduce it by putting the state back rather than by re-running —
+`XDG_STATE_HOME=<scratch> cargo test ...` with the file written by hand took
+this from unexplained to proven in one run.
+
+Two fixes, both on the branch for #215. `Window::set_allowlist_path` points a
+window under test at a scratch file; it must be called before anything asks
+for `reader()`, because the list loads once when the reader is built and stays
+in memory for its life (deliberately — there is never meant to be a second
+opinion about who is allow-listed), and a `debug_assert!` says so.
+`scripts/run-isolated.sh` now exports `XDG_STATE_HOME` alongside
+`XDG_DATA_HOME` and `XDG_CONFIG_HOME`; it had isolated the store and the
+config but not the state, so looking at the demo mailbox and clicking "always
+allow" once wrote a real exception into the real file — the most likely way
+the poisoned entry got there in the first place.
+
+The general rule: `$XDG_STATE_HOME` is not just window geometry. Anything a
+test constructs that reaches it needs a seam, or the suite is asserting about
+the machine.
+
 **`postio_runtime::Engine` does not need a trait in front of it to be
 tested.** A proposal to add one was closed as not-needed after being written
 on a wrong premise. `Engine::spawn` takes
