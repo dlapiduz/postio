@@ -61,7 +61,16 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then echo "[]"; exit 0; fi
-if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then echo "Merged"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+    # Actually move the base, as a real rebase-merge does -- the #312
+    # verification in issue-land.sh checks that the work reached the base, so
+    # a stub that says "Merged" without merging fails that very check. The
+    # base is read the same way the land script reads it.
+    BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
+    git push -q origin "HEAD:refs/heads/$BASE" || exit 1
+    echo "Merged"
+    exit 0
+fi
 exit 0
 """
 

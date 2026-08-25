@@ -133,6 +133,14 @@ def main() -> int:
         (repo / "README.md").write_text("fixture repo\n", encoding="utf-8")
         git("add", "-A", cwd=repo)
         git("commit", "-q", "-m", "init", cwd=repo)
+        # issue-claim.sh refuses a base branch that origin does not carry, so
+        # the fixture needs a real (local, bare) origin with main on it -- the
+        # guard arrived after this test did, and without this the run dies at
+        # the guard instead of exercising blockedBy at all.
+        origin = Path(directory) / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        git("remote", "add", "origin", str(origin), cwd=repo)
+        git("push", "-q", "origin", "main", cwd=repo)
 
         result = run_claim(repo, stub_dir)
 
