@@ -282,6 +282,10 @@ Q4 worth making before its preset schema is written, and it is why this section
 lives in an ADR about accounts: it is the *account type* that decides which
 discovery mechanism applies.
 
+> **Settled:** ADR 0006 Q4 was amended as asked (2026-08-24, #152) — metadata
+> discovery is now a first-class endpoint source, and the hand-carried fields
+> are the offline path.
+
 `rfc8620` is likewise the reason `MailBackend` should stay protocol-agnostic:
 JMAP discovery is already available in a crate Postio depends on, so the day
 JMAP is wanted the missing piece is a backend, not a discovery story.
@@ -621,4 +625,5 @@ one that is wrong.
   results, and every count.
 - [ADR 0006](0006-oauth-and-provider-presets.md) Q4 is worth revisiting before
   its preset schema is written — RFC 8414 metadata can supply the OAuth
-  endpoints the preset row was going to hand-carry (Q7).
+  endpoints the preset row was going to hand-carry (Q7). *Done: Q4 was amended
+  2026-08-24 (#152).*
