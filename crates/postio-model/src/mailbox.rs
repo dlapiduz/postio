@@ -1,5 +1,7 @@
 //! Mailboxes (folders) and their special-use roles.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -141,6 +143,88 @@ impl MailboxRole {
             Self::Flagged => "flagged",
             Self::Regular => "regular",
         }
+    }
+}
+
+/// Folder paths the user has assigned a role to by hand.
+///
+/// A third tier above the two [`MailboxRole::resolve`] already has, and the
+/// one that makes the other two admit they can be wrong. `SPECIAL-USE` covers
+/// servers that advertise it and name-matching covers the spellings Postio has
+/// been taught; neither covers a self-hosted server that advertises nothing
+/// and names its folders in a language nobody added to the list. On that
+/// server every role-driven verb — archive, delete, junk, file as sent —
+/// refuses permanently, and refusing is the honest answer only for as long as
+/// there is no way to say what the folder actually is (#164).
+///
+/// Keyed by the **path the server reports**, delimiters and all, rather than
+/// by the leaf name: two folders can both be called `Old` under different
+/// parents, and a leaf match would silently pick one of them.
+///
+/// The default is empty, and an empty set resolves exactly as
+/// [`MailboxRole::resolve`] does. That is a property worth stating because
+/// every account that never writes `[mailboxes]` goes through this path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleOverrides {
+    /// Path to role. Inverted from the `role = "path"` config writes, because
+    /// resolution asks "what is this folder for", never "where is archive".
+    by_path: BTreeMap<String, MailboxRole>,
+}
+
+impl RoleOverrides {
+    /// Builds a set from `role = path` pairs, as `[mailboxes]` spells them.
+    ///
+    /// One folder per role: the last pair for a role wins, mirroring what a
+    /// TOML table does with a repeated key. Roles are looked up *by role*
+    /// downstream — `by_role(account, Archive)` returns one mailbox — so two
+    /// folders wearing one role is a state nothing can act on.
+    pub fn from_pairs<I, S>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (MailboxRole, S)>,
+        S: Into<String>,
+    {
+        let mut by_role: BTreeMap<MailboxRole, String> = BTreeMap::new();
+        for (role, path) in pairs {
+            by_role.insert(role, path.into());
+        }
+        Self {
+            by_path: by_role
+                .into_iter()
+                .map(|(role, path)| (path, role))
+                .collect(),
+        }
+    }
+
+    /// Whether anything has been overridden at all.
+    pub fn is_empty(&self) -> bool {
+        self.by_path.is_empty()
+    }
+
+    /// The role the user assigned to `path`, if they assigned one.
+    pub fn role_for(&self, path: &str) -> Option<MailboxRole> {
+        self.by_path.get(path).copied()
+    }
+
+    /// The full precedence: **override, then `SPECIAL-USE`, then the name.**
+    ///
+    /// Above `SPECIAL-USE` and not merely above the name guess. A server that
+    /// marks a folder `\Junk` is usually right, and "usually" is exactly what
+    /// an override is for — the user has looked at their own server and
+    /// disagreed, and there is no reading of that in which Postio knows
+    /// better.
+    ///
+    /// One function with three tiers rather than a second code path, which is
+    /// what keeps the precedence stateable in one place. It is called from
+    /// folder reconciliation rather than from the IMAP edge where `resolve`
+    /// runs, because the edge parses what the *server* said and has no
+    /// business reading the user's configuration.
+    pub fn resolve<I, S>(&self, attributes: I, path: &str) -> MailboxRole
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.role_for(path)
+            .unwrap_or_else(|| MailboxRole::resolve(attributes, path))
     }
 }
 
