@@ -14,7 +14,7 @@
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, MailboxId, MessageId, Operation, OperationId, OperationRange, OperationState,
-    OperationTarget,
+    OperationTarget, Uid, UidValidity,
 };
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -49,6 +49,19 @@ pub struct QueuedOperation {
     pub created_at: DateTime<Utc>,
     /// When the row last changed.
     pub updated_at: DateTime<Utc>,
+    /// Where the message sat on the server when this was enqueued.
+    ///
+    /// Snapshotted for message-target rows, because the local half of a Move
+    /// or Delete nulls the live row's coordinates in the same transaction —
+    /// by drain time this row is the only thing that remembers them (#289).
+    /// `None` for rows written before the snapshot existed, for non-message
+    /// targets, and for messages that had never been uploaded; the drainer
+    /// falls back to the live row.
+    pub source_uid: Option<Uid>,
+    /// The generation [`source_uid`](Self::source_uid) was observed under. A
+    /// UID alone is not an identity: under a new generation it names a
+    /// different message.
+    pub source_uid_validity: Option<UidValidity>,
 }
 
 impl QueuedOperation {
@@ -75,7 +88,9 @@ impl QueuedOperation {
 /// # let (account, message) = (AccountId::new(1), MessageId::new(1));
 /// # let (inbox, archive) = (MailboxId::new(1), MailboxId::new(2));
 /// let transaction = connection.transaction()?;
-/// // ... move the message locally ...
+/// // Enqueue FIRST, then perform the local write: a Move or Delete nulls
+/// // the row's server coordinates, and the enqueue is what snapshots them
+/// // while they are still there (#289).
 /// OperationQueueRepository::new(&transaction).enqueue(
 ///     account,
 ///     OperationTarget::Message(message),
@@ -98,7 +113,8 @@ pub struct OperationQueueRepository<'a> {
 
 const COLUMNS: &str = "\
 id, account_id, op_type, target_kind, target_id, mailbox_id, payload, inverse, state,
-attempts, last_error, next_attempt_at, created_at, updated_at";
+attempts, last_error, next_attempt_at, created_at, updated_at, source_uid,
+source_uid_validity";
 
 impl<'a> OperationQueueRepository<'a> {
     /// Borrows a connection.
@@ -127,11 +143,27 @@ impl<'a> OperationQueueRepository<'a> {
         let encoded_inverse = inverse.as_ref().map(encode).transpose()?;
         let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
 
+        // The snapshot has to be read before the caller's local write nulls
+        // it — which is why enqueue comes before the move in every Move and
+        // Delete path (#289). A target that is not a message, or a row that
+        // does not exist, snapshots nothing.
+        let (source_uid, source_uid_validity): (Option<u32>, Option<u32>) = match target {
+            OperationTarget::Message(id) => scope
+                .query_row(
+                    "SELECT uid, uid_validity FROM messages WHERE id = ?1",
+                    [id.get()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap_or((None, None)),
+            _ => (None, None),
+        };
+
         scope.execute(
             "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
                                           mailbox_id, payload, inverse, state, attempts,
-                                          created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)",
+                                          created_at, updated_at, source_uid,
+                                          source_uid_validity)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9, ?10, ?11)",
             params![
                 account_id,
                 operation.op_type(),
@@ -142,6 +174,8 @@ impl<'a> OperationQueueRepository<'a> {
                 encoded_inverse,
                 OperationState::Pending.as_str(),
                 to_millis(at),
+                source_uid,
+                source_uid_validity,
             ],
         )?;
         let id = OperationId::new(scope.last_insert_rowid());
@@ -162,6 +196,8 @@ impl<'a> OperationQueueRepository<'a> {
             next_attempt_at: None,
             created_at: at,
             updated_at: at,
+            source_uid: source_uid.map(Uid::new),
+            source_uid_validity: source_uid_validity.map(UidValidity::new),
         })
     }
 
@@ -214,8 +250,10 @@ impl<'a> OperationQueueRepository<'a> {
         let sql = format!(
             "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
                                           mailbox_id, payload, inverse, state, attempts,
-                                          created_at, updated_at)
-             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7
+                                          created_at, updated_at, source_uid,
+                                          source_uid_validity)
+             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
+                    messages.uid, messages.uid_validity
                FROM messages
               WHERE {predicate}"
         );
@@ -286,8 +324,10 @@ impl<'a> OperationQueueRepository<'a> {
         let sql = format!(
             "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
                                           mailbox_id, payload, inverse, state, attempts,
-                                          created_at, updated_at)
-             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7
+                                          created_at, updated_at, source_uid,
+                                          source_uid_validity)
+             SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
+                    messages.uid, messages.uid_validity
                FROM messages
               WHERE messages.id IN ({})",
             super::messages::placeholders(ids.len(), 8)
@@ -598,5 +638,7 @@ fn read_queued(row: &Row<'_>) -> Result<QueuedOperation> {
         next_attempt_at: row.get::<_, Option<i64>>(11)?.map(from_millis),
         created_at: from_millis(row.get(12)?),
         updated_at: from_millis(row.get(13)?),
+        source_uid: row.get::<_, Option<u32>>(14)?.map(Uid::new),
+        source_uid_validity: row.get::<_, Option<u32>>(15)?.map(UidValidity::new),
     })
 }
