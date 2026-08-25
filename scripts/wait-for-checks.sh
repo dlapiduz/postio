@@ -18,10 +18,16 @@
 #   0  safe to merge -- checks passed, or none were ever due
 #   1  do not merge -- a check failed, or one was due and never appeared
 #
-# Environment (the tests set all three; nobody else should need to):
+# Environment (the tests set these; nobody else should need to):
 #   POSTIO_CHECKS_REGISTER_TIMEOUT  seconds to wait for a due check   (180)
 #   POSTIO_CHECKS_GRACE             seconds to look anyway when none is due (30)
 #   POSTIO_CHECKS_POLL              seconds between polls              (5)
+#   POSTIO_CI_WORKFLOWS_DIR         workflow directory to predict from, in
+#                                   place of this repo's real .github/workflows
+#                                   -- so the self-test exercises this script's
+#                                   own registration/timeout logic against a
+#                                   fixed fixture, not whatever this repo's own
+#                                   CI triggers happen to be enabled today.
 # No `-e`: the predicate below signals "nothing scheduled" with exit 1, and
 # that is an answer, not a failure.
 set -uo pipefail
@@ -33,8 +39,12 @@ REGISTER_TIMEOUT="${POSTIO_CHECKS_REGISTER_TIMEOUT:-180}"
 GRACE="${POSTIO_CHECKS_GRACE:-30}"
 POLL="${POSTIO_CHECKS_POLL:-5}"
 
+CI_EXPECTED_ARGS=(--base main)
+if [ -n "${POSTIO_CI_WORKFLOWS_DIR:-}" ]; then
+    CI_EXPECTED_ARGS+=(--workflows "$POSTIO_CI_WORKFLOWS_DIR")
+fi
 EXPECTED=$(git diff --name-only origin/main...HEAD \
-    | python3 "$HERE/ci-expected-workflows.py" --base main)
+    | python3 "$HERE/ci-expected-workflows.py" "${CI_EXPECTED_ARGS[@]}")
 SCHEDULED=$?
 
 case "$SCHEDULED" in

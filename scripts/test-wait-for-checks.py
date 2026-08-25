@@ -56,6 +56,20 @@ exit 0
 """
 
 
+# A workflow of our own, not this repo's real ci.yml. Reading that file
+# incidentally worked until it stopped having a live `pull_request` trigger
+# (paused 2026-08-25 for private-repo Actions minutes -- see ci.yml) and two
+# cases here silently started testing the wrong branch of the script's logic.
+# A fixture that never changes for operational reasons is what this suite
+# actually needs: CODE schedules a check, PROSE does not, always.
+FIXTURE_CI_YML = """\
+name: CI
+on:
+  pull_request:
+    paths-ignore: ['*.md', 'docs/**']
+"""
+
+
 def run(
     *,
     diff: list[str],
@@ -77,12 +91,17 @@ def run(
         (stub_dir / "watch").write_text("all checks reported\n", encoding="utf-8")
         (stub_dir / "watch_status").write_text(str(watch_status), encoding="utf-8")
 
+        workflows_dir = stub_dir / "workflows"
+        workflows_dir.mkdir()
+        (workflows_dir / "ci.yml").write_text(FIXTURE_CI_YML, encoding="utf-8")
+
         env = dict(os.environ)
         env["PATH"] = f"{bin_dir}:{env['PATH']}"
         env["STUB_DIR"] = str(stub_dir)
         env["POSTIO_CHECKS_GRACE"] = str(grace)
         env["POSTIO_CHECKS_REGISTER_TIMEOUT"] = str(register_timeout)
         env["POSTIO_CHECKS_POLL"] = "1"
+        env["POSTIO_CI_WORKFLOWS_DIR"] = str(workflows_dir)
         return subprocess.run(
             ["bash", str(SCRIPT), "https://example.com/pr/1"],
             capture_output=True,

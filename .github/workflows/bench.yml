@@ -9,9 +9,14 @@ name: Benches
 # Nightly catches a break within a day, which is the right resolution for
 # something no one is blocked on. workflow_dispatch is there for when you have
 # just touched a bench and want to know now.
+#
+# PAUSED 2026-08-25: same reason as ci.yml -- a daily run still spends this
+# private repo's limited free minutes every day, whether anyone benched
+# anything or not. workflow_dispatch-only until the repo is public. Restore
+# by uncommenting the schedule below.
 on:
-  schedule:
-    - cron: "0 6 * * *"
+  # schedule:
+  #   - cron: "0 6 * * *"
   workflow_dispatch:
 
 permissions:
