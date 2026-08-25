@@ -276,7 +276,9 @@ jobs:
             libsqlite3-dev \
             libsecret-1-dev \
             libglib2.0-dev \
-            libpango1.0-dev
+            libpango1.0-dev \
+            mutter \
+            xvfb
 
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
@@ -307,6 +309,50 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Sixty test files in this workspace open with "no display? skip and
+      # return", which is right on a contributor's headless shell and wrong
+      # here: a runner with no display returned early from every one of them
+      # and reported success. The accessibility audit that docs/PRODUCT.md §20
+      # depends on is one of the sixty, so that guarantee went unenforced on
+      # every push until #114. A green tick meaning "nothing ran" is worse
+      # than a red one.
+      #
+      # This gives `.cargo/config.toml`'s runner what it needs rather than
+      # working around it. `scripts/headless-runner.sh` already brings up
+      # `mutter --headless` and is what every local run uses; all it wants is
+      # `mutter` on PATH and an `XDG_RUNTIME_DIR`, neither of which a runner
+      # has by default. Supplying them means CI tests the same Wayland
+      # configuration developers do — against the compositor the application
+      # actually targets — instead of a second, differently-behaved one.
+      #
+      # Xvfb is the backstop, not the plan. A runner has no logind seat and no
+      # session bus, so `mutter --headless` may well refuse to start; the
+      # runner then fails open and execs the test binary unchanged, which
+      # inherits the DISPLAY set here. Belt and braces, because the failure
+      # this is guarding against is silent.
+      #
+      # `gtk_display_required.rs` fails the build if both paths ever stop
+      # working, so the skips cannot come back unnoticed.
+      - name: Give the GTK suites a display
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 &
+          # The socket, not `xdpyinfo`, which lives in x11-utils and would be
+          # a second package to install for one readiness check.
+          for _ in $(seq 1 40); do
+            [ -S /tmp/.X11-unix/X99 ] && break
+            sleep 0.25
+          done
+          [ -S /tmp/.X11-unix/X99 ] \
+            || { echo "::error::Xvfb never came up; the GTK suites would all skip"; exit 1; }
+
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+
+          {
+            echo "DISPLAY=:99"
+            echo "XDG_RUNTIME_DIR=$runtime"
+          } >> "$GITHUB_ENV"
 
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
