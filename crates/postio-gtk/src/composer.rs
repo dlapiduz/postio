@@ -1593,6 +1593,14 @@ impl Composer {
     /// composer opens it is not — so a failed grab is retried once the layout
     /// has run. Not a delay the user can see: it is the same frame the
     /// composer first paints in.
+    ///
+    /// The retry is a tick callback, not an idle: `idle_add_local_once` is not
+    /// ordered against the frame clock that drives the layout pass doing the
+    /// mapping, so the retry can lose that race and leave the keyboard
+    /// nowhere (`postio-43`, the same shape `postio-1ff` turned out to be —
+    /// see `8daa510`). A tick callback runs on the frame clock, so waiting
+    /// two ticks puts the retry strictly after the layout pass; the first
+    /// tick can be the one the mapping happens in.
     fn focus_first(&self) {
         let imp = self.imp();
         let field: gtk::Widget = match first_field(imp.draft.borrow().kind) {
@@ -1600,8 +1608,14 @@ impl Composer {
             Field::Body => imp.body.clone().upcast(),
         };
         if !field.grab_focus() {
-            glib::idle_add_local_once(move || {
+            let ticks = Cell::new(0u8);
+            field.clone().add_tick_callback(move |field, _| {
+                ticks.set(ticks.get() + 1);
+                if ticks.get() < 2 {
+                    return glib::ControlFlow::Continue;
+                }
                 field.grab_focus();
+                glib::ControlFlow::Break
             });
         }
     }
