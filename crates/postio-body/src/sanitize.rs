@@ -127,12 +127,33 @@ fn rewrite_attribute<'u>(
 /// Whether `value` names a remote host rather than something local
 /// (`postio-cid:`, `data:`, or a bare fragment/relative path a sender's
 /// markup left dangling).
+///
+/// The scheme is compared case-insensitively, because that is what it means:
+/// RFC 3986 §3.1 makes schemes case-insensitive and WebKit resolves them that
+/// way. #147's `sanitize_html` fuzz target found this the hard way — a pixel
+/// spelled `HTTPS://` was left in the document and reported as nothing held
+/// back, so the reader fetched it and the badge said zero. Blocking a sender
+/// defeats by holding shift is not blocking.
+///
+/// ASCII case only, deliberately: a scheme is ASCII by grammar, and
+/// `to_lowercase` on attacker-controlled text would allocate for every
+/// attribute in every message to fold characters no scheme can contain.
 fn is_remote(value: &str) -> bool {
     let value = value.trim();
-    value.starts_with("http://")
-        || value.starts_with("https://")
+    ["http://", "https://", "ftp://"]
+        .iter()
+        // `get`, not a slice: an attribute value is attacker-controlled text
+        // and may begin with a multi-byte character, so `value[..8]` panics
+        // when byte 8 lands inside one. The fuzz target found that in this
+        // very function, 71 executions after it was written.
+        .any(|scheme| {
+            value
+                .get(..scheme.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+        })
+        // Protocol-relative: no scheme to fold, and whatever the document was
+        // loaded over is what it would use.
         || value.starts_with("//")
-        || value.starts_with("ftp://")
 }
 
 /// Percent-encode a `Content-ID` for use as a URI's opaque part.
@@ -225,6 +246,58 @@ mod tests {
             RemoteImages::Allowed,
         );
         assert_eq!(out.html, "<p>body</p>");
+    }
+
+    /// #147, found by the `sanitize_html` fuzz target. URL schemes are
+    /// case-insensitive (RFC 3986 §3.1) and WebKit treats them that way, so a
+    /// tracking pixel spelled `HTTPS://` was fetched while Postio reported
+    /// nothing held back. Blocking that a sender defeats by pressing shift is
+    /// not blocking, and this is the promise in PRODUCT.md that nothing leaves
+    /// the machine unasked.
+    #[test]
+    fn a_remote_image_cannot_dodge_blocking_by_changing_case() {
+        for spelling in [
+            "HTTPS://", "hTtps://", "Http://", "HTTP://", "FTP://", "Ftp://",
+        ] {
+            let html = format!(r#"<img src="{spelling}tracker.example.org/o.gif">"#);
+            let out = sanitize_body(&html, RemoteImages::Blocked);
+            assert!(
+                !out.html.contains("tracker.example.org"),
+                "{spelling} survived: {}",
+                out.html
+            );
+            assert_eq!(out.remote_blocked, 1, "{spelling} was not counted");
+        }
+    }
+
+    /// The regression the `sanitize_html` target caught 71 executions after
+    /// the case-insensitivity fix above was written — in the fix itself, not
+    /// in anything older. Comparing a prefix by slicing `value[..8]` panics
+    /// when byte 8 lands inside a multi-byte character, and an attribute value
+    /// is attacker-controlled text that can start with any character at all.
+    #[test]
+    fn a_multibyte_attribute_value_does_not_split_a_character() {
+        for value in ["日本語です", "é", "\u{fffd}\u{fffd}\u{fffd}", "🐟🐟🐟"] {
+            let html = format!(r#"<img src="{value}">"#);
+            // The assertion is that this returns at all.
+            let out = sanitize_body(&html, RemoteImages::Blocked);
+            assert_eq!(out.remote_blocked, 0, "{value} is not remote");
+        }
+    }
+
+    /// The other half: case-folding must not start blocking things that are
+    /// local. `postio-cid:` and `data:` are resolved on this machine.
+    #[test]
+    fn case_folding_does_not_make_a_local_reference_remote() {
+        for local in [
+            "postio-cid:x@example.com",
+            "DATA:image/png;base64,AA==",
+            "#anchor",
+        ] {
+            let html = format!(r#"<img src="{local}">"#);
+            let out = sanitize_body(&html, RemoteImages::Blocked);
+            assert_eq!(out.remote_blocked, 0, "{local} was treated as remote");
+        }
     }
 
     #[test]
