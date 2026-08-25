@@ -126,6 +126,19 @@ pub fn install(
             }
         }
     ));
+
+    // The cursor rested on a message long enough to have been read (#71).
+    //
+    // Through `Window::act`, so it takes the same road every other gesture
+    // does and one seam still carries the lot. The message is named
+    // explicitly rather than left to the selection: the cursor may have moved
+    // on in the moment between the timer firing and this running, and the
+    // message that was read is the one the clock was started for.
+    window.list().connect_dwelled(glib::clone!(
+        #[weak(rename_to = window)]
+        window,
+        move |message| window.act(postio_core::Command::MarkReadOnDwell { message })
+    ));
 }
 
 /// Apply one event to everything on screen.
