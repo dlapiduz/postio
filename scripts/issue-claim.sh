@@ -176,7 +176,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     echo
     echo "  tree:   $TREE"
     echo "  branch: $BRANCH"
-    echo "  target: this worktree's own; export RUSTC_WRAPPER=sccache (deps come from the machine-wide cache)"
+    echo "  target: this worktree's own (deps come from the machine-wide sccache, wired in automatically)"
     echo
     echo "Work in that directory from here on:  cd $TREE"
     echo "Land it with:                         scripts/issue-land.sh"
