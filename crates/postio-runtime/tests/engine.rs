@@ -966,7 +966,20 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
             .expect("save and queue");
     }
 
-    let landed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+    // 60s, not 15s: this failed once for real (#55) at ~1-minute load 18 --
+    // several other sessions each compiling nine crates of rustc at once --
+    // and passed both in isolation and in two full-suite reruns straight
+    // afterward. There is no event on this engine's own stream for "a queued
+    // operation settled" to wait on instead (`announce_drain` only emits on
+    // `needs_resync` or a failure, and adding one to serve this single test
+    // is a bigger change than a flaky assertion warrants); this is a real
+    // SQLite write, a full drain pass and a mock network round trip
+    // competing with a shared machine's CPU, so the budget has to be one a
+    // *quiet* box clears in a fraction of a second and a *loaded* one still
+    // clears within a wait nobody minds. A hung engine still fails this in
+    // moments; 60s only matters when the box is this contended, which is
+    // rare and recoverable by re-running.
+    let landed = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         loop {
             if let Ok(status) = backend.status(&drafts_mailbox.path).await
                 && status.exists > 0
