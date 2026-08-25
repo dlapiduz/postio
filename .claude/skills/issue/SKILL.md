@@ -21,7 +21,39 @@ scripts/issue-claim.sh                      # next ready issue
 scripts/issue-claim.sh --milestone MVP      # scoped to a milestone
 scripts/issue-claim.sh 42                   # a specific issue
 scripts/issue-claim.sh --dry-run            # look before taking
+scripts/issue-claim.sh --base feature/x 42  # cut from an initiative branch
 ```
+
+## Landing somewhere other than `main`
+
+Most work is one issue onto `main` and nothing below applies. An
+**initiative** — several interdependent issues that would leave `main`
+half-migrated if they landed one at a time — gets a branch of its own, and
+`--base` is how a worktree is cut from it.
+
+**You pass `--base` once, to the claim.** It is recorded in the worktree, and
+`issue-land.sh` reads it back: the rebase, the changed-crate list and the PR's
+base all follow it, with no flag repeated. That is deliberate — a flag you
+have to remember on every landing is one you eventually forget, and forgetting
+*this* one merges initiative work straight into `main`, which is the single
+thing the initiative branch exists to prevent.
+
+Two refusals to expect, both of which mean stop rather than retry:
+
+- **A base that is not on `origin`.** Refused by the claim, before anything is
+  taken, so a typo cannot leave a claim behind that locks the issue for every
+  other session.
+- **An open PR whose base disagrees with the recorded one.** `issue-land.sh`
+  will not merge on that mismatch: one of the two is wrong and guessing which
+  lands the work somewhere nobody chose. Retarget the PR, or correct the
+  record.
+
+`main` is still the default, so `scripts/issue-claim.sh` with no `--base`
+behaves exactly as it always has.
+
+**Rebase the initiative branch onto `main` regularly.** `origin/arch/adr-0005-revision`
+is what happens otherwise: 359 commits ahead, 486 behind, effectively dead.
+The tooling will not do it for you.
 
 It takes an issue that is **open, labelled `ready`, unassigned, and not blocked
 by anything still open** — `blockedBy` is a real GitHub field, so this is not a
