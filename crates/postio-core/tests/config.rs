@@ -14,7 +14,17 @@ use postio_core::bridge::event_channel;
 use postio_core::config::{ConfigService, Keymap, SharedConfig};
 use postio_core::{CommandId, Context, Event};
 
-const PATIENCE: Duration = Duration::from_secs(10);
+/// How long a wait on the event stream may go silent before it is called a
+/// hang.
+///
+/// A *liveness* bound, not a latency claim — the waits below are already
+/// event-driven, so this deadline does no measuring; it only turns a genuine
+/// hang into a failure with a name. It is deliberately enormous: at 10
+/// seconds it doubled as a performance budget for inotify delivery plus the
+/// watcher's debounce, and a box with four sessions compiling walked through
+/// it once (#219). The engineering-notes "tests that fail under load"
+/// doctrine is the long form.
+const PATIENCE: Duration = Duration::from_secs(120);
 
 fn bindings(overrides: &[(&str, &str)]) -> KeyBindings {
     let mut keys = KeyBindings::default();
