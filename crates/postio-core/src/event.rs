@@ -32,6 +32,22 @@ pub enum ConnectionState {
 }
 
 /// Something the UI needs to react to.
+///
+/// # Every data variant names its account
+///
+/// A variant that names a message, mailbox or thread also names the
+/// [`AccountId`] it belongs to. With several accounts (ADR 0005 Q11), a
+/// frontend keeping an aggregated view has to decide *whose* data moved
+/// before it can decide whether a repaint concerns the view on screen — and
+/// resolving an id to an account means touching the store, which is the trip
+/// the event exists to save. Emitters always know the account already; a new
+/// data variant carries it from day one.
+///
+/// [`SearchResults`](Self::SearchResults) is the deliberate exception:
+/// results are ranked across whatever scope the query ran in, so a single
+/// account would be wrong in unified scope, and relevance to the view is
+/// decided by the query itself. It gains the scope, not an account, with the
+/// search-scope work (#186).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
     // -- Data ------------------------------------------------------------
@@ -42,16 +58,22 @@ pub enum Event {
     },
     /// A mailbox's message list changed enough that the window must reload.
     MessageListChanged {
+        /// The account the mailbox belongs to.
+        account: AccountId,
         /// The affected mailbox.
         mailbox: MailboxId,
     },
     /// These messages changed in place — flags, labels, read state.
     MessagesChanged {
+        /// The account the messages belong to.
+        account: AccountId,
         /// The affected messages.
         messages: Vec<MessageId>,
     },
     /// These messages left a mailbox: archived, deleted or moved away.
     MessagesRemoved {
+        /// The account the mailbox belongs to.
+        account: AccountId,
         /// The mailbox they left.
         mailbox: MailboxId,
         /// The messages that left it.
@@ -59,6 +81,8 @@ pub enum Event {
     },
     /// New mail arrived — the trigger for a desktop notification.
     NewMail {
+        /// The account it arrived at.
+        account: AccountId,
         /// The mailbox it landed in.
         mailbox: MailboxId,
         /// The newly delivered messages.
@@ -66,11 +90,15 @@ pub enum Event {
     },
     /// A thread gained, lost or re-linked messages after a threading pass.
     ThreadChanged {
+        /// The account the thread belongs to.
+        account: AccountId,
         /// The affected thread.
         thread: ThreadId,
     },
     /// A message body finished loading from the blob store or the server.
     BodyLoaded {
+        /// The account the message belongs to.
+        account: AccountId,
         /// The message whose body is now available.
         message: MessageId,
     },
@@ -268,6 +296,42 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("completed"), "{json}");
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn every_data_variant_names_its_account() {
+        // The rule in the enum's doc comment, machine-checked: a variant that
+        // names data serialises with the account it belongs to. A new data
+        // variant that forgets the field fails here, not in a review.
+        let account = AccountId::new(7);
+        let mailbox = MailboxId::new(1);
+        let message = MessageId::new(2);
+        let thread = ThreadId::new(3);
+        let events = [
+            Event::MailboxesChanged { account },
+            Event::MessageListChanged { account, mailbox },
+            Event::MessagesChanged {
+                account,
+                messages: vec![message],
+            },
+            Event::MessagesRemoved {
+                account,
+                mailbox,
+                messages: vec![message],
+            },
+            Event::NewMail {
+                account,
+                mailbox,
+                messages: vec![message],
+            },
+            Event::ThreadChanged { account, thread },
+            Event::BodyLoaded { account, message },
+        ];
+        for event in events {
+            let json = serde_json::to_string(&event).unwrap();
+            assert!(json.contains("\"account\":7"), "{json}");
+            assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
+        }
     }
 
     #[test]

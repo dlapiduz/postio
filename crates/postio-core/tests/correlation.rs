@@ -35,12 +35,14 @@ fn noisy_bus() -> Dispatcher {
     Dispatcher::builder()
         .on(CommandId::Archive, |invocation| async move {
             invocation.emit(Event::MessagesChanged {
+                account: postio_model::AccountId::new(1),
                 messages: vec![message(1)],
             });
             Ok(())
         })
         .on(CommandId::Refresh, |invocation| async move {
             invocation.emit(Event::MessagesChanged {
+                account: postio_model::AccountId::new(1),
                 messages: vec![message(99)],
             });
             Ok(())
@@ -78,7 +80,7 @@ fn a_caller_can_pick_its_own_events_out_of_an_unrelated_stream() {
         matches!(
             ours.as_slice(),
             [
-                Event::MessagesChanged { messages },
+                Event::MessagesChanged { messages, .. },
                 Event::InvocationFinished {
                     outcome: InvocationOutcome::Completed,
                     ..
@@ -329,6 +331,7 @@ fn work_a_handler_spawns_keeps_reporting_under_the_same_id() {
                 let events = invocation.events();
                 tokio::spawn(async move {
                     events.emit(Event::MessageListChanged {
+                        account: postio_model::AccountId::new(7),
                         mailbox: postio_model::MailboxId::new(7),
                     });
                     counter.fetch_add(1, Ordering::SeqCst);

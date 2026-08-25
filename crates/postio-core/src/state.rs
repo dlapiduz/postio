@@ -533,8 +533,13 @@ impl AppState {
         }
         if self.mailbox != next.mailbox
             && let Some(mailbox) = next.mailbox
+            // A mailbox is only ever selected within an account, so the id
+            // here is the mailbox's owner. The let-chain keeps the diff total:
+            // a state that somehow holds a mailbox with no account emits
+            // nothing rather than inventing one.
+            && let Some(account) = next.account
         {
-            events.push(Event::MessageListChanged { mailbox });
+            events.push(Event::MessageListChanged { account, mailbox });
         }
 
         if self.view != next.view {
