@@ -52,6 +52,9 @@ ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # legitimate upstream addresses.
 SKIP_PATHS = (
     "scripts/check-no-personal-data.py",
+    # Its self-test has to hold a forbidden address to prove this fires on
+    # one, exactly as the check above has to name what it forbids.
+    "scripts/test-check-no-personal-data.py",
     # The copyright line names the holder on purpose.
     "LICENSE",
     # Hook sources and their test fixtures must name what they forbid.

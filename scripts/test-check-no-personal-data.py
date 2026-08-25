@@ -22,6 +22,11 @@ alone would let a real leak through:
   would turn the guard off over exactly the files that describe mailboxes,
   which is why the discriminator is NUL and not decodability.
 
+This file is itself in the check's `SKIP_PATHS`, for the reason the check
+script is: proving the guard fires on a forbidden address means holding one.
+The addresses below are invented and the domain is not reserved on purpose --
+that is the whole point of them.
+
 Usage: scripts/test-check-no-personal-data.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
