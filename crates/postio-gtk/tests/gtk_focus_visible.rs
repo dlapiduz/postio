@@ -94,9 +94,11 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
 /// commonest cause on a developer's machine — and every comparison would then
 /// be between two blank textures, failing for a reason that has nothing to do
 /// with the code. The caller skips instead, loudly.
+///
+/// One sample. Callers want [`settled`], not this.
 fn pixels(window: &Window, widget: &impl IsA<gtk::Widget>) -> Option<(Vec<u8>, usize, usize)> {
     let window = window.clone().upcast::<gtk::Window>();
-    if !frames(&window, 3) {
+    if !frames(&window, 2) {
         return None;
     }
     let widget = widget.as_ref();
@@ -115,6 +117,48 @@ fn pixels(window: &Window, widget: &impl IsA<gtk::Widget>) -> Option<(Vec<u8>, u
     Some((bytes, width as usize, height as usize))
 }
 
+/// A widget's pixels once they have stopped changing.
+///
+/// This is the whole fix for #90, and it needs both halves.
+///
+/// **A minimum number of frames**, because a CSS state change reaches the
+/// pixels through the frame clock and nothing sooner. Focus is set
+/// synchronously; the ring is drawn later.
+///
+/// **Then repeated sampling until two consecutive renders agree**, because a
+/// fixed frame budget is a guess that works until the machine is loaded. This
+/// is what turned 796/796/796/0/0 into one answer.
+///
+/// Stability is the *precondition*, never the assertion — the caller still
+/// compares two settled renders and decides. Waiting for "the pixels differ
+/// from before" would be waiting for the thing under test, which is how an
+/// await-for-condition test quietly becomes one that cannot fail.
+///
+/// It settles on whatever is true, including "nothing was drawn". A missing
+/// ring makes this return the unfocused image and the caller's assertion
+/// fail, which is the direction a wrong answer here must fail in.
+fn settled(window: &Window, widget: &impl IsA<gtk::Widget>) -> Option<(Vec<u8>, usize, usize)> {
+    // Enough frames that a style revalidation queued by `grab_focus` has
+    // certainly run before the first sample is taken.
+    if !frames(&window.clone().upcast::<gtk::Window>(), 6) {
+        return None;
+    }
+    let mut previous: Option<Vec<u8>> = None;
+    for _ in 0..30 {
+        let (bytes, width, height) = pixels(window, widget)?;
+        if previous.as_deref() == Some(bytes.as_slice()) {
+            return Some((bytes, width, height));
+        }
+        previous = Some(bytes);
+    }
+    // Never settled. Returning the last sample rather than `None` on purpose:
+    // `None` means "the compositor is not painting" and makes the caller skip,
+    // and a widget that genuinely never stops changing is a finding, not a
+    // reason to pass quietly.
+    let (bytes, width, height) = pixels(window, widget)?;
+    Some((bytes, width, height))
+}
+
 /// How many pixels differ between two renders of the same widget.
 ///
 /// Counted per pixel rather than per byte so the number means something a
@@ -126,9 +170,13 @@ fn changed(before: &[u8], after: &[u8]) -> usize {
         "the widget changed size between renders, so this is not a comparison \
          of focus styling — fix the layout before reading anything into it"
     );
+    // `as_chunks::<4>()` rather than `chunks_exact(4)`: one RGBA pixel is
+    // four bytes and saying so in the type is what clippy asks for here.
     before
-        .chunks_exact(4)
-        .zip(after.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(after.as_chunks::<4>().0.iter())
         .filter(|(a, b)| {
             a.iter()
                 .zip(b.iter())
@@ -224,11 +272,6 @@ fn taking_focus_changes_what_is_drawn() {
         "the window never painted; nothing below could mean anything"
     );
 
-    if std::env::var("LOUD").is_ok() {
-        let provider = gtk::CssProvider::new();
-        provider.load_from_string(".postio-folder:focus { background-color: rgb(0,255,0); outline: 6px solid rgb(255,0,0); }");
-        gtk::style_context_add_provider_for_display(&display, &provider, 900);
-    }
     let rows = collect(window.upcast_ref::<gtk::Widget>(), "postio-folder");
     assert!(
         !rows.is_empty(),
@@ -238,7 +281,7 @@ fn taking_focus_changes_what_is_drawn() {
     let row = rows[0].clone();
     assert!(!focused(&row), "nothing is focused yet");
 
-    let Some((before, width, height)) = pixels(&window, &row) else {
+    let Some((before, width, height)) = settled(&window, &row) else {
         eprintln!("skipping: the compositor is not painting this window");
         return;
     };
@@ -256,14 +299,14 @@ fn taking_focus_changes_what_is_drawn() {
         window.sidebar().focus_folders(),
         "the sidebar had no folder to land on"
     );
+    assert!(focused(&row), "the row did not take the keyboard");
 
-    let Some((after, _, _)) = pixels(&window, &row) else {
+    let Some((after, _, _)) = settled(&window, &row) else {
         eprintln!("skipping: the compositor stopped painting mid-test");
         return;
     };
 
     let differing = changed(&before, &after);
-    eprintln!("DEBUG differing={differing} of {}", width * height);
     assert!(
         differing >= VISIBLE_PIXELS,
         "focusing the folder row changed {differing} pixels of {}, which is \
@@ -275,13 +318,19 @@ fn taking_focus_changes_what_is_drawn() {
 
     // …and letting go puts it back. Not a bonus assertion: without it, a rule
     // that painted the ring permanently on first focus would pass the test
-    // above and be a worse bug than no ring at all.
-    let elsewhere = window.shell().list();
-    elsewhere.set_can_focus(true);
-    elsewhere.grab_focus();
+    // above, and a ring that never goes away is worse than no ring at all —
+    // it would point at the wrong row for the rest of the session.
+    //
+    // Dropping the window's focus rather than grabbing it somewhere else,
+    // because "somewhere else" has to be a widget that will actually take it
+    // and that is a second thing to get wrong.
+    gtk::prelude::GtkWindowExt::set_focus(
+        &window.clone().upcast::<gtk::Window>(),
+        None::<&gtk::Widget>,
+    );
     assert!(!focused(&row), "the row kept the keyboard");
 
-    let Some((released, _, _)) = pixels(&window, &row) else {
+    let Some((released, _, _)) = settled(&window, &row) else {
         eprintln!("skipping: the compositor stopped painting mid-test");
         return;
     };
@@ -291,5 +340,57 @@ fn taking_focus_changes_what_is_drawn() {
         "the row still differs from its unfocused self by {lingering} pixels \
          after the keyboard left it, so the ring is drawn on a row that no \
          longer has focus"
+    );
+
+    // ── A second surface, drawn a completely different way ───────────────
+    //
+    // The folder row above is `outline` on the focused widget. A compose
+    // field is `box-shadow: inset` on its *parent*, matched by
+    // `:focus-within` rather than `:focus`. A test that only knew how to look
+    // for an outline would pass on the sidebar and prove nothing here, which
+    // is exactly the gap #90 asked to be closed — so this checks that the
+    // harness measures *drawn pixels* and not one CSS property.
+    let composer = window.composer();
+    composer.open(postio_model::Draft::new(
+        postio_model::AccountId::UNASSIGNED,
+    ));
+
+    let field_rows = collect(window.upcast_ref::<gtk::Widget>(), "postio-compose-row");
+    assert!(
+        !field_rows.is_empty(),
+        "no `.postio-compose-row` widgets, so `:focus-within` has nothing to \
+         apply to and this half could not fail"
+    );
+    let field_row = field_rows[0].clone();
+
+    // Opening the composer puts the keyboard in `To` already, so take it away
+    // first — otherwise "before" is already the focused state and the
+    // comparison is between one thing and itself.
+    gtk::prelude::GtkWindowExt::set_focus(
+        &window.clone().upcast::<gtk::Window>(),
+        None::<&gtk::Widget>,
+    );
+    let Some((unfocused, field_width, field_height)) = settled(&window, &field_row) else {
+        eprintln!("skipping: the compositor stopped painting mid-test");
+        return;
+    };
+
+    assert!(
+        composer.test_focus_field(postio_gtk::composer::Field::To),
+        "the To field did not take the keyboard"
+    );
+    let Some((focused_pixels, _, _)) = settled(&window, &field_row) else {
+        eprintln!("skipping: the compositor stopped painting mid-test");
+        return;
+    };
+
+    let field_differing = changed(&unfocused, &focused_pixels);
+    assert!(
+        field_differing >= VISIBLE_PIXELS,
+        "putting the keyboard in the To field changed {field_differing} pixels \
+         of {}, so there is nothing to tell a keyboard-only user which field \
+         they are typing into. The rule is `.postio-compose-row:focus-within` \
+         in shell.css.",
+        field_width * field_height
     );
 }
