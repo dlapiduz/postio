@@ -57,6 +57,13 @@ on:
   #   paths-ignore: *prose
   workflow_dispatch:
 
+# Least-privilege default: no job here pushes a commit, opens a PR, or
+# touches an issue. Without this block every step -- including the
+# third-party actions below -- gets whatever GITHUB_TOKEN scope the
+# repository default grants, which may be read/write. #145.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -84,7 +91,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # No toolchain selected here: rust-toolchain.toml names the exact
       # version and its components, and `rustup show` installs what it names.
@@ -102,7 +109,7 @@ jobs:
     name: Crate boundaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Only `cargo metadata` is needed here: it resolves the dependency graph
       # without compiling anything, so this job needs no GTK system libraries
@@ -112,7 +119,7 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -233,7 +240,7 @@ jobs:
     name: Supply chain
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # `Cargo.lock` holds ~405 packages and nothing checked any of them until
       # #97. This is the "what is in the graph at all" question; the crate
@@ -244,18 +251,16 @@ jobs:
       # cargo metadata and no GTK, so it runs in seconds beside the other cheap
       # checks instead of waiting on the workspace to compile.
       - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
-          # Pinned by major version, like actions/checkout and actions/cache
-          # elsewhere in this file.
           arguments: --all-features
 
   build:
     name: Clippy and tests
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
       #   gtk4-devel        -> libgtk-4-dev
@@ -297,7 +302,7 @@ jobs:
         run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
 
       - name: Cache cargo registry and target dir
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index

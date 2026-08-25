@@ -28,6 +28,10 @@ on:
       - '.github/workflows/hooks.yml'
   workflow_dispatch:
 
+# Least-privilege default; see the note in ci.yml. #145.
+permissions:
+  contents: read
+
 concurrency:
   group: hooks-${{ github.ref }}
   cancel-in-progress: true
@@ -37,7 +41,7 @@ jobs:
     name: Shared-tree guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Prove the guard denies what it must and allows what it must
         # The suite creates a stand-in worktree under $HOME and asserts both
