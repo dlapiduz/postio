@@ -222,6 +222,12 @@ jobs:
         # three-crate change merged without waiting for CI. #160.
         run: python3 scripts/test-issue-land-rebase-handover.py
 
+      - name: Prove fuzz.sh says what is missing instead of failing late
+        # Without cargo-fuzz it ran `cargo fuzz`, which made rustup download
+        # a whole nightly toolchain and then failed with "no such command:
+        # fuzz" -- naming neither the missing tool nor the fix. #277.
+        run: python3 scripts/test-fuzz-missing-tool.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
