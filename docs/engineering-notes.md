@@ -1825,6 +1825,37 @@ subjects/previews/senders read out of the database. It uses
 thread, and a thread-local subscriber would make the test pass while
 observing an empty buffer.
 
+**`postio_config::secrets::is_secret_key` matches a substring, and that bit
+you the moment a new schema reused it (#191).** It normalizes a key (strips
+`_`/`-`/space, lowercases) and checks whether the result *contains* one of
+`SECRET_MARKERS` — `"password"`, `"token"`, `"secret"`, etc. — deliberately
+generous, because in `config.toml` a false positive costs a renamed key and
+a false negative writes a password to disk. That generosity assumes nothing
+legitimate in the document ever needs those words as substrings, which held
+for `config.toml` and stopped holding the moment `providers.toml`
+(`postio-imap/src/discovery/providers_toml.rs`) needed fields named
+`requires_app_password`, `password_help_url`, and — worse — the OAuth token
+*endpoint*'s own field, `token`, all of which are perfectly ordinary,
+non-secret data that the marker list matches anyway. Stripping the whole
+parsed table, the way `config.toml` does, silently deleted three real
+fields the first time this ran (`cargo build` failed with "contains what
+looks like a secret at: provider.gmail.password_help_url" and two others —
+not a subtle bug, but one that would resurface for anyone else who points
+`strip_secrets` at a *whole* document without first checking whether the
+document's own schema uses any of those eight words for something ordinary.
+
+The fix is not to loosen the marker list — `config.toml` still needs it
+generous — but to scope *where* it runs: only at an `#[serde(flatten)]
+extra: toml::Table` catch-all for fields the schema does not name, checked
+after typed deserialization rather than before it. A named, expected field
+is never handed to `is_secret_key` at all, however many marker substrings
+its name happens to contain; only a key nobody's schema recognizes — a
+`client_secret` someone mistakenly pastes in — reaches the scan. Before
+reusing `strip_secrets`/`is_secret_key` on a new document type, check
+whether that schema's own legitimate field names collide with
+`SECRET_MARKERS` first — `password`, `passwd`, `passphrase`, `secret`,
+`token`, `apikey`, `credential`, `privatekey`, and the exact matches `pass`,
+`pw` — rather than discovering it via a build failure.
 
 ## Toolchain
 

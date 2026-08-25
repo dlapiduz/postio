@@ -54,6 +54,7 @@ io-sasl = { version = "=0.1.0", default-features = false, optional = true }
 log = { version = "0.4", features = ["std"], optional = true }
 oo7 = "0.6.0-alpha"
 pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+postio-config.workspace = true
 postio-model.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
 rustls-platform-verifier = { version = "0.7", optional = true }
@@ -61,9 +62,18 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "macros", "process", "time", "sync", "net", "io-util"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+toml = "1.1.4"
 tracing = "0.1"
 url = "2.5.8"
 zeroize = "1.9.0"
+
+# `providers_toml.rs` is compiled a second time by build.rs (`#[path]`), the
+# same idiom `postio-gtk/build.rs` uses for design tokens (ARCHITECTURE.md
+# §10) -- so the build script needs everything that module needs.
+[build-dependencies]
+postio-config.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
 
 [dev-dependencies]
 # The protocol crate, for the handful of commands `postio-imap` does not wrap
@@ -75,7 +85,6 @@ postio-imap = { path = ".", features = ["test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 serde-xml-rs = "0.8"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
-toml = "1.1.4"
 
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/check-lint-floor.py.
