@@ -223,14 +223,34 @@ pub fn previewable(mime: &str) -> bool {
 /// a part called `../../.bashrc` must not be able to steer where the save
 /// dialog opens. Otherwise the part id and a guess at an extension, so the
 /// dialog never opens on an empty name.
+///
+/// This is where an attachment filename stops being *reported* and starts
+/// being *used*. [`postio_model::mime::parse`] hands over what the sender
+/// wrote, faithfully and on purpose; everything that makes it fit to name a
+/// file happens here, which is why the traversal and control-character tests
+/// live beside this function and not beside the parser.
 pub fn save_name(node: &Node) -> String {
     if let Some(name) = node.filename.as_deref().map(str::trim)
         && !name.is_empty()
     {
         let cleaned: String = name
-            .replace(['/', '\\'], "-")
-            .trim_matches(['.', ' '].as_slice())
-            .to_owned();
+            .chars()
+            // A separator becomes a dash: the sender meant a character to be
+            // there, and eliding it silently joins two name components.
+            .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+            // A control character is dropped rather than marked, because the
+            // sender did not mean anything by it that a reader could see.
+            //
+            // #147, found by the `parse_message` fuzz target: a NUL reaches
+            // here both from a literal `filename="a\0b.txt"` and from one
+            // base64'd inside an RFC 2047 encoded word. The name then goes to
+            // `FileDialog::initial_name`, and gtk-rs converts a `&str` to a C
+            // string on the way — a conversion an interior NUL has no valid
+            // answer for. Pressing `s` on a message must not be how the
+            // application ends.
+            .filter(|c| !c.is_control())
+            .collect();
+        let cleaned = cleaned.trim_matches(['.', ' '].as_slice()).to_owned();
         if !cleaned.is_empty() {
             return cleaned;
         }
@@ -1330,6 +1350,40 @@ mod tests {
     fn a_part_the_sender_did_not_name_still_gets_one() {
         let nodes = tree("multipart/mixed", &[part("2.1", "image/png", 10)]);
         assert_eq!(save_name(&nodes[1]), "part-2.1.png");
+    }
+
+    /// #147, found by the `parse_message` fuzz target within a minute of its
+    /// first run. A NUL reaches `Attachment::filename` two ways -- written
+    /// straight into the `filename=` parameter, or base64'd inside an RFC 2047
+    /// encoded word -- and `mime::parse` reports it faithfully, which is its
+    /// job. This is the layer that has to make it safe: the name goes to
+    /// `FileDialog::initial_name`, and gtk-rs converts a `&str` to a C string
+    /// on the way, which an interior NUL is not a valid input for. Opening a
+    /// message's parts and pressing `s` is not allowed to be how the
+    /// application ends.
+    #[test]
+    fn a_save_name_carries_no_control_characters() {
+        for hostile in ["a\0b.txt", "a\nb.txt", "a\rb\tc.txt", "\u{7}bell.txt"] {
+            let nodes = tree("multipart/mixed", &[named("1", "text/plain", 10, hostile)]);
+            let name = save_name(&nodes[1]);
+            assert!(
+                !name.chars().any(char::is_control),
+                "{hostile:?} produced a name with a control character: {name:?}"
+            );
+            assert!(!name.is_empty(), "{hostile:?} produced an empty name");
+        }
+    }
+
+    /// The same find's other half: a slash survives a *malformed* encoded
+    /// word, which is not the shape the existing traversal test used.
+    #[test]
+    fn a_save_name_launders_a_slash_out_of_an_undecoded_encoded_word() {
+        let nodes = tree(
+            "multipart/mixed",
+            &[named("1", "text/plain", 10, "=?utf-8Qa/b.txt")],
+        );
+        let name = save_name(&nodes[1]);
+        assert!(!name.contains('/'), "{name}");
     }
 
     #[test]
