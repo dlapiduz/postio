@@ -119,6 +119,14 @@ pub enum Absent {
     Missing,
     /// Downloaded, and the message genuinely has no text or HTML part.
     Empty,
+    /// `\Draft`, but written by another client: there is no local composer
+    /// buffer behind the row, so there is nothing here to resume editing.
+    ///
+    /// Not a retryable wait like [`Absent::Partial`] or [`Absent::Offline`] --
+    /// downloading its body would only ever produce something to read, never
+    /// something to edit, so promising a retry would be a promise the reader
+    /// cannot keep. See #175.
+    ForeignDraft,
 }
 
 /// What the pane says for each [`Absent`], as the document's body.
@@ -153,6 +161,11 @@ fn absent_html(state: Absent) -> String {
         Absent::Empty => (
             "This message has no body",
             "Nothing arrived with it but the headers — that is the whole              message, not a fault."
+                .to_owned(),
+        ),
+        Absent::ForeignDraft => (
+            "Written on another device",
+            "This draft was started in another mail client. Postio can              show it here but cannot edit it."
                 .to_owned(),
         ),
     };
@@ -693,6 +706,7 @@ mod tests {
             Absent::Offline,
             Absent::Missing,
             Absent::Empty,
+            Absent::ForeignDraft,
         ]
         .iter()
         .map(|state| absent_html(*state))
@@ -703,6 +717,7 @@ mod tests {
             Absent::Offline,
             Absent::Missing,
             Absent::Empty,
+            Absent::ForeignDraft,
         ]
         .iter()
         .zip(&said)
@@ -739,6 +754,20 @@ mod tests {
     fn a_message_with_no_body_is_not_offered_a_retry() {
         let html = absent_html(Absent::Empty);
         assert!(!html.contains("check for new mail"), "{html}");
+    }
+
+    /// #175: a draft written by another client is a dead end for a different
+    /// reason than the other three -- there is nothing to download, because
+    /// there is no local buffer to resume. Retrying would promise a fetch
+    /// that cannot change the outcome.
+    #[test]
+    fn a_foreign_draft_says_it_cannot_be_edited_here_and_offers_no_retry() {
+        let html = absent_html(Absent::ForeignDraft);
+        assert!(!html.contains("check for new mail"), "{html}");
+        assert!(
+            html.contains("another") || html.contains("device") || html.contains("client"),
+            "should say this draft came from somewhere else: {html}"
+        );
     }
 
     #[test]
