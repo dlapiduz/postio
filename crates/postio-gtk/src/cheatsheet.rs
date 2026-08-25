@@ -635,11 +635,17 @@ mod tests {
                 // per-surface sections — see `sections`.
                 IN_THE_BOX,
                 heading(Context::List),
+                // `postio-yzc`: the thread's unread filter and order toggle
+                // are the first commands whose *first* context is Thread
+                // rather than List -- every message action reachable from a
+                // thread is also reachable from the list, and files under
+                // "Message list" instead. These two exist nowhere else.
+                heading(Context::Thread),
                 heading(Context::Composer),
                 heading(Context::Sidebar),
             ],
-            "no registry command is filed under Thread, Reading, Search or \
-             Palette today; if one is, this test is how you find out"
+            "no registry command is filed under Reading, Search or Palette \
+             today; if one is, this test is how you find out"
         );
     }
 }

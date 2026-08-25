@@ -60,6 +60,17 @@ const ROWS_NAME: &str = "Messages in this thread";
 
 const THREAD_KEYS: &str = "j/k in thread · A archive thread";
 
+/// The key `postio_core::registry` binds `ToggleThreadUnread` to. Drawn on
+/// the toggle itself rather than looked up live from the keymap — the same
+/// static-hint convention `composer.rs` already uses for `Send`/`Save draft`
+/// — so a `[keys]` override moves the resolver's key without this label
+/// pretending to track it.
+const UNREAD_KEY: &str = "n";
+
+/// The key `postio_core::registry` binds `ToggleThreadOrder` to. See
+/// [`UNREAD_KEY`].
+const ORDER_KEY: &str = "o";
+
 /// What the column says when a filter has hidden everything.
 const NOTHING_UNREAD: &str = "Every message here has been read.";
 
@@ -564,7 +575,8 @@ impl ThreadView {
             imp.back_to.borrow().as_deref(),
         ));
         let order = imp.order.get();
-        imp.order_toggle.set_label(order.short());
+        imp.order_toggle
+            .set_child(Some(&crate::header::labelled(order.short(), ORDER_KEY)));
         imp.order_toggle
             .set_tooltip_text(Some(order.toggled().label()));
         imp.order_toggle
@@ -611,13 +623,12 @@ impl ThreadView {
         title.append(&imp.subject);
         title.append(&imp.meta);
 
-        // Real buttons rather than key hints. These two are view options that
-        // the command registry does not carry, and drawing `u` beside a
-        // filter that `u` does not reach would teach the wrong key — the one
-        // thing the whole hint system depends on not doing. As buttons they
-        // are still keyboard-operable, by Tab and Space, and `postio-yzc`
-        // tracks giving them verbs of their own.
-        imp.unread_toggle.set_label("Unread");
+        // Real buttons, not just key hints: `postio-yzc` gave both a verb of
+        // their own (`n`, `o` — `postio-core::registry`), but they stay
+        // buttons rather than becoming bare hints, because Tab and Space have
+        // to keep reaching them for anyone not using the keyboard shortcut.
+        imp.unread_toggle
+            .set_child(Some(&crate::header::labelled("Unread", UNREAD_KEY)));
         imp.unread_toggle
             .update_property(&[gtk::accessible::Property::Label(
                 "Show only what has not been read",
@@ -632,7 +643,10 @@ impl ThreadView {
             move |toggle| view.set_unread_only(toggle.is_active())
         ));
 
-        imp.order_toggle.set_label(Order::default().short());
+        imp.order_toggle.set_child(Some(&crate::header::labelled(
+            Order::default().short(),
+            ORDER_KEY,
+        )));
         imp.order_toggle.add_css_class("flat");
         imp.order_toggle.add_css_class("postio-thread-toggle");
         imp.order_toggle.connect_clicked(glib::clone!(

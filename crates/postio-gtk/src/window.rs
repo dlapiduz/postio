@@ -1276,6 +1276,19 @@ impl Window {
             CommandId::PrevMessage if self.thread_open() => self.thread().prev_row(),
             CommandId::FirstMessage if self.thread_open() => self.thread().first_row(),
             CommandId::LastMessage if self.thread_open() => self.thread().last_row(),
+            // View options on the open thread. The registry keeps these to
+            // `Context::Thread`, so the guard is defence rather than the
+            // thing doing the filtering -- it just keeps a stray invocation
+            // (the palette, say, with no thread on screen) from touching a
+            // column that is not there.
+            CommandId::ToggleThreadUnread if self.thread_open() => {
+                let thread = self.thread();
+                thread.set_unread_only(!thread.unread_only());
+            }
+            CommandId::ToggleThreadOrder if self.thread_open() => {
+                let thread = self.thread();
+                thread.set_order(thread.order().toggled());
+            }
             CommandId::NextMessage => self.list().next_row(),
             CommandId::PrevMessage => self.list().prev_row(),
             CommandId::FirstMessage => self.list().first_row(),
