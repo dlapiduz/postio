@@ -352,3 +352,74 @@ fn a_plain_document_is_recognised_and_a_structured_one_is_not() {
         );
     }
 }
+
+// ── issue #116: link_hosts, for the composer's quoted-tracking-link banner ─
+
+#[test]
+fn link_hosts_finds_a_link_nested_in_a_list_and_a_quote() {
+    let document = Document {
+        blocks: vec![
+            Block::Paragraph(vec![Inline::Link {
+                href: Href::parse("https://click.tracker.example.org/r?c=1").unwrap(),
+                inlines: vec![Inline::Text("shop now".to_owned())],
+            }]),
+            Block::List {
+                ordered: false,
+                items: vec![vec![Block::Paragraph(vec![Inline::Link {
+                    href: Href::parse("https://cdn.example.org/img").unwrap(),
+                    inlines: vec![],
+                }])]],
+            },
+            Block::Quote(vec![Block::Paragraph(vec![Inline::Strong(vec![
+                Inline::Link {
+                    href: Href::parse("https://nested.example.org").unwrap(),
+                    inlines: vec![],
+                },
+            ])])]),
+        ],
+    };
+    let mut hosts = document.link_hosts();
+    hosts.sort();
+    assert_eq!(
+        hosts,
+        [
+            "cdn.example.org",
+            "click.tracker.example.org",
+            "nested.example.org",
+        ]
+    );
+}
+
+#[test]
+fn link_hosts_is_case_insensitive_and_deduplicates() {
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![
+            Inline::Link {
+                href: Href::parse("https://Tracker.Example.org/a").unwrap(),
+                inlines: vec![],
+            },
+            Inline::Link {
+                href: Href::parse("https://tracker.example.org/b").unwrap(),
+                inlines: vec![],
+            },
+        ])],
+    };
+    assert_eq!(document.link_hosts(), ["tracker.example.org"]);
+}
+
+#[test]
+fn link_hosts_skips_a_mailto_link_since_it_names_no_host_to_compare() {
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![Inline::Link {
+            href: Href::parse("mailto:ada@example.com").unwrap(),
+            inlines: vec![],
+        }])],
+    };
+    assert!(document.link_hosts().is_empty());
+}
+
+#[test]
+fn a_document_with_no_links_has_no_hosts() {
+    assert!(Document::from_text("just words").link_hosts().is_empty());
+    assert!(Document::new().link_hosts().is_empty());
+}

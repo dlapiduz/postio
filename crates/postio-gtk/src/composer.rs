@@ -163,6 +163,77 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
     }
 }
 
+/// Whether `host` belongs to a different organisation than `sender_domain`.
+///
+/// Exact match or a subdomain of it counts as the same: a company's own
+/// `click.shop.example.org` linking out from `shop.example.org` is not what
+/// [`quoted_tracking_domains`] exists to flag, only a host with no
+/// relationship to the sender's domain at all.
+fn differs_from_sender(host: &str, sender_domain: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    let sender_domain = sender_domain.to_ascii_lowercase();
+    host != sender_domain && !host.ends_with(&format!(".{sender_domain}"))
+}
+
+/// What the composer says when a reply's quoted text links to one or more
+/// domains other than the message being replied to came from.
+///
+/// `None` for nothing to say — this is issue #116's whole shape: no link is
+/// ever stripped or rewritten by anything upstream (a link is not a load,
+/// `postio-body/tests/outgoing.rs::a_quoted_link_keeps_its_href_because_a_link_is_not_a_load`),
+/// this only decides whether to say something about one.
+fn tracking_link_notice(domains: &[String]) -> Option<String> {
+    match domains {
+        [] => None,
+        [one] => Some(format!(
+            "The quoted text links to {one}, which differs from the sender's own domain."
+        )),
+        many => Some(format!(
+            "The quoted text links to {} domains that differ from the sender's own: {}.",
+            many.len(),
+            many.join(", ")
+        )),
+    }
+}
+
+/// Hosts a reply's quoted text would link to that differ from `source`'s own
+/// sender.
+///
+/// A reply reaches people the original message did not, and a tracking
+/// redirect's query string usually encodes the *first* recipient's id — so a
+/// reply-all's other readers would click through under that id, not their
+/// own, without anyone having decided to send their identifier anywhere.
+/// Purely informational (issue #116's maintainer verdict): `postio-body`
+/// still represents exactly what the message said, and nothing here changes
+/// what ends up in the draft.
+///
+/// Mirrors [`quotable`]'s own condition exactly: a message that already has
+/// a text part is quoted *as that text*, not as anything derived from its
+/// HTML, so a link that exists only in the HTML alternative was never
+/// actually quoted and scanning for it would warn about content the reply
+/// does not contain.
+fn quoted_tracking_domains(source: &Message) -> Vec<String> {
+    let has_text = source
+        .body
+        .text
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty());
+    if has_text {
+        return Vec::new();
+    }
+    let Some(html) = source.body.html.as_deref() else {
+        return Vec::new();
+    };
+    let Some(sender_domain) = source.primary_from().and_then(|from| from.domain()) else {
+        return Vec::new();
+    };
+    postio_body::parse(html)
+        .link_hosts()
+        .into_iter()
+        .filter(|host| differs_from_sender(host, sender_domain))
+        .collect()
+}
+
 /// What the status line says before anything has happened to the draft.
 /// What the body field announces itself as. One constant because the scroll
 /// region around it is a separate tab stop and must say the same thing.
@@ -370,6 +441,11 @@ mod imp {
         pub send: gtk::Button,
         pub save: gtk::Button,
         pub warning: gtk::Label,
+        /// Issue #116: "this reply quotes a link to a domain other than the
+        /// sender's own" — purely informational, next to `warning` but a
+        /// separate label, since the two can be true at once and are about
+        /// unrelated things.
+        pub tracking_notice: gtk::Label,
         /// The attachment list's own row, hidden entirely while there is
         /// nothing to show — a bare "no attachments" line is clutter the Cc
         /// row already taught this composer not to add.
@@ -440,6 +516,7 @@ mod imp {
                 send: gtk::Button::new(),
                 save: gtk::Button::new(),
                 warning: gtk::Label::new(None),
+                tracking_notice: gtk::Label::new(None),
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
                 attachments_list: gtk::ListBox::new(),
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
@@ -1291,7 +1368,24 @@ impl Composer {
             return;
         };
         if let Some(draft) = reply_draft(id, &source, &account) {
+            // After, not before: `open` calls `fill`, which clears the
+            // notice for every fresh composition — a reply's own domains
+            // must win by running last, not be immediately wiped by it.
             self.open(draft);
+            self.set_tracking_domains(&quoted_tracking_domains(&source));
+        }
+    }
+
+    /// Show or hide issue #116's "this quotes a link to another domain"
+    /// notice.
+    fn set_tracking_domains(&self, domains: &[String]) {
+        let notice = &self.imp().tracking_notice;
+        match tracking_link_notice(domains) {
+            Some(text) => {
+                notice.set_text(&text);
+                notice.set_visible(true);
+            }
+            None => notice.set_visible(false),
         }
     }
 
@@ -1568,6 +1662,12 @@ impl Composer {
         imp.cc_row.set_visible(!draft.cc.is_empty());
         imp.bcc_row.set_visible(!draft.bcc.is_empty());
         self.sync_more();
+        // Ephemeral to this one reply action, not a property of the draft
+        // itself: `open_reply` sets it right after this call returns, for a
+        // fresh reply. Anything else that opens the composer — a new
+        // message, resuming a saved draft — has no reply source to have
+        // scanned, so there is nothing left to say about.
+        self.set_tracking_domains(&[]);
 
         let identity = draft.identity_id;
         *imp.draft.borrow_mut() = draft;
@@ -1829,9 +1929,18 @@ impl Composer {
         imp.warning.set_visible(false);
         imp.warning.set_accessible_role(gtk::AccessibleRole::Status);
 
+        imp.tracking_notice
+            .add_css_class("postio-compose-tracking-notice");
+        imp.tracking_notice.set_xalign(0.0);
+        imp.tracking_notice.set_wrap(true);
+        imp.tracking_notice.set_visible(false);
+        imp.tracking_notice
+            .set_accessible_role(gtk::AccessibleRole::Status);
+
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&title);
         column.append(&fields);
+        column.append(&imp.tracking_notice);
         column.append(&scroller);
         column.append(&imp.warning);
         column.append(&self.build_attachments());
@@ -2552,5 +2661,107 @@ mod tests {
         let source = source_message();
         let account = account_reading_it();
         assert!(reply_draft(CommandId::Archive, &source, &account).is_none());
+    }
+
+    // ── issue #116: the quoted-tracking-link banner ────────────────────────
+
+    #[test]
+    fn a_subdomain_of_the_sender_is_not_flagged_but_an_unrelated_host_is() {
+        assert!(!differs_from_sender("shop.example.org", "shop.example.org"));
+        assert!(!differs_from_sender(
+            "click.shop.example.org",
+            "shop.example.org"
+        ));
+        assert!(!differs_from_sender("SHOP.EXAMPLE.ORG", "shop.example.org"));
+        assert!(differs_from_sender(
+            "click.tracker.example.org",
+            "shop.example.org"
+        ));
+        // Not a suffix match on the bare string: "notshop.example.org" is a
+        // different domain than "shop.example.org", not a subdomain of it.
+        assert!(differs_from_sender(
+            "notshop.example.org",
+            "shop.example.org"
+        ));
+    }
+
+    #[test]
+    fn the_notice_names_one_domain_or_counts_several() {
+        assert_eq!(tracking_link_notice(&[]), None);
+        assert_eq!(
+            tracking_link_notice(&["click.tracker.example.org".to_owned()]).as_deref(),
+            Some(
+                "The quoted text links to click.tracker.example.org, which differs \
+                 from the sender's own domain."
+            )
+        );
+        assert_eq!(
+            tracking_link_notice(&["a.example.org".to_owned(), "b.example.org".to_owned()])
+                .as_deref(),
+            Some(
+                "The quoted text links to 2 domains that differ from the sender's \
+                 own: a.example.org, b.example.org."
+            )
+        );
+    }
+
+    /// The `.eml` corpus fixture #116 itself points at: an HTML-only message
+    /// from `orders@shop.example.org` linking out to
+    /// `click.tracker.example.org`.
+    fn html_only_source_with_a_tracking_link() -> Message {
+        let mut message = Message::new(
+            AccountId::new(1),
+            postio_model::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        message.from = vec![EmailAddress::new(
+            Some("Cooperage Supply"),
+            "orders@shop.example.org",
+        )];
+        message.body = MessageBody {
+            text: None,
+            html: Some(
+                "<p><a href=\"https://click.tracker.example.org/r?u=abc&c=aa71\">\
+                 Shop now</a></p>"
+                    .to_owned(),
+            ),
+        };
+        message
+    }
+
+    #[test]
+    fn an_html_only_reply_source_with_a_foreign_link_is_flagged() {
+        let source = html_only_source_with_a_tracking_link();
+        assert_eq!(
+            quoted_tracking_domains(&source),
+            ["click.tracker.example.org"]
+        );
+    }
+
+    #[test]
+    fn a_link_to_the_senders_own_domain_is_not_flagged() {
+        let mut source = html_only_source_with_a_tracking_link();
+        source.body.html =
+            Some("<p><a href=\"https://shop.example.org/catalog\">Shop now</a></p>".to_owned());
+        assert!(quoted_tracking_domains(&source).is_empty());
+    }
+
+    #[test]
+    fn a_message_with_its_own_text_part_is_never_scanned() {
+        // The quoted content in this case is the message's own plain-text
+        // part, not anything postio-body derived from the HTML -- so a
+        // link that exists only in the HTML alternative was never actually
+        // quoted, and flagging it would warn about a link the reply does
+        // not contain.
+        let mut source = html_only_source_with_a_tracking_link();
+        source.body.text = Some("Shop now: see the HTML version".to_owned());
+        assert!(quoted_tracking_domains(&source).is_empty());
+    }
+
+    #[test]
+    fn a_message_with_no_html_at_all_is_never_scanned() {
+        let mut source = html_only_source_with_a_tracking_link();
+        source.body.html = None;
+        assert!(quoted_tracking_domains(&source).is_empty());
     }
 }
