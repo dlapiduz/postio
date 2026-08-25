@@ -223,7 +223,7 @@ pub fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring) {
         .list()
         .connect_export(std::rc::Rc::new(move |messages: Vec<MessageId>| {
             let (database, blobs) = (database.clone(), blobs.clone());
-            let (engine, runtime) = (engine.get().cloned(), runtime.clone());
+            let (engine, runtime) = (engine.single(), runtime.clone());
             Box::pin(async move {
                 let into = crate::paths::export_dir();
                 // On the runtime, not the UI thread: this reads SQLite, writes

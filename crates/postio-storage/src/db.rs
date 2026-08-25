@@ -473,6 +473,16 @@ impl Database {
         path: &Path,
         guard: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Self> {
+        Self::open_file_with_guard_sized(path, DEFAULT_MAX_CONNECTIONS, guard)
+    }
+
+    /// [`open_file_with_guard`](Self::open_file_with_guard), with an explicit
+    /// pool size — for tests exercising the pool budget (#183).
+    pub(crate) fn open_file_with_guard_sized(
+        path: &Path,
+        max_connections: usize,
+        guard: Box<dyn std::any::Any + Send + Sync>,
+    ) -> Result<Self> {
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -481,7 +491,7 @@ impl Database {
         }
         let database = Self::from_location_with_guard(
             Location::File(path.to_path_buf()),
-            DEFAULT_MAX_CONNECTIONS,
+            max_connections,
             Some(guard),
         )?;
         crate::perm::tighten_file(path)?;

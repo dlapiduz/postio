@@ -48,6 +48,6 @@ pub mod seed;
 pub mod test_support;
 
 pub use blob::BlobStore;
-pub use db::{Database, Pool, PooledConnection};
+pub use db::{DEFAULT_MAX_CONNECTIONS, Database, Pool, PooledConnection};
 pub use error::{Error, Result};
 pub use migrations::{Migration, MigrationReport, migrate, schema_version};

@@ -23,7 +23,10 @@
 //! says so plainly when there is nothing behind it, rather than the key doing
 //! nothing.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
+
+use postio_model::ids::AccountId;
 
 use postio_core::bridge::EventSink;
 use postio_core::dispatch::{CommandError, DispatcherBuilder, Invocation};
@@ -31,25 +34,57 @@ use postio_core::state::SharedState;
 use postio_core::{CommandId, Event};
 use postio_runtime::Engine;
 
-/// The engine, once there is one.
+/// The engines, one per account, as they are started.
 ///
-/// Written exactly once, by whoever starts it; read by the `Refresh` handler on
-/// every invocation. A [`OnceLock`] rather than a mutex because that is the
-/// whole life cycle — an engine is never replaced, and a reader must never
-/// wait on a writer that is opening a connection.
+/// #183 made this a table: the composition root starts one engine per
+/// *enabled* account, and a handler that needs "the" engine has to say whose.
+/// Written at startup by whoever starts them; read on every invocation. The
+/// write lock is held for a `BTreeMap` insert and nothing else, so a reader
+/// never waits on a writer that is opening a connection — that work happens
+/// before `fill` is called, exactly as it did under the old `OnceLock`.
 #[derive(Debug, Clone, Default)]
-pub struct EngineSlot(Arc<OnceLock<Engine>>);
+pub struct EngineSlot(Arc<RwLock<BTreeMap<AccountId, Engine>>>);
 
 impl EngineSlot {
-    /// Put the engine in. Ignores a second call: the first engine keeps the
-    /// window it was started for.
-    pub fn fill(&self, engine: Engine) {
-        let _ = self.0.set(engine);
+    /// Put an account's engine in. The first engine for an account keeps it:
+    /// an engine is never replaced while the process runs.
+    pub fn fill(&self, account: AccountId, engine: Engine) {
+        self.0
+            .write()
+            .expect("no engine writer panics")
+            .entry(account)
+            .or_insert(engine);
     }
 
-    /// The engine, if one has been started.
-    pub fn get(&self) -> Option<&Engine> {
-        self.0.get()
+    /// The engine syncing `account`, if one was started.
+    pub fn for_account(&self, account: AccountId) -> Option<Engine> {
+        self.0
+            .read()
+            .expect("no engine writer panics")
+            .get(&account)
+            .cloned()
+    }
+
+    /// The engine, when exactly one account is syncing.
+    ///
+    /// The bridge for consumers that predate multi-account — the reader's
+    /// body fetch, drag-out — which know a message but have not yet been
+    /// taught to name its account. With several engines running this is
+    /// `None`, deliberately: guessing an engine fetches one account's mail
+    /// over another account's session, which is worse than declining.
+    /// #184/#185 teach those call sites accounts, and then this goes.
+    pub fn single(&self) -> Option<Engine> {
+        let engines = self.0.read().expect("no engine writer panics");
+        if engines.len() == 1 {
+            engines.values().next().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// How many engines are running.
+    pub fn count(&self) -> usize {
+        self.0.read().expect("no engine writer panics").len()
     }
 }
 
@@ -77,17 +112,21 @@ fn refresh(
     state: &SharedState,
     events: &EventSink,
 ) -> Result<(), CommandError> {
-    let Some(mailbox) = state.read(|state| state.mailbox()) else {
+    let (Some(mailbox), scope) = state.read(|state| (state.mailbox(), *state.scope())) else {
         return Err(CommandError::rejected("No folder is open to refresh"));
     };
-    let Some(engine) = engine.get() else {
+    // A mailbox is only ever open within one account (#182), so the scope
+    // names whose engine this pass belongs to. Unified has no mailbox open
+    // and is caught by the rejection above.
+    let Some(account) = scope.account() else {
+        return Err(CommandError::rejected("No folder is open to refresh"));
+    };
+    let Some(engine) = engine.for_account(account) else {
         // No account, or no transport: the sidebar already says the account is
         // offline, and a key that silently did nothing would be worse than a
         // sentence saying why.
         return Err(CommandError::rejected("This account is not syncing"));
     };
-
-    let engine = engine.clone();
     let events = events.clone();
     tokio::spawn(async move {
         // The pass reports itself as it goes — progress, connection state, and
@@ -125,8 +164,17 @@ mod tests {
     use super::*;
 
     /// A state with a folder open, so a refresh has something to refresh.
+    /// The account every test engine here syncs.
+    fn the_account() -> AccountId {
+        AccountId::new(1)
+    }
+
     fn looking_at(mailbox: postio_model::MailboxId) -> SharedState {
         let mut state = AppState::new();
+        // The scope first, as the composition root sets it (#182): a mailbox
+        // is only ever open within one account, and refresh resolves whose
+        // engine to ask from exactly this.
+        state.open_account(the_account());
         state.open_mailbox(mailbox);
         SharedState::new(state)
     }
@@ -185,6 +233,7 @@ mod tests {
         );
         let engine = EngineSlot::default();
         engine.fill(
+            report.account.id,
             postio_runtime::Engine::spawn(EngineParts {
                 account: report.account.id,
                 database: database.clone(),

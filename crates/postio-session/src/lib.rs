@@ -164,7 +164,20 @@ impl Wiring {
 /// with nothing in it.
 pub fn open_store() -> Option<(Database, BlobStore)> {
     let path = paths::store_path();
-    let database = match Database::open(&path) {
+    // Opened twice on purpose (#183). The pool's size is fixed at open, and
+    // the right size depends on how many accounts the store holds -- which
+    // cannot be read without opening it. So a one-connection bootstrap runs
+    // the migrations and answers the count, and the pool every engine will
+    // live on is opened at the size the answer implies. WAL makes the brief
+    // overlap of the two handles ordinary.
+    let accounts = match Database::open_with(&path, 1) {
+        Ok(bootstrap) => enabled_accounts(&bootstrap).len(),
+        Err(error) => {
+            tracing::error!(path = %path.display(), %error, "cannot open the store");
+            return None;
+        }
+    };
+    let database = match Database::open_with(&path, pool_size_for(accounts)) {
         Ok(database) => database,
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store");
@@ -214,21 +227,52 @@ pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-/// The account to open, if the store holds one.
+/// Connections the window keeps for itself, whatever the account count.
 ///
-/// Read straight off a connection rather than through [`MailStore`]: which
-/// account to open is a question about *starting up*, not about drawing mail,
-/// and this crate is the one place allowed to ask it directly. It is one
-/// indexed read before the window is presented.
-pub fn first_account(database: &Database) -> Option<postio_model::Account> {
-    let connection = database
+/// The reads the UI makes — the list's pages, search, the reader's blobs —
+/// while every engine is mid-pass. Three is what the old fixed pool of four
+/// left beside its single engine, so a one-account store costs exactly what
+/// it always cost.
+pub const UI_RESERVED_CONNECTIONS: usize = 3;
+
+/// The pool size for a store holding `accounts` enabled accounts.
+///
+/// One connection per engine plus the UI's reserve, and never smaller than
+/// one engine's worth: a store with no account yet still opens, and the
+/// first account onboarding creates must be startable without reopening.
+pub fn pool_size_for(accounts: usize) -> usize {
+    accounts.max(1) + UI_RESERVED_CONNECTIONS
+}
+
+/// How many engines a pool of `max_connections` can serve.
+///
+/// The refusal the ADR asks for lives on this number: starting more engines
+/// than this is not a slow start, it is a deadlock — the extra engine waits
+/// forever for a connection a sync pass is holding, and nothing ever says
+/// why. A pool too small to cover the UI's reserve serves no engines rather
+/// than serving them by starving the window.
+pub fn engine_budget(max_connections: usize) -> usize {
+    max_connections.saturating_sub(UI_RESERVED_CONNECTIONS)
+}
+
+/// Every enabled account, in creation order.
+///
+/// This replaces `first_account()`, deliberately without a replacement for
+/// its shape: ADR 0005 — "the first account is not special; any code that
+/// treats it differently fails exactly once, in the field." A caller that
+/// still needs exactly one (the pane-feeding path, until #185 teaches the
+/// sidebar to wear several) takes `.first()` at its own call site, where the
+/// choice is visible, rather than behind a name that makes it look like an
+/// answer.
+pub fn enabled_accounts(database: &Database) -> Vec<postio_model::Account> {
+    let Ok(connection) = database
         .connection()
         .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
-        .ok()?;
+    else {
+        return Vec::new();
+    };
     AccountRepository::new(&connection)
         .list_enabled()
         .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
-        .ok()?
-        .into_iter()
-        .next()
+        .unwrap_or_default()
 }

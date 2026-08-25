@@ -41,8 +41,8 @@ pub mod search;
 // one startup sequence and it should not matter to the reader which side of
 // the split each step came from.
 pub use postio_session::{
-    Wiring, actions, engine, ensure_search_index, first_account, logging, open_store, paths,
-    refresh,
+    Wiring, actions, enabled_accounts, engine, engine_budget, ensure_search_index, logging,
+    open_store, paths, refresh,
 };
 
 use std::rc::Rc;
@@ -381,7 +381,13 @@ pub struct Wired {
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
 pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
-    let Some(account) = first_account(&wiring.database) else {
+    // `.first()` here is the *panes'* single-account cut, not the sync
+    // engine's: every enabled account syncs (#183), and this is the one call
+    // site that still has to pick one to draw, because the sidebar does not
+    // wear several yet. #185 is where this choice goes to die; until then it
+    // is made here, visibly, rather than behind a helper that makes "the
+    // first one" look like an answer.
+    let Some(account) = enabled_accounts(&wiring.database).into_iter().next() else {
         tracing::info!(
             "no account configured; opening empty (see the provision example, or postio-hiy)"
         );
@@ -449,28 +455,69 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 /// drain whatever the last session left queued — is already under way while
 /// the list is drawing.
 pub fn start_syncing(window: &Window, wiring: &Wiring) {
-    let Some(account) = first_account(&wiring.database) else {
+    let accounts = enabled_accounts(&wiring.database);
+    if accounts.is_empty() {
         return;
-    };
-    let Some(sync) = engine::start(
-        &account,
-        &wiring.database,
-        wiring.blobs.clone(),
-        wiring.events.clone(),
-        wiring.secrets.clone(),
-        wiring.mailbox_roles.clone(),
-    ) else {
+    }
+
+    // Each engine holds a connection from the pool for the length of a sync
+    // pass. Starting more engines than the pool can serve is not a slow
+    // start, it is a deadlock: the extra engine waits forever for a
+    // connection another pass is holding, and nothing ever says why. So the
+    // refusal is a sentence, up front (#183, ADR 0005 Q3). `open_store`
+    // sizes the pool from the account count, so this fires only when the
+    // store changed under a running process -- accounts added since open.
+    let budget = engine_budget(wiring.database.pool().max_connections());
+    if accounts.len() > budget {
+        let sentence = format!(
+            "{} accounts are enabled but the store was opened with room to \
+             sync {budget}. Not starting any engine, because starting some \
+             and not others would sync whichever came first and silently \
+             skip the rest. Restart Postio to re-size the pool.",
+            accounts.len()
+        );
+        tracing::error!(accounts = accounts.len(), budget, "engine budget exceeded");
+        wiring
+            .events
+            .emit(postio_core::Event::Error { message: sentence });
         return;
-    };
-    // Leaked for the same reason the feeds are: it lives as long as the
-    // process, and dropping it at exit would stop the engine a moment before
-    // the process ends anyway.
-    let sync: &'static _ = Box::leak(Box::new(sync));
-    // `Refresh` is the one command that needs it, and it is pressed long
-    // after the bus was built.
-    wiring.engine.fill(sync.clone());
-    seed_the_backfill(sync, wiring);
-    fetch_what_is_opened(window, sync, wiring.runtime.clone());
+    }
+
+    // The account the panes are drawing (`feed_the_window`'s `.first()`), so
+    // the row-activation hook below asks the engine whose mail is actually
+    // on screen. The other engines sync all the same -- that is the point.
+    let mut on_screen: Option<&'static postio_runtime::Engine> = None;
+
+    for account in &accounts {
+        let Some(sync) = engine::start(
+            account,
+            &wiring.database,
+            wiring.blobs.clone(),
+            wiring.events.clone(),
+            wiring.secrets.clone(),
+            wiring.mailbox_roles.clone(),
+        ) else {
+            // `engine::start` has already said why (no transport, say).
+            // The other accounts still get their engines: one account that
+            // cannot start must not take the rest offline with it.
+            continue;
+        };
+        // Leaked for the same reason the feeds are: it lives as long as the
+        // process, and dropping it at exit would stop the engine a moment
+        // before the process ends anyway.
+        let sync: &'static _ = Box::leak(Box::new(sync));
+        // `Refresh` resolves whose engine to ask from the scope (#182), long
+        // after the bus was built.
+        wiring.engine.fill(account.id, sync.clone());
+        seed_the_backfill(sync, account.id, wiring);
+        if on_screen.is_none() {
+            on_screen = Some(sync);
+        }
+    }
+
+    if let Some(sync) = on_screen {
+        fetch_what_is_opened(window, sync, wiring.runtime.clone());
+    }
 }
 
 /// Jump a message to the front of the backfill when it is opened.
@@ -498,15 +545,16 @@ fn fetch_what_is_opened(
 /// At startup, because a session that ended with mail unread should not have
 /// to fetch it again on the wire when the user opens it. `postio-26c` also
 /// wants this run again whenever a sync finishes; nothing emits that yet.
-fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
+fn seed_the_backfill(
+    sync: &'static postio_runtime::Engine,
+    account: postio_model::ids::AccountId,
+    wiring: &Wiring,
+) {
     let Ok(connection) = wiring.database.connection() else {
         return;
     };
-    let Some(account) = first_account(&wiring.database) else {
-        return;
-    };
     let mailboxes = match postio_storage::repository::MailboxRepository::new(&connection)
-        .list_for_account(account.id)
+        .list_for_account(account)
     {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
@@ -578,25 +626,37 @@ pub async fn startup_route(
     database: &Database,
     secrets: &dyn postio_imap::secret::SecretStore,
 ) -> Startup {
-    let Some(account) = first_account(database) else {
+    let accounts = enabled_accounts(database);
+    if accounts.is_empty() {
         return Startup::Onboard(None);
-    };
-    let key = postio_imap::secret::AccountKey::new(account.address.address.clone());
-    // The account's domain, never the local part, for the same reason
-    // `feed_the_window` logs only that.
-    let domain = account.address.domain().unwrap_or("unknown").to_owned();
-    match secrets.retrieve(&key).await {
-        Ok(password) if !password.is_empty() => Startup::Ready(Box::new(account)),
-        Ok(_) => {
-            tracing::warn!(%domain, "the keyring holds an empty password; asking for it again");
-            Startup::Onboard(Some(Box::new(account)))
-        }
-        Err(error) => {
-            // Safe to log verbatim: no `SecretError` carries a password.
-            tracing::warn!(%domain, %error, "no usable password for the account; asking for it again");
-            Startup::Onboard(Some(Box::new(account)))
+    }
+    // Any account that can authenticate opens the window (#183): every
+    // enabled account syncs, so one broken credential must not hold the rest
+    // hostage behind the repair screen. Only when *no* account is usable
+    // does this route to repair -- for the first broken one, which is the
+    // one the user most likely just typed.
+    let mut broken: Option<postio_model::Account> = None;
+    for account in accounts {
+        let key = postio_imap::secret::AccountKey::new(account.address.address.clone());
+        // The account's domain, never the local part, for the same reason
+        // `feed_the_window` logs only that.
+        let domain = account.address.domain().unwrap_or("unknown").to_owned();
+        match secrets.retrieve(&key).await {
+            Ok(password) if !password.is_empty() => {
+                return Startup::Ready(Box::new(account));
+            }
+            Ok(_) => {
+                tracing::warn!(%domain, "the keyring holds an empty password; will ask again");
+                broken.get_or_insert(account);
+            }
+            Err(error) => {
+                // Safe to log verbatim: no `SecretError` carries a password.
+                tracing::warn!(%domain, %error, "no usable password; will ask again");
+                broken.get_or_insert(account);
+            }
         }
     }
+    Startup::Onboard(broken.map(Box::new))
 }
 
 #[cfg(test)]
