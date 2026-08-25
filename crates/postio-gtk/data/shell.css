@@ -1353,6 +1353,14 @@ button.postio-compose-more {
   color: var(--postio-accent-text);
 }
 
+/* Issue #116: purely informational, not a warning demanding action, so the
+   secondary ink rather than the accent colour "look at this" wears. */
+.postio-compose-tracking-notice {
+  padding: 6px 28px;
+  font-size: 0.8rem;
+  color: var(--postio-ink-secondary);
+}
+
 .postio-compose-actions {
   padding: 12px 28px 20px;
 }

@@ -2345,6 +2345,7 @@ dependencies = [
  "html5ever",
  "markup5ever_rcdom",
  "postio-model",
+ "url",
 ]
 
 [[package]]

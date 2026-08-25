@@ -291,6 +291,20 @@ impl Document {
         })
     }
 
+    /// Every link's host, lowercased and deduplicated.
+    ///
+    /// Not [`Href`] itself: a caller comparing against a sender's own domain
+    /// (issue #116's composer banner is the first) wants just the host, and
+    /// parsing one out of a raw href belongs with the type that already
+    /// knows what a valid href looks like. A `mailto:` link names no host at
+    /// all and is silently skipped, the same as any href [`url`] cannot find
+    /// one in.
+    pub fn link_hosts(&self) -> Vec<String> {
+        let mut hosts = Vec::new();
+        collect_link_hosts_in_blocks(&self.blocks, &mut hosts);
+        hosts
+    }
+
     /// Render to the HTML subset.
     ///
     /// The **normal form**: no whitespace between blocks, attributes in a
@@ -321,6 +335,55 @@ impl Document {
         }
         out
     }
+}
+
+// ---------------------------------------------------------------------------
+// Link hosts (issue #116)
+// ---------------------------------------------------------------------------
+
+fn collect_link_hosts_in_blocks(blocks: &[Block], hosts: &mut Vec<String>) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                collect_link_hosts_in_inlines(inlines, hosts);
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    collect_link_hosts_in_blocks(item, hosts);
+                }
+            }
+            Block::Quote(blocks) => collect_link_hosts_in_blocks(blocks, hosts),
+            Block::Pre(_) | Block::Rule => {}
+        }
+    }
+}
+
+fn collect_link_hosts_in_inlines(inlines: &[Inline], hosts: &mut Vec<String>) {
+    for inline in inlines {
+        match inline {
+            Inline::Link { href, inlines } => {
+                if let Some(host) = host_of(href.as_str())
+                    && !hosts.contains(&host)
+                {
+                    hosts.push(host);
+                }
+                collect_link_hosts_in_inlines(inlines, hosts);
+            }
+            Inline::Strong(inlines) | Inline::Emphasis(inlines) => {
+                collect_link_hosts_in_inlines(inlines, hosts);
+            }
+            Inline::Text(_) | Inline::Code(_) | Inline::Image { .. } | Inline::Break => {}
+        }
+    }
+}
+
+/// The host of an `http`/`https` href, lowercased. `None` for `mailto:` and
+/// anything else with no authority component to name one.
+fn host_of(href: &str) -> Option<String> {
+    url::Url::parse(href)
+        .ok()?
+        .host_str()
+        .map(str::to_ascii_lowercase)
 }
 
 // ---------------------------------------------------------------------------
