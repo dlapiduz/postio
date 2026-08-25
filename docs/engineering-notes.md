@@ -1661,6 +1661,31 @@ RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
 
 ## The shared cargo target directory
 
+**sccache's server outlives the worktree that started it, and
+`issue-release.sh` can leave it pointing at a directory that no longer
+exists.** `.cargo/config.toml` sets `TMPDIR = { value = "target/tmp",
+relative = true }`, which resolves against *the workspace root of whoever
+started the sccache server*. The server is one machine-wide daemon, it keeps
+the environment it was launched with, and it is the process that actually
+creates the compiler's temporary files. So releasing the worktree that
+happened to start it breaks every subsequent build on the box:
+
+```
+sccache: encountered fatal error
+sccache: error: Failed to create temp dir
+sccache: caused by: No such file or directory (os error 2)
+   at path "/home/.../postio-worktrees/issue-176/target/tmp/sccache350w6t"
+error: could not compile `unicode-ident` (lib)
+```
+
+The path in the message names a worktree you may never have worked in, and
+`unicode-ident` is whatever happened to compile first — neither has anything
+to do with the failure. **Check whether anyone else is mid-build
+(`pgrep -af rustc`), then `sccache --stop-server`**; the next `cargo` starts a
+fresh server with the current `TMPDIR`. Do not do it while another session is
+compiling — the running build dies with it.
+
+
 **It hands you other worktrees' artifacts, and the compile error then names a
 file that is correct.** This is not contention and not a stale cache — it was
 demonstrated end to end while landing #82.
