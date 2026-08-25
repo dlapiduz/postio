@@ -646,11 +646,15 @@ mod tests {
                 // `Context::Reader` — see `postio-14b`.
                 heading(Context::Reader),
                 heading(Context::Composer),
+                // `save_search` (issue #10) is the first command whose first
+                // context is Search rather than a broader one it also
+                // belongs to -- see `SaveSearch`'s registry entry.
+                heading(Context::Search),
                 heading(Context::Sidebar),
                 heading(Context::Parts),
             ],
-            "no registry command is filed under Search or Palette \
-             today; if one is, this test is how you find out"
+            "no registry command is filed under Palette today; if one is, \
+             this test is how you find out"
         );
     }
 }

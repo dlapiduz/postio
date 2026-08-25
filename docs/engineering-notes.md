@@ -171,6 +171,41 @@ those has an obvious default, which is why this stayed the cheap interim —
 say so on the row — rather than becoming a v1 feature. Revisit if multi-client
 drafting becomes a real workflow rather than an edge case.
 
+**Saved searches (#10) landed as add/list/activate; rename, reorder and
+delete did not.** ARCHITECTURE.md §6 already settled what a saved search
+*is* — `postio-config::FilterConfig`'s `[filters.<name>]`, `pinned = true`
+meaning "show it in the sidebar" — so #10 was wiring, not design: nothing
+read `FilterConfig` at runtime and the sidebar had no third section. What
+shipped is deliberately the acceptance criteria and no more: `Ctrl+S` names
+a save from the query text itself (`Config::save_filter`, a slug with `-2`,
+`-3` on a collision), the sidebar's "Saved searches" section renders every
+pinned entry and reports the query when one is picked, and
+`Window::run_search` opens the box with it and runs it immediately rather
+than waiting out the debounce a keystroke would. A user who wants to rename
+one, or stop pinning it, edits `config.toml` by hand — `Ctrl+E` already
+opens it — same as any `[filters]` entry before this issue.
+
+The write path is intentionally decoupled from the `ConfigService` /
+`LiveConfig` handle `postio-gtk/src/config.rs::install_at` already owns:
+`Ctrl+S` calls `Config::load_from_path` fresh, adds the filter, saves, and
+repaints the sidebar directly, rather than mutating the cached `service`
+and routing through `ConfigService::apply`. The file watcher reaches the
+same state a moment later and repaints again — redundant, and harmless,
+because `set_saved_searches` replaces the list rather than appending to it.
+Routing the write through `service` instead would have needed either
+`ConfigService` to grow a save method or the closure holding it to move
+into two places at once; reading fresh avoids both for one extra disk read
+per save, which is not a path anyone times. This is also what closes half of
+§6's "Schema built, not wired" note — the sidebar now reads `[filters]` live,
+including a hand-edit while the app is running, through the same
+`ConfigChanged::filters` the watcher already computed and nothing consumed
+before this.
+
+Rename, reorder and delete are real gaps, not omissions nobody noticed —
+they were in the issue's own "What", just not its "Acceptance". File them
+as their own issue(s) before calling saved searches "done" in any
+roadmap sense.
+
 ## Post-v1 ideas captured (mostly now tracked as GitHub issues)
 
 These were captured from conversations with the user before the migration to

@@ -348,6 +348,20 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
     },
+    CommandSpec {
+        id: CommandId::SaveSearch,
+        title: "Save search as folder",
+        // Shares a binding with `save_draft`, which is fine: the two
+        // contexts do not overlap, and `ctrl+s` is the "save this" muscle
+        // memory in both. See `postio-search`/canvas 2b's "save as folder".
+        default_binding: "ctrl+s",
+        alternate_bindings: &[],
+        // Only reachable with the search box open -- saving needs a query
+        // to save, and `Context::Search` is where one exists.
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
     // -- Compose ---------------------------------------------------------
     CommandSpec {
         id: CommandId::Compose,
