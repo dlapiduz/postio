@@ -25,6 +25,13 @@ if [ "${1:-}" = "--stale" ]; then
         [ -d "$claim" ] || continue
         num=$(basename "$claim" | sed 's/^issue-//')
 
+        # A live worktree is a live claim, whatever the labels say. The
+        # in-progress label can go missing while a session works (a failed
+        # `gh issue edit` at claim time, a relabel, another sweep), and
+        # clearing this lock on that evidence is what once let a second
+        # session claim its way into the first one's tree. #328.
+        [ -d "$WORKTREES/issue-$num" ] && continue
+
         # A lock whose issue is no longer claimed is left-over machinery from
         # work that finished: harmless-looking, and it makes issue-claim.sh
         # refuse that issue forever. Always safe to drop, regardless of age.
@@ -37,7 +44,6 @@ if [ "${1:-}" = "--stale" ]; then
             continue
         fi
 
-        [ -d "$WORKTREES/issue-$num" ] && continue
         git -C "$REPO_ROOT" ls-remote --exit-code --heads origin "issue-$num-*" \
             >/dev/null 2>&1 && continue
 
@@ -95,6 +101,9 @@ if [ "$ABANDON" = 1 ]; then
     gh issue comment "$NUM" --body "Unclaimed by an agent session. Any pushed branch is still on origin."
     echo "#$NUM released and available again."
 else
-    gh issue edit "$NUM" --remove-label in-progress >/dev/null 2>&1 || true
+    # `ready` too: a closed issue wearing `ready` reads as claimable work on
+    # every board and label query that does not also check the state. #328.
+    gh issue edit "$NUM" --remove-label in-progress --remove-label ready \
+        >/dev/null 2>&1 || true
     echo "#$NUM cleaned up."
 fi
