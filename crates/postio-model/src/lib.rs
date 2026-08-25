@@ -76,7 +76,7 @@ pub use ids::{
     ModSeq, OperationId, RfcMessageId, ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
-pub use mailbox::{Mailbox, MailboxCounts, MailboxRole};
+pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleOverrides};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
