@@ -6,7 +6,7 @@
 #
 # Split out into its own script, rather than living inline in the workflow,
 # so the "new issue or a comment on the existing one" decision can be driven
-# by a stubbed `gh` -- see scripts/test-report-advisory-failure.py -- instead
+# by a stubbed `gh` -- see scripts/tests/test-report-advisory-failure.py -- instead
 # of only ever being exercised by a real advisory landing in Cargo.lock.
 #
 # Usage: scripts/report-advisory-failure.sh <cargo-deny-output-file> <run-url>

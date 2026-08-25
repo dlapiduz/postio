@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/check-runtime-crossings.py.
+"""Self-test for scripts/checks/check-runtime-crossings.py.
 
 A guard that has never been seen to fail is not a guard. This one exists
 because of a defect that shipped -- `postio-66`, "there is no reactor
@@ -10,7 +10,7 @@ nothing.
 Throwaway git repositories in a temp dir, each with one crate in it. The real
 repository is never touched and nothing here reaches the network.
 
-Usage: scripts/test-check-runtime-crossings.py
+Usage: scripts/tests/test-check-runtime-crossings.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -21,8 +21,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CHECK = HERE / "check-runtime-crossings.py"
+HERE = Path(__file__).resolve().parent.parent
+CHECK = HERE / "checks" / "check-runtime-crossings.py"
 
 FAILURES: list[str] = []
 

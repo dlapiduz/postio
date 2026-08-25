@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/check-no-silent-tracking.py.
+"""Self-test for scripts/checks/check-no-silent-tracking.py.
 
 A guard that has never been seen to fail is not a guard — and this one guards
 something that currently does not exist, so on the real tree it passes whether
@@ -9,7 +9,7 @@ So: throwaway git repositories in a temp dir, each with one crate in it, and
 an assertion for every way the rule can be met or broken. The real repository
 is never touched and nothing here reaches the network.
 
-Usage: scripts/test-check-no-silent-tracking.py
+Usage: scripts/tests/test-check-no-silent-tracking.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -20,8 +20,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CHECK = HERE / "check-no-silent-tracking.py"
+HERE = Path(__file__).resolve().parent.parent
+CHECK = HERE / "checks" / "check-no-silent-tracking.py"
 
 FAILURES: list[str] = []
 

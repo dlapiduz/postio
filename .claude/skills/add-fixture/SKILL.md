@@ -22,7 +22,7 @@ what it *exercises*, not what it contains — `broken-references`, not
 
 **Invent everything.** Every address must use a reserved domain
 (`example.com`, `.test`, `.invalid`). Never a real person's name or address,
-least of all the maintainer's — `scripts/check-no-personal-data.py` runs in CI
+least of all the maintainer's — `scripts/checks/check-no-personal-data.py` runs in CI
 and a corpus test scans specifically for this.
 
 Use real message bytes: CRLF line endings, genuine headers, correct MIME
@@ -48,7 +48,7 @@ and why it exists. A fixture nobody can explain gets deleted by someone later.
 
 ```bash
 cargo test -p postio-model
-python3 scripts/check-no-personal-data.py
+python3 scripts/checks/check-no-personal-data.py
 ```
 
 The tests that will catch a partial job:

@@ -14,7 +14,7 @@ ever pointed at a wider `cargo deny check` in the future).
 create`/`issue comment` are recorded to a log file instead of actually
 calling GitHub, so this runs with no token and no network.
 
-Usage: scripts/test-report-advisory-failure.py
+Usage: scripts/tests/test-report-advisory-failure.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -26,7 +26,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "report-advisory-failure.sh"
 
 FAILURES: list[str] = []

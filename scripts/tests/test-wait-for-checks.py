@@ -12,7 +12,7 @@ heuristic existed to avoid, and is covered here too.
 replays a scripted sequence of answers, one per call, so the registration
 race can be reproduced deterministically instead of waited for.
 
-Usage: scripts/test-wait-for-checks.py
+Usage: scripts/tests/test-wait-for-checks.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "wait-for-checks.sh"
 
 FAILURES: list[str] = []

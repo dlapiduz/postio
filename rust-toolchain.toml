@@ -13,7 +13,7 @@
 # project should look like a change, not like weather.
 #
 # `rustup` honours this file everywhere, so CI needs no toolchain step of its
-# own. `scripts/check-toolchain-pinned.py` refuses a workflow that adds one.
+# own. `scripts/checks/check-toolchain-pinned.py` refuses a workflow that adds one.
 #
 # One caveat it cannot enforce: RUSTUP_TOOLCHAIN in the environment *beats*
 # this file. See docs/engineering-notes.md before wondering why a pin did

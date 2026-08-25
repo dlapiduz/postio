@@ -231,7 +231,7 @@ fn settings(outcome: &DiscoveryOutcome) -> &postio_imap::discovery::AccountSetti
 // --- Shipped provider presets -------------------------------------------
 //
 // Addresses in a real provider's domain are built rather than written out;
-// a literal one reads as personal data to scripts/check-no-personal-data.py.
+// a literal one reads as personal data to scripts/checks/check-no-personal-data.py.
 // See CLAUDE.md, "No personal data".
 
 #[tokio::test]
@@ -727,7 +727,7 @@ async fn live_probe_against_the_thunderbird_ispdb() {
 
     let probe = Probe::new(Arc::new(PimalayaTransport::new()));
     // Built, not written out: a literal address in a real provider's domain
-    // reads as personal data to scripts/check-no-personal-data.py.
+    // reads as personal data to scripts/checks/check-no-personal-data.py.
     let domain = std::env::var("POSTIO_TEST_ISPDB_DOMAIN").unwrap_or_else(|_| "gmail.com".into());
     let report = probe
         .run(&format!("someone@{domain}"), &CancelToken::new())

@@ -4,7 +4,7 @@
 //! come back. It never reaches into storage, never speaks a protocol and never
 //! awaits the network. That is what keeps a second frontend possible, and CI
 //! enforces the half of it that can be enforced: this crate must not depend on
-//! `gtk4` or `libadwaita` (`scripts/check-crate-boundaries.py`).
+//! `gtk4` or `libadwaita` (`scripts/checks/check-crate-boundaries.py`).
 //!
 //! # The registry is the source of truth
 //!

@@ -143,7 +143,7 @@ other reasons rather than as its own change.
 for by clicking *Sign in*, which is the test `ARCHITECTURE.md` §11 sets. The
 listener binds only on demand and only on loopback. The refresh token goes
 straight to the keyring; the access token is a `Password` (zeroizing) and is
-never written to disk. `scripts/check-no-silent-tracking.py` should learn about
+never written to disk. `scripts/checks/check-no-silent-tracking.py` should learn about
 this flow so that "Postio opened a connection" stays an enumerable list — and
 the flow's requests belong in the egress log (#151) that turns that list from
 an assertion into a record the user can read.

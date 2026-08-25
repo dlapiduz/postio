@@ -89,7 +89,7 @@ the alternative — a second binary opening SQLite directly — is not a second
 frontend but a second application sharing a file.
 
 Dashed borders mark the three crates whose dependency closure CI polices
-(`scripts/check-crate-boundaries.py`).
+(`scripts/checks/check-crate-boundaries.py`).
 
 ---
 
@@ -290,7 +290,7 @@ hide inside the thing meant to catch it.
 - **`postio-gtk` must not depend on `rusqlite`/`io-imap`.** The view layer does
   no SQL and speaks no protocol.
 
-`scripts/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
+`scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an
 innocent-looking intermediate is caught, and a string in a comment cannot fool
 it. It counts the guarded crate's own dev-dependencies too — a test that pulls

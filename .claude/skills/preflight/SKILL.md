@@ -21,8 +21,7 @@ cargo build --workspace
 cargo test --workspace --no-fail-fast
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
-python3 scripts/check-crate-boundaries.py
-python3 scripts/check-no-personal-data.py
+scripts/check.sh
 ```
 
 **Always `--no-fail-fast`.** Plain `cargo test` aborts remaining targets after
@@ -32,8 +31,10 @@ totals look catastrophic. This has already caused a false alarm.
 `cargo fmt --all --check` is read-only and safe with others working. Never drop
 the `--check` here — writing would rewrite files they are mid-edit in.
 
-`check-no-personal-data.py` redacts values by default because CI logs are
-public. Add `--reveal` locally when fixing what it finds.
+`scripts/check.sh` runs every repository invariant. The personal-data check
+redacts values by default because CI logs are public; run
+`python3 scripts/checks/check-no-personal-data.py --reveal` locally when
+fixing what it finds.
 
 ## 2. Stale artifacts — check this before believing a failure
 

@@ -8,7 +8,7 @@
 //!
 //! It does not probe, it does not connect, and it does not write anything. It
 //! cannot: `postio-gtk` may not link `io-imap` or `rusqlite`
-//! (`scripts/check-crate-boundaries.py`), and all three of those need one or
+//! (`scripts/checks/check-crate-boundaries.py`), and all three of those need one or
 //! the other. So this is the form and the states, and
 //! [`Onboarding::connect_probe`] / [`Onboarding::connect_submit`] are where
 //! the composition root does the work — the same arrangement

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/ci-expected-workflows.py.
+"""Self-test for scripts/checks/ci-expected-workflows.py.
 
 The predicate it implements decides whether `issue-land.sh` is allowed to
 merge without seeing a check, so a wrong answer in one direction wastes a
@@ -10,7 +10,7 @@ dir and against this repository's real `.github/workflows`.
 The last case is #135 verbatim in shape: a multi-crate Rust change that the
 old `gh pr checks` heuristic called "prose-only" and merged unchecked.
 
-Usage: scripts/test-ci-expected-workflows.py
+Usage: scripts/tests/test-ci-expected-workflows.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -21,9 +21,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 REPO = HERE.parent
-SCRIPT = HERE / "ci-expected-workflows.py"
+SCRIPT = HERE / "checks" / "ci-expected-workflows.py"
 
 FAILURES: list[str] = []
 

@@ -8,7 +8,7 @@
 # an advisory against it will never arrive as a routine `cargo update`.
 #
 # This is the "what is in the graph at all" question.
-# `scripts/check-crate-boundaries.py` asks the other one -- which of *our*
+# `scripts/checks/check-crate-boundaries.py` asks the other one -- which of *our*
 # crates may reach which -- and neither substitutes for the other.
 #
 # Run it locally with:  cargo deny check

@@ -31,7 +31,7 @@
 //! ```
 //!
 //! No GTK type appears here, and none may: `postio-core` must stay
-//! UI-agnostic (`scripts/check-crate-boundaries.py`), which is what keeps a
+//! UI-agnostic (`scripts/checks/check-crate-boundaries.py`), which is what keeps a
 //! macOS frontend possible.
 //!
 //! # N producers, N subscribers

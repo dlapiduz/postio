@@ -33,7 +33,7 @@
 //! # Why this lives in `postio-app`
 //!
 //! Because of that seed. `postio-gtk` may not depend on `rusqlite`, and
-//! `scripts/check-crate-boundaries.py` counts a crate's own dev-dependencies —
+//! `scripts/checks/check-crate-boundaries.py` counts a crate's own dev-dependencies —
 //! an example is built from that graph — so a `shot` that reads a store cannot
 //! live beside the widgets it renders. `postio-app` is the crate that already
 //! knows both halves exist, which is what a shot of the real application over
