@@ -535,34 +535,52 @@ fn preview(text: &str) -> Option<String> {
 /// to be the server's numbering and not the parser's flat part index: children
 /// of a multipart are numbered from 1, and a nested multipart extends the path
 /// with a dot.
+/// # Why this walks with an explicit stack (#277)
+///
+/// It recursed, once per level of nesting, over a tree built entirely from the
+/// message. Nesting is free for a sender — `multipart/mixed` inside
+/// `multipart/mixed`, as deep as they care to type — so a crafted message
+/// overflowed the stack here.
+///
+/// That was the serious half of #277, and the half with no mitigations. The
+/// `mail_parser` unwind this module contains is a `debug_assert!` and so is
+/// absent from a release build; this was unconditional. And a stack overflow
+/// is a `SIGSEGV` rather than an unwind, so the [`catch_unwind`](try_parse)
+/// that makes [`parse`] infallible cannot touch it, and no caller can.
+///
+/// An explicit worklist rather than a depth limit, because a limit is a number
+/// somebody has to be right about — too low and a legitimately baroque
+/// forwarded thread loses its attachments, too high and the crash is still
+/// reachable. Iteration has no such number. The heap it uses is bounded by a
+/// message that is already in memory.
+///
+/// Found by the `parse_message` fuzz target from #147, which could only reach
+/// it once the unwind stopped firing first on the same inputs.
 fn part_paths(source: &MpMessage<'_>) -> HashMap<MessagePartId, String> {
-    fn walk(
-        source: &MpMessage<'_>,
-        id: MessagePartId,
-        prefix: Option<&str>,
-        out: &mut HashMap<MessagePartId, String>,
-    ) {
+    let mut paths = HashMap::new();
+    // (part, the path of that part). The root has no path of its own: its
+    // children are numbered from 1, which is what IMAP calls them.
+    let mut pending: Vec<(MessagePartId, Option<String>)> = vec![(0, None)];
+
+    while let Some((id, prefix)) = pending.pop() {
         let Some(part) = source.parts.get(id as usize) else {
-            return;
+            continue;
         };
         match &part.body {
             PartType::Multipart(children) => {
                 for (index, child) in children.iter().enumerate() {
-                    let path = match prefix {
+                    let path = match prefix.as_deref() {
                         Some(prefix) => format!("{prefix}.{}", index + 1),
                         None => (index + 1).to_string(),
                     };
-                    walk(source, *child, Some(&path), out);
+                    pending.push((*child, Some(path)));
                 }
             }
             _ => {
-                out.insert(id, prefix.unwrap_or("1").to_owned());
+                paths.insert(id, prefix.unwrap_or_else(|| "1".to_owned()));
             }
         }
     }
-
-    let mut paths = HashMap::new();
-    walk(source, 0, None, &mut paths);
     paths
 }
 
