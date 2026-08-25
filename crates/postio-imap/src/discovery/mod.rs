@@ -64,22 +64,19 @@
 //!   only when [`ProbeOptions::guess_common_names`] is on — off by
 //!   default. It builds `imap.<domain>` / `smtp.<domain>` by string
 //!   formatting alone and calls nothing resembling [`DiscoveryTransport`].
-//! * **Cancellation stops *waiting*, not the request.** [`Probe::attempt`]
-//!   races each step against [`CancelToken::cancelled`], and losing that
-//!   race does make this module stop caring about the answer. It does not
-//!   make the request go away: [`PimalayaTransport`] runs `io-pim-discovery`'s
-//!   blocking client on [`tokio::task::spawn_blocking`], and a `JoinHandle`
-//!   dropped by a lost `select!` detaches the task rather than aborting it
-//!   — the blocking thread, and the socket it opened, run to whatever
-//!   `io-pim-discovery` itself decides is done, with no timeout of its own.
-//!   Realistically bounded rather than fixed: `Onboarding::probe`
-//!   (`postio-gtk`) already refuses to start a second probe while
-//!   `Status::is_busy`, so this is one abandoned request at a time, not an
-//!   accumulating pile of them, and it is the same shape of exposure typing
-//!   any address into any browser's address bar already has. Fixing it for
-//!   real needs a transport under this module's own control instead of
-//!   `io-pim-discovery`'s blocking client — out of scope for an audit bead,
-//!   and recorded as `postio-brp.2` rather than attempted blind here.
+//! * **Cancellation stops the request, not just the waiting.**
+//!   [`Probe::attempt`] races each step against [`CancelToken::cancelled`],
+//!   and losing that race makes this module stop caring about the answer.
+//!   That alone never made the request go away: a `JoinHandle` dropped by a
+//!   lost `select!` *detaches* the blocking task rather than aborting it, so
+//!   the socket stayed open for as long as `io-pim-discovery` took to
+//!   finish. The token now goes down to the transport with every call, and
+//!   [`PimalayaTransport`] hands `io-pim-discovery` a stream that checks it
+//!   before every read and write — so the detached task fails at its next
+//!   I/O boundary and drops its socket. A peer that accepts the connection
+//!   and then says nothing is bounded separately, by
+//!   [`DISCOVERY_IO_TIMEOUT`]. What is left unbounded is `connect` on the
+//!   HTTPS path, which keeps the OS default. #57.
 //! * **Nowhere else constructs a [`Probe`].** `crates/postio-app/src/onboarding.rs`
 //!   is the only production call site (`grep -rn 'Probe::new\|Probe::with_options'`
 //!   outside `tests/` and doc examples finds exactly that one line); every
@@ -112,8 +109,8 @@ use io_pim_discovery::autoconfig::config::{
 pub use self::builtin::{Preset, preset_for_domain, presets};
 pub use self::settings::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 pub use self::transport::{
-    AutoconfigEndpoint, DiscoveryAutoconfig, DiscoverySrvReport, DiscoverySrvService,
-    DiscoveryTransport, PimalayaTransport, TransportError,
+    AutoconfigEndpoint, DISCOVERY_IO_TIMEOUT, DiscoveryAutoconfig, DiscoverySrvReport,
+    DiscoverySrvService, DiscoveryTransport, PimalayaTransport, TransportError,
 };
 pub use crate::cancel::CancelToken;
 
@@ -400,7 +397,7 @@ impl Probe {
 
         match step {
             ProbeStep::Srv => {
-                let raced = race!(self.transport.srv(&address.domain));
+                let raced = race!(self.transport.srv(&address.domain, cancel));
                 Ok(match raced {
                     Err(_elapsed) => (AttemptOutcome::TimedOut, None),
                     Ok(Err(err)) => (AttemptOutcome::Failed(err.message().to_owned()), None),
@@ -424,7 +421,7 @@ impl Probe {
                     },
                 };
 
-                let raced = race!(self.transport.autoconfig(endpoint));
+                let raced = race!(self.transport.autoconfig(endpoint, cancel));
                 Ok(match raced {
                     Err(_elapsed) => (AttemptOutcome::TimedOut, None),
                     Ok(Err(err)) => (AttemptOutcome::Failed(err.message().to_owned()), None),
