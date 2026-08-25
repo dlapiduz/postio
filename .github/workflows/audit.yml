@@ -1,0 +1,81 @@
+name: Supply-chain audit
+
+# ci.yml's `supply-chain` job runs cargo-deny -- advisories included -- but
+# only when a push or PR touches non-prose paths, and is itself
+# workflow_dispatch-only while this repo is private (see the "PAUSED" note
+# there). A RUSTSEC advisory published against something already in
+# Cargo.lock's ~405 packages therefore has no ceiling on how long it goes
+# unnoticed: deny.toml opens by observing that a compromised transitive
+# dependency here is "the highest-value target the project owns within
+# reach", and the gap between an advisory's publication and the next
+# unrelated push landing is exactly the window that matters. #146.
+#
+# Licences, bans and sources do not change without a Cargo.lock change, so
+# the push-time job still owns those; this checks only what can turn red
+# with nobody touching the repository at all.
+on:
+  schedule:
+    # Offset from bench.yml's 06:00 so the two scheduled jobs are not both
+    # queuing for a runner at the exact same minute.
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Scoped here rather than widened workspace-wide, per #145: only this job
+  # reports a failure by filing or updating an issue.
+  issues: write
+
+jobs:
+  advisories:
+    name: cargo-deny advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Installed directly rather than through EmbarkStudios/cargo-deny-action:
+      # that action runs as a Docker entrypoint, and its own stdout is not
+      # something a later step in this job can read back -- which is exactly
+      # what turning a failure into an issue that names the advisory needs.
+      # Pinned to the same release the action itself bundles (see its
+      # Dockerfile), with the published checksum verified before the binary
+      # is ever executed.
+      - name: Install cargo-deny
+        env:
+          DENY_VERSION: "0.20.2"
+          DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          archive="cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          curl -sSL -o "$archive" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/${archive}"
+          echo "${DENY_SHA256}  ${archive}" | sha256sum -c -
+          sudo tar -xzf "$archive" --strip-components=1 -C /usr/local/bin "*/cargo-deny"
+          cargo-deny --version
+
+      # Advisories only -- see the note above on why licences/bans/sources
+      # stay with the push-time job. `--all-features` matches ci.yml's own
+      # supply-chain job, so the two never disagree about what is in the
+      # graph to begin with.
+      - name: cargo deny check advisories
+        id: audit
+        run: |
+          if cargo deny --all-features check advisories 2>&1 | tee audit-output.txt; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: File or update an issue naming the advisory
+        if: steps.audit.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/report-advisory-failure.sh audit-output.txt \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      # A step failing here is the point: it is what makes a passing run
+      # silent and a failing one visible in the Actions tab, on top of
+      # whatever issue the step above filed.
+      - name: Fail the job so a red run is visible
+        if: steps.audit.outputs.failed == 'true'
+        run: exit 1
