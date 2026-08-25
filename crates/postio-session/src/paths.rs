@@ -50,10 +50,26 @@ where
 /// `$XDG_CACHE_HOME/postio/drag`. **Cache, not data**, and the distinction is
 /// the whole reason this is a separate function rather than a folder beside
 /// the database: these files are copies of mail that is already stored, made
-/// so that some other application could be handed a path. Losing them costs
-/// nothing, and a cache directory is somewhere the system is allowed to
-/// reclaim — which is exactly right for files whose only purpose was to
-/// survive long enough for a drop to read them.
+/// so that some other application could be handed a path. A cache directory
+/// is somewhere the system is allowed to reclaim, which is the right shape
+/// for files whose only purpose was to survive long enough for a drop to
+/// read them.
+///
+/// # "Losing them costs nothing" is not quite true
+///
+/// It is true of the *bytes* — they are still in the blob store — and false
+/// of the timing. A receiver is handed a **path**, and it reads that path
+/// after the drop, on its own schedule. That is so even through the file
+/// transfer portal, which despite taking file descriptors hands the receiver
+/// back paths and never copies the content (#121, and
+/// `crates/postio-app/tests/drag_out_portal.rs`). So a file reclaimed between
+/// the drop and the read is a drop that silently produced nothing, and
+/// nothing anywhere reports an error.
+///
+/// Nothing in Postio deletes this directory today, which is why that window
+/// never opens in practice. **Do not add a sweep over it without reading that
+/// test first** — a startup purge here would be the same class of bug as
+/// pointing this at the blob store's temporary directory, below.
 ///
 /// Not the blob store's temporary directory, which looks tempting and is
 /// wrong: `BlobStore::purge_temporary` deletes everything in there on start,
