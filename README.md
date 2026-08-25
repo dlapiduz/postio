@@ -34,6 +34,36 @@ first.
 Screenshots of the running app will go here once the shell (E7) is far
 enough along to be worth a picture — see `docs/images/`.
 
+## This codebase is almost entirely AI-generated
+
+Postio is written by AI coding agents — Claude, running in parallel
+sessions — under the direction of a human maintainer who sets scope,
+reviews the results, and makes the product decisions. That is not a
+disclaimer; it is the experiment. The interesting question is not whether
+an agent can emit code, but whether a *process* can make agent-written
+software trustworthy, and this repository is built around that question:
+
+- **Every piece of work is a GitHub issue**, worked in its own branch,
+  landed as a PR. The issue history is the reasoning, in public.
+- **Test-driven development is mandatory**, for agents exactly as it
+  would be for people: the failing test is written first, and CI enforces
+  a gate chain — tests, clippy as errors, formatting, architectural
+  boundary checks, a personal-data scanner, license and advisory audits
+  on every dependency.
+- **The invariants are machine-checked, not remembered.** A crate that
+  must not link GTK, a view layer that must not speak SQL, a log that
+  must never contain message content — each is a script in CI, because a
+  rule an agent (or a person) has to remember is a rule that drifts.
+- **Decisions are written down** as [ADRs](docs/decisions/) with their
+  alternatives and costs, and hard-won lessons live in
+  [`docs/engineering-notes.md`](docs/engineering-notes.md) so the next
+  session does not relearn them.
+
+Read the code with the same skepticism you would give any codebase — and
+if you find something wrong, the issue tracker is where this project
+thinks. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to file an issue
+an agent can act on, including handing us the prompt you would run.
+
 ## Building and running
 
 ### System dependencies
@@ -44,6 +74,19 @@ Fedora 40+ (developed and tested on Fedora 44 / GNOME 50 / Wayland):
 sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
                  sqlite-devel libsecret-devel glib2-devel pkgconf-pkg-config
 ```
+
+Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 feature
+floor this project pins):
+
+```bash
+sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
+                 libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
+                 libglib2.0-dev libpango1.0-dev
+```
+
+Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) — with
+[rustup](https://rustup.rs) installed, the right compiler arrives on the
+first `cargo` command; no version to pick.
 
 Verified working against: gtk4 4.22.4, libadwaita-1 1.9.3,
 webkitgtk-6.0 2.52.5, sqlite3 3.51.2, libsecret-1 0.21.7, glib-2.0 2.88.3.
@@ -60,6 +103,35 @@ cargo build --workspace
 cargo run -p postio-app
 ```
 
+There is also a Flatpak manifest — see [`flatpak/`](flatpak/) — which is
+what a Flathub release will build from.
+
+### First run
+
+Postio opens onto a one-screen setup: type your email address, and the
+autoconfig probe fills in the server settings (a preset table, Thunderbird
+autoconfig, then DNS SRV — or manual entry if your provider answers to
+none of them). The password goes straight into the OS keyring; it is
+never written to a file. iCloud accounts need an app-specific password
+from <https://account.apple.com> — iCloud does not accept account
+passwords over IMAP.
+
+After the first sync, drive it from the keyboard:
+
+| | |
+|---|---|
+| `j` / `k` | next / previous message |
+| `Enter`, `t` | open a message / its thread |
+| `e` | reply |
+| `a` / `A` | archive message / whole thread |
+| `u` | undo — any action, after the fact |
+| `/` | search (`from:ada is:unread has:attach …`) |
+| `Ctrl+K` | the command palette — every command, searchable |
+| `?` | the full cheat sheet |
+
+Every binding is rebindable; the complete generated reference is
+[`docs/keybindings.md`](docs/keybindings.md).
+
 ### Test
 
 ```bash
@@ -70,9 +142,11 @@ cargo bench                             # perf budgets — see "It must feel ins
 ```
 
 Development is test-driven: a failing test is written before the code
-that makes it pass, for every crate. See [`CLAUDE.md`](CLAUDE.md) for the
-full contributor workflow, commit conventions, and architectural
-invariants enforced in CI.
+that makes it pass, for every crate. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for how to contribute — as a person
+or by pointing an agent at an issue — and [`CLAUDE.md`](CLAUDE.md) for
+the agent workflow, commit conventions, and the architectural invariants
+CI enforces.
 
 ### It must feel instant
 
