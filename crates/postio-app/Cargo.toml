@@ -54,6 +54,9 @@ postio-storage = { workspace = true, features = ["test-support"] }
 # re-exports. That is the point of the split (#82): what those tests exercise
 # is `postio-session`, and the import should say so.
 postio-session.workspace = true
+# The end-to-end suite (tests/e2e.rs) syncs a real window against the
+# in-process wire-level IMAP server over loopback.
+postio-imap = { workspace = true, features = ["imap", "test-server"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 criterion = "0.7.0"
