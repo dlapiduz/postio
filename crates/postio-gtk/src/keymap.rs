@@ -739,7 +739,8 @@ impl Resolver {
     /// not be honoured so the caller can put it on the settings validity line.
     pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
         let (keymap, problems) = Keymap::from_commands(commands);
-        (Self::new(keymap), Self::all_problems(commands, problems))
+        let problems = Self::all_problems(commands, &keymap, problems);
+        (Self::new(keymap), problems)
     }
 
     /// Rebuilds the table after `config.toml` changed, without a restart.
@@ -754,16 +755,37 @@ impl Resolver {
     /// is only the half that has to be reparsed into chords.
     pub fn apply_commands(&mut self, commands: &postio_core::Keymap) -> Vec<String> {
         let (keymap, problems) = Keymap::from_commands(commands);
+        let problems = Self::all_problems(commands, &keymap, problems);
         self.set_keymap(keymap);
-        Self::all_problems(commands, problems)
+        problems
     }
 
+    /// `commands.problems()`, this crate's own parse failures, and any
+    /// binding [`Keymap::shadowed`] finds -- in that order, since "`y` is
+    /// already bound to `flag`" is what the user needs to hear first.
+    ///
+    /// `keymap` is the table [`Keymap::from_commands`] just built from
+    /// `commands`: shadowing is a property of the *resolved* chord table,
+    /// not of `commands` itself, so it can only be checked once that table
+    /// exists.
     fn all_problems(
         commands: &postio_core::Keymap,
+        keymap: &Keymap,
         mut parse_problems: Vec<String>,
     ) -> Vec<String> {
         let mut problems = commands.problems().to_vec();
         problems.append(&mut parse_problems);
+        problems.extend(
+            keymap
+                .shadowed()
+                .into_iter()
+                .map(|(context, binding, command)| {
+                    format!(
+                        "`{binding}` in {context:?} can never fire -- a shorter binding \
+                 matches first, so `{command}` is unreachable"
+                    )
+                }),
+        );
         problems
     }
 
@@ -1225,6 +1247,30 @@ mod tests {
             command(&mut resolver, "g", KeyContext::List),
             "go_somewhere",
             "the exact match fires rather than waiting for a timeout"
+        );
+    }
+
+    #[test]
+    fn a_shadowed_binding_reaches_the_problems_the_settings_panel_shows() {
+        // `FirstMessage`'s default is `g g` (registry.rs), in every
+        // `LIST_SURFACES` context including List. Rebinding some other
+        // command to plain `g` in that same context is exactly the shape of
+        // edit a user would make without knowing `g g` already means
+        // something -- `Resolver::from_commands` is what `window.rs` calls
+        // to report problems, so this has to reach *that*, not just
+        // `Keymap::shadowed()` directly.
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("archive".to_string(), "g".to_string());
+
+        let (_, problems) = Resolver::from_commands(&postio_core::Keymap::resolve(&overrides));
+
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("first_message") && problem.contains("`g g`")),
+            "a shadowed binding never reached the reported problems: {problems:?}"
         );
     }
 
