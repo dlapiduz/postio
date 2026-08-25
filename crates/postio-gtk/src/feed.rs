@@ -490,14 +490,16 @@ impl Feed {
             // New mail lands at the top and every row shifts down. This is
             // an insertion, not a reload, which is what keeps the selection
             // on the message it was on and the scroll where it was.
-            Event::NewMail { mailbox, messages } if inner.showing(*mailbox) => {
+            Event::NewMail {
+                mailbox, messages, ..
+            } if inner.showing(*mailbox) => {
                 list.inserted_at_top(messages.len() as u32);
             }
             // Flags, read state, labels: the rows are still the same rows in
             // the same order, so only the pages holding them are refetched.
             // `MessageList::deliver` replaces the data inside the existing
             // `GObject`, so nothing above rediscovers anything.
-            Event::MessagesChanged { messages } => {
+            Event::MessagesChanged { messages, .. } => {
                 let pages: BTreeSet<u32> = messages
                     .iter()
                     .filter_map(|message| list.page_of(*message))
@@ -511,7 +513,7 @@ impl Feed {
                 self.reload();
             }
             // The order itself moved: a resync, a re-sort, a filter change.
-            Event::MessageListChanged { mailbox } if inner.showing(*mailbox) => {
+            Event::MessageListChanged { mailbox, .. } if inner.showing(*mailbox) => {
                 self.reload();
             }
             // The hits are the list now. Handled here rather than by whoever
@@ -1143,6 +1145,7 @@ mod tests {
         let mut tracker = SyncTracker::new();
         assert!(!tracker.apply(&Event::MailboxesChanged { account: account() }));
         assert!(!tracker.apply(&Event::BodyLoaded {
+            account: account(),
             message: postio_model::ids::MessageId::new(1),
         }));
     }

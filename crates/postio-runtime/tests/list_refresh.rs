@@ -107,7 +107,7 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
     let told = drain(&events)
         .iter()
         .filter(
-            |event| matches!(event, Event::MessageListChanged { mailbox } if *mailbox == inbox.id),
+            |event| matches!(event, Event::MessageListChanged { mailbox, .. } if *mailbox == inbox.id),
         )
         .count();
 
