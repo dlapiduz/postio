@@ -27,11 +27,22 @@
 //! with no `Window` around it, and `gtk_parts.rs` drives a bare `PartsPanel`
 //! with no `Reader` around it.
 //!
+//! # Why this points the window at a scratch allow list
+//!
+//! #215: it did not, and so the count it asserts on was whatever the
+//! developer's own `$XDG_STATE_HOME/postio/remote-images.ini` said. A machine
+//! where the test's sender had a standing "always allow" rendered the body
+//! with its remote images *permitted*, held nothing back, and failed here
+//! forever — on every commit and every branch, because the cause was not in
+//! the tree. A test that asserts on blocking must own the list that decides
+//! what is blocked.
+//!
 //! One test function, for the reason `gtk_style.rs` gives.
 
 use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
+use postio_gtk::reader::RemoteImageAllowList;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::ids::AccountId;
@@ -48,6 +59,11 @@ fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
     style::install(&display);
 
     let window = Window::default();
+    // Before anything asks for the reader, which is when it is built and when
+    // it reads this file. Empty, so the sender below is blocked because this
+    // test says so and not because of what is on the machine.
+    let allowlist = scratch_allowlist();
+    window.set_allowlist_path(&allowlist);
     window.present();
     pump();
 
@@ -86,6 +102,26 @@ fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
         blocked_tag(&window).is_visible(),
         "the reader held a remote image back and the panel never heard about it"
     );
+
+    // And it *follows* the reader rather than latching on the first render.
+    // Allow-listing the sender re-renders with nothing held back, and a badge
+    // still claiming otherwise would be exactly the stale one the wiring's own
+    // comment says this connection exists to prevent.
+    window.reader().click_always_allow();
+    pump();
+    assert!(
+        !blocked_tag(&window).is_visible(),
+        "the sender is allow-listed now, so nothing is held back — and the \
+         panel has to hear about that render too, not just the first"
+    );
+
+    // #215's other half: the exception went to the file this test named, so a
+    // window under test never edits the developer's own standing allow list.
+    assert!(
+        RemoteImageAllowList::load_from(&allowlist).is_allowed("ada@example.com"),
+        "the window's reader should persist to the path it was given"
+    );
+
     window.close_parts();
     pump();
 
@@ -119,6 +155,18 @@ fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
     assert!(!window.reader().widget().is_visible());
 
     window.destroy();
+}
+
+/// An allow-list file of this test's own, under the process's temp dir.
+///
+/// Never `$XDG_STATE_HOME` — see the module docs. Starts absent, which
+/// [`RemoteImageAllowList::load_from`] reads as "nobody is allow-listed".
+fn scratch_allowlist() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("postio-reading-pane-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory should be creatable");
+    let path = dir.join("remote-images.ini");
+    let _ = std::fs::remove_file(&path);
+    path
 }
 
 /// A plain-text body with a remote image in its HTML, so the blocking has

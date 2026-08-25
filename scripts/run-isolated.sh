@@ -72,10 +72,19 @@ mkdir -p "$STATE/data" "$STATE/config"
 # sessions building there and risk the stale-artifact failure described above.
 export CARGO_TARGET_DIR="$TARGET"
 
-# A throwaway store. The app resolves both of these (see postio-app/src/paths.rs),
-# so nothing it does can reach a real mailbox or a real config.
+# A throwaway store, so nothing the app does can reach a real mailbox, a real
+# config, or the state the real Postio keeps. Config is resolved by
+# postio-config/src/paths.rs; the state files by glib::user_state_dir() in
+# postio-gtk/src/state.rs and postio-gtk/src/reader/allowlist.rs.
 export XDG_DATA_HOME="$STATE/data"
 export XDG_CONFIG_HOME="$STATE/config"
+# XDG_STATE_HOME was missed until #215, and it is not only window geometry:
+# $XDG_STATE_HOME/postio/remote-images.ini is the standing "always allow
+# images from this sender" list. Clicking that once while looking at the demo
+# store wrote a real exception into the real file -- which then decided what
+# postio-gtk's tests saw, because a Window builds a Reader that loads it. That
+# cost a p1 nobody could bisect, since the cause was never in the tree.
+export XDG_STATE_HOME="$STATE/state"
 
 # Observability. POSTIO_LOG takes an EnvFilter directive, so `debug` turns
 # everything up and `postio_sync=debug,postio_runtime=debug` turns up just the
