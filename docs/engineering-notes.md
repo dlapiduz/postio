@@ -533,6 +533,42 @@ row's archive button archived the selection *and* that row; the keyboard
 never reached `connect_action` at all. Pinned by
 `crates/postio-gtk/tests/gtk_dispatch.rs`. Do not add a third way out.
 
+**The file-transfer portal carries *references*, not bytes — a dragged-out
+file that is deleted after the drop leaves the receiver with nothing, and no
+error anywhere.** Established 2026-08-25 on #121 by driving
+`org.freedesktop.portal.FileTransfer` by hand, because the mechanism decides
+whether `paths::export_dir` is allowed to point at a cache directory.
+
+What the portal actually does, in the order it happens:
+
+- `StartTransfer` returns a key. GDK writes that key, and nothing else, as
+  the payload for `application/vnd.portal.filetransfer`.
+- `AddFiles(key, fds)` takes **open file descriptors**. It is tempting to
+  read that as "the portal now has the content" and it is not: the fds
+  identify the files, and `RetrieveFiles` hands the receiver back *paths*.
+  Between an unsandboxed sender and an unsandboxed receiver they are the
+  original paths, unchanged — no document-portal indirection at all.
+- Delete the files after `AddFiles` and `RetrieveFiles` still returns those
+  paths, still reports success, and every one of them is now missing. The
+  receiver gets nothing and Postio believes the drop worked.
+
+Two consequences worth keeping:
+
+- **The dangerous window is after serialisation, not before.** GDK opens the
+  fds *during* serialisation, so a file missing at that moment fails loudly
+  with `Failed to open …`. The silent case is only ever "produced,
+  serialised, then reclaimed before the receiver read it".
+- **`export_dir` is `$XDG_CACHE_HOME/postio/drag` on purpose, and that is a
+  live trade-off rather than a settled one.** Nothing in Postio deletes it
+  today, so in practice the window never fires; the day something does — a
+  startup sweep, a size cap, a "clear cache" verb — it fires silently.
+  `crates/postio-app/tests/drag_out_portal.rs` pins the mechanism down so
+  that change fails a test instead of a user's drop.
+
+That test file is also the sandbox check: run unchanged inside
+`flatpak run dev.postio.Postio` it proves the sandboxed path, which is the
+only part of #121 a session on the host cannot answer.
+
 ## Storage, sync & search internals
 
 **Re-pointing a mailbox role relabels folders; it never moves mail.** `[mailboxes]`
