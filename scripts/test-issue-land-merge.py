@@ -52,7 +52,7 @@ FAILURES: list[str] = []
 # it would be.
 DELETE_BRANCH_ERROR = (
     "failed to run git: fatal: 'main' is already used by worktree at "
-    "'/home/diego/src/postio'"
+    "'/home/user/src/postio'"
 )
 
 # Every call is appended to $STUB_DIR/calls, one line each, so the test can
