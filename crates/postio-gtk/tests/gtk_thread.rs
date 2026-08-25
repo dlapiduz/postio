@@ -109,17 +109,32 @@ fn t_drills_into_a_thread_and_esc_puts_the_list_back_exactly() {
     );
 
     // -- the view options work while drilled in ---------------------------
+    //
+    // Through `window.act`, the same path the keyboard and the palette
+    // resolve a keystroke to (`Command::default_for` -> `act`) -- not
+    // `ThreadView::set_order`/`set_unread_only` directly, which would only
+    // prove the widget works and say nothing about whether `postio-yzc`'s
+    // two new commands actually reach it.
 
-    window.thread().set_order(Order::Newest);
+    assert_eq!(window.thread().order(), Order::Oldest, "the starting order");
+    window.act(postio_core::Command::default_for(
+        CommandId::ToggleThreadOrder,
+    ));
     pump();
+    assert_eq!(window.thread().order(), Order::Newest);
     let newest = window.thread().rows();
     assert_eq!(
         newest.first().map(|row| row.id),
         Some(MessageId::new(THREAD_SIZE)),
         "reversed"
     );
-    window.thread().set_unread_only(true);
+
+    assert!(!window.thread().unread_only(), "the starting filter");
+    window.act(postio_core::Command::default_for(
+        CommandId::ToggleThreadUnread,
+    ));
     pump();
+    assert!(window.thread().unread_only());
     assert!(
         window.thread().rows().iter().all(|row| !row.seen),
         "the filter keeps only what has not been read"
@@ -127,6 +142,17 @@ fn t_drills_into_a_thread_and_esc_puts_the_list_back_exactly() {
     assert!(
         !window.thread().rows().is_empty(),
         "and the fixture has unread mail in it, or this proves nothing"
+    );
+
+    // -- and the footer draws the keys that reach them ---------------------
+    let hints = key_hints(&window);
+    assert!(
+        hints.iter().any(|hint| hint == "n"),
+        "the unread toggle should show the key that reaches it: {hints:?}"
+    );
+    assert!(
+        hints.iter().any(|hint| hint == "o"),
+        "the order toggle should show the key that reaches it: {hints:?}"
     );
 
     // -- Esc puts the list back, exactly ----------------------------------
@@ -265,6 +291,35 @@ fn scroll_offset(window: &Window) -> f64 {
     .and_then(|scroller| scroller.downcast::<gtk::ScrolledWindow>().ok())
     .map(|scroller| scroller.vadjustment().value())
     .unwrap_or(0.0)
+}
+
+/// The text of every key hint currently drawn in the thread column.
+///
+/// `postio-yzc`: the unread and order toggles used to be bare buttons with no
+/// hint at all, because neither had a command to be a hint *for*. Reading the
+/// hints back out of the widget tree, rather than the toggle buttons'
+/// registry-blind old text, is what tells a regression that removed
+/// `postio_gtk::header::labelled` from them apart from one that only changed
+/// their wording.
+fn key_hints(window: &Window) -> Vec<String> {
+    let mut hints = Vec::new();
+    walk(&window.clone().upcast(), &mut |widget| {
+        if widget.has_css_class("postio-keyhint")
+            && let Some(label) = widget.downcast_ref::<gtk::Label>()
+        {
+            hints.push(label.text().to_string());
+        }
+    });
+    hints
+}
+
+fn walk(widget: &gtk::Widget, visit: &mut impl FnMut(&gtk::Widget)) {
+    visit(widget);
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        walk(&node, visit);
+        child = node.next_sibling();
+    }
 }
 
 /// Let the frame clock tick, so the list actually asks for and receives its

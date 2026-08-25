@@ -79,6 +79,10 @@ command_ids! {
     Back => "back",
     /// Show the whole thread the focused message belongs to.
     Thread => "thread",
+    /// Show only unread messages in the open thread, or show everything again.
+    ToggleThreadUnread => "toggle_thread_unread",
+    /// Reverse which end of the open thread comes first.
+    ToggleThreadOrder => "toggle_thread_order",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -272,6 +276,10 @@ pub enum Command {
         /// The thread to show; `None` means the focused message's thread.
         thread: Option<ThreadId>,
     },
+    /// Toggle the open thread's unread-only filter.
+    ToggleThreadUnread,
+    /// Reverse the open thread's message order.
+    ToggleThreadOrder,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -429,6 +437,8 @@ impl Command {
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
             Command::Thread { .. } => CommandId::Thread,
+            Command::ToggleThreadUnread => CommandId::ToggleThreadUnread,
+            Command::ToggleThreadOrder => CommandId::ToggleThreadOrder,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -478,6 +488,8 @@ impl Command {
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
             CommandId::Thread => Command::Thread { thread: None },
+            CommandId::ToggleThreadUnread => Command::ToggleThreadUnread,
+            CommandId::ToggleThreadOrder => Command::ToggleThreadOrder,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },
