@@ -13,6 +13,11 @@
 # CARGO_BUILD_JOBS, both of which override this.
 [build]
 jobs = 2
+# One compile cache for the whole machine, in every worktree, without every
+# session remembering `export RUSTC_WRAPPER=sccache`. The wrapper execs plain
+# rustc when sccache is not installed, so nothing breaks on a fresh box; an
+# explicit RUSTC_WRAPPER in the environment still wins over this.
+rustc-wrapper = "scripts/rustc-wrapper.sh"
 
 # Linking is the memory peak, not compiling. One fat binary that pulls in GTK,
 # WebKit and SQLite is where the resident set spikes, so keep the linker's own
