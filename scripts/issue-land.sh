@@ -26,7 +26,6 @@ set -euo pipefail
 TREE=$(git rev-parse --show-toplevel)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 MAIN_CHECKOUT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$MAIN_CHECKOUT/target}"
 
 MSG=""; WIP=0; GATES_ONLY=0; MERGE=1
 while [ $# -gt 0 ]; do
@@ -64,7 +63,13 @@ CRATES=$(printf '%s\n' $CRATES | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u)
 echo "issue:  #$ISSUE"
 echo "branch: $BRANCH"
 echo "crates: ${CRATES:-none}"
-echo "target: $CARGO_TARGET_DIR"
+# #178 gave every worktree its own target/ because sharing one compiled a
+# worktree's crate against a sibling's. Nothing defaults this any more: these
+# gates are the run a merge is staked on, so they are the last place that
+# should share artifacts with whatever else is landing right now. A caller who
+# genuinely wants a directory of their own still gets it -- see #253 and
+# docs/engineering-notes.md.
+echo "target: ${CARGO_TARGET_DIR:-$TREE/target (this worktree)}"
 echo
 
 # rust-toolchain.toml pins the compiler, and RUSTUP_TOOLCHAIN in the

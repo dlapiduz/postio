@@ -208,6 +208,14 @@ jobs:
         # blocked forever, even once its blocker closed. #247.
         run: python3 scripts/test-issue-claim-blocked-by.py
 
+      - name: Prove issue-land.sh's gates do not share a target directory
+        # #178 gave every worktree its own target/ because sharing one
+        # compiles a worktree's crate against a sibling's; issue-land.sh kept
+        # defaulting to the main checkout's, so the one run a merge is staked
+        # on was the one still sharing. This builds a real crate through
+        # --gates-only and looks at where the artifacts landed. #253.
+        run: python3 scripts/test-issue-land-target-dir.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
