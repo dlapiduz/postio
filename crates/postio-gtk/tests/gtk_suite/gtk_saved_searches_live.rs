@@ -82,8 +82,7 @@ fn saved_search_row(window: &Window, name: &str) -> Option<gtk::ListBoxRow> {
     find(window.sidebar().upcast_ref::<gtk::Widget>(), name)
 }
 
-#[test]
-fn pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one() {
+pub fn pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one() {
     let root = std::env::temp_dir().join(format!("postio-saved-searches-{}", std::process::id()));
     let state_dir = root.join("state");
     std::fs::create_dir_all(&state_dir).unwrap();

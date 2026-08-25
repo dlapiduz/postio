@@ -54,8 +54,7 @@ fn settle_for(budget: std::time::Duration, done: impl Fn() -> bool) -> bool {
     done()
 }
 
-#[test]
-fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
+pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
     let state_dir = std::env::temp_dir().join(format!("postio-reading-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

@@ -15,8 +15,7 @@ use gtk::prelude::*;
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::{app, fonts, style, window::Window};
 
-#[test]
-fn the_window_opens_and_wears_the_design() {
+pub fn the_window_opens_and_wears_the_design() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

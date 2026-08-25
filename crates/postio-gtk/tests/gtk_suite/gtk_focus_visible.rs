@@ -245,8 +245,7 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     found
 }
 
-#[test]
-fn taking_focus_changes_what_is_drawn() {
+pub fn taking_focus_changes_what_is_drawn() {
     let state_dir = std::env::temp_dir().join(format!("postio-focus-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
 

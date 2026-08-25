@@ -73,8 +73,7 @@ fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
 }
 
-#[test]
-fn opening_and_open_with_ing_a_part_reach_the_desktop() {
+pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     let state_dir = std::env::temp_dir().join(format!("postio-parts-open-{}", std::process::id()));
     let export_dir = state_dir.join("export");
     std::fs::create_dir_all(&state_dir).unwrap();

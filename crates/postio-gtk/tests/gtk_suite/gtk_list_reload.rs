@@ -102,8 +102,7 @@ impl MessageSource for Filling {
     }
 }
 
-#[test]
-fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
+pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

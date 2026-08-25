@@ -38,8 +38,7 @@ use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 /// for a 200-message thread specifically.
 const THREAD_SIZE: i64 = 200;
 
-#[test]
-fn t_drills_into_a_thread_and_esc_puts_the_list_back_exactly() {
+pub fn t_drills_into_a_thread_and_esc_puts_the_list_back_exactly() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

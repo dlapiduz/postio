@@ -47,8 +47,7 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
-#[test]
-fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
+pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
     let state_dir = std::env::temp_dir().join(format!("postio-drain-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

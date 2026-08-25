@@ -65,8 +65,7 @@ fn screen(window: &Window) -> Option<Onboarding> {
     window.content().and_downcast::<Onboarding>()
 }
 
-#[test]
-fn an_account_with_no_credential_lands_on_the_repair_screen() {
+pub fn an_account_with_no_credential_lands_on_the_repair_screen() {
     let state_dir = std::env::temp_dir().join(format!("postio-repair-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

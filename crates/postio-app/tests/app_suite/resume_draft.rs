@@ -49,8 +49,7 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
-#[test]
-fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
+pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     let state_dir =
         std::env::temp_dir().join(format!("postio-resume-draft-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();

@@ -35,8 +35,7 @@ use std::path::{Path, PathBuf};
 /// Where the crate's real code lives.
 const SOURCE: &str = "src";
 
-#[test]
-fn no_source_file_prints_outside_its_tests() {
+pub fn no_source_file_prints_outside_its_tests() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(SOURCE);
     let mut found: Vec<String> = Vec::new();
 

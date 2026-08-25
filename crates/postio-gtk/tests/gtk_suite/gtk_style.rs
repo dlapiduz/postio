@@ -27,8 +27,7 @@ const SENTINEL: Rgba = Rgba(1.0, 0.0, 1.0, 1.0);
 /// mapping onto the named colours is that stock widgets keep working.
 const DERIVED: [&str; 1] = ["--accent-color"];
 
-#[test]
-fn the_generated_stylesheet_works_in_gtk() {
+pub fn the_generated_stylesheet_works_in_gtk() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

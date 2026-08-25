@@ -47,8 +47,7 @@ fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
     settle();
 }
 
-#[test]
-fn the_detach_key_reaches_the_composer_in_a_wired_application() {
+pub fn the_detach_key_reaches_the_composer_in_a_wired_application() {
     let state_dir = std::env::temp_dir().join(format!("postio-detach-app-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.
