@@ -13,6 +13,30 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
     and the whole verb vocabulary -- which is what makes a headless frontend
     (an MCP server; see ADR 0010) possible without giving the database a
     second writer that plays by different rules.
+  * ``postio-search`` must not depend on ``rusqlite``/``gtk4``. It is the query
+    *language* -- parser, highlighter, facets -- and stays pure so the same
+    query string means the same thing in the search bar, the sidebar and
+    ``[filters]``; ``postio-index`` is the FTS5 executor that runs it.
+  * ``postio-body`` must not depend on ``rusqlite``/``gtk4``. It is the other
+    pure leaf: the composer's document, the HTML subset, quoting and
+    sanitising, kept out of ``postio-model`` only because ``ammonia`` pulls an
+    HTML parser (ADR 0004) -- not because it needed a toolkit or a database.
+  * ``postio-model`` must not depend on ``ammonia``/``html5ever``,
+    ``rusqlite``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
+    composer's document here for exactly this reason -- dependency weight on
+    the crate the whole workspace waits on -- and ADR 0007 admitted the vCard
+    parser only because it brings zero dependencies of its own.
+  * ``postio-config`` must not depend on ``rusqlite``/``gtk4``. It parses and
+    validates TOML and watches the file for changes; it does no SQL and links
+    no toolkit.
+
+Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
+``io-imap``/``io-sasl``. Cargo unifies features workspace-wide, so
+``postio-imap``'s default ``imap`` feature is active in the resolved graph
+regardless of what ``postio-sync`` asks for -- a graph-based rule here would
+fail on a manifest that is entirely correct. `crates/postio-sync/tests/boundary.rs`
+holds that line instead, by reading the manifest text directly; see its own
+doc comment for the full reasoning.
 
 The check inspects ``cargo metadata``'s resolved dependency graph rather than
 grepping source, so it catches a violation that arrives *transitively* through
@@ -97,6 +121,79 @@ RULES: dict[str, dict[str, object]] = {
             "commands is through GTK -- and ADR 0010's alternative, a second "
             "binary opening SQLite directly, gives the database two writers "
             "with different rules about ordering, undo and the queue."
+        ),
+    },
+    "postio-search": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+        ],
+        "why": (
+            "postio-search is the query language -- parser, highlighter, "
+            "facets -- not the index that executes it. postio-index is the "
+            "FTS5 executor; postio-gtk, postio-runtime and postio-app all "
+            "depend on postio-search directly, so the same query string has "
+            "to mean the same thing in the search bar, the sidebar and "
+            "[filters], which only holds if this crate does no SQL of its own."
+        ),
+    },
+    "postio-body": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+        ],
+        "why": (
+            "postio-body is the composer's document, the HTML subset, "
+            "quoting and sanitising -- the other shared leaf, kept out of "
+            "postio-model only because ammonia pulls an HTML parser (ADR "
+            "0004). It is not a database and not a toolkit, and either one "
+            "arriving here would mean a leaf every frontend depends on now "
+            "links what only one of them needs."
+        ),
+    },
+    "postio-model": {
+        "banned": [
+            "ammonia",
+            "html5ever",
+            "markup5ever_rcdom",
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "tokio",
+        ],
+        "why": (
+            "postio-model is what the whole workspace waits on to compile, "
+            "which is the reason ADR 0004 Q1 rejected putting the composer's "
+            "document here -- an HTML parser's dependency weight lands on "
+            "every crate in the tree -- and the reason ADR 0007 admitted the "
+            "vCard parser only because it brings zero dependencies of its "
+            "own. Each of these is the class of dependency one of those ADRs "
+            "argued out; letting any of them back in reopens that argument "
+            "by accident instead of on purpose."
+        ),
+    },
+    "postio-config": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+        ],
+        "why": (
+            "postio-config parses and validates TOML and watches the file "
+            "for live reload. It does no SQL and links no toolkit -- the "
+            "schema is read by postio-core, postio-gtk and postio-app alike, "
+            "and any of them depending on it should not be how SQLite or GTK "
+            "quietly reach the other two."
         ),
     },
 }
