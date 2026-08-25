@@ -298,8 +298,28 @@ asserting it.
   through GTK. ADR 0010's alternative — a second binary opening SQLite
   directly — gives the database two writers with different rules about
   ordering, undo and the queue, which is a bug nobody remembers the cause of.
+- `postio-search` must not depend on `rusqlite` or `gtk4`. It is the query
+  *language*, not the index that executes it — `postio-index` is the FTS5
+  executor — and postio-gtk, postio-runtime and postio-app all depend on it
+  directly, so the same query string has to mean the same thing everywhere.
+- `postio-body` must not depend on `rusqlite` or `gtk4`. The other pure leaf:
+  the composer's document, the HTML subset, quoting and sanitising, kept out
+  of `postio-model` only because `ammonia` pulls an HTML parser (ADR 0004).
+- `postio-model` must not depend on `ammonia`/`html5ever`, `rusqlite`,
+  `gtk4`, or `tokio`. It is what the whole workspace waits on to compile —
+  ADR 0004 Q1 rejected the composer's document here for exactly this
+  dependency weight, and ADR 0007 admitted the vCard parser only because it
+  brings none of its own.
+- `postio-config` must not depend on `rusqlite` or `gtk4`. It parses and
+  watches TOML; postio-core, postio-gtk and postio-app all depend on it, and
+  none of them should reach the other two through it.
 - `postio-sync` talks to the `MailBackend` trait, never to `io-imap` types
-  directly — that crate is pre-1.0 and moving fast.
+  directly — that crate is pre-1.0 and moving fast. Enforced by
+  `crates/postio-sync/tests/boundary.rs` reading the manifest text rather
+  than by `scripts/check-crate-boundaries.py`: Cargo unifies features across
+  the workspace, so `postio-imap`'s default `imap` feature is active in the
+  resolved graph regardless of what `postio-sync` asks for, and a
+  graph-based rule here would fail on a manifest that is entirely correct.
 - Every mutating action is local-first: SQLite write, enqueue the operation, emit
   the event, repaint. **The UI never awaits the network.**
 - Secrets go in the Secret Service keyring. Never in `config.toml`, never logged.
