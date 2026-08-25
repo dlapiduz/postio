@@ -2300,3 +2300,46 @@ notice it after the fact (`git show --stat` on your own commit lists paths
 you didn't intend), verify the swept-in change is intact and the affected
 crate still builds, note it honestly, and move on.
 
+
+## The scripts directory and the gate (2026-08-25, #315)
+
+**`scripts/` is a small command surface over two subdirectories.** Top level:
+the commands a session actually types (`issue-claim.sh`, `issue-land.sh`,
+`issue-release.sh`, `check.sh`, `run-isolated.sh`, `test-headless.sh`) plus
+infrastructure invoked by config or other scripts. `scripts/checks/` holds
+every repository invariant; `scripts/tests/` holds the self-tests.
+`scripts/check.sh` runs every `checks/check-*.py` by glob, so **adding an
+invariant is dropping a file into `checks/` with a self-test in `tests/`** —
+nothing else to wire, and `issue-land.sh` and CI pick it up automatically.
+
+**Self-tests rot while CI is paused, silently.** Two were red on `main` for
+days before #315 tripped over them: `test-issue-claim-blocked-by.py`'s
+fixture predated the claim script's base-exists guard (no `origin` in the
+fixture, so the run died before reaching what it tests), and
+`test-issue-base-branch.py`'s `gh` stub predated the #312 merge
+verification (it said "Merged" without moving the base, failing the very
+check that exists to catch that lie — the merge test's stub had been taught
+this; the base-branch one had not). If you change the landing machinery, run
+`scripts/tests/` yourself; nothing else will until CI is back.
+
+**sccache is wired in through `.cargo/config.toml`**
+(`build.rustc-wrapper = "scripts/rustc-wrapper.sh"`), not exported per shell.
+The wrapper execs plain rustc when sccache is missing, so it cannot cause the
+"RUSTC_WRAPPER names a binary that does not exist" hard failure an export
+could; an explicit `RUSTC_WRAPPER` in the environment still beats the config.
+The standing warning above about the sccache *server* keeping the `TMPDIR` of
+whoever started it still applies.
+
+**Dev-profile debug info is `line-tables-only`** (workspace `Cargo.toml`).
+Backtraces keep file:line — what tests and `RUST_BACKTRACE` need — while the
+heaviest part of compiling and linking the GTK/WebKit stack goes away. What
+is lost is variable inspection in a debugger; delete the one line to get it
+back. Changing it invalidates every cached compile once (sccache keys on
+flags), so the first build after it lands pays full price.
+
+**The headless runner keys on cargo's 16-hex metadata suffix** to decide what
+runs on the private compositor: `deps/gtk_list-0123456789abcdef` goes
+headless, `postio-app` and examples reach the real display — before #315 the
+README's own `cargo run -p postio-app` launched the app invisibly.
+`scripts/tests/test-headless-runner.py` pins the contract with a stubbed
+mutter, so it runs anywhere, fast.
