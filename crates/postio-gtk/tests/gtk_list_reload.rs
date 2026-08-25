@@ -143,6 +143,7 @@ fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     // moved; it does not say how, because it does not know.
     store.batch_committed(200);
     feeds.apply(&Event::MessageListChanged {
+        account: postio_model::AccountId::new(1),
         mailbox: MailboxId::new(INBOX),
     });
     pump_until(|| list.model().n_items() == 320);
@@ -176,6 +177,7 @@ fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     for batch in 0..5 {
         store.batch_committed(200);
         feeds.apply(&Event::MessageListChanged {
+            account: postio_model::AccountId::new(1),
             mailbox: MailboxId::new(INBOX),
         });
         let expected = 520 + batch * 200;
