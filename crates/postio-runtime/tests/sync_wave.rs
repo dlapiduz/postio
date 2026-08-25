@@ -26,6 +26,7 @@ use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
 };
+use postio_storage::test_support::TempDatabase;
 use postio_storage::{BlobStore, Database, test_support};
 
 /// Long enough that two passes overlap for an unmistakable stretch, short
@@ -60,8 +61,21 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 ///
 /// Nothing is seeded locally on purpose: discovery is what fills the folder
 /// table, and a first sync is the case this file is about.
-fn engine_over(backend: Arc<MockBackend>) -> (Database, Engine) {
-    let database = test_support::memory();
+///
+/// # File-backed, because this file is about concurrency
+///
+/// `test_support::memory()` is the usual choice and is the wrong one here.
+/// An in-memory database is opened with SQLite's *shared cache*, which is a
+/// different locking model from the WAL one Postio actually runs on: locks are
+/// per-table, and a reader blocks a writer outright rather than the two
+/// running side by side. The engine's runtime is
+/// `Builder::new_current_thread`, so a pass that blocks waiting for one of
+/// those locks blocks every other lane on the same thread with it, and the
+/// wave this file is about stops overlapping — not because the engine stopped
+/// running passes concurrently, but because the store underneath it was one
+/// Postio never uses. See #79, where exactly this made three lanes serialise.
+fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
+    let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("a connection");
         test_support::account(&connection)
