@@ -465,24 +465,40 @@ impl<'a> Drainer<'a> {
         };
 
         let uids = match step.target {
-            OperationTarget::Message(_) => match message.as_ref().map(|message| message.server.uid)
-            {
-                Some(Some(uid)) => UidSet::single(uid),
-                Some(None) => {
-                    return Ok(Resolved::Obsolete {
-                        reason: "the message has never been uploaded, so the server has \
-                                 nothing to change"
-                            .to_owned(),
-                        mailbox: None,
-                    });
-                }
-                None => {
+            OperationTarget::Message(_) => {
+                let Some(message) = message.as_ref() else {
                     return Ok(Resolved::Obsolete {
                         reason: "the message is no longer in the local store".to_owned(),
                         mailbox: None,
                     });
+                };
+                // For a Move or Delete the live row cannot answer: its local
+                // half nulled the coordinates in the same transaction that
+                // enqueued this, so the queue row's snapshot is the only
+                // thing that still names the server position. The earliest
+                // contributing row was enqueued before any nulling. Rows
+                // from before the snapshot existed carry none and fall back
+                // to the live row, which is the old behavior. #289.
+                let snapshot = match &step.operation {
+                    Operation::Move { .. } | Operation::Delete { .. } => {
+                        OperationQueueRepository::new(connection)
+                            .get(step.head())?
+                            .and_then(|row| row.source_uid)
+                    }
+                    _ => None,
+                };
+                match snapshot.or(message.server.uid) {
+                    Some(uid) => UidSet::single(uid),
+                    None => {
+                        return Ok(Resolved::Obsolete {
+                            reason: "the message has never been uploaded, so the server has \
+                                     nothing to change"
+                                .to_owned(),
+                            mailbox: None,
+                        });
+                    }
                 }
-            },
+            }
             // A mailbox-wide operation names no UIDs.
             _ => UidSet::new(),
         };

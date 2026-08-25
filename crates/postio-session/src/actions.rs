@@ -410,11 +410,6 @@ impl Actions {
             let messages = MessageRepository::new(&transaction);
             let queue = OperationQueueRepository::new(&transaction);
             for (source, ids) in &by_source {
-                // The local write and its queue row in one transaction: a
-                // queue row without its write tells the server about
-                // something the user never saw, and a write without its row
-                // silently never reaches the server.
-                messages.move_to(ids, destination).map_err(store_failure)?;
                 let operation = match kind {
                     UndoKind::Delete => Operation::Delete {
                         from: *source,
@@ -425,12 +420,20 @@ impl Actions {
                         to: destination,
                     },
                 };
+                // The local write and its queue row in one transaction: a
+                // queue row without its write tells the server about
+                // something the user never saw, and a write without its row
+                // silently never reaches the server. The queue row comes
+                // FIRST — enqueue snapshots the rows' server coordinates,
+                // and the move nulls them (#289).
+                //
                 // One statement per source mailbox rather than one per
                 // message: a multi-select spanning a handful of folders is a
                 // handful of `enqueue_many` calls, not one `enqueue` per row.
                 queue
                     .enqueue_many(account, ids, &operation, at)
                     .map_err(store_failure)?;
+                messages.move_to(ids, destination).map_err(store_failure)?;
             }
         }
         transaction.commit().map_err(store_failure)?;
