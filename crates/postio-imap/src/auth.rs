@@ -15,7 +15,7 @@
 //!   `ortie`, `mutt_oauth2.py`) and treat its first line of output as the
 //!   token. The broker owns refresh, storage and the provider relationship;
 //!   Postio owns exactly one obligation on top of
-//!   [`CommandSecretStore`](crate::secret::CommandSecretStore) — **expiry
+//!   [`CommandSecretStore`] — **expiry
 //!   semantics**. The token is cached per account so a connection pool does
 //!   not spawn a process per session, and [`TokenSource::invalidate`] drops
 //!   the cache so the next ask re-runs the broker. Without that, delegation
