@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build and run Postio without touching the shared working tree.
 #
-# Several Claude sessions edit /home/user/src/postio continuously, so building
+# Several Claude sessions edit ~/src/postio continuously, so building
 # from it gives you whatever half-finished state happened to be on disk. This
 # builds from a git worktree pinned to a commit instead, with its own target
 # directory and its own XDG dirs, so:
