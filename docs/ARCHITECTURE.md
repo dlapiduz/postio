@@ -425,12 +425,16 @@ including `CommandSpec.title` staying `&'static str`, with a translated title
 leaked at registration rather than needing `Cow`, which answers what used to
 be `postio-plp4`'s localisation half. The composer's document model is
 [ADR 0004](decisions/0004-composer-document-model.md) ([#30](https://github.com/dlapiduz/postio/issues/30)),
-covered in §13 below. What ADR 0002's own implementation left open is the
-first row of the table that follows.
+covered in §13 below. What ADR 0002's own implementation left open — exactly
+one `EventStream`, so a tracked caller and the window could not both read it —
+is now built: `postio_core::bridge::EventHub` fans every producer's events out
+to every subscriber, each by name and each with a private stream, per
+[ADR 0013](decisions/0013-event-fanout.md) ([#176](https://github.com/dlapiduz/postio/issues/176)).
+`postio-app` subscribes once as `"window"`; a second frontend subscribes
+alongside it without stealing a repaint.
 
 | Gap | Effect | Issue |
 |---|---|---|
-| Exactly one `EventStream` — a tracked caller and the window cannot both read it | Blocks the second half of ADR 0002's correlation-id work: an MCP server or other headless consumer cannot sit beside a running window. [ADR 0013](decisions/0013-event-fanout.md) decided the fix (a hub, N subscribers); it is not yet built. | [#176](https://github.com/dlapiduz/postio/issues/176) |
 | ~2,850 lines of toolkit-free logic live in `postio-gtk` — keymap, selection, tokens | A second frontend must reimplement, fork, or link GTK to borrow them. Smaller than it once measured: `postio-body` (ADR 0004) already pulled the sanitizer and the quote folder out. | — |
 | Boundary rules guard two crates, not the graph | Nothing stops `postio-search` re-acquiring `rusqlite` and undoing the index split | — |
 | `first_account()` in `postio-app/src/lib.rs` | Single account, though model/storage/engine are all account-aware. An appropriate MVP cut. | [#1](https://github.com/dlapiduz/postio/issues/1) |

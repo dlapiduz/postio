@@ -218,6 +218,34 @@ omitted entirely). `postio-search` is a pure *shared* leaf (query language, no
 SQL, no toolkit) depended on by `postio-gtk`, `postio-index`, `postio-runtime`
 and `postio-app`; `postio-index` owns `rusqlite` and the FTS5 executor.
 
+**`EventStream` is not `Clone`, and the reason is a trap rather than a
+preference.** It wraps an `async_channel::Receiver`, and that receiver is
+*work-stealing*: cloning it does not duplicate the stream, it splits it. Two
+handles on one channel each get some of the events and neither gets all of
+them. So the obvious way to add a second consumer — clone the receiver —
+produces a window that misses an unknown subset of repaints and an MCP server
+that misses an unknown subset of answers, both holding state that is silently
+wrong, with nothing failing anywhere. That is ADR 0005 Q10's dangerous failure
+shape exactly.
+
+Fan-out is `postio_core::bridge::EventHub` (ADR 0013, #176): one queue per
+subscriber, an emit is a read lock and one `try_send` each. Two consequences
+worth knowing before touching it:
+
+- **Test both streams, never one and a count.** A fan-out bug under a
+  work-stealing receiver still delivers *n* events in total, so any assertion
+  that counts, or that reads a single subscriber, passes while the split is
+  happening. `crates/postio-core/tests/event_hub.rs` asserts the full
+  sequence on every subscriber for this reason.
+- **`emit` returning `false` means nobody took it**, which on a hub includes a
+  hub with no subscribers yet — not only a hub whose subscribers have all
+  gone. Same for `EventSink::is_closed`.
+
+The hub keeps **no history**: a subscriber joins at *now* and reads SQLite for
+the past. A replay buffer would be a second unbounded in-memory copy of recent
+mailbox activity that no consumer asked for, so if one is ever proposed, that
+is the argument it has to beat.
+
 ## GTK & UI gotchas
 
 **A change the app makes on the user's behalf does not go on the undo stack**

@@ -84,7 +84,7 @@ pub fn needed(database: &Database) -> bool {
 /// On success the original content goes back and the application starts as it
 /// would have if the account had been there all along.
 ///
-/// `state`, `wired` and `streams` are the same three pieces `run()`'s
+/// `state`, `wired` and `events` are the same three pieces `run()`'s
 /// `activate` handler already holds once an account is there from the
 /// start — passed through so a screen that just created one can finish the
 /// exact same sequence: install every command handler and drain the two
@@ -107,7 +107,7 @@ pub fn install(
     wiring: &Wiring,
     state: SharedState,
     wired: Vec<CommandId>,
-    streams: Rc<RefCell<Vec<Option<EventStream>>>>,
+    events: Rc<RefCell<Option<EventStream>>>,
     notifier: crate::notifications::Notifier,
     repairing: Option<Account>,
 ) {
@@ -136,7 +136,7 @@ pub fn install(
         let previous = previous.clone();
         let state = state.clone();
         let wired = wired.clone();
-        let streams = Rc::clone(&streams);
+        let events = Rc::clone(&events);
         let notifier = notifier.clone();
         move |submission| {
             submit(
@@ -147,7 +147,7 @@ pub fn install(
                 submission.clone(),
                 state.clone(),
                 wired.clone(),
-                Rc::clone(&streams),
+                Rc::clone(&events),
                 notifier.clone(),
             )
         }
@@ -230,7 +230,7 @@ fn submit(
     submission: Submission,
     state: SharedState,
     wired: Vec<CommandId>,
-    streams: Rc<RefCell<Vec<Option<EventStream>>>>,
+    events: Rc<RefCell<Option<EventStream>>>,
     notifier: crate::notifications::Notifier,
 ) {
     screen.set_status(Status::Connecting);
@@ -301,7 +301,7 @@ fn submit(
             // panes. Without that a window fed here would show mail and
             // answer no key, which is the shape of bug `postio-bl2` is
             // named for.
-            crate::open_account(&window, &wiring, &state, &wired, &streams, &notifier);
+            crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
         }
     });
 }
