@@ -49,7 +49,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
-use postio_core::bridge::{Bridge, event_channel};
+use postio_core::bridge::{Bridge, EventHub, EventStream};
 use postio_core::dispatch::Dispatcher;
 use postio_core::state::SharedState;
 use postio_gtk::startup::{Phase, Timeline};
@@ -139,27 +139,36 @@ pub fn run() -> glib::ExitCode {
     // must not come back as "not wired up in this build".
     let wired: Vec<postio_core::CommandId> = bus.wired().collect();
 
+    // Every producer's events, and every consumer's view of them. The bus's
+    // handlers and the sync engine are two producers; the window is one
+    // subscriber, and ADR 0013 exists so that an MCP server can be a second
+    // one without stealing the window's repaints.
+    let hub = EventHub::new();
+    // The engine is not a command handler, so the bridge never hands it a
+    // sink; it holds one of its own on the same hub.
+    let sink = hub.sink();
+
     // The runtime: the tokio threads every read is polled on and every command
     // is handled on.
-    let (runtime, replies) = match Bridge::new(bus) {
-        Ok((bridge, events)) => (Some(bridge), Some(events)),
+    let runtime = match Bridge::builder().build_with_events(bus, hub.sink()) {
+        Ok(bridge) => Some(bridge),
         Err(error) => {
             tracing::error!(%error, "no runtime, so no mail");
-            (None, None)
+            None
         }
     };
 
-    // The engine's own channel. `Bridge` hands its sink to command handlers
-    // and keeps the stream; the engine is not a command handler, so it gets
-    // one of its own and the UI drains it on the main context.
-    let (sink, events) = event_channel();
     // Taken on the first `activate`. `EventStream` is not `Clone` — there is
     // one queue and exactly one reader of it — and `activate` can fire again
     // when a second launch raises the window. `Rc` rather than a plain
-    // `RefCell`: `onboarding::install` holds its own clone and drains these
-    // from its own closure, once its screen has created the account
-    // `activate` did not find one for at startup.
-    let streams = Rc::new(std::cell::RefCell::new(vec![Some(events), replies]));
+    // `RefCell`: `onboarding::install` holds its own clone and drains it from
+    // its own closure, once its screen has created the account `activate` did
+    // not find one for at startup.
+    //
+    // One subscription rather than the `Vec<Option<EventStream>>` this used to
+    // be: fan-in is the hub's now, so the window no longer collects a stream
+    // per producer by hand.
+    let events = Rc::new(std::cell::RefCell::new(Some(hub.subscribe("window"))));
 
     let application = app::build_with(timeline);
 
@@ -211,7 +220,7 @@ pub fn run() -> glib::ExitCode {
             wiring,
             state.clone(),
             wired.clone(),
-            Rc::clone(&streams),
+            Rc::clone(&events),
             notifier,
         );
     });
@@ -242,7 +251,7 @@ pub fn open_or_onboard(
     wiring: &Wiring,
     state: SharedState,
     wired: Vec<postio_core::CommandId>,
-    streams: Rc<std::cell::RefCell<Vec<Option<postio_core::bridge::EventStream>>>>,
+    events: Rc<std::cell::RefCell<Option<EventStream>>>,
     notifier: notifications::Notifier,
 ) {
     let (sender, receiver) = async_channel::bounded(1);
@@ -268,7 +277,7 @@ pub fn open_or_onboard(
             });
             match route {
                 Startup::Ready(_) => {
-                    open_account(&window, &wiring, &state, &wired, &streams, &notifier)
+                    open_account(&window, &wiring, &state, &wired, &events, &notifier)
                 }
                 // `postio-hiy`: nothing to feed yet, or nothing that can
                 // authenticate. The screen replaces the window's content and
@@ -279,7 +288,7 @@ pub fn open_or_onboard(
                     &wiring,
                     state,
                     wired,
-                    streams,
+                    events,
                     notifier,
                     repairing.map(|account| *account),
                 ),
@@ -300,7 +309,7 @@ fn open_account(
     wiring: &Wiring,
     state: &SharedState,
     wired: &[postio_core::CommandId],
-    streams: &Rc<std::cell::RefCell<Vec<Option<postio_core::bridge::EventStream>>>>,
+    events: &Rc<std::cell::RefCell<Option<EventStream>>>,
     notifier: &notifications::Notifier,
 ) {
     start_syncing(window, wiring);
@@ -318,10 +327,11 @@ fn open_account(
         wired.to_vec(),
     );
     // Everything either half has to say reaches the panes here: a mailbox the
-    // server disagreed with, a body that arrived, an archive that landed. Two
-    // queues because there are two producers — the engine and the bus — and
-    // one reader each.
-    for stream in streams.borrow_mut().iter_mut().filter_map(Option::take) {
+    // server disagreed with, a body that arrived, an archive that landed. One
+    // queue, because the hub fans both producers in before the window sees
+    // them — and `take`, because a second `activate` must not drain a stream
+    // that is already being drained.
+    if let Some(stream) = events.borrow_mut().take() {
         commands::drain(window, &feeds, stream, notifier.clone());
     }
 }

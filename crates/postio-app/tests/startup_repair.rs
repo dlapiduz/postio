@@ -121,7 +121,7 @@ fn an_account_with_no_credential_lands_on_the_repair_screen() {
         &wiring,
         Default::default(),
         Vec::new(),
-        std::rc::Rc::new(std::cell::RefCell::new(vec![Some(events)])),
+        std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
         notifier,
     );
 

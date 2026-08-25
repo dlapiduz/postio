@@ -34,6 +34,18 @@
 //! UI-agnostic (`scripts/check-crate-boundaries.py`), which is what keeps a
 //! macOS frontend possible.
 //!
+//! # N producers, N subscribers
+//!
+//! [`EventHub`] is what makes a second consumer possible: every producer's
+//! [`EventSink`] feeds it, every consumer [`subscribe`](EventHub::subscribe)s
+//! by name and gets a private [`EventStream`] with exactly the API above. An
+//! event goes to *every* queue that exists at emit time, so a window and an
+//! MCP server can both listen without either one stealing the other's
+//! repaints. The composition root owns the hub; nothing here is global.
+//!
+//! A subscriber joins at *now* — the hub keeps no history, because events are
+//! notifications and SQLite is the record. See ADR 0013.
+//!
 //! # Why commands are handled one at a time
 //!
 //! The pump awaits each handler before taking the next command, so `archive`
@@ -46,7 +58,8 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{fmt, thread};
 
@@ -56,6 +69,21 @@ use crate::{Command, Event};
 /// How long [`Bridge::shutdown`] waits for in-flight work before it stops
 /// caring. Quitting is not a good time to hang on a wedged socket.
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The queue depth at which a subscriber gets named in the log.
+///
+/// Subscriptions are unbounded, exactly like both of the queues that came
+/// before them: the UI must never block a handler, and a burst of IDLE
+/// updates must never stall the sync engine. The cost of that is an OOM with
+/// no explanation when a drain loop wedges, so the hub watches each queue and
+/// says whose it is.
+///
+/// A thousand is well past anything mail-scale traffic produces — a whole
+/// mailbox refresh is hundreds of events, absorbed inside one 16 ms frame —
+/// so crossing it means a consumer has stopped reading, not that it is busy.
+/// Deliberately a constant with a comment rather than configuration: nobody
+/// tunes a queue depth in `config.toml` (ADR 0013 Q2).
+pub const SUBSCRIBER_DEPTH_WATERMARK: usize = 1024;
 
 /// The future a [`CommandHandler`] returns.
 ///
@@ -209,8 +237,21 @@ impl CommandSender {
 /// command that asked for it.
 #[derive(Debug, Clone)]
 pub struct EventSink {
-    events: async_channel::Sender<EventEnvelope>,
+    events: EventTarget,
     origin: Option<InvocationId>,
+}
+
+/// Where a sink's events actually go.
+///
+/// Private, and deliberately not a trait object: the two cases are the whole
+/// set, and the hub's cost has to stay visible at the call site — a `Direct`
+/// emit is one `try_send`, exactly as it was before the hub existed.
+#[derive(Debug, Clone)]
+enum EventTarget {
+    /// An isolated pair from [`event_channel`]: one queue, one reader.
+    Direct(async_channel::Sender<EventEnvelope>),
+    /// A hub, fanning out to every subscription that exists at emit time.
+    Hub(Arc<HubInner>),
 }
 
 impl EventSink {
@@ -218,14 +259,18 @@ impl EventSink {
     ///
     /// Returns `false` when there is no longer a frontend listening — the
     /// window closed while this handler was in flight. That is an ordinary
-    /// teardown race, not an error worth propagating.
+    /// teardown race, not an error worth propagating. On a hub it means no
+    /// subscription took the event: every one of them is gone, or none has
+    /// joined yet.
     pub fn emit(&self, event: Event) -> bool {
-        self.events
-            .try_send(EventEnvelope {
-                event,
-                origin: self.origin,
-            })
-            .is_ok()
+        let envelope = EventEnvelope {
+            event,
+            origin: self.origin,
+        };
+        match &self.events {
+            EventTarget::Direct(events) => events.try_send(envelope).is_ok(),
+            EventTarget::Hub(hub) => hub.deliver(envelope),
+        }
     }
 
     /// The invocation everything emitted through this sink answers.
@@ -247,8 +292,14 @@ impl EventSink {
     }
 
     /// Whether anyone is still listening.
+    ///
+    /// On a hub this is "no subscription can take an event", which includes a
+    /// hub nobody has subscribed to yet.
     pub fn is_closed(&self) -> bool {
-        self.events.is_closed()
+        match &self.events {
+            EventTarget::Direct(events) => events.is_closed(),
+            EventTarget::Hub(hub) => hub.is_closed(),
+        }
     }
 }
 
@@ -328,11 +379,207 @@ pub fn event_channel() -> (EventSink, EventStream) {
     let (sender, receiver) = async_channel::unbounded();
     (
         EventSink {
-            events: sender,
+            events: EventTarget::Direct(sender),
             origin: None,
         },
         EventStream(receiver),
     )
+}
+
+/// One subscriber's queue, and the name it is known by in the log.
+struct Subscription {
+    /// Diagnostics only. Nothing may dispatch on a label (ADR 0013 Q3):
+    /// which accounts a consumer may reveal is that consumer's contract with
+    /// its own configuration, enforced where data leaves the process.
+    label: String,
+    events: async_channel::Sender<EventEnvelope>,
+    /// Whether this queue's depth has already been reported. One line per
+    /// crossing, not one per event: a wedged drain loop would otherwise fill
+    /// the log as fast as it fills the queue.
+    warned: AtomicBool,
+}
+
+impl Subscription {
+    fn send(&self, envelope: EventEnvelope) -> bool {
+        if self.events.try_send(envelope).is_err() {
+            return false;
+        }
+        let depth = self.events.len();
+        if depth >= SUBSCRIBER_DEPTH_WATERMARK {
+            if !self.warned.swap(true, Ordering::Relaxed) {
+                // Label and counts only. A queue depth is not content, and a
+                // log full of somebody's mail is the same leak as shipping
+                // their address in a fixture.
+                tracing::warn!(
+                    subscriber = %self.label,
+                    depth,
+                    watermark = SUBSCRIBER_DEPTH_WATERMARK,
+                    "an event subscriber is not draining its queue"
+                );
+            }
+        } else if depth < SUBSCRIBER_DEPTH_WATERMARK / 2 {
+            // Hysteresis, so a subscriber sitting on the threshold does not
+            // produce one line per event once it starts draining again.
+            self.warned.store(false, Ordering::Relaxed);
+        }
+        true
+    }
+}
+
+/// The table every sink writes into and every subscription reads out of.
+#[derive(Default)]
+struct HubInner {
+    subscribers: RwLock<Vec<Subscription>>,
+}
+
+impl HubInner {
+    /// A poisoned lock is not a reason to lose an event.
+    ///
+    /// Nothing under either lock can panic — a `push`, a `retain`, a
+    /// `try_send` on an unbounded queue — so poisoning here means a panic
+    /// somewhere else unwound through this thread, and the table is still
+    /// exactly as consistent as it was.
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<Subscription>> {
+        self.subscribers
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Vec<Subscription>> {
+        self.subscribers
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Hand `envelope` to every subscription. Never blocks.
+    fn deliver(&self, envelope: EventEnvelope) -> bool {
+        let subscribers = self.read();
+        // The last subscriber takes the envelope itself, so the overwhelming
+        // case — one window, nobody else — costs a read lock and the same
+        // `try_send` it always did, with no clone at all.
+        let Some((last, rest)) = subscribers.split_last() else {
+            return false;
+        };
+        let mut delivered = false;
+        for subscription in rest {
+            delivered |= subscription.send(envelope.clone());
+        }
+        delivered | last.send(envelope)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.read()
+            .iter()
+            .all(|subscription| subscription.events.is_closed())
+    }
+}
+
+/// Fan-out between every producer and every consumer of events.
+///
+/// The composition root builds one, hands [`sink`](Self::sink)s to the
+/// producers — the command bus, the sync engine, the config watcher — and
+/// gives each consumer its own [`subscribe`](Self::subscribe)d stream. Every
+/// subscriber sees every envelope; the hub never filters, because scoping
+/// belongs at each consumer's own trust boundary and not in a layer that
+/// cannot know the policy (ADR 0013 Q3).
+///
+/// Cloning a hub is cloning a handle to the same table. Dropping every handle
+/// does not close anything on its own: the sinks hold the table too, which is
+/// what lets [`Bridge::new`] build a hub, keep a sink and let the hub itself
+/// go.
+///
+/// ```
+/// use postio_core::Event;
+/// use postio_core::bridge::EventHub;
+///
+/// let hub = EventHub::new();
+/// let window = hub.subscribe("window");
+/// let mcp = hub.subscribe("mcp");
+///
+/// let archived = Event::ActionCompleted {
+///     description: "Archived".to_owned(),
+///     undoable: true,
+/// };
+/// hub.sink().emit(archived.clone());
+///
+/// // Both, not one each: delivery is total per subscriber.
+/// assert_eq!(window.try_next(), Some(archived.clone()));
+/// assert_eq!(mcp.try_next(), Some(archived));
+/// ```
+#[derive(Clone, Default)]
+pub struct EventHub {
+    inner: Arc<HubInner>,
+}
+
+impl EventHub {
+    /// A hub with no producers and no subscribers yet.
+    pub fn new() -> Self {
+        EventHub::default()
+    }
+
+    /// A sink for one producer. Clone it as freely as any other `EventSink`.
+    pub fn sink(&self) -> EventSink {
+        EventSink {
+            events: EventTarget::Hub(Arc::clone(&self.inner)),
+            origin: None,
+        }
+    }
+
+    /// A private stream for one consumer, known by `label`.
+    ///
+    /// The label is the audit hook: it names the subscriber in the watermark
+    /// warning and in `Debug`, and gives ADR 0010's tool-call log a stable
+    /// name for who was listening. It is diagnostics, never dispatch.
+    ///
+    /// The subscription starts at *now*. Everything before it is in the
+    /// store (ADR 0013 Q4).
+    pub fn subscribe(&self, label: impl Into<String>) -> EventStream {
+        let (sender, receiver) = async_channel::unbounded();
+        let mut subscribers = self.inner.write();
+        // A consumer that went away leaves a queue nothing will ever read,
+        // and every emit would keep paying for it. Under the write lock a
+        // subscribe already takes, so the emit path stays a read lock.
+        subscribers.retain(|subscription| !subscription.events.is_closed());
+        subscribers.push(Subscription {
+            label: label.into(),
+            events: sender,
+            warned: AtomicBool::new(false),
+        });
+        EventStream(receiver)
+    }
+
+    /// How many subscriptions are live, last time anybody looked.
+    pub fn subscribers(&self) -> usize {
+        self.inner
+            .read()
+            .iter()
+            .filter(|subscription| !subscription.events.is_closed())
+            .count()
+    }
+}
+
+impl fmt::Debug for EventHub {
+    /// Labels and depths. Never an event.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let subscribers = self.inner.read();
+        f.debug_struct("EventHub")
+            .field(
+                "subscribers",
+                &subscribers
+                    .iter()
+                    .map(|subscription| (subscription.label.as_str(), subscription.events.len()))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+impl fmt::Debug for HubInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HubInner")
+            .field("subscribers", &self.read().len())
+            .finish()
+    }
 }
 
 /// How to build a [`Bridge`]. The defaults are what the application uses.
@@ -370,10 +617,38 @@ impl BridgeBuilder {
         self
     }
 
-    /// Start the runtime and its command pump.
+    /// Start the runtime and its command pump, on a hub of the bridge's own.
+    ///
+    /// Returns the first subscription to that hub, which is what the frontend
+    /// drains. A caller that wants a second consumer builds its own
+    /// [`EventHub`] and uses [`build_with_events`](Self::build_with_events)
+    /// instead; this signature is the one every existing caller has, and it
+    /// keeps working exactly as it did.
     ///
     /// Fails only if the OS will not give us threads.
     pub fn build<H: CommandHandler>(self, handler: H) -> io::Result<(Bridge, EventStream)> {
+        let hub = EventHub::new();
+        let events = hub.subscribe("bridge");
+        let bridge = self.build_with_events(handler, hub.sink())?;
+        // The hub itself goes here; the sink inside the pump holds the table,
+        // so the subscription closes when the runtime does — which is the
+        // behaviour this signature had before a hub existed.
+        Ok((bridge, events))
+    }
+
+    /// Start the runtime and its command pump, emitting into `events`.
+    ///
+    /// For the composition root, which owns the [`EventHub`] and subscribes
+    /// each consumer itself. There is no stream to return here: the caller
+    /// already has the hub, and how many consumers there are is its decision
+    /// rather than the bridge's.
+    ///
+    /// Fails only if the OS will not give us threads.
+    pub fn build_with_events<H: CommandHandler>(
+        self,
+        handler: H,
+        events: EventSink,
+    ) -> io::Result<Bridge> {
         let mut builder = tokio::runtime::Builder::new_multi_thread();
         // Both drivers, explicitly. This is the runtime the sync engine runs
         // on, so every socket the application opens is opened here, and a
@@ -392,13 +667,9 @@ impl BridgeBuilder {
         // Unbounded in both directions: the UI must never block on a full
         // queue, and a burst of IDLE updates must never stall the sync engine.
         let (command_tx, command_rx) = async_channel::unbounded::<Queued>();
-        let (event_tx, event_rx) = async_channel::unbounded::<EventEnvelope>();
 
         let handler = Arc::new(handler);
-        let sink = EventSink {
-            events: event_tx,
-            origin: None,
-        };
+        let sink = events;
         let pump = runtime.spawn(async move {
             // `recv` keeps yielding buffered commands after the sender closes,
             // so everything already queued at quit still gets handled.
@@ -415,13 +686,12 @@ impl BridgeBuilder {
             }
         });
 
-        let bridge = Bridge {
+        Ok(Bridge {
             runtime: Some(runtime),
             pump: Some(pump),
             commands: command_tx,
             shutdown_timeout: self.shutdown_timeout,
-        };
-        Ok((bridge, EventStream(event_rx)))
+        })
     }
 }
 
