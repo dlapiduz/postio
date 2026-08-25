@@ -371,15 +371,31 @@ impl PartNode {
 /// needs the tree. The section string keeps the structure recoverable.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BodyStructure {
+    /// The message's own content type — `BODYSTRUCTURE`'s root, not any one
+    /// part's: `multipart/mixed`, `multipart/alternative`,
+    /// `multipart/related`, or a single part's own type when the message is
+    /// not multipart at all. This is the row the parts tree hangs off.
+    content_type: String,
     parts: Vec<PartNode>,
 }
 
 impl BodyStructure {
-    /// Builds a structure from parts in document order.
-    pub fn from_parts<I: IntoIterator<Item = PartNode>>(parts: I) -> Self {
+    /// Builds a structure from the message's own `content_type` and its
+    /// `parts`, in document order.
+    pub fn from_parts<I: IntoIterator<Item = PartNode>>(
+        content_type: impl Into<String>,
+        parts: I,
+    ) -> Self {
         Self {
+            content_type: content_type.into().to_ascii_lowercase(),
             parts: parts.into_iter().collect(),
         }
+    }
+
+    /// The message's own content type. See the field doc for what "own"
+    /// means here.
+    pub fn content_type(&self) -> &str {
+        &self.content_type
     }
 
     /// The parts, in document order.
@@ -471,6 +487,7 @@ impl FetchedMessage {
         }
 
         if let Some(structure) = self.structure {
+            message.content_type = Some(structure.content_type().to_owned());
             message.attachments = structure.to_attachments(MessageId::UNASSIGNED);
         }
 

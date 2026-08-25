@@ -176,6 +176,12 @@ pub struct Message {
     pub preview: Option<String>,
     /// Attachment metadata; the bytes may not be local yet.
     pub attachments: Vec<Attachment>,
+    /// The message's own MIME type — `BODYSTRUCTURE`'s root, not any one
+    /// part's: `multipart/mixed`, `multipart/alternative`, `text/plain`, and
+    /// so on. `None` for a message no `BODYSTRUCTURE` has been parsed for
+    /// yet — a draft still being composed, or a row synced before this field
+    /// existed.
+    pub content_type: Option<String>,
 
     /// Flags and keywords.
     pub flags: FlagSet,
@@ -217,6 +223,7 @@ impl Message {
             body: MessageBody::default(),
             preview: None,
             attachments: Vec::new(),
+            content_type: None,
             flags: FlagSet::new(),
             labels: Vec::new(),
             size: 0,
