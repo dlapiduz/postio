@@ -524,12 +524,9 @@ const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow
 
 /// The keys the column offers, drawn at its foot.
 ///
-/// Canvas 2b draws a third line here, `C-s save as folder`. It is not here
-/// because saved searches are not a command this build has, and a key hint
-/// for a key that does nothing teaches the wrong thing — the whole argument
-/// of the design is that the hints are true. `postio-7yp` tracks the command;
-/// the line comes back with it.
-const PANEL_KEYS: &str = "Ret open · Tab refine";
+/// Canvas 2b's third line, `C-s save as folder`: `CommandId::SaveSearch`
+/// wires it (issue #10), so the hint can finally say something true.
+const PANEL_KEYS: &str = "Ret open · Tab refine · C-s save as folder";
 
 type ScopeHandler = Box<dyn Fn(Scope)>;
 type RefineHandler = Box<dyn Fn(&str)>;

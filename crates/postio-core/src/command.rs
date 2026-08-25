@@ -105,6 +105,8 @@ command_ids! {
     AddLabel => "add_label",
     /// Focus the search field.
     Search => "search",
+    /// Save the current search as a pinned folder in the sidebar.
+    SaveSearch => "save_search",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -389,6 +391,11 @@ pub enum Command {
         /// The query to run; `None` focuses the empty search field.
         query: Option<String>,
     },
+    /// Save the query the search box currently holds as a pinned folder.
+    ///
+    /// No payload: the box being open is what says which query, the same
+    /// way `EditConfig` needs no path because there is only one file.
+    SaveSearch,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -512,6 +519,7 @@ impl Command {
             Command::MarkUnread { .. } | Command::MarkReadOnDwell { .. } => CommandId::MarkUnread,
             Command::AddLabel { .. } => CommandId::AddLabel,
             Command::Search { .. } => CommandId::Search,
+            Command::SaveSearch => CommandId::SaveSearch,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::SaveDraft => CommandId::SaveDraft,
@@ -587,6 +595,7 @@ impl Command {
                 label: None,
             },
             CommandId::Search => Command::Search { query: None },
+            CommandId::SaveSearch => Command::SaveSearch,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::SaveDraft => Command::SaveDraft,

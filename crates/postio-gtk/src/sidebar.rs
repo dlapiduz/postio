@@ -36,8 +36,26 @@ use postio_model::mailbox::{Mailbox, MailboxRole};
 /// What to call when the user picks a folder.
 type SelectionHandler = Box<dyn Fn(MailboxId)>;
 
+/// What to call when the user picks a saved search.
+type SearchSelectionHandler = Box<dyn Fn(String)>;
+
 /// What to call when messages are dropped on a folder.
 type DropHandler = Box<dyn Fn(crate::list_view::Dragged, MailboxId)>;
+
+/// A pinned `[filters]` entry, as the sidebar needs it: a name to show and a
+/// query to hand back when the row is picked.
+///
+/// Not `postio_config::FilterConfig` itself, whose name is a map key rather
+/// than a field: the widget takes a flat list of rows to draw, the same
+/// shape `set_mailboxes` already takes, so the caller carries the config
+/// schema's own key-value split and this stays a plain display value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSearch {
+    /// The `[filters.<name>]` key, shown as the row's label.
+    pub name: String,
+    /// The query text this row hands back when activated.
+    pub query: String,
+}
 
 /// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
 const PROTOCOL: &str = "imap";
@@ -269,11 +287,14 @@ mod imp {
         pub special: gtk::ListBox,
         pub ordinary: gtk::ListBox,
         pub ordinary_section: gtk::Box,
+        pub saved: gtk::ListBox,
+        pub saved_section: gtk::Box,
         pub status_state: gtk::Label,
         pub status_detail: gtk::Label,
         pub status: RefCell<SyncStatus>,
         pub tick: RefCell<Option<glib::SourceId>>,
         pub selected: RefCell<Vec<SelectionHandler>>,
+        pub search_selected: RefCell<Vec<SearchSelectionHandler>>,
         pub dropped: RefCell<Vec<DropHandler>>,
         /// Set while a selection is being applied programmatically, so
         /// restoring one does not look like the user clicking it.
@@ -362,6 +383,24 @@ impl Sidebar {
         imp.ordinary_section.set_visible(false);
         folders.append(&imp.ordinary_section);
 
+        let saved_rule = gtk::Separator::new(gtk::Orientation::Horizontal);
+        saved_rule.add_css_class("postio-rule");
+        let saved_heading = gtk::Label::new(Some("Saved searches"));
+        saved_heading.add_css_class("postio-kicker");
+        saved_heading.set_xalign(0.0);
+
+        imp.saved_section
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.saved_section
+            .add_css_class("postio-saved-searches-section");
+        imp.saved_section.append(&saved_rule);
+        imp.saved_section.append(&saved_heading);
+        imp.saved.add_css_class("postio-saved-searches");
+        imp.saved_section.append(&search_list(&imp.saved));
+        // Nothing to list until a search has been pinned.
+        imp.saved_section.set_visible(false);
+        folders.append(&imp.saved_section);
+
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_vexpand(true);
@@ -392,27 +431,72 @@ impl Sidebar {
         status.set_accessible_role(gtk::AccessibleRole::Status);
         column.append(&status);
 
-        // Selecting in one list clears the other: together they are one list
-        // of folders that happens to be drawn in two blocks.
-        for (list, other) in [(&imp.special, &imp.ordinary), (&imp.ordinary, &imp.special)] {
-            list.connect_row_selected(glib::clone!(
-                #[weak(rename_to = sidebar)]
-                self,
-                #[weak]
-                other,
-                move |_, row| {
-                    let Some(row) = row else { return };
-                    other.unselect_all();
-                    if sidebar.imp().echoing.get() {
-                        return;
-                    }
-                    let id = MailboxId::new(row_id(row));
-                    for callback in sidebar.imp().selected.borrow().iter() {
-                        callback(id);
-                    }
+        // Selecting in one list clears the other two: together they are one
+        // list of folders, plus the saved searches, drawn in blocks.
+        let special = imp.special.clone();
+        let ordinary = imp.ordinary.clone();
+        let saved = imp.saved.clone();
+
+        imp.special.connect_row_selected(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            #[weak]
+            ordinary,
+            #[weak]
+            saved,
+            move |_, row| {
+                let Some(row) = row else { return };
+                ordinary.unselect_all();
+                saved.unselect_all();
+                if sidebar.imp().echoing.get() {
+                    return;
                 }
-            ));
-        }
+                let id = MailboxId::new(row_id(row));
+                for callback in sidebar.imp().selected.borrow().iter() {
+                    callback(id);
+                }
+            }
+        ));
+        imp.ordinary.connect_row_selected(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            #[weak]
+            special,
+            #[weak]
+            saved,
+            move |_, row| {
+                let Some(row) = row else { return };
+                special.unselect_all();
+                saved.unselect_all();
+                if sidebar.imp().echoing.get() {
+                    return;
+                }
+                let id = MailboxId::new(row_id(row));
+                for callback in sidebar.imp().selected.borrow().iter() {
+                    callback(id);
+                }
+            }
+        ));
+        imp.saved.connect_row_selected(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            #[weak]
+            special,
+            #[weak]
+            ordinary,
+            move |_, row| {
+                let Some(row) = row else { return };
+                special.unselect_all();
+                ordinary.unselect_all();
+                if sidebar.imp().echoing.get() {
+                    return;
+                }
+                let query = row_query(row);
+                for callback in sidebar.imp().search_selected.borrow().iter() {
+                    callback(query.clone());
+                }
+            }
+        ));
 
         self.set_child(Some(&column));
         self.set_status(SyncStatus::default());
@@ -440,6 +524,22 @@ impl Sidebar {
         if let Some(id) = selected {
             self.select(id);
         }
+    }
+
+    /// Replace the saved-search list.
+    ///
+    /// Sorted by name, the way the ordinary folder section is sorted by
+    /// path: alphabetical is the one order that does not require the user to
+    /// remember when each one was saved. Rows are updated in place, exactly
+    /// as [`Sidebar::set_mailboxes`] does, so a rename or a requery does not
+    /// cost the selection.
+    pub fn set_saved_searches(&self, searches: &[SavedSearch]) {
+        let imp = self.imp();
+        let mut sorted: Vec<SavedSearch> = searches.to_vec();
+        sorted.sort_by(|a, b| a.name.cmp(&b.name));
+
+        sync_search_rows(&imp.saved, &sorted);
+        imp.saved_section.set_visible(!sorted.is_empty());
     }
 
     /// The selected folder, if any.
@@ -561,6 +661,16 @@ impl Sidebar {
         self.imp().selected.borrow_mut().push(Box::new(callback));
     }
 
+    /// What to call when the user picks a saved search: its query, not its
+    /// name -- running it is the caller's job, and the query is all that
+    /// takes.
+    pub fn connect_search_selected(&self, callback: impl Fn(String) + 'static) {
+        self.imp()
+            .search_selected
+            .borrow_mut()
+            .push(Box::new(callback));
+    }
+
     /// Replace what the status line says.
     pub fn set_status(&self, status: SyncStatus) {
         let imp = self.imp();
@@ -614,6 +724,12 @@ impl Sidebar {
 fn folder_list(list: &gtk::ListBox) -> gtk::Widget {
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("postio-folders");
+    list.upcast_ref::<gtk::Widget>().clone()
+}
+
+/// A list of saved-search rows, the same shape as [`folder_list`].
+fn search_list(list: &gtk::ListBox) -> gtk::Widget {
+    list.set_selection_mode(gtk::SelectionMode::Single);
     list.upcast_ref::<gtk::Widget>().clone()
 }
 
@@ -829,6 +945,67 @@ fn row_id(row: &gtk::ListBoxRow) -> i64 {
     unsafe {
         row.data::<i64>("postio-mailbox-id")
             .map(|p| *p.as_ref())
+            .unwrap_or_default()
+    }
+}
+
+/// Bring `list` in line with `searches`, reusing the rows that survive --
+/// the saved-search counterpart of [`sync_rows`].
+fn sync_search_rows(list: &gtk::ListBox, searches: &[SavedSearch]) {
+    for (index, search) in searches.iter().enumerate() {
+        match list.row_at_index(index as i32) {
+            Some(row) => update_search_row(&row, search),
+            None => list.append(&search_row(search)),
+        }
+    }
+    while let Some(extra) = list.row_at_index(searches.len() as i32) {
+        list.remove(&extra);
+    }
+}
+
+/// One saved-search row: its name, nothing beside it.
+///
+/// No count the way a folder has one: a saved search's number would be how
+/// many messages it currently matches, which costs a query to know and is
+/// not what the sidebar promises to keep live for anything else in it.
+fn search_row(search: &SavedSearch) -> gtk::ListBoxRow {
+    let name = gtk::Label::new(None);
+    name.add_css_class("postio-folder-name");
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(pango::EllipsizeMode::End);
+
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("postio-saved-search");
+    row.set_child(Some(&name));
+    update_search_row(&row, search);
+    row
+}
+
+fn update_search_row(row: &gtk::ListBoxRow, search: &SavedSearch) {
+    // SAFETY: the key is private to this module and always holds a `String`.
+    // The only writer of this key; `row_query` is the only reader.
+    #[allow(unsafe_code)]
+    unsafe {
+        row.set_data("postio-search-query", search.query.clone())
+    };
+    if let Some(name) = row.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
+        name.set_text(&search.name);
+    }
+    row.update_property(&[gtk::accessible::Property::Label(&search.name)]);
+}
+
+/// The query [`update_search_row`] stored on `row`, or empty if it has none.
+///
+/// Safe for the same reason [`row_id`] is: `"postio-search-query"` is
+/// private to this file and is only ever written by [`update_search_row`],
+/// always as a `String`.
+fn row_query(row: &gtk::ListBoxRow) -> String {
+    // glib cannot know the type a key was stored under; this file can.
+    #[allow(unsafe_code)]
+    unsafe {
+        row.data::<String>("postio-search-query")
+            .map(|p| p.as_ref().clone())
             .unwrap_or_default()
     }
 }

@@ -36,15 +36,31 @@
 //! also handed to [`crate::settings::SettingsPanel::note_known_good`], which
 //! is what lets "Revert file" undo a bad `$EDITOR` save as readily as a bad
 //! one typed in the panel.
+//!
+//! # Saved searches
+//!
+//! `[filters]` is the same one-file-is-the-settings promise (issue #10): a
+//! pinned entry reaches the sidebar through this same reload bridge, no
+//! second store involved. `Ctrl+S` is the other direction — the one write
+//! this module makes to the file rather than only reading it — and it takes
+//! the plain, decoupled path: read `path` fresh, add the filter, save, and
+//! repaint the sidebar directly, rather than routing through the `service`
+//! this function already owns. The watcher reaches the same state a moment
+//! later and repaints again, redundantly but harmlessly; that redundancy is
+//! what keeps a hand-edited `[filters]` and the box's own `Ctrl+S` reaching
+//! the sidebar through one path instead of two.
 
 use std::path::Path;
 
 use adw::prelude::*;
 use gtk::glib;
+use postio_config::Config;
 use postio_config::validate::Checked;
 use postio_config::watch::ConfigWatcher;
 use postio_core::{CommandId, ConfigService, Event};
 
+use crate::finder::Mode;
+use crate::sidebar::SavedSearch;
 use crate::window::Window;
 
 /// Load `config.toml`, apply it to `window`, and keep applying it.
@@ -74,12 +90,28 @@ pub fn install_at(window: &Window, path: &Path) {
     window.list().set_density(service.config().ui.density);
     window.list().set_keymap(service.keymap().clone());
     window.settings().load(path);
+    window
+        .sidebar()
+        .set_saved_searches(&saved_searches(service.config()));
+    window.sidebar().connect_search_selected({
+        let window = window.downgrade();
+        move |query| {
+            if let Some(window) = window.upgrade() {
+                window.run_search(&query);
+            }
+        }
+    });
 
     window.connect_command({
         let path = path.to_path_buf();
+        let window = window.downgrade();
         move |id| {
             if id == CommandId::EditConfig {
                 spawn_editor(&path);
+            } else if id == CommandId::SaveSearch
+                && let Some(window) = window.upgrade()
+            {
+                save_current_search(&window, &path);
             }
         }
     });
@@ -131,6 +163,11 @@ pub fn install_at(window: &Window, path: &Path) {
                 window.apply_ui(&service.config().ui);
                 window.list().set_density(service.config().ui.density);
             }
+            if update.changed.filters {
+                window
+                    .sidebar()
+                    .set_saved_searches(&saved_searches(service.config()));
+            }
             // Whichever save this was — the panel's own debounced write, or
             // `$EDITOR`'s — a file that loads without error is what "Revert
             // file" should be able to go back to.
@@ -141,6 +178,48 @@ pub fn install_at(window: &Window, path: &Path) {
             }
         }
     });
+}
+
+/// The pinned entries of `[filters]`, as the sidebar widget wants them.
+fn saved_searches(config: &Config) -> Vec<SavedSearch> {
+    config
+        .filters
+        .iter()
+        .filter(|(_, filter)| filter.pinned)
+        .map(|(name, filter)| SavedSearch {
+            name: name.clone(),
+            query: filter.query.clone(),
+        })
+        .collect()
+}
+
+/// `Ctrl+S`: save whatever the search box currently holds as a new pinned
+/// filter, and show it in the sidebar right away.
+///
+/// Reads `path` fresh rather than through the `service` handle `install_at`
+/// already owns -- see the module doc's "Saved searches" section for why
+/// that decoupling, not a shared mutable `service`, is the simpler seam
+/// here. A silent no-op with nothing typed: saving an empty query would
+/// pin "everything", which is not a folder anyone meant to make.
+fn save_current_search(window: &Window, path: &Path) {
+    let finder = window.finder();
+    if finder.mode() != Mode::Search {
+        return;
+    }
+    let query = finder.query().text;
+    if query.trim().is_empty() {
+        return;
+    }
+
+    let mut config = Config::load_from_path(path).unwrap_or_default();
+    config.save_filter(&query);
+    if let Err(error) = config.save_to_path(path) {
+        tracing::warn!(%error, "could not save the search");
+        return;
+    }
+    window
+        .sidebar()
+        .set_saved_searches(&saved_searches(&config));
 }
 
 /// What the configuration file on disk got wrong.
