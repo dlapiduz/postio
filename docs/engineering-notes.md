@@ -1272,7 +1272,7 @@ just is not free, and this is the bill.
 not the source tree — a long build run directly in the shared checkout can
 still be torn by a concurrent `git pull`.** Observed 2026-08-25 verifying
 `main` after the postio-session refactor: `cargo test --workspace
---no-fail-fast` was run against `/home/user/src/postio` with its *own*
+--no-fail-fast` was run against `~/src/postio` with its *own*
 `CARGO_TARGET_DIR`, specifically to dodge the hazard above. Twenty minutes
 into a cold build it failed anyway — `postio-imap` used
 `Message::content_type`, but the `postio-model` rlib it linked against had
