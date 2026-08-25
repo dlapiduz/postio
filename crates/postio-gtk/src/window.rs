@@ -104,6 +104,10 @@ mod imp {
         pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
+        /// ADR 0012's first-run keyboard orientation. `postio-app` decides
+        /// when it shows and remembers that it has; this crate only builds
+        /// and places the widget.
+        pub orientation: OnceCell<crate::orientation::OrientationPlate>,
         /// Installed lazily, on first [`Window::composer`] — nothing before
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
@@ -959,6 +963,12 @@ impl Window {
             }
         ));
 
+        // ADR 0012: above both the list and the thread view, so it stays on
+        // screen whichever of the two is currently showing. Hidden until
+        // `postio-app` has something to say.
+        let orientation = crate::orientation::OrientationPlate::new();
+        shell.list().append(&orientation.widget());
+
         // The named states cover the rows rather than replacing them: an
         // empty mailbox still has a header saying which mailbox it is, and
         // the state view hides itself the instant a row arrives.
@@ -1081,6 +1091,7 @@ impl Window {
         let _ = self.imp().list.set(list_view);
         let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
+        let _ = self.imp().orientation.set(orientation);
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         let _ = self.imp().compose_button.set(header.compose.clone());
@@ -1674,6 +1685,15 @@ impl Window {
             .clone()
     }
 
+    /// ADR 0012's first-run keyboard orientation, above the message list.
+    pub fn orientation(&self) -> crate::orientation::OrientationPlate {
+        self.imp()
+            .orientation
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     /// Shows the cheat sheet, or hides it if it is already up.
     ///
     /// Toggling rather than only opening: `?` is what the user pressed to get
@@ -1747,6 +1767,7 @@ impl Window {
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap.clone());
         self.parts().set_keymap(&keymap);
+        self.orientation().set_keymap(&keymap);
     }
 
     /// Apply the `[ui]` block: what the list shows, and how much of it.

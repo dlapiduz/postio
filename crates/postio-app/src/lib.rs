@@ -32,6 +32,7 @@ pub mod export;
 pub mod feed;
 pub mod notifications;
 pub mod onboarding;
+pub mod orientation;
 pub mod reading;
 pub mod search;
 
@@ -403,6 +404,9 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
     reading::install(window, wiring, &feeds);
+
+    // ADR 0012: the first-run keyboard orientation, after the first sync.
+    orientation::install(window, wiring, &feeds);
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.

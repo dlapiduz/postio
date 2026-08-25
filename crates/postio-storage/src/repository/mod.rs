@@ -33,11 +33,13 @@ mod drafts;
 mod mailboxes;
 mod messages;
 mod operations;
+mod settings;
 mod sync_state;
 mod threading;
 mod threads;
 
 pub use accounts::{AccountRepository, IdentityRepository};
+pub use settings::SettingsRepository;
 pub use contacts::ContactRepository;
 pub use drafts::DraftRepository;
 pub use mailboxes::MailboxRepository;
