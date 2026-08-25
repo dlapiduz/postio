@@ -55,6 +55,10 @@ SKIP_PATHS = (
     # Its self-test has to hold a forbidden address to prove this fires on
     # one, exactly as the check above has to name what it forbids.
     "scripts/test-check-no-personal-data.py",
+    # Same reasoning, for issue-land.sh's staging-order regression test: it
+    # plants a real-shaped address in a throwaway sandbox file to prove the
+    # gate now sees a file staged on the same landing that adds it.
+    "scripts/test-issue-land-personal-data.py",
     # The copyright line names the holder on purpose.
     "LICENSE",
     # Hook sources and their test fixtures must name what they forbid.
