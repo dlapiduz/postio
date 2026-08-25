@@ -60,6 +60,26 @@ type CursorHandler = Box<dyn Fn(crate::list::Row)>;
 /// place that difference lives.
 type CommandHandler = Box<dyn Fn(Command)>;
 
+/// What to call when the cursor has rested on a row long enough for it to have
+/// been read. See [`DWELL_TO_READ`].
+type DwellHandler = Box<dyn Fn(MessageId)>;
+
+/// How long the cursor rests on a message before it counts as read (#71).
+///
+/// Marking on arrival is what this number exists to avoid: scrolling from one
+/// end of a mailbox to the other passes over every message in between, and
+/// marking all of them destroys the unread state as a signal — the one thing
+/// it is for. A dwell means "the cursor stayed here long enough that a person
+/// could have read it".
+///
+/// A second is about the shortest value that cleanly separates the two
+/// gestures. A held `j` repeats roughly every 30ms, so a sweep of fifty
+/// messages rests nowhere and marks nothing; reading deliberately, even
+/// quickly, leaves the cursor still for longer than this on anything worth
+/// looking at. Much shorter starts catching the sweep, and much longer leaves
+/// mail you plainly read still bold, which reads as the app not keeping up.
+pub const DWELL_TO_READ: std::time::Duration = std::time::Duration::from_millis(1_000);
+
 /// The verbs the bulk bar carries, in the order they appear.
 ///
 /// Three fit the canvas' 404px list without crowding, and these are the three
@@ -115,6 +135,16 @@ mod imp {
         /// unread signal destroying itself. Every real move sets this; the
         /// autoselect does not.
         pub(super) landed: Cell<bool>,
+        /// Subscribers to "the cursor rested here long enough to have been
+        /// read". See [`DWELL_TO_READ`].
+        pub(super) dwelled: RefCell<Vec<DwellHandler>>,
+        /// The dwell timer in flight, if there is one. Cancelled — not just
+        /// replaced — whenever the cursor moves or the list stops being
+        /// something the user could be reading, because a `glib` timeout that
+        /// merely loses its handle still fires.
+        pub(super) dwell: RefCell<Option<glib::SourceId>>,
+        /// How long that timer runs. [`DWELL_TO_READ`] outside a test.
+        pub(super) dwell_delay: Cell<std::time::Duration>,
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
@@ -158,6 +188,9 @@ mod imp {
                 cursor_moved: RefCell::new(Vec::new()),
                 reported: Cell::new(None),
                 landed: Cell::new(false),
+                dwelled: RefCell::new(Vec::new()),
+                dwell: RefCell::new(None),
+                dwell_delay: Cell::new(DWELL_TO_READ),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
                 keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
@@ -386,6 +419,67 @@ impl MessageListView {
         self.imp().cursor_moved.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called when the cursor has rested on a row for [`DWELL_TO_READ`].
+    ///
+    /// Once per landing: the timer is armed when the cursor arrives and
+    /// cancelled the moment it leaves, so holding `j` through a mailbox fires
+    /// this for none of the rows it passes over. Whoever subscribes marks the
+    /// message read — that is a store write and so not this pane's to do.
+    pub fn connect_dwelled(&self, handler: impl Fn(MessageId) + 'static) {
+        self.imp().dwelled.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Stop any dwell in flight without starting another.
+    ///
+    /// The timer answers "was this message in front of a person for long
+    /// enough", so anything that makes that untrue has to cancel it: the
+    /// window losing focus, or the composer taking the reading pane. Both are
+    /// facts about the window rather than about this pane, which is why they
+    /// are pushed in rather than watched for here.
+    ///
+    /// Idempotent, and safe to call when nothing is armed.
+    pub fn cancel_dwell(&self) {
+        if let Some(source) = self.imp().dwell.borrow_mut().take() {
+            source.remove();
+        }
+    }
+
+    /// Start the clock on `message`, replacing whatever was running.
+    fn arm_dwell(&self, message: MessageId) {
+        self.cancel_dwell();
+        let delay = self.imp().dwell_delay.get();
+        let source = glib::timeout_add_local_once(
+            delay,
+            glib::clone!(
+                #[weak(rename_to = view)]
+                self,
+                move || {
+                    // Taken rather than cleared: the source has fired and
+                    // removing it again would warn about a source that is
+                    // already gone.
+                    let _ = view.imp().dwell.borrow_mut().take();
+                    for handler in view.imp().dwelled.borrow().iter() {
+                        handler(message);
+                    }
+                }
+            ),
+        );
+        self.imp().dwell.replace(Some(source));
+    }
+
+    /// How long a dwell takes, for a test that cannot afford to wait a real
+    /// second per assertion.
+    ///
+    /// Public for the reason [`crate::parts::PartsPanel::press`] is: the
+    /// behaviour worth proving is "it fires once the cursor rests, and not
+    /// when it moves on", and a test that re-implemented the timer to check
+    /// that would be testing its own copy. Not a setting — see
+    /// [`DWELL_TO_READ`] for why the delay is a decision rather than a
+    /// preference.
+    pub fn set_dwell_delay(&self, delay: std::time::Duration) {
+        self.imp().dwell_delay.set(delay);
+    }
+
     /// Tell the subscribers which message the cursor is on, if that changed.
     ///
     /// Deduplicated on the message id rather than on the signal, because
@@ -404,6 +498,8 @@ impl MessageListView {
         }
         if position == gtk::INVALID_LIST_POSITION {
             imp.reported.set(None);
+            // Nothing under the cursor is nothing to have been reading.
+            self.cancel_dwell();
             return;
         }
         // A placeholder: the page under the cursor has not been delivered.
@@ -422,6 +518,12 @@ impl MessageListView {
         for handler in imp.cursor_moved.borrow().iter() {
             handler(row.clone());
         }
+        // After the report and only on a real landing, which the check above
+        // has already established: a flag repaint or a page arriving for the
+        // row the cursor is *already* on returns early, so neither restarts
+        // the clock. Without that a mailbox syncing under the cursor would
+        // keep resetting the dwell and nothing would ever be marked read.
+        self.arm_dwell(row.id);
     }
 
     /// What a drag from this pane offers a receiver.

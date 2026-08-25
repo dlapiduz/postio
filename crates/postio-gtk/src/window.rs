@@ -592,6 +592,13 @@ impl Window {
         if let Some(reader) = self.imp().reader.get() {
             reader.widget().set_visible(self.reading());
         }
+        // The dwell timer (#71) measures "this message was in front of a
+        // person for long enough to have been read". The composer taking the
+        // pane makes that untrue mid-count, so the clock stops rather than
+        // marking read a message the user looked away from to write a reply.
+        if !self.reading() {
+            self.list().cancel_dwell();
+        }
     }
 
     /// The header's `Compose` button, once `build` has run. `None` only
@@ -972,6 +979,16 @@ impl Window {
         let toast = crate::toast::Toast::new();
         toast.overlay().set_child(Some(&layout));
         self.set_content(Some(toast.overlay()));
+
+        // Alt-tabbing away stops the dwell (#71). Leaving Postio open on a
+        // message while you do something else is not reading it, and a
+        // machine left alone overnight must not come back with whatever the
+        // cursor happened to be on marked read.
+        self.connect_is_active_notify(|window| {
+            if !window.is_active() {
+                window.list().cancel_dwell();
+            }
+        });
 
         let undo = gio::SimpleAction::new("undo", None);
         undo.connect_activate(glib::clone!(
