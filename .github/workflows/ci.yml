@@ -193,6 +193,13 @@ jobs:
         # a dirty tree with no -m must still refuse, but say so. #120.
         run: python3 scripts/test-issue-land-commit-guard.py
 
+      - name: Prove issue-land.sh stages before the personal-data gate runs
+        # check-no-personal-data.py reads `git ls-files` -- tracked files
+        # only -- and used to run before `git add -A`, so a file this
+        # session was adding was invisible to it on the very landing that
+        # added it. That is how #269's PNG got through unscanned. #270.
+        run: python3 scripts/test-issue-land-personal-data.py
+
       - name: Prove issue-land.sh's merge step survives main's worktree
         # `gh pr merge --rebase --delete-branch` fails here every time,
         # because deleting the local branch makes `gh` switch this worktree
