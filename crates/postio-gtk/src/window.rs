@@ -30,7 +30,7 @@ use postio_core::{ActionId, CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
 use crate::feed::{Feeds, Folders, MailboxSource, MessageSource};
-use crate::finder::{Finder, Mode};
+use crate::finder::{Finder, Mode, Query};
 use crate::keymap::{self, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
@@ -1595,6 +1595,24 @@ impl Window {
         }
         let command = self.follow_drill_in(&command).unwrap_or(command);
         self.deliver(command);
+    }
+
+    /// Runs `query` as though it had been typed and answered immediately,
+    /// rather than after the debounce a keystroke would wait out.
+    ///
+    /// The seam a saved search activates through (issue #10): the sidebar
+    /// deals in query strings, not in typing, and a row that took 300ms to
+    /// answer would look broken next to every other one that opens at once.
+    pub fn run_search(&self, query: &str) {
+        self.open_finder(Mode::Search);
+        let finder = self.finder();
+        finder.set_query(Query {
+            mode: Mode::Search,
+            text: query.to_string(),
+        });
+        if let Some(live) = finder.live() {
+            live.flush();
+        }
     }
 
     /// Opens the box in `mode`, remembering what to come back to.
