@@ -907,3 +907,62 @@ fn every_corpus_fixture_still_parses() {
         );
     }
 }
+
+/// Builds a message whose multiparts nest `depth` deep.
+///
+/// Legal MIME throughout — every boundary opens and closes — just absurd. A
+/// sender controls this shape completely, which is the whole point.
+fn nested_multipart(depth: usize) -> Vec<u8> {
+    let mut out = String::from("Subject: Nested\r\nMIME-Version: 1.0\r\n");
+    for level in 0..depth {
+        out.push_str(&format!(
+            "Content-Type: multipart/mixed; boundary=\"b{level}\"\r\n\r\n--b{level}\r\n"
+        ));
+    }
+    out.push_str("Content-Type: text/plain\r\n\r\nleaf\r\n");
+    for level in (0..depth).rev() {
+        out.push_str(&format!("\r\n--b{level}--\r\n"));
+    }
+    out.into_bytes()
+}
+
+/// #277's serious half. `catch_unwind` contains a panic; it cannot contain a
+/// stack overflow, which is a `SIGSEGV` and takes the process with it however
+/// carefully the caller is written. `part_paths` walked the MIME tree by
+/// recursing once per level, so a message that nests deeply enough crashed
+/// ingest — and unlike the `debug_assert!` this module also contains, that was
+/// true of a release build too.
+///
+/// The walk is iterative now, so there is no depth to tune and no arbitrary
+/// limit to be wrong about. This depth is far past anything a real message has
+/// and comfortably past what the recursive version survived.
+#[test]
+fn a_deeply_nested_multipart_does_not_overflow_the_stack() {
+    let raw = nested_multipart(20_000);
+    let parsed = mime::parse(&raw);
+    assert_eq!(parsed.size, raw.len() as u64);
+}
+
+/// The same walk still numbers parts the way IMAP does, which is the thing it
+/// exists for — an iterative rewrite that got the paths wrong would break
+/// every lazy attachment fetch.
+#[test]
+fn the_iterative_walk_numbers_parts_the_way_imap_does() {
+    let parsed = parse("attachment-pdf");
+    let paths: Vec<String> = parsed
+        .parts
+        .iter()
+        .filter_map(|part| part.attachment.part_id.clone())
+        .collect();
+    assert!(
+        !paths.is_empty(),
+        "the fixture should have at least one numbered part"
+    );
+    for path in &paths {
+        assert!(
+            path.split('.')
+                .all(|segment| segment.parse::<u32>().is_ok()),
+            "a part path is dot-separated positive integers: {path}"
+        );
+    }
+}
