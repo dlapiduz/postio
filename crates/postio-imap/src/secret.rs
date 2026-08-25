@@ -47,6 +47,16 @@ const UNLOCK_HINT: &str = "Unlock it (log in again, or open Passwords and Keys \
 /// Zeroized on drop, redacted in `Debug` and `Display`, and — importantly —
 /// neither `Serialize` nor `Deserialize`, so it cannot end up in a config
 /// file or a log line by accident.
+///
+/// `Clone` is safe here and deliberate: each clone owns its own
+/// `Zeroizing<String>` and is overwritten independently when it drops, so
+/// copying a password does not create an unprotected one. What is *not* safe
+/// is copying the string out — see [`expose`](Self::expose).
+///
+/// `PartialEq` compares byte by byte and is **not** constant time. That is
+/// fine for what this type does: Postio compares a password against nothing,
+/// least of all against anything an attacker supplies. Do not reach for it to
+/// verify a credential.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Password(Zeroizing<String>);
 
@@ -67,6 +77,38 @@ impl Password {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+}
+
+/// Read a secret buffer as text, without copying it.
+///
+/// Takes `Zeroizing` rather than `&[u8]` on purpose: it is the only route
+/// from bytes to a [`Password`] in this module, so a caller holding a bare
+/// buffer has to wrap it before it can get anywhere, and the wrapping is
+/// what overwrites the secret when the buffer drops. The compiler enforces
+/// that; nothing else could.
+///
+/// It *borrows* rather than converting for the second half of the same
+/// reason. `String::from_utf8` would move the buffer into a `String` and
+/// hand back a plain, un-zeroized allocation on success — and on failure
+/// drop the bytes it was given without overwriting them. That failure path
+/// is where the secret used to escape without ever becoming a `Password`,
+/// so nothing downstream protected it either. See #144.
+fn secret_text(bytes: &Zeroizing<Vec<u8>>) -> Option<&str> {
+    std::str::from_utf8(bytes).ok()
+}
+
+/// The first line of `text`, without its line ending.
+///
+/// `pass show` and friends print the password on line one and metadata
+/// after it, and every one of them ends the line. A password may contain
+/// spaces, so nothing but the line ending is trimmed.
+///
+/// Borrowed, so this adds no allocation to zeroize.
+fn first_line(text: &str) -> &str {
+    text.split('\n')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('\r')
 }
 
 impl fmt::Debug for Password {
@@ -386,14 +428,19 @@ impl SecretStore for KeyringSecretStore {
             })?;
 
             let secret = item.secret().await.map_err(|err| map_oo7_error(key, err))?;
-            let password = String::from_utf8(secret.as_bytes().to_vec()).map_err(|_| {
-                SecretError::Backend {
-                    account: key.account().to_owned(),
-                    reason: "the stored secret is not valid UTF-8".to_owned(),
-                }
+            // Our own copy of the keyring's bytes, wrapped before anything
+            // else happens to it: the previous shape moved it through
+            // `String::from_utf8`, which is fine on the success path and
+            // dropped an un-zeroized copy of the secret on the failure one.
+            let bytes = Zeroizing::new(secret.as_bytes().to_vec());
+            let text = secret_text(&bytes).ok_or_else(|| SecretError::Backend {
+                account: key.account().to_owned(),
+                reason: "the stored secret is not valid UTF-8".to_owned(),
             })?;
 
-            Ok(Password::new(password))
+            // Not split at a newline, unlike the command store: whatever the
+            // keyring holds is the password, including any byte in it.
+            Ok(Password::new(text))
         })
         .await
     }
@@ -513,17 +560,15 @@ impl SecretStore for CommandSecretStore {
             }));
         }
 
-        let stdout = String::from_utf8(output.stdout)
-            .map_err(|_| self.failure("the command printed something that is not valid UTF-8"))?;
+        // The program's whole standard output is the secret, so it is wrapped
+        // the moment it is ours -- before the UTF-8 check, which is the path
+        // the copy used to escape on, and before the split, which used to
+        // leave a second un-zeroized `String` behind as well.
+        let stdout = Zeroizing::new(output.stdout);
+        let text = secret_text(&stdout)
+            .ok_or_else(|| self.failure("the command printed something that is not valid UTF-8"))?;
 
-        // `pass show` and friends print a trailing newline that is not part
-        // of the password; take the first line and nothing else.
-        let password = stdout
-            .split('\n')
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches('\r');
-
+        let password = first_line(text);
         if password.is_empty() {
             return Err(self.failure("the command printed nothing"));
         }
@@ -548,9 +593,16 @@ impl SecretStore for CommandSecretStore {
 /// Public on purpose: crates above this one need to test their credential
 /// paths without a Secret Service session either. [`MemorySecretStore::locked`]
 /// simulates a keyring that will not open.
+///
+/// It holds [`Password`] rather than `String` for the reason the rest of this
+/// module does: a plain `String` in the map would be freed without being
+/// overwritten every time an entry is replaced or the store is dropped. Being
+/// a test double is not an exemption — the fixtures crates above this one
+/// write into it are the shape a real one has, and the habit is what carries
+/// over. #144.
 #[derive(Clone, Debug, Default)]
 pub struct MemorySecretStore {
-    items: Arc<Mutex<HashMap<AccountKey, String>>>,
+    items: Arc<Mutex<HashMap<AccountKey, Password>>>,
     locked: bool,
 }
 
@@ -606,7 +658,7 @@ impl SecretStore for MemorySecretStore {
         self.items
             .lock()
             .expect("secret store mutex")
-            .insert(key.clone(), password.expose().to_owned());
+            .insert(key.clone(), password.clone());
         Ok(())
     }
 
@@ -616,7 +668,7 @@ impl SecretStore for MemorySecretStore {
             .lock()
             .expect("secret store mutex")
             .get(key)
-            .map(Password::new)
+            .cloned()
             .ok_or_else(|| SecretError::NotFound {
                 account: key.account().to_owned(),
             })
@@ -652,6 +704,83 @@ mod tests {
         assert!(toml::from_str::<SecretSource>("type = \"keyring\"\nargv = [\"pass\"]").is_err());
         assert!(toml::from_str::<SecretSource>("type = \"command\"").is_err());
         assert!(toml::from_str::<SecretSource>("type = \"command\"\nargv = []").is_err());
+    }
+
+    // -- Zeroization (#144) ------------------------------------------------
+    //
+    // A secret that reaches a plain `Vec<u8>` or `String` is freed without
+    // being overwritten, and stays legible in whatever page the allocator
+    // hands out next. `Password` was always right; the buffers *around* it
+    // were the gap, and the invalid-UTF-8 paths were the worst of them,
+    // because that is where the copy escaped without ever becoming a
+    // `Password` at all.
+    //
+    // The guarantee is carried by the signature: `secret_text` accepts only
+    // `&Zeroizing<Vec<u8>>`, so a caller holding a bare buffer has to wrap it
+    // before it can get a password out, and it borrows rather than converting,
+    // so no second allocation exists to leak. These tests hold the behaviour
+    // that signature has to keep working.
+
+    #[test]
+    fn a_secret_buffer_reads_back_as_text_without_a_second_allocation() {
+        let bytes = Zeroizing::new(b"hunter2".to_vec());
+        let text = secret_text(&bytes).expect("valid UTF-8");
+        assert_eq!(text, "hunter2");
+        // Borrowed from the zeroized buffer itself, not copied out of it.
+        assert_eq!(text.as_ptr(), bytes.as_ptr());
+    }
+
+    #[test]
+    fn a_secret_buffer_that_is_not_utf8_yields_nothing_to_copy() {
+        let bytes = Zeroizing::new(vec![0xff, 0xfe, 0xfd]);
+        assert!(secret_text(&bytes).is_none());
+    }
+
+    #[test]
+    fn only_the_first_line_of_a_command_is_the_password() {
+        // `pass show` prints the password on line one and metadata after it.
+        assert_eq!(first_line("hunter2\n"), "hunter2");
+        assert_eq!(first_line("hunter2\r\n"), "hunter2");
+        assert_eq!(first_line("hunter2\nlogin: ada@example.com\n"), "hunter2");
+        assert_eq!(first_line("hunter2"), "hunter2");
+        assert_eq!(first_line("\n"), "");
+        assert_eq!(first_line(""), "");
+        // A password may legitimately contain spaces, so nothing but the line
+        // ending is trimmed.
+        assert_eq!(first_line(" hunter 2 \n"), " hunter 2 ");
+    }
+
+    #[tokio::test]
+    async fn a_command_that_prints_a_password_yields_it() {
+        let store = CommandSecretStore::new(["/bin/sh", "-c", "printf 'hunter2\\n'"]);
+        let password = store
+            .retrieve(&AccountKey::new("ada@example.com"))
+            .await
+            .expect("the command printed a password");
+        assert_eq!(password.expose(), "hunter2");
+    }
+
+    #[tokio::test]
+    async fn a_command_that_prints_something_that_is_not_utf8_is_an_error() {
+        // The path the leak lived on: before #144 the buffer holding the
+        // secret was dropped here without being zeroized, and it never became
+        // a `Password`, so nothing else protected it either.
+        let store = CommandSecretStore::new(["/bin/sh", "-c", "printf '\\377\\376'"]);
+        let error = store
+            .retrieve(&AccountKey::new("ada@example.com"))
+            .await
+            .expect_err("not valid UTF-8");
+        assert!(error.to_string().contains("UTF-8"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_command_that_prints_nothing_is_an_error() {
+        let store = CommandSecretStore::new(["/bin/sh", "-c", "printf ''"]);
+        let error = store
+            .retrieve(&AccountKey::new("ada@example.com"))
+            .await
+            .expect_err("no password");
+        assert!(error.to_string().contains("nothing"), "{error}");
     }
 
     #[test]
