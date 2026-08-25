@@ -112,14 +112,70 @@ fn stored(database: &Database, path: &str) -> Option<u32> {
 }
 
 /// Waits for `condition`, or gives up and says what was true when it did.
+///
+/// The deadline is a *liveness* bound — it exists to turn a hang into a
+/// failure with a name, and for nothing else. It is deliberately enormous:
+/// this file used to give it 30 seconds, which quietly made it a performance
+/// budget, and a GitHub runner (or this box with four sessions compiling)
+/// walked straight through it while the code under test was fine (#122,
+/// #125). Performance claims live in the benches; a genuinely hung test
+/// costing three minutes once is cheaper than a flake costing a bisection
+/// every month.
 async fn until(what: &str, mut condition: impl FnMut() -> bool) {
-    let waited = tokio::time::timeout(Duration::from_secs(30), async {
+    let waited = tokio::time::timeout(Duration::from_secs(180), async {
         while !condition() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await;
     assert!(waited.is_ok(), "timed out waiting for {what}");
+}
+
+/// Whether `log` shows INBOX served ahead of the archive's completion.
+///
+/// The property "INBOX was not queued behind the archive" is an *order* on
+/// the server's own call log, not a stopwatch race: an engine that queues
+/// INBOX behind the archive serves every archive fetch first, so INBOX's
+/// first header fetch landing before the archive's last is exactly the
+/// discriminator — under any scheduler, at any load. (The old form asserted
+/// the archive was still incomplete at the moment a poll noticed INBOX was
+/// done, which goes vacuous whenever the machine is slow enough for both to
+/// finish — the 1-in-5 flake of #125.)
+///
+/// First-INBOX against last-archive on purpose: once the initial sync ends,
+/// the watcher may fetch INBOX again on its own schedule, so INBOX's *last*
+/// fetch is not the initial sync's; its *first* always is.
+fn inbox_was_not_queued_behind_the_archive(log: &[String]) -> bool {
+    let first_inbox = log.iter().position(|mailbox| mailbox == "INBOX");
+    let last_archive = log.iter().rposition(|mailbox| mailbox == "Archive");
+    match (first_inbox, last_archive) {
+        (Some(inbox), Some(archive)) => inbox < archive,
+        _ => false,
+    }
+}
+
+#[test]
+fn the_order_check_rejects_a_sequential_archive_first_engine() {
+    // The regression this file's second test exists to catch, in miniature:
+    // an engine that syncs the archive to completion before touching INBOX
+    // produces exactly this log, and the check must call it out. This is the
+    // "verify your tests can fail" half (CLAUDE.md) — injectable here, where
+    // simulating a starved scheduler in the real engine is not.
+    let starved: Vec<String> = std::iter::repeat_n("Archive".to_owned(), 50)
+        .chain(std::iter::once("INBOX".to_owned()))
+        .collect();
+    assert!(!inbox_was_not_queued_behind_the_archive(&starved));
+
+    let healthy: Vec<String> = ["Archive", "INBOX", "Archive", "Archive"]
+        .map(str::to_owned)
+        .to_vec();
+    assert!(inbox_was_not_queued_behind_the_archive(&healthy));
+
+    // A log that never saw one of the two is an answer to a different
+    // question, never a pass.
+    assert!(!inbox_was_not_queued_behind_the_archive(&[
+        "Archive".to_owned()
+    ]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -169,13 +225,20 @@ async fn the_inbox_finishes_while_a_large_archive_is_still_going() {
 
     let (database, engine) = engine_over(backend.clone());
 
-    until("INBOX to finish", || stored(&database, "INBOX") == Some(10)).await;
+    // Liveness only: wait for the whole wave, then judge the order the
+    // server actually saw. Waiting for both is what makes the assertion
+    // non-vacuous — nothing about a slow machine can change a log that has
+    // already been written.
+    until("both folders to finish their first sync", || {
+        stored(&database, "INBOX") == Some(10) && stored(&database, "Archive") == Some(2_000)
+    })
+    .await;
 
-    let archive = stored(&database, "Archive").unwrap_or(0);
+    let log = backend.header_fetches();
     assert!(
-        archive < 2_000,
-        "INBOX is only readable early if it did not have to wait out the \
-         archive: the archive was already complete at {archive} messages"
+        inbox_was_not_queued_behind_the_archive(&log),
+        "INBOX's first header fetch came after the archive's last, so INBOX \
+         waited out the whole archive: {log:?}"
     );
     drop(engine);
 }

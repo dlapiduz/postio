@@ -387,6 +387,9 @@ struct State {
     /// The largest [`State::in_flight`] ever reached.
     peak_in_flight: usize,
     chunk_size: usize,
+    /// Which mailbox each served `FETCH` (headers) call was for, in the
+    /// order the server handled them. See [`MockBackend::header_fetches`].
+    header_fetches: Vec<String>,
 }
 
 impl State {
@@ -535,6 +538,22 @@ impl MockBackend {
     /// How many calls the backend has served.
     pub fn calls(&self) -> u64 {
         self.state().calls
+    }
+
+    /// Which mailbox each served header `FETCH` was for, oldest first.
+    ///
+    /// This is the mock's answer to scheduling questions, the same way
+    /// [`peak_in_flight`](Self::peak_in_flight) is its answer to concurrency
+    /// ones: **order in this log is causal and survives any machine load**,
+    /// where "was X still incomplete when Y finished" is a wall-clock overlap
+    /// that goes vacuous exactly when the box is slow (#125). A test that
+    /// means "INBOX was not queued behind the archive" asserts on positions
+    /// here, not on a stopwatch.
+    ///
+    /// Only *served* fetches are recorded: a call that a fault failed or that
+    /// never got past connect does not appear.
+    pub fn header_fetches(&self) -> Vec<String> {
+        self.state().header_fetches.clone()
     }
 
     /// The most calls that were on the wire at once.
@@ -750,6 +769,7 @@ impl MockBackendBuilder {
                 calls: 0,
                 in_flight: 0,
                 peak_in_flight: 0,
+                header_fetches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
             notify: Arc::new(Notify::new()),
@@ -841,7 +861,9 @@ impl MailBackend for MockBackend {
             return Err(BackendError::Cancelled);
         }
 
-        let state = self.state();
+        let mut state = self.state();
+        state.header_fetches.push(mailbox.to_owned());
+        let state = state;
         let index = self.locate(&state, mailbox, "FETCH")?;
         let condstore = state.condstore();
         let folder = &state.mailboxes[index];
