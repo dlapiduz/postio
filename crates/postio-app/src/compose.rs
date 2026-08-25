@@ -405,10 +405,11 @@ pub(crate) enum Body {
 /// * **fetched, naming blobs that will not read** — the database and the
 ///   blob directory disagree. Rare, and a genuine fault.
 ///
-/// [`Absent::Offline`] is deliberately not produced here: telling it from
-/// `Partial` needs the engine's `ConnectionState`, which does not reach this
-/// crate yet. The pane says "downloading" in both cases meanwhile, which is
-/// true but less useful than it should be — see the follow-up issue on #70.
+/// `is_offline` is what tells [`Absent::Offline`] from [`Absent::Partial`]
+/// for a body that has not been fetched: both are "nothing here yet", but
+/// only one of them is worth promising a backfill for. The caller reads it
+/// off the engine's `ConnectionState` (`reading.rs`), because this module
+/// has no seam of its own onto the sync engine.
 ///
 /// [`BodyState`]: postio_model::message::BodyState
 /// [`Absent::Offline`]: postio_gtk::reader::Absent::Offline
@@ -416,6 +417,7 @@ pub(crate) fn load_body_or_reason(
     connection: &postio_storage::PooledConnection,
     blobs: &BlobStore,
     id: MessageId,
+    is_offline: bool,
 ) -> Body {
     use postio_gtk::reader::Absent;
 
@@ -433,7 +435,12 @@ pub(crate) fn load_body_or_reason(
     // Has anything been downloaded for this message at all?
     match repository.get(id) {
         Ok(Some(message)) if !message.sync.body_state.has_body() => {
-            return Body::Absent(Absent::Partial);
+            let reason = if is_offline {
+                Absent::Offline
+            } else {
+                Absent::Partial
+            };
+            return Body::Absent(reason);
         }
         Ok(Some(_)) => {}
         // The row is gone, or unreadable. Either way there is nothing to
@@ -521,6 +528,75 @@ mod tests {
             .create(&mut account)
             .unwrap();
         account.id
+    }
+
+    // ── `load_body_or_reason` ────────────────────────────────────────────
+    //
+    // Pure data: no display, no `adw::init()`. See the module doc above for
+    // why a GTK-touching test does not belong beside these.
+
+    #[test]
+    fn a_message_with_no_body_yet_names_offline_only_when_the_engine_is() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().unwrap();
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
+        message.sync.body_state = postio_model::BodyState::HeadersOnly;
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .unwrap();
+        drop(connection);
+
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+        let connection = database.connection().unwrap();
+
+        assert!(
+            matches!(
+                load_body_or_reason(&connection, &blobs, id, false),
+                Body::Absent(postio_gtk::reader::Absent::Partial)
+            ),
+            "online and not yet fetched is the ordinary backfill wait"
+        );
+        assert!(
+            matches!(
+                load_body_or_reason(&connection, &blobs, id, true),
+                Body::Absent(postio_gtk::reader::Absent::Offline)
+            ),
+            "offline and not yet fetched has to say so, not promise a backfill \
+             that cannot run"
+        );
+    }
+
+    #[test]
+    fn a_message_whose_body_already_arrived_ignores_whether_the_engine_is_offline() {
+        // Offline-ness only changes the story for a body that has not landed
+        // yet. A message with real bytes on disk must read the same whether
+        // or not the engine happens to be connected right now.
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().unwrap();
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
+        message.sync.body_state = postio_model::BodyState::Full;
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .unwrap();
+        drop(connection);
+
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+        let connection = database.connection().unwrap();
+
+        // No blobs were ever named for it, so this is the "fetched, naming
+        // no blobs" case -- `Absent::Empty` -- either way.
+        assert!(matches!(
+            load_body_or_reason(&connection, &blobs, id, false),
+            Body::Absent(postio_gtk::reader::Absent::Empty)
+        ));
+        assert!(matches!(
+            load_body_or_reason(&connection, &blobs, id, true),
+            Body::Absent(postio_gtk::reader::Absent::Empty)
+        ));
     }
 
     #[test]
