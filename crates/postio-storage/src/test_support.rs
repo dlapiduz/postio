@@ -20,10 +20,10 @@
 //!
 //! # Which one to use
 //!
-//! [`memory`] for almost everything: it is faster and leaves nothing behind.
-//! [`temp`] when the test is *about* the file — WAL behaviour, reopening,
-//! anything that needs a real path — because an in-memory database has no
-//! journal and no filesystem.
+//! [`memory`] for almost everything: it is fast (tmpfs where available) and
+//! leaves nothing behind. [`temp`] when the test is *about* the file's
+//! location — reopening from a path the test controls, permissions,
+//! anything that needs [`TempDatabase::directory`].
 //!
 //! ```
 //! let database = postio_storage::test_support::memory();
@@ -40,15 +40,33 @@ use tempfile::TempDir;
 use crate::db::Database;
 use crate::repository::{AccountRepository, MailboxRepository};
 
-/// A migrated in-memory database, shared by every connection its pool opens.
+/// A migrated scratch database, shared by every connection its pool opens.
 ///
-/// It lives as long as the returned handle and disappears with it.
+/// It lives as long as the returned handle (clones included) and disappears
+/// with it.
+///
+/// Despite the name it is **file-backed**, in a temporary directory the
+/// handle owns — on `/dev/shm` where that exists, so it still costs RAM
+/// rather than disk. It used to be `Database::open_in_memory`, whose
+/// `cache=shared` brings table-level locks that `busy_timeout` cannot wait
+/// out: under load, a fixture write could fail with "database table is
+/// locked" in a test that is not about locking at all (#204). A file gets
+/// WAL and the ordinary busy handler, where a reader never fails a writer.
 ///
 /// # Panics
 ///
-/// If the database cannot be opened or migrated.
+/// If the directory or the database cannot be created or migrated.
 pub fn memory() -> Database {
-    Database::open_in_memory().expect("an in-memory database must always open")
+    let shm = Path::new("/dev/shm");
+    let directory = if shm.is_dir() {
+        tempfile::tempdir_in(shm)
+    } else {
+        tempfile::tempdir()
+    }
+    .expect("a scratch directory must always open");
+    let path = directory.path().join("postio.db");
+    Database::open_file_with_guard(&path, Box::new(directory))
+        .expect("a scratch database must always open")
 }
 
 /// A migrated database in a temporary directory that deletes itself.
