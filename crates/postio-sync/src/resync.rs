@@ -76,7 +76,7 @@ use postio_model::{
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::drain::SyncError;
 use crate::initial::{self, Progress};
@@ -361,8 +361,14 @@ async fn incremental(
         // more per message. This is the path that runs on every start, for
         // every folder, so it pays that on the ordinary case and not only on
         // a first sync.
-        let committed = connection
-            .unchecked_transaction()
+        //
+        // IMMEDIATE for the reason `initial.rs` gives at its own transaction
+        // (#79): the first statement here is a SELECT, and a deferred
+        // transaction that has to promote a read lock to a write lock is told
+        // SQLITE_BUSY without the busy handler ever running. This path runs on
+        // every start for every folder, so it meets the UI thread's local-first
+        // writes more often than the first-sync one does.
+        let committed = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
             .map_err(postio_storage::Error::from)?;
         let connection: &Connection = &committed;
 

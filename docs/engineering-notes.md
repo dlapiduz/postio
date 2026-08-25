@@ -569,10 +569,53 @@ arbitrary:
 - *Passes are concurrent, never parallel.* The engine's runtime is
   current-thread and the futures are polled by one `FuturesUnordered` on one
   task, so two passes cannot both be inside `initial::enumerate`'s batch
-  transaction at once — there is no await between `unchecked_transaction()`
-  and `commit()`. Do not add one. Those transactions are `BEGIN DEFERRED` and
-  read before they write, so genuinely simultaneous writers would meet
-  `SQLITE_BUSY_SNAPSHOT`, which the busy handler does *not* cover.
+  transaction at once — there is no await between the `BEGIN` and the
+  `commit()`. Do not add one: on a current-thread runtime a task that blocks
+  in SQLite's busy handler blocks every other lane with it, so an await inside
+  a write transaction turns lock contention into a stall of the whole engine.
+
+**Every outermost write transaction is `BEGIN IMMEDIATE`, and has to be**
+(#79). A deferred transaction takes no lock, and every write path in the
+storage layer reads before it writes — `SyncStateRepository::mutate` loads the
+state before saving it, `upsert_batch` looks a UID up before choosing insert
+or update. So a deferred transaction is holding a *read* lock by the time it
+writes and has to promote, and SQLite will not let a promotion wait: blocking
+a connection that already holds a read lock could deadlock against the writer
+it would be waiting for, so it returns `SQLITE_BUSY` and deliberately does
+**not** invoke the busy handler. `PRAGMA busy_timeout = 5000` never gets a say
+and the write fails on the spot.
+
+The second writer is always there — the UI thread writes local-first on every
+flag, archive and draft autosave, through the same pool — so this was never
+theoretical. `crates/postio-sync/tests/concurrent_writers.rs` loses a sync
+pass's *first* batch to it, every run, without the fix.
+
+Two places decide this and both had to change:
+- `postio_storage::repository::Scope::open`, the chokepoint for all 26
+  grouped writes in that crate. A bare `SAVEPOINT` outside a transaction
+  *starts* a deferred one, so `Scope` now asks `Connection::is_autocommit()`
+  and issues `BEGIN IMMEDIATE`/`COMMIT` when it is outermost and
+  `SAVEPOINT`/`RELEASE` when it is nested.
+- The batch transactions in `postio_sync::initial` and `postio_sync::resync`,
+  which open their own transaction rather than going through `Scope`.
+
+Each is independently load-bearing: reverting either alone puts that test back
+to failing every run. And do not expect the extended code to be
+`SQLITE_BUSY_SNAPSHOT` (517) — the promotion failure reports plain
+`SQLITE_BUSY` (5) about as often, and the two are one problem with one fix.
+What identifies it is that it arrives in milliseconds against a five-second
+timeout.
+
+**A concurrency test must not use `test_support::memory()`** (#79). An
+in-memory database is opened with SQLite's shared cache, a different locking
+model from the WAL one Postio runs on: locks are per-table and a reader blocks
+a writer outright rather than the two proceeding side by side. Combined with
+the current-thread runtime above, one lane waiting on such a lock blocks every
+other lane, and `sync_wave.rs` — whose whole subject is that passes overlap —
+went from green to timing out purely because of the store underneath it, not
+because anything about the engine had changed. It uses `test_support::temp()`
+for that reason. #79's own testing note reached this from the other direction:
+in-memory fails with `SQLITE_LOCKED`, which is a different bug.
 
 Two things had to change to survive concurrency, and would have to change
 again for anything else that overlaps passes. `StatusTracker` keeps the set of
