@@ -53,6 +53,21 @@ use postio_runtime::store::{MailStore, SqliteStore};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, Database};
 
+/// `[mailboxes]` from the file at `path`, or nothing.
+///
+/// Unreadable, unparseable or absent all mean the same here — no overrides,
+/// which is the behaviour every account had before the section existed.
+/// Problems are not swallowed: `validate` reports them, with a line number,
+/// and the settings panel shows them where they can be fixed. This is the
+/// same shape as `notifications::config_at`, and for the same reason.
+pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .map(|config| config.role_overrides())
+        .unwrap_or_default()
+}
+
 /// What the frontend needs, once there is a store to give it.
 #[derive(Clone)]
 pub struct Wiring {
@@ -80,6 +95,13 @@ pub struct Wiring {
     /// paths — the one onboarding writes and the one startup reads — hang
     /// off this.
     pub secrets: Arc<dyn postio_imap::secret::SecretStore>,
+    /// Folders the user assigned a role to by hand, from `[mailboxes]`.
+    ///
+    /// A part, like `secrets`, and for the same reason: which folder is this
+    /// installation's archive is a choice about *this installation*, and
+    /// anything that read the file itself could not be driven by a test.
+    /// Empty is the ordinary case and resolves exactly as before.
+    pub mailbox_roles: postio_model::RoleOverrides,
 }
 
 impl Wiring {
@@ -106,7 +128,21 @@ impl Wiring {
             commands,
             engine: refresh::EngineSlot::default(),
             secrets: Arc::new(postio_imap::secret::KeyringSecretStore::default()),
+            mailbox_roles: postio_model::RoleOverrides::default(),
         }
+    }
+
+    /// The same wiring, with `[mailboxes]` applied.
+    ///
+    /// Read once, at startup, and carried: a mapping edited while Postio is
+    /// running takes effect at the next start rather than immediately. That
+    /// is a real limit and worth stating — the engine is spawned with its
+    /// parts and folder discovery runs inside it, so applying a change live
+    /// means reaching into a running task, which is more than the mapping is
+    /// worth on its own.
+    pub fn with_mailbox_roles(mut self, roles: postio_model::RoleOverrides) -> Self {
+        self.mailbox_roles = roles;
+        self
     }
 
     /// The same wiring, reading and writing passwords somewhere else.

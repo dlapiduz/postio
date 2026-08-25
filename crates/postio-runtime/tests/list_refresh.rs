@@ -95,6 +95,7 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
 

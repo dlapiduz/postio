@@ -97,6 +97,7 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
     (database, engine)

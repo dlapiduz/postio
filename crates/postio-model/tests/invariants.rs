@@ -446,11 +446,17 @@ fn an_override_outranks_the_server_attribute_and_the_name() {
 fn without_a_matching_override_nothing_changes() {
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
 
-    // Every existing case still resolves exactly as it did. An override is a
-    // third tier, not a replacement for the two that already work.
+    // Every existing case still resolves exactly as it did, *for roles nobody
+    // has pinned*. An override is a third tier, not a replacement for the two
+    // that already work.
+    //
+    // The one exception is the pinned role itself, which is taken from
+    // whatever held it before — see
+    // `a_pinned_role_is_taken_from_whatever_held_it_before`. That is not a
+    // caveat to this rule, it is the rule that makes `by_role` answerable.
     assert_eq!(
-        overrides.resolve(["\\Archive"], "Sent Messages"),
-        MailboxRole::Archive
+        overrides.resolve(["\\Sent"], "Posta Inviata"),
+        MailboxRole::Sent
     );
     assert_eq!(
         overrides.resolve(Vec::<String>::new(), "Sent Messages"),
@@ -520,5 +526,31 @@ fn two_folders_cannot_both_be_the_archive() {
             .count(),
         1,
         "two folders resolved to Archive: {resolved:?}"
+    );
+}
+
+#[test]
+fn a_pinned_role_is_taken_from_whatever_held_it_before() {
+    // The server has a folder called Archive, marked `\Archive`, and the user
+    // has pointed `archive` somewhere else. Both cannot be the archive:
+    // `by_role(account, Archive)` returns one row, so leaving two would make
+    // archiving go to an arbitrary one of them — and which one could change
+    // between runs.
+    let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
+
+    assert_eq!(
+        overrides.resolve(Vec::<String>::new(), "Vecchia Posta"),
+        MailboxRole::Archive
+    );
+    assert_eq!(
+        overrides.resolve(["\\Archive"], "Archive"),
+        MailboxRole::Regular,
+        "the folder that used to be the archive has to give the role up"
+    );
+
+    // Only the pinned role is taken. Everything else resolves as before.
+    assert_eq!(
+        overrides.resolve(["\\Sent"], "Sent Messages"),
+        MailboxRole::Sent
     );
 }

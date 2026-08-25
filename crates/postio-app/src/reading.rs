@@ -992,6 +992,7 @@ mod tests {
             reconnect: Default::default(),
             watch: Default::default(),
             network: NetworkSource::default(),
+            mailbox_roles: Default::default(),
         })
         .expect("an engine");
 

@@ -223,8 +223,26 @@ impl RoleOverrides {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.role_for(path)
-            .unwrap_or_else(|| MailboxRole::resolve(attributes, path))
+        if let Some(role) = self.role_for(path) {
+            return role;
+        }
+        let natural = MailboxRole::resolve(attributes, path);
+        // A role the user has pinned to some *other* folder is spoken for, so
+        // this one cannot also claim it. Without this, pointing `archive` at a
+        // new folder on a server that already has one called `Archive` leaves
+        // two rows wearing the role, and `by_role` returns whichever the query
+        // reaches first -- so archiving would go to an arbitrary one of them,
+        // and which one could change between runs. Demoted to `Regular`,
+        // which is what the folder is once it is not the archive.
+        if self.claims(natural) {
+            return MailboxRole::Regular;
+        }
+        natural
+    }
+
+    /// Whether some folder has been pinned to `role`.
+    fn claims(&self, role: MailboxRole) -> bool {
+        self.by_path.values().any(|pinned| *pinned == role)
     }
 }
 

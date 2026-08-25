@@ -439,6 +439,45 @@ never reached `connect_action` at all. Pinned by
 
 ## Storage, sync & search internals
 
+**Re-pointing a mailbox role relabels folders; it never moves mail.** `[mailboxes]`
+lets a user say which folder is the archive on a server that advertises no
+`SPECIAL-USE` and names its folders in a language `match_name` was never
+taught (#164). The question that needed deciding was what happens to mail
+already filed under the old resolution when that mapping changes, and the
+answer is nothing:
+
+- A role is a property of a **mailbox row** — which folder plays which part —
+  and not of any message. Messages live in folders; re-pointing `archive` says
+  nothing about where anything already is.
+- Moving mail to match would mean Postio issuing IMAP moves the user never
+  asked for, on a config edit. That is squarely against "nothing leaves this
+  machine that the user did not ask for".
+- It would also be irreversible in a way relabelling is not. Edit the line
+  back and the labels swap back; moved mail stays moved.
+
+The non-obvious consequence, and the one a test caught rather than the design:
+**a pinned role has to be taken away from whatever held it before.** Point
+`archive` at a new folder on a server that already has one called `Archive`
+and, without that rule, two rows wear the role — and `by_role` returns one, so
+archiving goes to an arbitrary one of them and which one can change between
+runs. The previous holder is demoted to `Regular`, which is what it is once it
+is not the archive.
+
+Precedence is **override → `SPECIAL-USE` → name guess**, and the override sits
+above the server attribute rather than merely above the guess: a server that
+marks a folder `\Junk` is usually right, and "usually" is what an override is
+for. It is one function, `RoleOverrides::resolve`, so the precedence is
+stateable in one place — but it is called from `postio-sync`'s reconciliation
+rather than from `MailboxRole::resolve`'s own call site at the IMAP edge,
+because that layer parses what the *server* said and has no business reading a
+config file.
+
+`[mailboxes]` is read once at startup, so a mapping edited while Postio is
+running takes effect at the next start. The engine is spawned with its parts
+and folder discovery runs inside it, so applying a change live means reaching
+into a running task.
+
+
 **A `oneshot`-reply `Job` on the engine is a fact nobody will ever hear.**
 `Engine::backfill_progress` could always answer how far the body queue had
 got, and in the entire workspace nothing called it. So the longest phase of a
