@@ -64,19 +64,35 @@ if [ -z "$ISSUE" ]; then
     exit 2
 fi
 
-# Everything below compares against origin/main, and nothing here had been
+# Which branch this work belongs to, recorded by `issue-claim.sh` when the
+# worktree was cut. Everything below -- the crate list, the rebase, the PR's
+# base -- follows it. Defaulting to `main` is what keeps every ordinary
+# landing exactly as it was; the alternative, a flag repeated on every
+# command, is a flag somebody eventually forgets, and forgetting this one
+# merges initiative work straight into `main`. #290.
+BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
+if ! git ls-remote --exit-code --heads origin "$BASE" >/dev/null 2>&1; then
+    echo "This worktree records base '$BASE', which is not on origin any more." >&2
+    echo "Nothing was pushed. If the initiative branch was merged and deleted," >&2
+    echo "rebase this branch onto main and record that instead:" >&2
+    echo "    printf 'main\n' > \"\$(git rev-parse --git-dir)/postio-base\"" >&2
+    exit 2
+fi
+
+# Everything below compares against the base, and nothing here had been
 # fetching it -- so the crate list, the PR body and the rebase were all reading
 # whatever the last fetch happened to leave behind.
-git fetch --quiet origin main
+git fetch --quiet origin "$BASE"
 
 # Which crates actually changed, so the gates run over those rather than the
 # whole workspace. CI proves the workspace; this proves your own work fast.
-CRATES=$(git diff --name-only origin/main...HEAD; git status --porcelain \
+CRATES=$(git diff --name-only "origin/$BASE...HEAD"; git status --porcelain \
          | sed 's/^...//') 
 CRATES=$(printf '%s\n' $CRATES | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u)
 
 echo "issue:  #$ISSUE"
 echo "branch: $BRANCH"
+echo "base:   $BASE"
 echo "crates: ${CRATES:-none}"
 # #178 gave every worktree its own target/ because sharing one compiled a
 # worktree's crate against a sibling's. Nothing defaults this any more: these
@@ -163,9 +179,9 @@ fi
 # only ever asked whether *this run* had something to commit. A branch that
 # never had any work on it -- claimed and landed without a line changed --
 # would otherwise sail through the push and open a PR with nothing in it.
-AHEAD=$(git rev-list --count origin/main..HEAD)
+AHEAD=$(git rev-list --count "origin/$BASE..HEAD")
 if [ "$AHEAD" = 0 ]; then
-    echo "Nothing to land: this branch has no commits beyond origin/main." >&2
+    echo "Nothing to land: this branch has no commits beyond origin/$BASE." >&2
     exit 2
 fi
 
@@ -173,19 +189,19 @@ fi
 # work -- four commits arrived during one recent piece of work -- and a branch
 # built on a stale base means CI tests a combination that will never exist,
 # the merge is a surprise, and the push can be rejected outright.
-BEHIND=$(git rev-list --count HEAD..origin/main)
+BEHIND=$(git rev-list --count "HEAD..origin/$BASE")
 if [ "$BEHIND" -gt 0 ]; then
-    echo "main moved $BEHIND commit(s) while you worked; rebasing onto it"
+    echo "$BASE moved $BEHIND commit(s) while you worked; rebasing onto it"
     # Both sides of the comparison are read before the rebase runs, because
     # after it the question cannot be asked honestly any more.
     BEFORE_HEAD=$(git rev-parse HEAD)
     BEFORE_SCRIPTS=$(git rev-parse "HEAD:scripts" 2>/dev/null || echo none)
-    if ! git rebase origin/main; then
+    if ! git rebase "origin/$BASE"; then
         git rebase --abort 2>/dev/null || true
         echo >&2
-        echo "Rebase onto origin/main hit a conflict. Nothing was pushed." >&2
+        echo "Rebase onto origin/$BASE hit a conflict. Nothing was pushed." >&2
         echo "Resolve it here, then run this script again:" >&2
-        echo "    git rebase origin/main" >&2
+        echo "    git rebase origin/$BASE" >&2
         exit 1
     fi
     echo "rebased."
@@ -237,10 +253,23 @@ git push -u origin "$BRANCH"
 
 if gh pr view --json number >/dev/null 2>&1; then
     echo "PR already open for $BRANCH; the push updated it."
+    # It may have been opened before this worktree recorded a base -- or
+    # against a different one entirely. Merging on that mismatch puts the work
+    # on a branch nobody chose, so it stops here instead.
+    OPEN_BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "")
+    if [ -n "$OPEN_BASE" ] && [ "$OPEN_BASE" != "$BASE" ]; then
+        echo >&2
+        echo "The open PR targets '$OPEN_BASE' and this worktree records" >&2
+        echo "'$BASE'. Not merging: one of the two is wrong, and guessing" >&2
+        echo "which would land the work somewhere nobody chose. Retarget the" >&2
+        echo "PR, or correct the recorded base:" >&2
+        echo "    printf '%s\\n' <branch> > \"\$(git rev-parse --git-dir)/postio-base\"" >&2
+        exit 2
+    fi
 else
     TITLE=$(git log -1 --format=%s)
-    gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$(cat <<BODY
-$(git log origin/main..HEAD --format='- %s')
+    gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$(cat <<BODY
+$(git log "origin/$BASE..HEAD" --format='- %s')
 
 Closes #$ISSUE
 

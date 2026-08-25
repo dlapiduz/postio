@@ -15,22 +15,35 @@
 #   scripts/issue-claim.sh --milestone MVP    # only from a milestone
 #   scripts/issue-claim.sh --label area:compose
 #   scripts/issue-claim.sh --dry-run          # show what it would take
+#   scripts/issue-claim.sh --base feature/x   # cut from an initiative branch
 set -euo pipefail
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
-WANT=""; MILESTONE=""; LABEL=""; DRY=0
+WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"
 while [ $# -gt 0 ]; do
     case "$1" in
         --milestone) MILESTONE="$2"; shift 2 ;;
         --label)     LABEL="$2";     shift 2 ;;
+        --base)      BASE="$2";      shift 2 ;;
         --dry-run)   DRY=1;          shift ;;
         [0-9]*)      WANT="$1";      shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# A base that does not exist would silently become a branch cut from nothing,
+# so it is checked against the remote before anything is claimed. A typo here
+# is an error, never a new branch.
+if ! git -C "$REPO_ROOT" ls-remote --exit-code --heads origin "$BASE" >/dev/null 2>&1; then
+    echo "No branch '$BASE' on origin, so there is nothing to cut from." >&2
+    echo "Existing branches:" >&2
+    git -C "$REPO_ROOT" ls-remote --heads origin \
+        | sed 's|.*refs/heads/|    |' | head -20 >&2
+    exit 2
+fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
 
@@ -138,12 +151,20 @@ while IFS=$'\t' read -r NUM TITLE; do
         continue
     fi
 
-    git -C "$REPO_ROOT" fetch --quiet origin main
+    git -C "$REPO_ROOT" fetch --quiet origin "$BASE"
     if [ -d "$TREE" ]; then
         echo "reusing existing worktree $TREE"
     else
-        git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" origin/main
+        git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
     fi
+    # Recorded rather than retyped. `issue-land.sh` reads this back, so a
+    # session that claimed from an initiative branch lands onto it without
+    # having to remember a flag -- and forgetting *this* flag is a merge to
+    # main, which is the one thing an initiative branch exists to prevent.
+    # The worktree's private git dir, so it is per worktree (a shared repo
+    # config would collide across sessions), untracked, and removed with the
+    # worktree it describes. #290.
+    printf '%s\n' "$BASE" > "$(git -C "$TREE" rev-parse --git-dir)/postio-base"
     # .cargo/config.toml points TMPDIR at target/tmp (relative), and nothing
     # else creates it in a fresh worktree -- without this, the first
     # tempfile::tempdir() in a test fails with NotFound (#178, #219).
