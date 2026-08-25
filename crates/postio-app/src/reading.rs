@@ -31,8 +31,11 @@ use std::rc::Rc;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
+use postio_core::ConnectionState;
 use postio_core::bridge::EventSink;
-use postio_gtk::reader::BlobSource;
+use postio_gtk::feed::Feeds;
+use postio_gtk::reader::{Absent, BlobSource};
+use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::window::Window;
 use postio_model::ids::{AttachmentId, BlobId};
 use postio_model::{Attachment, MessageId};
@@ -48,7 +51,12 @@ use crate::Wiring;
 /// Hooked to the same activation the body backfill listens for, so opening a
 /// message asks for its bytes and paints whatever is already local in the
 /// same gesture.
-pub fn install(window: &Window, wiring: &Wiring) {
+///
+/// `feeds` is where `ConnectionState` reaches this crate from: the sidebar
+/// already renders it, so this reuses that seam (`Folders::status`,
+/// `Folders::connect_status`) rather than opening a second one onto the
+/// engine.
+pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     // What the pane is showing, or is waiting to show. Set the instant a row
     // is activated rather than when the body lands, so a reply that arrives
     // late can tell it is late.
@@ -301,6 +309,7 @@ pub fn install(window: &Window, wiring: &Wiring) {
         runtime,
         showing,
         opened,
+        offline: Cell::new(is_offline(&feeds.folders.status())),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -316,6 +325,29 @@ pub fn install(window: &Window, wiring: &Wiring) {
         parts,
         move |row| parts.fill(&window, row)
     ));
+
+    // Reconnecting (or losing the connection) has to repaint a pane that is
+    // already showing a wait, not leave stale words on screen until the
+    // cursor happens to move next -- see issue #117.
+    feeds.folders.connect_status(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        parts,
+        move |status| {
+            parts.offline.set(is_offline(status));
+            parts.repaint_if_waiting(&window);
+        }
+    ));
+}
+
+/// Whether `status` says the engine has no connection at all right now.
+///
+/// Only [`ConnectionState::Offline`] counts: `Connecting` and `Failing` are
+/// still trying, so a body already queued for backfill has not been given up
+/// on the way `Offline` has.
+fn is_offline(status: &SyncStatus) -> bool {
+    matches!(status.state, ConnectionState::Offline)
 }
 
 /// Everything filling the reading pane needs, so the cursor and activation
@@ -327,6 +359,10 @@ struct Fill {
     /// What the pane is showing, or is waiting to show.
     showing: Rc<Cell<Option<MessageId>>>,
     opened: Rc<RefCell<Option<Opened>>>,
+    /// Whether the engine has no connection at all right now. Read by
+    /// [`Fill::fill`] to pick `Absent::Offline` over `Absent::Partial`, and
+    /// kept current by the `connect_status` handler `install` wires.
+    offline: Cell<bool>,
 }
 
 impl Fill {
@@ -335,6 +371,7 @@ impl Fill {
         let message = row.id;
         let sender = row.from.as_ref().map(|from| from.address.clone());
         self.showing.set(Some(message));
+        let offline = self.offline.get();
 
         let answer = crate::search::ask(&self.database, &self.runtime, {
             let blobs = self.blobs.clone();
@@ -342,7 +379,8 @@ impl Fill {
                 // One crossing for both. The parts are metadata the sync
                 // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
                 // for them costs a row read and never a fetch.
-                let body = crate::compose::load_body_or_reason(connection, &blobs, message);
+                let body =
+                    crate::compose::load_body_or_reason(connection, &blobs, message, offline);
                 let (content_type, parts) = MessageRepository::new(connection)
                     .get(message)
                     .ok()
@@ -371,7 +409,11 @@ impl Fill {
                     crate::compose::Body::Ready(body) => {
                         let root = root_type(content_type.as_deref(), &body, &parts);
                         window.reader().set_attachments(&root, &parts);
-                        *opened.borrow_mut() = Some(Opened { root, parts });
+                        *opened.borrow_mut() = Some(Opened {
+                            root,
+                            parts,
+                            absent: None,
+                        });
                         window.show_message(&body, sender.as_deref());
                     }
                     crate::compose::Body::Absent(reason) => {
@@ -387,12 +429,45 @@ impl Fill {
                             &parts,
                         );
                         window.reader().set_attachments(&root, &parts);
-                        *opened.borrow_mut() = Some(Opened { root, parts });
+                        *opened.borrow_mut() = Some(Opened {
+                            root,
+                            parts,
+                            absent: Some(reason),
+                        });
                         window.show_absent(reason);
                     }
                 }
             }
         });
+    }
+
+    /// Repaint the pane in place if it is currently showing a wait whose
+    /// wording depends on connectivity, now that connectivity changed.
+    ///
+    /// No store read: `opened` already holds the root type and parts from
+    /// the last fill, and only the words explaining the wait change --
+    /// `Missing` and `Empty` are not waits and are left alone.
+    fn repaint_if_waiting(&self, window: &Window) {
+        let mut opened = self.opened.borrow_mut();
+        let Some(current) = opened.as_ref().and_then(|opened| opened.absent) else {
+            return;
+        };
+        if !matches!(current, Absent::Partial | Absent::Offline) {
+            return;
+        }
+        let reason = if self.offline.get() {
+            Absent::Offline
+        } else {
+            Absent::Partial
+        };
+        if reason == current {
+            return;
+        }
+        if let Some(opened) = opened.as_mut() {
+            opened.absent = Some(reason);
+        }
+        drop(opened);
+        window.show_absent(reason);
     }
 }
 
@@ -405,6 +480,10 @@ struct Opened {
     root: String,
     /// Its parts, as `BODYSTRUCTURE` described them. Bytes not included.
     parts: Vec<Attachment>,
+    /// `Some` when the pane is showing a wait rather than a real body, and
+    /// which one -- so [`Fill::repaint_if_waiting`] can tell a connectivity
+    /// change worth repainting from one that is not.
+    absent: Option<Absent>,
 }
 
 /// The message's own content type — the row the parts tree hangs off.

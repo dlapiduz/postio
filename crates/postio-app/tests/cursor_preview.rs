@@ -145,14 +145,22 @@ fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
     // on this machine to draw. The pane must say which kind of nothing that
     // is rather than render blank -- the bug was that "still downloading"
     // and "broken" were the same picture.
+    //
+    // `Offline`, not `Partial`: no engine was ever started, so `Folders`'
+    // connection tracker is still at its own starting answer -- "offline,
+    // never synced" -- and the pane has to say that honestly rather than
+    // promise a backfill nothing here is running (issue #117;
+    // `reading_offline.rs` covers the online and reconnecting cases this
+    // test does not touch).
     assert_eq!(
         window.reader().absent(),
-        Some(Absent::Partial),
-        "a message with no downloaded body must say so, not render blank"
+        Some(Absent::Offline),
+        "a message with no downloaded body and no engine ever started must \
+         say so, not promise a backfill that cannot run"
     );
 
     // ── and none of it dialled anything ──────────────────────────────────
     // No engine was started. The pane filled from the local store alone,
-    // which is what makes the partial state honest rather than a spinner
+    // which is what makes the offline state honest rather than a spinner
     // waiting on a socket.
 }
