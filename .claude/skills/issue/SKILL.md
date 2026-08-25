@@ -140,6 +140,12 @@ Merging is a **rebase**, not a squash: this history is linear and the commit
 convention asks for small focused commits, so squashing a branch discards the
 structure those rules exist to produce.
 
+If the rebase onto `main` brings in a change under `scripts/`, the run says
+`handing over to the landing machinery this rebase brought in` and starts
+again from the top on the new copy — gates included. That is not a fault:
+this script rebases the tree it lives in, so without the handover the run
+that pulls a landing fix in is the one run that fix cannot protect. See #160.
+
 GitHub's own `--auto` merge is deliberately **not** used. It waits for
 *required* checks, branch protection is what makes a check required, and this
 repository cannot set any — so `--auto` would merge before CI had started.

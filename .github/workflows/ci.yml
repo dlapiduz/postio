@@ -216,6 +216,12 @@ jobs:
         # --gates-only and looks at where the artifacts landed. #253.
         run: python3 scripts/test-issue-land-target-dir.py
 
+      - name: Prove issue-land.sh hands over to the machinery it rebases in
+        # It rebases the tree it lives in, so a fix to the landing machinery
+        # was invisible to the first run that pulled it in -- which is how a
+        # three-crate change merged without waiting for CI. #160.
+        run: python3 scripts/test-issue-land-rebase-handover.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides
