@@ -42,6 +42,36 @@ jobs:
           rustup default stable
 """
 
+# The same bug in one line instead of a block. This is the shorter spelling and
+# so the likelier way to reintroduce it, and the check used to miss it.
+WORKFLOW_FLOATING_INLINE = """\
+jobs:
+  build:
+    steps:
+      - name: Install Rust toolchain
+        run: rustup default stable
+"""
+
+# What fuzz.yml does. A dated nightly names one compiler as exactly as a
+# version does, and `-Z sanitizer=address` has no stable spelling at any
+# version, so this must be allowed -- see #147.
+WORKFLOW_DATED_NIGHTLY = """\
+jobs:
+  fuzz:
+    steps:
+      - name: Install the fuzzing toolchain
+        run: rustup toolchain install nightly-2026-08-24 --profile minimal
+"""
+
+# A bare `nightly` is still the bug: it floats exactly like `stable` does.
+WORKFLOW_BARE_NIGHTLY = """\
+jobs:
+  fuzz:
+    steps:
+      - name: Install the fuzzing toolchain
+        run: rustup toolchain install nightly --profile minimal
+"""
+
 
 def build_tree(
     root: Path, *, toolchain: str | None, workflow: str, manifest: str | None = None
@@ -116,6 +146,28 @@ def main() -> int:
         "a workflow that installs `stable` fails even with a pin present",
         toolchain=exact,
         workflow=WORKFLOW_FLOATING,
+        expected=1,
+    )
+    case(
+        "the one-line `run: rustup default stable` fails too",
+        toolchain=exact,
+        workflow=WORKFLOW_FLOATING_INLINE,
+        expected=1,
+    )
+
+    # ── the fuzzing exception, and its edge ──────────────────────────────
+    # A dated nightly is a pin. A bare one is not. The distinction is the
+    # whole reason fuzz.yml is allowed to exist alongside this check.
+    case(
+        "a dated nightly is a pin, not a float",
+        toolchain=exact,
+        workflow=WORKFLOW_DATED_NIGHTLY,
+        expected=0,
+    )
+    case(
+        "a bare nightly is still refused",
+        toolchain=exact,
+        workflow=WORKFLOW_BARE_NIGHTLY,
         expected=1,
     )
 
