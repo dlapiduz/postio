@@ -29,7 +29,7 @@
 //!
 //! Same shape as [`crate::sidebar`]'s own gap: [`ListStateView::set_status`]
 //! is the whole input surface, and nothing calls it with live data yet.
-//! [`ConnectionState::Failing`] carries no reason of its own — deliberately,
+//! [`ConnectionState::Failing`] carries a typed category, not prose —
 //! see its doc comment — so the reason has to arrive through
 //! [`SyncStatus::detail`], the same field the sidebar's status line already
 //! reads. The store and queue counts are plain `u64`s a caller supplies,
@@ -151,7 +151,7 @@ pub fn derive(
         });
     }
     match status.state {
-        ConnectionState::Failing => Some(State::Failing {
+        ConnectionState::Failing { .. } => Some(State::Failing {
             reason: status
                 .detail
                 .clone()
@@ -615,7 +615,9 @@ mod tests {
         for state in [
             ConnectionState::Offline,
             ConnectionState::Connecting,
-            ConnectionState::Failing,
+            ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth,
+            },
         ] {
             assert!(
                 matches!(
@@ -740,7 +742,9 @@ mod tests {
     #[test]
     fn a_failing_connection_never_shrugs() {
         let with_reason = SyncStatus {
-            state: ConnectionState::Failing,
+            state: ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth,
+            },
             detail: Some("AUTHENTICATIONFAILED".to_string()),
             ..SyncStatus::default()
         };
@@ -751,7 +755,9 @@ mod tests {
             })
         );
 
-        let without_reason = status(ConnectionState::Failing);
+        let without_reason = status(ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        });
         let State::Failing { reason } = derive(&without_reason, 0, 0, 0, None).unwrap() else {
             panic!("failing status did not produce a failing state");
         };
