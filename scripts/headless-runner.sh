@@ -54,4 +54,50 @@ export WAYLAND_DISPLAY="$DISPLAY_NAME"
 export GDK_BACKEND=wayland
 export GTK_A11Y="${GTK_A11Y:-none}"
 unset DISPLAY            # or GDK falls back through XWayland to the real session
+
+# WebKit's DMA-BUF renderer negotiates GPU buffers with the compositor, and
+# under a nested headless mutter on a loaded machine that handshake has
+# wedged at 0% CPU (#272). Tests do not need GPU-accelerated web rendering;
+# the documented escape hatch pins WebKit to its software path. Harmless for
+# every binary that never loads WebKit.
+export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+
+case "$(basename "${1:-}")" in
+gtk_reader-*)
+    # The one binary that talks to WebKit directly has hung at least four
+    # times (#272), holding a gate run hostage until a human killed it. Run
+    # it under a watchdog: its own process group (so the WebProcess and
+    # NetworkProcess children die with it), a hard deadline, and a dump of
+    # kernel-side state before the kill so a hang leaves a diagnosis rather
+    # than a mystery.
+    LIMIT="${POSTIO_TEST_WATCHDOG:-300}"
+    setsid "$@" &
+    GROUP=$!
+    trap 'kill -9 -"$GROUP" 2>/dev/null' INT TERM
+    START=$(date +%s)
+    while kill -0 "$GROUP" 2>/dev/null; do
+        if [ $(( $(date +%s) - START )) -gt "$LIMIT" ]; then
+            {
+                echo "postio watchdog: $(basename "$1") exceeded ${LIMIT}s; process tree at kill:"
+                for pid in $(pgrep -g "$GROUP"); do
+                    echo "  pid $pid $(cat /proc/$pid/comm 2>/dev/null): state=$(awk '{print $3}' /proc/$pid/stat 2>/dev/null) wchan=$(cat /proc/$pid/wchan 2>/dev/null)"
+                    for t in /proc/$pid/task/*; do
+                        echo "    thread $(basename "$t"): state=$(awk '{print $3}' "$t/stat" 2>/dev/null) wchan=$(cat "$t/wchan" 2>/dev/null)"
+                    done
+                done
+                echo "postio watchdog: killing the process group; raise POSTIO_TEST_WATCHDOG if this was real work."
+            } >&2
+            kill -9 -"$GROUP" 2>/dev/null
+            exit 124
+        fi
+        sleep 1
+    done
+    wait "$GROUP"; RC=$?
+    # Reap anything that outlived the harness -- the save-dialog and orphaned
+    # WebProcess pattern CLAUDE.md records. An empty group is the normal case.
+    kill -9 -"$GROUP" 2>/dev/null
+    exit "$RC"
+    ;;
+esac
+
 exec "$@"
