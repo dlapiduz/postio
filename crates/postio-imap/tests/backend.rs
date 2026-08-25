@@ -230,6 +230,32 @@ async fn the_backend_is_usable_behind_a_trait_object() {
     assert!(capabilities.contains(Capability::Idle));
 }
 
+/// Reads a directory, retrying briefly on a transient `NotFound`.
+///
+/// `CARGO_MANIFEST_DIR` names this crate's own checked-out source, so the
+/// directory cannot legitimately be missing — but under the heavy concurrent
+/// filesystem writes several sessions building on one machine produce, a
+/// `read_dir` on it has been observed to spuriously report `NotFound` for a
+/// directory that plainly exists a moment later. #225.
+fn read_dir_retrying(dir: &std::path::Path) -> std::fs::ReadDir {
+    let mut last_error = None;
+    for _ in 0..5 {
+        match std::fs::read_dir(dir) {
+            Ok(entries) => return entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                last_error = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => panic!("{}: {error}", dir.display()),
+        }
+    }
+    panic!(
+        "{}: {}",
+        dir.display(),
+        last_error.expect("at least one attempt was made")
+    );
+}
+
 #[test]
 fn no_io_imap_type_reaches_the_seam() {
     // ADR 0001 rule 7. io-imap is pre-1.0 and reshuffles its public API every
@@ -237,7 +263,7 @@ fn no_io_imap_type_reaches_the_seam() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/backend");
     let mut checked = 0;
 
-    for entry in std::fs::read_dir(&dir).expect("src/backend") {
+    for entry in read_dir_retrying(&dir) {
         let path = entry.expect("dir entry").path();
         if path.extension().is_none_or(|ext| ext != "rs") {
             continue;
