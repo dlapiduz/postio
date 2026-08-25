@@ -8,9 +8,14 @@
 #
 # Usage:
 #   scripts/issue-land.sh -m "feat(gtk): teach the list to do the thing"
+#   scripts/issue-land.sh                       # tree already committed; -m not needed
 #   scripts/issue-land.sh -m "..." --wip        # push without opening a PR
 #   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
+#
+# -m is only for uncommitted work: CLAUDE.md says commit as you go, so the
+# ordinary case is a clean tree with the branch's commits already on it, and
+# this must not demand a message it would only throw away. #120.
 #
 # By default this waits for CI and merges. A PR nobody merges is work that
 # looks finished and is not: it goes stale, it conflicts with whatever lands
@@ -111,12 +116,12 @@ fi
 
 [ "$GATES_ONLY" = 1 ] && { echo; echo "gates passed; nothing committed."; exit 0; }
 
-if [ -z "$MSG" ]; then
-    echo "Nothing committed: pass -m \"<type>(<scope>): <summary>\"." >&2
-    exit 2
-fi
-
 if [ -n "$(git status --porcelain)" ]; then
+    if [ -z "$MSG" ]; then
+        echo "Uncommitted changes: pass -m \"<type>(<scope>): <summary>\"," >&2
+        echo "or commit them yourself first." >&2
+        exit 2
+    fi
     # Safe here in a way it never is in the shared checkout: this tree belongs
     # to this agent and nothing else is writing to it.
     git add -A
@@ -125,6 +130,16 @@ if [ -n "$(git status --porcelain)" ]; then
 Refs: #$ISSUE"
 else
     echo "no local changes to commit"
+fi
+
+# A clean tree is not the same question as an empty branch: the guard above
+# only ever asked whether *this run* had something to commit. A branch that
+# never had any work on it -- claimed and landed without a line changed --
+# would otherwise sail through the push and open a PR with nothing in it.
+AHEAD=$(git rev-list --count origin/main..HEAD)
+if [ "$AHEAD" = 0 ]; then
+    echo "Nothing to land: this branch has no commits beyond origin/main." >&2
+    exit 2
 fi
 
 # Rebase onto current main before pushing. Other sessions land while you
