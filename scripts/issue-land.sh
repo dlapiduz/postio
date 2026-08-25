@@ -31,7 +31,6 @@ set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-MAIN_CHECKOUT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
 # How many times one landing may hand over to a rebased copy of itself before
 # it gives up rather than merging. Two is enough for the case this exists for
 # -- machinery landing while a branch is being landed -- and a run that needs
