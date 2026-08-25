@@ -332,7 +332,26 @@ fn address_from_wire(address: WireAddress<'static>) -> Option<EmailAddress> {
 fn body_structure_from_wire(wire: &WireBodyStructure<'static>) -> BodyStructure {
     let mut parts = Vec::new();
     flatten(wire, &[], &mut parts);
-    BodyStructure::from_parts(parts)
+    BodyStructure::from_parts(root_content_type(wire), parts)
+}
+
+/// The message's own content type — `BODYSTRUCTURE`'s root, not any one
+/// part's.
+///
+/// `Multi`'s own `subtype` (`mixed`, `alternative`, `related`, …) is exactly
+/// this and nothing else carries it: [`flatten`] only ever numbers and
+/// records the *children*, so a multipart message's own type has no other
+/// way out of the wire structure.
+fn root_content_type(wire: &WireBodyStructure<'static>) -> String {
+    match wire {
+        WireBodyStructure::Multi { subtype, .. } => {
+            format!("multipart/{}", istring_to_string(subtype))
+        }
+        WireBodyStructure::Single { body, .. } => {
+            let (media_type, subtype) = mime_type_of(&body.specific);
+            format!("{media_type}/{subtype}")
+        }
+    }
 }
 
 /// Walks one body structure, assigning RFC 3501 §6.4.5 section numbers.
@@ -549,6 +568,35 @@ mod tests {
         assert_eq!(parts[0].charset(), Some("us-ascii"));
         assert_eq!(parts[0].size(), 120);
         assert!(parts[0].is_body_text());
+    }
+
+    #[test]
+    fn a_single_part_message_s_own_content_type_is_its_one_part_s() {
+        let structure = body_structure_from_wire(&text_part(120));
+        assert_eq!(structure.content_type(), "text/plain");
+    }
+
+    #[test]
+    fn a_multipart_message_s_own_content_type_carries_the_wire_subtype() {
+        // The bug this covers: `flatten` used to discard `Multi`'s own
+        // `subtype` (`WireBodyStructure::Multi { bodies, .. }`), so every
+        // multipart message read back as `multipart/mixed` regardless of
+        // what the server actually sent -- wrong for `multipart/related`
+        // (inline images) and `multipart/alternative` alike.
+        let alternative = WireBodyStructure::Multi {
+            bodies: Vec1::try_from(vec![text_part(10), attachment_part("report.pdf", 20)])
+                .expect("at least one child"),
+            subtype: IString::try_from("alternative").unwrap(),
+            extension_data: None::<MultiPartExtensionData<'static>>,
+        };
+        let structure = body_structure_from_wire(&alternative);
+        assert_eq!(structure.content_type(), "multipart/alternative");
+
+        let mixed = body_structure_from_wire(&multipart(vec![
+            text_part(10),
+            attachment_part("report.pdf", 20),
+        ]));
+        assert_eq!(mixed.content_type(), "multipart/mixed");
     }
 
     #[test]

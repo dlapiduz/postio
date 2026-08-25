@@ -102,6 +102,39 @@ fn a_message_round_trips_with_its_recipients_and_attachments() {
 }
 
 #[test]
+fn a_message_s_own_content_type_round_trips() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 200);
+    message.content_type = Some("multipart/related".to_owned());
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.content_type.as_deref(), Some("multipart/related"));
+}
+
+#[test]
+fn a_message_with_no_content_type_recorded_reads_back_as_none() {
+    // A row synced before this field existed, or a draft nothing has parsed
+    // `BODYSTRUCTURE` for yet -- distinct from an empty string, which would
+    // be a wrong answer rather than an honest "not known".
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 201);
+    assert_eq!(message.content_type, None);
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.content_type, None);
+}
+
+#[test]
 fn flags_are_denormalized_so_the_list_never_parses_a_string() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
