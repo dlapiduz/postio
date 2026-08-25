@@ -413,3 +413,112 @@ fn message_body_knows_when_it_is_empty() {
     body.html = Some("<p>hi</p>".into());
     assert!(!body.is_empty());
 }
+
+// ── Explicit role overrides ──────────────────────────────────────────────
+//
+// The two tiers above cover the providers Postio targets. They cannot cover a
+// self-hosted server that advertises no SPECIAL-USE and names its folders in
+// a language `match_name` has never heard of — and on that server `a`, `d`
+// and the rest refuse permanently, with no way for the user to fix it (#164).
+// So there is a third tier above both, written by hand.
+
+#[test]
+fn an_override_outranks_the_server_attribute_and_the_name() {
+    let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
+
+    // Nothing the server says about this folder — no attribute, no
+    // recognisable name — and it still resolves, which is the whole point.
+    assert_eq!(
+        overrides.resolve(Vec::<String>::new(), "Vecchia Posta"),
+        MailboxRole::Archive
+    );
+
+    // Above SPECIAL-USE too, not merely above the name guess. A server that
+    // marks a folder `\Junk` is usually right, but "usually" is what an
+    // override is for: the user has looked and disagreed.
+    assert_eq!(
+        overrides.resolve(["\\Junk"], "Vecchia Posta"),
+        MailboxRole::Archive
+    );
+}
+
+#[test]
+fn without_a_matching_override_nothing_changes() {
+    let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
+
+    // Every existing case still resolves exactly as it did. An override is a
+    // third tier, not a replacement for the two that already work.
+    assert_eq!(
+        overrides.resolve(["\\Archive"], "Sent Messages"),
+        MailboxRole::Archive
+    );
+    assert_eq!(
+        overrides.resolve(Vec::<String>::new(), "Sent Messages"),
+        MailboxRole::Sent
+    );
+    assert_eq!(
+        overrides.resolve(Vec::<String>::new(), "Posta Inviata"),
+        MailboxRole::Regular
+    );
+}
+
+#[test]
+fn an_empty_override_set_is_exactly_todays_behaviour() {
+    // The default has to be free and invisible: every account that never
+    // writes `[mailboxes]` goes through this, so if it differed from
+    // `resolve` at all it would be a silent change for everybody.
+    let overrides = RoleOverrides::default();
+    for (attributes, name) in [
+        (vec!["\\Archive".to_owned()], "Sent Messages"),
+        (Vec::new(), "Deleted Messages"),
+        (Vec::new(), "Anything Else"),
+        (vec!["\\HasNoChildren".to_owned()], "Junk"),
+    ] {
+        assert_eq!(
+            overrides.resolve(&attributes, name),
+            MailboxRole::resolve(&attributes, name),
+            "an empty override set changed the answer for {name}"
+        );
+    }
+}
+
+#[test]
+fn an_override_matches_the_path_a_server_reports_not_the_leaf() {
+    // Config names the folder the way the server does, delimiters and all,
+    // because that is the only spelling that is unambiguous: two folders can
+    // both be called "Old" under different parents.
+    let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Lists/Old")]);
+    assert_eq!(
+        overrides.resolve(Vec::<String>::new(), "Lists/Old"),
+        MailboxRole::Archive
+    );
+    assert_eq!(
+        overrides.resolve(Vec::<String>::new(), "Other/Old"),
+        MailboxRole::Regular,
+        "a leaf-name match would have hit the wrong folder"
+    );
+}
+
+#[test]
+fn two_folders_cannot_both_be_the_archive() {
+    // Roles are looked up by role -- `by_role(account, Archive)` -- so two
+    // folders wearing one role is a state nothing downstream can act on.
+    // Config is a map keyed by role, so the shape already forbids it; this
+    // says so, because the constructor takes pairs and could have allowed it.
+    let overrides = RoleOverrides::from_pairs([
+        (MailboxRole::Archive, "First"),
+        (MailboxRole::Archive, "Second"),
+    ]);
+    let resolved = [
+        overrides.resolve(Vec::<String>::new(), "First"),
+        overrides.resolve(Vec::<String>::new(), "Second"),
+    ];
+    assert_eq!(
+        resolved
+            .iter()
+            .filter(|r| **r == MailboxRole::Archive)
+            .count(),
+        1,
+        "two folders resolved to Archive: {resolved:?}"
+    );
+}
