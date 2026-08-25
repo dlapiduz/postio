@@ -3,10 +3,10 @@
 
 A guard that has never been seen to fail is not a guard. This builds throwaway
 cargo workspaces in a temp dir -- with dummy path crates literally named `gtk4`,
-`libadwaita`, `rusqlite` and `io-imap` -- and asserts that the boundary check
-passes on a clean layout and fails, naming the offending crate *and* the
-offending dependency, on every way an invariant can be broken: directly,
-transitively, and through a dev-dependency.
+`libadwaita`, `rusqlite`, `io-imap`, `ammonia` and `tokio` -- and asserts that
+the boundary check passes on a clean layout and fails, naming the offending
+crate *and* the offending dependency, on every way an invariant can be broken:
+directly, transitively, and through a dev-dependency.
 
 No network, and the real crate manifests are never touched.
 
@@ -53,6 +53,10 @@ def build_fixture(
     gtk_dev_deps: str = "",
     session_deps: str = "",
     session_dev_deps: str = "",
+    search_deps: str = "",
+    body_deps: str = "",
+    model_deps: str = "",
+    config_deps: str = "",
     helper_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
@@ -63,9 +67,13 @@ def build_fixture(
     if include_gtk:
         write_crate(root, "crates", "postio-gtk", gtk_deps, gtk_dev_deps)
     write_crate(root, "crates", "postio-session", session_deps, session_dev_deps)
+    write_crate(root, "crates", "postio-search", search_deps)
+    write_crate(root, "crates", "postio-body", body_deps)
+    write_crate(root, "crates", "postio-model", model_deps)
+    write_crate(root, "crates", "postio-config", config_deps)
     write_crate(root, "crates", "helper", helper_deps)
     # Stand-ins for the real third-party crates, so nothing is fetched.
-    for banned in ("gtk4", "libadwaita", "rusqlite", "io-imap"):
+    for banned in ("gtk4", "libadwaita", "rusqlite", "io-imap", "ammonia", "tokio"):
         write_crate(root, "vendor", banned)
     return root / "Cargo.toml"
 
@@ -233,7 +241,68 @@ def main() -> int:
             must_mention=("postio-session", "gtk4"),
         )
 
-        # 10. And the real workspace is clean today.
+        # 10. postio-search is the query *language*, and stays pure so the
+        #     same query string means the same thing in the search bar, the
+        #     sidebar and `[filters]` -- postio-index is the FTS5 executor.
+        check_case(
+            "postio-search gains a direct rusqlite dependency",
+            build_fixture(
+                tmp_path / "search-rusqlite",
+                search_deps='rusqlite = { path = "../../vendor/rusqlite" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-search", "rusqlite"),
+        )
+
+        # 11. postio-body is the other pure leaf ADR 0004 carved out --
+        #     kept apart from postio-model only because ammonia pulls an
+        #     HTML parser, not because it needed a toolkit.
+        check_case(
+            "postio-body gains a direct gtk4 dependency",
+            build_fixture(
+                tmp_path / "body-gtk4",
+                body_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-body", "gtk4"),
+        )
+
+        # 12. postio-model is what the whole workspace waits on to compile;
+        #     ADR 0004 Q1 rejected the composer's document here for exactly
+        #     the dependency weight `ammonia` would add.
+        check_case(
+            "postio-model gains a direct ammonia dependency",
+            build_fixture(
+                tmp_path / "model-ammonia",
+                model_deps='ammonia = { path = "../../vendor/ammonia" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-model", "ammonia"),
+        )
+
+        # 13. …and the same for a runtime it has no business scheduling on.
+        check_case(
+            "postio-model gains a direct tokio dependency",
+            build_fixture(
+                tmp_path / "model-tokio",
+                model_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-model", "tokio"),
+        )
+
+        # 14. postio-config parses and validates TOML; it does no SQL.
+        check_case(
+            "postio-config gains a direct rusqlite dependency",
+            build_fixture(
+                tmp_path / "config-rusqlite",
+                config_deps='rusqlite = { path = "../../vendor/rusqlite" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-config", "rusqlite"),
+        )
+
+        # 15. And the real workspace is clean today.
         check_case(
             "the real workspace passes",
             REPO_ROOT / "Cargo.toml",
