@@ -140,8 +140,16 @@ and the script adds it.
 
 **Push is now standing-authorised for issue branches only.** Pushing a branch
 that exists to be reviewed cannot damage anything. Pushing `main` still
-requires the user to ask, and force-push, remote changes and history rewrites
-are still refused outright.
+requires the user to ask, and remote changes and history rewrites are still
+refused outright.
+
+`--force-with-lease` is authorised on your own issue branch; bare `--force`
+is not. This script rebases onto `origin/main` before pushing, so the second
+push of a branch you have already pushed is necessarily non-fast-forward —
+there is no non-forcing spelling of it. The leased form refuses if the remote
+has moved; `--force` cannot tell your own rebase from a commit somebody else
+landed. The guard hook enforces that split in every tree, private worktree
+included, because the remote is shared even when the checkout is not.
 
 ## 4. Is it actually reachable?
 

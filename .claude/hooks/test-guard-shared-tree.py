@@ -236,5 +236,69 @@ for cmd in shared_cds:
     print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} -> {got}")
     scoped += 1
 
+# ── Force-pushing, which a worktree does NOT get an exemption from ──────
+#
+# #130. Every other rule here exists because sessions share one tree and one
+# index, and inside a worktree none of that is true -- so the worktree is
+# exempt wholesale. A push is the exception: it does not touch the tree at
+# all, it touches the *remote*, which every session shares no matter whose
+# checkout the command was typed in. The exemption was hiding that.
+#
+# The split is between the two spellings, because they are not the same
+# promise. `--force-with-lease` refuses if the remote holds anything the
+# pusher has not seen, which is exactly the protection the blanket rule is
+# reaching for; bare `--force` makes no such check and will happily discard
+# it. And `issue-land.sh` rebases onto origin/main before pushing, so the
+# second push of any already-pushed branch is necessarily non-fast-forward --
+# refusing both spellings would make the landing flow impossible rather than
+# safe.
+force_pushes = [
+    # (command, allowed in a worktree?)
+    ("git push --force origin HEAD", False),
+    ("git push -f origin HEAD", False),
+    ("git push --force-with-lease origin HEAD", True),
+    ("git push --force-with-lease=main origin HEAD", True),
+    ("git push --mirror origin", False),
+    ("git push --delete origin some-branch", False),
+    ("git push origin HEAD", True),
+    ("git push -u origin HEAD", True),
+]
+for cmd, allowed_in_worktree in force_pushes:
+    want = "allow" if allowed_in_worktree else "deny"
+    got = decide(cmd, cwd=WORKTREE)
+    ok = got == want
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} {want:<5} {cmd!r} in a worktree -> {got}")
+    scoped += 1
+
+# In the shared checkout every rewriting spelling stays refused, including
+# `--force-with-lease`: `main` is the branch other sessions commit to, and
+# "nothing landed since I last fetched" is a much weaker promise there than
+# it is on a branch only one session has.
+for cmd in [
+    "git push --force origin main",
+    "git push -f origin main",
+    "git push --force-with-lease origin main",
+    "git push --mirror origin",
+    "git push --delete origin main",
+]:
+    got = decide(cmd, cwd=SHARED)
+    ok = got == "deny"
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} in the shared tree -> {got}")
+    scoped += 1
+
+# A `cd` into a worktree carries the same split, since that is how a session
+# that started in the shared checkout gets there.
+for cmd, want in [
+    (f"cd {WORKTREE} && git push --force origin HEAD", "deny"),
+    (f"cd {WORKTREE} && git push --force-with-lease origin HEAD", "allow"),
+]:
+    got = decide(cmd, cwd=SHARED)
+    ok = got == want
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} {want:<5} {cmd!r} -> {got}")
+    scoped += 1
+
 print(f"\n{len(DENY) + len(ALLOW) + scoped} cases, {failures} failure(s)")
 sys.exit(1 if failures else 0)

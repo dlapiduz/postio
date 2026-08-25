@@ -35,8 +35,17 @@ available, not the newest.
   session with uncommitted work. See **Commits** below.
 - **Pushing an issue branch is standing-authorised.** A branch that exists to
   be reviewed cannot damage anything.
-- **Pushing `main` is not.** Neither is adding a remote, force-pushing, or
-  rewriting history. Ask in the current session.
+- **Pushing `main` is not.** Neither is adding a remote nor rewriting shared
+  history. Ask in the current session.
+- **`--force-with-lease` on your own issue branch is standing-authorised;
+  bare `--force` is not.** `issue-land.sh` rebases onto `origin/main` before
+  pushing, so the second push of a branch you have already pushed is
+  necessarily non-fast-forward — there is no non-forcing spelling of it. The
+  leased form refuses if the remote has moved, which is the protection the
+  blanket rule was reaching for; `--force` cannot tell your own rebase from a
+  commit somebody else landed while you were not looking. The guard hook
+  enforces that split in **every** tree, private worktree included: the
+  remote is shared even when the checkout is not.
 
 ## Build & Test
 
@@ -608,8 +617,12 @@ What is left to you:
 - **Re-read an issue before you finish it.** Someone may have commented,
   decided something, or closed it while you worked.
 - **If a push is rejected as non-fast-forward, that is this**, not a mistake:
-  fetch, rebase, push again. Never force-push — the guard hook refuses it, and
-  on a shared branch it discards whatever landed since you last looked.
+  fetch, rebase, push again. If the rejection is because *you* rebased a
+  branch you had already pushed, "push again" can only be
+  `--force-with-lease` — expected, and authorised on your own issue branch.
+  Bare `--force` is refused in every tree, worktree included, because it
+  cannot tell your rebase from a commit somebody else landed since you last
+  looked.
 
 ### Say it in the issue, not in the terminal
 
