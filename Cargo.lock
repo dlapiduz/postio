@@ -2352,6 +2352,7 @@ name = "postio-config"
 version = "0.1.0"
 dependencies = [
  "notify",
+ "postio-model",
  "serde",
  "thiserror",
  "toml",
