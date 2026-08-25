@@ -121,6 +121,14 @@ mod imp {
         /// moment something supplies a source — the same shape the search
         /// preview uses, and for the same reason.
         pub blobs: std::cell::RefCell<Option<std::rc::Rc<dyn crate::reader::BlobSource>>>,
+        /// Where the reader's remote-image allow list is read from and saved
+        /// back to, when it should not be the real one.
+        ///
+        /// `None` — the shipping case — means
+        /// `$XDG_STATE_HOME/postio/remote-images.ini`. See
+        /// [`Window::set_allowlist_path`] for why a test needs to say
+        /// otherwise.
+        pub allowlist_path: std::cell::RefCell<Option<std::path::PathBuf>>,
         /// Whether the reader has a message to show.
         ///
         /// The reading pane holds both the reader and the composer, so "is
@@ -501,7 +509,15 @@ impl Window {
                 blobs.as_ref().and_then(|blobs| blobs.resolve(content_id))
             }
         };
-        let reader = crate::reader::Reader::new(std::rc::Rc::new(source));
+        let source = std::rc::Rc::new(source);
+        let reader = match self.imp().allowlist_path.borrow().clone() {
+            Some(path) => crate::reader::Reader::with_allowlist(
+                source,
+                crate::reader::RemoteImageAllowList::load_from(&path),
+                path,
+            ),
+            None => crate::reader::Reader::new(source),
+        };
         let widget = reader.widget();
         widget.set_vexpand(true);
         // Nothing to read yet. The pane shows its empty state until a message
@@ -529,6 +545,40 @@ impl Window {
     /// store has never fetched, and is deliberately not a network request.
     pub fn set_blob_source(&self, blobs: std::rc::Rc<dyn crate::reader::BlobSource>) {
         *self.imp().blobs.borrow_mut() = Some(blobs);
+    }
+
+    /// Read and write the remote-image allow list at `path` instead of the
+    /// real `$XDG_STATE_HOME/postio/remote-images.ini`.
+    ///
+    /// What a test points at a scratch file, and the only caller there is:
+    /// the application wants the real one.
+    ///
+    /// # Why this exists (#215)
+    ///
+    /// A `Window` builds its own [`crate::reader::Reader`], and that reader
+    /// loaded the developer's own standing allow list. So a test asserting
+    /// that a remote image *is* held back was really asserting something
+    /// about the machine: allow-list the sender it uses — by looking at the
+    /// app once, or by running a test that clicked "always allow" — and the
+    /// body renders with images permitted, nothing is held back, and the test
+    /// fails on every commit and every branch, because the cause is not in
+    /// the tree at all. That cost a p1 and a bisect that could not find
+    /// anything, since there was nothing to find.
+    ///
+    /// Unlike [`set_blob_source`], this has to be set **before** anything
+    /// asks for the reader: the list loads once, when the reader is built,
+    /// and stays in memory for its life (see
+    /// [`crate::reader::Reader::new`]) precisely so there is never a second
+    /// opinion about who is allow-listed.
+    ///
+    /// [`set_blob_source`]: Self::set_blob_source
+    pub fn set_allowlist_path(&self, path: &std::path::Path) {
+        debug_assert!(
+            self.imp().reader.get().is_none(),
+            "set_allowlist_path must come before the reader is built, or the \
+             list it already loaded is the one that stays"
+        );
+        *self.imp().allowlist_path.borrow_mut() = Some(path.to_path_buf());
     }
 
     /// Show a message in the reading pane.
