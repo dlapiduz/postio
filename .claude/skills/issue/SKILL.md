@@ -92,22 +92,12 @@ work in the backlog; an unlabelled issue has not been triaged as agent-ready.
 `cd` into the worktree and stay there. It is a real checkout on its own branch,
 cut from `origin/main`.
 
-Let cargo build into this worktree's own `target/`, and keep the 400-odd
-third-party crates (GTK, WebKit — the expensive ones) warm through the
-machine-wide compile cache instead:
-
-```bash
-export RUSTC_WRAPPER=sccache    # `mise use -g sccache` if it is not installed
-```
-
-Check it is there before you export it. `RUSTC_WRAPPER` naming a binary that
-does not exist does not degrade to an ordinary build — cargo fails outright,
-`cargo metadata` included, so even the invariant checks stop working.
-
-This used to say `export CARGO_TARGET_DIR=~/src/postio/target`. Sharing one
-target directory between worktrees compiles one worktree's crate against
-another's — see #178 and `docs/engineering-notes.md`. sccache keys on exact
-compiler inputs, so it is immune to that.
+Cargo builds into this worktree's own `target/`, and the 400-odd third-party
+crates (GTK, WebKit — the expensive ones) come warm from the machine-wide
+sccache, which `.cargo/config.toml` wires in automatically — nothing to
+export, and a box without sccache still builds. (Never share a target
+directory between worktrees — it compiles one worktree's crate against
+another's; see #178 and `docs/engineering-notes.md`.)
 
 **The parallel-work hazard table in CLAUDE.md does not apply in here.** That
 table exists because sessions shared one tree and one index. This tree is
@@ -139,7 +129,10 @@ read a snapshot that may be hours old. Rebase a long branch as you go rather
 than only at the end, and re-read the issue before you finish it in case
 someone decided something while you worked.
 
-Still true, and not negotiable: **TDD** — write the failing test first;
+Still true, and not negotiable: **TDD** — write the failing test, watch it
+fail, make it pass, move on. The red run at the start is the proof the test
+can fail; never re-break working code after going green to test the test.
+Also non-negotiable:
 **no network in the default suite**; **no personal data in fixtures**; the
 [architectural invariants](../../../CLAUDE.md); and the perf and motion budgets.
 
@@ -151,8 +144,9 @@ scripts/issue-land.sh --gates-only    # check without committing
 scripts/issue-land.sh -m "..." --wip  # push a branch, no PR yet
 ```
 
-It formats, runs clippy and tests **for the crates you actually changed**,
-runs the three repository invariant checks, commits, pushes the branch, opens
+It formats, runs clippy and tests **for the crates you actually changed**
+(the periodic reconcile pass proves the rest of the workspace), runs every
+repository invariant via `scripts/check.sh`, commits, pushes the branch, opens
 a PR whose body says `Closes #<n>`, **waits for CI, and merges it**.
 
 That last part is not optional and not someone else's job. A PR nobody merges
