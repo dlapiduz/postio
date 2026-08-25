@@ -157,7 +157,9 @@ pub fn apply(
         // Rows that have left the mailbox cannot stay selected: the next
         // action would be aimed at mail that is no longer there.
         Event::MessagesRemoved { .. } => window.list().clear_selection(),
-        Event::NewMail { mailbox, messages } => notifier.notify(window, *mailbox, messages),
+        Event::NewMail {
+            mailbox, messages, ..
+        } => notifier.notify(window, *mailbox, messages),
         _ => {}
     }
 }

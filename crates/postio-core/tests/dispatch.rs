@@ -300,6 +300,7 @@ fn mail_dispatcher(mail: Arc<FakeMail>) -> Dispatcher {
                     .unwrap()
                     .push(format!("archive {}", moved.len()));
                 invocation.emit(Event::MessagesRemoved {
+                    account: postio_model::AccountId::new(1),
                     mailbox: postio_model::MailboxId::new(1),
                     messages: moved.clone(),
                 });

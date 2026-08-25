@@ -184,6 +184,7 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     let reads = store.reads.get();
     for _ in 0..20 {
         feeds.apply(&Event::MessagesChanged {
+            account: postio_model::AccountId::new(1),
             messages: vec![MessageId::new(1)],
         });
     }

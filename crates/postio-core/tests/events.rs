@@ -14,23 +14,29 @@ fn events_cover_the_repaint_surface() {
             account: AccountId::new(1),
         },
         Event::MessageListChanged {
+            account: AccountId::new(1),
             mailbox: MailboxId::new(2),
         },
         Event::MessagesChanged {
+            account: AccountId::new(1),
             messages: vec![MessageId::new(3)],
         },
         Event::MessagesRemoved {
+            account: AccountId::new(1),
             mailbox: MailboxId::new(2),
             messages: vec![MessageId::new(3)],
         },
         Event::NewMail {
+            account: AccountId::new(1),
             mailbox: MailboxId::new(2),
             messages: vec![MessageId::new(4)],
         },
         Event::ThreadChanged {
+            account: AccountId::new(1),
             thread: ThreadId::new(5),
         },
         Event::BodyLoaded {
+            account: AccountId::new(1),
             message: MessageId::new(3),
         },
         Event::SelectionChanged {

@@ -53,14 +53,36 @@ fn a_fresh_state_is_an_empty_list() {
 #[test]
 fn opening_a_mailbox_tells_the_list_to_reload() {
     let mut state = AppState::new();
+    state.open_account(AccountId::new(1));
 
     let events = state.open_mailbox(MailboxId::new(7));
 
     assert_eq!(state.mailbox(), Some(MailboxId::new(7)));
     assert!(
         events.contains(&Event::MessageListChanged {
+            account: AccountId::new(1),
             mailbox: MailboxId::new(7)
         }),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn opening_a_mailbox_with_no_account_open_reloads_nothing() {
+    // A mailbox belongs to an account, so a reload event has to say whose
+    // list moved (ADR 0005 Q11) -- and a state holding a mailbox with no
+    // account has nothing true to say. Emitting nothing is deliberate and
+    // this test is its record; #182's `Scope` makes the state
+    // unrepresentable, at which point this test goes with it.
+    let mut state = AppState::new();
+
+    let events = state.open_mailbox(MailboxId::new(7));
+
+    assert_eq!(state.mailbox(), Some(MailboxId::new(7)));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::MessageListChanged { .. })),
         "{events:?}"
     );
 }

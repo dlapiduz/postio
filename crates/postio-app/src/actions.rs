@@ -110,6 +110,10 @@ enum Aim {
 /// offering to undo the undo.
 struct Applied {
     kind: UndoKind,
+    /// The account the verb ran in. Every event announcing the work names it
+    /// (ADR 0005 Q11); a unified-scope action later becomes one `Applied` per
+    /// account, expanded in the store.
+    account: AccountId,
     /// Every message the unit touched, in the order it touched them — empty
     /// for a bulk unit, which knows how many it touched and not which.
     messages: Vec<MessageId>,
@@ -317,6 +321,7 @@ impl Actions {
         transaction.commit().map_err(store_failure)?;
 
         Ok(Applied {
+            account,
             kind,
             messages: Vec::new(),
             count,
@@ -399,6 +404,7 @@ impl Actions {
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
         Ok(Applied {
+            account,
             kind,
             count: messages.len(),
             messages,
@@ -528,6 +534,7 @@ impl Actions {
             },
         };
         Ok(Applied {
+            account,
             kind: kind_for(&flag, wanted),
             messages: Vec::new(),
             count,
@@ -609,6 +616,7 @@ impl Actions {
             },
         };
         Ok(Applied {
+            account,
             kind: kind_for(&flag, wanted),
             count: changed.len(),
             messages: changed.clone(),
@@ -624,8 +632,10 @@ impl Actions {
 
     /// Emit what the panes repaint from, and record what `u` takes back.
     fn announce(&self, applied: Applied, events: &EventSink, recording: Recording) {
+        let account = applied.account;
         for (mailbox, messages) in &applied.removed {
             events.emit(Event::MessagesRemoved {
+                account,
                 mailbox: *mailbox,
                 messages: messages.clone(),
             });
@@ -634,13 +644,17 @@ impl Actions {
             // The folder they landed in is longer than it was, and it may be
             // the one on screen — an undone archive has to reappear now, not
             // at the next sync.
-            events.emit(Event::MessageListChanged { mailbox });
+            events.emit(Event::MessageListChanged { account, mailbox });
         }
         for mailbox in &applied.reloaded {
-            events.emit(Event::MessageListChanged { mailbox: *mailbox });
+            events.emit(Event::MessageListChanged {
+                account,
+                mailbox: *mailbox,
+            });
         }
         if !applied.changed.is_empty() {
             events.emit(Event::MessagesChanged {
+                account,
                 messages: applied.changed.clone(),
             });
         }
@@ -1040,11 +1054,13 @@ mod tests {
 
         let events = world.drained();
         assert!(events.contains(&Event::MessagesRemoved {
+            account: world.account.id,
             mailbox: world.inbox,
             messages: vec![message],
         }));
         assert!(
             events.contains(&Event::MessageListChanged {
+                account: world.account.id,
                 mailbox: world.archive
             }),
             "the folder they landed in is longer than it was"
@@ -1407,9 +1423,11 @@ mod tests {
 
         let events = world.drained();
         assert!(events.contains(&Event::MessageListChanged {
+            account: world.account.id,
             mailbox: world.inbox
         }));
         assert!(events.contains(&Event::MessageListChanged {
+            account: world.account.id,
             mailbox: world.archive
         }));
         assert!(
@@ -1626,6 +1644,7 @@ mod tests {
 
         let events = world.drained();
         assert!(events.contains(&Event::MessageListChanged {
+            account: world.account.id,
             mailbox: world.inbox
         }));
         assert!(
