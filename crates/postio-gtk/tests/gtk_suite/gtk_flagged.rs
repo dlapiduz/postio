@@ -110,8 +110,7 @@ impl MessageSource for Store {
     }
 }
 
-#[test]
-fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
+pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

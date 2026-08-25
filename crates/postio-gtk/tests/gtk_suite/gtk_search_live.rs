@@ -26,8 +26,7 @@ use postio_gtk::{fonts, style};
 /// The interaction budget from CLAUDE.md. A keystroke has to fit inside it.
 const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
 
-#[test]
-fn the_readout_answers_the_query_on_screen_and_no_other() {
+pub fn the_readout_answers_the_query_on_screen_and_no_other() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

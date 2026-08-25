@@ -16,8 +16,7 @@ use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
 use postio_model::{Draft, MessageBody};
 
-#[test]
-fn the_body_round_trips_through_the_neutral_document() {
+pub fn the_body_round_trips_through_the_neutral_document() {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
         eprintln!("skipping: no display");
         return;

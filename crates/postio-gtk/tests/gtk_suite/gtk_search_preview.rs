@@ -31,8 +31,7 @@ use postio_search::highlight::{MATCH_END, MATCH_START};
 /// The interaction budget from CLAUDE.md. Arrowing a row has to fit inside it.
 const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
 
-#[test]
-fn the_preview_follows_the_focus_and_answers_the_query_on_screen() {
+pub fn the_preview_follows_the_focus_and_answers_the_query_on_screen() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

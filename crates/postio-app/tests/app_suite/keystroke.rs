@@ -64,8 +64,7 @@ fn mailbox_of(database: &Database, message: MessageId) -> i64 {
         .get()
 }
 
-#[test]
-fn pressing_a_archives_the_row_in_the_database() {
+pub fn pressing_a_archives_the_row_in_the_database() {
     let state_dir = std::env::temp_dir().join(format!("postio-keystroke-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

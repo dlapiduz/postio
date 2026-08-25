@@ -60,8 +60,7 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
-#[test]
-fn a_window_over_a_populated_store_lists_its_mail() {
+pub fn a_window_over_a_populated_store_lists_its_mail() {
     let state_dir = std::env::temp_dir().join(format!("postio-wiring-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

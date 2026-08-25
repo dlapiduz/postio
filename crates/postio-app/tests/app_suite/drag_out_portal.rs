@@ -116,8 +116,7 @@ fn portal_available() -> bool {
     .unwrap_or(false)
 }
 
-#[test]
-fn a_dragged_message_survives_the_portal() {
+pub fn a_dragged_message_survives_the_portal() {
     let state_dir = std::env::temp_dir().join(format!("postio-dragportal-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     let export_dir = state_dir.join("drag");

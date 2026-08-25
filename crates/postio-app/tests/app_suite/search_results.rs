@@ -80,8 +80,7 @@ fn listed(list: &postio_gtk::list::MessageList, total: u32) -> Vec<MessageId> {
         .collect()
 }
 
-#[test]
-fn a_query_puts_the_matching_messages_in_the_list() {
+pub fn a_query_puts_the_matching_messages_in_the_list() {
     let state_dir = std::env::temp_dir().join(format!("postio-results-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

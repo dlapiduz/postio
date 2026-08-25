@@ -16,8 +16,7 @@ use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 
-#[test]
-fn the_sidebar_lists_folders_and_says_where_sync_stands() {
+pub fn the_sidebar_lists_folders_and_says_where_sync_stands() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

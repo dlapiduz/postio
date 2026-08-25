@@ -57,8 +57,7 @@ fn unread_in(database: &Database, mailbox: MailboxId) -> u32 {
         .expect("a count")
 }
 
-#[test]
-fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
+pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
     let state_dir =
         std::env::temp_dir().join(format!("postio-bulk-keystroke-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();

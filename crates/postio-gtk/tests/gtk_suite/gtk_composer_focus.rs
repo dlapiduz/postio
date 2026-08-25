@@ -50,8 +50,7 @@ fn settle_until(done: impl Fn() -> bool) {
     heartbeat.remove();
 }
 
-#[test]
-fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
+pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
         return;

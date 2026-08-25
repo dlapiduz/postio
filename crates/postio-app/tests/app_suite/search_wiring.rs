@@ -56,8 +56,7 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
-#[test]
-fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
+pub fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
     let state_dir = std::env::temp_dir().join(format!("postio-search-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statement of a single-threaded test.

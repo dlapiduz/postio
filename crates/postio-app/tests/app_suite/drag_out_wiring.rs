@@ -41,8 +41,7 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     glib::MainContext::default().block_on(future)
 }
 
-#[test]
-fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
+pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
     let state_dir = std::env::temp_dir().join(format!("postio-dragout-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
     let export_dir = state_dir.join("drag");
