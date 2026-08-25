@@ -67,7 +67,8 @@ the defaults above are what they are:
 - **`cargo test --workspace` compiles and runs all nine crates, including GTK.**
   With several sessions active it also serialises on the shared target
   directory, so a habitual workspace test is the largest wall-clock cost in the
-  build. Verify your own crate; let CI prove the workspace.
+  build. Verify your own crate; the periodic full-suite run described in **CI
+  is paused** is what proves the workspace while per-PR CI is off.
 
 Always pass `--no-fail-fast` to a workspace test. Plain `cargo test` aborts
 remaining targets after the first failure, so one broken crate hides a thousand
@@ -499,10 +500,53 @@ scripts/issue-land.sh -m "feat(gtk): ..."     # gates, commit, push, PR, merge
 scripts/issue-release.sh <n>            # remove the worktree
 ```
 
-`issue-land.sh` **waits for CI and merges on green**. Opening a PR is not
-finishing: an unmerged branch goes stale, conflicts with whatever lands next,
-and leaves the issue open. If a check fails, that is yours to fix on the same
-branch — not something to hand to whoever reads the PR list next.
+`issue-land.sh` **waits for CI and merges on green** — when CI is running. See
+**CI is paused** below for the current state: right now nothing is scheduled,
+so landing means push, open the PR, and merge within moments, no waiting.
+Opening a PR is not finishing either way: an unmerged branch goes stale,
+conflicts with whatever lands next, and leaves the issue open. If a check
+ever fails, that is yours to fix on the same branch — not something to hand
+to whoever reads the PR list next.
+
+### CI is paused
+
+**As of 2026-08-25, `ci.yml` and `bench.yml` are `workflow_dispatch`-only.**
+This is a private repo, and `ci.yml`'s old `push` + `pull_request` triggers
+meant every merge bought two full runs against a small, non-renewing free
+minutes allotment — one on the PR, one again on the push to `main` that
+landed it. That ran the account out. Public repos get free Actions minutes
+on GitHub-hosted runners, so the real fix is taking this repo public; until
+that happens, treat the workflows as off rather than working around them.
+
+What this changes, concretely:
+
+- **Landing no longer waits on a real check.** `wait-for-checks.sh` reads
+  `ci.yml`'s own triggers to decide what a diff should schedule, so a paused
+  workflow correctly predicts nothing and merges promptly — this needed no
+  change to `issue-land.sh` itself, only to the workflow files' triggers.
+  Land normally; do not add your own wait.
+- **You are the CI now, occasionally.** Since nothing proves the workspace
+  automatically, run `cargo test --workspace --no-fail-fast` by hand against
+  `main` every so often — the steward loop (`/loop`'s recurring sweep) does
+  this as part of its regular pass, but anyone can. If it is red:
+  1. Pull the `ready` label from every open issue that has it (`gh issue
+     list --label ready` to find them) — that pauses new claims without
+     touching issues already `in-progress`, which is deliberately the
+     narrower, less disruptive stop.
+  2. Fix the regression on its own branch, land it the normal way.
+  3. Put `ready` back on whatever you removed it from.
+
+  Do not manufacture this ceremony for a single flaky test — see **Testing**
+  further down for what counts as one. It is for an actual broken `main`.
+- **A release still needs proof.** `release.yml` builds and ships the
+  Flatpak; it does not run the test suite. Whoever tags a release runs
+  `cargo test --workspace --no-fail-fast` locally first — that gate did not
+  used to need saying because CI said it on every merge, and it does not say
+  it anymore.
+
+To restore normal per-PR CI, uncomment the `push`/`pull_request` triggers
+`ci.yml` and `bench.yml` each comment out at the point they were paused, and
+delete this section.
 
 ### Skills
 
