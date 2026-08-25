@@ -283,3 +283,85 @@ fn commands_carry_their_target() {
     assert_ne!(archive, explicit);
     assert_eq!(explicit.id(), CommandId::Archive);
 }
+
+// -- Scope gating (#182, ADR 0005 Q4) ----------------------------------------
+//
+// Move is the first command whose availability depends on *state* rather than
+// `Context`: it has no meaning in the unified scope, because a unified view
+// is not a mailbox and "move to..." from it names no destination tree. The
+// gate is a registry predicate -- the same machinery that keeps a composer
+// command out of the message list -- so the palette, the cheat sheet and the
+// key hints cannot drift apart about it.
+
+#[test]
+fn move_is_unavailable_in_the_unified_scope() {
+    use postio_core::state::Scope;
+
+    let in_account: Vec<_> = registry::reachable_in(
+        Context::List,
+        Scope::Account(postio_model::ids::AccountId::new(1)),
+    )
+    .map(|spec| spec.id)
+    .collect();
+    let in_unified: Vec<_> = registry::reachable_in(Context::List, Scope::Unified)
+        .map(|spec| spec.id)
+        .collect();
+
+    let move_id = postio_core::ActionId::Builtin(CommandId::Move);
+    assert!(
+        in_account.contains(&move_id),
+        "Move must stay reachable in a real account: {in_account:?}"
+    );
+    assert!(
+        !in_unified.contains(&move_id),
+        "Move offered in Unified is a destination picker over no tree"
+    );
+}
+
+#[test]
+fn unified_hides_nothing_else() {
+    use postio_core::state::Scope;
+
+    // The gate exists for commands that *name a destination inside one
+    // account's tree*. Archive, delete and flag all act per message, and
+    // every message knows its account -- so they stay. A second command
+    // joining Move here should be a decision, not a drift; this test is
+    // where that decision becomes visible.
+    for context in Context::ALL {
+        let in_account: BTreeSet<_> = registry::reachable_in(
+            *context,
+            Scope::Account(postio_model::ids::AccountId::new(1)),
+        )
+        .map(|spec| spec.id)
+        .collect();
+        let in_unified: BTreeSet<_> = registry::reachable_in(*context, Scope::Unified)
+            .map(|spec| spec.id)
+            .collect();
+
+        let hidden: Vec<_> = in_account.difference(&in_unified).collect();
+        assert!(
+            hidden
+                .iter()
+                .all(|id| **id == postio_core::ActionId::Builtin(CommandId::Move)),
+            "Unified hides more than Move in {context:?}: {hidden:?}"
+        );
+    }
+}
+
+#[test]
+fn account_scope_equals_todays_reachability() {
+    use postio_core::state::Scope;
+
+    // "Existing single-account behaviour unchanged": with a real account on
+    // screen, the gated iterator is exactly the ungated one.
+    for context in Context::ALL {
+        let gated: Vec<_> = registry::reachable_in(
+            *context,
+            Scope::Account(postio_model::ids::AccountId::new(1)),
+        )
+        .map(|spec| spec.id)
+        .collect();
+        let ungated: Vec<_> = registry::reachable(*context).map(|spec| spec.id).collect();
+        assert_eq!(gated, ungated, "in {context:?}");
+    }
+}
