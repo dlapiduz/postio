@@ -396,3 +396,74 @@ fn the_default_path_is_the_xdg_one() {
 
     assert!(postio_config::paths::config_dir_from(|_| None).is_err());
 }
+
+// ------------------------------------------------------------- mailboxes --
+
+#[test]
+fn parses_a_mailbox_role_mapping() {
+    // Keyed by role and valued by the server's own path, which is the way
+    // round a person can write: they know what they want archived and they
+    // can read the folder name off their own server. `[keys]` is the same
+    // shape -- the thing you mean on the left, the spelling on the right.
+    let cfg = Config::from_toml_str(
+        r#"
+        [mailboxes]
+        archive = "Vecchia Posta"
+        trash = "Cestino"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        cfg.mailboxes.get("archive").map(String::as_str),
+        Some("Vecchia Posta")
+    );
+    assert_eq!(
+        cfg.mailboxes.get("trash").map(String::as_str),
+        Some("Cestino")
+    );
+}
+
+#[test]
+fn a_mailbox_mapping_becomes_role_overrides() {
+    // The point of the section: it has to arrive at resolution as the model's
+    // own type, or every consumer reinvents the role parsing.
+    let cfg = Config::from_toml_str(
+        r#"
+        [mailboxes]
+        archive = "Vecchia Posta"
+        "#,
+    )
+    .unwrap();
+
+    let overrides = cfg.role_overrides();
+    assert_eq!(
+        overrides.role_for("Vecchia Posta"),
+        Some(postio_model::MailboxRole::Archive)
+    );
+    assert_eq!(overrides.role_for("Cestino"), None);
+}
+
+#[test]
+fn no_mailboxes_section_means_no_overrides() {
+    let cfg = Config::from_toml_str("").unwrap();
+    assert!(
+        cfg.role_overrides().is_empty(),
+        "an account that never writes [mailboxes] must resolve exactly as before"
+    );
+}
+
+#[test]
+fn an_unparseable_role_is_dropped_rather_than_guessed() {
+    // `role_overrides` cannot report an error -- validation is where problems
+    // are reported, with a line number. What it must not do is guess: a typo
+    // that silently became Archive would move mail somewhere nobody chose.
+    let cfg = Config::from_toml_str(
+        r#"
+        [mailboxes]
+        archiv = "Vecchia Posta"
+        "#,
+    )
+    .unwrap();
+    assert!(cfg.role_overrides().is_empty());
+}

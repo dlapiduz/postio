@@ -475,3 +475,83 @@ fn a_missing_file_is_valid_defaults() {
     assert!(checked.validation.is_valid());
     assert_eq!(checked.config, Some(postio_config::Config::default()));
 }
+
+#[test]
+fn a_mailbox_role_that_is_not_a_role_is_reported() {
+    let checked = check(
+        r#"
+        [mailboxes]
+        archiv = "Vecchia Posta"
+        "#,
+    );
+    let problem = checked
+        .validation
+        .errors()
+        .iter()
+        .find(|error| error.path.starts_with("mailboxes."))
+        .expect("a typo'd role must be reported, not silently ignored");
+    assert!(
+        problem.message.contains("archiv"),
+        "the message has to name the key the user typed: {}",
+        problem.message
+    );
+}
+
+#[test]
+fn mapping_inbox_is_refused_because_the_server_decides_it() {
+    // INBOX is the one folder IMAP names itself, in RFC 3501. Letting someone
+    // point `inbox` at another folder would make Postio disagree with every
+    // other client on the same account about where mail arrives.
+    let checked = check(
+        r#"
+        [mailboxes]
+        inbox = "Somewhere Else"
+        "#,
+    );
+    assert!(
+        checked
+            .validation
+            .errors()
+            .iter()
+            .any(|error| error.path.starts_with("mailboxes.")),
+        "mapping inbox must be refused"
+    );
+}
+
+#[test]
+fn an_empty_mailbox_path_is_reported() {
+    let checked = check(
+        r#"
+        [mailboxes]
+        archive = ""
+        "#,
+    );
+    assert!(
+        checked
+            .validation
+            .errors()
+            .iter()
+            .any(|error| error.path.starts_with("mailboxes.")),
+        "an empty path names no folder and must be reported"
+    );
+}
+
+#[test]
+fn a_real_mailbox_mapping_validates_clean() {
+    let checked = check(
+        r#"
+        [mailboxes]
+        archive = "Vecchia Posta"
+        trash = "Cestino"
+        "#,
+    );
+    assert!(
+        !checked
+            .validation
+            .errors()
+            .iter()
+            .any(|error| error.path.starts_with("mailboxes.")),
+        "a valid mapping was reported as a problem: {:?}",
+        checked.validation.errors()
+    );
+}

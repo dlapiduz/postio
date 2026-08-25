@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 notify = "8.2.0"
+postio-model.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 toml = "1.1.4"
