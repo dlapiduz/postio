@@ -1,0 +1,1 @@
+-from:bot@example.net -is:read plain words

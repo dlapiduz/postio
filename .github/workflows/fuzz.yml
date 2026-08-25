@@ -1,0 +1,143 @@
+name: Fuzz
+
+# Hostile input, on a timer.
+#
+# Every message Postio parses is attacker-controlled. The `.eml` corpus is
+# excellent at correctness but contains only inputs somebody thought of; this
+# is the job that tries the ones nobody thought of. The workspace forbids
+# `unsafe`, so what it is hunting is panics, unbounded memory, and sanitizer
+# bypasses -- a mail that crashes the client on sight is a denial of service
+# the user re-triggers on every startup.
+#
+# A schedule rather than per-PR, and deliberately so: fuzzing is not a gate. A
+# find is a bug report, not a reason to block a change that did not cause it,
+# and a five-minute run proves nothing about a diff either way. The instrumented
+# build is also expensive, which is the other reason `fuzz/` is a workspace of
+# its own -- `cargo test --workspace` never touches it.
+#
+# PAUSED 2026-08-25: same reason as ci.yml and bench.yml. A weekly run spends
+# this private repository's limited free minutes whether anything is found or
+# not, and the account has already run out once. workflow_dispatch-only until
+# the repo is public; restore by uncommenting the schedule below.
+on:
+  # schedule:
+  #   - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes per target"
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  # The checkers, before anything is fuzzed with them. A property that cannot
+  # fail reports "clean" forever, and a scheduled job built on one is theatre --
+  # so `postio_fuzz::properties` carries tests that feed each check a
+  # deliberate violation and assert it notices, plus a pass over the whole
+  # `.eml` corpus. Seconds, and it is what makes the matrix below mean
+  # anything.
+  properties:
+    name: Fuzz properties
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the fuzzing toolchain
+        run: rustup toolchain install nightly-2026-08-24 --profile minimal
+      - name: Test the checkers
+        working-directory: fuzz
+        run: cargo test
+
+  fuzz:
+    needs: properties
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-26.04
+    # Each target on its own runner: a find in one must not cut short the two
+    # that had not run yet, and `fail-fast` would do exactly that.
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse_message, sanitize_html, parse_query]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The one place in this repository that installs a toolchain rather than
+      # letting rust-toolchain.toml decide, and the reason is not preference:
+      # libFuzzer needs `-Z sanitizer=address`, which does not exist on stable
+      # at any version. The date is what keeps it a pin -- a bare `nightly`
+      # here would float exactly like the `rustup default stable` that #38 is
+      # about, and `scripts/check-toolchain-pinned.py` still refuses that
+      # spelling. Keep this in step with fuzz/rust-toolchain.toml.
+      - name: Install the fuzzing toolchain
+        run: rustup toolchain install nightly-2026-08-24 --profile minimal
+
+      - name: Identify the compiler
+        id: rust
+        run: |
+          echo "version=$(rustup run nightly-2026-08-24 rustc --version | tr ' ()/' '----')" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and the fuzz target dir
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-fuzz
+            fuzz/target
+          key: fuzz-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock', 'fuzz/Cargo.toml') }}
+          restore-keys: |
+            fuzz-${{ runner.os }}-${{ steps.rust.outputs.version }}-
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.2
+
+      # None of the three targets links GTK, WebKit or SQLite -- they reach
+      # postio-model, postio-body and postio-search, which are the pure leaves.
+      # That is why this job needs no apt step and the others do.
+
+      - name: Seed the corpus
+        run: scripts/fuzz-seed.sh ${{ matrix.target }}
+
+      # `-rss_limit_mb` is a finding, not a guard rail: unbounded memory on a
+      # 2 GB message is the denial of service, so let libFuzzer call it.
+      # `-timeout` likewise catches the input that takes a minute to parse.
+      - name: Fuzz
+        working-directory: fuzz
+        run: |
+          cargo fuzz run "${{ matrix.target }}" -- \
+            -max_total_time=$(( ${{ github.event.inputs.minutes || 5 }} * 60 )) \
+            -rss_limit_mb=2048 \
+            -timeout=25 \
+            -print_final_stats=1
+
+      # A crash artifact is the input that reproduced it -- for parse_message
+      # that is a whole message, mutated out of the corpus but still made of
+      # somebody's mail. Logs on a public repository are public, so it is
+      # uploaded and never printed: `check-no-personal-data.py` redacts by
+      # default for the same reason, and a job that echoed the bytes would
+      # publish exactly what the redaction protects.
+      - name: Upload the crash artifact
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-find-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Say what to do with it
+        if: failure()
+        run: |
+          echo "::error::${{ matrix.target }} found an input that fails."
+          echo "The reproducer is in the fuzz-find-${{ matrix.target }} artifact."
+          echo "It is deliberately not printed here -- see docs/engineering-notes.md,"
+          echo "'Fuzzing the hostile-input pipeline', for how to triage it."

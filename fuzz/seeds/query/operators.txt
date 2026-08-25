@@ -1,0 +1,1 @@
+from:ada@example.com is:unread subject:"quarterly report"
