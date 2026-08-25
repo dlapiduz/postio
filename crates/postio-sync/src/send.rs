@@ -306,10 +306,10 @@ async fn file_sent_copy(
         return;
     }
     let _ = ThreadingRepository::new(connection, job.account).thread(&message);
-    // The list and the sidebar read this cached count rather than counting
-    // rows, so a message filed without recomputing it would stay invisible
-    // in Sent until an unrelated resync happened to recompute it.
-    let _ = MailboxRepository::new(connection).recount(job.sent_mailbox);
+    // No recount needed here: migration 0003's `messages_count_insert`
+    // trigger already updated Sent's cached counts the instant `create`
+    // inserted the row. A call here would only redo what the trigger just
+    // did -- see `MailboxRepository::recount`'s own docs. postio-qhz.8.
 
     let blobs = BodyBlobs {
         text: put_text(smtp.blobs, message.body.text.as_deref()).unwrap_or_default(),
