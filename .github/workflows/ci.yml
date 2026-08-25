@@ -201,6 +201,13 @@ jobs:
         # ever asked for --delete-branch again. #167.
         run: python3 scripts/test-issue-land-merge.py
 
+      - name: Prove issue-claim.sh's blockedBy check reads the real field
+        # `gh issue list --json blockedBy` never emits `closed` -- it emits
+        # `state: "OPEN"|"CLOSED"`. Reading the wrong key made `not False`
+        # always true, so every issue with any blockedBy entry was reported
+        # blocked forever, even once its blocker closed. #247.
+        run: python3 scripts/test-issue-claim-blocked-by.py
+
       - name: Prove the GTK-init check actually fails when violated
         # The tree is clean, so this check passes whether it works or not.
         # Its own failure modes -- including the brace scanner that decides

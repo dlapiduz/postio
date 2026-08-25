@@ -66,7 +66,7 @@ for i in json.load(sys.stdin):
     if i["assignees"]:
         skipped.append((pri, "#%s (%s) skipped: already claimed" % (num, pri)))
         continue
-    if any(not b.get("closed", False) for b in i["blockedBy"].get("nodes", [])):
+    if any(b.get("state") != "CLOSED" for b in i["blockedBy"].get("nodes", [])):
         skipped.append((pri, "#%s (%s) skipped: blocked" % (num, pri)))
         continue
     rows.append(i)
