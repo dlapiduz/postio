@@ -28,7 +28,7 @@ use postio_model::{
     OperationTarget, Uid, UidValidity,
 };
 use postio_storage::repository::{
-    ContactRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
+    ContactRepository, MessageRepository, MessageSet, OperationQueueRepository, SyncStateRepository,
 };
 use postio_storage::test_support::{self, TempDatabase};
 use postio_storage::{BlobStore, PooledConnection};
@@ -429,6 +429,174 @@ async fn a_queued_flag_change_and_move_reach_a_real_server() {
     assert!(report.failed.is_empty());
     assert_eq!(server.uids(ARCHIVE).len(), 1);
     assert_eq!(server.uids(INBOX), vec![Uid::new(2), Uid::new(3)]);
+}
+
+#[tokio::test]
+async fn a_local_move_still_reaches_the_server() {
+    // The production order (#289): the queue row and the local move happen in
+    // one transaction -- enqueue first, then the move, which nulls the row's
+    // server identity as correct local-first bookkeeping. The drainer used to
+    // resolve the UID from the *nulled* row, classify the move as "never
+    // uploaded, so the server has nothing to change", and mark it done:
+    // archived locally, never synced.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox, archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let message = message_at(&connection, &inbox, Uid::new(1));
+    enqueue(
+        &connection,
+        account,
+        message,
+        Operation::Move {
+            from: inbox.id,
+            to: archive.id,
+        },
+        at(9),
+    );
+    MessageRepository::new(&connection)
+        .move_to(&[message], archive.id)
+        .expect("the local move");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, account, at(10))
+        .await
+        .expect("drain");
+
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(
+        server.uids(ARCHIVE).len(),
+        1,
+        "the move never reached the server"
+    );
+    assert_eq!(server.uids(INBOX), vec![Uid::new(2), Uid::new(3)]);
+}
+
+#[tokio::test]
+async fn a_local_delete_still_reaches_the_server() {
+    // Delete nulls the row's server identity the same way Move does (#289),
+    // so it loses its server position across the same gap.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox, trash) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let message = message_at(&connection, &inbox, Uid::new(2));
+    enqueue(
+        &connection,
+        account,
+        message,
+        Operation::Delete {
+            from: inbox.id,
+            trash: trash.id,
+        },
+        at(9),
+    );
+    MessageRepository::new(&connection)
+        .move_to(&[message], trash.id)
+        .expect("the local delete");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, account, at(10))
+        .await
+        .expect("drain");
+
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert_eq!(
+        server.uids(ARCHIVE).len(),
+        1,
+        "the delete never reached the server"
+    );
+    assert_eq!(server.uids(INBOX), vec![Uid::new(1), Uid::new(3)]);
+}
+
+#[tokio::test]
+async fn a_bulk_move_over_a_predicate_still_reaches_the_server() {
+    // The bulk path: enqueue_set materializes one row per message before
+    // move_set nulls their identities, all in one transaction (#289). The
+    // snapshot each queue row carries is what the drainer has to prefer.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox, archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let everything = MessageSet::in_mailbox(inbox.id);
+    OperationQueueRepository::new(&connection)
+        .enqueue_set(
+            account,
+            &everything,
+            &Operation::Move {
+                from: inbox.id,
+                to: archive.id,
+            },
+            at(9),
+        )
+        .expect("enqueue_set")
+        .expect("the mailbox was not empty");
+    MessageRepository::new(&connection)
+        .move_set(&everything, archive.id)
+        .expect("the local bulk move");
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, account, at(10))
+        .await
+        .expect("drain");
+
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(
+        server.uids(ARCHIVE).len(),
+        3,
+        "the bulk move never reached the server"
+    );
+    assert!(server.uids(INBOX).is_empty(), "{:?}", server.uids(INBOX));
+}
+
+#[tokio::test]
+async fn a_drained_move_does_not_resurrect_on_resync() {
+    // The user-visible half of #289: with the move never landing, the next
+    // resync of the source folder finds the server copy still there and
+    // re-adds it -- the archived message comes back as a duplicate.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox, archive) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let message = message_at(&connection, &inbox, Uid::new(1));
+    enqueue(
+        &connection,
+        account,
+        message,
+        Operation::Move {
+            from: inbox.id,
+            to: archive.id,
+        },
+        at(9),
+    );
+    MessageRepository::new(&connection)
+        .move_to(&[message], archive.id)
+        .expect("the local move");
+    Drainer::new(&backend)
+        .drain(&connection, account, at(10))
+        .await
+        .expect("drain");
+
+    bootstrap(&connection, &backend, &inbox).await;
+
+    assert_eq!(
+        known_uids(&connection, &inbox, VALIDITY),
+        vec![2, 3],
+        "the archived message resurrected in the source folder"
+    );
 }
 
 // ---------------------------------------------------------------------------

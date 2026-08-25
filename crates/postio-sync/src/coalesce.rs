@@ -57,7 +57,9 @@ pub struct Step {
 
 impl Step {
     /// The row this step took its position from.
-    fn head(&self) -> OperationId {
+    /// The earliest queue row behind this step — enqueue order, so also the
+    /// row whose source snapshot predates any local nulling (#289).
+    pub(crate) fn head(&self) -> OperationId {
         self.rows[0]
     }
 }
@@ -340,6 +342,8 @@ mod tests {
             next_attempt_at: None,
             created_at: at,
             updated_at: at,
+            source_uid: None,
+            source_uid_validity: None,
         }
     }
 
