@@ -61,8 +61,23 @@ from pathlib import Path
 # `rustup default <channel>` / `rustup toolchain install <channel>` where the
 # channel is a floating name rather than a version. `1.98.0` is fine; `stable`
 # is the bug.
+#
+# A *dated* nightly -- `nightly-2026-08-24` -- is not floating and is not the
+# bug: it names one compiler as exactly as `1.98.0` does, and it is the only
+# way to spell what libFuzzer needs, since `-Z sanitizer=address` does not
+# exist on stable at any version. `fuzz/` is built with one, on a schedule,
+# and never decides whether a PR is green. The rule this file is about is
+# "the compiler must be a decision somebody made", not "the compiler must be
+# stable" -- so the date is what makes it acceptable, and a bare `nightly`
+# stays refused. See #147.
+#
+# The optional `run:` allows for the one-line form. Without it this matched
+# only the `run: |` block spelling, so `run: rustup default stable` on a single
+# line -- the shorter and likelier way to reintroduce the bug -- went straight
+# past the guard.
 FLOATING = re.compile(
-    r"^\s*rustup\s+(?:default|toolchain\s+install)\s+(stable|beta|nightly)\b",
+    r"^\s*(?:-\s*)?(?:run:\s*)?rustup\s+(?:default|toolchain\s+install)\s+"
+    r"(stable|beta|nightly)(?!-\d{4}-\d{2}-\d{2})\b",
     re.MULTILINE,
 )
 
