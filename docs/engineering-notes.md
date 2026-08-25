@@ -1494,6 +1494,24 @@ filesystem. `df -h /tmp` is the one-line diagnosis and `rm -rf` the fix. If
 you need a private target directory, put it under `/home`, which has room,
 and delete it when you are done -- it is a full duplicate of the build.
 
+**Resolved 2026-08-25 (#178): worktrees stopped sharing a target
+directory.** The mechanism was never pinned down, but the effect was proven
+twice (a `bool`-vs-`u32` type error against a declaration that was correct;
+`CommandId::DetachComposer` missing against a `command.rs` that declares it),
+and every diagnosis of it cost the wrong kind of time. The replacement:
+each worktree builds into its own `target/` and `RUSTC_WRAPPER=sccache`
+carries the third-party compilation cost once per machine — sccache keys on
+exact compiler inputs, so it cannot serve a sibling's artifact. Numbers that
+shaped the choice: the shared directory had grown to ~157 GB (du,
+hardlink-inflated) against 99 GB free, so nobody "migrates" by copying —
+new claims simply start private, the cache warms as sessions build what
+they touch, and the legacy directory is reclaimed when the last session
+sharing it is gone. `issue-claim.sh` now also creates `target/tmp` in the
+fresh worktree, because `.cargo/config.toml` points TMPDIR there and its
+absence made every `tempfile::tempdir()` in a fresh worktree fail with
+NotFound — three sessions hit that in one day. The interim tell above stays
+true for anyone still on the shared directory.
+
 ## Working in a shared git tree
 
 These matter regardless of whether work is tracked in beads or GitHub Issues
