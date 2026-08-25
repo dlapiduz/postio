@@ -63,6 +63,7 @@ pub mod watch;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use postio_model::{MailboxRole, RoleOverrides};
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
@@ -77,6 +78,19 @@ pub use sync::{BodyFetch, SyncConfig};
 pub use ui::{Density, Theme, UiConfig};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
+
+/// Whether a role is one a user may point at a folder of their choosing.
+///
+/// `Inbox` is not: IMAP names that folder itself (RFC 3501), so remapping it
+/// would put Postio at odds with every other client on the account about
+/// where mail arrives. `Regular` is not either — it is the absence of a role,
+/// and "this folder is an ordinary folder" is what happens anyway.
+///
+/// Shared with [`validate`](crate::validate) so the section and its error
+/// messages cannot disagree about what is allowed.
+pub(crate) fn overridable(role: MailboxRole) -> bool {
+    !matches!(role, MailboxRole::Inbox | MailboxRole::Regular)
+}
 
 /// Unknown keys preserved verbatim so a round trip never loses a hand-edit.
 pub type Extras = Table;
@@ -104,6 +118,18 @@ pub struct Config {
     /// `[filters]` — named saved queries.
     #[serde(default)]
     pub filters: BTreeMap<String, FilterConfig>,
+    /// `[mailboxes]` — role to the server's own folder path.
+    ///
+    /// Keyed by role and valued by path, the way `[keys]` is keyed by the
+    /// thing you mean and valued by its spelling: a person knows what they
+    /// want archived, and can read the folder's name off their own server.
+    ///
+    /// A `String` rather than a parsed role because an unknown key has to
+    /// survive to validation, where it can be reported with a line number.
+    /// Parsing here would drop a typo silently, which is the one thing this
+    /// section must not do — see [`Config::role_overrides`].
+    #[serde(default)]
+    pub mailboxes: BTreeMap<String, String>,
     /// `[logging]` — how much Postio says about what it is doing.
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -117,6 +143,23 @@ pub struct Config {
 }
 
 impl Config {
+    /// `[mailboxes]` as the model's own override type.
+    ///
+    /// Keys that are not roles are **dropped, never guessed**. This cannot
+    /// report a problem — validation does that, with the line number — and a
+    /// typo silently resolved to the nearest role would file mail somewhere
+    /// nobody chose. `inbox` is dropped for a different reason: IMAP names
+    /// that folder itself in RFC 3501, so pointing it elsewhere would make
+    /// Postio disagree with every other client on the same account about
+    /// where mail arrives. Both are reported by
+    /// [`validate`](crate::validate).
+    pub fn role_overrides(&self) -> RoleOverrides {
+        RoleOverrides::from_pairs(self.mailboxes.iter().filter_map(|(role, path)| {
+            let role = MailboxRole::from_name(role)?;
+            (overridable(role) && !path.trim().is_empty()).then_some((role, path.clone()))
+        }))
+    }
+
     /// Parse a TOML document.
     ///
     /// Secret-bearing keys are removed before deserialization, so no value here

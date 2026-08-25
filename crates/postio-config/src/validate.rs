@@ -30,6 +30,7 @@ use std::fmt;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use postio_model::MailboxRole;
 use toml::{Table, Value};
 
 use crate::source::SourceMap;
@@ -222,6 +223,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_accounts(config, &map, errors);
         check_sync(config, &map, errors);
         check_filters(config, &map, errors);
+        check_mailboxes(config, &map, errors);
     }
     config
 }
@@ -511,6 +513,47 @@ fn check_sync(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError
             true,
             "`initial_sync_messages` cannot be 0; the first sync would fetch nothing".to_string(),
         );
+    }
+}
+
+fn check_mailboxes(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    for (key, path) in &config.mailboxes {
+        let Some(role) = MailboxRole::from_name(key) else {
+            push(
+                errors,
+                map,
+                format!("mailboxes.{key}"),
+                false,
+                format!(
+                    "`{key}` is not a mailbox role. Expected one of {}.",
+                    and_list(&["archive", "sent", "drafts", "trash", "junk", "flagged"])
+                ),
+            );
+            continue;
+        };
+        if !crate::overridable(role) {
+            push(
+                errors,
+                map,
+                format!("mailboxes.{key}"),
+                false,
+                format!(
+                    "`{key}` cannot be pointed at another folder. IMAP names \
+                     the inbox itself, and an ordinary folder is what a folder \
+                     is without a role."
+                ),
+            );
+            continue;
+        }
+        if path.trim().is_empty() {
+            push(
+                errors,
+                map,
+                format!("mailboxes.{key}"),
+                false,
+                format!("`{key}` names no folder"),
+            );
+        }
     }
 }
 
