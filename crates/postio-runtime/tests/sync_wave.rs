@@ -131,6 +131,18 @@ async fn until(what: &str, mut condition: impl FnMut() -> bool) {
     assert!(waited.is_ok(), "timed out waiting for {what}");
 }
 
+/// How many header fetches the server has served for the archive so far.
+///
+/// Per mailbox so the watcher's own post-sync INBOX polling cannot blur a
+/// count: nothing but the wave fetches the archive.
+fn archive_fetches(backend: &MockBackend) -> usize {
+    backend
+        .header_fetches()
+        .iter()
+        .filter(|mailbox| *mailbox == "Archive")
+        .count()
+}
+
 /// Whether `log` shows INBOX served ahead of the archive's completion.
 ///
 /// The property "INBOX was not queued behind the archive" is an *order* on
@@ -250,13 +262,18 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
     // engine used to check its inbox only *between* mailboxes, so a question
     // asked during a forty-thousand-message archive waited out the archive.
     //
-    // The assertion is not a stopwatch: it is that the archive was still
-    // unfinished when the answer came back. A wave that had to run to
-    // completion first could not produce that.
+    // The assertion is causal, not a stopwatch: archive fetches must still
+    // be *served after* the answer comes back. An engine that had to run the
+    // wave to completion first answers only once the archive's fetch count
+    // has stopped moving, so the two counts below come out equal — under any
+    // scheduler, at any load. (The earlier form asserted the archive's row
+    // count was below its total at the moment the answer returned, which a
+    // machine slow enough to finish the archive inside that window turned
+    // vacuous — the CI flake this test was known for, #122.)
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
-            .mailbox(folder("Archive", &["\\Archive"], 4_000))
+            .mailbox(folder("Archive", &["\\Archive"], 2_000))
             .build(),
     );
     backend.set_latency(LATENCY);
@@ -274,19 +291,22 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
         .backfill_progress()
         .await
         .expect("the engine answers while it is syncing");
-
-    let archive = stored(&database, "Archive").unwrap_or(0);
-    assert!(
-        archive < 4_000,
-        "the answer only came back after the whole archive had synced, so the \
-         question waited out the wave rather than interrupting it"
-    );
+    let fetches_at_answer = archive_fetches(&backend);
 
     // And nothing was dropped on the way: an interrupted pass is requeued and
     // resumes, so the archive still finishes.
     until("the archive to finish anyway", || {
-        stored(&database, "Archive") == Some(4_000)
+        stored(&database, "Archive") == Some(2_000)
     })
     .await;
+
+    let fetches_in_the_end = archive_fetches(&backend);
+    assert!(
+        fetches_at_answer < fetches_in_the_end,
+        "no archive fetch was served after the answer came back, so the \
+         question waited out the wave rather than interrupting it \
+         ({fetches_at_answer} of {fetches_in_the_end} archive fetches had \
+         already happened)"
+    );
     drop(engine);
 }
