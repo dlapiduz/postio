@@ -46,6 +46,7 @@ pub fn start(
     blobs: BlobStore,
     events: EventSink,
     secrets: Arc<dyn SecretStore>,
+    mailbox_roles: postio_model::RoleOverrides,
 ) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
 
@@ -85,6 +86,7 @@ pub fn start(
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::NetworkManager,
+        mailbox_roles,
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {

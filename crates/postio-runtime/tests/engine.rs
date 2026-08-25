@@ -59,6 +59,7 @@ fn engine_with_backend() -> (
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
 
@@ -806,6 +807,7 @@ fn engine_over_arc(
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
     (engine, events)
@@ -945,6 +947,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
 
@@ -1044,6 +1047,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
     })
     .expect("the engine starts");
 

@@ -5,7 +5,7 @@
 //! ever wrote it. See `postio-755`.
 
 use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
-use postio_model::{Account, EmailAddress, MailboxRole, Message};
+use postio_model::{Account, EmailAddress, MailboxRole, Message, RoleOverrides};
 use postio_storage::repository::{AccountRepository, MailboxRepository, MessageRepository};
 use postio_storage::test_support;
 use postio_sync::discover::discover;
@@ -53,7 +53,7 @@ async fn discovery_writes_the_servers_folders_into_the_local_table() {
     let account = an_account(&connection);
     let backend = a_server().await;
 
-    let report = discover(&connection, &backend, account.id)
+    let report = discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
 
@@ -74,7 +74,7 @@ async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
     let account = an_account(&connection);
     let backend = a_server().await;
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
 
@@ -102,7 +102,7 @@ async fn discovering_twice_keeps_the_same_rows() {
     let account = an_account(&connection);
     let backend = a_server().await;
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("first pass");
     let before: Vec<_> = MailboxRepository::new(&connection)
@@ -112,7 +112,7 @@ async fn discovering_twice_keeps_the_same_rows() {
         .map(|mailbox| (mailbox.path, mailbox.id))
         .collect();
 
-    let report = discover(&connection, &backend, account.id)
+    let report = discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("second pass");
 
@@ -140,7 +140,7 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
     let account = an_account(&connection);
     let backend = a_server().await;
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("first pass");
 
@@ -153,7 +153,7 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
     inbox.highest_mod_seq = Some(postio_model::ModSeq::new(900));
     mailboxes.update(&inbox).expect("record a synced inbox");
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("second pass");
 
@@ -171,7 +171,7 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     let account = an_account(&connection);
     let backend = a_server().await;
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("first pass");
     let mailboxes = MailboxRepository::new(&connection);
@@ -193,7 +193,7 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
         .build();
     smaller.connect().await.expect("connect");
 
-    let report = discover(&connection, &smaller, account.id)
+    let report = discover(&connection, &smaller, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
 
@@ -226,12 +226,12 @@ async fn a_folder_that_comes_back_is_usable_again() {
         .mailbox(MockMailbox::new("INBOX"))
         .build();
     smaller.connect().await.expect("connect");
-    discover(&connection, &smaller, account.id)
+    discover(&connection, &smaller, account.id, &RoleOverrides::default())
         .await
         .expect("first pass");
 
     let full = a_server().await;
-    discover(&connection, &full, account.id)
+    discover(&connection, &full, account.id, &RoleOverrides::default())
         .await
         .expect("second pass");
 
@@ -251,13 +251,13 @@ async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
     let account = an_account(&connection);
     let backend = a_server().await;
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("first pass");
 
     let empty = MockBackend::builder().build();
     empty.connect().await.expect("connect");
-    let report = discover(&connection, &empty, account.id)
+    let report = discover(&connection, &empty, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
 
@@ -277,7 +277,7 @@ async fn a_child_folder_is_linked_to_its_parent() {
         .build();
     backend.connect().await.expect("connect");
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
 
@@ -309,7 +309,7 @@ async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
         .build();
     backend.connect().await.expect("connect");
 
-    discover(&connection, &backend, account.id)
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
 
@@ -318,4 +318,160 @@ async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
         .expect("by path")
         .expect("the folder");
     assert!(!lists.selectable);
+}
+
+// ── Explicit role overrides (#164) ───────────────────────────────────────
+
+/// A server that gives no help at all: no `SPECIAL-USE`, and folder names in
+/// a language `match_name` has never been taught. Before an override existed,
+/// `a` and `d` refused on this account permanently.
+async fn an_unhelpful_server() -> MockBackend {
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Vecchia Posta"))
+        .mailbox(MockMailbox::new("Cestino"))
+        .build();
+    backend.connect().await.expect("connect");
+    backend
+}
+
+fn role_of(connection: &Connection, account: &Account, path: &str) -> Option<MailboxRole> {
+    MailboxRepository::new(connection)
+        .list_for_account(account.id)
+        .expect("list")
+        .into_iter()
+        .find(|mailbox| mailbox.path == path)
+        .map(|mailbox| mailbox.role)
+}
+
+#[tokio::test]
+async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = an_unhelpful_server().await;
+
+    // Without one, exactly the state the issue describes: no archive folder,
+    // so every role-driven verb refuses.
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+    assert_eq!(
+        role_of(&connection, &account, "Vecchia Posta"),
+        Some(MailboxRole::Regular),
+        "nothing about this folder is guessable, which is the premise"
+    );
+
+    let overrides = RoleOverrides::from_pairs([
+        (MailboxRole::Archive, "Vecchia Posta"),
+        (MailboxRole::Trash, "Cestino"),
+    ]);
+    discover(&connection, &backend, account.id, &overrides)
+        .await
+        .expect("discover");
+
+    assert_eq!(
+        role_of(&connection, &account, "Vecchia Posta"),
+        Some(MailboxRole::Archive)
+    );
+    assert_eq!(
+        role_of(&connection, &account, "Cestino"),
+        Some(MailboxRole::Trash)
+    );
+    assert_eq!(
+        role_of(&connection, &account, "INBOX"),
+        Some(MailboxRole::Inbox),
+        "the inbox is still the inbox; an override elsewhere does not disturb it"
+    );
+}
+
+#[tokio::test]
+async fn an_override_outranks_what_the_server_said() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_server().await;
+
+    // This server advertises `\Archive` on the folder called Archive. The
+    // user has looked and disagreed, and there is no reading of that in which
+    // Postio knows better.
+    let overrides = RoleOverrides::from_pairs([(MailboxRole::Junk, "Archive")]);
+    discover(&connection, &backend, account.id, &overrides)
+        .await
+        .expect("discover");
+
+    assert_eq!(
+        role_of(&connection, &account, "Archive"),
+        Some(MailboxRole::Junk)
+    );
+}
+
+/// **The behaviour the issue flagged as undecided, decided.**
+///
+/// Changing a mapping re-labels folders. It never moves mail.
+///
+/// A role is a property of a *mailbox* row — which folder plays which part —
+/// and not of any message. Messages live in folders, and re-pointing `archive`
+/// at a different folder says nothing about where anything already is. The
+/// alternative, moving mail to match, would mean Postio issuing IMAP moves
+/// that the user never asked for, on a config edit, against the rule that
+/// nothing leaves this machine unasked. It would also be irreversible: change
+/// the line back and the labels swap back, but moved mail stays moved.
+#[tokio::test]
+async fn remapping_a_role_moves_the_label_and_never_the_mail() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
+        .mailbox(MockMailbox::new("Vecchia Posta"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    // Put a message in the folder that is the archive today.
+    let archive = MailboxRepository::new(&connection)
+        .list_for_account(account.id)
+        .expect("list")
+        .into_iter()
+        .find(|mailbox| mailbox.path == "Archive")
+        .expect("an Archive row");
+    let mut message = Message::new(account.id, archive.id, chrono::Utc::now());
+    message.subject = Some("filed under the old archive".to_owned());
+    MessageRepository::new(&connection)
+        .create(&mut message)
+        .expect("create message");
+
+    // Now point `archive` somewhere else.
+    let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
+    discover(&connection, &backend, account.id, &overrides)
+        .await
+        .expect("discover");
+
+    assert_eq!(
+        role_of(&connection, &account, "Vecchia Posta"),
+        Some(MailboxRole::Archive),
+        "the new folder wears the role"
+    );
+    assert_eq!(
+        role_of(&connection, &account, "Archive"),
+        Some(MailboxRole::Regular),
+        "and the old one gives it up — two folders cannot both be the archive, \
+         because `by_role` returns one"
+    );
+
+    let still_there = MessageRepository::new(&connection)
+        .get(message.id)
+        .expect("read");
+    assert_eq!(
+        still_there.map(|m| m.mailbox_id),
+        Some(archive.id),
+        "the mail did not move. Re-pointing a role is a relabelling; moving \
+         mail would be a network operation nobody asked for, and unlike a \
+         relabelling it could not be undone by editing the line back."
+    );
 }

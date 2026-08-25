@@ -9,7 +9,7 @@
 //! `0600` after writing; the actual mailbox was not.
 //!
 //! [`ensure_private_dir`] creates a missing directory `0700` directly, via
-//! [`DirBuilderExt::mode`], rather than creating it with the default mode and
+//! `DirBuilderExt::mode`, rather than creating it with the default mode and
 //! chmodding afterward — a chmod-after-create leaves a window where the
 //! directory is briefly world-traversable, and a process racing to look
 //! inside it does not need a large one. For a directory that already exists
