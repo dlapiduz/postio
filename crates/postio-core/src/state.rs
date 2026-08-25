@@ -218,6 +218,43 @@ struct Frame {
     focus: Option<MessageId>,
 }
 
+/// What the window is showing mail *from*: one account, or all of them.
+///
+/// ADR 0005 Q4. This replaces `account: Option<AccountId>`, which carried two
+/// meanings at once -- "no account configured" and "no account chosen" -- and
+/// the second stops being expressible the moment a unified view exists,
+/// because "all of them" is a choice and `None` cannot say it.
+///
+/// Unified is **a view, never a destination**. A real mailbox has a
+/// `UIDVALIDITY`, a message set that physically lives there and a role; mail
+/// moves *into* it. Unified is a read-time aggregation over the Inbox-role
+/// mailbox of every enabled account, which is why [`Scope::Account`] is the
+/// only variant that carries an id -- and why Move, which names a destination
+/// inside one account's tree, is gated on it (see
+/// [`registry::reachable_in`](crate::registry::reachable_in)).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// One account. Its mailboxes are real folders; `a` archives into one.
+    Account(AccountId),
+    /// Every enabled account at once.
+    ///
+    /// The default, because Unified over zero accounts is an empty view --
+    /// which is exactly what a fresh window shows, and it names no account id
+    /// the state would otherwise have to invent.
+    #[default]
+    Unified,
+}
+
+impl Scope {
+    /// The account on screen, when the scope names exactly one.
+    pub fn account(self) -> Option<AccountId> {
+        match self {
+            Scope::Account(account) => Some(account),
+            Scope::Unified => None,
+        }
+    }
+}
+
 /// The application's view of itself.
 ///
 /// Mutated only from command handlers — the bus is the single writer, which is
@@ -225,7 +262,7 @@ struct Frame {
 /// `.await`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppState {
-    account: Option<AccountId>,
+    scope: Scope,
     mailbox: Option<MailboxId>,
     selected: Selection,
     focus: Option<MessageId>,
@@ -249,9 +286,18 @@ impl AppState {
 
     // -- What the user is looking at -------------------------------------
 
-    /// The account in the sidebar, if one has been opened.
+    /// What the window is showing mail from.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    /// The account in the sidebar, when the scope names exactly one.
+    ///
+    /// Derived from [`scope`](Self::scope) rather than stored: `None` now
+    /// means only "no single account is on screen" -- a fresh window, or the
+    /// unified view -- never "nothing was chosen".
     pub fn account(&self) -> Option<AccountId> {
-        self.account
+        self.scope.account()
     }
 
     /// The mailbox the list is showing, if one has been opened.
@@ -359,14 +405,21 @@ impl AppState {
 
     /// Open an account, which resets the mailbox and the selection with it.
     pub fn open_account(&mut self, account: AccountId) -> Vec<Event> {
+        self.open_scope(Scope::Account(account))
+    }
+
+    /// Change what the window shows mail from.
+    ///
+    /// Widening to [`Scope::Unified`] resets the position for the same reason
+    /// switching accounts does: the rows on screen belong to one account's
+    /// mailbox, and a unified list is a different set -- keeping the
+    /// selection would let an action land on a message the user cannot see.
+    pub fn open_scope(&mut self, scope: Scope) -> Vec<Event> {
         self.commit(|state| {
-            if state.account == Some(account) {
+            if state.scope == scope {
                 return;
             }
-            state.account = Some(account);
-            // The old mailbox and rows belong to an account that is no longer
-            // on screen; keeping them would let an action land on a message
-            // the user cannot see.
+            state.scope = scope;
             state.mailbox = None;
             state.clear_position();
         })
@@ -526,8 +579,8 @@ impl AppState {
     fn diff(&self, next: &AppState) -> Vec<Event> {
         let mut events = Vec::new();
 
-        if self.account != next.account
-            && let Some(account) = next.account
+        if self.scope != next.scope
+            && let Some(account) = next.scope.account()
         {
             events.push(Event::MailboxesChanged { account });
         }
@@ -536,8 +589,9 @@ impl AppState {
             // A mailbox is only ever selected within an account, so the id
             // here is the mailbox's owner. The let-chain keeps the diff total:
             // a state that somehow holds a mailbox with no account emits
-            // nothing rather than inventing one.
-            && let Some(account) = next.account
+            // nothing rather than inventing one -- and the unified scope,
+            // which is not a mailbox at all, emits nothing here either.
+            && let Some(account) = next.scope.account()
         {
             events.push(Event::MessageListChanged { account, mailbox });
         }

@@ -313,9 +313,20 @@ fn open_account(
     notifier: &notifications::Notifier,
 ) {
     start_syncing(window, wiring);
-    let Some(Wired { feeds, .. }) = feed_the_window(window, wiring) else {
+    let Some(Wired { account, feeds, .. }) = feed_the_window(window, wiring) else {
         return;
     };
+    // One account on screen, said once to both halves (#182): `AppState` is
+    // what the bus consults, and the window is what filters the palette and
+    // the cheat sheet. `quiet`: the panes are being fed in this same breath,
+    // so there is nothing to repaint from the announcement.
+    {
+        let (quiet, _) = postio_core::bridge::event_channel();
+        state.update(&quiet, |app| {
+            app.open_scope(postio_core::state::Scope::Account(account))
+        });
+    }
+    window.set_scope(postio_core::state::Scope::Account(account));
     // Every gesture the window produces from here on reaches a real handler.
     // Before this line the keymap, the palette and the selection model all
     // resolved correctly and then handed off to nothing.
@@ -346,6 +357,13 @@ fn open_account(
 /// cannot see, and every search surface reads empty — which cost this bead an
 /// afternoon of chasing a wiring bug that was not there.
 pub struct Wired {
+    /// The account the panes were pointed at.
+    ///
+    /// What the caller needs to set the scope (#182): the window's palette
+    /// and cheat sheet filter on it, and `AppState` mirrors it, so both
+    /// halves agree about which account is on screen without re-reading the
+    /// store to ask.
+    pub account: postio_model::ids::AccountId,
     /// The message list, the folders and the status line.
     pub feeds: postio_gtk::feed::Feeds,
     /// The search surfaces, or `None` when search could not be installed.
@@ -413,7 +431,11 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // handlers that answer the box a moment after they were connected.
     let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
-    Some(Wired { feeds, search })
+    Some(Wired {
+        account: account.id,
+        feeds,
+        search,
+    })
 }
 
 /// Bring the account's connection up and keep it up.

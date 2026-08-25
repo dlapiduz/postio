@@ -65,6 +65,37 @@ pub struct CommandSpec {
     pub destructive: bool,
     /// How the user gets back. Never [`Recovery::None`] when `destructive`.
     pub recovery: Recovery,
+    /// The scope predicate: where this command has meaning at all.
+    ///
+    /// [`Context`] answers "where is the keyboard"; this answers "what is on
+    /// screen", which is *state* rather than place. Move is the first command
+    /// gated on it (ADR 0005 Q4): a unified view is not a mailbox, so
+    /// "move to…" from it names no destination tree. The shape for the next
+    /// state-conditional command is the same — add a variant naming the state
+    /// it needs, gate the spec, and [`reachable_in`] carries it to the
+    /// palette, the cheat sheet and the key hints at once.
+    pub scope_gate: ScopeGate,
+}
+
+/// What [`Scope`](crate::state::Scope) a command needs to mean anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScopeGate {
+    /// Meaningful whatever is on screen. Nearly everything.
+    #[default]
+    Anywhere,
+    /// Needs one real account's mailbox tree on screen: unavailable in the
+    /// unified scope, where there is no such tree to name a destination in.
+    AccountOnly,
+}
+
+impl ScopeGate {
+    /// Whether a command with this gate is available in `scope`.
+    pub fn allows(self, scope: crate::state::Scope) -> bool {
+        match self {
+            ScopeGate::Anywhere => true,
+            ScopeGate::AccountOnly => scope.account().is_some(),
+        }
+    }
 }
 
 impl CommandSpec {
@@ -108,6 +139,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::PrevMessage,
@@ -117,6 +149,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::FirstMessage,
@@ -130,6 +163,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::LastMessage,
@@ -139,6 +173,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::OpenMessage,
@@ -150,6 +185,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::List, Context::Thread, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ToggleSelection,
@@ -163,6 +199,7 @@ static SPECS: &[CommandSpec] = &[
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionDown,
@@ -172,6 +209,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionUp,
@@ -181,6 +219,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::SelectAll,
@@ -190,6 +229,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::PrevView,
@@ -199,6 +239,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Back,
@@ -209,6 +250,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Thread,
@@ -218,6 +260,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::List, Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ToggleThreadUnread,
@@ -232,6 +275,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Thread]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ToggleThreadOrder,
@@ -241,6 +285,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Thread]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     // -- Message actions -------------------------------------------------
     CommandSpec {
@@ -251,6 +296,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ReplyAll,
@@ -260,6 +306,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Forward,
@@ -269,6 +316,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Archive,
@@ -280,6 +328,7 @@ static SPECS: &[CommandSpec] = &[
         // wants a toast for.
         destructive: true,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ArchiveThread,
@@ -289,6 +338,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Delete,
@@ -298,6 +348,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Move,
@@ -307,6 +358,9 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        // ADR 0005 Q4: a unified view is not a mailbox, so "move to…" from
+        // it names no destination tree. Not a no-op -- unavailable.
+        scope_gate: ScopeGate::AccountOnly,
     },
     CommandSpec {
         id: CommandId::Flag,
@@ -316,6 +370,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::MarkUnread,
@@ -328,6 +383,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::AddLabel,
@@ -337,6 +393,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     // -- Search ----------------------------------------------------------
     CommandSpec {
@@ -347,6 +404,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     // -- Compose ---------------------------------------------------------
     CommandSpec {
@@ -357,6 +415,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Send,
@@ -368,6 +427,7 @@ static SPECS: &[CommandSpec] = &[
         // the queue drains, so it earns an undo-send window rather than a modal.
         destructive: false,
         recovery: Recovery::Undo,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::SaveDraft,
@@ -377,6 +437,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::DiscardDraft,
@@ -387,6 +448,7 @@ static SPECS: &[CommandSpec] = &[
         // Typed prose has no other copy anywhere, so this one asks first.
         destructive: true,
         recovery: Recovery::Confirm,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::AttachFile,
@@ -396,6 +458,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::DetachComposer,
@@ -412,6 +475,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     // -- View and application --------------------------------------------
     CommandSpec {
@@ -422,6 +486,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::CommandPalette,
@@ -432,6 +497,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::CheatSheet,
@@ -442,6 +508,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Settings,
@@ -452,6 +519,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::EditConfig,
@@ -461,6 +529,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::ToggleSidebar,
@@ -470,6 +539,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::FocusSidebar,
@@ -481,6 +551,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::NextFolder,
@@ -494,6 +565,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::PrevFolder,
@@ -503,6 +575,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::Refresh,
@@ -515,6 +588,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     // -- Parts panel -------------------------------------------------------
     CommandSpec {
@@ -525,6 +599,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::NextPart,
@@ -537,6 +612,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::PrevPart,
@@ -546,6 +622,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::OpenPart,
@@ -555,6 +632,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::SavePart,
@@ -564,6 +642,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::SaveAllParts,
@@ -573,6 +652,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::OpenPartExternally,
@@ -582,6 +662,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
     CommandSpec {
         id: CommandId::RenderPartOnce,
@@ -591,6 +672,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        scope_gate: ScopeGate::Anywhere,
     },
 ];
 
@@ -785,6 +867,8 @@ pub struct ActionSpec {
     pub destructive: bool,
     /// How the user gets back.
     pub recovery: Recovery,
+    /// Where this command has meaning at all. See [`CommandSpec::scope_gate`].
+    pub scope_gate: ScopeGate,
 }
 
 impl ActionSpec {
@@ -811,6 +895,7 @@ impl From<&'static CommandSpec> for ActionSpec {
             contexts: spec.contexts,
             destructive: spec.destructive,
             recovery: spec.recovery,
+            scope_gate: spec.scope_gate,
         }
     }
 }
@@ -825,6 +910,10 @@ impl From<ExtSpec> for ActionSpec {
             contexts: spec.contexts,
             destructive: spec.destructive,
             recovery: spec.recovery,
+            // Extensions are not scope-aware yet: an extension command shows
+            // everywhere its contexts say. The day one needs gating, ExtSpec
+            // grows the field and this stops being a constant.
+            scope_gate: ScopeGate::Anywhere,
         }
     }
 }
@@ -847,6 +936,26 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
         .map(|spec| ActionSpec::from(*spec))
         .collect();
     for_context(context).map(ActionSpec::from).chain(extensions)
+}
+
+/// [`reachable`], further filtered by what is on screen.
+///
+/// `Context` answers "where is the keyboard"; `scope` answers "what is the
+/// window showing", which is state rather than place — Move is gated on it
+/// because a unified view is not a mailbox and "move to…" from it names no
+/// destination tree (ADR 0005 Q4). Every surface that *offers* commands — the
+/// palette, the cheat sheet, the key hints — goes through this, so a gated
+/// command is absent everywhere at once rather than absent from whichever
+/// surfaces remembered to check.
+///
+/// [`reachable`] keeps meaning the context-only filter, so callers that have
+/// no scope — documentation generators, tests over the shipped vocabulary —
+/// keep compiling and keep meaning what they meant.
+pub fn reachable_in(
+    context: Context,
+    scope: crate::state::Scope,
+) -> impl Iterator<Item = ActionSpec> {
+    reachable(context).filter(move |spec| spec.scope_gate.allows(scope))
 }
 
 /// Every command in the merged vocabulary, in the same order as [`reachable`].

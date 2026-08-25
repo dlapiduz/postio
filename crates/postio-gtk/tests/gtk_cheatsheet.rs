@@ -63,6 +63,12 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
     settle();
     assert!(window.cheatsheet().is_visible(), "? opens the sheet");
 
+    // The scope the composition root sets when an account opens (#182). A
+    // bare window starts in Unified -- truthful for a window over nothing --
+    // and this test's census below wants the full vocabulary on the page.
+    window.set_scope(postio_core::state::Scope::Account(
+        postio_model::ids::AccountId::new(1),
+    ));
     let sections = window.cheatsheet().sections();
     assert!(!sections.is_empty(), "and it has something in it");
     let listed: Vec<ActionId> = sections
@@ -77,6 +83,26 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
         postio_core::registry::all().count(),
         "every command, once each"
     );
+
+    // And the other direction, through the same widget rather than the pure
+    // function: widening to Unified takes Move -- and only Move -- off the
+    // printed page. This is the wiring proof, not the policy one; the
+    // registry tests own the policy.
+    window.set_scope(postio_core::state::Scope::Unified);
+    let unified: Vec<ActionId> = window
+        .cheatsheet()
+        .sections()
+        .iter()
+        .flat_map(|section| section.rows.iter().filter_map(|row| row.id))
+        .collect();
+    assert_eq!(unified.len(), listed.len() - 1, "exactly one command gone");
+    assert!(
+        !unified.contains(&ActionId::Builtin(postio_core::CommandId::Move)),
+        "the one gone is Move"
+    );
+    window.set_scope(postio_core::state::Scope::Account(
+        postio_model::ids::AccountId::new(1),
+    ));
 
     // `?` again closes it — the key that opened it has to be able to close it.
     window.handle_key(

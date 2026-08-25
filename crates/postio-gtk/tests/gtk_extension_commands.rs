@@ -24,6 +24,12 @@ use postio_core::{ActionId, CommandId, Context, ContextSet, Keymap, Recovery};
 use postio_gtk::{cheatsheet, palette};
 
 /// A namespaced id nothing else in this binary uses.
+/// A scope with one real account on screen. Extensions are ungated, so this
+/// keeps every assertion here meaning what it meant before scopes existed.
+fn account_scope() -> postio_core::state::Scope {
+    postio_core::state::Scope::Account(postio_model::ids::AccountId::new(1))
+}
+
 fn unique_id(name: &str) -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -50,7 +56,7 @@ fn a_registered_command_is_findable_in_the_palette() {
     let keymap = Keymap::resolve(&Default::default());
 
     // By title, the way a user reaches for it.
-    let found = palette::entries(&keymap, Context::List, "summarise");
+    let found = palette::entries(&keymap, Context::List, account_scope(), "summarise");
     let row = found
         .iter()
         .find(|entry| entry.id == ActionId::Ext(ext))
@@ -65,7 +71,7 @@ fn a_registered_command_is_findable_in_the_palette() {
 
     // By its namespaced id, which is what a log line or a config file spells.
     assert!(
-        palette::entries(&keymap, Context::List, &id)
+        palette::entries(&keymap, Context::List, account_scope(), &id)
             .iter()
             .any(|entry| entry.id == ActionId::Ext(ext)),
         "it cannot be found by the id `[keys]` names it with"
@@ -73,7 +79,7 @@ fn a_registered_command_is_findable_in_the_palette() {
 
     // And the built-ins are unharmed beside it.
     assert!(
-        palette::entries(&keymap, Context::List, "archive")
+        palette::entries(&keymap, Context::List, account_scope(), "archive")
             .iter()
             .any(|entry| entry.id == ActionId::Builtin(CommandId::Archive)),
     );
@@ -89,12 +95,12 @@ fn the_palette_still_respects_the_context_predicate() {
     let keymap = Keymap::resolve(&Default::default());
 
     assert!(
-        palette::entries(&keymap, Context::List, "list only")
+        palette::entries(&keymap, Context::List, account_scope(), "list only")
             .iter()
             .any(|entry| entry.id == ActionId::Ext(ext))
     );
     assert!(
-        !palette::entries(&keymap, Context::Composer, "list only")
+        !palette::entries(&keymap, Context::Composer, account_scope(), "list only")
             .iter()
             .any(|entry| entry.id == ActionId::Ext(ext)),
         "it turned up in the composer, where it was never registered"
@@ -107,7 +113,7 @@ fn the_cheat_sheet_teaches_it_under_where_it_came_from() {
     let ext = register(&id, "File to receipts", Some("ctrl+shift+f"));
     let namespace = ext.namespace();
 
-    let sections = cheatsheet::sections(&Keymap::resolve(&Default::default()));
+    let sections = cheatsheet::sections(&Keymap::resolve(&Default::default()), account_scope());
     let section = sections
         .iter()
         .find(|section| section.title == namespace)
