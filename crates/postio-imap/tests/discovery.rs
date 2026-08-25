@@ -27,6 +27,16 @@ struct MockTransport {
     /// ran.
     requested: Mutex<Vec<(ProbeStep, String, Option<String>)>>,
     stall: Option<Duration>,
+    /// Whether the token the transport was handed had already been
+    /// cancelled by the time the call ran, recorded per call. #57: the
+    /// probe held a `CancelToken` and never passed it down, so nothing at
+    /// the network layer could act on it.
+    saw_cancelled: Mutex<Vec<bool>>,
+    /// A clone of the token the transport was last handed, kept so the test
+    /// can ask *afterwards* whether it observed the caller's cancellation.
+    /// A transport handed a fresh token of its own would look identical at
+    /// call time and never flip here.
+    held: Mutex<Option<CancelToken>>,
 }
 
 impl MockTransport {
@@ -65,6 +75,28 @@ impl MockTransport {
             tokio::time::sleep(stall).await;
         }
     }
+
+    /// What the transport could see of the caller's cancellation, per call.
+    fn saw_cancelled(&self) -> Vec<bool> {
+        self.saw_cancelled.lock().unwrap().clone()
+    }
+
+    fn observe(&self, cancel: &CancelToken) {
+        self.saw_cancelled
+            .lock()
+            .unwrap()
+            .push(cancel.is_cancelled());
+        *self.held.lock().unwrap() = Some(cancel.clone());
+    }
+
+    /// Whether the token the transport kept has since been cancelled.
+    fn saw_cancelled_after_the_fact(&self) -> bool {
+        self.held
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(CancelToken::is_cancelled)
+    }
 }
 
 #[async_trait]
@@ -72,8 +104,10 @@ impl DiscoveryTransport for MockTransport {
     async fn autoconfig(
         &self,
         endpoint: AutoconfigEndpoint<'_>,
+        cancel: &CancelToken,
     ) -> Result<DiscoveryAutoconfig, TransportError> {
         let step = endpoint.step();
+        self.observe(cancel);
         self.calls.lock().unwrap().push(step);
         let local_part = match endpoint {
             AutoconfigEndpoint::Subdomain { local_part, .. } => Some(local_part.to_owned()),
@@ -91,7 +125,12 @@ impl DiscoveryTransport for MockTransport {
         }
     }
 
-    async fn srv(&self, domain: &str) -> Result<DiscoverySrvReport, TransportError> {
+    async fn srv(
+        &self,
+        domain: &str,
+        cancel: &CancelToken,
+    ) -> Result<DiscoverySrvReport, TransportError> {
+        self.observe(cancel);
         self.calls.lock().unwrap().push(ProbeStep::Srv);
         self.requested
             .lock()
@@ -114,11 +153,16 @@ impl DiscoveryTransport for UnreachableTransport {
     async fn autoconfig(
         &self,
         _endpoint: AutoconfigEndpoint<'_>,
+        _cancel: &CancelToken,
     ) -> Result<DiscoveryAutoconfig, TransportError> {
         panic!("the probe must not hit the network for a known provider");
     }
 
-    async fn srv(&self, _domain: &str) -> Result<DiscoverySrvReport, TransportError> {
+    async fn srv(
+        &self,
+        _domain: &str,
+        _cancel: &CancelToken,
+    ) -> Result<DiscoverySrvReport, TransportError> {
         panic!("the probe must not hit the network for a known provider");
     }
 }
@@ -467,6 +511,72 @@ async fn probing_is_cancellable() {
         started.elapsed() < Duration::from_secs(2),
         "cancellation did not take effect: {:?}",
         started.elapsed()
+    );
+}
+
+/// #57: the probe's cancel token has to reach the transport, or nothing at
+/// the network layer can act on it.
+///
+/// This is the wiring, not the mechanism. `probing_is_cancellable` above
+/// already passed while the token stopped the probe *awaiting* an answer and
+/// left the request itself running — the transport never saw the token at
+/// all, so `PimalayaTransport` could not have cancelled a socket even in
+/// principle. Asserting that the transport receives a token which observes
+/// the caller's cancellation is the only assertion that could have failed
+/// then and passes now.
+#[tokio::test]
+async fn the_transport_is_handed_a_token_that_sees_the_cancellation() {
+    let transport = Arc::new(MockTransport::stalling());
+    let probe = Probe::with_options(
+        transport.clone(),
+        ProbeOptions {
+            step_timeout: Duration::from_millis(50),
+            overall_timeout: Duration::from_millis(200),
+            ..ProbeOptions::default()
+        },
+    );
+
+    let cancel = CancelToken::new();
+    // Cancelled before the run, so every call the probe makes is made with a
+    // token that is already flagged. A transport that was handed a *fresh*
+    // token -- or none -- would report false.
+    cancel.cancel();
+    let _ = probe.run("user@example.org", &cancel).await;
+
+    // An already-cancelled token short-circuits before the first step, so
+    // drive it again with cancellation arriving mid-flight to get a call
+    // that actually reaches the transport.
+    let cancel = CancelToken::new();
+    let handle = {
+        let probe = Probe::with_options(
+            transport.clone(),
+            ProbeOptions {
+                step_timeout: Duration::from_secs(5),
+                overall_timeout: Duration::from_secs(10),
+                ..ProbeOptions::default()
+            },
+        );
+        let cancel = cancel.clone();
+        tokio::spawn(async move { probe.run("user@example.org", &cancel).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    cancel.cancel();
+    let _ = handle.await.expect("the probe task did not panic");
+
+    let seen = transport.saw_cancelled();
+    assert!(
+        !seen.is_empty(),
+        "the transport was never called, so this proves nothing"
+    );
+    assert!(
+        seen.iter().any(|observed| !observed),
+        "every call already saw a cancelled token, so this cannot tell a \
+         live token from a pre-cancelled one: {seen:?}"
+    );
+    assert!(
+        transport.saw_cancelled_after_the_fact(),
+        "the token the transport holds never observed the caller's \
+         cancellation, so a real transport could not stop its request"
     );
 }
 

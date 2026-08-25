@@ -123,10 +123,15 @@ pub fn install(
         None => screen.focus_address(),
     }
 
+    // One per screen, shared by the two closures below: the probe replaces
+    // the token in it, `Connect` clears it.
+    let cancellation = ProbeCancellation::default();
+
     screen.connect_probe({
         let screen = screen.clone();
         let runtime = wiring.runtime.clone();
-        move |address| probe(&screen, &runtime, address)
+        let cancellation = cancellation.clone();
+        move |address| probe(&screen, &runtime, address, &cancellation)
     });
 
     screen.connect_submit({
@@ -138,7 +143,13 @@ pub fn install(
         let wired = wired.clone();
         let events = Rc::clone(&events);
         let notifier = notifier.clone();
+        let cancellation = cancellation.clone();
         move |submission| {
+            // Pressing Connect settles the question the probe was asking, and
+            // the screen is on its way out either way. Leaving a discovery
+            // request open past that point is a socket held for an answer
+            // nobody will read.
+            cancellation.stop();
             submit(
                 &screen,
                 &window,
@@ -152,6 +163,46 @@ pub fn install(
             )
         }
     });
+}
+
+/// The cancel token for the probe currently in flight, if there is one.
+///
+/// #57 gave the transport a token it can actually act on — a cancelled probe
+/// now fails its socket at the next read rather than running on detached.
+/// This is the other half: something has to *do* the cancelling, and before
+/// this the composition root handed `Probe::run` a
+/// `CancelToken::new()` it then dropped on the floor, so no probe in the
+/// shipping application was ever cancellable at all.
+///
+/// `Rc<RefCell<..>>` rather than a plain field: the probe closure and the
+/// submit closure both need it, and both are `'static` closures owned by the
+/// screen.
+#[derive(Clone, Default)]
+struct ProbeCancellation(Rc<RefCell<Option<CancelToken>>>);
+
+impl ProbeCancellation {
+    /// Stops whatever probe is in flight and hands back a token for the new
+    /// one.
+    ///
+    /// The view layer already refuses to start a second probe while
+    /// `Status::is_busy`, so the cancel here is usually a no-op — but that
+    /// guard lives in another crate and answers a question about *what the
+    /// screen says*, which is not the same question as whether a socket is
+    /// open. Two independent reasons to be correct is the right number for
+    /// something whose failure is invisible.
+    fn restart(&self) -> CancelToken {
+        self.stop();
+        let token = CancelToken::new();
+        *self.0.borrow_mut() = Some(token.clone());
+        token
+    }
+
+    /// Stops whatever probe is in flight, if any. Idempotent.
+    fn stop(&self) {
+        if let Some(token) = self.0.borrow_mut().take() {
+            token.cancel();
+        }
+    }
 }
 
 /// How this application probes, as against how the crate probes by default.
@@ -190,14 +241,20 @@ fn status_for(report: &DiscoveryReport) -> Status {
 }
 
 /// Run the autoconfig probe for `address` and show what it found.
-fn probe(screen: &Onboarding, runtime: &tokio::runtime::Handle, address: &str) {
+fn probe(
+    screen: &Onboarding,
+    runtime: &tokio::runtime::Handle,
+    address: &str,
+    cancellation: &ProbeCancellation,
+) {
     screen.set_status(Status::Probing);
 
     let (sender, receiver) = async_channel::bounded(1);
     let email = address.to_owned();
+    let cancel = cancellation.restart();
     runtime.spawn(async move {
         let probe = Probe::with_options(Arc::new(PimalayaTransport::new()), probe_options());
-        let answer = probe.run(&email, &CancelToken::new()).await;
+        let answer = probe.run(&email, &cancel).await;
         let _ = sender.send(answer).await;
     });
 
@@ -527,6 +584,62 @@ mod tests {
     use std::time::Duration;
 
     use postio_imap::discovery::{DiscoveryReport, ServerSettings, SettingsSource};
+
+    // -- Cancelling the probe that is in flight (#57) ---------------------
+    //
+    // The transport can now act on a cancelled token, and the composition
+    // root used to hand it a `CancelToken::new()` it immediately forgot --
+    // so no probe in the shipping application was cancellable, whatever the
+    // layers underneath could do. These cover the bookkeeping that changed;
+    // the two call sites using it are one line each.
+
+    #[test]
+    fn a_probe_gets_a_live_token() {
+        let cancellation = ProbeCancellation::default();
+        let token = cancellation.restart();
+        assert!(
+            !token.is_cancelled(),
+            "the probe was handed a token that was already spent"
+        );
+    }
+
+    #[test]
+    fn starting_a_probe_stops_the_one_before_it() {
+        let cancellation = ProbeCancellation::default();
+        let first = cancellation.restart();
+        let second = cancellation.restart();
+
+        assert!(first.is_cancelled(), "the earlier probe kept its socket");
+        assert!(!second.is_cancelled(), "the new probe starts live");
+    }
+
+    #[test]
+    fn leaving_the_screen_stops_the_probe() {
+        let cancellation = ProbeCancellation::default();
+        let token = cancellation.restart();
+
+        cancellation.stop();
+
+        assert!(
+            token.is_cancelled(),
+            "pressing Connect left a discovery request open for an answer \
+             nobody will read"
+        );
+    }
+
+    #[test]
+    fn stopping_twice_is_harmless() {
+        // `Connect` can be pressed without a probe ever having run -- typed
+        // address, straight to the password field.
+        let cancellation = ProbeCancellation::default();
+        cancellation.stop();
+        cancellation.stop();
+
+        let token = cancellation.restart();
+        cancellation.stop();
+        cancellation.stop();
+        assert!(token.is_cancelled());
+    }
 
     /// A report from a domain that publishes nothing, with the guess on.
     fn nothing_published(suggestion: Option<AccountSettings>) -> DiscoveryReport {
