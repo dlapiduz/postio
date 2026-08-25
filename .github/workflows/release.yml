@@ -21,7 +21,7 @@ jobs:
     name: Flatpak bundle
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # A cold debug build already ran a runner out of disk once and killed lld
       # with SIGBUS mid-link. This build is --release and additionally needs the
@@ -68,7 +68,7 @@ jobs:
           echo "$(jq length flatpak/cargo-sources.json) crate sources pinned"
 
       - name: Cache flatpak-builder state
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .flatpak-builder
           key: ${{ runner.os }}-flatpak-${{ hashFiles('Cargo.lock', 'flatpak/dev.postio.Postio.json') }}
@@ -88,7 +88,7 @@ jobs:
           ls -lh "$BUNDLE"
           echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: flatpak-bundle
           path: ${{ env.BUNDLE }}
