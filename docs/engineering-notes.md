@@ -1482,6 +1482,49 @@ Both scripts have self-tests that CI runs: `test-ci-expected-workflows.py`,
 and `test-wait-for-checks.py`, which drives the wait against a stubbed `gh`
 so the registration race is reproducible instead of something you wait for.
 
+**A script that rebases the tree it lives in runs its own pre-rebase self.**
+That fix above landed, and then #50 merged a 1016-line, three-crate change
+without waiting for CI anyway — printing a sentence (`no checks scheduled —
+prose-only change, nothing to wait for`) that no longer existed anywhere in
+the tree. Nothing was stale on disk. The order inside one run is what did it:
+`issue-land.sh` runs its gates, then **rebases the worktree that contains
+`issue-land.sh`**, and then keeps executing the copy bash already had open —
+which is the version from before the rebase pulled the new machinery in. The
+run that introduces a fix to landing is therefore the one run the fix cannot
+protect, and it is the run whose author has least reason to expect the old
+behaviour.
+
+It is worse than merely stale. **bash reads a script by byte offset as it
+goes**, so rewriting the file underneath a running shell can shift what it
+parses next; the result is not reliably "the old version" of anything.
+
+The fix is a **handover** (#160). Before rebasing, the script records
+`git rev-parse HEAD:scripts` — one tree hash standing for the whole of
+`scripts/`. If the rebase changes it, the run `exec`s
+`$TREE/scripts/issue-land.sh` from the top with the same arguments, under
+`POSTIO_LAND_REEXEC_DEPTH`, and gives up rather than merging past
+`POSTIO_LAND_REEXEC_LIMIT` (2) handovers. Three things make that safe rather
+than clever:
+
+- **The whole decision sits inside the same `if [ "$BEHIND" -gt 0 ]` block as
+  the rebase.** bash parses a compound command in full before executing any
+  of it, so that block is already in memory when the rebase rewrites the
+  file. Code placed *after* the block would be re-read at a byte offset into
+  a file that has changed. Keep it there.
+- **Nothing has been pushed yet at that point**, so a handover cannot double
+  a push, a PR or a merge. If you move the push earlier, this stops being
+  true.
+- **The re-run needs no "skip what you did" flag.** The work is already
+  committed so the tree is clean, and the branch is now zero behind, so the
+  commit and rebase steps fall through on their own — and the gates run again
+  against the combination CI will actually see, which is the only way the
+  gates and the merge decision can be talking about the same tree.
+
+`scripts/test-issue-land-rebase-handover.py` covers all four orderings
+(machinery rewritten, a *called* check tightened, an ordinary rebase, and the
+bound reached) against a real bare remote with only `gh` stubbed. Its case A
+is the #50 incident verbatim in shape.
+
 ## Landing work
 
 **`issue-land.sh`'s gates do not include `cargo doc`, and CI's do.** Moving
