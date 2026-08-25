@@ -383,7 +383,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
-    reading::install(window, wiring);
+    reading::install(window, wiring, &feeds);
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
