@@ -94,12 +94,23 @@ A frontend with a human in it does not need them — the human sees the repaint.
 An MCP tool call must return a result to *its* caller, and today the event
 stream gives it no way to tell its own result from another session's.
 
-**Decision: `Command` carries an optional opaque `CorrelationId`, and every
-`Event` produced in response carries it back.** Optional, because the GTK
-frontend has no use for one and should not have to invent one; opaque, because
-nothing may infer meaning from it. This is a small change in `postio-core` and
-it is a prerequisite, not a nice-to-have — without it the MCP server is
-reduced to polling the store, which is Q2's trap wearing a different hat.
+**Built already, and not by this ADR: [ADR 0002](0002-extensible-command-vocabulary.md)'s
+correlation-id work (issue #33).** `CommandSender::send_tracked(cmd) ->
+InvocationId` tags the `EventSink` a handler emits through, not the command or
+the handler, so `EventEnvelope { event, origin }` carries the origin back and
+`Event::InvocationFinished { invocation, outcome }` fires exactly once per
+tracked send — including when the handler panics or none was registered, so a
+caller awaiting an answer is never left hanging. The GTK frontend's plain
+`send` and its bare `EventStream` are unchanged, which is what makes this safe
+for a frontend that has no use for it.
+
+What that implementation leaves open, and what MCP actually needs before a
+server can sit beside a running window, is the constraint its own "Implemented"
+section names: there is still exactly one `EventStream`, so a tracked caller
+and the window cannot both read it. [ADR 0013](0013-event-fanout.md) decided
+the fix — a hub, N subscribers — and [#176](https://github.com/dlapiduz/postio/issues/176)
+tracks building it. Without it the MCP server is reduced to polling the store,
+which is Q2's trap wearing a different hat.
 
 ---
 
@@ -218,9 +229,14 @@ design. If it is ever wanted, it is an ADR of its own.
 
 ## Consequences
 
-- **Prerequisite work, in order:** extract `postio-session` and give it a
-  boundary rule; add `CorrelationId` to `Command`/`Event`. Neither is MCP code
-  and both are worth having anyway.
+- **Prerequisite work — both already landed, and neither was MCP code:**
+  `postio-session` extracted with its own boundary rule
+  ([#82](https://github.com/dlapiduz/postio/issues/82)); correlation ids
+  shipped as `send_tracked`/`EventEnvelope`/`InvocationFinished`
+  ([ADR 0002](0002-extensible-command-vocabulary.md), #33). What is left
+  before a server can subscribe beside the window is the fan-out hub
+  [ADR 0013](0013-event-fanout.md) decided and
+  [#176](https://github.com/dlapiduz/postio/issues/176) tracks building.
 - `postio-mcp` is a thin binary: stdio framing, tool schemas, and a translation
   to commands and queries. It is small precisely because Q2 was decided the
   expensive way.
