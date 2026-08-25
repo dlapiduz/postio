@@ -47,11 +47,16 @@
 //! announces no completion — so the GTK frontend sees the same stream it saw
 //! before, event for event. Tracking costs nothing when nobody asks for it.
 //!
-//! It also does not fan the stream out. There is still exactly one
-//! [`EventStream`](crate::bridge::EventStream), because a second consumer
-//! raises questions — who sees a repaint, who sees a rejection — that no
-//! consumer exists yet to answer. ADR 0002 flags that as the next decision,
-//! not this one.
+//! It also does not fan the stream out. That is
+//! [`EventHub`](crate::bridge::EventHub)'s job, decided separately in
+//! ADR 0013: every subscriber gets a private
+//! [`EventStream`](crate::bridge::EventStream) and sees every envelope, so
+//! "who sees a repaint, who sees a rejection" is answered "everyone", and
+//! *which of those are mine* stays this module's question — [`is_from`]
+//! filters per subscriber, because an [`InvocationId`] is process-unique
+//! rather than stream-unique.
+//!
+//! [`is_from`]: EventEnvelope::is_from
 //!
 //! [`CommandSender::send`]: crate::bridge::CommandSender::send
 
