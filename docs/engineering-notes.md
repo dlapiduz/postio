@@ -1451,6 +1451,41 @@ concurrent writer, not only tests that reopen or inspect the file directly.
 
 ## Logging & privacy
 
+**`Zeroizing<String>` protects the password; the buffers around it are where
+it escapes.** `postio_imap::secret::Password` was always the right shape, and
+#144's security review still found live copies that were freed without being
+overwritten — all of them on the way *into* a `Password`, and the worst of
+them on error paths where the secret never became one at all. Two rules came
+out of it:
+
+- **`String::from_utf8` is the trap.** On success it moves the buffer into a
+  `String`, which is fine only if that `String` is itself zeroized; on failure
+  it drops the bytes it was given, unprotected. `secret.rs` now goes
+  `Zeroizing<Vec<u8>>` → `std::str::from_utf8` → `&str` → `Password`, which
+  borrows instead of converting, so no second allocation exists on either
+  path. The signature is the enforcement: `secret_text` accepts only
+  `&Zeroizing<Vec<u8>>`, so a caller holding a bare buffer has to wrap it
+  before it can get a password out at all, and the compiler is what checks
+  that — nothing else could.
+- **`SecretString::from(String)` reallocates, and reallocating frees a secret
+  without overwriting it.** `secrecy::SecretString` is `SecretBox<str>` and
+  does zeroize on drop, but it is built through `String::into_boxed_str`,
+  which calls `shrink_to_fit` — so a `String` with spare capacity is copied to
+  a fresh allocation and the old one is freed with the password still in it.
+  The copies handed to io-sasl (`postio-imap/src/imap/mod.rs`'s
+  `credential_copy`) and to io-smtp (`postio-sync/src/send.rs`) are single
+  `str::to_owned` calls for exactly this reason: `to_owned` allocates `len`,
+  so the buffer moves. A `String::with_capacity`, a `push_str` or a `format!`
+  in either place reintroduces the leak silently;
+  `the_handshake_copy_of_a_password_has_no_spare_capacity` is what catches it.
+
+For the record, checked against io-sasl 0.1.0 and io-imap 0.6.0: the password
+we hand over is protected the whole way down. `SaslPlainCreds::passwd` is a
+`SecretString`, and io-imap makes one further copy inside
+`ImapAuthPlain::new` which is also a `SecretString`. Two copies, both
+zeroized.
+
+
 **Logger installation order.** `log::set_logger` succeeds *once* per
 process. `postio-imap`'s `skip_counter` watches io-imap's
 `debug!("skipping undecodable untagged response")` and turns it into
