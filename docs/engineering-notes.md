@@ -1145,6 +1145,33 @@ CLAUDE.md and the `/issue` skill both recommend
 builds warm. That advice is still right about the cost it is avoiding — it
 just is not free, and this is the bill.
 
+**"A single cargo invocation is safe" (above) is about the target directory,
+not the source tree — a long build run directly in the shared checkout can
+still be torn by a concurrent `git pull`.** Observed 2026-08-25 verifying
+`main` after the postio-session refactor: `cargo test --workspace
+--no-fail-fast` was run against `/home/user/src/postio` with its *own*
+`CARGO_TARGET_DIR`, specifically to dodge the hazard above. Twenty minutes
+into a cold build it failed anyway — `postio-imap` used
+`Message::content_type`, but the `postio-model` rlib it linked against had
+no such field. Both true at once only makes sense if the two crates were
+compiled from different moments of the same tree, and `git reflog` said
+so: `pull: Fast-forward` had landed five commits, including the one adding
+`content_type`, while the build was still running. Cargo had already
+compiled and cached `postio-model` from before the pull; `postio-imap`'s
+source was read from disk after it, use-site and definition torn across
+the same invocation.
+
+Isolating `CARGO_TARGET_DIR` answers "whose *artifact* is this" (the entry
+above); it says nothing about "whose *source tree* is this", because the
+shared checkout is exactly one directory that every session's `git fetch`,
+`git pull`, or `git checkout` can rewrite while somebody else's `rustc` is
+mid-read of the same files. `scripts/run-isolated.sh` already avoids this
+for the running app by pinning a worktree to a commit rather than reading
+`~/src/postio` live. A verification run worth staking a report on needs the
+same pinning: `git worktree add <path> <commit>` (or run it in an existing
+issue worktree, which is already pinned to its own branch) rather than a
+scratch target dir against the one checkout everyone else is still moving.
+
 **A test that spawns a real `Engine` needs `test_support::temp()`, not
 `test_support::memory()` — `:memory:` has no WAL.** #109 tracked
 `reading::tests::a_part_nobody_has_is_fetched_before_it_is_saved` failing
