@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Product spec — what Postio is and is deliberately not
+    url: https://github.com/dlapiduz/postio/blob/main/docs/PRODUCT.md
+    about: The recorded product decisions, including what v1 excludes and why.
+  - name: Roadmap — what is planned
+    url: https://github.com/users/dlapiduz/projects/2
+    about: Post-v1 work, grouped into epics. Check here before filing a feature request.

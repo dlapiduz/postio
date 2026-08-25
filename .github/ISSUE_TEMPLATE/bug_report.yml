@@ -1,0 +1,76 @@
+name: Bug report
+description: Something Postio does that it should not, or fails to do.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things before you write:
+
+        **Never paste real mail.** No subjects, no bodies, no recipient
+        addresses — describe the *shape* of the message instead, and use
+        reserved-domain examples (`ada@example.com`). Issues are public
+        and permanent.
+
+        **A precise issue is a contribution here.** This codebase is
+        worked by AI coding agents that claim well-shaped issues and land
+        fixes as PRs — the sharper your report (and the optional agent
+        prompt at the bottom), the likelier it gets fixed without another
+        human in the loop.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The observable behaviour, as concretely as you can.
+      placeholder: Archiving from search results jumps the selection to the top of the list.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: The selection stays on the next search result, like it does in a folder.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Steps from a fresh start, if you can. Mention mailbox shape (how many messages, which folder) rather than mailbox content.
+      placeholder: |
+        1. Search for anything with >2 results
+        2. Select the first result, press `a`
+        3. Selection is at the top instead of on the next result
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Distro, desktop/compositor, and how you built or installed Postio. `rustc --version` if you built from source.
+      placeholder: Fedora 44, GNOME 50 on Wayland, built from main at <commit>.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `POSTIO_LOG=debug` turns up logging (`RUST_LOG` does nothing). Postio's logs never
+        contain message content by design — but read what you paste anyway, and redact
+        anything that identifies you.
+      render: text
+  - type: textarea
+    id: agent-prompt
+    attributes:
+      label: Agent prompt (optional)
+      description: |
+        A self-contained prompt an AI coding agent (Claude Code or similar) could run in this
+        repository to fix the bug. State the failing behaviour precisely enough to write a
+        failing test from, the acceptance criteria, and any seam you suspect (a file, a type,
+        a command id — guesses welcome, labelled as guesses). See CONTRIBUTING.md for a worked
+        example. Keep the ground rules inside the prompt: test first, reserved-domain
+        fixtures, no network in tests.
+      placeholder: |
+        Write a failing test in crates/postio-gtk/tests/ that ... then make it pass.
+        Acceptance: ... . Probably lives near ... .
