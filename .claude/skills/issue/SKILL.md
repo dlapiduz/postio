@@ -24,6 +24,25 @@ scripts/issue-claim.sh --dry-run            # look before taking
 scripts/issue-claim.sh --base feature/x 42  # cut from an initiative branch
 ```
 
+## Several small issues on one branch
+
+Landing has a fixed cost — the gate chain, the rebase, the PR — so three
+ten-minute issues as three landings is mostly overhead. When the issues are
+small and touch compatible ground, batch them:
+
+1. Claim the first one normally; it names the branch and the worktree.
+2. Claim each rider with `gh issue edit <n> --add-assignee @me --add-label
+   in-progress` and `mkdir ~/.cache/postio/claims/issue-<n>` — the lock
+   without a second worktree.
+3. Work each as its own commit (or commits), `Refs:` its own issue.
+4. Land once. The PR's `Closes #<anchor>` handles the first; close each
+   rider yourself: `gh issue close <n> -c "Landed with #<anchor> in <pr-url>"`,
+   and `rmdir` its claim lock.
+
+Batch small and compatible, not merely convenient: an issue that grows past
+"small" mid-work deserves its own branch, and a batch should still read as
+one reviewable PR. When in doubt, land what is done and start a fresh batch.
+
 ## Landing somewhere other than `main`
 
 Most work is one issue onto `main` and nothing below applies. An

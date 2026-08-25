@@ -20,6 +20,17 @@ by nothing still open. Never take `epic`, `icebox`, or `needs-architecture`.
 Priority is `p0`…`p4`; the claim script picks the most important thing, and
 `scripts/issue-claim.sh 42` takes a specific one.
 
+**Small issues can share one branch.** Claim the extra ones so no other
+session takes them (`gh issue edit <n> --add-assignee @me --add-label
+in-progress` — no second worktree), work them as separate commits, land
+once; the PR closes its anchor issue, and you close the riders with
+`gh issue close <n> -c "Landed with #<anchor>"`. An **initiative** — several
+interdependent issues that would leave `main` half-migrated landing one at a
+time — gets a feature branch instead: `scripts/issue-claim.sh --base
+feature/<x> <n>` cuts the worktree from it and lands back onto it (details
+in `/issue`); rebase the feature branch onto `main` regularly, merge it when
+it is whole.
+
 **Finishing an issue is not finishing a session** — claim the next one and
 keep going. Never ask whether to continue; the answer is yes, and asking
 costs a round trip that may not come back for hours. Stop only when:
