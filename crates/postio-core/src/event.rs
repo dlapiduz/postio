@@ -23,12 +23,49 @@ use serde::{Deserialize, Serialize};
 pub enum ConnectionState {
     /// Working from the local database only.
     Offline,
-    /// Establishing a connection.
+    /// Establishing a connection, or waiting out a backoff that will retry
+    /// on its own.
     Connecting,
     /// Connected, with an idle or streaming session.
     Online,
-    /// The last attempt failed; the engine is backing off.
-    Failing,
+    /// Stopped on something retrying will not fix, and waiting for a person.
+    Failing {
+        /// What kind of person-shaped problem it is.
+        reason: FailureReason,
+    },
+}
+
+/// Why an account is [`Failing`](ConnectionState::Failing), categorised by
+/// what the *user* can do about it — never by error text (ADR 0005 Q10).
+///
+/// This is what lets a frontend offer "reauthorise this account" for the
+/// most common failure instead of guessing from prose, and what routes each
+/// kind to the right retry behaviour. The prose still travels beside the
+/// state as [`Event::Error`], for the status line to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReason {
+    /// The server refused the credential. Re-enter the password or re-run
+    /// the sign-in flow. **Never retried on a timer** — retrying a rejected
+    /// credential is how an account gets locked; `postio-sync`'s blocked
+    /// link holds until the user acts.
+    Auth,
+    /// The network path to the server is broken in a way backoff has given
+    /// up on. Recovers on its own when the path does; nothing for the user
+    /// to fix in Postio. (Ordinary transient trouble stays
+    /// [`Connecting`](ConnectionState::Connecting); this reason is reserved
+    /// for when the supervisor learns to report a backoff that has stopped
+    /// making progress.)
+    Network,
+    /// The server accepted the connection and is refusing the work — out of
+    /// quota, a 5xx, a command rejected. Retried, slower. (Reserved like
+    /// [`Network`](Self::Network): today a per-operation server failure is
+    /// the operation queue's to retry and does not fail the link.)
+    Server,
+    /// The account's settings are wrong — a certificate that does not
+    /// verify, a server with no capabilities, a host that is not an IMAP
+    /// server. Retrying cannot fix a setting; the user edits it.
+    Config,
 }
 
 /// Something the UI needs to react to.
@@ -295,6 +332,21 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("completed"), "{json}");
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn a_failing_state_says_what_kind_of_help_it_needs() {
+        // ADR 0005 Q10: the reason is typed and on the event, so a frontend
+        // can offer "reauthorise" without parsing prose.
+        let event = Event::ConnectionChanged {
+            account: AccountId::new(1),
+            state: ConnectionState::Failing {
+                reason: FailureReason::Auth,
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"auth\""), "{json}");
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), event);
     }
 

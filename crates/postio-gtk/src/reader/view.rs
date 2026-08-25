@@ -58,6 +58,10 @@ struct Open {
     sender: Option<String>,
 }
 
+/// Called with how many remote references the pane is currently holding
+/// back, every time a render decides that count anew.
+type RenderedHandler = Box<dyn Fn(u32)>;
+
 /// The reading pane: a hardened `WebView`, and the remote-image banner
 /// (`postio-xxz`) that sits above it.
 ///
@@ -81,6 +85,12 @@ pub struct Reader {
     /// What came with the message, per canvas 1b — and the way into the
     /// parts panel. See [`crate::parts::Chips`].
     chips: crate::parts::Chips,
+    /// Called every time a render settles how many remote references are
+    /// being held back — initial render, and again if the banner's "show
+    /// once" or "always allow" changes it. See [`connect_rendered`].
+    ///
+    /// [`connect_rendered`]: Reader::connect_rendered
+    rendered: Rc<RefCell<Vec<RenderedHandler>>>,
 }
 
 /// Why the reading pane has no body to draw.
@@ -212,6 +222,7 @@ impl Reader {
             absent: Rc::new(std::cell::Cell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
             chips,
+            rendered: Rc::new(RefCell::new(Vec::new())),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -226,10 +237,18 @@ impl Reader {
             let view = reader.view.clone();
             let open = Rc::clone(&reader.open);
             let highlight = Rc::clone(&reader.highlight);
+            let rendered = Rc::clone(&reader.rendered);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
                 if let Some(banner) = banner_weak.upgrade() {
-                    render_open(&view, &banner, &open, &highlight, RemoteImages::Allowed);
+                    render_open(
+                        &view,
+                        &banner,
+                        &open,
+                        &highlight,
+                        RemoteImages::Allowed,
+                        &rendered,
+                    );
                 }
             });
         }
@@ -238,6 +257,7 @@ impl Reader {
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
+            let rendered = Rc::clone(&reader.rendered);
             reader.banner.connect_always_allow(move || {
                 let sender = open.borrow().as_ref().and_then(|o| o.sender.clone());
                 if let Some(sender) = sender {
@@ -251,7 +271,14 @@ impl Reader {
                     }
                 }
                 if let Some(banner) = banner_weak.upgrade() {
-                    render_open(&view, &banner, &open, &highlight, RemoteImages::Allowed);
+                    render_open(
+                        &view,
+                        &banner,
+                        &open,
+                        &highlight,
+                        RemoteImages::Allowed,
+                        &rendered,
+                    );
                 }
             });
         }
@@ -319,7 +346,19 @@ impl Reader {
             &self.open,
             &self.highlight,
             remote,
+            &self.rendered,
         );
+    }
+
+    /// Called every time a render settles how many remote references are
+    /// being held back — see [`RenderedHandler`].
+    ///
+    /// Fires on the initial render and again whenever the banner's "show
+    /// once" or "always allow" changes the count, so a caller wiring the
+    /// parts panel's [`crate::parts::PartsPanel::set_held_back`] never goes
+    /// stale.
+    pub fn connect_rendered(&self, handler: impl Fn(u32) + 'static) {
+        self.rendered.borrow_mut().push(Box::new(handler));
     }
 
     /// Draw the message's attachments as chips under the body.
@@ -370,6 +409,12 @@ impl Reader {
             &wrap_document(&absent_html(state), RemoteImages::Blocked),
             Some(DOCUMENT_BASE_URI),
         );
+        // No body drawn, so nothing is being held back either — a caller
+        // watching `connect_rendered` must not keep showing the previous
+        // message's count.
+        for handler in self.rendered.borrow().iter() {
+            handler(0);
+        }
     }
 
     /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
@@ -390,6 +435,9 @@ impl Reader {
             &wrap_document("", RemoteImages::Blocked),
             Some(DOCUMENT_BASE_URI),
         );
+        for handler in self.rendered.borrow().iter() {
+            handler(0);
+        }
     }
 }
 
@@ -406,6 +454,7 @@ fn render_open(
     open: &Rc<RefCell<Option<Open>>>,
     highlight: &Rc<RefCell<Vec<String>>>,
     remote: RemoteImages,
+    rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
 ) {
     let (body, sender) = {
         let guard = open.borrow();
@@ -421,16 +470,20 @@ fn render_open(
     let content = crate::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
-    banner.set_visible(remote == RemoteImages::Blocked && remote_blocked);
+    banner.set_visible(remote == RemoteImages::Blocked && remote_blocked > 0);
 
     let document = wrap_document(&content, remote);
     view.load_html(&document, Some(DOCUMENT_BASE_URI));
+
+    for handler in rendered.borrow().iter() {
+        handler(remote_blocked);
+    }
 }
 
 /// The body markup: sanitized and quote-folded, but not yet wrapped in the
-/// document template [`wrap_document`] adds. The `bool` is whether at least
-/// one remote reference was stripped — see [`sanitize::Sanitized::remote_blocked`].
-fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, bool) {
+/// document template [`wrap_document`] adds. The count is how many remote
+/// references were stripped — see [`sanitize::Sanitized::remote_blocked`].
+fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, u32) {
     if let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) {
         let sanitized = sanitize::sanitize_body(html, remote);
         return (
@@ -439,9 +492,9 @@ fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, bool) {
         );
     }
     if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        return (quote::text_to_html(text), false);
+        return (quote::text_to_html(text), 0);
     }
-    (String::new(), false)
+    (String::new(), 0)
 }
 
 /// Every scripting-adjacent `WebKitSettings` flag, turned off.
@@ -692,7 +745,7 @@ mod tests {
     fn an_empty_body_produces_empty_content() {
         let (content, blocked) = body_html(&MessageBody::default(), RemoteImages::Blocked);
         assert_eq!(content, "");
-        assert!(!blocked);
+        assert_eq!(blocked, 0);
     }
 
     #[test]
@@ -719,7 +772,7 @@ mod tests {
             text: None,
             html: Some(r#"<img src="https://tracker.example.org/o.gif">"#.to_owned()),
         };
-        assert!(body_html(&body, RemoteImages::Blocked).1);
+        assert_eq!(body_html(&body, RemoteImages::Blocked).1, 1);
     }
 
     #[test]

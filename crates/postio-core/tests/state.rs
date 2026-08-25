@@ -365,10 +365,20 @@ fn connection_state_is_per_account() {
             state: ConnectionState::Connecting,
         }]
     );
-    state.set_connection(second, ConnectionState::Failing);
+    state.set_connection(
+        second,
+        ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        },
+    );
 
     assert_eq!(state.connection(first), ConnectionState::Connecting);
-    assert_eq!(state.connection(second), ConnectionState::Failing);
+    assert_eq!(
+        state.connection(second),
+        ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        }
+    );
     assert_eq!(
         state.connection(AccountId::new(3)),
         ConnectionState::Offline,

@@ -586,7 +586,9 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
         announced(&events).iter().any(|event| matches!(
             event,
             Event::ConnectionChanged {
-                state: postio_core::ConnectionState::Failing,
+                state: postio_core::ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
                 ..
             }
         )),
@@ -616,7 +618,9 @@ async fn a_refused_password_blocks_and_a_new_one_unblocks() {
         announced(&events).iter().any(|event| matches!(
             event,
             Event::ConnectionChanged {
-                state: postio_core::ConnectionState::Failing,
+                state: postio_core::ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
                 ..
             }
         )),
@@ -1051,4 +1055,65 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
     // Nothing was asked of the engine at any point — discovery is part of
     // coming up, not something a caller has to remember.
     drop(engine);
+}
+
+#[tokio::test]
+async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
+    // #109: `postio-app::seed_the_backfill` sends a job the instant
+    // `Engine::spawn` returns, so a job is reliably already queued by the
+    // time an account's engine's own loop runs for the first time. Before
+    // this was fixed, the very first connection attempt happened only on
+    // the ticker's first fire inside that loop's `select!` -- and a job
+    // that arrived first left the ticker branch to wait for a real
+    // `POLL_INTERVAL` (5s), for a reason that has nothing to do with the
+    // network. Fetching a body the mock server actually holds, with a job
+    // sent first exactly the way production does, has to finish well under
+    // that -- 2s is generous against the ~20-40ms this takes once the
+    // connection is not gated behind an unrelated tick.
+    let (engine, database, report, _events) = engine();
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+    give_the_inbox_uids(&database, inbox.id);
+
+    // `give_the_inbox_uids` sets `uid = id` for every seeded message, and
+    // `server()` only holds ten of them (UIDs 1..=10) -- so the message
+    // asked for has to be one the mock can actually answer for, not merely
+    // "the inbox's newest", which `seed_small` may give an id past ten.
+    let message = with_store(
+        &database,
+        "a message the mock actually holds",
+        |connection| {
+            Ok(connection.query_row(
+                "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
+                [inbox.id.get()],
+                |row| row.get::<_, i64>(0),
+            )?)
+        },
+    );
+    let message = postio_model::ids::MessageId::new(message);
+
+    let wanted = engine.request_body(message).await.expect("request_body");
+    assert!(
+        wanted,
+        "there was nothing to fetch for a message the mock holds"
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let landed = with_store(&database, "reading raw_blob_id", |connection| {
+                postio_storage::repository::MessageRepository::new(connection).get(message)
+            })
+            .expect("the message exists")
+            .raw_blob_id
+            .is_some();
+            if landed {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect(
+        "the body never arrived within 2s -- the connection attempt is \
+         waiting on the ticker's first tick instead of happening at once",
+    );
 }
