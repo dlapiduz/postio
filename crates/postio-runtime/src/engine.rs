@@ -447,6 +447,21 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 tokio::spawn(crate::network::follow(network));
             }
 
+            // Attempt the first connection right now, rather than waiting for
+            // `ticker`'s first tick to win a race against whatever else is
+            // ready: `postio-app::seed_the_backfill` sends a job the instant
+            // `Engine::spawn` returns, so a job was already queued by the
+            // time this loop ever ran for the first time, and `select!`
+            // gives no guarantee about which of two simultaneously-ready
+            // branches goes first. #109 measured that race costing a full
+            // `POLL_INTERVAL` of connect latency on every single run.
+            let moved = state
+                .supervisor
+                .poll(parts.backend.as_ref(), Utc::now(), entropy())
+                .await;
+            announce_link(&parts, &mut state, moved);
+            handle_link_transition(&parts, &pool, &mut state).await;
+
             loop {
                 tokio::select! {
                     job = inbox.recv() => match job {
@@ -476,27 +491,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // queue that has been waiting for a connection should go out the
                 // moment there is one, not on the next thing the user happens to
                 // do.
-                if came_up(&mut state) {
-                    let outcome = drain(&parts, &pool, &mut state).await;
-                    announce_drain(&parts.events, parts.account, &outcome);
-                    // Before anything asks what is *in* a folder, find out which
-                    // folders there are. Everything below reads the local table,
-                    // and on a new account that table is empty until this runs.
-                    discover(&parts, &pool).await;
-                    // And find out what the server has been doing meanwhile.
-                    queue_every_mailbox(&parts, &pool, &mut state);
-                    start_watching(&parts, &pool, &mut state).await;
-                } else if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
-                    // The queue is filled by whoever performed the action — a flag,
-                    // an archive, a draft autosaved as it is typed — and none of
-                    // them can tell this thread that they wrote a row. So it asks,
-                    // and the cost of asking with an empty queue is one indexed
-                    // read. Without this a mutation made while connected would wait
-                    // for the next *reconnection* to go out, which on a machine
-                    // that stays online is never.
-                    let outcome = drain(&parts, &pool, &mut state).await;
-                    announce_drain(&parts.events, parts.account, &outcome);
-                }
+                handle_link_transition(&parts, &pool, &mut state).await;
 
                 // A few mailboxes at a time, highest priority first, and the
                 // inbox checked between waves: a folder with forty thousand
@@ -612,6 +607,37 @@ fn came_up(state: &mut State) -> bool {
     let transition = online && !state.online;
     state.online = online;
     transition
+}
+
+/// Act on whatever the link just did, before anything else runs.
+///
+/// A queue that has been waiting for a connection should go out the moment
+/// there is one, not on the next thing the user happens to do. Shared
+/// between the loop and the one connection attempt made before it, so a
+/// link that comes up before the loop's first iteration is handled exactly
+/// the way one coming up mid-loop is. See the comment on that first attempt.
+async fn handle_link_transition(parts: &EngineParts, pool: &Pool, state: &mut State) {
+    if came_up(state) {
+        let outcome = drain(parts, pool, state).await;
+        announce_drain(&parts.events, parts.account, &outcome);
+        // Before anything asks what is *in* a folder, find out which
+        // folders there are. Everything below reads the local table, and on
+        // a new account that table is empty until this runs.
+        discover(parts, pool).await;
+        // And find out what the server has been doing meanwhile.
+        queue_every_mailbox(parts, pool, state);
+        start_watching(parts, pool, state).await;
+    } else if state.supervisor.link().is_online() && has_queued_work(parts, pool) {
+        // The queue is filled by whoever performed the action — a flag, an
+        // archive, a draft autosaved as it is typed — and none of them can
+        // tell this thread that they wrote a row. So it asks, and the cost
+        // of asking with an empty queue is one indexed read. Without this a
+        // mutation made while connected would wait for the next
+        // *reconnection* to go out, which on a machine that stays online is
+        // never.
+        let outcome = drain(parts, pool, state).await;
+        announce_drain(&parts.events, parts.account, &outcome);
+    }
 }
 
 /// Resolve once the inbox has something in it, without taking it.

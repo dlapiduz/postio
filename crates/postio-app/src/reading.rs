@@ -595,28 +595,19 @@ mod tests {
             ));
         }
 
-        let engine = Engine::spawn(EngineParts {
-            account: report.account.id,
-            database: database.clone(),
-            blobs: blobs.clone(),
-            backend: Arc::new(MockBackend::builder().mailbox(mailbox).build()),
-            // Never dialled: nothing here queues a send.
-            smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
-            events: sink,
-            retry: Default::default(),
-            backfill: Default::default(),
-            reconnect: Default::default(),
-            watch: Default::default(),
-            network: NetworkSource::default(),
-        })
-        .expect("an engine");
-
         // `seed` writes bodies as NotFetched and assigns no UID -- it exists
         // to fill a screenshot and knows nothing about any server. Give one
         // message the UID of a message the mock actually holds, so the engine
         // has something it can ask for; the rest are moved out of the way so
         // the unique index has no opinion.
+        //
+        // Done before `Engine::spawn` below, deliberately: the engine now
+        // connects and reads these same tables the instant it starts (#109),
+        // rather than five seconds later. Writing this fixture data
+        // afterward would leave the engine's first discovery pass free to
+        // run against whichever half of it had committed so far, which is
+        // exactly the kind of thing a UID reassignment cannot survive being
+        // wrong about.
         let connection = database.connection().expect("a connection");
         connection
             .execute(
@@ -641,6 +632,24 @@ mod tests {
             )
             .expect("the fixture writes");
         drop(connection);
+
+        let engine = Engine::spawn(EngineParts {
+            account: report.account.id,
+            database: (*database).clone(),
+            blobs: blobs.clone(),
+            backend: Arc::new(MockBackend::builder().mailbox(mailbox).build()),
+            // Never dialled: nothing here queues a send.
+            smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+            secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+            events: sink,
+            retry: Default::default(),
+            backfill: Default::default(),
+            reconnect: Default::default(),
+            watch: Default::default(),
+            network: NetworkSource::default(),
+        })
+        .expect("an engine");
+
         (database, blobs, engine, newest)
     }
 
@@ -694,10 +703,15 @@ mod tests {
             ATTACHED,
             "the bytes handed back are the part's, not the message's"
         );
-        assert!(
-            raw_blob(&database, message).expect("a read").is_some(),
+        // Not a bare `raw_blob(...).expect(...)`: the engine's backfill loop
+        // is still writing other messages' rows on its own thread while this
+        // reads. `wait_for_body` is what a caller waiting on exactly this
+        // question already uses, the same helper `part_bytes` awaited above,
+        // so re-checking through it costs nothing and asks nothing new of
+        // the store.
+        wait_for_body(&database, message).await.expect(
             "the fetch has to leave the message in the store, not only return \
-             the part -- saving a second part must not go back to the server"
+             the part -- saving a second part must not go back to the server",
         );
     }
 
