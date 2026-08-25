@@ -233,3 +233,61 @@ fn the_settings_panel_edits_the_file_in_place() {
     settle();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log() {
+    // A binding the resolver dropped is not a debug log line nobody reads
+    // interactively -- it is a setting the user wrote that did not take
+    // effect, and the settings panel is where they would go to fix it.
+    let root = std::env::temp_dir().join(format!("postio-settings-keymap-{}", std::process::id()));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    // A misspelled command name. `postio_config::validate` cannot catch
+    // this: `postio-config` sits below `postio-core` in the crate graph
+    // (CLAUDE.md's architectural invariants) and has no way to know which
+    // command ids exist, only its own static mirror of default *bindings*
+    // for the ones it does. `postio_core::Keymap::resolve` has the real
+    // registry and reports exactly this in `problems()` -- "not a command
+    // in this build" -- which is the report() this issue is about.
+    std::fs::write(&path, "[keys]\narchiv = \"z\"\n").unwrap();
+
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+
+    assert!(
+        window.settings().is_valid(),
+        "the TOML itself is well-formed; `postio_config::validate` has no \
+         business flagging a command name it cannot check"
+    );
+
+    let footer = window.settings().footer_text();
+    assert!(
+        footer.to_lowercase().contains("keymap"),
+        "a dropped binding never reached the settings panel: {footer:?}"
+    );
+    assert!(
+        footer.contains("archiv") && footer.contains("not a command"),
+        "the footer does not name the unrecognised command: {footer:?}"
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}

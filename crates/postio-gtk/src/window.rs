@@ -1008,6 +1008,7 @@ impl Window {
         let keymap = postio_core::Keymap::resolve(&Default::default());
         let (resolver, problems) = Resolver::from_commands(&keymap);
         report(&problems);
+        self.settings().set_keymap_problems(&problems);
         let _ = self.imp().resolver.set(std::cell::RefCell::new(resolver));
         // The registry's own bindings, so the box and the cheat sheet print
         // keys from the first frame rather than from whenever `config.toml`
@@ -1624,6 +1625,7 @@ impl Window {
         if let Some(resolver) = self.imp().resolver.get() {
             let problems = resolver.borrow_mut().apply_commands(&keymap);
             report(&problems);
+            self.settings().set_keymap_problems(&problems);
         }
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap);
