@@ -231,6 +231,14 @@ jobs:
       - name: Prove the lint-floor check actually fails when violated
         run: python3 scripts/test-check-lint-floor.py
 
+      - name: Prove the personal-data check reads the right files
+        # It read every tracked file as UTF-8 with errors="ignore", binaries
+        # included -- and "ignore" *deletes* undecodable bytes, splicing
+        # what sat either side into an address that exists nowhere in the
+        # file. A screenshot's compressed pixels did exactly that and blocked
+        # every landing in the repository. #144.
+        run: python3 scripts/test-check-no-personal-data.py
+
       - name: Prove the tracking check actually fails when violated
         # It guards something that does not exist yet, so on a clean tree it
         # passes whether it works or not. That is the shape of check that

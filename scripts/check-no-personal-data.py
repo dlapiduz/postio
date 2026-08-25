@@ -89,6 +89,35 @@ def tracked_files(scopes: list[str]) -> list[str]:
     return [p for p in out.splitlines() if not p.startswith(SKIP_PATHS)]
 
 
+def readable(path: str) -> str | None:
+    """The file as text, or `None` if it is binary and there is nothing to read.
+
+    Two decisions here, and both were bought with a false positive that
+    blocked every landing in the repository:
+
+    **Binary files are skipped**, because there is no text in them to leak. A
+    screenshot's addresses are pixels; a font's are glyph outlines. The test
+    is a NUL byte in the first 8 KiB, which is git's own, rather than "does
+    it decode" — the `.eml` corpus is legitimately not UTF-8, and skipping
+    every file that fails a strict decode would turn this check off over
+    exactly the files that describe mailboxes.
+
+    **What is left decodes with `errors="replace"`, never `"ignore"`.**
+    `"ignore"` *deletes* an undecodable byte, which splices whatever sat on
+    either side of it into one run — and two innocent fragments either side of
+    a stray byte then form a perfectly-shaped address that appears nowhere in
+    the file. That is exactly what `site/assets/img/compose.png` did. Replaced
+    bytes become U+FFFD, which matches no part of an address, so they separate
+    instead of fusing. Nothing is lost by it: the patterns here are ASCII-only
+    and would not have matched across a non-ASCII byte anyway.
+    """
+    with open(path, "rb") as handle:
+        head = handle.read(8192)
+        if b"\x00" in head:
+            return None
+        return (head + handle.read()).decode("utf-8", errors="replace")
+
+
 def denied_names() -> list[tuple[str, str]]:
     """Real names that must not appear. Never printed, only matched."""
     env = os.environ.get("POSTIO_DENY_NAMES", "")
@@ -119,8 +148,10 @@ def main() -> int:
 
     for path in tracked_files(scopes):
         try:
-            text = open(path, encoding="utf-8", errors="ignore").read()
+            text = readable(path)
         except OSError:
+            continue
+        if text is None:
             continue
 
         for num, line in enumerate(text.splitlines(), 1):
