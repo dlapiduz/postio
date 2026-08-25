@@ -251,7 +251,15 @@ git push -u origin "$BRANCH"
 
 [ "$WIP" = 1 ] && { echo; echo "pushed $BRANCH without a PR (work in progress)."; exit 0; }
 
-if gh pr view --json number >/dev/null 2>&1; then
+# The *state*, not merely the existence, of a PR for this head branch.
+# `gh pr view` resolves the most recent PR for the branch whatever state it is
+# in, so a branch name that has been used before -- which
+# `issue-claim.sh` makes likely, since it generates the name from the issue
+# title and two sessions on one issue is the normal state of this repository --
+# resolves to somebody else's *merged* PR. Adopting that as "already open"
+# then merges nothing and reports success. #312.
+PR_STATE=$(gh pr view --json state -q .state 2>/dev/null || echo "")
+if [ "$PR_STATE" = "OPEN" ]; then
     echo "PR already open for $BRANCH; the push updated it."
     # It may have been opened before this worktree recorded a base -- or
     # against a different one entirely. Merging on that mismatch puts the work
@@ -267,6 +275,12 @@ if gh pr view --json number >/dev/null 2>&1; then
         exit 2
     fi
 else
+    if [ -n "$PR_STATE" ]; then
+        # A closed or merged PR on this head branch: the name was reused.
+        # Opening a new one is correct -- the alternative is adopting a PR
+        # that is not this work's.
+        echo "the previous PR for $BRANCH is $PR_STATE; opening a new one."
+    fi
     TITLE=$(git log -1 --format=%s)
     gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$(cat <<BODY
 $(git log "origin/$BASE..HEAD" --format='- %s')
@@ -279,6 +293,12 @@ BODY
 fi
 URL=$(gh pr view --json url -q .url)
 echo "$URL"
+
+# What this branch is actually landing, recorded before the merge: `--rebase`
+# gives every commit a new hash, so "did it land" cannot be asked by ancestry
+# afterwards. Subjects survive a rebase; that is what gets checked. See the
+# verification below.
+LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 
 [ "$MERGE" = 1 ] || { echo "left open at your request (--no-merge)."; exit 0; }
 
@@ -310,6 +330,43 @@ fi
 # is left for this script to clean up, and that half never needed the local
 # checkout at all.
 gh pr merge --rebase
+
+# Believe it only after checking. `gh pr merge` prints
+# "! Pull request #N was already merged" and exits **0** when there is nothing
+# to do, so the exit status alone once let this script announce "merged.",
+# delete the remote branch, and leave the work existing nowhere but the local
+# worktree -- which the line it prints next tells you to remove. #312.
+#
+# Ancestry cannot answer this: `--rebase` rewrites every commit, so the local
+# tip is never an ancestor of the base even on complete success. Subjects
+# survive, so they are what is compared, and `main` having moved on underneath
+# is fine -- this asks whether the work arrived, not whether it is the tip.
+git fetch -q origin "$BASE"
+LANDED=$(git log "origin/$BASE" --format=%s)
+MISSING=0
+while IFS= read -r subject; do
+    [ -n "$subject" ] || continue
+    printf '%s\n' "$LANDED" | grep -Fqx -- "$subject" || {
+        echo "not on origin/$BASE: $subject" >&2
+        MISSING=1
+    }
+done <<EOF_LANDING
+$LANDING
+EOF_LANDING
+
+if [ "$MISSING" = 1 ]; then
+    echo >&2
+    echo "MERGE DID NOT LAND. gh reported success and origin/$BASE does not" >&2
+    echo "carry the commits above. The remote branch $BRANCH is deliberately" >&2
+    echo "NOT deleted -- with the PR merged elsewhere or closed, it may be the" >&2
+    echo "only copy of this work besides this worktree." >&2
+    echo >&2
+    echo "Do not run issue-release.sh. Check the PR, then land onto a branch" >&2
+    echo "name that is not already spoken for:" >&2
+    echo "    git branch -m <a-new-name> && scripts/issue-land.sh" >&2
+    exit 1
+fi
+
 echo
 echo "merged."
 if git push origin --delete "$BRANCH" 2>&1; then
