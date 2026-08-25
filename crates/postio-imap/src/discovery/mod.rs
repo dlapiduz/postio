@@ -96,6 +96,7 @@
 //!   request to a named third party.
 
 mod builtin;
+mod providers_toml;
 mod settings;
 mod transport;
 

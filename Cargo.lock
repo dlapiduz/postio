@@ -2413,6 +2413,7 @@ dependencies = [
  "log",
  "oo7",
  "pimalaya-stream",
+ "postio-config",
  "postio-imap",
  "postio-model",
  "rustls",
