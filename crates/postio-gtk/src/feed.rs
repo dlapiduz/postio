@@ -567,12 +567,12 @@ pub trait MailboxSource {
 ///
 /// # Where the failure reason comes from
 ///
-/// [`ConnectionState::Failing`] carries no reason of its own — deliberately,
-/// so `postio-core` need not change when the sync engine's state machine
-/// does. The reason travels beside it as [`Event::Error`], so the tracker
-/// keeps the last one it saw and promotes it the moment the connection
-/// starts failing. Leaving that state clears it: a reason that outlived the
-/// failure it explained would be worse than none.
+/// [`ConnectionState::Failing`] carries a typed category — what *kind* of
+/// help the account needs (ADR 0005 Q10) — but not prose. The prose travels
+/// beside it as [`Event::Error`], so the tracker keeps the last one it saw
+/// and promotes it the moment the connection starts failing. Leaving that
+/// state clears it: a reason that outlived the failure it explained would be
+/// worse than none.
 #[derive(Clone, Debug, Default)]
 pub struct SyncTracker {
     status: SyncStatus,
@@ -597,7 +597,7 @@ impl SyncTracker {
         match event {
             Event::ConnectionChanged { state, .. } => {
                 self.status.state = *state;
-                if *state == ConnectionState::Failing {
+                if matches!(state, ConnectionState::Failing { .. }) {
                     self.status.detail = self.reason.clone();
                 } else {
                     // Connected, connecting or deliberately offline: whatever
@@ -648,7 +648,7 @@ impl SyncTracker {
             }
             Event::Error { message } => {
                 self.reason = Some(message.clone());
-                if self.status.state == ConnectionState::Failing {
+                if matches!(self.status.state, ConnectionState::Failing { .. }) {
                     self.status.detail = Some(message.clone());
                 }
             }
@@ -1074,7 +1074,9 @@ mod tests {
         tracker.apply(&Event::Error {
             message: "the server rejected the password".to_string(),
         });
-        tracker.apply(&connection(ConnectionState::Failing));
+        tracker.apply(&connection(ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        }));
         assert_eq!(
             tracker.status().detail.as_deref(),
             Some("the server rejected the password")
@@ -1095,7 +1097,9 @@ mod tests {
         assert_eq!(tracker.status().detail, None);
 
         // And it does not come back on the next unrelated failure.
-        tracker.apply(&connection(ConnectionState::Failing));
+        tracker.apply(&connection(ConnectionState::Failing {
+            reason: postio_core::FailureReason::Auth,
+        }));
         assert_eq!(tracker.status().detail, None);
     }
 

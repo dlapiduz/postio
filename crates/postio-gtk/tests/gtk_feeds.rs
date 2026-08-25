@@ -269,7 +269,9 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     feeds.apply(&Event::Error {
         message: "app-specific password rejected".to_string(),
     });
-    feeds.apply(&connection(ConnectionState::Failing));
+    feeds.apply(&connection(ConnectionState::Failing {
+        reason: postio_core::FailureReason::Auth,
+    }));
     pump();
     assert_eq!(
         status_text(&window),
@@ -318,7 +320,9 @@ fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     );
 
     // ── and the list pane's named states read the same connection ─────────
-    feeds.apply(&connection(ConnectionState::Failing));
+    feeds.apply(&connection(ConnectionState::Failing {
+        reason: postio_core::FailureReason::Auth,
+    }));
     pump();
     assert!(
         window.list_state().state().is_some(),
