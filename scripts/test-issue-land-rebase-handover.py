@@ -91,6 +91,10 @@ if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
     exit 0
 fi
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+    # Really move the base, as a rebase-merge does. #312 made the script
+    # verify that the work reached `main` before reporting success, so a stub
+    # that says "Merged" without merging now fails that check -- correctly.
+    git push -q "$ORIGIN" "HEAD:refs/heads/main" || exit 1
     echo "Merged"
     exit 0
 fi
@@ -199,7 +203,11 @@ def advance_main(origin: Path, work: Path, files: dict[str, str], message: str) 
 
 
 def land(
-    root: Path, target: Path, stub_dir: Path, extra_env: dict[str, str] | None = None
+    root: Path,
+    target: Path,
+    stub_dir: Path,
+    origin: Path,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
@@ -209,6 +217,8 @@ def land(
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
+    # The bare remote the `pr merge` stub pushes into; see GH_STUB.
+    environment["ORIGIN"] = str(origin)
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
     environment.update(extra_env or {})
@@ -258,7 +268,7 @@ def run_case(
     advance_main(origin, base / name / "bump", incoming, "chore: main moves")
 
     (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
-    result = land(root, target, stub_dir, extra_env)
+    result = land(root, target, stub_dir, origin, extra_env)
     return result, (stub_dir / "calls").read_text(encoding="utf-8")
 
 
