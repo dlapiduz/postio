@@ -17,16 +17,16 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-CHECK = ROOT / "scripts" / "check-lint-floor.py"
+ROOT = Path(__file__).resolve().parents[2]
+CHECK = ROOT / "scripts" / "checks" / "check-lint-floor.py"
 
 
 def sandbox(tmp: Path) -> Path:
     """A minimal copy of the workspace: manifests only, which is all the
     check reads."""
     shutil.copy(ROOT / "Cargo.toml", tmp / "Cargo.toml")
-    (tmp / "scripts").mkdir()
-    shutil.copy(CHECK, tmp / "scripts" / "check-lint-floor.py")
+    (tmp / "scripts" / "checks").mkdir(parents=True)
+    shutil.copy(CHECK, tmp / "scripts" / "checks" / "check-lint-floor.py")
     for manifest in (ROOT / "crates").glob("*/Cargo.toml"):
         target = tmp / "crates" / manifest.parent.name
         target.mkdir(parents=True)
@@ -36,7 +36,7 @@ def sandbox(tmp: Path) -> Path:
 
 def run(tmp: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(tmp / "scripts" / "check-lint-floor.py")],
+        [sys.executable, str(tmp / "scripts" / "checks" / "check-lint-floor.py")],
         capture_output=True,
         text=True,
     )

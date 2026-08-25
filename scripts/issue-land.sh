@@ -139,12 +139,7 @@ for crate in $CRATES; do
 done
 
 echo "--- repository invariants ---"
-python3 scripts/check-crate-boundaries.py
-python3 scripts/check-no-personal-data.py
-python3 scripts/check-no-silent-tracking.py
-python3 scripts/check-toolchain-pinned.py
-python3 scripts/check-no-gtk-init-in-unit-tests.py
-python3 scripts/check-runtime-crossings.py
+"$TREE/scripts/check.sh"
 
 # rust-toolchain.toml pins the compiler, so CI and this shell agree by
 # construction -- the gates above ran with RUSTUP_TOOLCHAIN cleared, so
@@ -310,7 +305,7 @@ echo
 echo "--- waiting for checks ---"
 # Not inline, because this is the step that decides whether an unreviewed
 # commit reaches main and it needs a test of its own -- see
-# scripts/test-wait-for-checks.py's stubbed `gh`. It exits non-zero when a
+# scripts/tests/test-wait-for-checks.py's stubbed `gh`. It exits non-zero when a
 # check failed *or* when one was due and never registered; both mean the same
 # thing here, which is do not merge.
 if ! "$TREE/scripts/wait-for-checks.sh" "$URL"; then

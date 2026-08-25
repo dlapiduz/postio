@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/check-no-gtk-init-in-unit-tests.py.
+"""Self-test for scripts/checks/check-no-gtk-init-in-unit-tests.py.
 
 The check exists because a unit test in `crates/postio-gtk/src/toast.rs`
 called `adw::init()` and aborted CI with SIGABRT. Once that test moved to
@@ -13,7 +13,7 @@ difference between "inside the test module" and "after it" is the whole rule.
 
 The real repository is never touched and nothing here reaches the network.
 
-Usage: scripts/test-check-no-gtk-init-in-unit-tests.py
+Usage: scripts/tests/test-check-no-gtk-init-in-unit-tests.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -24,8 +24,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CHECK = HERE / "check-no-gtk-init-in-unit-tests.py"
+HERE = Path(__file__).resolve().parent.parent
+CHECK = HERE / "checks" / "check-no-gtk-init-in-unit-tests.py"
 
 FAILURES: list[str] = []
 

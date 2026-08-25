@@ -22,7 +22,7 @@
 //! file. By the time that causes a problem, nobody remembers there were two.
 //!
 //! So the rule is enforced rather than intended.
-//! `scripts/check-crate-boundaries.py` guards this crate against `gtk4` and
+//! `scripts/checks/check-crate-boundaries.py` guards this crate against `gtk4` and
 //! `libadwaita` exactly as it guards `postio-core`, because a verb added in a
 //! hurry that reaches for a widget would take the headless frontend away
 //! silently — everything would still compile, and every test would still pass.

@@ -666,7 +666,7 @@ mod tests {
             "user@@example.org",
             "user@localhost",
             // Built, not written out: a literal here reads as an address to
-            // scripts/check-no-personal-data.py.
+            // scripts/checks/check-no-personal-data.py.
             &["user@", ".example.org"].concat(),
             "user@example.org.",
             "user name@example.org",

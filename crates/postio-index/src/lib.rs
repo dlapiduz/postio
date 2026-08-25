@@ -9,7 +9,7 @@
 //! `postio-gtk` depends on `postio-search` for the pure query-operator parser.
 //! The moment *any* workspace member turned `index` on, `rusqlite` landed in
 //! the view layer's dependency graph and
-//! `scripts/check-crate-boundaries.py` failed — correctly, since a workspace
+//! `scripts/checks/check-crate-boundaries.py` failed — correctly, since a workspace
 //! build really would link SQLite into `postio-gtk`. No manifest ever enabled
 //! it, so [`search`] and [`index::ensure_schema`] had never run inside Postio
 //! (`postio-svx`).

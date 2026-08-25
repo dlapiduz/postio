@@ -295,7 +295,7 @@ the HTML already stored. Rejected in Q3.
 
 ## Consequences
 
-- `scripts/check-crate-boundaries.py` gains nothing to guard here —
+- `scripts/checks/check-crate-boundaries.py` gains nothing to guard here —
   `postio-body` has no SQL and no toolkit, and the existing `postio-gtk` rule
   is unaffected. Worth adding `postio-body` to the pure-leaf set if that check
   ever grows from two crates to a graph rule (`ARCHITECTURE.md`, known gaps).

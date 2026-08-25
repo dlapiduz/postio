@@ -156,7 +156,7 @@ pub type Read<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send
 /// thing that draws its rows need not be compiled together. `postio-gtk`
 /// depends on `postio-core`, so anything concrete here would put `rusqlite` in
 /// the view layer's dependency graph — which
-/// `scripts/check-crate-boundaries.py` refuses, and rightly: the view layer
+/// `scripts/checks/check-crate-boundaries.py` refuses, and rightly: the view layer
 /// does no SQL. The implementation lives behind the `runtime` feature, and a
 /// test can answer from a table instead.
 ///

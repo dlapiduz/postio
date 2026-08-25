@@ -19,7 +19,7 @@ checks are stubbed, exactly as in `test-issue-land-commit-guard.py`, because
 this test is about staging order, not about them. `--wip` is used throughout
 so the script never touches `gh`.
 
-Usage: scripts/test-issue-land-personal-data.py
+Usage: scripts/tests/test-issue-land-personal-data.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -32,10 +32,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-PERSONAL_DATA_CHECK = HERE / "check-no-personal-data.py"
+PERSONAL_DATA_CHECK = HERE / "checks" / "check-no-personal-data.py"
 
 # The five invariant checks this test is not about. `check-no-personal-data.py`
 # is deliberately left off this list -- it is the one under test, so it has to
@@ -78,15 +78,18 @@ def build_sandbox(root: Path, channel: str) -> None:
 
     scripts = root / "scripts"
     scripts.mkdir()
+    (scripts / "checks").mkdir()
+    shutil.copy(HERE / "check.sh", scripts / "check.sh")
+    (scripts / "check.sh").chmod(0o755)
     shutil.copy(ISSUE_LAND, scripts / ISSUE_LAND.name)
     (scripts / ISSUE_LAND.name).chmod(0o755)
-    shutil.copy(PERSONAL_DATA_CHECK, scripts / PERSONAL_DATA_CHECK.name)
-    (scripts / PERSONAL_DATA_CHECK.name).chmod(0o755)
+    shutil.copy(PERSONAL_DATA_CHECK, scripts / "checks" / PERSONAL_DATA_CHECK.name)
+    (scripts / "checks" / PERSONAL_DATA_CHECK.name).chmod(0o755)
     for name in STUB_CHECKS:
-        (scripts / name).write_text(
+        (scripts / "checks" / name).write_text(
             "#!/usr/bin/env python3\nraise SystemExit(0)\n", encoding="utf-8"
         )
-        (scripts / name).chmod(0o755)
+        (scripts / "checks" / name).chmod(0o755)
 
 
 def git(*args: str, cwd: Path) -> None:

@@ -79,7 +79,7 @@ def level_of(value: object) -> str | None:
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     try:
         manifest = tomllib.loads((root / "Cargo.toml").read_text())
     except (OSError, tomllib.TOMLDecodeError) as exc:

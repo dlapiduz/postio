@@ -12,8 +12,8 @@ The branch's own diff is what knows, so this decides from the diff. The
 workflow files are the authority: their `on.pull_request` filters say
 exactly which changes schedule them, and reading those is not a guess.
 
-    scripts/ci-expected-workflows.py crates/postio-core/src/lib.rs
-    git diff --name-only origin/main...HEAD | scripts/ci-expected-workflows.py
+    scripts/checks/ci-expected-workflows.py crates/postio-core/src/lib.rs
+    git diff --name-only origin/main...HEAD | scripts/checks/ci-expected-workflows.py
 
 Prints one workflow name per line, in filename order.
 
@@ -297,7 +297,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("paths", nargs="*", help="changed paths; else stdin")
     parser.add_argument(
         "--workflows",
-        default=str(Path(__file__).resolve().parent.parent / ".github" / "workflows"),
+        default=str(Path(__file__).resolve().parents[2] / ".github" / "workflows"),
         help="directory of workflow files",
     )
     parser.add_argument("--base", default="main", help="the PR's base branch")

@@ -379,7 +379,7 @@ const RESERVED_UNDER_EXAMPLE: &[&str] = &["com", "net", "org"];
 
 /// Whether `domain` is one nobody can register, and so one the corpus may use.
 ///
-/// This is the same rule `scripts/check-no-personal-data.py` applies to the
+/// This is the same rule `scripts/checks/check-no-personal-data.py` applies to the
 /// whole repository, restated here so the corpus cannot drift away from it.
 /// Deliberately narrower than "RFC 2606 second-level name": `example.de` reads
 /// like a reserved domain and is not one — it is registrable, and an address

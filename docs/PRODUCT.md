@@ -438,7 +438,7 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
 
 When adding anything that could make a network request, the question is not
 "is this useful" but **"did the user ask for it"**. If the answer is no, it does
-not ship. `scripts/check-no-silent-tracking.py` refuses the two mechanisms that
+not ship. `scripts/checks/check-no-silent-tracking.py` refuses the two mechanisms that
 are easiest to add by accident; `ARCHITECTURE.md` §11 is the enforcement story.
 
 Phishing and link warnings, PGP and S/MIME are unscheduled.

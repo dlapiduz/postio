@@ -7,7 +7,7 @@
 //! # Why it is its own crate
 //!
 //! `postio-gtk` must not depend on `rusqlite` or `io-imap` — the view layer
-//! does no SQL and speaks no protocol, and `scripts/check-crate-boundaries.py`
+//! does no SQL and speaks no protocol, and `scripts/checks/check-crate-boundaries.py`
 //! enforces it. `postio-gtk` also depends on `postio-core`, and Cargo features
 //! are per *package*: if the binary lived in `postio-gtk` and turned on
 //! `postio-core/runtime`, feature unification would give the library the same

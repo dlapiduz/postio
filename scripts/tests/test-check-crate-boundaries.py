@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/check-crate-boundaries.py.
+"""Self-test for scripts/checks/check-crate-boundaries.py.
 
 A guard that has never been seen to fail is not a guard. This builds throwaway
 cargo workspaces in a temp dir -- with dummy path crates literally named `gtk4`,
@@ -10,7 +10,7 @@ directly, transitively, and through a dev-dependency.
 
 No network, and the real crate manifests are never touched.
 
-Usage: scripts/test-check-crate-boundaries.py
+Usage: scripts/tests/test-check-crate-boundaries.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -21,8 +21,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CHECK = HERE / "check-crate-boundaries.py"
+HERE = Path(__file__).resolve().parent.parent
+CHECK = HERE / "checks" / "check-crate-boundaries.py"
 REPO_ROOT = HERE.parent
 
 WORKSPACE_MANIFEST = """\

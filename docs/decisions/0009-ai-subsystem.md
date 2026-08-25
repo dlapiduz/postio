@@ -44,7 +44,7 @@ because of what the code can reach, not because everybody remembered.
 `postio-ai` depends on `postio-model` (message types), `postio-core` (to
 register its commands) and `postio-storage` (embeddings, egress log). It
 **does not depend on `postio-imap`, `postio-smtp` or `postio-sync`**, and the
-`scripts/check-crate-boundaries.py` rule that already guards two crates gains a
+`scripts/checks/check-crate-boundaries.py` rule that already guards two crates gains a
 third entry for exactly this.
 
 That is the whole enforcement of "AI must never send mail": there is no send in
@@ -194,7 +194,7 @@ not a weakening: "on 3 March, 12 messages from this account went to this remote
 provider" is the auditable fact. A log holding the prompts would be a second
 copy of the user's mail in a file with different permissions.
 
-`scripts/check-no-silent-tracking.py` gains AI provider endpoints to its
+`scripts/checks/check-no-silent-tracking.py` gains AI provider endpoints to its
 mechanism list, so a future patch that adds a remote call has to write down its
 consent path in the same `POSTIO-CONSENT:` form the read-receipt and
 One-Click guards already use.

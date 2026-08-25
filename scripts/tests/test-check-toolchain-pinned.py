@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/check-toolchain-pinned.py.
+"""Self-test for scripts/checks/check-toolchain-pinned.py.
 
 The guard passes on the real tree once the pin is in place, and would pass
 just as cheerfully if it had stopped looking at anything. So: throwaway trees
@@ -7,7 +7,7 @@ in a temp dir, one per way the rule can be met or broken, and an assertion for
 each. The real repository is never touched and nothing here reaches the
 network.
 
-Usage: scripts/test-check-toolchain-pinned.py
+Usage: scripts/tests/test-check-toolchain-pinned.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -19,8 +19,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CHECK = HERE / "check-toolchain-pinned.py"
+HERE = Path(__file__).resolve().parent.parent
+CHECK = HERE / "checks" / "check-toolchain-pinned.py"
 
 FAILURES: list[str] = []
 
