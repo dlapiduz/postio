@@ -456,3 +456,62 @@ fn a_large_attachment_streams_rather_than_being_held_whole() {
         "the head of the blob is readable without reading the tail"
     );
 }
+
+// ---------------------------------------------------------------------------
+// This is the user's mail: the root, its shards and its blobs are private
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+mod private_by_default {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    fn mode_of(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[test]
+    fn a_freshly_opened_store_and_its_temp_directory_are_0700() {
+        let (_directory, store) = store();
+
+        assert_eq!(mode_of(store.root()), 0o700, "the blob root");
+        assert_eq!(mode_of(store.temporary_directory()), 0o700, "and its tmp/");
+    }
+
+    #[test]
+    fn a_stored_blob_and_its_shard_directories_are_private() {
+        let (_directory, store) = store();
+
+        let id = store
+            .put(b"a report nobody else on the machine gets to read")
+            .expect("put");
+        let path = store
+            .path_of(&id)
+            .expect("the path a stored digest resolves to");
+
+        assert_eq!(
+            mode_of(path.parent().expect("the shard directory")),
+            0o700,
+            "the two-level shard directory"
+        );
+        assert_eq!(mode_of(&path), 0o600, "and the blob file the digest names");
+    }
+
+    #[test]
+    fn a_root_that_was_loosened_is_repaired_on_reopen() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("blobs");
+        BlobStore::open(&root).expect("first open");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+            .expect("loosen it, the way a pre-fix store would be");
+
+        BlobStore::open(&root).expect("reopen");
+
+        assert_eq!(mode_of(&root), 0o700);
+    }
+}

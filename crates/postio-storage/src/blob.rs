@@ -104,11 +104,21 @@ pub struct BlobStore {
 impl BlobStore {
     /// Opens (or creates) a blob store rooted at `root`.
     ///
+    /// `root` is created (or repaired) `0700`, same as `temporary` below it —
+    /// this holds raw messages and attachments, so it gets the same
+    /// treatment `Database::open` gives the SQLite file beside it. See
+    /// [`crate::perm`].
+    ///
     /// # Errors
     ///
-    /// [`Error::Io`] if the directory tree cannot be created.
+    /// [`Error::Io`](crate::error::Error::Io) if the directory tree cannot be created.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
+        // Named explicitly rather than left to `create_dir_all(&temporary)`
+        // creating it as an ancestor: an ancestor is only tightened when
+        // this call is the one that creates it, and a store from before this
+        // existed already has `root` sitting there at the umask.
+        crate::perm::ensure_private_dir(&root)?;
         let temporary = root.join(TEMPORARY);
         create_dir_all(&temporary)?;
         Ok(Self { root, temporary })
@@ -439,10 +449,19 @@ impl TemporaryBlob {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        let file = File::create(&path).map_err(|source| Error::Io {
-            path: path.clone(),
-            source,
-        })?;
+        // `private_file_options` rather than `File::create`: the temporary
+        // file is renamed into place as the published blob (`publish`,
+        // below), which does not change its mode, so whatever this creates
+        // it with is what the blob ends up at.
+        let file = crate::perm::private_file_options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|source| Error::Io {
+                path: path.clone(),
+                source,
+            })?;
         Ok(Self {
             path,
             file: Some(file),
@@ -514,10 +533,7 @@ fn shard_name(path: &Path) -> Option<&str> {
 }
 
 fn create_dir_all(path: &Path) -> Result<()> {
-    std::fs::create_dir_all(path).map_err(|source| Error::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    crate::perm::ensure_private_dir(path)
 }
 
 fn read_dir(path: &Path) -> Result<Vec<std::fs::DirEntry>> {

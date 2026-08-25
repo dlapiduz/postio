@@ -40,6 +40,7 @@ pub mod blob;
 pub mod db;
 pub mod error;
 pub mod migrations;
+mod perm;
 pub mod repository;
 #[cfg(feature = "test-support")]
 pub mod seed;
