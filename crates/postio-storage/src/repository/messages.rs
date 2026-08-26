@@ -412,7 +412,8 @@ const MESSAGE_COLUMNS: &str = "\
 id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_ids, subject,
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
-raw_blob_id, content_type, list_id, text_part_id, html_part_id";
+raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
+html_part_id, html_part_headers";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -1170,7 +1171,8 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
                 uid_validity = ?22, mod_seq = ?23, remote_id = ?24, body_state = ?25,
                 flags_dirty = ?26, has_pending_operations = ?27, deleted_locally = ?28,
                 last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31, list_id = ?32,
-                text_part_id = ?33, html_part_id = ?34
+                text_part_id = ?33, text_part_headers = ?34,
+                html_part_id = ?35, html_part_headers = ?36
           WHERE id = ?1",
         params_from_iter(row_values(id, message)),
     )?;
@@ -1196,10 +1198,11 @@ fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
                                draft, deleted, has_attachments, uid, uid_validity, mod_seq,
                                remote_id, body_state, flags_dirty, has_pending_operations,
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
-                               list_id, text_part_id, html_part_id)
+                               list_id, text_part_id, text_part_headers,
+                               html_part_id, html_part_headers)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34)",
+                 ?32, ?33, ?34, ?35, ?36)",
         params_from_iter(row_values(0, message)),
     )?;
     Ok(MessageId::new(connection.last_insert_rowid()))
@@ -1274,7 +1277,9 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
         maybe_text(message.content_type.clone()),
         maybe_text(message.list_id.clone()),
         maybe_text(message.text_part_id.clone()),
+        maybe_text(message.text_part_headers.clone()),
         maybe_text(message.html_part_id.clone()),
+        maybe_text(message.html_part_headers.clone()),
     ]
 }
 
@@ -1458,7 +1463,9 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         content_type: row.get(24)?,
         list_id: row.get(25)?,
         text_part_id: row.get(26)?,
-        html_part_id: row.get(27)?,
+        text_part_headers: row.get(27)?,
+        html_part_id: row.get(28)?,
+        html_part_headers: row.get(29)?,
     })
 }
 
