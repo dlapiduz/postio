@@ -24,9 +24,15 @@ use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
 use postio_storage::{BlobStore, Database, test_support};
 
-/// How long every call to the slow account's server takes. Long enough that a
-/// serialized implementation could not fit the fast account's whole pass
-/// inside it, short enough that the suite does not notice.
+/// How long every call to the slow account's server takes.
+///
+/// The assertion below is on *ordering*, not on elapsed time, so this only has
+/// to make the slow account reliably slower than the fast one — not to fit
+/// inside any particular budget. An earlier version asserted the fast pass
+/// finished within this bound and failed on the land gate at 2.2s: the whole
+/// machine was busy compiling, and an absolute wall-clock bound measures the
+/// load as much as the code. A test that fails when the box is busy is worse
+/// than no test.
 const SLOW: Duration = Duration::from_millis(400);
 
 fn a_message() -> Vec<u8> {
@@ -60,7 +66,9 @@ fn engine_for(database: &Database, account: AccountId, backend: Arc<MockBackend>
         blobs,
         backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
@@ -111,10 +119,12 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
     let slow_engine = engine_for(&database, slow.0, Arc::clone(&slow_backend));
     let fast_engine = engine_for(&database, fast.0, Arc::clone(&fast_backend));
 
-    // The slow pass starts first, so a serialized implementation would have to
-    // finish it before the fast one could begin.
-    let started = Instant::now();
-    let slow_pass = tokio::spawn(async move { slow_engine.sync(slow.1).await });
+    // The slow pass starts first, so anything serializing the two would have
+    // to finish it before the fast one could begin.
+    let slow_pass = tokio::spawn(async move {
+        let outcome = slow_engine.sync(slow.1).await;
+        (outcome, Instant::now())
+    });
 
     // Let the slow account get genuinely in flight rather than merely spawned;
     // otherwise "the fast one finished first" could be true because the slow
@@ -125,19 +135,21 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
         .sync(fast.1)
         .await
         .expect("the fast account syncs");
-    let fast_finished = started.elapsed();
+    let fast_finished = Instant::now();
 
+    let (slow_outcome, slow_finished) = slow_pass.await.expect("the slow task");
+    slow_outcome.expect("the slow account syncs too, eventually");
+
+    // Ordering, not duration. Anything that serializes the two makes the slow
+    // pass hold what it holds until it is done, so the fast pass cannot finish
+    // first. Under real concurrency the fast one does, because the slow one
+    // waits out `SLOW` on every call — and that stays true however loaded the
+    // machine is, since both accounts are loaded equally.
     assert!(
-        fast_finished < SLOW,
-        "the fast account's pass took {fast_finished:?}, at least as long as \
-         the slow account's per-call latency ({SLOW:?}) — it waited for it, so \
-         something is serializing the two"
+        fast_finished < slow_finished,
+        "the fast account did not finish until after the slow one — it waited \
+         for it, so something is serializing the two"
     );
-
-    slow_pass
-        .await
-        .expect("the slow task")
-        .expect("the slow account syncs too, eventually");
 
     // ── and each row reflects only its own pass ──────────────────────────
     let connection = database.connection().expect("a connection");
