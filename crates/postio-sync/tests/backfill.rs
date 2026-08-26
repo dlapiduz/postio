@@ -559,3 +559,114 @@ async fn a_cancelled_fetch_stores_nothing() {
     );
     let _ = &local.database;
 }
+
+// ---------------------------------------------------------------------------
+// And it reaches the search index
+// ---------------------------------------------------------------------------
+
+/// The indexed body text for `id`, or `None` if it has no shadow row at all.
+fn indexed_body(connection: &postio_storage::PooledConnection, id: MessageId) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT body FROM search_documents WHERE message_id = ?1",
+            [id.get()],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+}
+
+/// Issue #327: `index_body` existed, was tested, and nothing ever called it.
+///
+/// The metadata columns — sender, recipients, subject, filenames — are kept
+/// current by SQL triggers, so they were always right. `body` is the one
+/// column no trigger can compute: the text lives in the blob store, and the
+/// only moment anything holds it is the moment it is fetched. Nothing did
+/// the call, so `body` was empty on every message ever synced and search
+/// answered a question about a subject and the same question about a body
+/// differently — which is what "search is inconsistent" turned out to mean.
+#[tokio::test]
+async fn a_fetched_body_becomes_searchable_text() {
+    let backend = server(2).await;
+    let local = local();
+    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[1];
+
+    assert_eq!(
+        indexed_body(&local.connection, id).as_deref(),
+        Some(""),
+        "the header pass leaves the body column empty, which is the state \
+         this test is about leaving behind"
+    );
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    assert_eq!(
+        indexed_body(&local.connection, id).as_deref(),
+        Some(format!("The body of note {uid}.\r\n").as_str()),
+        "the body landed in the blob store and never reached the index, so \
+         a word that appears only in a message's body finds nothing (#327)"
+    );
+}
+
+/// The other half of the same call: an HTML-only message is indexed as its
+/// *text*, never as its markup.
+///
+/// Marketing mail, calendar invitations and anything composed in a webmail
+/// client have no `text/plain` alternative at all, so this is the ordinary
+/// case rather than an exotic one. Putting the markup in would make every
+/// such message a hit for `div`, for `href`, and for the host of every
+/// tracking redirect it carries — none of which the message says.
+#[tokio::test]
+async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
+    let raw = b"From: Ada Lovelace <ada@example.com>\r\n\
+         Subject: Quarterly\r\n\
+         Message-ID: <html-1@example.com>\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\
+         \r\n\
+         <div><p>Turbines <a href=\"https://tracker.example/click?id=7\">stayed \
+         nominal</a> all quarter.</p></div>\r\n"
+        .to_vec();
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(MockMessage::new(raw).with_internal_date(at(1)));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 4_096),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let indexed = indexed_body(&local.connection, id).expect("a shadow row");
+    assert!(
+        indexed.contains("stayed nominal"),
+        "an HTML-only message is not findable by anything it actually says: \
+         indexed as {indexed:?}"
+    );
+    for markup in ["div", "href", "tracker.example"] {
+        assert!(
+            !indexed.contains(markup),
+            "{markup:?} is in the index, so this message is a hit for a word \
+             it never contained: {indexed:?}"
+        );
+    }
+}

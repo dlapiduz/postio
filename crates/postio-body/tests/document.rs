@@ -287,6 +287,40 @@ fn to_text_is_readable_rather_than_a_tag_soup() {
 }
 
 #[test]
+fn to_search_text_keeps_the_words_and_drops_the_addresses() {
+    // #327. The index is the one reader that must not be told where a link
+    // goes: a message linking to `tracker.example` does not *say*
+    // "tracker.example" anywhere a person can see, so indexing it makes that
+    // message answer a query it has no business answering -- and one
+    // shortener would then answer for every campaign that used it. The
+    // `[image]` placeholder is the same mistake in miniature: it would make
+    // every message carrying a picture a hit for the word "image".
+    let text = every_shape().to_search_text();
+
+    assert!(text.contains("plain, with bold and italic"));
+    assert!(
+        text.contains("a link"),
+        "the words a person reads are still there: {text}"
+    );
+    assert!(
+        !text.contains("example.com"),
+        "a link's address is in the indexable text: {text}"
+    );
+    assert!(text.contains("a picture"), "alt text is content: {text}");
+    assert!(
+        !text.contains("[image"),
+        "the placeholder is not something the message says: {text}"
+    );
+    // The quoting form is unchanged, which is the other half of the claim:
+    // this is a second rendering, not a change to the one replies use.
+    assert!(
+        every_shape()
+            .to_text()
+            .contains("a link <https://example.com/a?b=c&d=e>")
+    );
+}
+
+#[test]
 fn text_escaping_survives_a_round_trip() {
     let document = Document {
         blocks: vec![Block::Paragraph(vec![Inline::Text(
