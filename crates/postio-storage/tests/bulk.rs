@@ -736,3 +736,123 @@ fn the_flags_with_columns_are_the_five_that_sort_first() {
         "the columns `set_flag_on_set` rebuilds the head from, in that order"
     );
 }
+
+// ── Smart folders (#52) ──────────────────────────────────────────────────
+//
+// Flagged is a predicate, not a folder: its rows are spread across every
+// mailbox in the account. `MessageSet::Flagged` is how a bulk verb aims at
+// it without the view first having to say which rows it means.
+
+/// Flag `messages`, straight into the column.
+fn flag(connection: &Connection, messages: &[MessageId]) {
+    for message in messages {
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id = ?1",
+                [message.get()],
+            )
+            .expect("flag a message");
+    }
+}
+
+#[test]
+fn the_flagged_set_spans_every_mailbox_in_the_account() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let in_inbox = fill(&connection, world.inbox, 6);
+    let in_archive = fill(&connection, world.archive, 4);
+
+    // Three flagged in one folder, two in another; the rest are not.
+    flag(&connection, &in_inbox[..3]);
+    flag(&connection, &in_archive[..2]);
+
+    let counted = MessageRepository::new(&connection)
+        .count_set(&MessageSet::flagged(world.account.id))
+        .expect("a count");
+
+    assert_eq!(
+        counted, 5,
+        "the set is every flagged message in the account, wherever it is filed"
+    );
+}
+
+#[test]
+fn a_deselected_row_comes_out_of_the_flagged_set_too() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let messages = fill(&connection, world.inbox, 5);
+    flag(&connection, &messages);
+
+    let counted = MessageRepository::new(&connection)
+        .count_set(&MessageSet::Flagged {
+            account: world.account.id,
+            except: vec![messages[0], messages[1]],
+        })
+        .expect("a count");
+
+    assert_eq!(counted, 3, "clicking two rows off takes them out of it");
+}
+
+#[test]
+fn a_smart_folder_set_names_no_mailbox() {
+    // The same refusal `Feed::mailbox()` makes, one layer down: a caller
+    // that needs somewhere to file a message must not be handed a folder
+    // that does not exist.
+    assert_eq!(
+        MessageSet::flagged(postio_model::AccountId::new(1)).mailbox(),
+        None
+    );
+}
+
+#[test]
+fn narrowing_the_flagged_set_to_one_folder_keeps_it_a_predicate() {
+    // What a cross-folder move needs. The queue's `Operation::Move` payload
+    // carries a single `from`, written once for the whole run, so a move out
+    // of a smart folder has to be grouped by source mailbox -- and each group
+    // has to stay a predicate rather than becoming a list of ids.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let in_inbox = fill(&connection, world.inbox, 4);
+    let in_archive = fill(&connection, world.archive, 3);
+    flag(&connection, &in_inbox);
+    flag(&connection, &in_archive);
+
+    let repository = MessageRepository::new(&connection);
+    assert_eq!(
+        repository
+            .count_set(&MessageSet::flagged(world.account.id).within(world.inbox))
+            .expect("a count"),
+        4
+    );
+    assert_eq!(
+        repository
+            .count_set(&MessageSet::flagged(world.account.id).within(world.archive))
+            .expect("a count"),
+        3
+    );
+}
+
+#[test]
+fn the_source_mailboxes_of_a_set_are_answered_without_naming_its_rows() {
+    // One indexed `SELECT DISTINCT` over the same predicate, so grouping a
+    // cross-folder move costs the folders it spans rather than the messages.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let in_inbox = fill(&connection, world.inbox, 500);
+    let in_archive = fill(&connection, world.archive, 500);
+    flag(&connection, &in_inbox[..2]);
+    flag(&connection, &in_archive[..2]);
+
+    let mut folders = MessageRepository::new(&connection)
+        .mailboxes_of_set(&MessageSet::flagged(world.account.id))
+        .expect("the source folders");
+    folders.sort_by_key(|mailbox| mailbox.get());
+
+    let mut expected = vec![world.inbox, world.archive];
+    expected.sort_by_key(|mailbox| mailbox.get());
+    assert_eq!(folders, expected);
+}

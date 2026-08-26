@@ -188,10 +188,10 @@ impl Selection {
 pub enum Resolved {
     /// These messages, named.
     Messages(Vec<MessageId>),
-    /// Every message in a mailbox, less the ones taken back out.
+    /// Every message the list is showing, less the ones taken back out.
     Everything {
-        /// The mailbox the predicate is about.
-        mailbox: MailboxId,
+        /// What the list is a view of — a folder, or a smart folder.
+        scope: ViewScope,
         /// Rows the user removed from the selection.
         except: Vec<MessageId>,
     },
@@ -205,9 +205,54 @@ pub enum Resolved {
     Batch {
         /// The queue rows the bulk action wrote.
         range: OperationRange,
-        /// The mailbox those messages are in now.
-        from: MailboxId,
+        /// The account those messages belong to.
+        account: AccountId,
+        /// The mailbox those messages are in now, when they are all in one.
+        from: Option<MailboxId>,
     },
+}
+
+/// What the message list is a view of.
+///
+/// A real folder and a smart folder are both things "everything" can be
+/// relative to, and until #52 only the first could be: app state held an
+/// `Option<MailboxId>`, so `Ctrl+A` in Flagged resolved to nothing and every
+/// bulk verb rejected with "Nothing selected".
+///
+/// The asymmetry that made that happen is still here and is still right —
+/// [`ViewScope::mailbox`] answers `None` for a smart folder, because a smart
+/// folder is not somewhere a message can be *put*. What changed is that the
+/// scope itself survives, so a predicate can be about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ViewScope {
+    /// One folder, as the server has it.
+    Mailbox(MailboxId),
+    /// Everything flagged in an account, wherever it is filed.
+    Flagged(AccountId),
+}
+
+impl ViewScope {
+    /// The folder this scope names, when it names one.
+    ///
+    /// `None` for a smart folder, and load-bearing: a destination has to be a
+    /// real mailbox, and a view assembled by a predicate is not one.
+    pub fn mailbox(self) -> Option<MailboxId> {
+        match self {
+            ViewScope::Mailbox(mailbox) => Some(mailbox),
+            ViewScope::Flagged(_) => None,
+        }
+    }
+
+    /// The account this scope is within.
+    ///
+    /// `None` for a mailbox, whose account is the store's to answer — a
+    /// `MailboxId` does not carry one.
+    pub fn account(self) -> Option<AccountId> {
+        match self {
+            ViewScope::Mailbox(_) => None,
+            ViewScope::Flagged(account) => Some(account),
+        }
+    }
 }
 
 /// One step of the back stack: where the user was, and where they were in it.
@@ -271,7 +316,7 @@ impl Scope {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppState {
     scope: Scope,
-    mailbox: Option<MailboxId>,
+    viewing: Option<ViewScope>,
     selected: Selection,
     focus: Option<MessageId>,
     view: ViewMode,
@@ -304,9 +349,19 @@ impl AppState {
         self.scope
     }
 
-    /// The mailbox the list is showing, if one has been opened.
+    /// The mailbox the list is showing, if it is showing a real one.
+    ///
+    /// `None` in a smart folder — which is the answer every caller wants,
+    /// because they all go on to use it as somewhere a message could be put.
+    /// [`AppState::viewing`] is the one that says what the list is scoped to
+    /// whether or not that is a folder.
     pub fn mailbox(&self) -> Option<MailboxId> {
-        self.mailbox
+        self.viewing.and_then(ViewScope::mailbox)
+    }
+
+    /// What the list is a view of, folder or smart folder.
+    pub fn viewing(&self) -> Option<ViewScope> {
+        self.viewing
     }
 
     /// What an action would hit.
@@ -345,15 +400,23 @@ impl AppState {
             MessageTarget::Thread(thread) => Some(Resolved::Thread(*thread)),
             // Taken at its word for the same reason a named list of messages
             // is: undo built this, and it names exactly what it moved.
-            MessageTarget::Batch { range, from } => Some(Resolved::Batch {
+            MessageTarget::Batch {
+                range,
+                account,
+                from,
+            } => Some(Resolved::Batch {
                 range: *range,
+                account: *account,
                 from: *from,
             }),
             MessageTarget::Messages(messages) if messages.is_empty() => None,
             MessageTarget::Messages(messages) => Some(Resolved::Messages(messages.clone())),
             MessageTarget::Selection => match &self.selected {
+                // The scope, not the mailbox. A smart folder has no mailbox
+                // and asking it for one is what made `Ctrl+A` in Flagged
+                // resolve to nothing (#52).
                 Selection::Everything { except } => Some(Resolved::Everything {
-                    mailbox: self.mailbox?,
+                    scope: self.viewing?,
                     except: except.clone(),
                 }),
                 Selection::These(messages) if !messages.is_empty() => {
@@ -417,7 +480,7 @@ impl AppState {
             // The old mailbox and rows belong to an account that is no longer
             // on screen; keeping them would let an action land on a message
             // the user cannot see.
-            state.mailbox = None;
+            state.viewing = None;
             state.clear_position();
         })
     }
@@ -434,18 +497,32 @@ impl AppState {
                 return;
             }
             state.scope = Scope::Unified;
-            state.mailbox = None;
+            state.viewing = None;
             state.clear_position();
         })
     }
 
     /// Open a mailbox in the list, dropping a selection from the old one.
     pub fn open_mailbox(&mut self, mailbox: MailboxId) -> Vec<Event> {
+        self.open_view(ViewScope::Mailbox(mailbox))
+    }
+
+    /// Open the account's Flagged view, dropping a selection from the old one.
+    pub fn open_flagged(&mut self, account: AccountId) -> Vec<Event> {
+        self.open_view(ViewScope::Flagged(account))
+    }
+
+    /// Point the list at `scope`, dropping a selection from wherever it was.
+    ///
+    /// A selection is relative to the list in view and does not survive a
+    /// change of it — the list does the same, and a predicate carried across
+    /// would name rows the user can no longer see.
+    pub fn open_view(&mut self, scope: ViewScope) -> Vec<Event> {
         self.commit(|state| {
-            if state.mailbox == Some(mailbox) {
+            if state.viewing == Some(scope) {
                 return;
             }
-            state.mailbox = Some(mailbox);
+            state.viewing = Some(scope);
             state.clear_position();
         })
     }
@@ -598,8 +675,8 @@ impl AppState {
         {
             events.push(Event::MailboxesChanged { account });
         }
-        if self.mailbox != next.mailbox
-            && let Some(mailbox) = next.mailbox
+        if self.viewing != next.viewing
+            && let Some(mailbox) = next.mailbox()
             // A mailbox is only ever selected within an account, so the id
             // here is the mailbox's owner. The let-chain keeps the diff total:
             // a unified view holds no mailbox (both `open_unified` and
@@ -753,7 +830,7 @@ mod tests {
         assert_eq!(
             state.resolve(&MessageTarget::Selection),
             Some(Resolved::Everything {
-                mailbox: MailboxId::new(4),
+                scope: ViewScope::Mailbox(MailboxId::new(4)),
                 except: vec![MessageId::new(7)],
             })
         );
@@ -784,6 +861,56 @@ mod tests {
         assert_eq!(
             state.resolve(&MessageTarget::Thread(ThreadId::new(5))),
             Some(Resolved::Thread(ThreadId::new(5)))
+        );
+    }
+
+    #[test]
+    fn select_all_in_a_smart_folder_is_about_the_smart_folder() {
+        // #52: `Feed::mailbox()` answers `None` in Flagged on purpose -- a
+        // smart folder must not claim to be a mailbox -- and app state used
+        // to hold nothing but a mailbox, so the predicate had nowhere to
+        // live. `Ctrl+A` resolved to `None` and every bulk verb rejected
+        // with "Nothing selected": honest, and not what was asked.
+        let mut state = AppState::new();
+        state.open_flagged(AccountId::new(3));
+        state.select_all();
+        state.toggle_selection(MessageId::new(9));
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            Some(Resolved::Everything {
+                scope: ViewScope::Flagged(AccountId::new(3)),
+                except: vec![MessageId::new(9)],
+            })
+        );
+    }
+
+    #[test]
+    fn a_smart_folder_still_refuses_to_call_itself_a_mailbox() {
+        // The asymmetry #52 had to preserve while fixing the rest of it: a
+        // scope that can be selected over is still not somewhere a message
+        // can be filed, and every caller reading `mailbox()` is asking the
+        // second question.
+        let mut state = AppState::new();
+        state.open_flagged(AccountId::new(3));
+
+        assert_eq!(state.mailbox(), None);
+        assert_eq!(state.viewing(), Some(ViewScope::Flagged(AccountId::new(3))));
+    }
+
+    #[test]
+    fn leaving_a_smart_folder_drops_its_selection() {
+        // A predicate is relative to the list in view. Carried into a folder
+        // it would name rows that are no longer on screen.
+        let mut state = AppState::new();
+        state.open_flagged(AccountId::new(3));
+        state.select_all();
+        state.open_mailbox(MailboxId::new(4));
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            None,
+            "the whole-view predicate must not survive the change of view"
         );
     }
 

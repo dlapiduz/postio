@@ -27,11 +27,11 @@
 //! whose reader was dropped on purpose.
 
 use postio_core::bridge::{CommandSender, EventSink, EventStream, event_channel};
-use postio_core::state::{Selection, SharedState};
+use postio_core::state::{Selection, SharedState, ViewScope};
 use postio_core::{Command, CommandId, Event};
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
-use postio_model::{MailboxId, MessageId};
+use postio_model::MessageId;
 
 use adw::prelude::*;
 use gtk::glib;
@@ -45,17 +45,22 @@ use gtk::glib;
 pub fn mirror(
     state: &SharedState,
     quiet: &EventSink,
-    mailbox: Option<MailboxId>,
+    scope: Option<ViewScope>,
     selection: &Selection,
     focus: Option<MessageId>,
 ) {
     state.update(quiet, |app| {
         let mut events = Vec::new();
-        if let Some(mailbox) = mailbox {
-            // Opening a different mailbox drops the selection with it, on
-            // both sides — the list does the same. So this goes first, or it
+        if let Some(scope) = scope {
+            // Opening a different view drops the selection with it, on both
+            // sides — the list does the same. So this goes first, or it
             // would throw away the selection just mirrored.
-            events.extend(app.open_mailbox(mailbox));
+            //
+            // The *scope*, not the mailbox it may or may not name: a smart
+            // folder has no mailbox, and telling app state only about
+            // mailboxes is what left `Ctrl+A` in Flagged with nothing to be
+            // relative to (#52).
+            events.extend(app.open_view(scope));
         }
         match selection {
             Selection::These(messages) => events.extend(app.select(messages.clone(), focus)),
@@ -73,6 +78,20 @@ pub fn mirror(
         }
         events
     });
+}
+
+/// The app-state scope a feed scope stands for.
+///
+/// `None` for a thread drill-in: a conversation is a *destination for a
+/// verb*, not a view a whole-view selection is relative to — `Ctrl+A` inside
+/// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
+/// gets acted on instead.
+fn view_scope(scope: postio_gtk::feed::FeedScope) -> Option<ViewScope> {
+    match scope {
+        postio_gtk::feed::FeedScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
+        postio_gtk::feed::FeedScope::Flagged(account) => Some(ViewScope::Flagged(account)),
+        postio_gtk::feed::FeedScope::Thread(_) => None,
+    }
 }
 
 /// Whether this invocation is the bus's business.
@@ -115,7 +134,7 @@ pub fn install(
             mirror(
                 &state,
                 &quiet,
-                feeds.messages.mailbox(),
+                feeds.messages.scope().and_then(view_scope),
                 &list.selection().selection(),
                 list.cursor_id(),
             );
@@ -209,6 +228,8 @@ mod tests {
         sink
     }
 
+    use postio_model::MailboxId;
+
     fn mailbox() -> MailboxId {
         MailboxId::new(4)
     }
@@ -254,7 +275,7 @@ mod tests {
         mirror(
             &state,
             &quiet(),
-            Some(mailbox()),
+            Some(ViewScope::Mailbox(mailbox())),
             &Selection::These(Vec::new()),
             Some(MessageId::new(9)),
         );
@@ -274,7 +295,7 @@ mod tests {
         mirror(
             &state,
             &quiet(),
-            Some(mailbox()),
+            Some(ViewScope::Mailbox(mailbox())),
             &Selection::These(vec![MessageId::new(1), MessageId::new(2)]),
             Some(MessageId::new(9)),
         );
@@ -296,7 +317,7 @@ mod tests {
         mirror(
             &state,
             &quiet(),
-            Some(mailbox()),
+            Some(ViewScope::Mailbox(mailbox())),
             &Selection::Everything {
                 except: vec![MessageId::new(7)],
             },
@@ -306,7 +327,7 @@ mod tests {
         assert_eq!(
             state.read(|app| app.resolve(&MessageTarget::Selection)),
             Some(postio_core::state::Resolved::Everything {
-                mailbox: mailbox(),
+                scope: ViewScope::Mailbox(mailbox()),
                 except: vec![MessageId::new(7)],
             }),
             "resolving it here would be the mailbox-sized read it exists to avoid"
@@ -321,7 +342,7 @@ mod tests {
         mirror(
             &state,
             &quiet(),
-            Some(mailbox()),
+            Some(ViewScope::Mailbox(mailbox())),
             &Selection::These(vec![MessageId::new(1)]),
             Some(MessageId::new(1)),
         );
@@ -329,7 +350,7 @@ mod tests {
         mirror(
             &state,
             &quiet(),
-            Some(MailboxId::new(5)),
+            Some(ViewScope::Mailbox(MailboxId::new(5))),
             &Selection::These(Vec::new()),
             None,
         );

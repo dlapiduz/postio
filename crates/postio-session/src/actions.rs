@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use postio_core::bridge::EventSink;
 use postio_core::dispatch::{CommandError, DispatcherBuilder};
-use postio_core::state::{Resolved, SharedState};
+use postio_core::state::{Resolved, SharedState, ViewScope};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::mailbox::MailboxRole;
@@ -111,11 +111,15 @@ enum Aim {
     Bulk {
         /// What to act on.
         set: MessageSet,
-        /// Whose account it is. Read from the mailbox rather than from a row,
-        /// because there is no row to read.
+        /// Whose account it is. Read from the mailbox, or carried by a scope
+        /// that already knows it, because there is no row to read.
         account: AccountId,
-        /// The folder those messages are in now.
-        from: MailboxId,
+        /// The folder those messages are in now, when they are all in one.
+        ///
+        /// `None` for a smart folder, whose rows are spread across the
+        /// account's folders — a move out of one has to be grouped by source
+        /// before it can be enqueued (#52).
+        from: Option<MailboxId>,
     },
 }
 
@@ -367,44 +371,90 @@ impl Actions {
         connection: &mut PooledConnection,
         set: MessageSet,
         account: AccountId,
-        from: MailboxId,
+        from: Option<MailboxId>,
         to: Destination,
         kind: UndoKind,
     ) -> Result<Applied, CommandError> {
         let destination = mailbox_for(connection, account, to)?;
-        if destination == from {
+        if from == Some(destination) {
             return Err(CommandError::rejected("Already there"));
         }
-        // The one number a bulk action is allowed to know, and the only thing
-        // that needs it is the sentence in the toast.
-        let count = MessageRepository::new(connection)
-            .count_set(&set)
-            .map_err(store_failure)? as usize;
-        if count == 0 {
+
+        // Which folders the rows are actually in.
+        //
+        // A folder selection answers itself. A smart folder does not: its
+        // rows are spread across the account, and the queue's `Operation`
+        // payload carries **one** `from` for the whole run `enqueue_set`
+        // writes — so a move out of Flagged has to be enqueued a source
+        // folder at a time or every row would claim to have come from
+        // whichever folder was named first. That is one `SELECT DISTINCT`
+        // over the same index, so it costs the folders the set spans and not
+        // the messages in it.
+        let sources = match from {
+            Some(from) => vec![from],
+            None => {
+                let mut sources = MessageRepository::new(connection)
+                    .mailboxes_of_set(&set)
+                    .map_err(store_failure)?;
+                // Whatever is already filed where it is going is not moving.
+                // Enqueueing it would tell the server to move a message onto
+                // itself and put it inside the run `u` takes back.
+                sources.retain(|mailbox| *mailbox != destination);
+                sources
+            }
+        };
+        if sources.is_empty() {
             return Err(CommandError::rejected("There is nothing here to move"));
         }
 
-        let operation = match kind {
-            UndoKind::Delete => Operation::Delete {
-                from,
-                trash: destination,
-            },
-            _ => Operation::Move {
-                from,
-                to: destination,
-            },
-        };
         let at = Utc::now();
         let transaction = connection.transaction().map_err(store_failure)?;
-        // Enqueue before moving: the predicate for a whole-mailbox selection
-        // is "the rows in this folder", and after the move there are none.
-        let range = OperationQueueRepository::new(&transaction)
-            .enqueue_set(account, &set, &operation, at)
-            .map_err(store_failure)?
-            .ok_or_else(|| CommandError::rejected("There is nothing here to move"))?;
-        MessageRepository::new(&transaction)
-            .move_set(&set, destination)
-            .map_err(store_failure)?;
+        let mut count = 0usize;
+        let mut inverse = Vec::new();
+        let mut reloaded = vec![destination];
+        for source in sources {
+            // Each group is still a predicate: `within` is a column
+            // comparison, not a list of ids.
+            let group = set.clone().within(source);
+            let operation = match kind {
+                UndoKind::Delete => Operation::Delete {
+                    from: source,
+                    trash: destination,
+                },
+                _ => Operation::Move {
+                    from: source,
+                    to: destination,
+                },
+            };
+            // Enqueue before moving: the predicate for a whole-view selection
+            // names the rows as they are now, and after the move it does not.
+            let Some(range) = OperationQueueRepository::new(&transaction)
+                .enqueue_set(account, &group, &operation, at)
+                .map_err(store_failure)?
+            else {
+                continue;
+            };
+            count += MessageRepository::new(&transaction)
+                .move_set(&group, destination)
+                .map_err(store_failure)?;
+            reloaded.push(source);
+            inverse.push(Command::Move {
+                target: MessageTarget::Batch {
+                    range,
+                    account,
+                    from: Some(destination),
+                },
+                // Back to the folder this group came from, not to one folder
+                // for all of them.
+                to: Some(source),
+            });
+        }
+        if count == 0 {
+            // Nothing was written, so nothing has to be unwound — dropping
+            // the transaction rolls back the queue rows any empty group
+            // might have left.
+            return Err(CommandError::rejected("There is nothing here to move"));
+        }
         transaction.commit().map_err(store_failure)?;
 
         Ok(Applied {
@@ -414,17 +464,11 @@ impl Actions {
             count,
             removed: Vec::new(),
             arrived: None,
-            // Both ends reload. Neither can be told which rows moved, and the
-            // one they moved into is as changed as the one they left.
-            reloaded: vec![from, destination],
+            // Every end reloads. None of them can be told which rows moved,
+            // and the one they moved into is as changed as the ones they left.
+            reloaded,
             changed: Vec::new(),
-            inverse: vec![Command::Move {
-                target: MessageTarget::Batch {
-                    range,
-                    from: destination,
-                },
-                to: Some(from),
-            }],
+            inverse,
         })
     }
 
@@ -571,7 +615,7 @@ impl Actions {
         connection: &mut PooledConnection,
         set: MessageSet,
         account: AccountId,
-        from: MailboxId,
+        from: Option<MailboxId>,
         flag: Flag,
         want: Option<bool>,
     ) -> Result<Applied, CommandError> {
@@ -601,6 +645,21 @@ impl Actions {
             return Err(CommandError::rejected("Already set"));
         }
 
+        // Which folders the list has to reload afterwards, answered *now*.
+        //
+        // A folder selection knows. A smart folder does not, and it cannot be
+        // asked later: `MessageSet::Flagged`'s predicate is not stable across
+        // this write. Archiving everything flagged leaves the flag alone, so
+        // the set still matches afterwards — but a bulk *unflag* over Flagged
+        // empties its own predicate, and a query run after the commit would
+        // answer "no folders" for the change that touched the most.
+        let reloaded = match from {
+            Some(from) => vec![from],
+            None => MessageRepository::new(connection)
+                .mailboxes_of_set(&changing)
+                .map_err(store_failure)?,
+        };
+
         let one: FlagSet = std::iter::once(flag.clone()).collect();
         let operation = if wanted {
             Operation::SetFlags { flags: one }
@@ -620,7 +679,14 @@ impl Actions {
             .map_err(store_failure)?;
         transaction.commit().map_err(store_failure)?;
 
-        let target = MessageTarget::Batch { range, from };
+        // Nothing moved, so `from` is carried through untouched: `None` in a
+        // smart folder, where the rows stayed in as many folders as they
+        // started in. Undo aims at the queue run either way.
+        let target = MessageTarget::Batch {
+            range,
+            account,
+            from,
+        };
         let inverse = match flag {
             Flag::Seen => Command::MarkUnread {
                 target,
@@ -640,8 +706,8 @@ impl Actions {
             arrived: None,
             // The rows did not go anywhere, but naming the ones that changed
             // is the read this path exists to avoid — so the list reloads the
-            // folder rather than being handed eighty thousand ids.
-            reloaded: vec![from],
+            // folders rather than being handed eighty thousand ids.
+            reloaded,
             changed: Vec::new(),
             inverse: vec![inverse],
         })
@@ -820,24 +886,33 @@ impl Actions {
             .state
             .read(|app| app.resolve(target))
             .ok_or_else(|| CommandError::rejected("Nothing selected"))?;
-        let (set, from) = match resolved {
+        let (set, account, from) = match resolved {
             Resolved::Messages(ids) => return self.rows(connection, ids).map(Aim::Rows),
             Resolved::Thread(thread) => {
                 let ids = thread_messages(connection, thread)?;
                 return self.rows(connection, ids).map(Aim::Rows);
             }
-            Resolved::Everything { mailbox, except } => {
-                (MessageSet::InMailbox { mailbox, except }, mailbox)
-            }
-            Resolved::Batch { range, from } => (MessageSet::Queued(range), from),
+            Resolved::Everything { scope, except } => match scope {
+                ViewScope::Mailbox(mailbox) => (
+                    MessageSet::InMailbox { mailbox, except },
+                    // One row read, and it is a folder rather than a message:
+                    // the account is needed to find the Archive, and there is
+                    // no message to ask.
+                    account_of(connection, mailbox)?,
+                    Some(mailbox),
+                ),
+                // A smart folder carries its own account, so there is no
+                // folder to read one off — and no one folder its rows are in.
+                ViewScope::Flagged(account) => {
+                    (MessageSet::Flagged { account, except }, account, None)
+                }
+            },
+            Resolved::Batch {
+                range,
+                account,
+                from,
+            } => (MessageSet::Queued(range), account, from),
         };
-        // One row read, and it is a folder rather than a message: the account
-        // is needed to find the Archive, and there is no message to ask.
-        let account = MailboxRepository::new(connection)
-            .get(from)
-            .map_err(store_failure)?
-            .ok_or_else(|| CommandError::rejected("That folder is no longer here"))?
-            .account_id;
         Ok(Aim::Bulk { set, account, from })
     }
 
@@ -965,6 +1040,22 @@ fn store_failure(error: impl std::fmt::Display) -> CommandError {
     CommandError::failed("Could not save that change")
 }
 
+/// Which account a folder belongs to.
+///
+/// One row read, and it is a folder rather than a message: a whole-folder
+/// selection names no message to ask, and the account is what finds the
+/// Archive. A scope that already carries its account does not come here.
+fn account_of(
+    connection: &PooledConnection,
+    mailbox: MailboxId,
+) -> Result<AccountId, CommandError> {
+    Ok(MailboxRepository::new(connection)
+        .get(mailbox)
+        .map_err(store_failure)?
+        .ok_or_else(|| CommandError::rejected("That folder is no longer here"))?
+        .account_id)
+}
+
 /// A bus answering this module's verbs and nothing else.
 ///
 /// The application composes a larger one — see [`wire`] — so this exists for
@@ -1076,6 +1167,16 @@ mod tests {
         fn everything_in(&self, mailbox: MailboxId) {
             self.state
                 .update(&self.quiet, |app: &mut AppState| app.open_mailbox(mailbox));
+            self.state
+                .update(&self.quiet, |app: &mut AppState| app.select_all());
+        }
+
+        /// What `Ctrl+A` mirrors in a smart folder: Flagged open, and the
+        /// predicate over it. No mailbox, because there is not one.
+        fn everything_flagged(&self) {
+            let account = self.account.id;
+            self.state
+                .update(&self.quiet, |app: &mut AppState| app.open_flagged(account));
             self.state
                 .update(&self.quiet, |app: &mut AppState| app.select_all());
         }
@@ -1627,6 +1728,165 @@ mod tests {
             Some(("Archived 30 messages", true)),
             "one gesture, one sentence, and an undo behind it"
         );
+    }
+
+    // ── The whole *smart* folder at once (#52) ──────────────────────────
+
+    #[test]
+    fn ctrl_a_then_unflag_clears_the_whole_flagged_view() {
+        // The verb the issue says people most want over Flagged, and the one
+        // whose predicate is treacherous: unflagging is the write that empties
+        // the very set it is selecting on.
+        let world = world();
+        let flagged: Vec<MessageId> = (0..6)
+            .map(|index| {
+                let mailbox = if index % 2 == 0 {
+                    world.inbox
+                } else {
+                    world.archive
+                };
+                let message = world.message(mailbox, &[]);
+                world.flag(message, Flag::Flagged);
+                message
+            })
+            .collect();
+        let untouched = world.message(world.inbox, &[]);
+        world.everything_flagged();
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(false),
+            })
+            .expect("Ctrl+A in Flagged then unflag must not reject");
+
+        for message in &flagged {
+            assert!(
+                !world.flags_of(*message).contains(&Flag::Flagged),
+                "every flagged message in the account should have been cleared, \
+                 across folders"
+            );
+        }
+        assert!(!world.flags_of(untouched).contains(&Flag::Flagged));
+        assert_eq!(
+            world.queued().len(),
+            6,
+            "one queue row per message, written before the write emptied the \
+             predicate they were selected by"
+        );
+    }
+
+    #[test]
+    fn one_undo_puts_a_whole_flagged_view_back() {
+        // The ordering trap, proved from the other end: if the queue rows had
+        // been written after the flag came off, the run would be empty and
+        // `u` would have nothing to take back.
+        let world = world();
+        let flagged: Vec<MessageId> = (0..4)
+            .map(|index| {
+                let mailbox = if index % 2 == 0 {
+                    world.inbox
+                } else {
+                    world.archive
+                };
+                let message = world.message(mailbox, &[]);
+                world.flag(message, Flag::Flagged);
+                message
+            })
+            .collect();
+        world.everything_flagged();
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(false),
+            })
+            .expect("unflag everything");
+        let _ = world.drained();
+
+        world.run(Command::Undo).expect("undo");
+
+        for message in &flagged {
+            assert!(
+                world.flags_of(*message).contains(&Flag::Flagged),
+                "undo has to reach the rows the action touched, wherever they \
+                 are filed"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_a_then_archive_in_flagged_files_from_every_folder_it_spans() {
+        // A move out of a smart folder is grouped by source folder, because
+        // the queue's `Operation::Move` payload carries one `from` for the
+        // whole run it writes. Ungrouped, every row would claim to have come
+        // out of whichever folder happened to be named.
+        let world = world();
+        let from_inbox = world.message(world.inbox, &[]);
+        let from_trash = world.message(world.trash, &[]);
+        world.flag(from_inbox, Flag::Flagged);
+        world.flag(from_trash, Flag::Flagged);
+        let already_there = world.message(world.archive, &[]);
+        world.flag(already_there, Flag::Flagged);
+        world.everything_flagged();
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive everything flagged");
+
+        assert_eq!(world.mailbox_of(from_inbox), world.archive);
+        assert_eq!(world.mailbox_of(from_trash), world.archive);
+        assert_eq!(
+            world.mailbox_of(already_there),
+            world.archive,
+            "it was already there and stayed"
+        );
+
+        let queued = world.queued();
+        assert_eq!(
+            queued.len(),
+            2,
+            "the message already in the destination is not moving, so it gets \
+             no queue row telling the server to move it onto itself: {queued:#?}"
+        );
+        let sources: std::collections::BTreeSet<MailboxId> = queued
+            .iter()
+            .filter_map(|(_, operation)| match operation {
+                Operation::Move { from, .. } => Some(*from),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            [world.inbox, world.trash].into_iter().collect(),
+            "each queue row names the folder its own message actually came from"
+        );
+    }
+
+    #[test]
+    fn undoing_an_archive_out_of_flagged_returns_each_message_to_its_own_folder() {
+        let world = world();
+        let from_inbox = world.message(world.inbox, &[]);
+        let from_trash = world.message(world.trash, &[]);
+        world.flag(from_inbox, Flag::Flagged);
+        world.flag(from_trash, Flag::Flagged);
+        world.everything_flagged();
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive everything flagged");
+        let _ = world.drained();
+
+        world.run(Command::Undo).expect("undo");
+
+        assert_eq!(
+            world.mailbox_of(from_inbox),
+            world.inbox,
+            "back where it came from, not to one folder for all of them"
+        );
+        assert_eq!(world.mailbox_of(from_trash), world.trash);
     }
 
     #[test]
