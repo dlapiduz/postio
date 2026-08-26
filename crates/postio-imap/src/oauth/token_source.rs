@@ -6,11 +6,12 @@
 //! a password account never collide — and the access token stays a
 //! [`Password`] in memory, cached until shortly before it expires.
 //!
-//! What this type deliberately does not do: single-flight concurrent
-//! refreshes, or route a rejected token to `Attention`. Both are #194.
-//! `invalidate` here does the minimum that is still correct alone —
-//! drop the cached access token, so the *next* call refreshes — and #194
-//! adds the coalescing on top without changing this contract.
+//! Concurrent callers finding the same token stale share one refresh
+//! ([`SingleFlight`], ADR 0006 Q5): on a provider that rotates its refresh
+//! token on every use, the second and third simultaneous refresh present a
+//! token the server has already burned. `invalidate` drops the cached access
+//! token so the *next* call refreshes; routing a rejection to the user is the
+//! session layer's job, at the layer that saw the server say no.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,7 @@ use super::exchange::{self, RefreshExchange, TokenResponse};
 use crate::auth::TokenSource;
 use crate::cancel::CancelToken;
 use crate::secret::{AccountKey, Password, SecretError, SecretStore};
+use crate::single_flight::SingleFlight;
 
 /// How much earlier than its stated expiry a cached access token is treated
 /// as stale. A refresh takes a round trip; starting it before the token is
@@ -67,6 +69,12 @@ pub struct OwnClientTokenSource {
     client_id: String,
     client_secret: Option<String>,
     cache: Mutex<HashMap<AccountKey, CachedAccessToken>>,
+    /// One refresh per account at a time, its result shared.
+    ///
+    /// An OAuth provider's tokens expire together, so the pool's sessions and
+    /// the SMTP path all find the cache stale at once — the stampede is the
+    /// normal case here, not the edge (ADR 0006 Q5).
+    refreshing: SingleFlight<AccountKey, Result<Password, SecretError>>,
 }
 
 impl std::fmt::Debug for OwnClientTokenSource {
@@ -95,7 +103,16 @@ impl OwnClientTokenSource {
             client_id: client_id.into(),
             client_secret,
             cache: Mutex::new(HashMap::new()),
+            refreshing: SingleFlight::default(),
         }
+    }
+
+    /// The cached access token for `account`, if there is one and it is not
+    /// about to expire.
+    fn cached(&self, account: &AccountKey) -> Option<Password> {
+        let cache = self.cache.lock().expect("token cache mutex");
+        let cached = cache.get(account)?;
+        cached.is_fresh().then(|| cached.token.clone())
     }
 
     /// Records the tokens a completed [`super::authorize`] attempt
@@ -175,12 +192,22 @@ impl OwnClientTokenSource {
 #[async_trait]
 impl TokenSource for OwnClientTokenSource {
     async fn access_token(&self, account: &AccountKey) -> Result<Password, SecretError> {
-        if let Some(cached) = self.cache.lock().expect("token cache mutex").get(account)
-            && cached.is_fresh()
-        {
-            return Ok(cached.token.clone());
+        if let Some(token) = self.cached(account) {
+            return Ok(token);
         }
-        self.refresh(account).await
+        self.refreshing
+            .run(account, async {
+                // Checked again inside the flight. A caller that arrived in
+                // the moment the previous refresh landed leads a flight of
+                // its own, and it should take the token that refresh just
+                // produced rather than spend a second round trip finding out
+                // it exists.
+                if let Some(token) = self.cached(account) {
+                    return Ok(token);
+                }
+                self.refresh(account).await
+            })
+            .await
     }
 
     async fn invalidate(&self, account: &AccountKey) {
@@ -208,6 +235,20 @@ mod tests {
     /// A token endpoint that answers every request the same way, on a
     /// background thread, for as many requests as the test needs.
     fn mock_refresh_endpoint(body: &'static str) -> Url {
+        mock_refresh_endpoint_counting(body).0
+    }
+
+    /// As [`mock_refresh_endpoint`], handing back the count of requests it has
+    /// served — which is the only place "how many refreshes happened" can
+    /// honestly be observed.
+    fn mock_refresh_endpoint_counting(
+        body: &'static str,
+    ) -> (Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        (endpoint(body, std::sync::Arc::clone(&served)), served)
+    }
+
+    fn endpoint(body: &'static str, served: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Url {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("addr").port();
 
@@ -234,6 +275,7 @@ mod tests {
                 }
                 let mut discard = vec![0u8; content_length];
                 let _ = std::io::Read::read_exact(&mut reader, &mut discard);
+                served.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -365,5 +407,95 @@ mod tests {
             .await
             .expect("stored");
         assert_eq!(stored.expose(), "rotated");
+    }
+
+    // -----------------------------------------------------------------------
+    // The stampede — ADR 0006 Q5, #194
+    // -----------------------------------------------------------------------
+
+    /// The acceptance criterion, stated where it can be counted: a provider's
+    /// access tokens expire together, so a pool's sessions and the SMTP path
+    /// all find the cache stale within the same second. The token endpoint
+    /// must see one request.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_callers_during_expiry_cause_exactly_one_refresh() {
+        let (url, served) =
+            mock_refresh_endpoint_counting(r#"{"access_token":"one-refresh","expires_in":3600}"#);
+        let store = Arc::new(MemorySecretStore::new());
+        let source = Arc::new(OwnClientTokenSource::new(store, url, "client-1", None));
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("stale"),
+                    refresh_token: Some(Password::new("the-refresh-token")),
+                    expires_in: Some(Duration::from_secs(0)), // already stale
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..6 {
+            let source = Arc::clone(&source);
+            tasks.spawn(async move { source.access_token(&account()).await });
+        }
+        let mut tokens = Vec::new();
+        while let Some(joined) = tasks.join_next().await {
+            tokens.push(joined.expect("the task should not panic").expect("a token"));
+        }
+
+        assert_eq!(
+            served.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "six callers, one round trip to the token endpoint"
+        );
+        assert!(
+            tokens.iter().all(|token| token.expose() == "one-refresh"),
+            "and all six got the token that refresh produced"
+        );
+    }
+
+    /// The half a mutex would get wrong. A revoked grant answers every waiter
+    /// from the one attempt rather than letting each take its turn at an
+    /// endpoint that is already saying no.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_refresh_that_fails_is_also_only_attempted_once() {
+        let (url, served) = mock_refresh_endpoint_counting(r#"{"not":"a token response"}"#);
+        let store = Arc::new(MemorySecretStore::new());
+        let source = Arc::new(OwnClientTokenSource::new(store, url, "client-1", None));
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("stale"),
+                    refresh_token: Some(Password::new("the-refresh-token")),
+                    expires_in: Some(Duration::from_secs(0)),
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..5 {
+            let source = Arc::clone(&source);
+            tasks.spawn(async move { source.access_token(&account()).await });
+        }
+        let mut refused = 0;
+        while let Some(joined) = tasks.join_next().await {
+            assert!(joined.expect("the task should not panic").is_err());
+            refused += 1;
+        }
+
+        assert_eq!(refused, 5, "every caller was told");
+        assert_eq!(
+            served.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "and the endpoint was asked once"
+        );
     }
 }
