@@ -18,6 +18,7 @@ mod parts_open_wiring;
 mod reading;
 mod reading_offline;
 mod reclaim_wiring;
+mod reply_identity;
 mod reply_source;
 mod resume_draft;
 mod search_index;
@@ -72,6 +73,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "reclaim_wiring::opening_a_store_reclaims_what_nothing_references",
         reclaim_wiring::opening_a_store_reclaims_what_nothing_references as fn(),
+    ),
+    (
+        "reply_identity::a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity",
+        reply_identity::a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity
+            as fn(),
     ),
     (
         "reply_source::reply_forward_and_reply_all_act_on_the_message_under_the_cursor",
