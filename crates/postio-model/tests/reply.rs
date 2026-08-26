@@ -42,7 +42,7 @@ fn built_reply(
     let account = account();
     let identity = account.identities[0].clone();
     let source = test_corpus::load(fixture).parse();
-    let draft = reply::reply(&source, &account);
+    let draft = reply::reply(&source, &account, reply::plain_quote(&source));
     let built = outgoing::build(&draft, &identity, &[], Some(&source));
     (mime::parse(&built.raw), source, draft)
 }
@@ -157,7 +157,7 @@ fn forwarding_carries_no_threading_headers_at_all() {
     let identity = account.identities[0].clone();
     let source = test_corpus::load("list-thread-04-reply-deep").parse();
 
-    let draft = reply::forward(&source, &account);
+    let draft = reply::forward(&source, &account, reply::plain_forward(&source));
     assert!(draft.in_reply_to.is_none());
 
     // A forward starts a new conversation, so nothing is passed as the parent.

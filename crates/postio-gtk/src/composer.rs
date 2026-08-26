@@ -207,27 +207,15 @@ fn tracking_link_notice(domains: &[String]) -> Option<String> {
 /// still represents exactly what the message said, and nothing here changes
 /// what ends up in the draft.
 ///
-/// Mirrors [`quotable`]'s own condition exactly: a message that already has
-/// a text part is quoted *as that text*, not as anything derived from its
-/// HTML, so a link that exists only in the HTML alternative was never
-/// actually quoted and scanning for it would warn about content the reply
-/// does not contain.
+/// Scans exactly what the quote will contain, by construction: the same
+/// [`source_document`] the reply is built from (#340). A message whose only
+/// links live in a part that is not quoted — plain text carries no `<a>` —
+/// produces nothing to warn about.
 fn quoted_tracking_domains(source: &Message) -> Vec<String> {
-    let has_text = source
-        .body
-        .text
-        .as_deref()
-        .is_some_and(|text| !text.trim().is_empty());
-    if has_text {
-        return Vec::new();
-    }
-    let Some(html) = source.body.html.as_deref() else {
-        return Vec::new();
-    };
     let Some(sender_domain) = source.primary_from().and_then(|from| from.domain()) else {
         return Vec::new();
     };
-    postio_body::parse(html)
+    source_document(source)
         .link_hosts()
         .into_iter()
         .filter(|host| differs_from_sender(host, sender_domain))
@@ -336,56 +324,50 @@ type AttachHandler = Box<dyn Fn(std::path::PathBuf, AttachReady)>;
 /// are the only commands this maps, and only when the composer is not
 /// already open — replying to a reply in progress is not a thing.
 fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Draft> {
-    let source = quotable(source);
-    let source = source.as_ref();
     match id {
-        CommandId::Reply => Some(reply::reply(source, account)),
-        CommandId::ReplyAll => Some(reply::reply_all(source, account)),
-        CommandId::Forward => Some(reply::forward(source, account)),
+        CommandId::Reply => Some(reply::reply(source, account, quoted_body(source, false))),
+        CommandId::ReplyAll => Some(reply::reply_all(
+            source,
+            account,
+            quoted_body(source, false),
+        )),
+        CommandId::Forward => Some(reply::forward(source, account, quoted_body(source, true))),
         _ => None,
     }
 }
 
-/// Give `source` a text body when all it has is markup.
+/// The body a reply or forward starts from, built from the parsed document —
+/// ADR 0003 Q3's inversion, done in the crate that has both halves.
 ///
-/// `postio_model::reply` quotes plain text, and it cannot do otherwise:
-/// `postio-model` sits *below* `postio-body` in the layering — the body crate
-/// depends on the model, so the model cannot reach the parser without a
-/// cycle. Turning markup into text is therefore done here, in the crate that
-/// has both, and handed down as an ordinary text body.
-///
-/// Before this, replying to an HTML-only message produced an attribution line
-/// with nothing under it. Marketing mail, calendar invitations and anything
-/// composed in a webmail client are HTML-only, so "nothing to quote" was the
-/// common case rather than an edge one.
-///
-/// Borrowed unless there is something to add, so the ordinary path does not
-/// clone a message to change nothing about it.
-fn quotable(source: &Message) -> std::borrow::Cow<'_, Message> {
-    use std::borrow::Cow;
-
-    let has_text = source
-        .body
-        .text
-        .as_deref()
-        .is_some_and(|text| !text.trim().is_empty());
-    if has_text {
-        return Cow::Borrowed(source);
-    }
-    let Some(html) = source.body.html.as_deref() else {
-        return Cow::Borrowed(source);
+/// Rich, in both renderings: the HTML half is what the editor opens
+/// (`document_of` prefers it), and the text half is the same document's
+/// `to_text`, whose `> ` convention keeps the plain form every mail client
+/// expects. Building both from one [`postio_body::Document`] is the
+/// security property (hardening requirement 6): a script or a tracking
+/// pixel in the source has no representation in the document, so neither
+/// rendering can carry one.
+fn quoted_body(source: &Message, forward: bool) -> MessageBody {
+    let document = source_document(source);
+    let rich = if forward {
+        postio_body::forwarded(&document, &reply::forward_header(source))
+    } else {
+        postio_body::quoted_reply(&document, &reply::attribution(source))
     };
-    // `to_text` over the closed subset, never a general HTML-to-text pass:
-    // that is the function that makes most mail's plain-text part
-    // unreadable, and the reason `postio_body::Document` is a small closed
-    // set in the first place.
-    let text = postio_body::parse(html).to_text();
-    if text.trim().is_empty() {
-        return Cow::Borrowed(source);
+    let (text, html) = postio_body::render(&rich);
+    MessageBody {
+        text: Some(text),
+        html: Some(html),
     }
-    let mut owned = source.clone();
-    owned.body.text = Some(text);
-    Cow::Owned(owned)
+}
+
+/// The document `source`'s body means — the markup the reader showed when
+/// there is markup, the plain text otherwise.
+fn source_document(source: &Message) -> postio_body::Document {
+    match (&source.body.html, &source.body.text) {
+        (Some(html), _) => postio_body::parse(html),
+        (None, Some(text)) => postio_body::Document::from_text(text),
+        (None, None) => postio_body::Document::new(),
+    }
 }
 
 mod imp {
@@ -892,8 +874,19 @@ impl Composer {
         draft.use_identity(&identity);
         imp.draft.borrow_mut().identity_id = draft.identity_id;
 
-        let current = imp.body.document().to_text();
-        let wanted = draft.body.text.unwrap_or_default();
+        let current = imp.body.document();
+        let wanted = if current.is_plain_text() {
+            postio_body::Document::from_text(draft.body.text.as_deref().unwrap_or_default())
+        } else {
+            // At the block level, never through text: flattening a rich
+            // quote to `> ` lines to swap a signature would be the identity
+            // dropdown quietly destroying the reply (#340).
+            let signature = identity
+                .signature
+                .as_ref()
+                .map(|signature| signature.text.as_str());
+            postio_body::apply_signature(&current, signature)
+        };
         if current == wanted {
             return;
         }
@@ -905,7 +898,7 @@ impl Composer {
         // GtkTextView used to keep it precisely, and a caret assertion is
         // the test to bring back if that ever matters again.
         let was_filling = imp.filling.replace(true);
-        imp.body.load(postio_body::Document::from_text(&wanted));
+        imp.body.load(wanted);
         imp.body.place_caret_start();
         imp.filling.set(was_filling);
         self.refresh();
@@ -2840,15 +2833,86 @@ mod tests {
     }
 
     #[test]
-    fn a_message_with_its_own_text_part_is_never_scanned() {
-        // The quoted content in this case is the message's own plain-text
-        // part, not anything postio-body derived from the HTML -- so a
-        // link that exists only in the HTML alternative was never actually
-        // quoted, and flagging it would warn about a link the reply does
-        // not contain.
+    fn a_reply_to_a_rich_message_quotes_its_structure_not_flattened_text() {
+        // #340: the quote is the parsed document, so the editor opens on a
+        // real Quote block with the source's structure inside it — and the
+        // text half still reads as the `> ` convention.
+        let mut source = html_only_source_with_a_tracking_link();
+        source.body = MessageBody {
+            text: Some("The lamp has shipped".to_owned()),
+            html: Some("<p>The lamp <strong>has shipped</strong></p>".to_owned()),
+        };
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
+
+        let document = document_of(&draft.body);
+        assert!(
+            document.blocks.iter().any(|block| matches!(
+                block,
+                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
+                    inner,
+                    postio_body::Block::Paragraph(inlines) if inlines
+                        .iter()
+                        .any(|inline| matches!(inline, postio_body::Inline::Strong(_)))
+                ))
+            )),
+            "{document:?}"
+        );
+        let text = draft.body.text.expect("a text half");
+        assert!(text.contains("> The lamp"), "{text}");
+        assert!(text.contains("wrote:"), "{text}");
+    }
+
+    #[test]
+    fn a_forward_of_a_hostile_message_carries_no_load_and_no_script() {
+        // ADR 0003 hardening requirement 6, at the wiring level: the draft a
+        // forward opens with is built from the closed document type, so the
+        // pixel and the script have no representation in either half.
+        let mut source = html_only_source_with_a_tracking_link();
+        source.subject = Some("Your order".to_owned());
+        source.body.html = Some(
+            r#"<p>Your order <b>has shipped</b>. <img src="https://pixel.tracker.example.org/o.gif" width="1" height="1"> <script>document.location='https://evil.example.org'</script></p>"#
+                .to_owned(),
+        );
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        let draft = reply_draft(CommandId::Forward, &source, &account).expect("a forward");
+
+        let html = draft.body.html.expect("a forward is rich");
+        let text = draft.body.text.expect("and has a text half");
+        for leak in [
+            "<img",
+            "<script",
+            "pixel.tracker.example.org",
+            "evil.example.org",
+        ] {
+            assert!(
+                !html.contains(leak),
+                "{leak} leaked:
+{html}"
+            );
+            assert!(
+                !text.contains(leak),
+                "{leak} leaked:
+{text}"
+            );
+        }
+        assert!(html.contains("has shipped"), "{html}");
+        assert!(text.contains("Forwarded message"), "{text}");
+        assert!(text.contains("Subject: Your order"), "{text}");
+    }
+
+    #[test]
+    fn a_message_with_both_parts_is_scanned_because_the_html_is_what_gets_quoted() {
+        // Before #340, a text part meant the reply quoted that text and the
+        // HTML's links were never in it. The rich quote is built from the
+        // markup the reader showed, so its links are exactly what the reply
+        // re-sends — and what the notice must name.
         let mut source = html_only_source_with_a_tracking_link();
         source.body.text = Some("Shop now: see the HTML version".to_owned());
-        assert!(quoted_tracking_domains(&source).is_empty());
+        assert_eq!(
+            quoted_tracking_domains(&source),
+            ["click.tracker.example.org"]
+        );
     }
 
     #[test]
