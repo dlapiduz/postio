@@ -45,7 +45,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
-use postio_imap::backend::{BackendError, MailBackend, VecSink};
+use postio_imap::backend::{BackendError, BodyPart, MailBackend, VecSink};
 use postio_imap::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
@@ -614,9 +614,20 @@ pub fn request_body(
 /// that claims a body it does not have, which nothing can detect and nothing
 /// can repair.
 ///
-/// Attachment payloads are not pulled here. They are fetched per part when the
-/// user opens one, which is why the size cap can be measured against
-/// `RFC822.SIZE` and still mean something.
+/// # Two axes, and why this fetches sections rather than the message
+///
+/// ADR 0017. `BODY.PEEK[]` pulls the whole message, attachments included: on
+/// the reference account that is 12.43 GB fetched to index the 1.43 GB of it
+/// that is words, because ~90% of a mailbox by weight is payloads FTS5 cannot
+/// index. So when the header sync recorded where the text lives
+/// ([`Message::text_part_id`]), this fetches exactly those sections and leaves
+/// the payloads on the server until somebody opens one.
+///
+/// A row whose sections are unknown — synced before migration 0008, or from a
+/// server that reported no `BODYSTRUCTURE` — falls back to the whole-message
+/// fetch. Slower and fatter, but a body that silently never arrives would be a
+/// hole in search, and guessing section `1` would be wrong for every multipart
+/// message.
 pub async fn fetch_body(
     connection: &Connection,
     blobs: &BlobStore,
@@ -630,6 +641,15 @@ pub async fn fetch_body(
         // queue. Checked before the fetch so a stale queue costs no bandwidth.
         return Ok(Outcome::Gone);
     };
+
+    // The text axis, when the header sync left us a map of where the words
+    // are. `content_type` is what says a `BODYSTRUCTURE` was parsed at all —
+    // a message that is nothing but an attachment has no text sections and
+    // must still take this path, or the fallback would fetch the payload this
+    // exists to avoid.
+    if message.content_type.is_some() {
+        return fetch_text_parts(connection, blobs, backend, request, message, cancel).await;
+    }
 
     let mut sink = VecSink::new();
     backend
@@ -697,6 +717,133 @@ pub async fn fetch_body(
     // `postio_session::index_local_bodies` sweeps up whatever this misses.
     if let Err(error) =
         postio_index::index::index_body_of(connection, request.message.get(), &parsed.body)
+    {
+        tracing::debug!(
+            message = request.message.get(),
+            %error,
+            "a fetched body did not reach the search index"
+        );
+    }
+    Ok(Outcome::Stored { bytes })
+}
+
+/// Fetches only the sections holding a message's own text, and decodes them.
+///
+/// The other half of [`fetch_body`]; see its documentation for why this exists.
+///
+/// # Rebuilding an entity from a section
+///
+/// `BODY[1.1]` returns a part's *encoded* bytes and none of its headers, so
+/// nothing in the response says whether they are base64 or what charset they
+/// are in. Both were reported by `BODYSTRUCTURE` and kept on the row
+/// ([`Message::text_part_headers`]), so prepending them turns the fetched
+/// section back into a self-contained entity the parser can decode — without
+/// spending a second round trip on `BODY[1.1.MIME]`.
+///
+/// # No raw blob
+///
+/// There is nothing to keep: the whole message was never fetched. That is the
+/// point, and it is also what retires the 1.3x duplication of storing the raw
+/// bytes and their decoded forms side by side. "View source" and
+/// forward-as-`message/rfc822` refetch on demand.
+async fn fetch_text_parts(
+    connection: &Connection,
+    blobs: &BlobStore,
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    mut message: postio_model::Message,
+    cancel: &CancelToken,
+) -> Result<Outcome> {
+    let messages = MessageRepository::new(connection);
+    let wanted = [
+        (
+            message.text_part_id.clone(),
+            message.text_part_headers.clone(),
+        ),
+        (
+            message.html_part_id.clone(),
+            message.html_part_headers.clone(),
+        ),
+    ];
+
+    let mut body = postio_model::MessageBody::default();
+    let mut preview = None;
+    let mut bytes = 0u64;
+
+    for (section, headers) in wanted {
+        let Some(section) = section else { continue };
+        let mut sink = VecSink::new();
+        backend
+            .fetch_part(
+                &request.path,
+                request.uid,
+                &BodyPart::Section(section),
+                &mut sink,
+                cancel,
+            )
+            .await?;
+        if !sink.is_finished() {
+            // The sink contract, same as the whole-message path: without
+            // `finish` the bytes are a fragment, and a fragment stored as a
+            // body is worse than no body.
+            return Err(SyncError::Backend(BackendError::Cancelled));
+        }
+        let raw = sink.into_inner();
+        bytes += raw.len() as u64;
+
+        let mut entity = headers.unwrap_or_default().into_bytes();
+        entity.extend_from_slice(b"\r\n");
+        entity.extend_from_slice(&raw);
+        // Same ingest boundary as the whole-message path (#277): ids and sizes
+        // only, because the bytes that defeated the parser are somebody's mail.
+        let parsed = mime::try_parse(&entity).unwrap_or_else(|_| {
+            tracing::warn!(
+                message = request.message.get(),
+                bytes = entity.len(),
+                "a fetched text part could not be parsed; storing what it yielded"
+            );
+            mime::parse(&entity)
+        });
+        if body.text.is_none() {
+            body.text = parsed.body.text;
+        }
+        if body.html.is_none() {
+            body.html = parsed.body.html;
+        }
+        preview = preview.or(parsed.preview);
+    }
+
+    let stored = BodyBlobs {
+        text: put_text(blobs, body.text.as_deref())?,
+        html: put_text(blobs, body.html.as_deref())?,
+        headers: None,
+    };
+
+    if message.preview.is_none() {
+        message.preview = preview;
+    }
+    messages.update(&mut message)?;
+
+    // `partial` means text local, payloads not — the variant migration 0001
+    // declared and nothing had ever written until ADR 0017 gave it a meaning.
+    // Nothing fills `blob_id` on the receive path yet (#377), so today any
+    // message carrying a part settles here; that is honest rather than
+    // provisional, and it is what tells the reader to offer "download".
+    let state = if message
+        .attachments
+        .iter()
+        .all(|part| part.blob_id.is_some())
+    {
+        BodyState::Full
+    } else {
+        BodyState::Partial
+    };
+
+    // The commit point, after which the body is local as far as anything else
+    // is concerned. See `fetch_body` for why it is last.
+    messages.set_body_blobs(request.message, &stored, state)?;
+
+    if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &body)
     {
         tracing::debug!(
             message = request.message.get(),

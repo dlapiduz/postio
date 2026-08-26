@@ -670,3 +670,184 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The text axis — ADR 0017
+// ---------------------------------------------------------------------------
+
+/// A message whose words are a rounding error beside its attachment.
+///
+/// The shape ADR 0017 is about: on the reference account, messages like this
+/// are 15% of the mail and 90% of the bytes.
+const HUGE: u64 = 40 * 1024 * 1024;
+
+fn with_a_big_attachment(uid: u32) -> MockMessage {
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "application/pdf", HUGE)
+                .with_filename("statement.pdf"),
+        ],
+    );
+    // The raw bytes exist so the mock can sketch an envelope, and are what a
+    // whole-message fetch would return -- the test asserts nothing pulls them.
+    MockMessage::new(
+        format!(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             Subject: Statement {uid}\r\n\
+             Message-ID: <statement-{uid}@example.com>\r\n\
+             Content-Type: multipart/mixed; boundary=b\r\n\
+             \r\n\
+             --b\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             Your statement is attached.\r\n\
+             --b--\r\n"
+        )
+        .into_bytes(),
+    )
+    .with_internal_date(at(uid as i64))
+    .with_structure(structure)
+    .with_part("1", &b"Your statement is attached."[..])
+}
+
+#[tokio::test]
+async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone() {
+    // The whole point of ADR 0017. Before it, this fetched `BODY.PEEK[]` --
+    // forty megabytes across the wire to index twenty-six bytes of words.
+    //
+    // The mock rejects a `BODY[<section>]` nobody seeded, and only section 1
+    // is seeded here, so a fetch that reached for the attachment fails the
+    // test rather than quietly costing bandwidth no assertion can see.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_big_attachment(1));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, HUGE),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    assert!(
+        matches!(outcome, Outcome::Stored { bytes } if bytes < 1_024),
+        "the text axis moves the words, not the payload: {outcome:?}"
+    );
+
+    let messages = MessageRepository::new(&local.connection);
+    let stored = messages.get(id).expect("get").expect("row");
+
+    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
+    let text = blobs.text.expect("a text/plain body");
+    assert_eq!(
+        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
+        "Your statement is attached."
+    );
+
+    assert!(
+        stored.raw_blob_id.is_none(),
+        "the raw message is not stored: it is the forty megabytes this exists to avoid"
+    );
+    assert_eq!(
+        stored.sync.body_state,
+        BodyState::Partial,
+        "text local, payload not -- the state migration 0001 declared and \
+         nothing has ever written"
+    );
+}
+
+#[tokio::test]
+async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
+    // `partial` has to mean something, so the other side of it needs proving:
+    // a message whose every part is now local is `full`, and a reader can tell
+    // the two apart without asking the network.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(
+            MockMessage::new(note(1))
+                .with_internal_date(at(1))
+                .with_structure(postio_imap::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [postio_imap::backend::PartNode::new("1", "text/plain", 26)
+                        .with_charset("utf-8")],
+                ))
+                .with_part("1", &b"The body of note 1.\r\n"[..]),
+        );
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+}
+
+#[tokio::test]
+async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
+    // Migration 0008 cannot invent sections for rows already on disk, and
+    // guessing `1` would be wrong for every multipart message. Such a row
+    // falls back to the whole-message fetch -- slower and fatter, but never
+    // a message that silently has no body and never a hole in search.
+    let backend = server(1).await;
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    // `server()` seeds no BODYSTRUCTURE, so the header pass records no
+    // sections -- exactly the shape of a pre-0008 row.
+    let messages = MessageRepository::new(&local.connection);
+    assert_eq!(
+        messages.get(id).expect("get").expect("row").text_part_id,
+        None
+    );
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = messages.get(id).expect("get").expect("row");
+    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
+    let text = blobs.text.expect("a text/plain body");
+    assert_eq!(
+        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
+        "The body of note 1.\r\n"
+    );
+    assert!(
+        stored.raw_blob_id.is_some(),
+        "the fallback fetched the whole message, so it keeps it"
+    );
+}
