@@ -156,36 +156,46 @@ impl BlobStore {
     /// either case nothing is published: the partial file is deleted and no
     /// digest is returned.
     pub fn put_reader(&self, mut source: impl Read) -> Result<BlobId> {
-        let mut temporary = TemporaryBlob::create(&self.temporary)?;
-        let mut hasher = blake3::Hasher::new();
+        let mut writer = self.writer()?;
         let mut buffer = vec![0u8; CHUNK];
 
         loop {
             let read = source.read(&mut buffer).map_err(|source| Error::Io {
-                path: temporary.path.clone(),
+                path: writer.path().to_path_buf(),
                 source,
             })?;
             if read == 0 {
                 break;
             }
-            hasher.update(&buffer[..read]);
-            temporary.write(&buffer[..read])?;
+            writer.write(&buffer[..read])?;
         }
 
-        let id = BlobId::new(hasher.finalize().to_hex().to_string());
-        let destination = self.path_of(&id)?;
+        writer.finish()
+    }
 
-        // Already stored. The bytes are identical by construction, so the
-        // cheapest correct thing is to drop what we just wrote.
-        if destination.exists() {
-            return Ok(id);
-        }
-
-        if let Some(parent) = destination.parent() {
-            create_dir_all(parent)?;
-        }
-        temporary.publish(&destination)?;
-        Ok(id)
+    /// Begins a blob whose bytes will be pushed in, a chunk at a time.
+    ///
+    /// The push counterpart of [`BlobStore::put_reader`], for the caller that
+    /// cannot hand over a [`Read`] because the bytes are arriving from
+    /// somewhere else — a socket delivering a `FETCH` response, above all.
+    /// Without it such a caller has to buffer the whole thing first, which for
+    /// a message is the forty megabytes ADR 0017's second axis is about.
+    ///
+    /// Nothing is visible until [`BlobWriter::finish`]. A writer dropped
+    /// before then — a cancelled fetch, a dead connection, a panic — leaves a
+    /// file in the temp directory for [`BlobStore::purge_temporary`] and no
+    /// blob at all, so the store's "never partially visible" guarantee holds
+    /// for this form exactly as it does for the others.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] if the temporary file cannot be created.
+    pub fn writer(&self) -> Result<BlobWriter> {
+        Ok(BlobWriter {
+            root: self.root.clone(),
+            temporary: TemporaryBlob::create(&self.temporary)?,
+            hasher: blake3::Hasher::new(),
+        })
     }
 
     /// Reads a whole blob into memory.
@@ -239,19 +249,7 @@ impl BlobStore {
     /// data, so this is also what stops `../../` in an id from resolving to a
     /// path outside the store.
     pub fn path_of(&self, id: &BlobId) -> Result<PathBuf> {
-        let digest = id.as_str();
-        if digest.len() != DIGEST_CHARS || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(Error::InvalidBlobId {
-                id: digest.to_owned(),
-            });
-        }
-        let mut path = self.root.clone();
-        for level in 0..SHARD_LEVELS {
-            let start = level * SHARD_WIDTH;
-            path.push(&digest[start..start + SHARD_WIDTH]);
-        }
-        path.push(&digest[SHARD_LEVELS * SHARD_WIDTH..]);
-        Ok(path)
+        path_of(&self.root, id)
     }
 
     /// Deletes every leftover temporary file, returning how many there were.
@@ -436,6 +434,93 @@ SELECT blob_id           FROM attachments WHERE blob_id           IS NOT NULL";
 }
 
 /// A blob being written: a temporary file that deletes itself unless published.
+/// Where a blob is, or would be, stored under `root`.
+///
+/// A free function rather than a method because [`BlobWriter`] needs it too and
+/// holds a root rather than a store. See [`BlobStore::path_of`] for the id
+/// validation, which is also what stops `../../` in an id — ids arrive from the
+/// database and from other processes' data — resolving outside the store.
+fn path_of(root: &Path, id: &BlobId) -> Result<PathBuf> {
+    let digest = id.as_str();
+    if digest.len() != DIGEST_CHARS || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(Error::InvalidBlobId {
+            id: digest.to_owned(),
+        });
+    }
+    let mut path = root.to_path_buf();
+    for level in 0..SHARD_LEVELS {
+        let start = level * SHARD_WIDTH;
+        path.push(&digest[start..start + SHARD_WIDTH]);
+    }
+    path.push(&digest[SHARD_LEVELS * SHARD_WIDTH..]);
+    Ok(path)
+}
+
+/// A blob being written, a chunk at a time.
+///
+/// Obtained from [`BlobStore::writer`]. The digest is computed as the bytes go
+/// past, so the writer holds one caller-sized chunk and never the blob: the
+/// file on disk is the buffer.
+///
+/// Publishing is [`BlobWriter::finish`] and nothing else. Dropping without it
+/// discards the write — which is what makes a cancelled fetch safe, and is why
+/// there is no `abort`: the absence of `finish` already means abandon, the
+/// same way [`crate::backend`-style sinks](BlobStore::writer) treat a missing
+/// completion call.
+#[derive(Debug)]
+pub struct BlobWriter {
+    root: PathBuf,
+    temporary: TemporaryBlob,
+    hasher: blake3::Hasher,
+}
+
+impl BlobWriter {
+    /// Appends `bytes` to the blob.
+    ///
+    /// Chunk boundaries carry no meaning: the digest is over the concatenation,
+    /// so the same content split differently is the same blob.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] if the bytes cannot be written. The writer should be
+    /// dropped after an error rather than reused; nothing has been published.
+    pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        self.hasher.update(bytes);
+        self.temporary.write(bytes)
+    }
+
+    /// The temporary file's path, for error reporting.
+    pub fn path(&self) -> &Path {
+        &self.temporary.path
+    }
+
+    /// Publishes the blob and returns its digest.
+    ///
+    /// Consumes the writer, so "finished" is not a state anything has to check.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] if the bytes cannot be flushed or the file cannot be
+    /// renamed into place. Nothing is published in either case.
+    pub fn finish(mut self) -> Result<BlobId> {
+        let id = BlobId::new(self.hasher.finalize().to_hex().to_string());
+        let destination = path_of(&self.root, &id)?;
+
+        // Already stored. The bytes are identical by construction, so the
+        // cheapest correct thing is to drop what we just wrote.
+        if destination.exists() {
+            return Ok(id);
+        }
+
+        if let Some(parent) = destination.parent() {
+            create_dir_all(parent)?;
+        }
+        self.temporary.publish(&destination)?;
+        Ok(id)
+    }
+}
+
+#[derive(Debug)]
 struct TemporaryBlob {
     path: PathBuf,
     file: Option<File>,
