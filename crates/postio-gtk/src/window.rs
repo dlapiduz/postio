@@ -170,6 +170,9 @@ mod imp {
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
         pub context: std::cell::Cell<Option<Context>>,
+        /// What the mail on screen belongs to. Beside `context` because the
+        /// two together are what decides whether a command is offered (#182).
+        pub scope: std::cell::Cell<postio_core::Scope>,
         pub commands: std::cell::RefCell<Vec<CommandHandler>>,
         /// Handlers for whole invocations, which the mouse produces — see
         /// [`Window::connect_action`](super::Window::connect_action).
@@ -1548,6 +1551,26 @@ impl Window {
         if !self.finder().is_open() {
             self.finder().set_context(context);
         }
+        // The sheet answers "what can I do now", so it tracks the context
+        // whether or not the box is up: `?` is pressed from wherever the
+        // reader is stuck (#182).
+        self.cheatsheet().set_context(context);
+    }
+
+    /// What the mail on screen belongs to.
+    ///
+    /// Reaches the two surfaces that filter by it — the palette and the
+    /// cheat sheet — so a unified view offers no `Move` in either. The
+    /// registry decides; this is only how the answer gets there.
+    pub fn set_scope(&self, scope: postio_core::Scope) {
+        self.imp().scope.set(scope);
+        self.finder().set_scope(scope);
+        self.cheatsheet().set_scope(scope);
+    }
+
+    /// The scope the window is showing.
+    pub fn scope(&self) -> postio_core::Scope {
+        self.imp().scope.get()
     }
 
     /// Called with every command a key press resolves to.

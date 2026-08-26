@@ -13,20 +13,28 @@
 //! [`sections`] decides what the sheet contains and is a pure function, tested
 //! with no display. [`CheatSheet`] is the widget around it.
 //!
+//! # It answers "what can I do *now*"
+//!
+//! The sheet lists what is reachable where the reader is standing — their
+//! context, and the scope on screen — rather than the whole vocabulary. A key
+//! that would do nothing here is not a key worth teaching, and `?` is pressed
+//! by somebody who is stuck rather than by somebody browsing. The complete
+//! reference is `docs/keybindings.md`, which is generated from the same table
+//! and is where "what does `m` do" gets answered whatever is on screen.
+//!
 //! # Grouping
 //!
-//! Every command lands in exactly one section, even though most are reachable
-//! in several contexts. A reader scanning for "how do I archive" wants one
-//! answer, not the same row under *List*, *Thread* and *Reader*; so a command
-//! reachable everywhere goes under **Everywhere**, and anything else goes under
-//! the first context it applies in, which is also the broadest. That keeps the
-//! sheet the length of the registry rather than the length of the registry
-//! times six.
+//! Two headings, because after filtering there are only two useful answers:
+//! **Everywhere** for commands reachable in every context, and the reader's
+//! own surface for the rest. Filing by a command's *first* context — which is
+//! what this did while it listed everything — would print "Reading" over keys
+//! the reader can press in *Parts*, which is exactly the sort of almost-right
+//! that a reference must not do.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
-use postio_core::{ActionId, Context, ContextSet, Keymap, registry};
+use postio_core::{ActionId, Context, ContextSet, Keymap, Scope, registry};
 
 use crate::finder::Mode;
 
@@ -87,42 +95,35 @@ fn heading(context: Context) -> &'static str {
 ///
 /// Empty sections are dropped: a heading with nothing under it is worse than no
 /// heading, and which sections have content depends on what the registry holds.
-pub fn sections(keymap: &Keymap) -> Vec<Section> {
-    let mut sections: Vec<Section> = Vec::new();
+pub fn sections(keymap: &Keymap, context: Context, scope: Scope) -> Vec<Section> {
     let mut everywhere = Section {
         title: EVERYWHERE,
         rows: Vec::new(),
     };
+    let mut here = Section {
+        title: heading(context),
+        rows: Vec::new(),
+    };
 
-    for context in Context::ALL {
-        sections.push(Section {
-            title: heading(*context),
-            rows: Vec::new(),
-        });
-    }
-
-    for spec in registry::all() {
+    for spec in registry::reachable_in(context, scope) {
+        let ActionId::Builtin(id) = spec.id else {
+            // Registered commands get their own sections, by provenance.
+            continue;
+        };
         let row = Row {
-            id: Some(spec.id.into()),
+            id: Some(spec.id),
             title: spec.title,
-            binding: keymap.binding(spec.id).map(str::to_owned),
+            binding: keymap.binding(id).map(str::to_owned),
         };
 
         if spec.contexts == ContextSet::ANY {
             everywhere.rows.push(row);
-            continue;
-        }
-        // The first context it applies in, which is also the broadest: filing
-        // "Archive" under *Message list* rather than repeating it under
-        // *Thread* and *Reading* as well.
-        let Some(first) = spec.contexts.iter().next() else {
-            continue;
-        };
-        let heading = heading(first);
-        if let Some(section) = sections.iter_mut().find(|s| s.title == heading) {
-            section.rows.push(row);
+        } else {
+            here.rows.push(row);
         }
     }
+
+    let sections = vec![here];
 
     let mut out = Vec::with_capacity(sections.len() + 2);
     if !everywhere.rows.is_empty() {
@@ -222,6 +223,11 @@ mod imp {
     pub struct CheatSheet {
         pub columns: gtk::Box,
         pub keymap: RefCell<Keymap>,
+        /// Where the reader is standing, and what is on screen. The sheet
+        /// lists what is reachable from there rather than the whole
+        /// vocabulary (#182).
+        pub context: RefCell<Context>,
+        pub scope: RefCell<Scope>,
         pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
     }
 
@@ -230,6 +236,8 @@ mod imp {
             Self {
                 columns: gtk::Box::new(gtk::Orientation::Horizontal, 32),
                 keymap: RefCell::new(Keymap::default()),
+                context: RefCell::new(Context::List),
+                scope: RefCell::new(Scope::default()),
                 dismissed: RefCell::new(Vec::new()),
             }
         }
@@ -286,9 +294,25 @@ impl CheatSheet {
         self.rebuild();
     }
 
+    /// Where the reader is standing. The sheet answers from there.
+    pub fn set_context(&self, context: Context) {
+        *self.imp().context.borrow_mut() = context;
+        self.rebuild();
+    }
+
+    /// What the mail on screen belongs to — see [`Scope`].
+    pub fn set_scope(&self, scope: Scope) {
+        *self.imp().scope.borrow_mut() = scope;
+        self.rebuild();
+    }
+
     /// What the sheet currently lists.
     pub fn sections(&self) -> Vec<Section> {
-        sections(&self.imp().keymap.borrow())
+        sections(
+            &self.imp().keymap.borrow(),
+            *self.imp().context.borrow(),
+            *self.imp().scope.borrow(),
+        )
     }
 
     /// Called when the user presses `Escape` or `?` again.
@@ -405,34 +429,90 @@ fn section_widget(section: &Section) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postio_core::CommandId;
+    use postio_core::{CommandId, Scope};
+    use postio_model::AccountId;
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
     }
 
+    /// The reader's ordinary position: standing in the message list, with one
+    /// account's mailboxes on screen.
+    fn in_the_list() -> (Context, Scope) {
+        (Context::List, Scope::Account(AccountId::new(1)))
+    }
+
     #[test]
-    fn every_command_appears_exactly_once() {
-        let listed: Vec<ActionId> = sections(&defaults())
+    fn every_reachable_command_appears_exactly_once() {
+        let (context, scope) = in_the_list();
+        let listed: Vec<ActionId> = sections(&defaults(), context, scope)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| row.id)
             .collect();
 
-        for spec in registry::all() {
-            let count = listed.iter().filter(|id| **id == spec.id.into()).count();
+        for spec in registry::reachable_in(context, scope) {
+            let count = listed.iter().filter(|id| **id == spec.id).count();
             assert_eq!(
                 count, 1,
                 "`{}` appears {count} times; a reader wants one answer",
                 spec.id
             );
         }
-        assert_eq!(listed.len(), registry::all().count());
+        assert_eq!(listed.len(), registry::reachable_in(context, scope).count());
+    }
+
+    /// The sheet answers "what can I do *now*", so it must not advertise a
+    /// key that would do nothing where the reader is standing.
+    #[test]
+    fn the_sheet_lists_only_what_is_reachable_here() {
+        let (context, scope) = in_the_list();
+        let listed: Vec<ActionId> = sections(&defaults(), context, scope)
+            .into_iter()
+            .flat_map(|section| section.rows)
+            .filter_map(|row| row.id)
+            .collect();
+
+        assert!(
+            listed.contains(&ActionId::Builtin(CommandId::Archive)),
+            "archiving is the list's whole job"
+        );
+        assert!(
+            !listed.contains(&ActionId::Builtin(CommandId::Send)),
+            "sending belongs to the composer; offering it here teaches a key \
+             that does nothing"
+        );
+        assert!(
+            !listed.contains(&ActionId::Builtin(CommandId::ToggleThreadUnread)),
+            "the thread filter needs a thread column on screen"
+        );
+    }
+
+    /// #182's acceptance, on the second surface it names.
+    #[test]
+    fn a_unified_view_lists_no_move() {
+        let ids = |scope| -> Vec<ActionId> {
+            sections(&defaults(), Context::List, scope)
+                .into_iter()
+                .flat_map(|section| section.rows)
+                .filter_map(|row| row.id)
+                .collect()
+        };
+
+        assert!(
+            ids(Scope::Account(AccountId::new(1))).contains(&ActionId::Builtin(CommandId::Move)),
+            "an account view can name a destination"
+        );
+        assert!(
+            !ids(Scope::Unified).contains(&ActionId::Builtin(CommandId::Move)),
+            "a unified view cannot, so the sheet must not teach `m` there"
+        );
     }
 
     #[test]
     fn a_command_reachable_everywhere_is_filed_under_everywhere() {
-        let sections = sections(&defaults());
+        let (context, scope) = in_the_list();
+        let sections = sections(&defaults(), context, scope);
         let everywhere = sections
             .iter()
             .find(|section| section.title == EVERYWHERE)
@@ -449,9 +529,9 @@ mod tests {
     }
 
     #[test]
-    fn a_command_is_filed_under_the_broadest_context_it_applies_in() {
-        let sections = sections(&defaults());
-        let list = sections
+    fn a_reachable_command_is_filed_under_the_surface_the_reader_is_on() {
+        let from_the_list = sections(&defaults(), in_the_list().0, in_the_list().1);
+        let list = from_the_list
             .iter()
             .find(|section| section.title == heading(Context::List))
             .expect("a Message list section");
@@ -460,25 +540,31 @@ mod tests {
             list.rows
                 .iter()
                 .any(|row| row.id == Some(ActionId::Builtin(CommandId::Archive))),
-            "archive works in the list, the thread and the reader; the sheet \
-             says so once"
+            "archive works in the list, the thread and the reader; standing in \
+             the list, the sheet says so under the list"
         );
 
-        let composing = sections
+        // The same command, read from a different surface, files under that
+        // surface — which is the whole reason this stopped keying off the
+        // command's own first context.
+        let from_the_reader = sections(&defaults(), Context::Reader, in_the_list().1);
+        let reading = from_the_reader
             .iter()
-            .find(|section| section.title == heading(Context::Composer))
-            .expect("a Composing section");
+            .find(|section| section.title == heading(Context::Reader))
+            .expect("a Reading section");
         assert!(
-            composing
+            reading
                 .rows
                 .iter()
-                .any(|row| row.id == Some(ActionId::Builtin(CommandId::Send)))
+                .any(|row| row.id == Some(ActionId::Builtin(CommandId::Archive))),
+            "the heading has to name where the reader is, not where the \
+             command was first declared"
         );
     }
 
     #[test]
     fn no_section_is_printed_empty() {
-        for section in sections(&defaults()) {
+        for section in sections(&defaults(), in_the_list().0, in_the_list().1) {
             assert!(
                 !section.rows.is_empty(),
                 "`{}` has no keys under it",
@@ -489,7 +575,7 @@ mod tests {
 
     #[test]
     fn rows_carry_the_binding_in_force() {
-        let archive = sections(&defaults())
+        let archive = sections(&defaults(), in_the_list().0, in_the_list().1)
             .into_iter()
             .flat_map(|section| section.rows)
             .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
@@ -505,11 +591,15 @@ mod tests {
             .overrides_mut()
             .insert("archive".to_owned(), "y".to_owned());
 
-        let archive = sections(&Keymap::resolve(&overrides))
-            .into_iter()
-            .flat_map(|section| section.rows)
-            .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
-            .expect("archive");
+        let archive = sections(
+            &Keymap::resolve(&overrides),
+            in_the_list().0,
+            in_the_list().1,
+        )
+        .into_iter()
+        .flat_map(|section| section.rows)
+        .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
+        .expect("archive");
 
         assert_eq!(
             archive.binding.as_deref(),
@@ -525,13 +615,16 @@ mod tests {
         // Commands only: the box's prefixes are also rows, but `>` is not a
         // binding the keymap has any say over — it is a character you type
         // into a surface — so an empty keymap does not silence one.
-        let listed: Vec<Row> = sections(&Keymap::default())
+        let listed: Vec<Row> = sections(&Keymap::default(), in_the_list().0, in_the_list().1)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter(|row| row.id.is_some())
             .collect();
 
-        assert_eq!(listed.len(), registry::all().count());
+        assert_eq!(
+            listed.len(),
+            registry::reachable_in(in_the_list().0, in_the_list().1).count()
+        );
         assert!(
             listed.iter().all(|row| row.binding.is_none()),
             "and \"this exists and has no key\" is an answer worth printing"
@@ -564,7 +657,7 @@ mod tests {
         // box's prefixes are not commands — so `>`, `#` and `@` appeared
         // nowhere in the app's own teaching. A user who never reads docs
         // would never discover two thirds of the box.
-        let section = sections(&defaults())
+        let section = sections(&defaults(), in_the_list().0, in_the_list().1)
             .into_iter()
             .find(|section| section.title == IN_THE_BOX)
             .expect("the sheet has no section for the box's prefixes");
@@ -608,7 +701,7 @@ mod tests {
         // It is what the box already is; the key that opens it is `/`, which
         // the registry lists as a command.
         assert_eq!(Mode::Search.prefix(), None);
-        let section = sections(&defaults())
+        let section = sections(&defaults(), in_the_list().0, in_the_list().1)
             .into_iter()
             .find(|section| section.title == IN_THE_BOX)
             .expect("a prefix section");
@@ -622,39 +715,23 @@ mod tests {
     }
 
     #[test]
-    fn the_sections_are_the_ones_the_registry_actually_uses() {
-        let titles: Vec<&str> = sections(&defaults())
-            .iter()
-            .map(|section| section.title)
-            .collect();
+    fn the_sheet_prints_only_everywhere_and_the_readers_own_surface() {
+        for context in [Context::List, Context::Composer, Context::Sidebar] {
+            let titles: Vec<&str> = sections(&defaults(), context, in_the_list().1)
+                .iter()
+                .map(|section| section.title)
+                .collect();
 
-        assert_eq!(
-            titles,
-            vec![
-                EVERYWHERE,
-                // Right after the keys that open the box, before the
-                // per-surface sections — see `sections`.
-                IN_THE_BOX,
-                heading(Context::List),
-                // `postio-yzc`: the thread's unread filter and order toggle
-                // are the first commands whose *first* context is Thread
-                // rather than List -- every message action reachable from a
-                // thread is also reachable from the list, and files under
-                // "Message list" instead. These two exist nowhere else.
-                heading(Context::Thread),
-                // `open_parts` is the one command reachable only from
-                // `Context::Reader` — see `postio-14b`.
-                heading(Context::Reader),
-                heading(Context::Composer),
-                // `save_search` (issue #10) is the first command whose first
-                // context is Search rather than a broader one it also
-                // belongs to -- see `SaveSearch`'s registry entry.
-                heading(Context::Search),
-                heading(Context::Sidebar),
-                heading(Context::Parts),
-            ],
-            "no registry command is filed under Palette today; if one is, \
-             this test is how you find out"
-        );
+            let expected: Vec<&str> = [EVERYWHERE, IN_THE_BOX, heading(context)]
+                .into_iter()
+                .filter(|title| titles.contains(title))
+                .collect();
+            assert_eq!(
+                titles, expected,
+                "after filtering to what is reachable there are only two \
+                 useful headings — what works everywhere, and what works \
+                 here. A third means the filter let something through."
+            );
+        }
     }
 }
