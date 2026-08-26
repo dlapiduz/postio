@@ -194,6 +194,13 @@ jobs:
         # instruction launches the app invisibly. #315.
         run: python3 scripts/tests/test-headless-runner.py
 
+      - name: Prove the sccache daemon is never pinned to a worktree
+        # sccache is one machine-wide daemon that fixes its temp directory at
+        # spawn and never re-reads it. Pinned to a worktree's target/tmp it
+        # breaks every build on the machine, for every session, the moment
+        # issue-release.sh deletes that worktree. #359.
+        run: python3 scripts/tests/test-rustc-wrapper-tmpdir.py
+
       - name: Prove issue-claim.sh never adopts an existing worktree
         # A claim lock can go missing while its session works; adopting the
         # worktree it protected puts two sessions in one tree. #328.
