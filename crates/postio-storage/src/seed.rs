@@ -220,6 +220,89 @@ fn load_folders(connection: &Connection, account: &Account) -> Vec<Mailbox> {
         .expect("reload seeded mailboxes")
 }
 
+/// Groups an already-seeded account's messages into conversations of
+/// `per_thread`, for benchmarking the threaded list. Answers how many threads.
+///
+/// [`seed_large`] deliberately leaves its messages unthreaded — it exists for
+/// the *message* window, where threading would only add noise. The thread
+/// list needs the opposite, and needs it at a size worth measuring, so this
+/// threads a seeded store after the fact.
+///
+/// **Not how threading works.** Real threading is JWZ over `References` and
+/// `In-Reply-To` (`ThreadingRepository`), one message at a time, and running
+/// it over a hundred thousand synthetic messages would measure the seeder
+/// rather than the query. This assigns membership in bulk and then computes
+/// the aggregates in one statement, which produces the same *shape* of data —
+/// which is all a read benchmark is about.
+///
+/// # Panics
+///
+/// If the store cannot be written.
+pub fn thread_seeded_messages(
+    database: &Database,
+    account: postio_model::AccountId,
+    per_thread: usize,
+) -> u32 {
+    assert!(per_thread > 0, "a conversation holds at least one message");
+    let connection = database.connection().expect("a checked-out connection");
+
+    let ids: Vec<i64> = {
+        let mut statement = connection
+            .prepare(
+                "SELECT id FROM messages WHERE account_id = ?1
+                  ORDER BY received_at DESC, id DESC",
+            )
+            .expect("prepare the seeded message list");
+        let rows = statement
+            .query_map([account.get()], |row| row.get::<_, i64>(0))
+            .expect("read the seeded message list");
+        rows.collect::<rusqlite::Result<_>>()
+            .expect("collect the seeded message list")
+    };
+
+    let scope = Scope::open(&connection).expect("open a threading batch");
+    let mut threads = 0;
+    for chunk in ids.chunks(per_thread) {
+        scope
+            .execute(
+                "INSERT INTO threads (account_id, subject, message_count, unread_count,
+                                      has_attachments, is_flagged, first_at, last_at)
+                 VALUES (?1, 'seeded conversation', 0, 0, 0, 0, 0, 0)",
+                [account.get()],
+            )
+            .expect("insert a seeded thread");
+        let thread = scope.last_insert_rowid();
+        for id in chunk {
+            scope
+                .execute(
+                    "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
+                    [thread, *id],
+                )
+                .expect("file a seeded message into its thread");
+        }
+        threads += 1;
+    }
+    // The aggregates, in one statement rather than per thread.
+    scope
+        .execute(
+            "UPDATE threads SET
+                 message_count = (SELECT count(*) FROM messages m
+                                   WHERE m.thread_id = threads.id AND m.deleted_locally = 0),
+                 unread_count  = (SELECT count(*) FROM messages m
+                                   WHERE m.thread_id = threads.id AND m.deleted_locally = 0
+                                     AND m.seen = 0),
+                 first_at = coalesce((SELECT min(received_at) FROM messages m
+                                       WHERE m.thread_id = threads.id), 0),
+                 last_at  = coalesce((SELECT max(received_at) FROM messages m
+                                       WHERE m.thread_id = threads.id), 0)
+               WHERE account_id = ?1",
+            [account.get()],
+        )
+        .expect("recompute the seeded thread aggregates");
+    scope.commit().expect("commit the threading batch");
+    threads
+}
+
 /// Inserts `message`, files it into a thread, and remembers who wrote it.
 fn file_message(
     connection: &Connection,
