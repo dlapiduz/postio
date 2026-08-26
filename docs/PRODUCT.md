@@ -82,10 +82,12 @@ nothing to keep and is what makes the option survive.
 
 ## 3. Accounts and providers
 
-v1 connects **one account over IMAP and SMTP**, authenticated with a password
-or an app-specific password. Multiple accounts are
-[ADR 0005](decisions/0005-multiple-accounts.md); OAuth 2 is
-[ADR 0006](decisions/0006-oauth-and-provider-presets.md). JMAP, the Gmail API
+v1 connects over **IMAP and SMTP**, authenticated with a password, an
+app-specific password, or OAuth 2 — the bearer mechanisms reach the IMAP and
+SMTP sessions as of #193, and
+[ADR 0006](decisions/0006-oauth-and-provider-presets.md) is the design.
+Multiple accounts are in scope and are
+[ADR 0005](decisions/0005-multiple-accounts.md), tracked under #1. JMAP, the Gmail API
 and Microsoft Graph are unscheduled, and the `MailBackend` seam
 (`ARCHITECTURE.md` §8) is what keeps them possible.
 
@@ -515,7 +517,7 @@ forward, attachments, drafts; local FTS5 search with operators and an instant
 search box; vim-style navigation, a command palette and configurable shortcuts;
 SQLite, background sync, offline reading, undo.
 
-**Out, deliberately:** OAuth. Multiple accounts. Rules. Contacts management.
+**Out, deliberately:** Rules. Contacts management.
 Snooze and scheduled send. **And AI** — a founding principle, deferred so that
 core mail, search and the keyboard land excellently first. Shipping AI over a
 mediocre mail client would produce a mediocre mail client with AI in it.
