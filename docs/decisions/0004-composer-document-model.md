@@ -248,6 +248,18 @@ the silent failure mode.
 
 ## Q6 — What ships in v1
 
+> **Amended 2026-08-25, by the maintainer (#347).** The surface changed; the
+> cut did not. Once ADR 0003's editing WebView existed as a tested component
+> — the dialect contract, the hardened profile, the bridge — keeping the
+> `GtkTextView` beside it meant every composer feature maintaining two
+> surfaces forever. The decision: **the Editor is the composer surface for
+> every draft**, visually plain until the formatting commands land, which
+> this section's own argument already licenses: a `Document` of paragraphs
+> *is* a plain-text document, so what was restricted was always the editor,
+> not the document. `to_text()` still carries the `text/plain` part;
+> `to_html()` now ships beside it. The paragraphs below record the original
+> v1 shape this amendment supersedes.
+
 **A plain-text composer over the neutral document.** A `Document` whose blocks
 are all `Paragraph` and whose inlines are all `Text` *is* a plain-text
 document — the model does not need restricting, the editor does. `to_text()` on
