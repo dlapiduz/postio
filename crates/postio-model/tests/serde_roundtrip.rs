@@ -94,6 +94,7 @@ fn sample_attachment() -> Attachment {
         content_id: Some("cid-1".into()),
         disposition: Disposition::Attachment,
         part_id: Some("2.1".into()),
+        part_headers: Some("Content-Type: application/pdf\r\n".into()),
         blob_id: Some(BlobId::new("sha256:deadbeef")),
     }
 }
