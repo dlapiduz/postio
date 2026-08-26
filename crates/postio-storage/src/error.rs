@@ -78,6 +78,20 @@ pub enum Error {
         id: String,
     },
 
+    /// A blob file exists but this build cannot decode it: it names a
+    /// container version or a codec from a newer Postio, or its compressed
+    /// payload is damaged.
+    ///
+    /// Deliberately not folded into [`Error::Io`]: the bytes were readable,
+    /// and what failed was making sense of them. Handing back a guess under a
+    /// digest that promises exact content is the one thing the blob store must
+    /// never do.
+    #[error("a stored blob could not be decoded: {reason}")]
+    UnreadableBlob {
+        /// What about it could not be decoded.
+        reason: String,
+    },
+
     /// The blob store has no blob under this key.
     #[error("no blob stored under `{id}`")]
     BlobNotFound {
