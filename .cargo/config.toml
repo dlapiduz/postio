@@ -45,5 +45,13 @@ runner = "scripts/headless-runner.sh"
 #
 # `relative = true` resolves against the workspace root, so this stays correct
 # for anyone who clones the repo rather than naming one machine's paths.
+#
+# This governs the *no-sccache* path only, and that is not a shortcoming —
+# with sccache the compiler runs inside the shared daemon, which fixes its own
+# TMPDIR when it is spawned and ignores every later client's. Setting this
+# per-worktree is what pinned that daemon to a directory `issue-release.sh`
+# would later delete, so `scripts/rustc-wrapper.sh` overrides it on that path;
+# see the note there and #359. Leave the two in step: this is the fallback for
+# a box with no sccache, where cargo runs rustc directly.
 [env]
 TMPDIR = { value = "target/tmp", relative = true }
