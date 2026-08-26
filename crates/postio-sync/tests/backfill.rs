@@ -932,3 +932,73 @@ async fn text_fetched_by_section_reaches_the_search_index() {
         .expect("the shadow row");
     assert_eq!(indexed, "Your statement is attached.");
 }
+
+#[tokio::test]
+async fn text_that_is_not_part_one_is_still_found() {
+    // The reason the section number is stored rather than assumed. A message
+    // whose first part is the attachment -- a scanner, a mail-merge, anything
+    // that puts the payload first -- keeps its words at `2.1`, and a backfill
+    // that reached for `1` would index a PDF's base64 as if it were prose.
+    //
+    // Only `2.1` and `2.2` are seeded, so a fetch of part 1 fails the test
+    // rather than silently costing the bandwidth this exists to save.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_imap::backend::PartNode::new("1", "application/pdf", HUGE)
+                .with_filename("scan.pdf"),
+            postio_imap::backend::PartNode::new("2.1", "text/plain", 20).with_charset("utf-8"),
+            postio_imap::backend::PartNode::new("2.2", "text/html", 40).with_charset("utf-8"),
+        ],
+    );
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(
+            MockMessage::new(
+                &b"From: Ada Lovelace <ada@example.com>\r\n\
+                   Subject: Scan\r\n\
+                   Content-Type: multipart/mixed; boundary=b\r\n\
+                   \r\n\
+                   body sketched for the envelope only\r\n"[..],
+            )
+            .with_internal_date(at(1))
+            .with_structure(structure)
+            .with_part("2.1", &b"Scan attached."[..])
+            .with_part("2.2", &b"<p>Scan attached.</p>"[..]),
+        );
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, HUGE),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let messages = MessageRepository::new(&local.connection);
+    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
+
+    let text = blobs.text.expect("the plain-text part at 2.1");
+    assert_eq!(
+        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
+        "Scan attached."
+    );
+    let html = blobs.html.expect("the HTML alternative at 2.2");
+    assert_eq!(
+        String::from_utf8(local.blobs.get(&html).expect("read")).expect("utf-8"),
+        "<p>Scan attached.</p>"
+    );
+    assert_eq!(
+        messages.get(id).expect("get").expect("row").sync.body_state,
+        BodyState::Partial,
+        "the scan itself stayed on the server"
+    );
+}
