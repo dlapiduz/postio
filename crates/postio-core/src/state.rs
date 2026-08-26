@@ -231,11 +231,17 @@ struct Frame {
 /// assembled across every enabled account and can never be one. Commands
 /// that need somewhere to put a message are unavailable in it — see
 /// [`Requirement`](crate::registry::Requirement).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Scope {
     /// One account's own mailboxes.
     Account(AccountId),
     /// Every enabled account at once. A view, never a destination.
+    ///
+    /// The default, and it is not a placeholder: unified over zero accounts
+    /// is empty, which is exactly what a fresh install has to show. The old
+    /// `None` had to mean that *and* "an account exists but none is chosen";
+    /// this means only the first.
+    #[default]
     Unified,
 }
 
@@ -264,7 +270,7 @@ impl Scope {
 /// `.await`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppState {
-    account: Option<AccountId>,
+    scope: Scope,
     mailbox: Option<MailboxId>,
     selected: Selection,
     focus: Option<MessageId>,
@@ -288,9 +294,14 @@ impl AppState {
 
     // -- What the user is looking at -------------------------------------
 
-    /// The account in the sidebar, if one has been opened.
-    pub fn account(&self) -> Option<AccountId> {
-        self.account
+    /// What the mail on screen belongs to.
+    ///
+    /// Replaces the old `account()`, deliberately rather than wrapping it:
+    /// a consumer that wants "the one account" has to say
+    /// `scope().account()` and, in saying it, decide what it means when
+    /// there is not one (#182).
+    pub fn scope(&self) -> Scope {
+        self.scope
     }
 
     /// The mailbox the list is showing, if one has been opened.
@@ -399,13 +410,30 @@ impl AppState {
     /// Open an account, which resets the mailbox and the selection with it.
     pub fn open_account(&mut self, account: AccountId) -> Vec<Event> {
         self.commit(|state| {
-            if state.account == Some(account) {
+            if state.scope == Scope::Account(account) {
                 return;
             }
-            state.account = Some(account);
+            state.scope = Scope::Account(account);
             // The old mailbox and rows belong to an account that is no longer
             // on screen; keeping them would let an action land on a message
             // the user cannot see.
+            state.mailbox = None;
+            state.clear_position();
+        })
+    }
+
+    /// Widen the view to every enabled account.
+    ///
+    /// Drops the mailbox for the same reason [`open_account`](Self::open_account)
+    /// does: a folder belongs to one account, so it cannot survive a view
+    /// that spans them all, and keeping it would let an action land somewhere
+    /// the user can no longer see.
+    pub fn open_unified(&mut self) -> Vec<Event> {
+        self.commit(|state| {
+            if state.scope == Scope::Unified {
+                return;
+            }
+            state.scope = Scope::Unified;
             state.mailbox = None;
             state.clear_position();
         })
@@ -565,8 +593,8 @@ impl AppState {
     fn diff(&self, next: &AppState) -> Vec<Event> {
         let mut events = Vec::new();
 
-        if self.account != next.account
-            && let Some(account) = next.account
+        if self.scope != next.scope
+            && let Some(account) = next.scope.account()
         {
             events.push(Event::MailboxesChanged { account });
         }
@@ -574,9 +602,10 @@ impl AppState {
             && let Some(mailbox) = next.mailbox
             // A mailbox is only ever selected within an account, so the id
             // here is the mailbox's owner. The let-chain keeps the diff total:
-            // a state that somehow holds a mailbox with no account emits
-            // nothing rather than inventing one.
-            && let Some(account) = next.account
+            // a unified view holds no mailbox (both `open_unified` and
+            // `open_account` clear it), so this emits nothing rather than
+            // inventing an account for a folder that spans none.
+            && let Some(account) = next.scope.account()
         {
             events.push(Event::MessageListChanged { account, mailbox });
         }

@@ -20,7 +20,14 @@
 //! the keymap, which is why they were built that way.
 
 use postio_core::registry::{self, ExtCommand};
-use postio_core::{ActionId, CommandId, Context, ContextSet, Keymap, Recovery};
+use postio_core::{ActionId, CommandId, Context, ContextSet, Keymap, Recovery, Scope};
+use postio_model::AccountId;
+
+/// These assert over context filtering and the extension door, so they run
+/// in the scope where every command is available.
+fn an_account() -> Scope {
+    Scope::Account(AccountId::new(1))
+}
 use postio_gtk::{cheatsheet, palette};
 
 /// A namespaced id nothing else in this binary uses.
@@ -50,7 +57,7 @@ fn a_registered_command_is_findable_in_the_palette() {
     let keymap = Keymap::resolve(&Default::default());
 
     // By title, the way a user reaches for it.
-    let found = palette::entries(&keymap, Context::List, "summarise");
+    let found = palette::entries(&keymap, Context::List, an_account(), "summarise");
     let row = found
         .iter()
         .find(|entry| entry.id == ActionId::Ext(ext))
@@ -65,7 +72,7 @@ fn a_registered_command_is_findable_in_the_palette() {
 
     // By its namespaced id, which is what a log line or a config file spells.
     assert!(
-        palette::entries(&keymap, Context::List, &id)
+        palette::entries(&keymap, Context::List, an_account(), &id)
             .iter()
             .any(|entry| entry.id == ActionId::Ext(ext)),
         "it cannot be found by the id `[keys]` names it with"
@@ -73,7 +80,7 @@ fn a_registered_command_is_findable_in_the_palette() {
 
     // And the built-ins are unharmed beside it.
     assert!(
-        palette::entries(&keymap, Context::List, "archive")
+        palette::entries(&keymap, Context::List, an_account(), "archive")
             .iter()
             .any(|entry| entry.id == ActionId::Builtin(CommandId::Archive)),
     );
@@ -89,12 +96,12 @@ fn the_palette_still_respects_the_context_predicate() {
     let keymap = Keymap::resolve(&Default::default());
 
     assert!(
-        palette::entries(&keymap, Context::List, "list only")
+        palette::entries(&keymap, Context::List, an_account(), "list only")
             .iter()
             .any(|entry| entry.id == ActionId::Ext(ext))
     );
     assert!(
-        !palette::entries(&keymap, Context::Composer, "list only")
+        !palette::entries(&keymap, Context::Composer, an_account(), "list only")
             .iter()
             .any(|entry| entry.id == ActionId::Ext(ext)),
         "it turned up in the composer, where it was never registered"
