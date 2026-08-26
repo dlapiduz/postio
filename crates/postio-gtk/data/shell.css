@@ -568,6 +568,14 @@ button.postio-compose {
   color: var(--postio-hairline);
 }
 
+/* The rule a selected or cursor row draws above itself: the plain hairline
+   can wash out against that row's own tint, closest in exactly the schemes
+   canvas 3c calls out (the checked and cursor grounds sit a step from the
+   hairline in light, and share dark's palette almost exactly). */
+.postio-row-edge.hairline.strong {
+  color: var(--postio-hairline-strong);
+}
+
 .postio-row-edge.selected {
   color: var(--postio-selected-border);
 }
@@ -608,9 +616,13 @@ button.postio-compose {
   color: var(--postio-selected-bg);
 }
 
-/* The list pane's own header: the folder, its unread count, the sort. */
+/* The list pane's own header: the folder, its unread count, the sort. A
+   permanent boundary against the rows below — the header's own, not the
+   first row's, so it holds whether or not that row happens to be selected
+   (#320: the tint used to be able to run straight into the header). */
 .postio-list-header {
   padding: 16px 18px 12px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 .postio-list-title {
