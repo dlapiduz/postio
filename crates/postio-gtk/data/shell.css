@@ -1086,6 +1086,59 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* ── The store will not open (#404) ──────────────────────────────────
+   The sibling of the first-run plate below, and deliberately the same
+   object: Postio putting a surface in front of you rather than a dialog.
+   ADR 0014 Q3 means a locked keyring stops the app, so this is what the
+   window shows instead of mail — it has to look like part of the
+   application, not like an error. */
+.postio-unavailable {
+  min-width: 560px;
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.postio-unavailable-header {
+  min-height: 44px;
+  padding: 0 18px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-unavailable-body {
+  padding: 22px 26px 26px;
+}
+
+/* Barlow Condensed, like every other heading. Nothing red and no warning
+   icon: the store being shut is the encryption working, not a fault. */
+.postio-unavailable-title {
+  font-family: var(--postio-font-heading);
+  font-size: 1.3125rem;
+  color: var(--postio-ink);
+}
+
+/* `SecretError`'s own sentence, which carries the unlock hint. Prose, and
+   the one thing on this screen the user has to actually read. */
+.postio-unavailable-reason {
+  font-size: 0.8864rem;
+  line-height: 1.5;
+  color: var(--postio-ink);
+}
+
+.postio-unavailable-note {
+  font-size: 0.8523rem;
+  line-height: 1.5;
+  color: var(--postio-ink-secondary);
+}
+
+/* `Ret`, in the mono face every other key hint wears. */
+.postio-unavailable-hint {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  opacity: 0.75;
+}
+
 /* ── First run (canvas 3e) ───────────────────────────────────────────
    One screen, on its own plate in the middle of the window. The same plate
    the palette and the parts panel use, because it is the same kind of thing:

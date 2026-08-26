@@ -341,17 +341,25 @@ impl Wiring {
     }
 }
 
-/// Open the local store, or explain why there is none.
+/// Open the local store, or say why there is none.
+///
+/// `Err` carries a sentence for the user rather than only for the log: a
+/// store that will not open stops the application, and the surface that says
+/// so needs words (#404).
 ///
 /// `store_key` is the master key this installation's store is encrypted
 /// under — see [`store_key`] for where it comes from and why a locked
 /// keyring means there is no store to open rather than an unencrypted one.
 ///
-/// A missing or unreadable database is not a reason to refuse to start: the
-/// window opens, says it has never synced, and stays usable for everything
-/// that does not need mail. A mail client that will not open is worse than one
-/// with nothing in it.
-pub fn open_store(store_key: &postio_storage::key::StoreKey) -> Option<(Database, BlobStore)> {
+/// That was not always so. This used to answer `None` and let the window open
+/// anyway, on the argument that a mail client with nothing in it beats one
+/// that will not start — which was right while the store was optional. ADR
+/// 0014 ended that: the store is encrypted, its key is in the keyring, and
+/// there is no degraded mode to fall back to. So the honest answer is a
+/// sentence, and `postio_app::run` puts it on a screen with a retry.
+pub fn open_store(
+    store_key: &postio_storage::key::StoreKey,
+) -> Result<(Database, BlobStore), String> {
     // Taken and not yet used, deliberately and for one slice only. ADR 0014
     // lands as three sequenced pieces: this one mints and reads the key
     // (#299), #300 issues `PRAGMA key` with its database subkey, and #301
@@ -366,7 +374,11 @@ pub fn open_store(store_key: &postio_storage::key::StoreKey) -> Option<(Database
         Ok(database) => database,
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store");
-            return None;
+            // The sentence goes back to the caller as well as to the log,
+            // because the caller is what puts it on screen (#404). A window
+            // that will not open and does not say why is the one thing worse
+            // than a window that will not open.
+            return Err(format!("Postio could not open its local store: {error}"));
         }
     };
     // Beside the database, not inside it: bodies and attachments are
@@ -375,7 +387,10 @@ pub fn open_store(store_key: &postio_storage::key::StoreKey) -> Option<(Database
         Ok(blobs) => blobs,
         Err(error) => {
             tracing::error!(%error, "cannot open the blob store");
-            return None;
+            return Err(format!(
+                "Postio could not open the store that holds message bodies \
+                 and attachments: {error}"
+            ));
         }
     };
     if let Err(error) = ensure_search_index(&database) {
@@ -385,7 +400,7 @@ pub fn open_store(store_key: &postio_storage::key::StoreKey) -> Option<(Database
         tracing::error!(%error, "the search index is unavailable");
     }
 
-    Some((database, blobs))
+    Ok((database, blobs))
 }
 
 /// Create the full-text index if it is not there, on every start.
