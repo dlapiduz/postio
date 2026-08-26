@@ -239,6 +239,10 @@ const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 /// is listening on [`Composer::connect_attach`] to turn it into an attachment.
 const NO_ATTACH_PATH: &str = "not attached — no attachment handler is connected yet";
 
+/// What the status line says when an image was pasted but nothing is
+/// listening on [`Composer::connect_inline_image`] to store its bytes.
+const NO_INLINE_PATH: &str = "not inserted — no inline-image handler is connected yet";
+
 /// Above this, an attachment's row calls out its size.
 ///
 /// The bead asks for a *configurable* threshold; that means reading
@@ -310,6 +314,27 @@ type ReplySourceProvider = Box<dyn Fn() -> Option<(Message, Account)>>;
 /// appears in `connect_attach`'s public signature, not because anything
 /// outside this module constructs one.
 pub type AttachReady = Box<dyn FnOnce(Option<Attachment>)>;
+
+/// What [`Composer::connect_inline_image`] hands its result to, exactly
+/// once: `Some` with the finished attachment — carrying a `Content-ID` and
+/// `Disposition::Inline` — or `None` to reject the paste. `pub` because it
+/// appears in the public signature, like [`AttachReady`].
+pub type InlineImageReady = Box<dyn FnOnce(Option<Attachment>)>;
+
+/// Turns pasted image bytes into an inline attachment: writes them to the
+/// blob store, mints a `Content-ID`, and calls [`InlineImageReady`] whenever
+/// it is ready — the same non-blocking contract as [`AttachHandler`].
+type InlineImageHandler = Box<dyn Fn(Vec<u8>, String, InlineImageReady)>;
+
+/// The slot `build()` fills with the draft-aware `postio-cid:` lookup; the
+/// editor's blob source redirects through it for the composer's whole life.
+type BlobLookup = Rc<RefCell<Option<Box<dyn Fn(&str) -> Option<(Vec<u8>, String)>>>>>;
+
+/// Reads an attachment's bytes back, for the editing surface's
+/// `postio-cid:` requests. Synchronous and local, like
+/// [`crate::reader::scheme::BlobSource`], because that is what a scheme
+/// handler can await.
+type AttachmentBytes = Box<dyn Fn(&Attachment) -> Option<Vec<u8>>>;
 
 /// Turns a chosen or dropped file into attachment metadata, calling
 /// [`AttachReady`] with the result whenever it is ready. A handler that
@@ -445,6 +470,14 @@ mod imp {
         /// Where a chosen or dropped file becomes attachment metadata. One
         /// slot: the same handler serves the file chooser and drag-and-drop.
         pub attach: RefCell<Option<AttachHandler>>,
+        /// Where pasted image bytes become an inline attachment (#341).
+        pub inline_image: RefCell<Option<InlineImageHandler>>,
+        /// Where an inline attachment's bytes come back from for display.
+        pub attachment_bytes: RefCell<Option<AttachmentBytes>>,
+        /// What the body's `postio-cid:` requests resolve through — filled
+        /// by `build()` with a draft-aware lookup, held here because the
+        /// editor is constructed before the composer object exists.
+        pub blob_lookup: BlobLookup,
         /// The window the composer took a pane from, once mounted.
         pub window: glib::WeakRef<Window>,
         /// The context and pane to put back when the composer closes.
@@ -464,6 +497,7 @@ mod imp {
     impl Default for Composer {
         fn default() -> Self {
             let row = || gtk::Box::new(gtk::Orientation::Horizontal, 14);
+            let blob_lookup: BlobLookup = Rc::new(RefCell::new(None));
             Self {
                 heading: gtk::Label::new(None),
                 status: gtk::Label::new(Some(UNSAVED)),
@@ -479,7 +513,15 @@ mod imp {
                 identity_row: row(),
                 identity: gtk::DropDown::from_strings(&[]),
                 identity_only: gtk::Label::new(None),
-                body: crate::editor::Editor::new(std::rc::Rc::new(|_: &str| None)),
+                body: {
+                    let lookup = blob_lookup.clone();
+                    crate::editor::Editor::new(std::rc::Rc::new(move |content_id: &str| {
+                        lookup
+                            .borrow()
+                            .as_ref()
+                            .and_then(|lookup| lookup(content_id))
+                    }))
+                },
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
                 send: gtk::Button::new(),
@@ -498,6 +540,9 @@ mod imp {
                 reply_source: RefCell::new(None),
                 recipient_suggestions: RefCell::new(None),
                 attach: RefCell::new(None),
+                inline_image: RefCell::new(None),
+                attachment_bytes: RefCell::new(None),
+                blob_lookup,
                 window: glib::WeakRef::new(),
                 restore: Cell::new(None),
                 filling: Cell::new(false),
@@ -1016,6 +1061,26 @@ impl Composer {
         *self.imp().attach.borrow_mut() = Some(Box::new(handler));
     }
 
+    /// Wires the seam pasted image bytes go out through to become an inline
+    /// attachment — blob write and `Content-ID` minting live above this
+    /// crate. Same non-blocking contract as [`connect_attach`](Self::connect_attach).
+    pub fn connect_inline_image(
+        &self,
+        handler: impl Fn(Vec<u8>, String, InlineImageReady) + 'static,
+    ) {
+        *self.imp().inline_image.borrow_mut() = Some(Box::new(handler));
+    }
+
+    /// Wires where an attachment's bytes come back from, for the editing
+    /// surface to display inline images — this draft's pasted ones and a
+    /// resumed draft's alike. Synchronous and local, like a blob-store read.
+    pub fn connect_attachment_bytes(
+        &self,
+        reader: impl Fn(&Attachment) -> Option<Vec<u8>> + 'static,
+    ) {
+        *self.imp().attachment_bytes.borrow_mut() = Some(Box::new(reader));
+    }
+
     // -- Detaching ------------------------------------------------------------
 
     /// Whether the composition is in a window of its own rather than the pane.
@@ -1487,6 +1552,67 @@ impl Composer {
         self.refresh();
     }
 
+    /// Intercept `Ctrl+V` when the clipboard holds pixels; text falls
+    /// through to WebKit's own paste. Returns whether the paste was taken.
+    fn paste_image(&self) -> bool {
+        let clipboard = self.imp().body.widget().clipboard();
+        if !clipboard
+            .formats()
+            .contains_type(gdk::Texture::static_type())
+        {
+            return false;
+        }
+        let composer = self.clone();
+        clipboard.read_texture_async(None::<&gio::Cancellable>, move |result| {
+            let Ok(Some(texture)) = result else {
+                return;
+            };
+            composer.add_inline_image(texture.save_to_png_bytes().to_vec(), "image/png");
+        });
+        true
+    }
+
+    /// The tail of a paste or drop of raw image bytes: out through
+    /// [`connect_inline_image`](Self::connect_inline_image) to become an
+    /// inline attachment, then into the draft and the body at the caret.
+    fn add_inline_image(&self, bytes: Vec<u8>, mime_type: &str) {
+        let handler = self.imp().inline_image.borrow();
+        let Some(handler) = handler.as_ref() else {
+            drop(handler);
+            self.set_status(NO_INLINE_PATH);
+            return;
+        };
+        let composer = self.clone();
+        handler(
+            bytes,
+            mime_type.to_owned(),
+            Box::new(move |attachment| match attachment {
+                Some(attachment) => composer.add_inline_attachment(attachment),
+                None => composer.set_status(NO_INLINE_PATH),
+            }),
+        );
+    }
+
+    /// Records the inline attachment and puts its image at the caret. The
+    /// insertion crosses the bridge like any edit, so the document, undo and
+    /// autosave all see it.
+    fn add_inline_attachment(&self, attachment: Attachment) {
+        let Some(content_id) = attachment
+            .content_id
+            .as_deref()
+            .and_then(postio_body::ContentId::parse)
+        else {
+            self.set_status(NO_INLINE_PATH);
+            return;
+        };
+        let alt = attachment
+            .filename
+            .clone()
+            .unwrap_or_else(|| "image".to_owned());
+        self.add_attachment(attachment);
+        self.imp().body.insert_image(&content_id, &alt);
+    }
+
     /// Removes the attachment at `index`. What removing a row before send
     /// does — the acceptance criterion "removing before send cleans up" is
     /// this and [`Composer::draft`] never seeing it again.
@@ -1883,17 +2009,85 @@ impl Composer {
                     gdk::Key::z if !shift => composer.undo_edit(),
                     gdk::Key::z | gdk::Key::Z if shift => composer.redo_edit(),
                     gdk::Key::y => composer.redo_edit(),
+                    // A paste whose clipboard holds pixels is ours: WebKit
+                    // would write an unresolvable fake URL into the DOM,
+                    // and the whole point of #341 is that image bytes go to
+                    // the blob store instead. Text pastes proceed to WebKit.
+                    gdk::Key::v if !shift => {
+                        if composer.paste_image() {
+                            glib::Propagation::Stop
+                        } else {
+                            glib::Propagation::Proceed
+                        }
+                    }
                     _ => glib::Propagation::Proceed,
                 }
             }
         ));
         imp.body.widget().add_controller(editing);
+
+        // The body's postio-cid: requests resolve against this draft's
+        // attachments, through whatever connect_attachment_bytes wired in —
+        // the same path a resumed draft's images take.
+        *imp.blob_lookup.borrow_mut() = Some(Box::new(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[upgrade_or]
+            None,
+            move |content_id: &str| {
+                let attachment = composer
+                    .imp()
+                    .draft
+                    .borrow()
+                    .attachments
+                    .iter()
+                    .find(|attachment| {
+                        attachment
+                            .content_id
+                            .as_deref()
+                            .map(|id| id.trim_start_matches('<').trim_end_matches('>'))
+                            == Some(content_id)
+                    })
+                    .cloned()?;
+                let reader = composer.imp().attachment_bytes.borrow();
+                let bytes = reader.as_ref()?(&attachment)?;
+                Some((bytes, attachment.mime_type.clone()))
+            }
+        )));
         // The WebView scrolls its own document, so there is no
         // ScrolledWindow around the body any more — one scroll surface, its
         // own tab stop, announcing the same name the TextView did.
         imp.body
             .widget()
             .update_property(&[gtk::accessible::Property::Label(BODY_NAME)]);
+
+        // An image dropped on the body goes inline, exactly like a paste;
+        // anything else falls through to the composer-wide target and
+        // becomes an ordinary attachment.
+        let body_drop = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+        body_drop.connect_drop(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[upgrade_or]
+            false,
+            move |_, value, _, _| {
+                let Ok(list) = value.get::<gdk::FileList>() else {
+                    return false;
+                };
+                let mut handled = false;
+                for file in list.files() {
+                    match dropped_image(&file) {
+                        Some((bytes, mime_type)) => {
+                            composer.add_inline_image(bytes, &mime_type);
+                        }
+                        None => composer.add_file(&file),
+                    }
+                    handled = true;
+                }
+                handled
+            }
+        ));
+        imp.body.widget().add_controller(body_drop);
 
         imp.warning.add_css_class("postio-compose-warning");
         imp.warning.set_xalign(0.0);
@@ -2184,6 +2378,20 @@ impl Composer {
         self.imp().body.test_type(text);
     }
 
+    /// Feeds image bytes into the paste path without a clipboard, which a
+    /// headless test cannot reliably own.
+    #[doc(hidden)]
+    pub fn test_paste_image_bytes(&self, bytes: Vec<u8>) {
+        self.add_inline_image(bytes, "image/png");
+    }
+
+    /// Script against the body's document, for assertions about what the
+    /// surface actually rendered.
+    #[doc(hidden)]
+    pub fn test_body_eval(&self, script: &str) -> String {
+        self.imp().body.test_eval(script)
+    }
+
     /// Select a range of the body's `nth` text node, as a hand would before
     /// reaching for a formatting button.
     #[doc(hidden)]
@@ -2316,6 +2524,30 @@ fn pretty_binding(binding: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("+")
+}
+
+/// `file`'s bytes and MIME type when it is an image small enough to inline,
+/// `None` to send it down the ordinary attachment path instead.
+///
+/// The type comes from the shared-mime-info sniff, not the extension; the
+/// size cap keeps a stray drop of a camera RAW from ballooning the message —
+/// past it, the file is still attached, just not inlined.
+fn dropped_image(file: &gio::File) -> Option<(Vec<u8>, String)> {
+    const INLINE_CAP: u64 = 10 * 1024 * 1024;
+    let info = file
+        .query_info(
+            "standard::content-type,standard::size",
+            gio::FileQueryInfoFlags::NONE,
+            gio::Cancellable::NONE,
+        )
+        .ok()?;
+    let mime_type = info.content_type()?.to_string();
+    if !mime_type.starts_with("image/") || info.size() as u64 > INLINE_CAP {
+        return None;
+    }
+    let path = file.path()?;
+    let bytes = std::fs::read(path).ok()?;
+    Some((bytes, mime_type))
 }
 
 fn holds(focus: &gtk::Widget, widget: &gtk::Widget) -> bool {

@@ -162,7 +162,7 @@ fn is_remote(value: &str) -> bool {
 /// `@`, `%`, whitespace, non-ASCII — is escaped. Content-IDs are usually
 /// plain ASCII already; this is just so a stray odd one cannot produce a
 /// URI `postio_gtk::reader::scheme` parses differently than it means.
-fn percent_encode(value: &str) -> String {
+pub(crate) fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {

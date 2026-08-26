@@ -314,7 +314,20 @@ impl Document {
     pub fn to_html(&self) -> String {
         let mut out = String::new();
         for block in &self.blocks {
-            write_block(&mut out, block);
+            write_block(&mut out, block, ImageScheme::Wire);
+        }
+        out
+    }
+
+    /// As [`to_html`](Self::to_html), but with every image source in the
+    /// editing shell's `postio-cid:` scheme rather than the wire's `cid:` —
+    /// the only form the shell's CSP will show. `parse` accepts the editing
+    /// scheme back, so `parse(editor_html(d)) == d` holds exactly as the
+    /// wire round trip does.
+    pub fn editor_html(&self) -> String {
+        let mut out = String::new();
+        for block in &self.blocks {
+            write_block(&mut out, block, ImageScheme::Editor);
         }
         out
     }
@@ -446,16 +459,35 @@ fn escape_attribute(out: &mut String, text: &str) {
     }
 }
 
-fn write_block(out: &mut String, block: &Block) {
+/// One image source in the editing shell's scheme: what
+/// [`Document::editor_html`] emits for it, and what an editing gesture that
+/// inserts an image writes into the DOM.
+pub fn editor_image_src(content_id: &ContentId) -> String {
+    format!(
+        "postio-cid:{}",
+        crate::sanitize::percent_encode(content_id.as_str())
+    )
+}
+
+/// Which scheme an `<img>` source carries: the wire's `cid:`, or the editing
+/// shell's `postio-cid:` (percent-encoded, matching what the scheme handler
+/// decodes).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageScheme {
+    Wire,
+    Editor,
+}
+
+fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
     match block {
         Block::Paragraph(inlines) => {
             out.push_str("<p>");
-            write_inlines(out, inlines);
+            write_inlines(out, inlines, scheme);
             out.push_str("</p>");
         }
         Block::Heading { level, inlines } => {
             let _ = write!(out, "<h{}>", level.digit());
-            write_inlines(out, inlines);
+            write_inlines(out, inlines, scheme);
             let _ = write!(out, "</h{}>", level.digit());
         }
         Block::List { ordered, items } => {
@@ -464,7 +496,7 @@ fn write_block(out: &mut String, block: &Block) {
             for item in items {
                 out.push_str("<li>");
                 for block in item {
-                    write_block(out, block);
+                    write_block(out, block, scheme);
                 }
                 out.push_str("</li>");
             }
@@ -473,7 +505,7 @@ fn write_block(out: &mut String, block: &Block) {
         Block::Quote(blocks) => {
             out.push_str("<blockquote>");
             for block in blocks {
-                write_block(out, block);
+                write_block(out, block, scheme);
             }
             out.push_str("</blockquote>");
         }
@@ -486,23 +518,23 @@ fn write_block(out: &mut String, block: &Block) {
     }
 }
 
-fn write_inlines(out: &mut String, inlines: &[Inline]) {
+fn write_inlines(out: &mut String, inlines: &[Inline], scheme: ImageScheme) {
     for inline in inlines {
-        write_inline(out, inline);
+        write_inline(out, inline, scheme);
     }
 }
 
-fn write_inline(out: &mut String, inline: &Inline) {
+fn write_inline(out: &mut String, inline: &Inline, scheme: ImageScheme) {
     match inline {
         Inline::Text(text) => escape_text(out, text),
         Inline::Strong(inlines) => {
             out.push_str("<strong>");
-            write_inlines(out, inlines);
+            write_inlines(out, inlines, scheme);
             out.push_str("</strong>");
         }
         Inline::Emphasis(inlines) => {
             out.push_str("<em>");
-            write_inlines(out, inlines);
+            write_inlines(out, inlines, scheme);
             out.push_str("</em>");
         }
         Inline::Code(text) => {
@@ -514,15 +546,25 @@ fn write_inline(out: &mut String, inline: &Inline) {
             out.push_str("<a href=\"");
             escape_attribute(out, href.as_str());
             out.push_str("\">");
-            write_inlines(out, inlines);
+            write_inlines(out, inlines, scheme);
             out.push_str("</a>");
         }
-        // `cid:` and not the reader's `postio-cid:` scheme: this is what goes
-        // on the wire, and the rewrite to a local scheme is a reading-time
-        // concern that belongs to whoever is displaying the message.
+        // `cid:` on the wire; the rewrite to a local scheme is a
+        // display-time concern, and the editor is the one display that
+        // serialises it here (`editor_html`) rather than through
+        // `sanitize_body` — its input is the trusted document, not a
+        // message.
         Inline::Image { content_id, alt } => {
-            out.push_str("<img src=\"cid:");
-            escape_attribute(out, content_id.as_str());
+            match scheme {
+                ImageScheme::Wire => {
+                    out.push_str("<img src=\"cid:");
+                    escape_attribute(out, content_id.as_str());
+                }
+                ImageScheme::Editor => {
+                    out.push_str("<img src=\"postio-cid:");
+                    out.push_str(&crate::sanitize::percent_encode(content_id.as_str()));
+                }
+            }
             out.push_str("\" alt=\"");
             escape_attribute(out, alt);
             out.push_str("\">");
