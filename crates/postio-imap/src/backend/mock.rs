@@ -31,6 +31,7 @@
 //! backend's; duplicating either here would mean testing them against
 //! themselves.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -94,6 +95,7 @@ pub struct MockMessage {
     flags: FlagSet,
     internal_date: Option<DateTime<Utc>>,
     structure: Option<BodyStructure>,
+    parts: HashMap<String, Vec<u8>>,
 }
 
 impl MockMessage {
@@ -108,6 +110,21 @@ impl MockMessage {
     /// Sets the flags the message already carries.
     pub fn with_flags(mut self, flags: FlagSet) -> Self {
         self.flags = flags;
+        self
+    }
+
+    /// Seeds the bytes a `BODY[<section>]` fetch returns for one MIME part.
+    ///
+    /// The mock has no MIME parser and deliberately does not grow one: if it
+    /// did, every parser test would be testing the parser against itself (see
+    /// the [`sketch`] module's own warning). So a part's bytes are stated,
+    /// exactly as its envelope and its `BODYSTRUCTURE` are.
+    ///
+    /// `bytes` are what the wire carries -- still base64 or quoted-printable,
+    /// with no headers of their own -- because that is what a real server
+    /// hands back and what the code under test has to cope with.
+    pub fn with_part(mut self, section: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        self.parts.insert(section.into(), bytes.into());
         self
     }
 
@@ -258,6 +275,9 @@ struct MessageState {
     mod_seq: u64,
     envelope: Envelope,
     structure: Option<BodyStructure>,
+    /// Bytes a `BODY[<section>]` fetch answers with, as seeded by
+    /// [`MockMessage::with_part`].
+    parts: HashMap<String, Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -310,6 +330,7 @@ impl MailboxState {
             mod_seq: self.highest_mod_seq,
             envelope,
             structure: message.structure,
+            parts: message.parts,
         });
         uid
     }
@@ -947,7 +968,7 @@ impl MailBackend for MockBackend {
                     mailbox: mailbox.to_owned(),
                     uid: uid.get(),
                 })?;
-            (section(&message.raw, part)?, state.chunk_size)
+            (section(message, part)?, state.chunk_size)
         };
 
         let mut written = 0u64;
@@ -1083,6 +1104,7 @@ impl MailBackend for MockBackend {
                 flags: message.flags.clone(),
                 internal_date: message.internal_date,
                 structure: None,
+                parts: HashMap::new(),
             };
             let uid = folder.push_arriving(seed);
             let uid_validity = folder.uid_validity;
@@ -1172,6 +1194,10 @@ impl MockBackend {
                 flags: message.flags.clone(),
                 internal_date: Some(message.internal_date),
                 structure: message.structure.clone(),
+                // A moved message is the same message: it keeps whatever
+                // sections were seeded for it, or a text fetch after a move
+                // would fail where the same fetch before it succeeded.
+                parts: message.parts.clone(),
             });
             mapping.push(UidMapping {
                 source: Uid::new(message.uid),
@@ -1217,16 +1243,27 @@ fn matches_pattern(pattern: &str, path: &str) -> bool {
 }
 
 /// The bytes of one section of a raw message.
-fn section(raw: &[u8], part: &BodyPart) -> BackendResult<Vec<u8>> {
+fn section(message: &MessageState, part: &BodyPart) -> BackendResult<Vec<u8>> {
+    let raw = &message.raw;
     let split = sketch::body_offset(raw);
     match part {
         BodyPart::Whole => Ok(raw.to_vec()),
         BodyPart::Headers => Ok(raw[..split.headers_end].to_vec()),
         BodyPart::Text => Ok(raw[split.body_start..].to_vec()),
-        BodyPart::Section(section) => Err(BackendError::Rejected {
-            command: format!("FETCH BODY[{section}]"),
-            reason: "the mock has no MIME parser; seed the part's bytes explicitly".to_owned(),
-        }),
+        // Rejected rather than empty when nothing was seeded. An empty answer
+        // is indistinguishable from a part that is genuinely empty, and a test
+        // asserting "no body" would then pass for the wrong reason.
+        BodyPart::Section(section) => {
+            message
+                .parts
+                .get(section)
+                .cloned()
+                .ok_or_else(|| BackendError::Rejected {
+                    command: format!("FETCH BODY[{section}]"),
+                    reason: "the mock has no MIME parser; seed the part's bytes explicitly"
+                        .to_owned(),
+                })
+        }
     }
 }
 
