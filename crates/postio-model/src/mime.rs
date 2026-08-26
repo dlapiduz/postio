@@ -260,6 +260,45 @@ pub fn try_parse_headers(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
     contain(|| parse_inner(raw, true))
 }
 
+/// Decodes RFC 2047 encoded words in a raw header value that never goes
+/// through [`parse`] — an IMAP `ENVELOPE`'s subject or a display name,
+/// which arrive as isolated field values well before any body reaches this
+/// module. [`parse`] already decodes these correctly wherever they sit
+/// inside a full header block; this gives the same decoding to a value
+/// with no header block around it.
+///
+/// Whatever `mail_parser` cannot make sense of — a truncated encoded word,
+/// bytes that are not valid in the charset they declare — comes back as
+/// whatever raw text survived, the same "show what arrived" promise
+/// [`parse`] keeps rather than an error. A completely unreadable result
+/// falls back to a lossy UTF-8 decode of the original bytes.
+///
+/// `mail_parser`'s decoder is hostile-input code (see [`try_parse`]'s own
+/// docs on `#277`), reached here on bytes an IMAP server chose, so this is
+/// wrapped in [`catch_unwind`](contain) too.
+pub fn decode_header_text(raw: &[u8]) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    // `parse_unstructured` reads until an unfolded `\n`; with none in the
+    // input it falls off the end and reports `HeaderValue::Empty` rather
+    // than whatever it collected, so one is appended purely as a terminator.
+    let mut terminated = Vec::with_capacity(raw.len() + 1);
+    terminated.extend_from_slice(raw);
+    terminated.push(b'\n');
+
+    let decoded = std::panic::catch_unwind(|| {
+        mail_parser::parsers::MessageStream::new(&terminated)
+            .parse_unstructured()
+            .as_text()
+            .map(str::to_string)
+    });
+    match decoded {
+        Ok(Some(text)) => text,
+        Ok(None) | Err(_) => String::from_utf8_lossy(raw).into_owned(),
+    }
+}
+
 /// Run `parse` and turn an unwind into an [`Unparseable`].
 ///
 /// `AssertUnwindSafe` is honest here rather than a shrug: the closure borrows

@@ -321,6 +321,74 @@ fn broken_encoded_words_degrade_instead_of_panicking() {
 }
 
 // ---------------------------------------------------------------------------
+// Acceptance: `decode_header_text` — an envelope field decoded outside a
+// full message parse (postio-321). The IMAP ENVELOPE arrives as isolated
+// header values, subject and display names among them, well before any body
+// is parsed; RFC 2047 encoded words in those values need the same decoding
+// `parse` already gives a body's headers.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_utf_8_encoded_word_decodes_outside_a_full_message() {
+    assert_eq!(
+        mime::decode_header_text(b"=?UTF-8?B?Q2Fmw6k=?="),
+        "Café",
+        "the same base64 UTF-8 word `parse` would decode in a Subject header"
+    );
+}
+
+#[test]
+fn a_non_utf_8_charset_decodes_rather_than_being_lossy_replaced() {
+    assert_eq!(
+        mime::decode_header_text(b"=?ISO-8859-1?B?Q2Fm6Q==?="),
+        "Café",
+        "the charset the word declares, not a UTF-8 guess over its raw bytes"
+    );
+}
+
+#[test]
+fn plain_ascii_with_no_encoded_word_passes_through() {
+    assert_eq!(
+        mime::decode_header_text(b"Shopping budget update"),
+        "Shopping budget update"
+    );
+}
+
+#[test]
+fn an_empty_field_decodes_to_an_empty_string() {
+    assert_eq!(mime::decode_header_text(b""), "");
+}
+
+#[test]
+fn a_truncated_encoded_word_degrades_to_something_readable() {
+    // No closing `?=`: `mail_parser` cannot decode it and leaves the raw
+    // characters as literal text rather than losing the field or panicking
+    // — the same degradation `broken_encoded_words_degrade_instead_of_panicking`
+    // checks for a full message.
+    let text = mime::decode_header_text(b"=?UTF-8?B?Q2Fmw6k Shopping");
+    assert!(!text.is_empty(), "got: {text:?}");
+    assert!(text.contains("Shopping"), "got: {text:?}");
+}
+
+#[test]
+fn decode_header_text_agrees_with_a_full_parse_of_the_same_subject() {
+    // The row shows a subject from the ENVELOPE, well before the body (and
+    // its Subject header) is ever fully parsed. The two must not disagree
+    // once the body does arrive and the row is rebuilt from it.
+    let encoded = "=?UTF-8?B?Q2Fmw6k=?= budget update";
+    let from_envelope = mime::decode_header_text(encoded.as_bytes());
+
+    let raw = format!("Subject: {encoded}\r\n\r\nBody\r\n");
+    let from_full_parse = mime::parse(raw.as_bytes());
+
+    assert_eq!(
+        from_full_parse.subject.as_deref(),
+        Some(from_envelope.as_str()),
+        "the subject the list shows before the body arrives must equal the one it shows after"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Acceptance: inline vs. attachment classification
 // ---------------------------------------------------------------------------
 
