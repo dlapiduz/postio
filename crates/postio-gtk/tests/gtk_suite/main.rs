@@ -15,19 +15,30 @@
 //! gtk_suite <name>` and the tooling's test counting to keep working.
 //!
 //! What deliberately stays out: `gtk_reader` (WebKit; runs under the
-//! headless runner's watchdog, in isolation — #272), `gtk_accessibility`
-//! (its own display races, #45/#114), and the multi-test files, which
-//! already amortize their binary.
+//! headless runner's watchdog, in isolation — #272) and `gtk_accessibility`
+//! (its own display races, #45/#114).
+//!
+//! Multi-test files used to stay out too, on the grounds that they "already
+//! amortize their binary". They did not amortize anything: a file with two
+//! display-needing `#[test]`s hands them to libtest's thread pool, GTK
+//! tolerates one thread, and the loser returns through its own `no display`
+//! guard and is reported as a pass. Three such files had been quietly
+//! running half their cases — see #355, and
+//! `scripts/checks/check-one-gtk-test-per-binary.py`, which now refuses a
+//! new one. This is where such cases belong; a second case here costs one
+//! `pub fn`, not a binary.
 //!
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
 mod feed;
 mod feed_results;
+mod gtk_composer_autosave;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_display_required;
 mod gtk_feeds;
+mod gtk_finder;
 mod gtk_flagged;
 mod gtk_focus_visible;
 mod gtk_list_recycling;
@@ -41,6 +52,7 @@ mod gtk_search_live;
 mod gtk_search_panel;
 mod gtk_search_preview;
 mod gtk_selection;
+mod gtk_settings;
 mod gtk_sidebar;
 mod gtk_sidebar_keys;
 mod gtk_sidebar_saved_searches;
@@ -62,6 +74,16 @@ const CASES: &[(&str, fn())] = &[
         feed_results::search_hits_reach_the_message_list as fn(),
     ),
     (
+        "gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending",
+        gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending
+            as fn(),
+    ),
+    (
+        "gtk_composer_autosave::saving_twice_carries_the_assigned_id_forward_into_the_second_save",
+        gtk_composer_autosave::saving_twice_carries_the_assigned_id_forward_into_the_second_save
+            as fn(),
+    ),
+    (
         "gtk_composer_document::the_body_round_trips_through_the_neutral_document",
         gtk_composer_document::the_body_round_trips_through_the_neutral_document as fn(),
     ),
@@ -81,6 +103,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_flagged::the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail",
         gtk_flagged::the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail as fn(),
+    ),
+    (
+        "gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders",
+        gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders as fn(),
+    ),
+    (
+        "gtk_finder::at_finds_a_correspondent_and_searches_their_mail",
+        gtk_finder::at_finds_a_correspondent_and_searches_their_mail as fn(),
     ),
     (
         "gtk_focus_visible::taking_focus_changes_what_is_drawn",
@@ -130,6 +160,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_selection::the_cursor_and_the_selection_are_two_different_things",
         gtk_selection::the_cursor_and_the_selection_are_two_different_things as fn(),
+    ),
+    (
+        "gtk_settings::the_settings_panel_edits_the_file_in_place",
+        gtk_settings::the_settings_panel_edits_the_file_in_place as fn(),
+    ),
+    (
+        "gtk_settings::a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log",
+        gtk_settings::a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log as fn(),
     ),
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
