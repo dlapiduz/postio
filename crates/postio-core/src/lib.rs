@@ -70,6 +70,6 @@ pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event, FailureReason, MailFootprint};
 pub use invocation::{EventEnvelope, InvocationId, InvocationOutcome};
-pub use registry::{CommandSpec, Recovery};
-pub use state::{AppState, Resolved, Selection, SharedState, ViewMode};
+pub use registry::{Availability, CommandSpec, Recovery, Requirement};
+pub use state::{AppState, Resolved, Scope, Selection, SharedState, ViewMode};
 pub use undo::{UndoEntry, UndoKind, UndoStack};
