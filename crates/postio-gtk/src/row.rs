@@ -1590,10 +1590,7 @@ mod tests {
         };
         assert_eq!(
             hints_for_row(&keymap, Some(&row)),
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-            ],
+            vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
             "one message in the thread is not a thread to open"
         );
 
