@@ -276,6 +276,13 @@ jobs:
         # #406.
         run: python3 scripts/tests/test-issue-land-lagging-ref.py
 
+      - name: Prove issue-file.sh searches before it files
+        # One bug collected three issue numbers in two days, both duplicates
+        # filed off a fresh reproduction -- the state where searching first
+        # feels redundant. The case that matters is a *closed* prior issue,
+        # which is what both duplicates were filed against. #415.
+        run: python3 scripts/tests/test-issue-file-duplicates.py
+
       - name: Prove fuzz.sh says what is missing instead of failing late
         # Without cargo-fuzz it ran `cargo fuzz`, which made rustup download
         # a whole nightly toolchain and then failed with "no such command:
