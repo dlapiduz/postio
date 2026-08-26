@@ -528,3 +528,116 @@ fn a_postio_cid_source_that_smuggles_a_url_is_still_refused() {
         "{document:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Acceptance: to_flowed_text is RFC 3676 format=flowed (#333)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_paragraph_short_enough_to_fit_wraps_to_nothing() {
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![Inline::Text(
+            "Looking now.".to_owned(),
+        )])],
+    };
+    assert_eq!(document.to_flowed_text(), "Looking now.");
+}
+
+#[test]
+fn a_paragraph_longer_than_the_width_gets_soft_broken() {
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![Inline::Text(
+            "one two three four five six seven eight nine ten".to_owned(),
+        )])],
+    };
+    let flowed = document.to_flowed_text_at(20);
+
+    let lines: Vec<&str> = flowed.split('\n').collect();
+    assert!(lines.len() > 1, "should have wrapped at all: {flowed:?}");
+    for line in &lines[..lines.len() - 1] {
+        assert!(
+            line.ends_with(' '),
+            "every line but the last should carry a soft break: {line:?}"
+        );
+        assert!(
+            line.chars().count() <= 20,
+            "{line:?} is longer than the width"
+        );
+    }
+    assert_eq!(
+        postio_body::flowed::unwrap(&flowed, ""),
+        "one two three four five six seven eight nine ten",
+        "unwrapping should reconstruct the sentence exactly"
+    );
+}
+
+#[test]
+fn a_hard_break_stays_a_fixed_line_even_when_it_is_the_only_one() {
+    // Two words either side of an `Inline::Break`, both well under the
+    // width -- nothing here needs a *soft* break, so the only way a fixed
+    // line can appear at all is the hard break itself.
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![
+            Inline::Text("first line".to_owned()),
+            Inline::Break,
+            Inline::Text("second line".to_owned()),
+        ])],
+    };
+    let flowed = document.to_flowed_text();
+
+    assert_eq!(
+        flowed, "first line\nsecond line",
+        "the hard break must not gain a trailing soft-break space of its own"
+    );
+}
+
+#[test]
+fn a_quote_is_wrapped_with_the_marker_counted_against_the_width() {
+    let document = Document {
+        blocks: vec![Block::Quote(vec![Block::Paragraph(vec![Inline::Text(
+            "one two three four five six seven eight".to_owned(),
+        )])])],
+    };
+    let flowed = document.to_flowed_text_at(20);
+
+    for line in flowed.split('\n') {
+        assert!(
+            line.starts_with("> "),
+            "every quoted line should carry the marker: {line:?}"
+        );
+        assert!(
+            line.chars().count() <= 20,
+            "{line:?} (with its marker) is longer than the width"
+        );
+    }
+}
+
+#[test]
+fn a_nested_quote_uses_adjacent_markers_with_one_space_before_content() {
+    let document = Document {
+        blocks: vec![Block::Quote(vec![Block::Quote(vec![Block::Paragraph(
+            vec![Inline::Text("deeply nested".to_owned())],
+        )])])],
+    };
+    assert_eq!(
+        document.to_flowed_text(),
+        ">> deeply nested",
+        "RFC 3676 markers are adjacent -- `>>`, never `> >`"
+    );
+}
+
+#[test]
+fn wrapping_and_unwrapping_a_paragraph_reconstructs_the_original_text() {
+    // The acceptance criterion, stated directly: `flowed::wrap` and
+    // `flowed::unwrap` are exact inverses for ordinary prose, independent
+    // of `Document` entirely.
+    for text in [
+        "a short line",
+        "a considerably longer paragraph that should wrap across several \
+         physical lines once it is flowed at a narrow width for the test",
+        "one two three four five six seven eight nine ten eleven twelve",
+    ] {
+        let wrapped = postio_body::flowed::wrap(text, "", 30);
+        assert_eq!(postio_body::flowed::unwrap(&wrapped, ""), text);
+    }
+}

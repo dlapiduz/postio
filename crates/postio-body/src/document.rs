@@ -38,6 +38,8 @@
 
 use std::fmt::Write as _;
 
+use crate::flowed;
+
 // ---------------------------------------------------------------------------
 // Leaf types
 // ---------------------------------------------------------------------------
@@ -360,6 +362,36 @@ impl Document {
         self.render_text(Links::LabelOnly)
     }
 
+    /// Render to the outgoing `text/plain; format=flowed` alternative — RFC
+    /// 3676, at [`flowed::WIDTH`].
+    ///
+    /// Not [`to_text`](Self::to_text): that function is the composer's own
+    /// round-trip partner for [`from_text`](Self::from_text), and wrapping
+    /// it would move the user's cursor and whitespace out from under them
+    /// while they are still typing — see `from_text`'s own doc and the
+    /// `plain_text_survives_the_composer_exactly` test this crate's suite
+    /// already has. This is a second rendering of the same structure, for
+    /// the one caller that wants it wrapped: the bytes that actually leave
+    /// the machine.
+    pub fn to_flowed_text(&self) -> String {
+        self.to_flowed_text_at(flowed::WIDTH)
+    }
+
+    /// As [`to_flowed_text`](Self::to_flowed_text), at a caller-chosen width
+    /// — split out for the property test that wants to see wrapping happen
+    /// at a width smaller than a paragraph, without waiting on a paragraph
+    /// long enough to wrap at 72 columns for real.
+    pub fn to_flowed_text_at(&self, width: usize) -> String {
+        let mut out = String::new();
+        for (index, block) in self.blocks.iter().enumerate() {
+            if index > 0 {
+                out.push_str("\n\n");
+            }
+            write_block_flowed(&mut out, block, 0, width);
+        }
+        out
+    }
+
     fn render_text(&self, links: Links) -> String {
         let mut out = String::new();
         for (index, block) in self.blocks.iter().enumerate() {
@@ -642,6 +674,108 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
             out.push_str(&indent);
             out.push_str("----");
         }
+    }
+}
+
+/// The `> ` (or `>> `, `>>> `, …) RFC 3676 §4.5 gives one quote depth: every
+/// marker adjacent, one space total before content, never a space between
+/// markers — `> >` is two mail clients disagreeing about nesting, `>>` is
+/// one agreeing with itself. `0` is unquoted text and gets no prefix at all.
+fn quote_prefix(depth: usize) -> String {
+    if depth == 0 {
+        String::new()
+    } else {
+        format!("{} ", ">".repeat(depth))
+    }
+}
+
+/// [`write_block_text`]'s counterpart for the flowed alternative: the same
+/// structure, wrapped at `width` per [`flowed::wrap`] instead of rendered
+/// verbatim.
+///
+/// `depth` is quote nesting only — unlike `write_block_text`'s `depth`,
+/// which also carries list indentation, because list continuation lines
+/// need their own alignment worked out from `flowed::wrap`'s prefix rather
+/// than reusing quote depth's meaning for a different purpose.
+fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usize) {
+    let prefix = quote_prefix(depth);
+    match block {
+        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+            let mut text = String::new();
+            write_inlines_text(&mut text, inlines, "", Links::Spelled);
+            write_flowed_lines(out, &text, &prefix, width);
+        }
+        Block::List { ordered, items } => {
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                let marker = if *ordered {
+                    format!("{}. ", index + 1)
+                } else {
+                    "- ".to_owned()
+                };
+                let item_prefix = format!("{prefix}{marker}");
+                // Every continuation line after the marker aligns under it,
+                // the same shape `flowed::wrap`'s own quote prefix already
+                // gives a quote -- a marker is just a prefix with an
+                // unusual first line.
+                let hang_prefix = format!("{prefix}{}", " ".repeat(marker.chars().count()));
+                for (nth, block) in item.iter().enumerate() {
+                    if nth > 0 {
+                        out.push_str("\n\n");
+                    }
+                    let block_prefix = if nth == 0 { &item_prefix } else { &hang_prefix };
+                    match block {
+                        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                            let mut text = String::new();
+                            write_inlines_text(&mut text, inlines, "", Links::Spelled);
+                            write_flowed_lines(out, &text, block_prefix, width);
+                        }
+                        other => write_block_flowed(out, other, depth, width),
+                    }
+                }
+            }
+        }
+        Block::Quote(blocks) => {
+            for (index, block) in blocks.iter().enumerate() {
+                if index > 0 {
+                    out.push_str("\n\n");
+                }
+                write_block_flowed(out, block, depth + 1, width);
+            }
+        }
+        Block::Pre(text) => {
+            // Preformatted content is never reflowed -- "not marked up" is
+            // this variant's whole point -- but it still shares the wire
+            // with flowed lines around it, so a line that would otherwise
+            // read as a quote marker or a soft-break continuation still
+            // needs stuffing.
+            for (index, line) in text.split('\n').enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&prefix);
+                out.push_str(&flowed::stuff_for_display(line));
+            }
+        }
+        Block::Rule => {
+            out.push_str(&prefix);
+            out.push_str("----");
+        }
+    }
+}
+
+/// Wraps each `\n`-separated span of already-rendered inline text — each
+/// span is one [`Inline::Break`]-delimited run, and RFC 3676 wants every one
+/// of those kept as its own *fixed* line, never joined with its neighbour by
+/// [`flowed::unwrap`].
+fn write_flowed_lines(out: &mut String, text: &str, prefix: &str, width: usize) {
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&flowed::wrap(line, prefix, width));
     }
 }
 
