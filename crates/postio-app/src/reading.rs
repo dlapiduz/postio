@@ -37,8 +37,9 @@ use postio_gtk::feed::Feeds;
 use postio_gtk::reader::{Absent, BlobSource};
 use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::window::Window;
+use postio_model::address::EmailAddress;
 use postio_model::ids::{AttachmentId, BlobId};
-use postio_model::{Attachment, MessageId};
+use postio_model::{Attachment, Message, MessageId};
 use postio_runtime::Engine;
 use postio_storage::Database;
 use postio_storage::blob::BlobStore;
@@ -405,13 +406,16 @@ impl Fill {
                 // for them costs a row read and never a fetch.
                 let body =
                     crate::compose::load_body_or_reason(connection, &blobs, message, offline);
-                let (content_type, parts) = MessageRepository::new(connection)
+                let fetched = MessageRepository::new(connection)
                     .get(message)
                     .ok()
-                    .flatten()
-                    .map(|message| (message.content_type, message.attachments))
+                    .flatten();
+                let (content_type, parts) = fetched
+                    .as_ref()
+                    .map(|message| (message.content_type.clone(), message.attachments.clone()))
                     .unwrap_or_default();
-                Some((body, content_type, parts))
+                let envelope = fetched.map(Envelope::from);
+                Some((body, content_type, parts, envelope))
             }
         });
         glib::spawn_future_local({
@@ -419,7 +423,7 @@ impl Fill {
             let opened = self.opened.clone();
             let window = window.clone();
             async move {
-                let Ok(Some((body, content_type, parts))) = answer.recv().await else {
+                let Ok(Some((body, content_type, parts, envelope))) = answer.recv().await else {
                     return;
                 };
                 // Late. The cursor moved while the blob was read, and the
@@ -428,6 +432,18 @@ impl Fill {
                 // clicks and now it filters a held-down `j`.
                 if showing.get() != Some(message) {
                     return;
+                }
+                // The envelope is known as soon as headers have synced --
+                // well before a body necessarily is -- so the header goes on
+                // screen regardless of which arm below the body takes (#319).
+                if let Some(envelope) = &envelope {
+                    window.reader().set_message_header(
+                        &envelope.from,
+                        &envelope.to,
+                        &envelope.cc,
+                        envelope.subject.as_deref(),
+                        envelope.date,
+                    );
                 }
                 match body {
                     crate::compose::Body::Ready(body) => {
@@ -508,6 +524,31 @@ struct Opened {
     /// which one -- so [`Fill::repaint_if_waiting`] can tell a connectivity
     /// change worth repainting from one that is not.
     absent: Option<Absent>,
+}
+
+/// The header fields the reading pane needs (#319), pulled out of a full
+/// [`Message`] row so `Fill::fill`'s database closure hands only what the
+/// GTK side needs across the channel, not the whole row.
+struct Envelope {
+    from: Vec<EmailAddress>,
+    to: Vec<EmailAddress>,
+    cc: Vec<EmailAddress>,
+    subject: Option<String>,
+    /// The sender's own `Date`, falling back to when the server received it
+    /// -- always known -- for the rare message with no `Date` header at all.
+    date: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<Message> for Envelope {
+    fn from(message: Message) -> Self {
+        Self {
+            from: message.from,
+            to: message.to,
+            cc: message.cc,
+            subject: message.subject,
+            date: message.date.unwrap_or(message.received_at),
+        }
+    }
 }
 
 /// The message's own content type — the row the parts tree hangs off.

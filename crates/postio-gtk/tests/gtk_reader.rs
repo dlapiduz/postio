@@ -17,9 +17,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use chrono::{TimeZone, Utc};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::reader::{BlobSource, Reader, RemoteImageAllowList};
+use postio_model::address::EmailAddress;
 use postio_model::message::MessageBody;
 use postio_model::test_corpus;
 use webkit6::prelude::*;
@@ -130,6 +132,91 @@ fn the_reader_renders_and_hardens_the_corpus() {
     assert!(
         !reader.banner_visible(),
         "no remote reference was stripped, so there is nothing for the banner to report"
+    );
+
+    // ── #319: the header puts sender, subject and date on screen ──────────
+    let header = reader.header();
+    let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
+    let bob = EmailAddress::new(Some("Bob"), "bob@example.com");
+    let carol = EmailAddress::new(None::<&str>, "carol@example.org");
+    let date = Utc.with_ymd_and_hms(2026, 8, 12, 14, 32, 0).unwrap();
+    header.set_message(
+        std::slice::from_ref(&ada),
+        std::slice::from_ref(&bob),
+        std::slice::from_ref(&carol),
+        Some("Dinner Friday?"),
+        date,
+    );
+    assert!(
+        header.subject_label().contains("Dinner Friday?"),
+        "the subject must be on screen: {}",
+        header.subject_label()
+    );
+    assert!(
+        header.sender_label().contains("Ada Lovelace")
+            && header.sender_label().contains("ada@example.com"),
+        "the sender's display name and address must both be on screen: {}",
+        header.sender_label()
+    );
+    assert!(
+        !header.date_label().is_empty(),
+        "an absolute date and time must be on screen"
+    );
+    assert!(
+        header.to_visible() && header.to_label().contains("bob@example.com"),
+        "the one recipient must be reachable in one line: {}",
+        header.to_label()
+    );
+    assert!(
+        header.cc_toggle_visible(),
+        "a Cc disclosure must be offered when the message has one"
+    );
+    assert!(
+        !header.cc_revealed(),
+        "Cc must not cost vertical space until asked for"
+    );
+
+    // A message with no subject and a sender with no display name still
+    // renders a complete header, not a blank one.
+    header.set_message(std::slice::from_ref(&carol), &[], &[], None, date);
+    assert!(
+        !header.subject_label().trim().is_empty(),
+        "a missing subject must say so rather than showing nothing"
+    );
+    assert_eq!(
+        header.sender_label(),
+        "carol@example.org",
+        "a sender with no display name shows the bare address, not a blank line"
+    );
+    assert!(
+        !header.to_visible(),
+        "no recipients means no To line taking up space for nothing"
+    );
+    assert!(
+        !header.cc_toggle_visible(),
+        "no Cc means no disclosure to offer"
+    );
+
+    // A header-only message -- headers synced, body not -- gets the same
+    // header a message with a body does: `set_message` never reads the body.
+    header.set_message(
+        std::slice::from_ref(&ada),
+        std::slice::from_ref(&bob),
+        &[],
+        Some("No body yet"),
+        date,
+    );
+    reader.show_absent(postio_gtk::reader::Absent::Partial);
+    assert!(
+        header.subject_label().contains("No body yet"),
+        "the header must survive showing an absent body"
+    );
+
+    // Closing the pane clears the header along with everything else.
+    reader.clear();
+    assert!(
+        header.subject_label().is_empty(),
+        "a cleared pane must not keep showing the last message's header"
     );
 
     // ── "always allow" persists and lifts the block on the next render ────
