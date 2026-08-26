@@ -2523,6 +2523,50 @@ impl Composer {
         completion.accept(&imp.to)
     }
 
+    /// Activates the `index`th suggestion the way a mouse click does, by
+    /// emitting the `row-activated` that `GtkListBox` emits for a click on a
+    /// row. Nothing about the button press is simulated — this is the signal
+    /// the click produces, so anything listening for the click hears this.
+    #[doc(hidden)]
+    pub fn test_click_recipient_suggestion(&self, index: usize) -> bool {
+        let Some(completion) = self.imp().to_completion.borrow().clone() else {
+            return false;
+        };
+        let Some(row) = completion.list.row_at_index(index as i32) else {
+            return false;
+        };
+        completion.list.select_row(Some(&row));
+        completion.list.emit_by_name::<()>("row-activated", &[&row]);
+        true
+    }
+
+    /// Delivers `key` to the completion's key handling, and reports whether it
+    /// was consumed.
+    ///
+    /// This calls the handler the entry's key controller calls; it does not
+    /// synthesize a GDK event, which GTK4 gives a test no way to do for a
+    /// particular widget. So it covers what the handler does with a key and
+    /// *not* whether a real keystroke reaches the handler at all — the
+    /// propagation phase decides that, and only running the app shows it.
+    #[doc(hidden)]
+    pub fn test_press_recipient_key(&self, key: gdk::Key) -> bool {
+        let imp = self.imp();
+        let Some(completion) = imp.to_completion.borrow().clone() else {
+            return false;
+        };
+        completion.handle_key(&imp.to, key) == glib::Propagation::Stop
+    }
+
+    /// How many suggestions `To` is currently offering.
+    #[doc(hidden)]
+    pub fn test_recipient_suggestion_count(&self) -> usize {
+        self.imp()
+            .to_completion
+            .borrow()
+            .as_ref()
+            .map_or(0, |completion| completion.candidates.borrow().len())
+    }
+
     /// Attaches `path` exactly as [`CommandId::AttachFile`] or a drop would,
     /// without going through `GtkFileDialog` or GTK's drag machinery — a
     /// headless test can drive neither. Both real paths converge on the same
@@ -2740,6 +2784,15 @@ fn sync_detach_button(button: &gtk::Button, detached: bool) {
     button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
 }
 
+/// How much of the recipient being typed must exist before completion offers
+/// anything.
+///
+/// Four, from #424. One character matches most of an address book, so the
+/// popover opened over the field with a list nobody could choose from yet —
+/// and it did it while a query ran on every keystroke. Four is where a prefix
+/// starts to identify somebody.
+const MIN_COMPLETION_PREFIX: usize = 4;
+
 /// Recipient completion attached to one entry: a popover of suggestions from
 /// [`Composer::connect_recipient_suggestions`], keyboard-navigable and
 /// accepted without ever reaching for the mouse.
@@ -2789,7 +2842,37 @@ impl Completion {
             move |entry| this.update(&composer, entry)
         ));
 
+        // A click commits the row it landed on. Without this the list looked
+        // interactive and was not: clicking moved GTK's own selection and
+        // nothing ever acted on it, so the only way to take a suggestion was
+        // the keyboard (#424).
+        this.list.connect_row_activated(glib::clone!(
+            #[strong]
+            this,
+            #[weak]
+            entry,
+            move |_, row| {
+                this.accept_row(&entry, row);
+            }
+        ));
+
         let keys = gtk::EventControllerKey::new();
+        // Capture, not the default bubble.
+        //
+        // The widget that actually holds the focus is the `GtkText` inside
+        // the entry, and `GtkText` binds Return to its `activate` keybinding,
+        // which consumes the event. A bubble-phase controller on the entry
+        // runs *after* the focus widget has had it, so Return never arrived
+        // here: the popover could be walked with the arrow keys and then not
+        // accepted with the keyboard, which is what #424 reported. Capturing
+        // takes the key on the way down, before the text widget's own
+        // bindings run, and `handle_key` still declines everything it does
+        // not want and every key at all while the popover is closed.
+        //
+        // The same reasoning, and the same setting, as every other key
+        // controller in this app: `window.rs`, `finder.rs`, `cheatsheet.rs`,
+        // `settings.rs`.
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed(glib::clone!(
             #[strong]
             this,
@@ -2809,7 +2892,13 @@ impl Completion {
     fn update(&self, composer: &Composer, entry: &gtk::Entry) {
         let text = entry.text();
         let (_, token) = current_entry(&text);
-        if token.is_empty() {
+        // Below the threshold nothing is offered *and* nothing is looked up:
+        // the provider is a database query, and running one per keystroke to
+        // rank half the address book on one letter costs something and tells
+        // the user nothing. Counted in `chars`, because a threshold measured
+        // in bytes would ask more of a name written in one script than
+        // another.
+        if token.chars().count() < MIN_COMPLETION_PREFIX {
             self.popover.popdown();
             return;
         }
@@ -2894,6 +2983,15 @@ impl Completion {
         let Some(row) = self.list.selected_row() else {
             return false;
         };
+        self.accept_row(entry, &row)
+    }
+
+    /// Commits one specific row, whether the keyboard selected it or a click
+    /// landed on it. A click carries the row it hit, so this takes the row
+    /// rather than re-reading the selection — the two agree today, and a
+    /// click that committed something other than what was under the pointer
+    /// would be the worst possible way for them ever to disagree.
+    fn accept_row(&self, entry: &gtk::Entry, row: &gtk::ListBoxRow) -> bool {
         let Some(address) = self.candidates.borrow().get(row.index() as usize).cloned() else {
             return false;
         };
