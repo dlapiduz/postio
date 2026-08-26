@@ -46,8 +46,9 @@ pub mod logging;
 pub mod paths;
 pub mod refresh;
 
+use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use postio_core::bridge::EventSink;
 use postio_runtime::store::{MailStore, SqliteStore};
@@ -440,6 +441,99 @@ pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error
 /// orphan — and a sweep with no grace period deletes the body of a message
 /// that is mid-fetch. Tests pass `ZERO` deliberately and nothing else may.
 pub const BLOB_GRACE_PERIOD: Duration = Duration::from_secs(60 * 60);
+
+/// How long a dragged-out export must have sat untouched before a sweep may
+/// reclaim it.
+///
+/// One hour, and this is a **guard rather than tuning**. #121 established
+/// that the file transfer portal hands a receiver a *path* and never copies
+/// the bytes, so a file deleted between the drop and the receiver's read
+/// produces a silent no-op: the receiver gets nothing, Postio reports
+/// success, and no error is raised anywhere. A drop's file is seconds old
+/// while that is happening, so an hour is a margin of three thousand.
+///
+/// It is also what makes the sweep safe with several instances running,
+/// which "nothing of mine is in flight" would not be: this process cannot
+/// see another one's drag and does not need to, because that drag's file is
+/// young.
+pub const DRAG_EXPORT_GRACE_PERIOD: Duration = Duration::from_secs(60 * 60);
+
+/// Delete dragged-out exports nothing is using any more. Answers how many.
+///
+/// # Why this exists
+///
+/// Dragging a message or an attachment out of Postio writes a file into
+/// [`paths::export_dir`], and nothing ever deleted one (#278): three writers
+/// and no reader. Someone who drags mail out regularly accumulated a
+/// plaintext copy of every message they had ever dragged, sitting outside the
+/// blob store, in a cache directory nothing audits, indefinitely.
+///
+/// # Why it is an age and not a purge
+///
+/// The obvious fix — empty the directory on start — is the dangerous one, and
+/// [`paths::export_dir`]'s own documentation warns against it. The receiver
+/// of a drop reads a path *after* the drop, on its own schedule, so a sweep
+/// that can touch a file a drop is still using turns a successful drag into
+/// nothing at all, silently.
+///
+/// `older_than` is the whole safety property, so it is a parameter rather
+/// than a constant reached for inside: the production caller passes
+/// [`DRAG_EXPORT_GRACE_PERIOD`] and is visibly not passing `ZERO`, exactly as
+/// [`BLOB_GRACE_PERIOD`] arranged for blobs.
+///
+/// # Cost
+///
+/// One `read_dir` of a directory that is empty on a machine where nobody
+/// drags mail out, which is why this can sit on the startup path beside
+/// [`purge_fetch_debris`]. An entry whose age cannot be read is left alone:
+/// the sweep's job is bounding a cache, and it may not guess.
+pub fn reclaim_drag_exports(
+    directory: &Path,
+    older_than: Duration,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        // Nobody has ever dragged anything out on this machine.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+
+    let now = SystemTime::now();
+    let mut removed = 0;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        // Unreadable metadata, or an mtime in the future because a clock
+        // moved: either way this sweep does not know how old it is, and
+        // "delete what you cannot date" is how the guard gets lost.
+        let Ok(age) = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .map(|modified| now.duration_since(modified).unwrap_or_default())
+        else {
+            continue;
+        };
+        if age < older_than {
+            continue;
+        }
+        // An attachment export gets a directory of its own so two parts
+        // sharing a filename do not collide, so both kinds turn up here.
+        let gone = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match gone {
+            Ok(()) => removed += 1,
+            // Another instance swept it first, or it is in use. Neither is
+            // this process's problem, and neither is worth failing a start.
+            Err(error) => {
+                tracing::debug!(%error, path = %path.display(), "could not reclaim a drag export");
+            }
+        }
+    }
+    Ok(removed)
+}
 
 /// Delete blobs the database no longer references. Answers what went.
 ///
