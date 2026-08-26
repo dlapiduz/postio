@@ -1381,3 +1381,59 @@ fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() {
     assert_eq!(stored.text_part_id, None);
     assert_eq!(stored.html_part_id, None);
 }
+
+#[test]
+fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
+    // The bug the e2e gate caught. `partial` means text local, payloads not
+    // (ADR 0017), and it is a *settled* state -- there is nothing more the
+    // background lane should do for such a message.
+    //
+    // While this query asked for `body_state <> 'full'`, every text-backfilled
+    // message carrying an attachment came straight back as a candidate: fetch
+    // its text, store it, settle at `partial`, and be handed back by the very
+    // next seed. The backfill spun on one message forever and starved
+    // everything behind it, including newly arriving mail.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut settled = a_message(inbox, account.id, 300);
+    settled.sync.body_state = BodyState::Partial;
+    messages.create(&mut settled).expect("create");
+
+    let mut wanted = a_message(inbox, account.id, 301);
+    wanted.sync.body_state = BodyState::HeadersOnly;
+    let wanted_id = messages.create(&mut wanted).expect("create");
+
+    let candidates = messages
+        .needing_backfill_from(inbox, 10, 0)
+        .expect("candidates");
+
+    assert_eq!(
+        candidates.iter().map(|c| c.message_id).collect::<Vec<_>>(),
+        vec![wanted_id],
+        "only the message with no text yet"
+    );
+}
+
+#[test]
+fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
+    // The other side of it. `partial` is settled for the *background* lane,
+    // not for the user: opening an attachment on such a message has to be
+    // able to ask for the parts the background lane deliberately declined,
+    // so the interactive lookup still answers for it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 302);
+    message.sync.body_state = BodyState::Partial;
+    let id = messages.create(&mut message).expect("create");
+
+    assert!(
+        messages.backfill_candidate(id).expect("look up").is_some(),
+        "the user can still ask for the rest of it"
+    );
+}

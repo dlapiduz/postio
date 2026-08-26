@@ -30,3 +30,18 @@ ALTER TABLE messages ADD COLUMN text_part_id TEXT;
 ALTER TABLE messages ADD COLUMN text_part_headers TEXT;
 ALTER TABLE messages ADD COLUMN html_part_id TEXT;
 ALTER TABLE messages ADD COLUMN html_part_headers TEXT;
+
+-- The backlog the body backfill drains, narrowed to match what it now asks
+-- for.
+--
+-- `idx_messages_body_state` (migration 0001) was `body_state <> 'full'`, from
+-- when `full` and "has a body" meant the same thing. They no longer do:
+-- `partial` is text local, payloads not (ADR 0017), and it is a *settled*
+-- state -- the background lane has nothing left to do for such a message.
+-- Left as it was, every text-backfilled message carrying an attachment came
+-- straight back as a candidate on the next seed, and the backfill spun on one
+-- message forever while newly arrived mail queued behind it.
+DROP INDEX IF EXISTS idx_messages_body_state;
+CREATE INDEX idx_messages_body_state
+    ON messages (mailbox_id, received_at DESC)
+    WHERE body_state IN ('not_fetched', 'headers_only');

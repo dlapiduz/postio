@@ -1039,7 +1039,7 @@ impl<'a> MessageRepository<'a> {
                     mailboxes.path
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
-                AND messages.body_state <> 'full'
+                AND messages.body_state IN ('not_fetched', 'headers_only')
                 AND messages.uid IS NOT NULL
                 AND messages.deleted_locally = 0
               ORDER BY messages.received_at DESC
