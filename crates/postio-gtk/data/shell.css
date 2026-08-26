@@ -1387,6 +1387,32 @@ button.postio-compose-more {
   border-radius: var(--postio-radius-sm);
 }
 
+/* ── The formatting toolbar (#339) ──────────────────────────────────
+   A quiet strip between the fields and the body: flat icon buttons,
+   hairline below, active state in the accent tint the selected row
+   already uses. Instant, like everything else — no transition. */
+.postio-compose-toolbar {
+  padding: 4px 24px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-compose-toolbar button {
+  min-height: 26px;
+  min-width: 30px;
+  padding: 2px 6px;
+  color: var(--postio-dim);
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-compose-toolbar button:hover {
+  color: var(--postio-ink);
+}
+
+.postio-compose-toolbar button:checked {
+  background: var(--postio-selected-bg);
+  color: var(--postio-accent-text);
+}
+
 .postio-compose-body {
   padding: 18px 28px;
   /* Barlow ligates `--` into a dash, and the signature separator is two

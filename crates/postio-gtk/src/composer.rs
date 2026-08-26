@@ -420,6 +420,14 @@ mod imp {
         /// composer holds a view over its record, exactly as ADR 0004
         /// always demanded of the surface.
         pub body: crate::editor::Editor,
+        /// The formatting toolbar's five toggles, in registry order: bold,
+        /// italic, bullet list, numbered list, quote block. Toggles because
+        /// each reflects the caret — active when the selection already sits
+        /// inside what the button would apply.
+        pub format_toggles: [gtk::ToggleButton; 5],
+        /// The link button: a plain button, because a link is a dialog to
+        /// fill in, not a state the caret can be in or out of.
+        pub link_button: gtk::Button,
         pub send: gtk::Button,
         pub save: gtk::Button,
         pub warning: gtk::Label,
@@ -490,6 +498,8 @@ mod imp {
                 identity: gtk::DropDown::from_strings(&[]),
                 identity_only: gtk::Label::new(None),
                 body: crate::editor::Editor::new(std::rc::Rc::new(|_: &str| None)),
+                format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
+                link_button: gtk::Button::new(),
                 send: gtk::Button::new(),
                 save: gtk::Button::new(),
                 warning: gtk::Label::new(None),
@@ -1909,6 +1919,7 @@ impl Composer {
         column.append(&title);
         column.append(&fields);
         column.append(&imp.tracking_notice);
+        column.append(&self.build_toolbar());
         column.append(imp.body.widget());
         column.append(&imp.warning);
         column.append(&self.build_attachments());
@@ -1933,6 +1944,90 @@ impl Composer {
 
         self.set_identities(Vec::new());
         self.refresh();
+    }
+
+    /// The formatting toolbar: the visible half of #338's commands.
+    ///
+    /// Every button dispatches the registry command the keyboard reaches —
+    /// the same `dispatch` arm, so a click and `Ctrl+B` are one code path —
+    /// and each toggle reflects the caret through the editor's format-state
+    /// channel. Buttons keep their hands off the focus (`focus_on_click`
+    /// false): the click's target is the selection in the editor, and
+    /// stealing the caret would destroy the thing the command acts on.
+    fn build_toolbar(&self) -> gtk::Box {
+        let imp = self.imp();
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        toolbar.add_css_class("postio-compose-toolbar");
+        toolbar.set_accessible_role(gtk::AccessibleRole::Toolbar);
+        toolbar.update_property(&[gtk::accessible::Property::Label("Formatting")]);
+
+        let toggles: [(CommandId, &str, &str); 5] = [
+            (
+                CommandId::Bold,
+                "format-text-bold-symbolic",
+                "postio-toolbar-bold",
+            ),
+            (
+                CommandId::Italic,
+                "format-text-italic-symbolic",
+                "postio-toolbar-italic",
+            ),
+            (
+                CommandId::BulletList,
+                "view-list-bullet-symbolic",
+                "postio-toolbar-bullet-list",
+            ),
+            (
+                CommandId::NumberedList,
+                "view-list-ordered-symbolic",
+                "postio-toolbar-numbered-list",
+            ),
+            (
+                CommandId::QuoteBlock,
+                "format-indent-more-symbolic",
+                "postio-toolbar-quote-block",
+            ),
+        ];
+        for (button, (id, icon, class)) in imp.format_toggles.iter().zip(toggles) {
+            style_toolbar_button(button.as_ref(), id, icon, class);
+            button.connect_clicked(glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |_| composer.dispatch(id)
+            ));
+            toolbar.append(button);
+        }
+
+        style_toolbar_button(
+            &imp.link_button,
+            CommandId::InsertLink,
+            "insert-link-symbolic",
+            "postio-toolbar-link",
+        );
+        imp.link_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.dispatch(CommandId::InsertLink)
+        ));
+        toolbar.append(&imp.link_button);
+
+        // Reflection: the caret's formatting drives the toggles. Programmatic
+        // `set_active` emits `toggled`, not `clicked`, so nothing loops.
+        let toggles = imp.format_toggles.clone();
+        imp.body.connect_format_state(move |state| {
+            let states = [
+                state.bold,
+                state.italic,
+                state.bullet_list,
+                state.numbered_list,
+                state.quote_block,
+            ];
+            for (button, active) in toggles.iter().zip(states) {
+                button.set_active(active);
+            }
+        });
+
+        toolbar
     }
 
     /// The `To` row, which also carries the button that reveals Cc and Bcc.
@@ -2096,6 +2191,13 @@ impl Composer {
         self.imp().body.test_type(text);
     }
 
+    /// Select a range of the body's `nth` text node, as a hand would before
+    /// reaching for a formatting button.
+    #[doc(hidden)]
+    pub fn test_select_body(&self, nth: u32, from: u32, to: u32) {
+        self.imp().body.test_select(nth, from, to);
+    }
+
     /// The draft `Reply` would open for `source`, without a window to press
     /// a key in. Public so the quoting path can be driven directly.
     #[doc(hidden)]
@@ -2189,6 +2291,40 @@ fn pane_siblings(composer: &Composer) -> Vec<gtk::Widget> {
 }
 
 /// Whether `focus` is `widget` or something inside it.
+/// Dress one toolbar button: icon, identity, and a tooltip that teaches the
+/// key — title and binding both read from the registry, so the toolbar can
+/// never drift from what the palette and the cheat sheet say.
+fn style_toolbar_button(button: &gtk::Button, id: CommandId, icon: &str, class: &str) {
+    let spec = postio_core::registry::get(id);
+    button.set_icon_name(icon);
+    button.add_css_class("flat");
+    button.add_css_class(class);
+    button.set_tooltip_text(Some(&format!(
+        "{} ({})",
+        spec.title,
+        pretty_binding(spec.default_binding)
+    )));
+    button.update_property(&[gtk::accessible::Property::Label(spec.title)]);
+    // The click acts on the editor's selection; taking the focus would
+    // collapse the very thing the command is for.
+    button.set_focus_on_click(false);
+}
+
+/// `ctrl+shift+8` the way a tooltip says it: `Ctrl+Shift+8`.
+fn pretty_binding(binding: &str) -> String {
+    binding
+        .split('+')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 fn holds(focus: &gtk::Widget, widget: &gtk::Widget) -> bool {
     focus == widget || focus.is_ancestor(widget)
 }
