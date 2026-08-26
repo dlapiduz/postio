@@ -200,6 +200,15 @@ pub struct Account {
     /// rest so a draft can sign differently without changing who it is from.
     #[serde(default)]
     pub signatures: Vec<Signature>,
+    /// An account-wide override of what a new draft starts signed with
+    /// (#12's last item, #394) — see [`signature_default::resolve`] for the
+    /// full precedence this participates in, alongside a mailbox's own
+    /// override and an identity's own signature.
+    ///
+    /// `None` means this account has no opinion, and resolution falls
+    /// through to whatever would have applied without it.
+    #[serde(default)]
+    pub default_signature_id: Option<SignatureId>,
     /// When the account was added.
     pub created_at: DateTime<Utc>,
 }
@@ -228,6 +237,7 @@ impl Account {
             enabled: true,
             identities: Vec::new(),
             signatures: Vec::new(),
+            default_signature_id: None,
             created_at: Utc::now(),
         }
     }
