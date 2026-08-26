@@ -17,6 +17,7 @@ mod keystroke;
 mod parts_open_wiring;
 mod reading;
 mod reading_offline;
+mod reply_source;
 mod resume_draft;
 mod search_index;
 mod search_results;
@@ -65,6 +66,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does",
         reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does as fn(),
+    ),
+    (
+        "reply_source::reply_forward_and_reply_all_act_on_the_message_under_the_cursor",
+        reply_source::reply_forward_and_reply_all_act_on_the_message_under_the_cursor as fn(),
     ),
     (
         "resume_draft::return_on_a_draft_row_opens_the_composer_on_that_draft",
