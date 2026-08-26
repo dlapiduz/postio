@@ -413,7 +413,7 @@ mod tests {
             .map(|entry| entry.title)
             .collect();
         assert!(
-            in_account.iter().any(|title| *title == "Move to…"),
+            in_account.contains(&"Move to…"),
             "an account view is exactly where moving into a folder means something: {in_account:?}"
         );
 
@@ -422,7 +422,7 @@ mod tests {
             .map(|entry| entry.title)
             .collect();
         assert!(
-            !unified.iter().any(|title| *title == "Move to…"),
+            !unified.contains(&"Move to…"),
             "offering Move across every account promises a folder the user was \
              never given the chance to pick: {unified:?}"
         );
