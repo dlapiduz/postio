@@ -56,9 +56,11 @@
 //! # }
 //! ```
 
+mod format;
+
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -191,10 +193,13 @@ impl BlobStore {
     ///
     /// [`Error::Io`] if the temporary file cannot be created.
     pub fn writer(&self) -> Result<BlobWriter> {
+        let temporary = TemporaryBlob::create(&self.temporary)?;
         Ok(BlobWriter {
             root: self.root.clone(),
-            temporary: TemporaryBlob::create(&self.temporary)?,
+            path: temporary.path.clone(),
             hasher: blake3::Hasher::new(),
+            state: State::Deciding(temporary),
+            probe: Vec::new(),
         })
     }
 
@@ -204,13 +209,57 @@ impl BlobStore {
     /// [`BlobStore::reader`] for anything that might be an attachment.
     pub fn get(&self, id: &BlobId) -> Result<Vec<u8>> {
         let path = self.path_of(id)?;
-        std::fs::read(&path).map_err(|source| self.read_error(id, path, source))
+        let stored = std::fs::read(&path).map_err(|source| self.read_error(id, path, source))?;
+        match format::framing_of(&stored)? {
+            // Bare plaintext from before the container existed. The bytes are
+            // already the answer; see `blob::format`.
+            format::Framing::Legacy => Ok(stored),
+            format::Framing::Container(format::Codec::None, _) => {
+                Ok(stored[format::HEADER_LEN..].to_vec())
+            }
+            format::Framing::Container(format::Codec::Zstd, _) => {
+                zstd::stream::decode_all(&stored[format::HEADER_LEN..]).map_err(|source| {
+                    Error::UnreadableBlob {
+                        reason: format!("its compressed payload could not be read: {source}"),
+                    }
+                })
+            }
+        }
     }
 
     /// Opens a blob for streaming.
-    pub fn reader(&self, id: &BlobId) -> Result<File> {
+    ///
+    /// Decompresses as it goes, so a 30 MiB attachment still never exists
+    /// whole in memory — which is the promise this method has always made and
+    /// the reason compression could not simply be bolted onto [`get`].
+    ///
+    /// [`get`]: BlobStore::get
+    pub fn reader(&self, id: &BlobId) -> Result<Box<dyn Read + Send>> {
         let path = self.path_of(id)?;
-        File::open(&path).map_err(|source| self.read_error(id, path, source))
+        let mut file =
+            File::open(&path).map_err(|source| self.read_error(id, path.clone(), source))?;
+
+        let mut start = [0u8; format::HEADER_LEN];
+        let read = read_up_to(&mut file, &mut start)
+            .map_err(|source| self.read_error(id, path.clone(), source))?;
+
+        match format::framing_of(&start[..read])? {
+            format::Framing::Legacy => {
+                // Rewind: those bytes are content, not a header.
+                let file = File::open(&path)
+                    .map_err(|source| self.read_error(id, path.clone(), source))?;
+                Ok(Box::new(file))
+            }
+            format::Framing::Container(format::Codec::None, _) => Ok(Box::new(file)),
+            format::Framing::Container(format::Codec::Zstd, _) => {
+                let decoder = zstd::stream::read::Decoder::new(file).map_err(|source| {
+                    Error::UnreadableBlob {
+                        reason: format!("its compressed payload could not be opened: {source}"),
+                    }
+                })?;
+                Ok(Box::new(decoder))
+            }
+        }
     }
 
     /// Whether the blob is stored.
@@ -218,7 +267,15 @@ impl BlobStore {
         self.path_of(id).is_ok_and(|path| path.is_file())
     }
 
-    /// The size of a stored blob, in bytes.
+    /// How many bytes the blob occupies on disk.
+    ///
+    /// The *stored* size, after compression and after the container header —
+    /// which is what a disk budget (#382) and a garbage-collection report care
+    /// about, since it is the space actually taken and actually reclaimed.
+    ///
+    /// It is **not** the length of the content. Nothing can answer that
+    /// without decompressing, and a caller that wants the content's length
+    /// wants the content.
     pub fn len_of(&self, id: &BlobId) -> Result<u64> {
         let path = self.path_of(id)?;
         std::fs::metadata(&path)
@@ -470,9 +527,52 @@ fn path_of(root: &Path, id: &BlobId) -> Result<PathBuf> {
 #[derive(Debug)]
 pub struct BlobWriter {
     root: PathBuf,
-    temporary: TemporaryBlob,
+    /// The temporary file's path, kept beside the state because the encoder
+    /// owns the file once compression starts.
+    path: PathBuf,
     hasher: blake3::Hasher,
+    state: State,
+    /// The opening bytes, held only until the codec is chosen.
+    ///
+    /// Bounded by [`PROBE_BYTES`], so this is not the buffering the streaming
+    /// writer exists to avoid.
+    probe: Vec<u8>,
 }
+
+/// Where a [`BlobWriter`]'s bytes are going.
+///
+/// The header has to say which codec the payload uses, and that cannot be
+/// known until enough bytes have been seen to tell whether the payload is
+/// worth compressing — hence a state that begins undecided.
+enum State {
+    /// Still sampling. Nothing has been written to the file yet, not even the
+    /// header.
+    Deciding(TemporaryBlob),
+    /// Straight through, for a payload already compressed by whoever made it.
+    Plain(TemporaryBlob),
+    /// Through a zstd stream.
+    Zstd(Box<zstd::stream::write::Encoder<'static, TemporaryBlob>>),
+    /// Momentarily empty, while one of the above is being swapped for another.
+    /// Never observable outside a single method.
+    Taken,
+}
+
+impl std::fmt::Debug for State {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Deciding(_) => formatter.write_str("Deciding"),
+            Self::Plain(_) => formatter.write_str("Plain"),
+            Self::Zstd(_) => formatter.write_str("Zstd"),
+            Self::Taken => formatter.write_str("Taken"),
+        }
+    }
+}
+
+/// How many opening bytes are sampled before choosing a codec.
+///
+/// One 64 KiB chunk: the size the transport hands over anyway, so in practice
+/// the decision is made on the first `write` and nothing is held twice.
+const PROBE_BYTES: usize = CHUNK;
 
 impl BlobWriter {
     /// Appends `bytes` to the blob.
@@ -485,13 +585,24 @@ impl BlobWriter {
     /// [`Error::Io`] if the bytes cannot be written. The writer should be
     /// dropped after an error rather than reused; nothing has been published.
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        // The digest is always over the plaintext, whatever the payload ends
+        // up encoded as. ADR 0014 depends on this: the id is taken before
+        // compression and before encryption, so dedup survives both.
         self.hasher.update(bytes);
-        self.temporary.write(bytes)
+
+        if let State::Deciding(_) = self.state {
+            self.probe.extend_from_slice(bytes);
+            if self.probe.len() < PROBE_BYTES {
+                return Ok(());
+            }
+            return self.decide_and_flush();
+        }
+        self.write_payload(bytes)
     }
 
     /// The temporary file's path, for error reporting.
     pub fn path(&self) -> &Path {
-        &self.temporary.path
+        &self.path
     }
 
     /// Publishes the blob and returns its digest.
@@ -503,6 +614,23 @@ impl BlobWriter {
     /// [`Error::Io`] if the bytes cannot be flushed or the file cannot be
     /// renamed into place. Nothing is published in either case.
     pub fn finish(mut self) -> Result<BlobId> {
+        // A blob shorter than the probe never decided; decide now, on
+        // everything there is.
+        if let State::Deciding(_) = self.state {
+            self.decide_and_flush()?;
+        }
+
+        let mut temporary = match std::mem::replace(&mut self.state, State::Taken) {
+            State::Plain(temporary) => temporary,
+            State::Zstd(encoder) => encoder.finish().map_err(|source| Error::Io {
+                path: self.path.clone(),
+                source,
+            })?,
+            State::Deciding(_) | State::Taken => {
+                unreachable!("deciding was resolved above, and Taken never escapes a method")
+            }
+        };
+
         let id = BlobId::new(self.hasher.finalize().to_hex().to_string());
         let destination = path_of(&self.root, &id)?;
 
@@ -515,8 +643,54 @@ impl BlobWriter {
         if let Some(parent) = destination.parent() {
             create_dir_all(parent)?;
         }
-        self.temporary.publish(&destination)?;
+        temporary.publish(&destination)?;
         Ok(id)
+    }
+
+    /// Chooses a codec from the sampled bytes, writes the header, and pushes
+    /// the sample through.
+    fn decide_and_flush(&mut self) -> Result<()> {
+        let State::Deciding(mut temporary) = std::mem::replace(&mut self.state, State::Taken)
+        else {
+            unreachable!("only called while deciding");
+        };
+
+        let codec = if format::looks_compressible(&self.probe) {
+            format::Codec::Zstd
+        } else {
+            format::Codec::None
+        };
+        temporary.write(&format::header(codec, format::NO_DICTIONARY))?;
+
+        self.state = match codec {
+            format::Codec::None => State::Plain(temporary),
+            format::Codec::Zstd => {
+                let encoder = zstd::stream::write::Encoder::new(temporary, format::LEVEL).map_err(
+                    |source| Error::Io {
+                        path: self.path.clone(),
+                        source,
+                    },
+                )?;
+                State::Zstd(Box::new(encoder))
+            }
+        };
+
+        let sample = std::mem::take(&mut self.probe);
+        self.write_payload(&sample)
+    }
+
+    /// Writes `bytes` through whichever payload encoder was chosen.
+    fn write_payload(&mut self, bytes: &[u8]) -> Result<()> {
+        match &mut self.state {
+            State::Plain(temporary) => temporary.write(bytes),
+            State::Zstd(encoder) => encoder.write_all(bytes).map_err(|source| Error::Io {
+                path: self.path.clone(),
+                source,
+            }),
+            State::Deciding(_) | State::Taken => {
+                unreachable!("the codec is chosen before any payload is written")
+            }
+        }
     }
 }
 
@@ -583,6 +757,43 @@ impl TemporaryBlob {
             path: destination.to_path_buf(),
             source,
         })
+    }
+}
+
+/// Fills as much of `buffer` as the file has, returning how much that was.
+///
+/// `Read::read` may stop short for reasons of its own, and a header split
+/// across two reads would otherwise look like a legacy blob.
+fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match file.read(&mut buffer[filled..])? {
+            0 => break,
+            read => filled += read,
+        }
+    }
+    Ok(filled)
+}
+
+impl Write for TemporaryBlob {
+    /// So a compressing encoder can own the file directly.
+    ///
+    /// `write_all` rather than a partial write: the encoder deals in whole
+    /// frames, and a short write it had to retry would interleave badly with
+    /// the digest, which is taken over the plaintext elsewhere entirely.
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.file
+            .as_mut()
+            .expect("the file is taken only when publishing")
+            .write_all(bytes)
+            .map(|()| bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self.file.as_mut() {
+            Some(file) => file.flush(),
+            None => Ok(()),
+        }
     }
 }
 

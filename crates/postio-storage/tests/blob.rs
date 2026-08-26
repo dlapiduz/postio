@@ -88,8 +88,11 @@ fn a_blob_round_trips_byte_for_byte() {
     let id = store.put(&content).expect("put");
 
     assert_eq!(store.get(&id).expect("get"), content);
-    assert_eq!(store.len_of(&id).expect("len"), content.len() as u64);
     assert!(store.contains(&id));
+    // `len_of` is the size on disk, not the size of the content: this
+    // particular content is a repeating byte cycle, so compression takes it
+    // to a fraction of itself (ADR 0017).
+    assert!(store.len_of(&id).expect("len") < content.len() as u64);
 }
 
 #[test]
@@ -170,7 +173,7 @@ fn a_blob_can_be_written_from_a_reader_without_buffering_it_whole() {
         store.put(&content).expect("the same bytes by value"),
         "streaming and buffered writes agree on the digest"
     );
-    assert_eq!(store.len_of(&id).expect("len"), content.len() as u64);
+    assert!(store.len_of(&id).expect("len") > 0, "it is on disk");
 }
 
 #[test]
@@ -308,6 +311,10 @@ fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     let body = store.put(b"the plain text body").expect("put");
     let attached = store.put(b"an attachment").expect("put");
     let orphan = store.put(b"nothing points at this").expect("put");
+    // What the orphan actually occupies, which is what collecting it frees.
+    // Not the length of its content: blobs are compressed and carry a
+    // container header (ADR 0017), so the two differ.
+    let orphan_bytes = store.len_of(&orphan).expect("the orphan's size on disk");
 
     let message = insert_message(&connection, Some(&raw), Some(&body));
     connection
@@ -324,10 +331,7 @@ fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
 
     assert_eq!(report.scanned, 4);
     assert_eq!(report.removed, 1, "only the orphan goes");
-    assert_eq!(
-        report.bytes_reclaimed,
-        "nothing points at this".len() as u64
-    );
+    assert_eq!(report.bytes_reclaimed, orphan_bytes);
 
     assert!(store.contains(&raw));
     assert!(store.contains(&body));
@@ -591,4 +595,138 @@ fn a_streamed_write_never_holds_more_than_one_chunk() {
         counted += read;
     }
     assert_eq!(counted, chunk.len() * chunks);
+}
+
+// ---------------------------------------------------------------------------
+// Compression under a versioned header — ADR 0017, axis 3
+// ---------------------------------------------------------------------------
+
+/// Text that compresses the way mail compresses: repetitive, quoted, signed.
+fn mail_shaped_text() -> Vec<u8> {
+    let mut text = String::new();
+    for n in 0..200 {
+        text.push_str(&format!(
+            "On Tuesday, Ada Lovelace <ada@example.com> wrote:\r\n\
+             > The quarterly figures are attached for review.\r\n\
+             > Please confirm receipt by Friday.\r\n\
+             Reply {n}: confirmed, thank you.\r\n\
+             --\r\n\
+             Ada Lovelace | Analytical Engines | ada@example.com\r\n\r\n"
+        ));
+    }
+    text.into_bytes()
+}
+
+#[test]
+fn a_compressed_blob_reads_back_byte_for_byte() {
+    // The only assertion that ultimately matters: compression is invisible
+    // above the store. Everything else here is about how much smaller it got.
+    let (_directory, store) = store();
+    let content = mail_shaped_text();
+
+    let id = store.put(&content).expect("put");
+
+    assert_eq!(store.get(&id).expect("get"), content);
+}
+
+#[test]
+fn the_id_is_the_digest_of_the_plaintext_not_of_what_is_on_disk() {
+    // Load-bearing for ADR 0014: the id is taken before compression and
+    // before encryption, so dedup is unaffected by either and the keyed-hash
+    // decision that ADR keeps working. If the id ever became a digest of the
+    // stored form, the same message compressed under two dictionary versions
+    // would be two blobs.
+    let (_directory, store) = store();
+    let content = mail_shaped_text();
+
+    let id = store.put(&content).expect("put");
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&content);
+    assert_eq!(id.as_str(), hasher.finalize().to_hex().as_str());
+}
+
+#[test]
+fn mail_shaped_text_actually_gets_smaller() {
+    // The point of the exercise. If this ratio is ever not worth having, the
+    // failure should be a number in a test rather than a discovery on a
+    // user's disk.
+    let (_directory, store) = store();
+    let content = mail_shaped_text();
+
+    let id = store.put(&content).expect("put");
+    let on_disk = store.len_of(&id).expect("stored length");
+
+    assert!(
+        on_disk * 4 < content.len() as u64,
+        "expected better than 4x on quoted mail, got {} from {}",
+        on_disk,
+        content.len()
+    );
+}
+
+#[test]
+fn already_compressed_bytes_are_not_compressed_again() {
+    // 8.9 GB of the reference account's payloads are JPEG, PNG, PDF and ZIP.
+    // Running them through zstd costs CPU on every read and write to make
+    // them very slightly larger, so the store must decline -- and must say so
+    // in the header rather than leaving a reader to guess.
+    let (_directory, store) = store();
+    // Incompressible by construction: a counter run through a hash is as
+    // close to random as a test can be without a dependency on an RNG.
+    let mut content = Vec::new();
+    for n in 0u32..8_000 {
+        content.extend_from_slice(blake3::hash(&n.to_le_bytes()).as_bytes());
+    }
+
+    let id = store.put(&content).expect("put");
+    let on_disk = store.len_of(&id).expect("stored length");
+
+    assert_eq!(store.get(&id).expect("get"), content);
+    assert!(
+        on_disk <= content.len() as u64 + 64,
+        "an incompressible blob must not grow: {} from {}",
+        on_disk,
+        content.len()
+    );
+}
+
+#[test]
+fn a_blob_written_before_the_format_existed_still_reads() {
+    // Existing stores hold bare plaintext files with no header. They are
+    // still every message a user has downloaded, and rewriting them all is a
+    // migration nobody needs: a file that does not start with the magic is
+    // read verbatim, for ever.
+    let (_directory, store) = store();
+    let content = b"Subject: written by an older Postio\r\n\r\nplain, headerless bytes";
+
+    // Write it the way the old store did: the plaintext, at the sharded path.
+    let id = BlobId::new(blake3::hash(content).to_hex().to_string());
+    let path = store.path_of(&id).expect("path");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&path, content).expect("write the legacy blob");
+
+    assert_eq!(store.get(&id).expect("get"), content);
+}
+
+#[test]
+fn a_compressed_blob_streams_without_being_read_whole() {
+    // `reader` is what keeps a 30 MiB attachment out of memory on the way to
+    // a viewer, and compression must not quietly turn it into a `get`.
+    let (_directory, store) = store();
+    let content = mail_shaped_text();
+    let id = store.put(&content).expect("put");
+
+    let mut reader = store.reader(&id).expect("reader");
+    let mut round_tripped = Vec::new();
+    let mut buffer = [0u8; 1024];
+    loop {
+        let read = reader.read(&mut buffer).expect("read");
+        if read == 0 {
+            break;
+        }
+        round_tripped.extend_from_slice(&buffer[..read]);
+    }
+
+    assert_eq!(round_tripped, content);
 }
