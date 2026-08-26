@@ -730,3 +730,162 @@ fn a_compressed_blob_streams_without_being_read_whole() {
 
     assert_eq!(round_tripped, content);
 }
+
+// ---------------------------------------------------------------------------
+// A budget, and evicting what can be refetched — ADR 0017, axis 3
+// ---------------------------------------------------------------------------
+
+/// A message received `received_at`, with whichever blobs it holds.
+fn insert_message_at(
+    connection: &rusqlite::Connection,
+    received_at: i64,
+    raw: Option<&BlobId>,
+    text: Option<&BlobId>,
+) -> i64 {
+    connection
+        .execute(
+            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id,
+                                   body_text_blob_id, body_state)
+             VALUES (1, 1, ?1, ?2, ?3, 'full')",
+            rusqlite::params![
+                received_at,
+                raw.map(BlobId::as_str),
+                text.map(BlobId::as_str)
+            ],
+        )
+        .expect("insert a message");
+    connection.last_insert_rowid()
+}
+
+fn attach(connection: &rusqlite::Connection, message: i64, blob: &BlobId, size: i64) {
+    connection
+        .execute(
+            "INSERT INTO attachments (message_id, mime_type, size, blob_id, part_id)
+             VALUES (?1, 'application/pdf', ?2, ?3, '2')",
+            rusqlite::params![message, size, blob.as_str()],
+        )
+        .expect("insert an attachment");
+}
+
+#[test]
+fn eviction_takes_raw_source_before_it_takes_a_payload() {
+    // The order ADR 0017 fixes. Raw source is the cheapest thing to lose: it
+    // is a cache of bytes nothing reads except view-source and
+    // forward-as-message/rfc822, both refetchable and both rare. An
+    // attachment somebody downloaded is a thing they asked for.
+    let (_directory, store) = store();
+    let database = database();
+    let connection = database.connection().expect("checkout");
+
+    let raw = store.put(&vec![b'r'; 40_000]).expect("put");
+    let text = store
+        .put(b"the words, which are never evicted")
+        .expect("put");
+    let payload = store.put(&vec![b'p'; 40_000]).expect("put");
+    let message = insert_message_at(&connection, 1_000, Some(&raw), Some(&text));
+    attach(&connection, message, &payload, 40_000);
+
+    // A budget that only one of the two big blobs can fit under.
+    let budget = store.len_of(&payload).expect("len") + store.len_of(&text).expect("len") + 16;
+    let report = store.evict_to_fit(&connection, budget).expect("evict");
+
+    assert!(report.removed >= 1);
+    assert!(!store.contains(&raw), "raw source goes first");
+    assert!(store.contains(&payload), "the attachment survives it");
+    assert!(store.contains(&text), "and the words are never touched");
+}
+
+#[test]
+fn eviction_never_takes_the_text_that_search_is_made_of() {
+    // The one class that is not refetchable in any meaningful sense: losing
+    // it silently shrinks search, and #352's honesty surface could not even
+    // report the gap because `body_state` would still say the body is local.
+    let (_directory, store) = store();
+    let database = database();
+    let connection = database.connection().expect("checkout");
+
+    let text = store.put(&vec![b't'; 40_000]).expect("put");
+    insert_message_at(&connection, 1_000, None, Some(&text));
+
+    // A budget of nothing at all: even then, the words stay.
+    let report = store.evict_to_fit(&connection, 0).expect("evict");
+
+    assert_eq!(report.removed, 0);
+    assert!(store.contains(&text));
+}
+
+#[test]
+fn eviction_takes_the_oldest_mail_first() {
+    // Recency without an access-time column. Blobs are immutable, so their
+    // mtime is when they were written and not when they were read, and
+    // `relatime`/`noatime` make atime unusable -- but the *message* already
+    // carries the only recency that matters, and it is already indexed.
+    //
+    // It is also the exact mirror of the backfill: bodies are fetched newest
+    // first, so they are evicted oldest first. Symmetry worth having.
+    let (_directory, store) = store();
+    let database = database();
+    let connection = database.connection().expect("checkout");
+
+    let old = store.put(&vec![b'o'; 40_000]).expect("put");
+    let new = store.put(&vec![b'n'; 40_000]).expect("put");
+    insert_message_at(&connection, 1_000, Some(&old), None);
+    insert_message_at(&connection, 9_000, Some(&new), None);
+
+    let budget = store.len_of(&new).expect("len") + 16;
+    store.evict_to_fit(&connection, budget).expect("evict");
+
+    assert!(!store.contains(&old), "the mail nobody has opened in years");
+    assert!(store.contains(&new), "not this week's");
+}
+
+#[test]
+fn an_evicted_payload_puts_its_message_back_to_partial() {
+    // Or the UI would lie: `full` means every part is local, and the
+    // attachment chip would offer "open" for bytes that are no longer here.
+    // #352's incomplete-corpus reporting reads the same column.
+    let (_directory, store) = store();
+    let database = database();
+    let connection = database.connection().expect("checkout");
+
+    let payload = store.put(&vec![b'p'; 40_000]).expect("put");
+    let message = insert_message_at(&connection, 1_000, None, None);
+    attach(&connection, message, &payload, 40_000);
+
+    store.evict_to_fit(&connection, 0).expect("evict");
+
+    assert!(!store.contains(&payload));
+    let state: String = connection
+        .query_row(
+            "SELECT body_state FROM messages WHERE id = ?1",
+            [message],
+            |row| row.get(0),
+        )
+        .expect("the row");
+    assert_eq!(state, "partial");
+    let blob: Option<String> = connection
+        .query_row(
+            "SELECT blob_id FROM attachments WHERE message_id = ?1",
+            [message],
+            |row| row.get(0),
+        )
+        .expect("the attachment");
+    assert_eq!(blob, None, "and the row stops claiming bytes it lost");
+}
+
+#[test]
+fn a_store_already_under_its_budget_evicts_nothing() {
+    let (_directory, store) = store();
+    let database = database();
+    let connection = database.connection().expect("checkout");
+
+    let raw = store.put(&vec![b'r'; 4_000]).expect("put");
+    insert_message_at(&connection, 1_000, Some(&raw), None);
+
+    let report = store
+        .evict_to_fit(&connection, 100 * 1024 * 1024)
+        .expect("evict");
+
+    assert_eq!(report.removed, 0);
+    assert!(store.contains(&raw));
+}
