@@ -518,6 +518,46 @@ fn unfold(value: &str) -> String {
     out.trim().to_owned()
 }
 
+/// The decoded bytes of one MIME entity — a header block, a blank line, and a
+/// body — with any transfer encoding undone.
+///
+/// # What this is for
+///
+/// ADR 0017's payload axis. `BODY[2.1]` returns a part's *encoded* bytes and
+/// none of its headers, so nothing in the response says whether they are
+/// base64. `BODYSTRUCTURE` reported the type and the encoding at header-sync
+/// time and they are kept on the row
+/// ([`Attachment::part_headers`](crate::Attachment::part_headers)), so
+/// prepending them rebuilds an entity this can decode — and an attachment's
+/// bytes are content-addressed on the *decoded* form, which is what makes two
+/// messages carrying the same file share one blob.
+///
+/// [`parse`] is the wrong tool for this: it answers about a *message* — its
+/// text bodies, its attachments, its headers — and a lone payload part is
+/// none of those. This answers the one question a payload fetch has.
+///
+/// `None` when the bytes are not an entity at all, or carry no body. Same
+/// contract as [`try_parse`]: hostile input yields an answer rather than a
+/// panic, and never a fragment the caller could mistake for a file.
+pub fn decode_entity(raw: &[u8]) -> Option<Vec<u8>> {
+    // Contained for the reason [`parse`] is contained (#277): these bytes came
+    // off a socket and were chosen by whoever sent the mail.
+    //
+    // `AssertUnwindSafe` is honest here for the same reason too — the parser
+    // is built inside the closure, `raw` is a shared slice nothing mutates,
+    // and on the unwind path every partial result is dropped.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let parsed = MessageParser::default().parse(raw)?;
+        // Part zero is the entity's root. A payload is a leaf by
+        // construction: `BODYSTRUCTURE` named a section, and a section is one
+        // part.
+        let contents = parsed.parts.first()?.contents();
+        (!contents.is_empty()).then(|| contents.to_vec())
+    }))
+    .ok()
+    .flatten()
+}
+
 /// Normalizes one `Message-ID`, rejecting the spellings that are not one.
 ///
 /// The corpus has a `References` header carrying an empty `<>`, an unterminated

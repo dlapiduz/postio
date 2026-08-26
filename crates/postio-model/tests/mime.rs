@@ -1079,3 +1079,39 @@ fn the_iterative_walk_numbers_parts_the_way_imap_does() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// One part on its own (ADR 0017's payload axis, #377)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_fetched_section_decodes_from_the_headers_that_explain_it() {
+    // `BODY[2]` hands back the part's *encoded* bytes and none of its
+    // headers. `BODYSTRUCTURE` reported the encoding at header-sync time and
+    // it is kept on the row, so prepending it rebuilds an entity that can be
+    // decoded -- without a second round trip for `[2.MIME]`.
+    let entity = b"Content-Type: application/pdf\r\n\
+                   Content-Transfer-Encoding: base64\r\n\
+                   \r\n\
+                   JVBERi0xLjQKJeLjz9MK\r\n";
+
+    let decoded = postio_model::mime::decode_entity(entity).expect("a decodable part");
+
+    assert_eq!(decoded, b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+}
+
+#[test]
+fn a_section_with_no_transfer_encoding_is_its_own_bytes() {
+    let entity = b"Content-Type: text/csv\r\n\r\nname,size\r\nada,3\r\n";
+
+    let decoded = postio_model::mime::decode_entity(entity).expect("a decodable part");
+
+    assert_eq!(decoded, b"name,size\r\nada,3\r\n");
+}
+
+#[test]
+fn bytes_that_are_not_an_entity_at_all_decode_to_nothing() {
+    // The same contract `parse` keeps: hostile input yields an answer, not a
+    // panic and not a fragment stored as if it were a file.
+    assert_eq!(postio_model::mime::decode_entity(b""), None);
+}
