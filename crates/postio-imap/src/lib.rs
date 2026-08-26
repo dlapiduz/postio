@@ -63,6 +63,7 @@ pub mod cancel;
 pub mod discovery;
 #[cfg(feature = "imap")]
 pub mod imap;
+pub mod oauth;
 pub mod secret;
 #[cfg(feature = "test-server")]
 pub mod test_server;

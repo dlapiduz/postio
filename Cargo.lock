@@ -1501,6 +1501,7 @@ dependencies = [
  "resolv-conf",
  "serde",
  "serde-xml-rs",
+ "serde_json",
  "thiserror",
  "url",
 ]
@@ -2407,7 +2408,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
+ "io-http",
  "io-imap",
  "io-pim-discovery",
  "io-sasl",
@@ -2417,10 +2420,13 @@ dependencies = [
  "postio-config",
  "postio-imap",
  "postio-model",
+ "rand 0.9.5",
  "rustls",
  "rustls-platform-verifier",
  "serde",
  "serde-xml-rs",
+ "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "tokio-rustls",
@@ -3505,6 +3511,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
