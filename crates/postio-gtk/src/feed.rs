@@ -620,11 +620,18 @@ impl SyncTracker {
                 // the line reading `syncing 89%` on a folder that had finished,
                 // for as long as the account stayed connected.
                 self.status.progress = None;
-                // And the body queue's number, for the same reason: the
-                // engine announces a connection state at the boundaries, so
-                // any of them means the count on screen is no longer being
-                // made.
-                self.status.backfill = None;
+                // The body queue's number is deliberately *not* cleared here
+                // (issue #316). The reasoning above is true for a list pass,
+                // which really does end at a connection boundary — but a
+                // backfill does not: it spans many IDLE cycles and
+                // reconnects while it keeps running, so `ConnectionChanged`
+                // fires constantly in the middle of one. Dropping the count
+                // on every one of those left the line reading `idle` for as
+                // long as it took the *next* body to settle and the 250 ms
+                // floor on top of that, while a body was genuinely still on
+                // the wire. `BackfillProgress` clears the count itself once
+                // the queue actually drains — that is the boundary that
+                // matters for this number, not a connection event.
             }
             Event::BackfillProgress { done, total, .. } => {
                 self.status.backfill = Some((*done, *total));
@@ -1015,6 +1022,45 @@ mod tests {
             "a queue that has drained is not a backfill in progress"
         );
         assert_eq!(tracker.status().lines(Instant::now()).0, "idle · imap");
+    }
+
+    /// Issue #316: `ConnectionChanged` cleared `backfill` unconditionally, on
+    /// the reasoning that "the engine announces a connection state at the
+    /// boundaries" — true for a list pass, which really does end there, but
+    /// not for a backfill, which spans many IDLE cycles and reconnects while
+    /// it keeps running. A connection blip mid-backfill erased the count the
+    /// line was showing and the sidebar read `idle` while a body was still
+    /// on the wire — seen live at the same moment the reading pane showed
+    /// "Downloading this message" for the selected message.
+    #[test]
+    fn a_connection_announcement_mid_backfill_does_not_erase_its_count() {
+        let mut tracker = SyncTracker::new();
+        tracker.apply(&connection(ConnectionState::Online));
+        tracker.apply(&Event::BackfillProgress {
+            account: account(),
+            done: 412,
+            total: 2000,
+        });
+        assert_eq!(
+            tracker.status().lines(Instant::now()).0,
+            "downloading · imap"
+        );
+
+        // The engine announces an IDLE cycle or a reconnect mid-backfill the
+        // same way it announces anything else on the link: a connection
+        // state, here `Online` again rather than a drain.
+        tracker.apply(&connection(ConnectionState::Online));
+
+        assert_eq!(
+            tracker.status().backfill,
+            Some((412, 2000)),
+            "a connection announcement mid-backfill must not erase its count"
+        );
+        assert_eq!(
+            tracker.status().lines(Instant::now()).0,
+            "downloading · imap",
+            "the status line must not claim idle while a body is still in flight"
+        );
     }
 
     #[test]
