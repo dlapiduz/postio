@@ -72,12 +72,6 @@ fn a_composed_operator_and_free_text_query_narrows_correctly() {
     assert_eq!(results.hits.len(), 1);
     assert_eq!(results.hits[0].message_id, matching.id);
     assert_eq!(results.total_hits, 1);
-    assert!(
-        results.hits[0].snippet.to_lowercase().contains("report"),
-        "the snippet should highlight the free-text match, not the from: \
-         operator's own messages_fts condition: {:?}",
-        results.hits[0].snippet
-    );
 }
 
 #[test]
@@ -287,8 +281,16 @@ fn search_never_crosses_accounts() {
     assert_eq!(results.hits[0].message_id, mine.id);
 }
 
+/// The boundary #408 settled: the executor does not snippet any more.
+///
+/// `snippet()` is an FTS5 function over indexed content and the body index
+/// has none (#407). Rather than give `postio-index` a blob-store dependency
+/// so it could reconstruct one -- it is a rusqlite-only leaf and
+/// `check-crate-boundaries.py` keeps it that way -- the excerpt is cut by
+/// `postio_search::highlight::snippet` from the body text, by whoever can
+/// read it. `postio_app::search` is that caller.
 #[test]
-fn a_matching_query_produces_a_highlighted_snippet() {
+fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
@@ -318,10 +320,14 @@ fn a_matching_query_produces_a_highlighted_snippet() {
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
-    assert_eq!(results.hits.len(), 1);
+    assert_eq!(
+        results.hits.len(),
+        1,
+        "a body-only match is still a hit, through the body index"
+    );
     assert!(
-        results.hits[0].snippet.contains('\u{1}') && results.hits[0].snippet.contains('\u{2}'),
-        "snippet should wrap the match: {:?}",
+        results.hits[0].snippet.is_empty(),
+        "the executor cannot read a body and must not invent an excerpt: {:?}",
         results.hits[0].snippet
     );
 }
@@ -613,54 +619,230 @@ fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
 }
 
 // ---------------------------------------------------------------------------
-// Highlighting — canvas 2b's "preview · match highlighted"
+// Two indexes, one query — #408
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_snippet_comes_back_with_the_match_marked_where_the_query_hit() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+/// A message with a subject and a body, both indexed.
+fn with_body(
+    connection: &Connection,
+    account: &postio_model::Account,
+    mailbox: postio_model::MailboxId,
+    subject: &str,
+    body: &str,
+    received_at: chrono::DateTime<Utc>,
+) -> Message {
+    let created = message(connection, account, mailbox, "ada", subject, received_at);
+    postio_index::index::index_body(connection, created.id.get(), Some(body)).expect("index body");
+    created
+}
 
-    let mut message = Message::new(account.id, inbox, at(9));
-    message.subject = Some("Index rebuild".to_string());
-    MessageRepository::new(&connection)
-        .create(&mut message)
-        .expect("create");
-    postio_index::index::index_body(
-        &connection,
-        message.id.get(),
-        Some("the rebuild walks every maildir once per folder"),
-    )
-    .expect("index body");
-
-    let query = parse("maildir", at(12).date_naive());
+fn found(
+    connection: &Connection,
+    account: postio_model::AccountId,
+    text: &str,
+) -> Vec<postio_model::MessageId> {
+    let query = parse(text, at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account_id: account,
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
     };
-    let results = search(&connection, &request, at(12)).expect("search");
-
-    let highlighted = postio_search::highlight::from_snippet(&results.hits[0].snippet);
-    assert!(
-        highlighted.is_highlighted(),
-        "snippet: {:?}",
-        results.hits[0].snippet
-    );
-    let matched: Vec<&str> = highlighted
-        .runs()
+    search(connection, &request, at(12))
+        .expect("search")
+        .hits
         .into_iter()
-        .filter(|(_, hit)| *hit)
-        .map(|(run, _)| run)
-        .collect();
-    assert_eq!(matched, ["maildir"]);
-    assert!(
-        !highlighted
-            .text
-            .contains(postio_search::highlight::MATCH_START),
-        "the markers are gone from the text a widget draws"
+        .map(|hit| hit.message_id)
+        .collect()
+}
+
+#[test]
+fn free_text_reaches_the_body_index_and_the_metadata_index() {
+    // The union. Before #407 both lived in one `messages_fts`, so one `MATCH`
+    // covered them; a message matching in either is still one hit and neither
+    // may be lost.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let in_subject = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "The maildir plan",
+        "nothing of note here",
+        at(9),
     );
+    let in_body = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Nothing of note",
+        "the maildir rebuild finished overnight",
+        at(8),
+    );
+
+    let mut ids = found(&connection, account.id, "maildir");
+    ids.sort_by_key(|id| id.get());
+    let mut expected = vec![in_subject.id, in_body.id];
+    expected.sort_by_key(|id| id.get());
+
+    assert_eq!(ids, expected, "a hit in either index is a hit");
+}
+
+#[test]
+fn a_subject_match_outranks_a_body_match() {
+    // The ranking decision, stated as the behaviour it exists to produce
+    // rather than as a number. Somebody searching "invoice" wants the message
+    // *about* invoices above the one that mentions them in passing, and the
+    // single six-column bm25 used to deliver that through its own length
+    // normalisation. Two scores means saying it on purpose.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    // Same age, so recency cannot be what decides it.
+    let mentions_it = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Weekly notes",
+        "the invoice was mentioned again",
+        at(9),
+    );
+    let about_it = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Invoice for August",
+        "attached, as agreed",
+        at(9),
+    );
+
+    assert_eq!(
+        found(&connection, account.id, "invoice"),
+        vec![about_it.id, mentions_it.id]
+    );
+}
+
+#[test]
+fn matching_in_both_indexes_beats_matching_in_either() {
+    // Why the two scores are summed rather than the better one taken: a
+    // message whose subject *and* body are about the thing is the most
+    // relevant thing there is.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let subject_only = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Invoice for August",
+        "attached, as agreed",
+        at(9),
+    );
+    let both = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Invoice for August",
+        "the invoice is attached",
+        at(9),
+    );
+
+    let ranked = found(&connection, account.id, "invoice");
+    assert_eq!(ranked.first(), Some(&both.id), "{ranked:?}");
+    assert!(ranked.contains(&subject_only.id));
+}
+
+#[test]
+fn a_negated_term_excludes_a_body_match_too() {
+    // `-spam` has to mean it wherever the word is. While the exclusion asked
+    // only `messages_fts`, a message whose only "spam" was in its body came
+    // back from a query that had explicitly refused it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let clean = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Quarterly report",
+        "the numbers are attached",
+        at(9),
+    );
+    let _spam_in_body = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Quarterly report",
+        "this is spam, frankly",
+        at(8),
+    );
+
+    assert_eq!(
+        found(&connection, account.id, "report -spam"),
+        vec![clean.id]
+    );
+}
+
+#[test]
+fn only_negated_free_text_still_excludes_a_body_match() {
+    // The other exclusion path: with no positive term there is no `MATCH` to
+    // fold the negation into, so it is built condition by condition — and
+    // that half had to learn about the body index as well.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let clean = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Quarterly report",
+        "the numbers are attached",
+        at(9),
+    );
+    let _spam_in_body = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Lunch plans",
+        "this is spam, frankly",
+        at(8),
+    );
+
+    assert_eq!(found(&connection, account.id, "-spam"), vec![clean.id]);
+}
+
+#[test]
+fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
+    // Through the executor, not only through the table: a contentless index
+    // is delete-then-insert, and a stale row would show up here as search
+    // returning a message for words it no longer contains.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let changed = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Draft",
+        "the first draft",
+        at(9),
+    );
+    postio_index::index::index_body(&connection, changed.id.get(), Some("the second draft"))
+        .expect("re-index");
+
+    assert_eq!(found(&connection, account.id, "second"), vec![changed.id]);
+    assert!(found(&connection, account.id, "first").is_empty());
 }
