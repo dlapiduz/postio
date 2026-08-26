@@ -538,6 +538,7 @@ impl Window {
         };
         let widget = reader.widget();
         widget.set_vexpand(true);
+        widget.set_hexpand(true);
         // Nothing to read yet. The pane shows its empty state until a message
         // arrives, rather than an empty white rectangle pretending to be one.
         widget.set_visible(false);
