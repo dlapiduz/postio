@@ -120,11 +120,24 @@ impl<'a> ContactRepository<'a> {
 
     /// Autocomplete: contacts whose address or name starts with `prefix`.
     ///
-    /// Ranked by how often the correspondent has been seen, then by how
-    /// recently — a colleague written to daily outranks someone mailed once
-    /// this morning, and between two equally familiar addresses the more recent
-    /// one wins. An empty prefix returns the most familiar correspondents,
-    /// which is what an empty recipient field should offer.
+    /// Ranked by how *recently* the correspondent was seen, then by how often
+    /// — the address someone just used outranks one they used to use, and
+    /// between two equally recent addresses the more familiar one wins. An
+    /// empty prefix therefore offers whoever was written to last, which is
+    /// what an empty recipient field should put in reach.
+    ///
+    /// Recency leads because frequency alone cannot tell a correspondent from
+    /// a robot. ADR 0007 Q6 makes exactly that point — "`times_seen = 400` for
+    /// a mailing list robot is not evidence that the user wants to write to
+    /// it" — and answers it by *banding*, ranking deliberately-created
+    /// contacts above mere mail sightings and leaving `times_seen DESC` to
+    /// order within the sighting band. Those bands do not exist: there is no
+    /// `source` column, every row here is a mail sighting, and so the band
+    /// that was meant to keep a person above a robot never applies. Ordering
+    /// is the only lever left, and a person answered this morning is better
+    /// evidence of intent than a list that shouts daily. See #424; when bands
+    /// arrive they compose with this rather than replacing it, since they sort
+    /// across bands and this sorts within one.
     ///
     /// The match is a prefix on the address, on the local part, and on any word
     /// of the display name: people type the name they remember, and they type
@@ -148,7 +161,7 @@ impl<'a> ContactRepository<'a> {
                  OR lower(coalesce(address_name, '')) LIKE ?{text} || '%'
                  OR lower(coalesce(address_name, '')) LIKE '% ' || ?{text} || '%'
               )
-              ORDER BY times_seen DESC, last_seen_at DESC, id
+              ORDER BY last_seen_at DESC, times_seen DESC, id
               LIMIT ?{limit_index}",
             account_filter(account_id)
         ))?;
