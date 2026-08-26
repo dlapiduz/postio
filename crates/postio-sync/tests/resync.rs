@@ -8,6 +8,7 @@
 use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
 use postio_imap::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
+use postio_storage::PooledConnection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Outcome, resync_mailbox, sync_mailbox};
@@ -52,7 +53,7 @@ fn local(connection: &Connection) -> (AccountId, Mailbox) {
 
 /// Runs the initial sync so the local store matches `backend`, as a fixture
 /// step for tests that are about what happens *after* that.
-async fn bootstrap(connection: &Connection, backend: &MockBackend, mailbox: &Mailbox) {
+async fn bootstrap(connection: &PooledConnection, backend: &MockBackend, mailbox: &Mailbox) {
     sync_mailbox(connection, backend, mailbox, &CancelToken::new(), |_| {})
         .await
         .expect("bootstrap sync");

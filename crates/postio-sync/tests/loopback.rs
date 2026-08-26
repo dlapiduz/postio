@@ -94,7 +94,7 @@ fn local(connection: &Connection) -> (AccountId, Mailbox, Mailbox) {
     (account.id, inbox, archive)
 }
 
-async fn bootstrap(connection: &Connection, backend: &ImapBackend, mailbox: &Mailbox) {
+async fn bootstrap(connection: &PooledConnection, backend: &ImapBackend, mailbox: &Mailbox) {
     sync_mailbox(connection, backend, mailbox, &CancelToken::new(), |_| {})
         .await
         .expect("bootstrap sync");

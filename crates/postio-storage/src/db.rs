@@ -181,6 +181,182 @@ impl Location {
     }
 }
 
+/// Which kind of writer is asking for SQLite's write lock.
+///
+/// See [`WriteGate`] for why the distinction has to exist at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WritePriority {
+    /// A write a person is waiting for: a flag, an archive, a draft autosave.
+    ///
+    /// Always goes ahead of [`WritePriority::Background`], and waits only for
+    /// a background unit already in progress.
+    Interactive,
+    /// Bulk work nobody is watching: a sync pass writing a batch of headers.
+    ///
+    /// Yields to any interactive writer that is waiting, *before* taking the
+    /// lock rather than after — which is the whole point.
+    Background,
+}
+
+/// Decides who gets SQLite's single write lock next.
+///
+/// # The problem this exists for (#425)
+///
+/// SQLite has one writer at a time, even under WAL, and its own way of
+/// resolving a collision is [`PRAGMAS`]' `busy_timeout`: the loser sleeps and
+/// retries, backing off up to a hundred milliseconds at a time. That is a
+/// *timeout*, not a queue — there is no fairness in it and no ordering, and
+/// the retrying writer simply races everyone else each time it wakes.
+///
+/// A first sync is the case where that falls apart. Two sync lanes take turns
+/// writing batches back to back, with essentially no gap between one `COMMIT`
+/// and the next `BEGIN IMMEDIATE`, so a keystroke's write wakes up, finds the
+/// lock taken *again*, and sleeps longer. Measured on the reproduction in
+/// `postio-session/tests/interactive_write.rs`: an archive keystroke took
+/// **1.8 seconds** to write one row while a backfill ran, with the connection
+/// pool almost idle (`Pool::get` returned in two microseconds) — so it was
+/// never pool exhaustion, and never the network. Shortening the background
+/// transactions does not fix it either: cut to an eighth of their size, the
+/// same keystroke still took half a second, because the number of races it
+/// had to lose went *up* as each one got shorter.
+///
+/// So the fix cannot be a bigger pool or a shorter transaction. It has to be
+/// an actual queue with a priority in it, which is this.
+///
+/// # What it guarantees
+///
+/// A background writer never *begins* a write while an interactive writer is
+/// waiting. So an interactive write waits at most for the one background unit
+/// already in progress, however long the backfill as a whole runs — which is
+/// what turns "wait for the download to finish" into "wait for one batch".
+/// Bounding that unit is the other half of the fix, and lives with the sync
+/// batch itself.
+///
+/// # Two rules for callers
+///
+/// * **Take the pooled connection first, then the permit.** Never the other
+///   way round: a thread holding a permit and waiting on [`Pool::get`] can be
+///   waiting for a connection held by a thread that is waiting for the permit.
+///   Every caller in this workspace acquires in that order.
+/// * **One permit at a time per thread.** The gate is not re-entrant, so a
+///   permit taken while holding another deadlocks against itself. A permit is
+///   meant to wrap one write unit, not to be threaded through a call graph.
+///
+/// Interactive writers are human-paced, so background work cannot be starved
+/// by them in any real workload; the gate deliberately does not try to be
+/// fair in that direction.
+#[derive(Debug, Clone)]
+pub struct WriteGate {
+    inner: Arc<GateInner>,
+}
+
+#[derive(Debug)]
+struct GateInner {
+    state: Mutex<GateState>,
+    free: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct GateState {
+    /// Whether a permit is outstanding.
+    held: bool,
+    /// Interactive writers blocked in [`WriteGate::acquire`] right now.
+    ///
+    /// Counted *before* waiting, which is what lets a background writer see
+    /// them and stand aside rather than taking the lock out from under them.
+    interactive_waiting: usize,
+}
+
+impl WriteGate {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(GateInner {
+                state: Mutex::new(GateState::default()),
+                free: Condvar::new(),
+            }),
+        }
+    }
+
+    /// Waits for the right to hold SQLite's write lock, and returns the permit
+    /// that carries it. Releasing is dropping the permit.
+    ///
+    /// Read [`WriteGate`]'s two rules for callers before adding a call site.
+    pub fn acquire(&self, priority: WritePriority) -> WritePermit {
+        let mut state = self.lock();
+        match priority {
+            WritePriority::Interactive => {
+                state.interactive_waiting += 1;
+                while state.held {
+                    state = self
+                        .inner
+                        .free
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+                state.interactive_waiting -= 1;
+            }
+            WritePriority::Background => {
+                while state.held || state.interactive_waiting > 0 {
+                    state = self
+                        .inner
+                        .free
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+            }
+        }
+        state.held = true;
+        WritePermit {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    /// Whether an interactive writer is waiting for the lock right now.
+    ///
+    /// This is what makes the gate's ordering *observable*, and so testable
+    /// without a stopwatch: `postio-storage/tests/write_gate.rs` uses it to
+    /// establish that a writer has actually queued before asserting who is
+    /// served next. A background writer with a long unit to do could also
+    /// consult it to stop between chunks rather than only at its next
+    /// acquisition; none does today, because re-acquiring per write unit
+    /// already bounds the wait.
+    pub fn interactive_is_waiting(&self) -> bool {
+        self.lock().interactive_waiting > 0
+    }
+
+    fn lock(&self) -> MutexGuard<'_, GateState> {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The right to hold SQLite's write lock, released when this is dropped.
+///
+/// Handed out by [`WriteGate::acquire`].
+#[derive(Debug)]
+pub struct WritePermit {
+    inner: Arc<GateInner>,
+}
+
+impl Drop for WritePermit {
+    fn drop(&mut self) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        state.held = false;
+        drop(state);
+        // `notify_all`, not `notify_one`: the waiters do not share a predicate
+        // — a background writer must also see `interactive_waiting == 0` — so
+        // waking a single arbitrary one can wake the only thread that still
+        // has to go back to sleep, and leave the lock idle with a queue on it.
+        self.inner.free.notify_all();
+    }
+}
+
 /// A pool of configured connections to one database.
 ///
 /// Cloning a `Pool` is cheap and gives another handle to the *same* pool, which
@@ -195,6 +371,9 @@ struct Inner {
     max_connections: usize,
     state: Mutex<State>,
     returned: Condvar,
+    /// Who may take SQLite's write lock next. One per database, because that
+    /// is the scope of the lock it is arbitrating.
+    write_gate: WriteGate,
     /// Something that must live exactly as long as the pool — the temporary
     /// directory a scratch database sits in (`test_support::memory`). `None`
     /// for every real database. Declared last so the connections in `state`
@@ -250,6 +429,7 @@ impl Pool {
                     _keeper: keeper,
                 }),
                 returned: Condvar::new(),
+                write_gate: WriteGate::new(),
                 _guard: guard,
             }),
         })
@@ -294,6 +474,11 @@ impl Pool {
     /// The largest number of connections this pool will open.
     pub fn max_connections(&self) -> usize {
         self.inner.max_connections
+    }
+
+    /// Who may take this database's write lock next — see [`WriteGate`].
+    pub fn write_gate(&self) -> &WriteGate {
+        &self.inner.write_gate
     }
 
     /// How many connections exist right now, checked out or idle.
@@ -343,6 +528,19 @@ pub struct PooledConnection {
     inner: Arc<Inner>,
     /// `Some` until `Drop` takes the connection back.
     connection: Option<Connection>,
+}
+
+impl PooledConnection {
+    /// Who may take this database's write lock next — see [`WriteGate`].
+    ///
+    /// Reachable from the connection rather than only from [`Database`] so
+    /// that code handed a connection to write through can arbitrate for the
+    /// lock without also being handed the pool. A borrowed connection and the
+    /// gate that governs writes on it are then impossible to separate, which
+    /// is what keeps a background writer from quietly skipping the queue.
+    pub fn write_gate(&self) -> &WriteGate {
+        &self.inner.write_gate
+    }
 }
 
 impl Deref for PooledConnection {
@@ -512,6 +710,22 @@ impl Database {
     /// The connection pool, for handing to a worker.
     pub fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    /// Who may take this database's write lock next — see [`WriteGate`].
+    pub fn write_gate(&self) -> &WriteGate {
+        self.pool.write_gate()
+    }
+
+    /// A connection, plus the right to write through it ahead of bulk
+    /// background work. What every user-initiated write should use.
+    ///
+    /// The connection is taken first and the permit second, which is the
+    /// ordering [`WriteGate`] requires of every caller.
+    pub fn interactive_write(&self) -> Result<(PooledConnection, WritePermit)> {
+        let connection = self.connection()?;
+        let permit = self.write_gate().acquire(WritePriority::Interactive);
+        Ok((connection, permit))
     }
 
     /// The database file, or `None` when it is in memory.
