@@ -77,6 +77,15 @@ pub fn harden(html: &str) -> String {
 /// `multipart/alternative` from. It takes a `MessageBody`, not a `Document` —
 /// the composer renders down before handing off, and that ordering is what
 /// lets this crate sit *above* `postio-model` rather than inside it.
+///
+/// The text half is [`Document::to_flowed_text`], not `to_text` — RFC 3676
+/// `format=flowed` (#333). `postio-model` cannot depend on this crate (see
+/// the crate's own module docs on why `postio-model` carries no HTML
+/// parser), so it has no way to wrap a plain string itself; wrapping here,
+/// once, before the string ever crosses that boundary, is what lets
+/// `postio_model::outgoing::assemble` advertise `format=flowed` on the part
+/// unconditionally rather than having to guess whether the text it was
+/// handed actually is.
 pub fn render(document: &Document) -> (String, String) {
-    (document.to_text(), harden(&document.to_html()))
+    (document.to_flowed_text(), harden(&document.to_html()))
 }
