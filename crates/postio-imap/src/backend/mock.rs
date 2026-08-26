@@ -1302,6 +1302,7 @@ mod sketch {
             message_id: get("message-id").and_then(|value| message_ids(value).into_iter().next()),
             in_reply_to: get("in-reply-to").and_then(|value| message_ids(value).into_iter().next()),
             references: get("references").map(message_ids).unwrap_or_default(),
+            list_id: get("list-id").and_then(postio_model::mime::list_id_from_text),
         }
     }
 

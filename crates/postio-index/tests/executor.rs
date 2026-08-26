@@ -81,6 +81,58 @@ fn a_composed_operator_and_free_text_query_narrows_correctly() {
 }
 
 #[test]
+fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let mut on_list = message(
+        &connection,
+        &account,
+        mailbox,
+        "ada",
+        "Tuesday walkthrough",
+        at(9),
+    );
+    on_list.list_id = Some("harbour-dev.lists.example.org".to_string());
+    MessageRepository::new(&connection)
+        .update(&mut on_list)
+        .expect("update message");
+
+    // Mentions the list's address only among its recipients, with no
+    // `List-Id` of its own — the old approximation would have matched this
+    // one too.
+    let mut off_list = message(
+        &connection,
+        &account,
+        mailbox,
+        "bob",
+        "Fwd: for your files",
+        at(10),
+    );
+    off_list.to = vec![EmailAddress::new(
+        None::<String>,
+        "harbour-dev@lists.example.org",
+    )];
+    MessageRepository::new(&connection)
+        .update(&mut off_list)
+        .expect("update message");
+
+    let query = parse("list:harbour-dev", at(12).date_naive());
+    let request = SearchRequest {
+        account_id: account.id,
+        query: &query,
+        scope: Scope::AllMail,
+        limit: 10,
+    };
+    let results = search(&connection, &request, at(12)).expect("search");
+
+    assert_eq!(results.hits.len(), 1);
+    assert_eq!(results.hits[0].message_id, on_list.id);
+}
+
+#[test]
 fn negated_only_free_text_excludes_without_a_positive_match_expression() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");

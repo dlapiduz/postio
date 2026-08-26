@@ -109,6 +109,10 @@ pub struct ParsedMessage {
     pub in_reply_to: Option<RfcMessageId>,
     /// `References`, oldest ancestor first, unusable entries dropped.
     pub references: Vec<RfcMessageId>,
+    /// The bracketed identifier out of `List-Id` (RFC 2919), when the
+    /// message carries one — the fact that lets the list be detected with
+    /// no configuration, rather than by matching an address by hand.
+    pub list_id: Option<String>,
     /// `From`, with any address group flattened.
     pub from: Vec<EmailAddress>,
     /// `Sender`.
@@ -165,6 +169,7 @@ impl ParsedMessage {
         message.rfc_message_id = self.rfc_message_id;
         message.in_reply_to = self.in_reply_to;
         message.references = self.references;
+        message.list_id = self.list_id;
         message.from = self.from;
         message.sender = self.sender;
         message.reply_to = self.reply_to;
@@ -299,6 +304,27 @@ pub fn decode_header_text(raw: &[u8]) -> String {
     }
 }
 
+/// The bracketed identifier out of a `List-Id` header value — RFC 2919's
+/// `"Display Name" <list-id>` — so a mailing list is recognized by its
+/// stable id and not by the display name a moderator can rename at will.
+/// Some senders omit the display name and send only the bracket, or omit
+/// the bracket too; either way whatever is left after trimming is the id.
+/// `None` once nothing is left to keep.
+///
+/// This is text-processing only — no `mail_parser` call, so no panic
+/// surface — and is shared with `postio-imap`, whose `ENVELOPE` fetch reads
+/// `List-Id` as its own isolated header value the same way it reads the
+/// subject.
+pub fn list_id_from_text(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    let id = match (raw.find('<'), raw.rfind('>')) {
+        (Some(start), Some(end)) if end > start => &raw[start + 1..end],
+        _ => raw,
+    };
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
 /// Run `parse` and turn an unwind into an [`Unparseable`].
 ///
 /// `AssertUnwindSafe` is honest here rather than a shrug: the closure borrows
@@ -394,6 +420,10 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     message.rfc_message_id = source.message_id().and_then(message_id);
     message.in_reply_to = message_ids(source.in_reply_to()).pop();
     message.references = message_ids(source.references());
+    message.list_id = addresses(source.list_id().as_address())
+        .into_iter()
+        .next()
+        .and_then(|address| list_id_from_text(&address.address));
 
     message.from = addresses(source.from());
     message.sender = addresses(source.sender()).into_iter().next();

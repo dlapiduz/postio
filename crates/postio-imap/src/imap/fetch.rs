@@ -145,6 +145,7 @@ async fn fetch_batch_inner(
         MessageDataItemName::Envelope,
         MessageDataItemName::BodyStructure,
         references_item(),
+        list_id_item(),
     ];
     if condstore {
         item_names.push(MessageDataItemName::ModSeq);
@@ -189,13 +190,40 @@ fn non_zero_mod_seq(mod_seq: ModSeq) -> BackendResult<NonZeroU64> {
 /// `BODY.PEEK[HEADER.FIELDS (REFERENCES)]` — see the [module docs](self).
 fn references_item() -> MessageDataItemName<'static> {
     MessageDataItemName::BodyExt {
-        section: Some(Section::HeaderFields(
-            None,
-            Vec1::from(AString::try_from("REFERENCES").expect("REFERENCES is a valid AString")),
-        )),
+        section: Some(references_section()),
         partial: None,
         peek: true,
     }
+}
+
+fn references_section() -> Section<'static> {
+    Section::HeaderFields(
+        None,
+        Vec1::from(AString::try_from("REFERENCES").expect("REFERENCES is a valid AString")),
+    )
+}
+
+/// `BODY.PEEK[HEADER.FIELDS (LIST-ID)]`, alongside `ENVELOPE` for the same
+/// reason `references_item` is: RFC 3501's `ENVELOPE` has no field for it,
+/// but it is what lets a mailing list be detected without the user naming
+/// it anywhere (#9). A field of its own rather than folded into the same
+/// `HEADER.FIELDS` request as `REFERENCES`: the server may return the
+/// requested headers in either order in one raw block, and
+/// `references_from_header`'s own parsing assumes the block holds exactly
+/// one header. Two items in one `FETCH` command is still one round trip.
+fn list_id_item() -> MessageDataItemName<'static> {
+    MessageDataItemName::BodyExt {
+        section: Some(list_id_section()),
+        partial: None,
+        peek: true,
+    }
+}
+
+fn list_id_section() -> Section<'static> {
+    Section::HeaderFields(
+        None,
+        Vec1::from(AString::try_from("LIST-ID").expect("LIST-ID is a valid AString")),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +242,7 @@ fn build_fetched_message(
     let mut envelope = None;
     let mut structure = None;
     let mut references = Vec::new();
+    let mut list_id = None;
 
     for item in items {
         match item {
@@ -228,6 +257,9 @@ fn build_fetched_message(
             MessageDataItem::ModSeq(value) => mod_seq = Some(ModSeq::new(value.get())),
             MessageDataItem::Envelope(wire) => envelope = Some(wire),
             MessageDataItem::BodyStructure(wire) => structure = Some(wire),
+            MessageDataItem::BodyExt { section, data, .. } if section == Some(list_id_section()) => {
+                list_id = list_id_from_header(nstring_to_string(data).as_deref());
+            }
             MessageDataItem::BodyExt { data, .. } => {
                 references = references_from_header(nstring_to_string(data).as_deref());
             }
@@ -249,7 +281,7 @@ fn build_fetched_message(
         flags,
         internal_date,
         size,
-        envelope: envelope.map(|wire| envelope_from_wire(wire, references.split_off(0))),
+        envelope: envelope.map(|wire| envelope_from_wire(wire, references.split_off(0), list_id)),
         structure: structure.map(|wire| body_structure_from_wire(&wire)),
     })
 }
@@ -300,13 +332,26 @@ fn references_from_header(raw: Option<&str>) -> Vec<RfcMessageId> {
         .collect()
 }
 
+/// Pulls the bracketed identifier out of a raw `List-Id:` header line — the
+/// same reduction [`postio_model::mime::list_id_from_text`] does for a full
+/// message parse, so a row shows the same list whether it arrived through
+/// `ENVELOPE`'s companion fetch or through a fully parsed body.
+fn list_id_from_header(raw: Option<&str>) -> Option<String> {
+    let (_, value) = raw?.split_once(':')?;
+    postio_model::mime::list_id_from_text(value)
+}
+
 fn parse_rfc2822(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc2822(text.trim())
         .ok()
         .map(|date| date.with_timezone(&chrono::Utc))
 }
 
-fn envelope_from_wire(wire: WireEnvelope<'static>, references: Vec<RfcMessageId>) -> Envelope {
+fn envelope_from_wire(
+    wire: WireEnvelope<'static>,
+    references: Vec<RfcMessageId>,
+    list_id: Option<String>,
+) -> Envelope {
     Envelope {
         date: nstring_to_string(wire.date).and_then(|text| parse_rfc2822(&text)),
         subject: nstring_to_header_text(wire.subject),
@@ -327,6 +372,7 @@ fn envelope_from_wire(wire: WireEnvelope<'static>, references: Vec<RfcMessageId>
         message_id: nstring_to_string(wire.message_id).map(RfcMessageId::new),
         in_reply_to: nstring_to_string(wire.in_reply_to).map(RfcMessageId::new),
         references,
+        list_id,
     }
 }
 
@@ -766,8 +812,19 @@ mod tests {
             ..empty_envelope()
         };
 
-        let envelope = envelope_from_wire(wire, Vec::new());
+        let envelope = envelope_from_wire(wire, Vec::new(), None);
         assert_eq!(envelope.subject.as_deref(), Some("Café"));
+    }
+
+    #[test]
+    fn a_list_id_header_line_is_reduced_to_its_bracketed_identifier() {
+        assert_eq!(
+            list_id_from_header(Some(
+                "List-Id: Harbour dev <harbour-dev.lists.example.org>"
+            )),
+            Some("harbour-dev.lists.example.org".to_string())
+        );
+        assert_eq!(list_id_from_header(None), None);
     }
 
     #[test]

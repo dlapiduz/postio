@@ -235,6 +235,11 @@ pub struct Envelope {
     pub in_reply_to: Option<RfcMessageId>,
     /// `References`, oldest ancestor first.
     pub references: Vec<RfcMessageId>,
+    /// The bracketed identifier out of `List-Id`, when the message carries
+    /// one. Not part of an `ENVELOPE` either, for the same reason
+    /// `references` is not: a companion `BODY.PEEK[HEADER.FIELDS (LIST-ID)]`
+    /// in the same fetch.
+    pub list_id: Option<String>,
 }
 
 /// One MIME part, as described by the server rather than by parsing bytes.
@@ -483,6 +488,7 @@ impl FetchedMessage {
             message.rfc_message_id = envelope.message_id;
             message.in_reply_to = envelope.in_reply_to;
             message.references = envelope.references;
+            message.list_id = envelope.list_id;
             message.sync.body_state = BodyState::HeadersOnly;
         }
 

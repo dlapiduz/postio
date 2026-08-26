@@ -743,6 +743,47 @@ fn the_reference_chain_is_what_threading_will_walk() {
 }
 
 // ---------------------------------------------------------------------------
+// Acceptance: `List-Id` is detected without manual configuration (#9)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_list_id_header_is_reduced_to_its_bracketed_identifier() {
+    let parsed = parse("list-thread-01-root");
+
+    assert_eq!(
+        parsed.list_id.as_deref(),
+        Some("harbour-dev.lists.example.org"),
+        "the phrase before the bracket is display text, not part of the id"
+    );
+}
+
+#[test]
+fn a_message_outside_any_list_has_no_list_id() {
+    let parsed = parse("plain-text-simple");
+    assert_eq!(parsed.list_id, None);
+}
+
+#[test]
+fn list_id_from_text_keeps_the_bracketed_part_and_trims_the_rest() {
+    assert_eq!(
+        mime::list_id_from_text("Harbour dev <harbour-dev.lists.example.org>"),
+        Some("harbour-dev.lists.example.org".to_string())
+    );
+    assert_eq!(
+        mime::list_id_from_text("<no-phrase.example.org>"),
+        Some("no-phrase.example.org".to_string()),
+        "not every sender includes a display name"
+    );
+    assert_eq!(
+        mime::list_id_from_text("bare.example.org"),
+        Some("bare.example.org".to_string()),
+        "and some senders send no brackets at all"
+    );
+    assert_eq!(mime::list_id_from_text("   "), None, "whitespace is nothing");
+    assert_eq!(mime::list_id_from_text(""), None);
+}
+
+// ---------------------------------------------------------------------------
 // Mapping onto `Message`
 // ---------------------------------------------------------------------------
 

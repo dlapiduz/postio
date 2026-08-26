@@ -669,13 +669,10 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
             ],
         ),
         Filter::Filename(value) => fts_column_condition("filenames", value),
-        // `list:` names a mailing list's `List-Id`, which nothing in the
-        // schema stores yet (it lives in the raw header block, in the blob
-        // store, not in SQLite — see CLAUDE.md, "No BLOB columns anywhere").
-        // Until a future bead indexes it properly, this approximates by
-        // matching the list's address among the message's recipients, which
-        // is where a mailing list's own address usually shows up.
-        Filter::List(value) => fts_column_condition("recipients", value),
+        // `list:` names a mailing list by its `List-Id` (#9): the bracketed
+        // identifier `postio-model::mime::list_id_from_text` extracts and
+        // `messages.list_id` stores, indexed here the same way `subject` is.
+        Filter::List(value) => fts_column_condition("list_id", value),
         Filter::HasAttachment => ("m.has_attachments = 1".to_string(), Vec::new()),
         Filter::Is(state) => {
             use postio_search::query::State;
