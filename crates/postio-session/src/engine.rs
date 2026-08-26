@@ -22,8 +22,11 @@
 
 use std::sync::Arc;
 
+use postio_imap::auth::{StoredPasswordSource, TokenSource};
 use postio_imap::backend::MailBackend;
-use postio_imap::imap::{ConnectionSettings, ImapBackend, PoolConfig, RustlsConnector};
+use postio_imap::imap::{
+    ConnectionPool, ConnectionSettings, ImapBackend, PoolConfig, RustlsConnector,
+};
 use postio_imap::secret::{AccountKey, SecretStore};
 use postio_model::Account;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
@@ -66,13 +69,26 @@ pub fn start(
         }
     };
 
-    let backend: Arc<dyn MailBackend> = Arc::new(ImapBackend::new(
-        settings(&account.incoming),
-        key,
-        secrets.clone(),
-        connector,
-        PoolConfig::default(),
-    ));
+    // One `TokenSource` for this account, and both sides of it get *this*
+    // instance (ADR 0006 Q5). A second source built for SMTP would look
+    // identical and would be the bug: a rejection seen while fetching would
+    // be invisible while sending, and two simultaneous refreshes on a
+    // provider that rotates its refresh token invalidate each other.
+    //
+    // A password account is a `TokenSource` too. That is the point of the
+    // seam — the composition root chooses which kind of credential this
+    // account has, and nothing downstream asks again.
+    let tokens: Arc<dyn TokenSource> = Arc::new(StoredPasswordSource::new(secrets.clone()));
+
+    let backend: Arc<dyn MailBackend> = Arc::new(ImapBackend::over(Arc::new(
+        ConnectionPool::with_token_source(
+            settings(&account.incoming),
+            key,
+            tokens.clone(),
+            connector,
+            PoolConfig::default(),
+        ),
+    )));
 
     match Engine::spawn(EngineParts {
         account: account.id,
@@ -80,7 +96,7 @@ pub fn start(
         blobs,
         backend,
         smtp,
-        secrets,
+        tokens,
         events,
         retry: Default::default(),
         backfill,

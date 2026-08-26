@@ -30,6 +30,9 @@ thiserror = "2.0.20"
 tracing = "0.1"
 
 [dev-dependencies]
+# Decoding the SASL PLAIN argument a transcript recorded, so a test can say
+# *which* credential reached the server rather than only that one did.
+base64 = "0.22.1"
 # Tests only: the real io-imap-backed backend and the in-process IMAP server
 # it can be pointed at, so the engine can be driven over a loopback socket
 # rather than only against the mock. Everything above still goes through
