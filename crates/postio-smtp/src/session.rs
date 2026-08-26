@@ -24,7 +24,10 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io;
 
+use io_sasl::mechanism::Sasl;
 use io_sasl::rfc4616::plain::SaslPlainCreds;
+use io_sasl::rfc7628::oauthbearer::SaslOauthbearerCreds;
+use io_sasl::xoauth2::SaslXoauth2Creds;
 use io_smtp::client::{SmtpClientAsync, SmtpClientError};
 use io_smtp::coroutine::{SmtpCoroutine, SmtpCoroutineState, SmtpYield};
 use io_smtp::rfc5321::data::SmtpDataError;
@@ -39,7 +42,7 @@ use io_smtp::session::{
     SmtpSessionOpen, SmtpSessionOpenError, SmtpSessionOpenOptions, SmtpSessionOpenYield,
     SmtpSessionTransport,
 };
-use postio_model::TransportSecurity;
+use postio_model::{AuthMethod, TransportSecurity};
 use secrecy::SecretString;
 
 use crate::cancel::CancelToken;
@@ -91,11 +94,7 @@ impl SmtpSession {
             starttls: settings.security == TransportSecurity::StartTls,
         };
 
-        let credentials = SaslPlainCreds {
-            authzid: None,
-            authcid: settings.username.clone(),
-            passwd: password.clone(),
-        };
+        let credentials = sasl_for(settings, password);
 
         let mut coroutine = SmtpSessionOpen::new(
             transport,
@@ -266,6 +265,37 @@ impl SmtpClientAsync for SmtpSession {
                 }
             }
         }
+    }
+}
+
+/// The SASL credentials for `settings`' auth method (#193).
+///
+/// The IMAP side has the same mapping, and the two are deliberately identical
+/// in shape: an account authenticates one way, and both of its sessions have
+/// to agree about which. The credential itself is the same `SecretString`
+/// whichever branch is taken — this crate still never fetches one, it takes
+/// it as a parameter (ADR 0006 Q1).
+fn sasl_for(settings: &ConnectionSettings, password: &SecretString) -> Sasl {
+    match settings.auth {
+        // An app-specific password is a password; the distinction is for the
+        // user interface and reaches the wire not at all.
+        AuthMethod::Password | AuthMethod::AppPassword => Sasl::Plain(SaslPlainCreds {
+            authzid: None,
+            authcid: settings.username.clone(),
+            passwd: password.clone(),
+        }),
+        // RFC 7628. `host` and `port` go verbatim into the GS2 header, so
+        // they must be the server actually being contacted.
+        AuthMethod::OAuth2 => Sasl::Oauthbearer(SaslOauthbearerCreds {
+            username: settings.username.clone(),
+            host: settings.host.clone(),
+            port: settings.port,
+            token: password.clone(),
+        }),
+        AuthMethod::XOAuth2 => Sasl::Xoauth2(SaslXoauth2Creds {
+            username: settings.username.clone(),
+            token: password.clone(),
+        }),
     }
 }
 

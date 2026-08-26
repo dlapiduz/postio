@@ -72,6 +72,11 @@ const DEFAULT_ACCOUNT: &str = "someone@example.com";
 /// The password it accepts. An app-specific password, in spirit.
 const DEFAULT_PASSWORD: &str = "app-specific-password";
 
+/// The bearer token it accepts for OAUTHBEARER/XOAUTH2, unless a builder says
+/// otherwise. Deliberately unlike the password: presenting one where the other
+/// belongs has to fail.
+const DEFAULT_ACCESS_TOKEN: &str = "test-access-token";
+
 /// What the greeting advertises by default: nothing worth having.
 ///
 /// The provider Postio targets hides `CONDSTORE`, `QRESYNC`, `IDLE` and
@@ -349,6 +354,7 @@ impl Shared {
 pub struct TestServerBuilder {
     account: String,
     password: String,
+    access_token: String,
     banner: Vec<String>,
     capabilities: Vec<String>,
     mailboxes: Vec<TestMailbox>,
@@ -361,6 +367,7 @@ impl TestServerBuilder {
         Self {
             account: DEFAULT_ACCOUNT.to_owned(),
             password: DEFAULT_PASSWORD.to_owned(),
+            access_token: DEFAULT_ACCESS_TOKEN.to_owned(),
             banner: DEFAULT_BANNER
                 .iter()
                 .map(|name| (*name).to_owned())
@@ -384,6 +391,16 @@ impl TestServerBuilder {
     /// Sets the password the server accepts.
     pub fn password(mut self, password: impl Into<String>) -> Self {
         self.password = password.into();
+        self
+    }
+
+    /// Sets the bearer token `OAUTHBEARER` and `XOAUTH2` accept (#193).
+    ///
+    /// Advertising the mechanism is separate — put `AUTH=OAUTHBEARER` in
+    /// [`capabilities`](Self::capabilities) — so a test can also describe a
+    /// server that offers a mechanism and then refuses every token.
+    pub fn access_token(mut self, token: impl Into<String>) -> Self {
+        self.access_token = token.into();
         self
     }
 
@@ -444,6 +461,7 @@ impl TestServerBuilder {
             state: Mutex::new(ServerState {
                 account: self.account.clone(),
                 password: self.password.clone(),
+                access_token: self.access_token.clone(),
                 banner: self.banner,
                 capabilities: self.capabilities,
                 mailboxes: self.mailboxes.into_iter().map(TestMailbox::seed).collect(),
@@ -473,6 +491,7 @@ impl TestServerBuilder {
             accept,
             account: self.account,
             password: self.password,
+            access_token: self.access_token,
         }
     }
 }
@@ -487,6 +506,7 @@ pub struct TestServer {
     accept: JoinHandle<()>,
     account: String,
     password: String,
+    access_token: String,
 }
 
 impl TestServer {
@@ -508,6 +528,11 @@ impl TestServer {
     /// The password it accepts.
     pub fn password(&self) -> &str {
         &self.password
+    }
+
+    /// The bearer token it accepts (#193).
+    pub fn access_token(&self) -> &str {
+        &self.access_token
     }
 
     /// Settings that reach it: cleartext, because

@@ -55,15 +55,20 @@ use io_imap::coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield};
 use io_imap::rfc3501::capability::ImapCapabilityGet;
 use io_imap::rfc3501::login::ImapLoginError;
 use io_imap::rfc3501::logout::ImapLogout;
+use io_imap::rfc7628::auth_oauthbearer::ImapAuthOauthbearerError;
 use io_imap::sasl::auth_login::ImapAuthLoginError;
 use io_imap::sasl::auth_plain::ImapAuthPlainError;
+use io_imap::sasl::auth_xoauth2::ImapAuthXoauth2Error;
 use io_imap::session::{
     ImapSessionOpen, ImapSessionOpenError, ImapSessionOpenOptions, ImapSessionOpenYield,
     ImapSessionTransport,
 };
 use io_imap::types::response::Capability as WireCapability;
+use io_sasl::mechanism::Sasl;
 use io_sasl::rfc4616::plain::SaslPlainCreds;
-use postio_model::TransportSecurity;
+use io_sasl::rfc7628::oauthbearer::SaslOauthbearerCreds;
+use io_sasl::xoauth2::SaslXoauth2Creds;
+use postio_model::{AuthMethod, TransportSecurity};
 
 use crate::backend::{BackendError, BackendResult, Capabilities};
 use crate::secret::Password;
@@ -180,11 +185,7 @@ impl ImapSession {
             ..Default::default()
         };
 
-        let credentials = SaslPlainCreds {
-            authzid: None,
-            authcid: settings.username.clone(),
-            passwd: credential_copy(password).into(),
-        };
+        let credentials = sasl_for(settings, password);
 
         let mut coroutine = ImapSessionOpen::new(transport, Some(credentials), options);
         let mut fragmentizer = Fragmentizer::new(MAX_MESSAGE_SIZE);
@@ -463,6 +464,23 @@ fn map_open_error(settings: &ConnectionSettings, error: ImapSessionOpenError) ->
                 reason: inner.to_string(),
             }
         }
+        // A rejected bearer token is an authentication failure like any
+        // other, and has to arrive as one: `Auth` is what stops the caller
+        // retrying blindly and what a `TokenSource` invalidation hangs off
+        // (#193). Left as `Protocol`, a stale token would look like a broken
+        // server and be retried on a timer for ever.
+        ImapSessionOpenError::AuthOauthbearer(inner) if is_rejection_oauthbearer(&inner) => {
+            BackendError::Auth {
+                account,
+                reason: inner.to_string(),
+            }
+        }
+        ImapSessionOpenError::AuthXoauth2(inner) if is_rejection_xoauth2(&inner) => {
+            BackendError::Auth {
+                account,
+                reason: inner.to_string(),
+            }
+        }
         other => BackendError::Protocol {
             reason: other.to_string(),
         },
@@ -510,6 +528,71 @@ fn is_rejection_imap_login(error: &ImapLoginError) -> bool {
         error,
         ImapLoginError::No(_) | ImapLoginError::Bad(_) | ImapLoginError::Bye(_)
     )
+}
+
+/// `NoWithError` is not an extra case to be thorough about — it is the
+/// *ordinary* one. Both bearer mechanisms report a rejected token by sending
+/// the server's error payload as a challenge and the `NO` after it (RFC 7628
+/// §3.2.3), so a stale token produces `NoWithError` and a bare `No` is the
+/// rarer shape. Matching only `No` would have left the common case classified
+/// as a protocol fault, which is a token that never gets refreshed.
+fn is_rejection_oauthbearer(error: &ImapAuthOauthbearerError) -> bool {
+    matches!(
+        error,
+        ImapAuthOauthbearerError::No(_)
+            | ImapAuthOauthbearerError::NoWithError { .. }
+            | ImapAuthOauthbearerError::Bad(_)
+            | ImapAuthOauthbearerError::Bye(_)
+    )
+}
+
+fn is_rejection_xoauth2(error: &ImapAuthXoauth2Error) -> bool {
+    matches!(
+        error,
+        ImapAuthXoauth2Error::No(_)
+            | ImapAuthXoauth2Error::NoWithError { .. }
+            | ImapAuthXoauth2Error::Bad(_)
+            | ImapAuthXoauth2Error::Bye(_)
+    )
+}
+
+/// The SASL credentials for `settings`' auth method (#193).
+///
+/// The credential is the same [`Password`] whichever branch is taken — a
+/// stored app password, or whatever a [`TokenSource`](crate::auth::TokenSource)
+/// returned. Only the mechanism differs, which is why this is a mapping over
+/// data rather than a second `open`.
+///
+/// Every branch passes the secret through [`credential_copy`] and nothing
+/// else, so the zeroization argument that function documents holds for the
+/// bearer mechanisms exactly as it does for PLAIN: `SaslOauthbearerCreds`'
+/// and `SaslXoauth2Creds`' `token` are `secrecy::SecretString` too, and both
+/// mechanisms build the wire form from it internally rather than handing us a
+/// `String` to assemble.
+fn sasl_for(settings: &ConnectionSettings, password: &Password) -> Sasl {
+    match settings.auth {
+        // An app-specific password is a password. The distinction is for the
+        // user interface — what to call the box they paste into — and reaches
+        // the wire not at all.
+        AuthMethod::Password | AuthMethod::AppPassword => Sasl::Plain(SaslPlainCreds {
+            authzid: None,
+            authcid: settings.username.clone(),
+            passwd: credential_copy(password).into(),
+        }),
+        // RFC 7628. `host` and `port` go verbatim into the GS2 header, so
+        // they have to be the server actually being contacted rather than
+        // anything canonicalised.
+        AuthMethod::OAuth2 => Sasl::Oauthbearer(SaslOauthbearerCreds {
+            username: settings.username.clone(),
+            host: settings.host.clone(),
+            port: settings.port,
+            token: credential_copy(password).into(),
+        }),
+        AuthMethod::XOAuth2 => Sasl::Xoauth2(SaslXoauth2Creds {
+            username: settings.username.clone(),
+            token: credential_copy(password).into(),
+        }),
+    }
 }
 
 /// The password, copied out of [`Password`] for the handshake.
