@@ -52,11 +52,32 @@ type DropHandler = Box<dyn Fn(crate::list_view::Dragged, MailboxId)>;
 /// schema's own key-value split and this stays a plain display value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedSearch {
-    /// The `[filters.<name>]` key, shown as the row's label.
+    /// The `[filters.<key>]` key -- the stable identity a rename, reorder
+    /// or delete acts on (#292). Never shown; [`SavedSearch::name`] is what
+    /// draws.
+    pub key: String,
+    /// What the row shows: the display name the user chose, or `key` if
+    /// they never renamed it.
     pub name: String,
     /// The query text this row hands back when activated.
     pub query: String,
 }
+
+/// What a saved search's context menu asked for, and which one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavedSearchAction {
+    /// Change the display name.
+    Rename,
+    /// Move one place earlier in the list.
+    MoveUp,
+    /// Move one place later in the list.
+    MoveDown,
+    /// Remove it.
+    Delete,
+}
+
+/// What to call when a saved search's context menu picks an action.
+type SavedSearchActionHandler = Box<dyn Fn(String, SavedSearchAction)>;
 
 /// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
 const PROTOCOL: &str = "imap";
@@ -410,6 +431,11 @@ mod imp {
         pub tick: RefCell<Option<glib::SourceId>>,
         pub selected: RefCell<Vec<SelectionHandler>>,
         pub search_selected: RefCell<Vec<SearchSelectionHandler>>,
+        pub saved_search_action: RefCell<Vec<SavedSearchActionHandler>>,
+        /// The saved-search context menu currently up, if any -- so a
+        /// second right-click before the first closes replaces it rather
+        /// than stacking a second grabbing popup on top.
+        pub saved_search_menu: RefCell<Option<gtk::PopoverMenu>>,
         pub dropped: RefCell<Vec<DropHandler>>,
         /// Set while a selection is being applied programmatically, so
         /// restoring one does not look like the user clicking it.
@@ -627,8 +653,158 @@ impl Sidebar {
             }
         ));
 
+        // Rename, reorder, delete (#292): a saved search has no keyboard
+        // path into it yet -- see the doc on `connect_saved_search_action`
+        // for why this stays mouse-only for now -- so this is the one way
+        // in, the same right-click-a-row idiom `list_view.rs`'s message
+        // context menu already uses.
+        let menu = gtk::GestureClick::new();
+        menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+        menu.set_propagation_phase(gtk::PropagationPhase::Capture);
+        menu.connect_pressed(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |_, _, x, y| {
+                sidebar.open_saved_search_menu(x, y);
+            }
+        ));
+        imp.saved.add_controller(menu);
+
         self.set_child(Some(&column));
         self.set_status(SyncStatus::default());
+    }
+
+    /// Opens a saved search's context menu exactly as a right-click would,
+    /// registering its actions on `self` -- without simulating the click
+    /// itself, which GTK4 gives a test no way to do (see #424, #437 for the
+    /// same limit hit elsewhere in this crate). A test drives the result
+    /// with `WidgetExt::activate_action("savedsearch.<verb>", None)`, the
+    /// same portable entry point a real menu item's activation uses.
+    #[doc(hidden)]
+    pub fn test_open_saved_search_menu(&self, x: f64, y: f64) {
+        self.open_saved_search_menu(x, y);
+    }
+
+    /// Closes the saved-search context menu, if one is open.
+    ///
+    /// `WidgetExt::activate_action` triggers a `SimpleAction`'s own
+    /// callback directly, which is what `test_open_saved_search_menu`'s own
+    /// doc says it is for -- but a *real* click also closes a
+    /// `GtkPopoverMenu` as part of its built-in item-activation handling,
+    /// and calling the action directly skips that entirely. A test that
+    /// never calls this leaves a grabbing popover attached to the window
+    /// through `window.destroy()`, which is exactly the hang this exists to
+    /// prevent -- found by hitting it, not by reading ahead.
+    #[doc(hidden)]
+    pub fn test_close_saved_search_menu(&self) {
+        if let Some(popover) = self.imp().saved_search_menu.take() {
+            popover.popdown();
+        }
+    }
+
+    /// Open a saved search's context menu at `(x, y)`, if there is a row
+    /// there to open one for.
+    ///
+    /// Not generated from the command registry the way the message list's
+    /// context menu is (`list_view.rs::open_context_menu`): these verbs
+    /// have no keyboard path yet, since saved searches do not participate
+    /// in `step`/`rows` keyboard navigation the way ordinary folders do --
+    /// `postio_core::Context::Sidebar`'s existing model is keyed to
+    /// `MailboxId`, and a saved search does not have one. A menu entry with
+    /// no binding and no cheat-sheet line would be a lie about what the
+    /// registry promises, so this is deliberately its own small, fixed
+    /// menu rather than a registry-generated one -- see the issue for the
+    /// keyboard-reachability gap this leaves, tracked separately.
+    fn open_saved_search_menu(&self, x: f64, y: f64) {
+        let imp = self.imp();
+        if let Some(previous) = imp.saved_search_menu.take() {
+            previous.popdown();
+        }
+        let Some(row) = imp.saved.row_at_y(y as i32) else {
+            return;
+        };
+        let key = row_search_key(&row);
+        if key.is_empty() {
+            return;
+        }
+        let index = row.index();
+        let is_first = index == 0;
+        let is_last = imp.saved.row_at_index(index + 1).is_none();
+
+        let menu = gtk::gio::Menu::new();
+        menu.append(Some("Rename"), Some("savedsearch.rename"));
+        if !is_first {
+            menu.append(Some("Move up"), Some("savedsearch.move-up"));
+        }
+        if !is_last {
+            menu.append(Some("Move down"), Some("savedsearch.move-down"));
+        }
+        menu.append(Some("Delete"), Some("savedsearch.delete"));
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&imp.saved);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        // Only the actions the menu actually offers: a `SimpleAction` this
+        // widget registered but no item pointed at would still be reachable
+        // through `WidgetExt::activate_action`, existing despite nothing on
+        // screen that reaches it -- so the same `is_first`/`is_last` gate
+        // above decides both, not only what the menu draws.
+        let actions = gtk::gio::SimpleActionGroup::new();
+        let mut wanted = vec![
+            ("rename", SavedSearchAction::Rename),
+            ("delete", SavedSearchAction::Delete),
+        ];
+        if !is_first {
+            wanted.push(("move-up", SavedSearchAction::MoveUp));
+        }
+        if !is_last {
+            wanted.push(("move-down", SavedSearchAction::MoveDown));
+        }
+        for (name, action) in wanted {
+            let simple = gtk::gio::SimpleAction::new(name, None);
+            simple.connect_activate(glib::clone!(
+                #[weak(rename_to = sidebar)]
+                self,
+                #[strong]
+                key,
+                move |_, _| {
+                    for callback in sidebar.imp().saved_search_action.borrow().iter() {
+                        callback(key.clone(), action);
+                    }
+                }
+            ));
+            actions.add_action(&simple);
+        }
+        // On `self`, not `imp.saved`: the popover's items resolve the action
+        // by walking up from wherever they are clicked, and a group inserted
+        // higher up still reaches them -- and doing it here, rather than on
+        // a private field, is what lets `test_open_saved_search_menu` be
+        // driven with `WidgetExt::activate_action` on the public `Sidebar`.
+        self.insert_action_group("savedsearch", Some(&actions));
+
+        popover.connect_closed(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            #[weak]
+            popover,
+            move |_| {
+                popover.unparent();
+                // Only if it is still the current one: `open_saved_search_menu`
+                // itself already took it out when replacing it with a new
+                // one, and `connect_closed` still fires for the outgoing
+                // popover after that -- clearing an unrelated, already-
+                // current popover here would be the bug this guards against.
+                let current = sidebar.imp().saved_search_menu.borrow().clone();
+                if current.as_ref() == Some(&popover) {
+                    sidebar.imp().saved_search_menu.take();
+                }
+            }
+        ));
+        *imp.saved_search_menu.borrow_mut() = Some(popover.clone());
+        popover.popup();
     }
 
     /// The account address shown at the top.
@@ -715,20 +891,18 @@ impl Sidebar {
         }
     }
 
-    /// Replace the saved-search list.
+    /// Replace the saved-search list, in exactly the order given.
     ///
-    /// Sorted by name, the way the ordinary folder section is sorted by
-    /// path: alphabetical is the one order that does not require the user to
-    /// remember when each one was saved. Rows are updated in place, exactly
-    /// as [`Sidebar::set_mailboxes`] does, so a rename or a requery does not
-    /// cost the selection.
+    /// The caller's order, not this widget's: alphabetical was fine while
+    /// nothing else was possible, but once a saved search can be reordered
+    /// (#292, `Config::ordered_filter_keys`) re-sorting here would silently
+    /// throw that away every time the sidebar redraws. Rows are updated in
+    /// place, exactly as [`Sidebar::set_mailboxes`] does, so a rename or a
+    /// requery does not cost the selection.
     pub fn set_saved_searches(&self, searches: &[SavedSearch]) {
         let imp = self.imp();
-        let mut sorted: Vec<SavedSearch> = searches.to_vec();
-        sorted.sort_by(|a, b| a.name.cmp(&b.name));
-
-        sync_search_rows(&imp.saved, &sorted);
-        imp.saved_section.set_visible(!sorted.is_empty());
+        sync_search_rows(&imp.saved, searches);
+        imp.saved_section.set_visible(!searches.is_empty());
     }
 
     /// The selected folder, if any.
@@ -895,6 +1069,25 @@ impl Sidebar {
     pub fn connect_search_selected(&self, callback: impl Fn(String) + 'static) {
         self.imp()
             .search_selected
+            .borrow_mut()
+            .push(Box::new(callback));
+    }
+
+    /// What to call when a saved search's context menu picks
+    /// [`SavedSearchAction::Rename`], `MoveUp`, `MoveDown` or `Delete`, with
+    /// the `[filters.<key>]` key the row was drawn from.
+    ///
+    /// The widget knows nothing about `postio-config` -- it hands back the
+    /// key and the verb, and asking `Config` to act on them, saving, and
+    /// calling [`Sidebar::set_saved_searches`] with the result is the
+    /// caller's job, the same split `connect_search_selected` already
+    /// draws.
+    pub fn connect_saved_search_action(
+        &self,
+        callback: impl Fn(String, SavedSearchAction) + 'static,
+    ) {
+        self.imp()
+            .saved_search_action
             .borrow_mut()
             .push(Box::new(callback));
     }
@@ -1349,11 +1542,13 @@ fn search_row(search: &SavedSearch) -> gtk::ListBoxRow {
 }
 
 fn update_search_row(row: &gtk::ListBoxRow, search: &SavedSearch) {
-    // SAFETY: the key is private to this module and always holds a `String`.
-    // The only writer of this key; `row_query` is the only reader.
+    // SAFETY: both keys are private to this module and always hold a
+    // `String`. The only writer of either; `row_query`/`row_search_key` are
+    // the only readers.
     #[allow(unsafe_code)]
     unsafe {
-        row.set_data("postio-search-query", search.query.clone())
+        row.set_data("postio-search-query", search.query.clone());
+        row.set_data("postio-search-key", search.key.clone());
     };
     if let Some(name) = row.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
         name.set_text(&search.name);
@@ -1371,6 +1566,17 @@ fn row_query(row: &gtk::ListBoxRow) -> String {
     #[allow(unsafe_code)]
     unsafe {
         row.data::<String>("postio-search-query")
+            .map(|p| p.as_ref().clone())
+            .unwrap_or_default()
+    }
+}
+
+/// The `[filters.<key>]` key [`update_search_row`] stored on `row` -- what
+/// its context menu acts on, as opposed to [`row_query`]'s "what it runs".
+fn row_search_key(row: &gtk::ListBoxRow) -> String {
+    #[allow(unsafe_code)]
+    unsafe {
+        row.data::<String>("postio-search-key")
             .map(|p| p.as_ref().clone())
             .unwrap_or_default()
     }
