@@ -143,6 +143,16 @@ pub struct BodyRequest {
     pub size: u64,
     /// When the server received it. The backlog's sort key.
     pub received_at: DateTime<Utc>,
+    /// Fetch the entire message rather than only the sections holding its
+    /// text.
+    ///
+    /// False for everything the background lane queues — that is the text axis
+    /// of ADR 0017, and pulling payloads nobody asked for is what it exists to
+    /// stop. Set by [`request_whole`] for the one case that genuinely needs
+    /// every byte: the user opening an attachment on a message whose payloads
+    /// were left on the server. They asked for those bytes by name, so this is
+    /// the interactive lane paying the interactive lane's price.
+    pub whole: bool,
 }
 
 impl From<BackfillCandidate> for BodyRequest {
@@ -154,6 +164,8 @@ impl From<BackfillCandidate> for BodyRequest {
             uid: candidate.uid,
             size: candidate.size,
             received_at: candidate.received_at,
+            // The text axis is the default; only `request_whole` opts out.
+            whole: false,
         }
     }
 }
@@ -589,6 +601,27 @@ pub fn request_body(
     Ok(true)
 }
 
+/// As [`request_body`], but asks for every byte of the message.
+///
+/// The escape hatch from the text axis, for the one caller that needs the
+/// parts it deliberately did not fetch: someone opening an attachment on a
+/// `partial` message. Until the payload axis fetches parts individually
+/// (#377) this is how those bytes arrive, and it is still on-demand — nothing
+/// speculative pulls a payload.
+pub fn request_whole(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    message_id: MessageId,
+) -> Result<bool> {
+    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+        return Ok(false);
+    };
+    let mut request = BodyRequest::from(candidate);
+    request.whole = true;
+    backfill.request_now(request);
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------
 // Doing one
 // ---------------------------------------------------------------------------
@@ -647,7 +680,7 @@ pub async fn fetch_body(
     // a message that is nothing but an attachment has no text sections and
     // must still take this path, or the fallback would fetch the payload this
     // exists to avoid.
-    if message.content_type.is_some() {
+    if !request.whole && message.content_type.is_some() {
         return fetch_text_parts(connection, blobs, backend, request, message, cancel).await;
     }
 
@@ -884,6 +917,7 @@ mod tests {
             uid: Uid::new(uid),
             size,
             received_at: at(uid as i64),
+            whole: false,
         }
     }
 

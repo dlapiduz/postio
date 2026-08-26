@@ -250,6 +250,10 @@ enum Job {
         message: MessageId,
         reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
     },
+    RequestWholeMessage {
+        message: MessageId,
+        reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
+    },
 }
 
 /// A handle to the sync engine.
@@ -272,6 +276,9 @@ impl fmt::Debug for Job {
             Job::Sync { mailbox, .. } => write!(formatter, "Sync({mailbox})"),
             Job::SeedBackfill { mailbox, .. } => write!(formatter, "SeedBackfill({mailbox})"),
             Job::RequestBody { message, .. } => write!(formatter, "RequestBody({message})"),
+            Job::RequestWholeMessage { message, .. } => {
+                write!(formatter, "RequestWholeMessage({message})")
+            }
         }
     }
 }
@@ -369,6 +376,18 @@ impl Engine {
     /// already here, or the message is gone.
     pub async fn request_body(&self, message: MessageId) -> Result<bool, EngineError> {
         self.ask(|reply| Job::RequestBody { message, reply }).await
+    }
+
+    /// Asks for every byte of `message`, not only the sections holding its
+    /// text.
+    ///
+    /// The background lane fetches text and leaves payloads on the server
+    /// (ADR 0017), so this is what the reading pane calls when the user opens
+    /// an attachment that was never downloaded. Still on demand: nothing
+    /// speculative reaches for a payload.
+    pub async fn request_whole_message(&self, message: MessageId) -> Result<bool, EngineError> {
+        self.ask(|reply| Job::RequestWholeMessage { message, reply })
+            .await
     }
 
     /// As [`ask`](Self::ask), for a job whose answer cannot fail.
@@ -1341,6 +1360,15 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
             announce_backfill_now(parts, state, std::time::Instant::now());
             let _ = reply.send(outcome);
         }
+        Job::RequestWholeMessage { message, reply } => {
+            let outcome = with_connection(pool, |connection| {
+                backfill::request_whole(connection, &mut state.backfill, message)
+                    .map_err(|error| EngineError::new(error.to_string()))
+            });
+            // Interactive, like `RequestBody`: the user is waiting on it.
+            announce_backfill_now(parts, state, std::time::Instant::now());
+            let _ = reply.send(outcome);
+        }
         Job::RetryNow { reply } => {
             let moved = state.supervisor.retry_now(Utc::now());
             announce_link(parts, state, moved);
@@ -2271,6 +2299,7 @@ mod tests {
             uid: postio_model::Uid::new(n),
             size: 100,
             received_at: Utc::now(),
+            whole: false,
         }
     }
 
