@@ -338,6 +338,8 @@ fn show_composer(window: &Window) {
         display_name: name.to_owned(),
         is_default: default,
         signature: Some(postio_model::Signature {
+            id: Default::default(),
+            name: String::new(),
             text: format!("{name} · postio.example.com"),
             html: None,
         }),
