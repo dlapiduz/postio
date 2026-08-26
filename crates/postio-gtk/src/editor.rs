@@ -52,6 +52,10 @@ const EDITOR_SCRIPT: &str = include_str!("../data/editor.js");
 /// The script-message channel the bridge reports edits on.
 const EDITED_MESSAGE: &str = "postioEdited";
 
+/// The channel the bridge reports the caret's formatting on — what a
+/// toolbar toggle reflects, named after the same registry ids it serves.
+const FORMAT_MESSAGE: &str = "postioFormat";
+
 /// How long after an edit the next one still amends the same undo step.
 ///
 /// What makes a typing run one `Ctrl+Z` rather than one per keystroke; the
@@ -179,12 +183,31 @@ fn handle_decide_policy(
 /// What a change handler receives: the document as it now stands.
 type ChangedHandler = Box<dyn Fn(&Document)>;
 
+/// What a format watcher receives: the caret's formatting as reported.
+type FormatWatcher = Box<dyn Fn(FormatState)>;
+
+/// The formatting in force where the caret sits, as the surface reports it.
+///
+/// What a toolbar toggle shows: `bold` is true when the selection is inside
+/// `Strong`, not when a mode is armed — there are no modes, only the
+/// document under the caret.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FormatState {
+    pub bold: bool,
+    pub italic: bool,
+    pub bullet_list: bool,
+    pub numbered_list: bool,
+    pub quote_block: bool,
+}
+
 struct EditorState {
     document: RefCell<Document>,
     history: RefCell<EditHistory>,
     changed: RefCell<Vec<ChangedHandler>>,
     last_edit: Cell<Option<Instant>>,
     coalesce: Duration,
+    format: Cell<FormatState>,
+    format_watchers: RefCell<Vec<FormatWatcher>>,
 }
 
 /// The editing surface with its document attached: Document in, WebKit's
@@ -220,6 +243,7 @@ impl Editor {
             &[],
         ));
         content.register_script_message_handler(EDITED_MESSAGE, None);
+        content.register_script_message_handler(FORMAT_MESSAGE, None);
 
         let view = view_with(&content, source);
         let state = Rc::new(EditorState {
@@ -228,6 +252,8 @@ impl Editor {
             changed: RefCell::new(Vec::new()),
             last_edit: Cell::new(None),
             coalesce,
+            format: Cell::new(FormatState::default()),
+            format_watchers: RefCell::new(Vec::new()),
         });
 
         content.connect_script_message_received(Some(EDITED_MESSAGE), {
@@ -237,6 +263,30 @@ impl Editor {
                     return;
                 }
                 absorb(&state, &value.to_str());
+            }
+        });
+
+        content.connect_script_message_received(Some(FORMAT_MESSAGE), {
+            let state = state.clone();
+            move |_, value| {
+                if !value.is_string() {
+                    return;
+                }
+                let report = value.to_str();
+                let tokens: Vec<&str> = report.split_whitespace().collect();
+                let format = FormatState {
+                    bold: tokens.contains(&"bold"),
+                    italic: tokens.contains(&"italic"),
+                    bullet_list: tokens.contains(&"bullet_list"),
+                    numbered_list: tokens.contains(&"numbered_list"),
+                    quote_block: tokens.contains(&"quote_block"),
+                };
+                if state.format.replace(format) == format {
+                    return;
+                }
+                for watcher in state.format_watchers.borrow().iter() {
+                    watcher(format);
+                }
             }
         });
 
@@ -265,6 +315,20 @@ impl Editor {
     /// Run `handler` after every absorbed edit, undo and redo.
     pub fn connect_changed(&self, handler: impl Fn(&Document) + 'static) {
         self.state.changed.borrow_mut().push(Box::new(handler));
+    }
+
+    /// The formatting in force where the caret sits, as last reported.
+    pub fn format_state(&self) -> FormatState {
+        self.state.format.get()
+    }
+
+    /// Run `handler` whenever the caret's formatting changes — the toolbar's
+    /// reflection channel. Called only on change, never per keystroke.
+    pub fn connect_format_state(&self, handler: impl Fn(FormatState) + 'static) {
+        self.state
+            .format_watchers
+            .borrow_mut()
+            .push(Box::new(handler));
     }
 
     /// Step back one typing run. `Ctrl+Z`.
@@ -433,6 +497,27 @@ impl Editor {
             while gtk::glib::MainContext::default().iteration(false) {}
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Select `from..to` inside the first paragraph's text node, for tests
+    /// that format a selection rather than a caret.
+    #[doc(hidden)]
+    pub fn test_select(&self, nth: u32, from: u32, to: u32) {
+        self.wait_ready();
+        // A TreeWalker rather than `firstChild.firstChild`: freshly typed
+        // text sits as a bare text node until a block gesture wraps it, and
+        // formatting splits one node into several, so the `nth` text node
+        // is wherever it is, not at a fixed depth.
+        self.run_blocking(&format!(
+            "(() => {{ const walker = document.createTreeWalker( \
+                 document.body, NodeFilter.SHOW_TEXT); \
+               let text = walker.nextNode(); \
+               for (let i = 0; i < {nth}; i++) text = walker.nextNode(); \
+               if (!text) return 'no text'; \
+               const sel = window.getSelection(); \
+               sel.setBaseAndExtent(text, {from}, text, {to}); \
+               return 'selected'; }})()"
+        ));
     }
 }
 
