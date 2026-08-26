@@ -606,6 +606,34 @@ only part of #121 a session on the host cannot answer.
 
 ## Storage, sync & search internals
 
+**One `TokenSource` per account, and never a second.** ADR 0006 Q5, made real
+in #194. The composition root (`postio_session::engine::start`) builds one and
+hands *that instance* to the account's IMAP pool and to `EngineParts::tokens`,
+which is what `SmtpContext` sends with. A second source of the same type,
+constructed anywhere downstream, compiles and looks identical and is the bug:
+
+- a rejection seen while fetching is invisible while sending, so the two sides
+  disagree about whether the credential is any good;
+- on a provider that rotates its refresh token on every use — Google and
+  Microsoft both do — two simultaneous refreshes each invalidate the other's
+  result, and the account degrades to one working token lifetime;
+- the single-flight coalescing is per source, so two sources means two flights
+  and the stampede it exists to prevent.
+
+`EngineParts` deliberately has no `secrets` field beside `tokens`: a struct
+offering both is a struct where the wrong one gets used. A password account is
+a `TokenSource` too (`StoredPasswordSource`), which is the whole point of the
+seam — the composition root decides what kind of credential an account has,
+and nothing downstream asks again.
+
+**What a refused credential means is decided in exactly one place**,
+`postio_imap::auth::with_credential`: invalidate, ask once more, and *do not
+retry at all* if the source hands back the same bytes. That last clause is the
+one that goes missing when the paragraph is written twice — and without it a
+wrong password is an endless pair of round trips. The pool and the SMTP send
+both call it; a third place that meets a server with a credential should too.
+
+
 **Re-pointing a mailbox role relabels folders; it never moves mail.** `[mailboxes]`
 lets a user say which folder is the archive on a server that advertises no
 `SPECIAL-USE` and names its folders in a language `match_name` was never
