@@ -44,6 +44,7 @@ mod gtk_selection;
 mod gtk_sidebar;
 mod gtk_sidebar_keys;
 mod gtk_sidebar_saved_searches;
+mod gtk_sidebar_tree;
 mod gtk_style;
 mod gtk_thread;
 mod gtk_thread_scope;
@@ -142,6 +143,10 @@ const CASES: &[(&str, fn())] = &[
         "gtk_sidebar_saved_searches::saved_searches_list_keyboard_navigate_and_report_their_query",
         gtk_sidebar_saved_searches::saved_searches_list_keyboard_navigate_and_report_their_query
             as fn(),
+    ),
+    (
+        "gtk_sidebar_tree::folders_nest_collapse_and_a_noselect_parent_only_toggles",
+        gtk_sidebar_tree::folders_nest_collapse_and_a_noselect_parent_only_toggles as fn(),
     ),
     (
         "gtk_style::the_generated_stylesheet_works_in_gtk",

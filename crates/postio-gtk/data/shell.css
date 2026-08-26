@@ -240,6 +240,22 @@ button.postio-compose {
   color: var(--postio-selected-accent-text);
 }
 
+/* The ordinary section's disclosure chevron (#324) — flat, dim, and no
+   wider than it has to be, so a row with children reads the same height as
+   one without. Its own click, not the row's: opacity does the hiding when
+   there is nothing to disclose, so every row's name still lines up at its
+   own depth. */
+.postio-folder-disclosure {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  color: var(--postio-dim);
+}
+
+.postio-folder:selected .postio-folder-disclosure {
+  color: var(--postio-selected-fg);
+}
+
 /* ── Search: the scope and refine column (canvas 2b) ─────────────────
    The sidebar's own ground and its own row idiom, because while a search is
    on screen this *is* the sidebar. Nothing here restyles a folder row; the

@@ -519,6 +519,21 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
     },
     CommandSpec {
+        id: CommandId::ToggleFolder,
+        title: "Expand or collapse folder",
+        // Distinct from `Return`/`l`/`Right`, which the message surfaces use
+        // to open something — the folder list already opens on selection
+        // (`postio-cfd.2`), so this is a second verb the same key would
+        // otherwise be asked to mean two things at once.
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Sidebar]),
+        destructive: false,
+        // Which folders are open is view state, not durable data — nothing
+        // here for undo to reach.
+        recovery: Recovery::None,
+    },
+    CommandSpec {
         id: CommandId::Refresh,
         title: "Refresh",
         default_binding: "F5",

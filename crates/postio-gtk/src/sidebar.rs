@@ -24,6 +24,7 @@
 //! folders, offline, never synced.
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
@@ -278,6 +279,120 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     (special, ordinary)
 }
 
+/// One row of the ordinary folder tree (#324), positioned in the hierarchy
+/// the server reported: the mailbox itself, how deep it nests, and whether
+/// it has children to disclose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    pub mailbox: Mailbox,
+    /// Ancestors between this row and a root, capped at [`MAX_DEPTH`].
+    pub depth: u8,
+    /// Whether this row has at least one child in the tree, whatever its
+    /// current expansion state.
+    pub has_children: bool,
+}
+
+/// Nesting deeper than this renders at the same indent as this depth: the
+/// sidebar column has finite width, and pushing a name out of it to indent
+/// correctly is worse than an indent that stops being literal.
+const MAX_DEPTH: u8 = 4;
+
+/// Flatten the ordinary folders into the order the sidebar draws them:
+/// depth-first, each level sorted the way the flat list has always been
+/// sorted, a folder's children immediately beneath it and hidden while it is
+/// collapsed.
+///
+/// `collapsed` names the folders currently closed; everything else with
+/// children is open, which is why a fresh account — nothing collapsed yet —
+/// renders exactly as flat-but-correctly-indented as it would before this
+/// existed, rather than defaulting to a wall of closed rows.
+///
+/// A `\Noselect` container (`Mailbox::selectable == false`) still gets a row
+/// when it has children, so the hierarchy it organizes can be opened even
+/// though it cannot be opened as a mailbox — see #324's acceptance. A
+/// `\Noselect` folder with nothing under it gets no row at all: nothing to
+/// open and nothing to toggle is a row that wastes a keystroke, same as
+/// today's flat list already decided in [`sections`].
+///
+/// A child whose parent was never listed by the server (`parent_id` points
+/// at nothing in `mailboxes`, or is `None`) renders as its own root — exactly
+/// what `postio-sync::discover::link_parents` already promises: "the folder
+/// is still perfectly usable; it just sits at the top."
+pub fn folder_rows(mailboxes: &[Mailbox], collapsed: &HashSet<MailboxId>) -> Vec<FolderRow> {
+    let ordinary: Vec<&Mailbox> = mailboxes
+        .iter()
+        .filter(|m| role_order(m.role).is_none())
+        .collect();
+    let present: HashSet<MailboxId> = ordinary.iter().map(|m| m.id).collect();
+
+    let mut children: HashMap<MailboxId, Vec<&Mailbox>> = HashMap::new();
+    for m in &ordinary {
+        if let Some(parent) = m.parent_id
+            && present.contains(&parent)
+        {
+            children.entry(parent).or_default().push(m);
+        }
+    }
+    for list in children.values_mut() {
+        list.sort_by_key(|m| m.path.to_lowercase());
+    }
+
+    let mut roots: Vec<&Mailbox> = ordinary
+        .iter()
+        .copied()
+        .filter(|m| !m.parent_id.is_some_and(|p| present.contains(&p)))
+        .collect();
+    roots.sort_by_key(|m| m.path.to_lowercase());
+
+    let mut out = Vec::new();
+    for root in roots {
+        walk_folder_tree(root, 0, &children, collapsed, &mut out);
+    }
+    out
+}
+
+fn walk_folder_tree<'a>(
+    mailbox: &'a Mailbox,
+    depth: u8,
+    children: &HashMap<MailboxId, Vec<&'a Mailbox>>,
+    collapsed: &HashSet<MailboxId>,
+    out: &mut Vec<FolderRow>,
+) {
+    let kids = children.get(&mailbox.id);
+    let has_children = kids.is_some_and(|k| !k.is_empty());
+    if !mailbox.selectable && !has_children {
+        return;
+    }
+    out.push(FolderRow {
+        mailbox: mailbox.clone(),
+        depth: depth.min(MAX_DEPTH),
+        has_children,
+    });
+    if has_children && !collapsed.contains(&mailbox.id) {
+        for child in kids.into_iter().flatten() {
+            walk_folder_tree(child, depth + 1, children, collapsed, out);
+        }
+    }
+}
+
+/// Every ancestor of `id`, nearest first, so the caller can open all of them.
+///
+/// A folder selected while an ancestor is collapsed must still be reachable —
+/// see [`Sidebar::select`] — and this is what tells it which parents to open.
+pub fn ancestors_of(mailboxes: &[Mailbox], id: MailboxId) -> Vec<MailboxId> {
+    let by_id: HashMap<MailboxId, &Mailbox> = mailboxes.iter().map(|m| (m.id, m)).collect();
+    let mut out = Vec::new();
+    let mut current = by_id.get(&id).and_then(|m| m.parent_id);
+    while let Some(parent) = current {
+        if !by_id.contains_key(&parent) {
+            break;
+        }
+        out.push(parent);
+        current = by_id.get(&parent).and_then(|m| m.parent_id);
+    }
+    out
+}
+
 mod imp {
     use super::*;
 
@@ -299,6 +414,13 @@ mod imp {
         /// Set while a selection is being applied programmatically, so
         /// restoring one does not look like the user clicking it.
         pub echoing: std::cell::Cell<bool>,
+        /// The full mailbox list [`Sidebar::set_mailboxes`] was last given —
+        /// kept so a toggle can re-flatten the tree, and a select can find a
+        /// row's ancestors, without the caller handing the list back.
+        pub mailboxes: RefCell<Vec<Mailbox>>,
+        /// Folders the ordinary tree is showing collapsed (#324).
+        pub collapsed: RefCell<HashSet<MailboxId>>,
+        pub collapsed_changed: RefCell<Vec<Box<dyn Fn()>>>,
     }
 
     #[glib::object_subclass]
@@ -472,6 +594,13 @@ impl Sidebar {
                     return;
                 }
                 let id = MailboxId::new(row_id(row));
+                // A `\Noselect` container has nothing to open — clicking it
+                // toggles its children instead, since that is the only
+                // thing selecting it could mean (#324).
+                if !sidebar.is_openable(id) {
+                    sidebar.toggle(id);
+                    return;
+                }
                 for callback in sidebar.imp().selected.borrow().iter() {
                     callback(id);
                 }
@@ -514,15 +643,75 @@ impl Sidebar {
     /// keyboard focus with it — which is the whole of "counts update live".
     pub fn set_mailboxes(&self, mailboxes: &[Mailbox]) {
         let imp = self.imp();
-        let (special, ordinary) = sections(mailboxes);
+        *imp.mailboxes.borrow_mut() = mailboxes.to_vec();
+        let (special, _) = sections(mailboxes);
         let selected = self.selected();
 
         sync_rows(&imp.special, &special, self);
-        sync_rows(&imp.ordinary, &ordinary, self);
-        imp.ordinary_section.set_visible(!ordinary.is_empty());
+        self.render_ordinary();
 
         if let Some(id) = selected {
             self.select(id);
+        }
+    }
+
+    /// Rebuild the ordinary section from the cached mailbox list and the
+    /// current collapse state (#324). Called after `set_mailboxes`, and
+    /// after anything that changes what is collapsed.
+    fn render_ordinary(&self) {
+        let imp = self.imp();
+        let rows = folder_rows(&imp.mailboxes.borrow(), &imp.collapsed.borrow());
+        sync_folder_rows(&imp.ordinary, &rows, self);
+        imp.ordinary_section.set_visible(!rows.is_empty());
+    }
+
+    /// Expand or collapse `id`'s children. A harmless no-op if `id` has none
+    /// — the caller does not have to check first.
+    pub fn toggle(&self, id: MailboxId) {
+        {
+            let mut collapsed = self.imp().collapsed.borrow_mut();
+            if !collapsed.remove(&id) {
+                collapsed.insert(id);
+            }
+        }
+        self.render_ordinary();
+        self.notify_collapsed_changed();
+    }
+
+    /// Toggle whichever folder is currently selected: the keyboard's
+    /// `toggle_folder` command acts on it, because selection is already the
+    /// sidebar's own notion of "where the keyboard is" — see
+    /// [`Sidebar::step`], which selects and opens in the same motion.
+    pub fn toggle_focused(&self) {
+        if let Some(id) = self.selected() {
+            self.toggle(id);
+        }
+    }
+
+    /// Set which folders are showing collapsed — what a caller restoring
+    /// saved state calls before or after the first [`Sidebar::set_mailboxes`].
+    pub fn set_collapsed(&self, collapsed: HashSet<MailboxId>) {
+        *self.imp().collapsed.borrow_mut() = collapsed;
+        self.render_ordinary();
+    }
+
+    /// The folders currently showing collapsed, for a caller to persist.
+    pub fn collapsed(&self) -> HashSet<MailboxId> {
+        self.imp().collapsed.borrow().clone()
+    }
+
+    /// Called whenever [`Sidebar::toggle`] or an ancestor auto-expand (see
+    /// [`Sidebar::select`]) changes which folders are collapsed.
+    pub fn connect_collapsed_changed(&self, callback: impl Fn() + 'static) {
+        self.imp()
+            .collapsed_changed
+            .borrow_mut()
+            .push(Box::new(callback));
+    }
+
+    fn notify_collapsed_changed(&self) {
+        for handler in self.imp().collapsed_changed.borrow().iter() {
+            handler();
         }
     }
 
@@ -554,8 +743,29 @@ impl Sidebar {
     }
 
     /// Select a folder without reporting it back as a user action.
+    ///
+    /// Opens every collapsed ancestor first (#324): a folder selected while
+    /// its parent is closed must still show as selected, rather than
+    /// silently landing on no row at all because the one it belongs to is
+    /// not currently drawn.
     pub fn select(&self, id: MailboxId) {
         let imp = self.imp();
+        let ancestors = ancestors_of(&imp.mailboxes.borrow(), id);
+        let opened = {
+            let mut collapsed = imp.collapsed.borrow_mut();
+            // `|=`, not `||=`, so removing an ancestor is never short-circuited
+            // away by an earlier one already having opened something.
+            let mut any = false;
+            for ancestor in &ancestors {
+                any |= collapsed.remove(ancestor);
+            }
+            any
+        };
+        if opened {
+            self.render_ordinary();
+            self.notify_collapsed_changed();
+        }
+
         imp.echoing.set(true);
         for list in [&imp.special, &imp.ordinary] {
             match find_row(list, id) {
@@ -635,13 +845,31 @@ impl Sidebar {
         row.grab_focus();
         let id = MailboxId::new(row_id(row));
         self.select(id);
-        // `select` is deliberately quiet — it is what the window calls to
-        // echo a folder it opened — so the keyboard has to announce its own
-        // move, the same way a click does.
-        for handler in self.imp().selected.borrow().iter() {
-            handler(id);
+        // A `\Noselect` container has nothing to open: stepping onto it
+        // moves the keyboard there — so `toggle_focused` (#324) has
+        // something to act on — but must not report it as an open folder,
+        // the same gate the click handler applies.
+        if self.is_openable(id) {
+            // `select` is deliberately quiet — it is what the window calls
+            // to echo a folder it opened — so the keyboard has to announce
+            // its own move, the same way a click does.
+            for handler in self.imp().selected.borrow().iter() {
+                handler(id);
+            }
         }
         Some(id)
+    }
+
+    /// Whether `id` names a folder that can actually be opened — false for a
+    /// `\Noselect` container, and true for an id this sidebar has never
+    /// heard of, so an unrelated caller's id is not silently swallowed.
+    fn is_openable(&self, id: MailboxId) -> bool {
+        self.imp()
+            .mailboxes
+            .borrow()
+            .iter()
+            .find(|m| m.id == id)
+            .is_none_or(|m| m.selectable)
     }
 
     /// Called when the user picks a folder, by click or by keyboard.
@@ -919,6 +1147,144 @@ pub fn display_name(mailbox: &Mailbox) -> String {
     }
 }
 
+/// Pixels of indent per nesting level (#324). Not a design token — this
+/// row's shape is laid out in code, not CSS, because how far in it sits is
+/// data (`FolderRow::depth`), not something a stylesheet selector can see.
+const INDENT_PX: i32 = 16;
+
+/// Bring `list` in line with `rows`, reusing the rows that survive — the
+/// ordinary section's own counterpart of [`sync_rows`], which has a
+/// hierarchy to draw that the special-use section does not.
+fn sync_folder_rows(list: &gtk::ListBox, rows: &[FolderRow], sidebar: &Sidebar) {
+    for (index, data) in rows.iter().enumerate() {
+        match list.row_at_index(index as i32) {
+            Some(row) => update_tree_row(&row, data, sidebar),
+            None => {
+                let row = tree_row(data, sidebar);
+                accept_drops(&row, sidebar);
+                list.append(&row);
+            }
+        }
+    }
+    while let Some(extra) = list.row_at_index(rows.len() as i32) {
+        list.remove(&extra);
+    }
+}
+
+/// `[indent][disclosure] name  count` — structure is [`update_tree_row`]'s
+/// promise to keep in step, exactly as [`folder_row`]'s is for the flat
+/// special-use rows.
+fn tree_row(data: &FolderRow, sidebar: &Sidebar) -> gtk::ListBoxRow {
+    let indent = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+
+    let disclosure = gtk::Button::from_icon_name("pan-end-symbolic");
+    disclosure.add_css_class("flat");
+    disclosure.add_css_class("postio-folder-disclosure");
+    disclosure.set_valign(gtk::Align::Center);
+
+    let name = gtk::Label::new(None);
+    name.add_css_class("postio-folder-name");
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(pango::EllipsizeMode::End);
+
+    let count = gtk::Label::new(None);
+    count.add_css_class("postio-folder-count");
+
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    line.append(&indent);
+    line.append(&disclosure);
+    line.append(&name);
+    line.append(&count);
+
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("postio-folder");
+    row.add_css_class("postio-folder-tree");
+    row.set_child(Some(&line));
+
+    // The disclosure is its own widget with its own click gesture, so
+    // clicking it does not also select the row — the same reason a switch
+    // or a button embedded in any GTK list row works today.
+    disclosure.connect_clicked(glib::clone!(
+        #[weak]
+        sidebar,
+        #[weak]
+        row,
+        move |_| sidebar.toggle(MailboxId::new(row_id(&row)))
+    ));
+
+    update_tree_row(&row, data, sidebar);
+    row
+}
+
+fn update_tree_row(row: &gtk::ListBoxRow, data: &FolderRow, sidebar: &Sidebar) {
+    // SAFETY: as `update_row` — the only writer of this key on a tree row.
+    // `row_id` reads it back without caring which kind of row wrote it.
+    #[allow(unsafe_code)]
+    unsafe {
+        row.set_data("postio-mailbox-id", data.mailbox.id.get())
+    };
+
+    let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
+        return;
+    };
+    let Some(indent) = line
+        .first_child()
+        .and_then(|c| c.downcast::<gtk::Box>().ok())
+    else {
+        return;
+    };
+    let Some(disclosure) = indent
+        .next_sibling()
+        .and_then(|c| c.downcast::<gtk::Button>().ok())
+    else {
+        return;
+    };
+    let Some(name) = disclosure
+        .next_sibling()
+        .and_then(|c| c.downcast::<gtk::Label>().ok())
+    else {
+        return;
+    };
+    let Some(count) = name
+        .next_sibling()
+        .and_then(|c| c.downcast::<gtk::Label>().ok())
+    else {
+        return;
+    };
+
+    indent.set_size_request(data.depth as i32 * INDENT_PX, -1);
+
+    let collapsed = sidebar.collapsed().contains(&data.mailbox.id);
+    disclosure.set_icon_name(if collapsed {
+        "pan-end-symbolic"
+    } else {
+        "pan-down-symbolic"
+    });
+    // A row with nothing to disclose keeps the control's width, so every
+    // row's name still lines up at its own depth, but it neither shows nor
+    // takes a click or the keyboard's Tab order.
+    disclosure.set_opacity(if data.has_children { 1.0 } else { 0.0 });
+    disclosure.set_sensitive(data.has_children);
+    disclosure.set_can_focus(data.has_children);
+    disclosure.update_property(&[gtk::accessible::Property::Label(if collapsed {
+        "Expand"
+    } else {
+        "Collapse"
+    })]);
+
+    name.set_text(&display_name(&data.mailbox));
+    match count_for(&data.mailbox) {
+        Some(value) => {
+            count.set_text(&value.to_string());
+            count.set_visible(true);
+        }
+        None => count.set_visible(false),
+    }
+
+    row.update_property(&[gtk::accessible::Property::Label(&announce(&data.mailbox))]);
+}
+
 fn find_row(list: &gtk::ListBox, id: MailboxId) -> Option<gtk::ListBoxRow> {
     let mut index = 0;
     while let Some(row) = list.row_at_index(index) {
@@ -1118,6 +1484,149 @@ mod tests {
         container.selectable = false;
         let (special, ordinary) = sections(&[container]);
         assert!(special.is_empty() && ordinary.is_empty());
+    }
+
+    /// A mailbox with an explicit id and parent, for tree tests — `mailbox`
+    /// above leaves every id `UNASSIGNED`, which is fine for a flat list but
+    /// ambiguous once rows have to point at each other.
+    fn folder(id: i64, parent: Option<i64>, path: &str) -> Mailbox {
+        let mut m = mailbox(path, MailboxRole::Regular, counts(0, 0, 0));
+        m.id = MailboxId::new(id);
+        m.parent_id = parent.map(MailboxId::new);
+        m
+    }
+
+    /// #324's own acceptance criterion: today's flat list cannot tell these
+    /// apart at all. Nested and indented, they can.
+    #[test]
+    fn two_folders_sharing_a_leaf_name_under_different_parents_are_distinguishable() {
+        let mailboxes = vec![
+            folder(1, None, "Clients"),
+            folder(2, Some(1), "Clients/Old"),
+            folder(3, None, "Archive2024"),
+            folder(4, Some(3), "Archive2024/Old"),
+        ];
+        let rows = folder_rows(&mailboxes, &HashSet::new());
+        let old: Vec<&FolderRow> = rows.iter().filter(|r| r.mailbox.name == "Old").collect();
+        assert_eq!(old.len(), 2, "both `Old` folders should render");
+        assert_ne!(
+            old[0].mailbox.id, old[1].mailbox.id,
+            "distinguishable rows, not the same row twice"
+        );
+        // Each sits under its own parent, one level deeper.
+        for row in &old {
+            assert_eq!(row.depth, 1);
+        }
+    }
+
+    #[test]
+    fn children_render_under_their_parent_indented_and_in_order() {
+        let mailboxes = vec![
+            folder(1, None, "Clients"),
+            folder(2, Some(1), "Clients/Acme"),
+            folder(3, Some(1), "Clients/Beta"),
+            folder(4, None, "Newsletters"),
+        ];
+        let rows = folder_rows(&mailboxes, &HashSet::new());
+        let names: Vec<&str> = rows.iter().map(|r| r.mailbox.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Clients", "Acme", "Beta", "Newsletters"],
+            "a parent's children come right after it, sorted, before the next root"
+        );
+        assert_eq!(rows[0].depth, 0);
+        assert_eq!(rows[1].depth, 1);
+        assert_eq!(rows[2].depth, 1);
+        assert_eq!(rows[3].depth, 0);
+        assert!(rows[0].has_children);
+        assert!(!rows[1].has_children);
+    }
+
+    #[test]
+    fn a_collapsed_parent_hides_its_children_but_still_has_a_row() {
+        let mailboxes = vec![
+            folder(1, None, "Clients"),
+            folder(2, Some(1), "Clients/Acme"),
+        ];
+        let collapsed = HashSet::from([MailboxId::new(1)]);
+        let rows = folder_rows(&mailboxes, &collapsed);
+        let names: Vec<&str> = rows.iter().map(|r| r.mailbox.name.as_str()).collect();
+        assert_eq!(names, ["Clients"], "the child is hidden while collapsed");
+        assert!(
+            rows[0].has_children,
+            "but the parent still knows it has one"
+        );
+    }
+
+    /// The design's own answer, taken directly: "A `\Noselect` parent cannot
+    /// be opened but can be toggled" — so it needs a row when it organizes
+    /// children, even though `sections`' flat list would have dropped it.
+    #[test]
+    fn a_noselect_parent_with_children_gets_a_toggle_only_row() {
+        let mut clients = folder(1, None, "Clients");
+        clients.selectable = false;
+        let mailboxes = vec![clients, folder(2, Some(1), "Clients/Acme")];
+        let rows = folder_rows(&mailboxes, &HashSet::new());
+        let names: Vec<&str> = rows.iter().map(|r| r.mailbox.name.as_str()).collect();
+        assert_eq!(names, ["Clients", "Acme"]);
+        assert!(!rows[0].mailbox.selectable, "still not openable");
+        assert!(rows[0].has_children);
+    }
+
+    #[test]
+    fn a_noselect_folder_with_no_children_is_dropped() {
+        let mut empty = folder(1, None, "Ghost");
+        empty.selectable = false;
+        let rows = folder_rows(&[empty], &HashSet::new());
+        assert!(rows.is_empty(), "nothing to open, nothing to toggle");
+    }
+
+    /// `postio-sync::discover::link_parents`'s own promise: an intermediate
+    /// level the server never listed leaves the child's `parent_id` pointing
+    /// at nothing this account knows about, and the folder "just sits at the
+    /// top" rather than vanishing or panicking.
+    #[test]
+    fn a_hierarchy_missing_its_intermediate_level_still_renders() {
+        let mut orphan = folder(2, Some(99), "Clients/Acme");
+        orphan.parent_id = Some(MailboxId::new(99)); // never listed
+        let rows = folder_rows(&[orphan], &HashSet::new());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].depth, 0,
+            "sits at the top, not nested under nothing"
+        );
+    }
+
+    #[test]
+    fn deep_nesting_stops_indenting_past_the_stated_depth() {
+        let mut mailboxes = vec![folder(1, None, "L0")];
+        for i in 1..8 {
+            mailboxes.push(folder(i + 1, Some(i), &format!("L{i}")));
+        }
+        let rows = folder_rows(&mailboxes, &HashSet::new());
+        assert_eq!(rows.len(), 8);
+        let max_depth = rows.iter().map(|r| r.depth).max().unwrap();
+        assert_eq!(
+            max_depth, MAX_DEPTH,
+            "indentation stops at a stated depth rather than growing forever"
+        );
+        // The last two rows are at different real depths but the same
+        // rendered one.
+        assert_eq!(rows[6].depth, rows[7].depth);
+    }
+
+    #[test]
+    fn ancestors_are_named_nearest_first() {
+        let mailboxes = vec![
+            folder(1, None, "Clients"),
+            folder(2, Some(1), "Clients/Acme"),
+            folder(3, Some(2), "Clients/Acme/Invoices"),
+        ];
+        assert_eq!(
+            ancestors_of(&mailboxes, MailboxId::new(3)),
+            vec![MailboxId::new(2), MailboxId::new(1)]
+        );
+        assert_eq!(ancestors_of(&mailboxes, MailboxId::new(1)), Vec::new());
     }
 
     #[test]

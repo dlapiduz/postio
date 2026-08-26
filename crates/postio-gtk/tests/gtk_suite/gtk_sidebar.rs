@@ -198,13 +198,24 @@ fn rows(sidebar: &Sidebar) -> Vec<gtk::ListBoxRow> {
 }
 
 /// Each row's name and the count beside it, when it shows one.
+///
+/// By CSS class, not row position: the ordinary section's rows (#324) carry
+/// an indent spacer and a disclosure button ahead of the name, which the
+/// special-use section's flat rows do not, so `first_child`/`next_sibling`
+/// no longer names the same two widgets in both.
 fn labels(sidebar: &Sidebar) -> Vec<(String, Option<String>)> {
     rows(sidebar)
         .iter()
         .map(|row| {
-            let line = row.child().unwrap();
-            let name: gtk::Label = line.first_child().unwrap().downcast().unwrap();
-            let count: gtk::Label = name.next_sibling().unwrap().downcast().unwrap();
+            let widget = row.clone().upcast::<gtk::Widget>();
+            let name: gtk::Label = collect(&widget, "postio-folder-name")[0]
+                .clone()
+                .downcast()
+                .unwrap();
+            let count: gtk::Label = collect(&widget, "postio-folder-count")[0]
+                .clone()
+                .downcast()
+                .unwrap();
             (
                 name.text().to_string(),
                 count.is_visible().then(|| count.text().to_string()),

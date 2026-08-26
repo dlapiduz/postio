@@ -137,6 +137,8 @@ command_ids! {
     NextFolder => "next_folder",
     /// Move to the previous folder in the sidebar.
     PrevFolder => "prev_folder",
+    /// Expand or collapse the focused folder's children.
+    ToggleFolder => "toggle_folder",
     /// Ask the sync engine to check for new mail now.
     Refresh => "refresh",
     /// Show the focused message's MIME structure.
@@ -441,6 +443,8 @@ pub enum Command {
     NextFolder,
     /// Move to the previous folder.
     PrevFolder,
+    /// Expand or collapse the focused folder's children.
+    ToggleFolder,
     /// Check for new mail now.
     Refresh,
 
@@ -535,6 +539,7 @@ impl Command {
             Command::FocusSidebar => CommandId::FocusSidebar,
             Command::NextFolder => CommandId::NextFolder,
             Command::PrevFolder => CommandId::PrevFolder,
+            Command::ToggleFolder => CommandId::ToggleFolder,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
             Command::NextPart => CommandId::NextPart,
@@ -611,6 +616,7 @@ impl Command {
             CommandId::FocusSidebar => Command::FocusSidebar,
             CommandId::NextFolder => Command::NextFolder,
             CommandId::PrevFolder => Command::PrevFolder,
+            CommandId::ToggleFolder => Command::ToggleFolder,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,
             CommandId::NextPart => Command::NextPart,
