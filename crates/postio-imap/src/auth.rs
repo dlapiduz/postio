@@ -59,6 +59,63 @@ pub trait TokenSource: Send + Sync + fmt::Debug {
 }
 
 // ---------------------------------------------------------------------------
+// Presenting one, and what to do when it is refused
+// ---------------------------------------------------------------------------
+
+/// Runs `attempt` with the account's credential, and gives it exactly one
+/// more go with a fresh one if the server refused the first.
+///
+/// # Why this is a function rather than a paragraph in two places
+///
+/// ADR 0006 Q5 asks for the same discipline wherever a credential meets a
+/// server, and Postio has two such places: the IMAP pool opening a
+/// connection, and the SMTP path opening a send. Written twice, they drift —
+/// and the way they drift is that one of them keeps retrying, which against a
+/// revoked grant is an endless pair of round trips to a server that has
+/// already said no.
+///
+/// Three rules, and all three matter:
+///
+/// * **One retry.** Not a loop: the source has had its chance to produce
+///   something better, and a second failure is the user's to resolve.
+/// * **Only on a rejection.** `rejected` decides. A refused `MOVE` is the
+///   operation's problem and must not spend a credential on it.
+/// * **Not at all if the credential did not change.** Re-presenting identical
+///   bytes to a server that just refused them is a wasted round trip, and it
+///   is the common case: `invalidate` on a stored password is a documented
+///   no-op.
+///
+/// The two failures stay apart in the return type. `Err` is "there is no
+/// credential to present" — the keyring is locked, the grant is gone — and
+/// `Ok(Err(..))` is what the server said about the one that was presented.
+/// Callers route those to different places, so flattening them here would
+/// only mean unflattening them twice.
+pub async fn with_credential<T, E, A, Fut>(
+    tokens: &dyn TokenSource,
+    key: &AccountKey,
+    rejected: impl Fn(&E) -> bool,
+    attempt: A,
+) -> Result<Result<T, E>, SecretError>
+where
+    A: Fn(Password) -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let credential = tokens.access_token(key).await?;
+    let refused = match attempt(credential.clone()).await {
+        Ok(value) => return Ok(Ok(value)),
+        Err(error) if rejected(&error) => error,
+        Err(error) => return Ok(Err(error)),
+    };
+
+    tokens.invalidate(key).await;
+    let refreshed = tokens.access_token(key).await?;
+    if refreshed.expose() == credential.expose() {
+        return Ok(Err(refused));
+    }
+    Ok(attempt(refreshed).await)
+}
+
+// ---------------------------------------------------------------------------
 // Stored passwords
 // ---------------------------------------------------------------------------
 
@@ -233,6 +290,183 @@ mod tests {
             tokens
                 .iter()
                 .all(|token| token.expose() == "brokered-token")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Presenting a credential, and the one retry
+    // -----------------------------------------------------------------------
+
+    /// Hands out `first` until invalidated, then `second`, counting both.
+    #[derive(Debug)]
+    struct Rotating {
+        first: String,
+        second: String,
+        invalidated: std::sync::atomic::AtomicUsize,
+        handed_out: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Rotating {
+        fn new(first: &str, second: &str) -> Self {
+            Self {
+                first: first.to_owned(),
+                second: second.to_owned(),
+                invalidated: std::sync::atomic::AtomicUsize::new(0),
+                handed_out: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TokenSource for Rotating {
+        async fn access_token(&self, _account: &AccountKey) -> Result<Password, SecretError> {
+            use std::sync::atomic::Ordering;
+            self.handed_out.fetch_add(1, Ordering::SeqCst);
+            Ok(Password::new(
+                if self.invalidated.load(Ordering::SeqCst) == 0 {
+                    &self.first
+                } else {
+                    &self.second
+                },
+            ))
+        }
+
+        async fn invalidate(&self, _account: &AccountKey) {
+            self.invalidated
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    fn key() -> AccountKey {
+        AccountKey::new("ada@example.com")
+    }
+
+    /// Records every credential presented, so a test asserts what reached the
+    /// server rather than only what came back.
+    fn presenting(
+        seen: Arc<Mutex<Vec<String>>>,
+        accepted: &'static str,
+    ) -> impl Fn(Password) -> std::future::Ready<Result<&'static str, &'static str>> {
+        move |password: Password| {
+            seen.lock()
+                .expect("seen mutex")
+                .push(password.expose().to_owned());
+            std::future::ready(if password.expose() == accepted {
+                Ok("a session")
+            } else {
+                Err("rejected")
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejected_credential_is_invalidated_once_and_retried_once() {
+        let source = Rotating::new("stale", "fresh");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let outcome = with_credential(
+            &source,
+            &key(),
+            |_| true,
+            presenting(Arc::clone(&seen), "fresh"),
+        )
+        .await
+        .expect("a credential was available");
+
+        assert_eq!(outcome, Ok("a session"));
+        assert_eq!(
+            *seen.lock().expect("seen mutex"),
+            vec!["stale".to_owned(), "fresh".to_owned()],
+            "the stale one, then the fresh one, and never a third"
+        );
+        assert_eq!(
+            source.invalidated.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_source_with_nothing_new_is_not_retried_against() {
+        // Every stored password: `invalidate` is a documented no-op, so a
+        // retry would re-present identical bytes to a server that has just
+        // refused them.
+        let source = Rotating::new("wrong", "wrong");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let outcome = with_credential(
+            &source,
+            &key(),
+            |_| true,
+            presenting(Arc::clone(&seen), "right"),
+        )
+        .await
+        .expect("a credential was available");
+
+        assert_eq!(outcome, Err("rejected"));
+        assert_eq!(
+            seen.lock().expect("seen mutex").len(),
+            1,
+            "one round trip, not two"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failure_that_is_not_a_rejection_spends_no_credential_on_a_retry() {
+        // A refused command is the operation's problem, not the
+        // connection's, and asking the source for a fresh token over one
+        // would be a refresh nobody needed.
+        let source = Rotating::new("fine", "fresh");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let outcome = with_credential(
+            &source,
+            &key(),
+            |_| false,
+            presenting(Arc::clone(&seen), "nothing"),
+        )
+        .await
+        .expect("a credential was available");
+
+        assert_eq!(outcome, Err("rejected"));
+        assert_eq!(seen.lock().expect("seen mutex").len(), 1);
+        assert_eq!(
+            source.invalidated.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "nothing was invalidated"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_credential_at_all_is_a_different_answer_from_a_refused_one() {
+        // The keyring is locked, or the grant is gone. Callers route that
+        // somewhere else -- there is nothing for the server to have an
+        // opinion about -- so it must not arrive looking like a rejection.
+        #[derive(Debug)]
+        struct Missing;
+
+        #[async_trait]
+        impl TokenSource for Missing {
+            async fn access_token(&self, account: &AccountKey) -> Result<Password, SecretError> {
+                Err(SecretError::NotFound {
+                    account: account.account().to_owned(),
+                })
+            }
+            async fn invalidate(&self, _account: &AccountKey) {}
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let outcome = with_credential(
+            &Missing,
+            &key(),
+            |_| true,
+            presenting(Arc::clone(&seen), "anything"),
+        )
+        .await;
+
+        assert!(matches!(outcome, Err(SecretError::NotFound { .. })));
+        assert!(
+            seen.lock().expect("seen mutex").is_empty(),
+            "nothing was presented to any server"
         );
     }
 }
