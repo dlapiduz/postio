@@ -2733,3 +2733,36 @@ a column that is NULL on every row in the table; `idx_recipients_draft` alone is
 6 MB. Per message the metadata costs about 2 KB. Anyone projecting a store's
 size should start from that number and add the text corpus, not from the
 message count alone.
+
+**Nothing reclaimed disk for the life of the project, because three sweeps
+had no caller.** `BlobStore::collect_garbage`, `BlobStore::purge_temporary`
+and (later) `BlobStore::evict_to_fit` were each written, tested, benched where
+relevant and documented — and no production code called any of them (#416).
+The consequence was not subtle: `MessageRepository::delete` removes a
+message's row and deliberately does *not* touch its blobs, because the
+schema delegates reclamation to the sweep, so **deleting mail freed nothing,
+ever**. The worst case needs no user at all — a `UIDVALIDITY` reset wipes and
+re-syncs a whole mailbox, orphaning every blob in it at once. They are wired
+now from `postio_app::reclaim_disk`, beside the body-index catch-up.
+
+This is the **third recorded instance** of the same shape, after
+`MailBackend::list_mailboxes` (no production caller for the life of the
+project, hidden because `MockBackend::new()` invented an INBOX) and
+`index_body` (written, tested and uncalled until #327, so `search_documents.body`
+was empty on every message in every real store). The pattern is now specific
+enough to state: **a `pub fn` in a leaf crate, fully tested, is not evidence
+that anything calls it** — and its own unit tests pass just as happily either
+way, so the suite gives no signal at all. The tests that catch this class live
+at the far end, in `crates/postio-app/tests/app_suite/`, and assert *"a store
+this application opened has had X done to it"* rather than *"X works"*.
+
+**The grace period is load-bearing, and a test that shortens it tests nothing.**
+`GarbageCollection::min_age` (one hour, `postio_session::BLOB_GRACE_PERIOD`)
+exists because a blob is written *before* the row that references it is
+committed — inside that window a perfectly healthy blob is indistinguishable
+from an orphan, and a sweep without the grace period deletes the body of a
+message that is mid-fetch. `reclaim_wiring.rs` therefore back-dates the
+orphan's mtime rather than passing a shorter period: the first version of that
+test passed `Duration::ZERO`-adjacent timing, failed, and the failure *was* the
+grace period working. Injecting a shorter period would have made it pass while
+exercising a configuration that never ships.

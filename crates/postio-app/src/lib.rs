@@ -469,8 +469,61 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
+    reclaim_disk(wiring);
 
     Some(Wired { feeds, search })
+}
+
+/// Give back the disk nothing is using any more, out of the way.
+///
+/// # Why this had to be added rather than fixed
+///
+/// `BlobStore::collect_garbage` and `BlobStore::purge_temporary` were both
+/// written, tested and documented, and neither had a production caller (#416).
+/// The blob store's own module docs describe garbage collection as *the*
+/// mechanism that keeps blobs from leaking — "a sweep cannot drift out of sync
+/// with the data" — and `MessageRepository::delete` removes a message's row
+/// without touching its blobs precisely because that sweep is supposed to
+/// follow.
+///
+/// With nothing calling it, **deleting mail freed nothing, ever**, and a
+/// `UIDVALIDITY` reset — which wipes and re-syncs an entire mailbox — orphaned
+/// every blob in it at once, permanently.
+///
+/// # Two sweeps, two different costs
+///
+/// The debris purge is one `read_dir` of a directory that is empty in the
+/// ordinary case, so it runs first and inline. Garbage collection walks the
+/// whole blob tree, which on a backfilled archive is a great many files, so it
+/// goes on a worker for the same reason [`catch_up_the_body_index`] does: a
+/// mail client that will not draw until it has counted its own files has
+/// traded the wrong thing.
+///
+/// `BLOB_GRACE_PERIOD`, never `Duration::ZERO`. A blob is written before the
+/// row that references it is committed, so inside that window a healthy blob
+/// looks exactly like an orphan, and a sweep without the grace period deletes
+/// the body of a message that is mid-fetch.
+///
+/// Once per start, not on a timer. Orphans are produced by deletes, moves and
+/// resyncs — none of which happen fast enough to be worth a schedule, and all
+/// of which will still be there next time.
+fn reclaim_disk(wiring: &Wiring) {
+    let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::purge_fetch_debris(&blobs) {
+            tracing::warn!(%error, "could not remove debris from unfinished fetches");
+        }
+        if let Err(error) = postio_session::reclaim_orphaned_blobs(
+            &database,
+            &blobs,
+            postio_session::BLOB_GRACE_PERIOD,
+        ) {
+            // Recoverable, and the same judgement the body index makes: a mail
+            // client that could not tidy up still reads mail, and the next
+            // start tries again.
+            tracing::warn!(%error, "could not reclaim blobs nothing references");
+        }
+    });
 }
 
 /// Index the bodies that were already on this machine, out of the way.

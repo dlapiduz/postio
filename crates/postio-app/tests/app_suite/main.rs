@@ -17,6 +17,7 @@ mod keystroke;
 mod parts_open_wiring;
 mod reading;
 mod reading_offline;
+mod reclaim_wiring;
 mod reply_source;
 mod resume_draft;
 mod search_index;
@@ -66,6 +67,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does",
         reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does as fn(),
+    ),
+    (
+        "reclaim_wiring::opening_a_store_reclaims_what_nothing_references",
+        reclaim_wiring::opening_a_store_reclaims_what_nothing_references as fn(),
     ),
     (
         "reply_source::reply_forward_and_reply_all_act_on_the_message_under_the_cursor",
