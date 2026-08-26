@@ -30,6 +30,7 @@ use std::sync::{OnceLock, RwLock};
 use crate::action::{ActionId, ExtId};
 use crate::command::CommandId;
 use crate::context::{Context, ContextSet};
+use crate::state::Scope;
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +45,48 @@ pub enum Recovery {
     Undo,
     /// Irreversible enough to ask first.
     Confirm,
+}
+
+/// A condition on *state* that a command needs in order to mean anything.
+///
+/// [`Context`] answers "which surface has focus", which is all most commands
+/// need. `Move` is the first that needs more: it has to name a destination,
+/// and in [`Scope::Unified`] there is no single account to name one in. ADR
+/// 0005's consequences asked for that to be settled once rather than
+/// special-cased at every surface, so it is data on the row — the same shape
+/// the rest of this table already uses — and every surface evaluates it
+/// through [`available`].
+///
+/// **The shape for the next one:** add a variant here, give it a line in
+/// [`Availability`], and answer it in [`Requirement::met_by`]. Nothing at a
+/// surface changes; the palette, cheat sheet and key hints pick it up because
+/// they all go through [`reachable_in`]. Resist a `fn` pointer: a predicate
+/// that is data can be tested, printed in a failure message, and read by
+/// somebody who is not holding the registry in their head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requirement {
+    /// The view has to be one account's, because the command needs somewhere
+    /// in *that* account to put something.
+    SingleAccount,
+}
+
+/// The state [`Requirement`]s are evaluated against.
+///
+/// A struct rather than bare arguments so a new requirement adds a field
+/// instead of changing every call site's signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Availability {
+    /// What the mail on screen belongs to.
+    pub scope: Scope,
+}
+
+impl Requirement {
+    /// Whether `state` satisfies this requirement.
+    pub fn met_by(self, state: Availability) -> bool {
+        match self {
+            Requirement::SingleAccount => state.scope.is_single_account(),
+        }
+    }
 }
 
 /// One row of the registry: everything every surface needs about a command.
@@ -65,6 +108,9 @@ pub struct CommandSpec {
     pub destructive: bool,
     /// How the user gets back. Never [`Recovery::None`] when `destructive`.
     pub recovery: Recovery,
+    /// What the *state* must be for this command to mean anything, beyond
+    /// having the right surface focused. `None` for almost everything.
+    pub requires: Option<Requirement>,
 }
 
 impl CommandSpec {
@@ -108,6 +154,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::PrevMessage,
@@ -117,6 +164,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::FirstMessage,
@@ -130,6 +178,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::LastMessage,
@@ -139,6 +188,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::OpenMessage,
@@ -150,6 +200,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::List, Context::Thread, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ToggleSelection,
@@ -163,6 +214,7 @@ static SPECS: &[CommandSpec] = &[
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionDown,
@@ -172,6 +224,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionUp,
@@ -181,6 +234,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::SelectAll,
@@ -190,6 +244,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::PrevView,
@@ -199,6 +254,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Back,
@@ -209,6 +265,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Thread,
@@ -218,6 +275,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::List, Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ToggleThreadUnread,
@@ -232,6 +290,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Thread]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ToggleThreadOrder,
@@ -241,6 +300,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Thread]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     // -- Message actions -------------------------------------------------
     CommandSpec {
@@ -251,6 +311,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ReplyAll,
@@ -260,6 +321,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Forward,
@@ -269,6 +331,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Archive,
@@ -280,6 +343,7 @@ static SPECS: &[CommandSpec] = &[
         // wants a toast for.
         destructive: true,
         recovery: Recovery::Undo,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ArchiveThread,
@@ -289,6 +353,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Delete,
@@ -298,6 +363,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Move,
@@ -307,6 +373,11 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        // A destination is one mailbox in one account, and a unified view
+        // spans every enabled account — so there is nowhere for this to mean.
+        // Unavailable rather than a no-op: offering it would promise a folder
+        // the user was never given the chance to pick (#182, ADR 0005 Q4).
+        requires: Some(Requirement::SingleAccount),
     },
     CommandSpec {
         id: CommandId::Flag,
@@ -316,6 +387,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::MarkUnread,
@@ -328,6 +400,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::AddLabel,
@@ -337,6 +410,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
+        requires: None,
     },
     // -- Search ----------------------------------------------------------
     CommandSpec {
@@ -347,6 +421,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::SaveSearch,
@@ -361,6 +436,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Search.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     // -- Compose ---------------------------------------------------------
     CommandSpec {
@@ -371,6 +447,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Send,
@@ -382,6 +459,7 @@ static SPECS: &[CommandSpec] = &[
         // the queue drains, so it earns an undo-send window rather than a modal.
         destructive: false,
         recovery: Recovery::Undo,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::SaveDraft,
@@ -391,6 +469,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::DiscardDraft,
@@ -401,6 +480,7 @@ static SPECS: &[CommandSpec] = &[
         // Typed prose has no other copy anywhere, so this one asks first.
         destructive: true,
         recovery: Recovery::Confirm,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::AttachFile,
@@ -410,6 +490,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::DetachComposer,
@@ -426,6 +507,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Bold,
@@ -437,6 +519,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Italic,
@@ -446,6 +529,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::BulletList,
@@ -457,6 +541,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::NumberedList,
@@ -466,6 +551,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::InsertLink,
@@ -477,6 +563,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::QuoteBlock,
@@ -486,6 +573,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     // -- View and application --------------------------------------------
     CommandSpec {
@@ -496,6 +584,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::CommandPalette,
@@ -506,6 +595,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::CheatSheet,
@@ -516,6 +606,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Settings,
@@ -526,6 +617,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::EditConfig,
@@ -535,6 +627,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ToggleSidebar,
@@ -544,6 +637,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::FocusSidebar,
@@ -555,6 +649,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::NextFolder,
@@ -568,6 +663,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::PrevFolder,
@@ -577,6 +673,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::ToggleFolder,
@@ -592,6 +689,7 @@ static SPECS: &[CommandSpec] = &[
         // Which folders are open is view state, not durable data — nothing
         // here for undo to reach.
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::Refresh,
@@ -604,6 +702,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     // -- Parts panel -------------------------------------------------------
     CommandSpec {
@@ -614,6 +713,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::NextPart,
@@ -626,6 +726,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::PrevPart,
@@ -635,6 +736,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::OpenPart,
@@ -644,6 +746,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::SavePart,
@@ -653,6 +756,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::SaveAllParts,
@@ -662,6 +766,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::OpenPartExternally,
@@ -671,6 +776,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
     CommandSpec {
         id: CommandId::RenderPartOnce,
@@ -680,6 +786,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
+        requires: None,
     },
 ];
 
@@ -874,6 +981,9 @@ pub struct ActionSpec {
     pub destructive: bool,
     /// How the user gets back.
     pub recovery: Recovery,
+    /// What the state must be, beyond the focused surface. See
+    /// [`Requirement`].
+    pub requires: Option<Requirement>,
 }
 
 impl ActionSpec {
@@ -900,6 +1010,7 @@ impl From<&'static CommandSpec> for ActionSpec {
             contexts: spec.contexts,
             destructive: spec.destructive,
             recovery: spec.recovery,
+            requires: spec.requires,
         }
     }
 }
@@ -914,6 +1025,9 @@ impl From<ExtSpec> for ActionSpec {
             contexts: spec.contexts,
             destructive: spec.destructive,
             recovery: spec.recovery,
+            // An extension has no way to name one yet; when it does, it
+            // arrives here rather than at a surface.
+            requires: None,
         }
     }
 }
@@ -936,6 +1050,26 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
         .map(|spec| ActionSpec::from(*spec))
         .collect();
     for_context(context).map(ActionSpec::from).chain(extensions)
+}
+
+/// Whether `spec` is reachable in `context` *and* satisfied by `state`.
+///
+/// The one place a surface asks "can the user do this right now". Splitting
+/// it from [`ActionSpec::available_in`] keeps the context question — which is
+/// most of them — free of state nobody else needs.
+pub fn available(spec: &ActionSpec, context: Context, state: Availability) -> bool {
+    spec.available_in(context) && spec.requires.is_none_or(|need| need.met_by(state))
+}
+
+/// Every command reachable in `context` for a view scoped to `scope`.
+///
+/// What the palette, the cheat sheet and the key hints iterate. [`reachable`]
+/// stays the scope-blind form, because `docs/keybindings.md` documents the
+/// whole vocabulary rather than one session's state — somebody looking up `m`
+/// has to find it whatever is on screen.
+pub fn reachable_in(context: Context, scope: Scope) -> impl Iterator<Item = ActionSpec> {
+    let state = Availability { scope };
+    reachable(context).filter(move |spec| spec.requires.is_none_or(|need| need.met_by(state)))
 }
 
 /// Every command in the merged vocabulary, in the same order as [`reachable`].
