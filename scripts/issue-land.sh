@@ -344,7 +344,16 @@ gh pr merge --rebase
 # open a second PR for commits that were already on main. The state this
 # guards against (#312) is permanent, not late, so waiting a little costs it
 # nothing at all.
-LANDED_TIMEOUT="${POSTIO_LANDED_TIMEOUT:-30}"
+#
+# #406's own fix picked 30s and it was not enough: PR #417, a ten-commit
+# rebase merge, recurred the same false alarm because replication of a
+# bigger rebase just takes longer. 120s is the floor -- a defensible
+# starting point on its own -- and it scales up from there with the number
+# of commits landing, since that is what #418 found correlates.
+LANDING_COUNT=$(printf '%s\n' "$LANDING" | grep -c .)
+LANDED_TIMEOUT_DEFAULT=$(( 60 + 10 * LANDING_COUNT ))
+[ "$LANDED_TIMEOUT_DEFAULT" -ge 120 ] || LANDED_TIMEOUT_DEFAULT=120
+LANDED_TIMEOUT="${POSTIO_LANDED_TIMEOUT:-$LANDED_TIMEOUT_DEFAULT}"
 LANDED_POLL="${POSTIO_LANDED_POLL:-3}"
 LANDED_DEADLINE=$(( $(date +%s) + LANDED_TIMEOUT ))
 
