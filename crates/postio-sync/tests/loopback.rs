@@ -605,10 +605,12 @@ async fn a_drained_move_does_not_resurrect_on_resync() {
 
 #[tokio::test]
 async fn a_backfilled_body_arrives_byte_for_byte() {
-    // The one path that streams rather than parses: io-imap's real streaming
-    // FETCH, through the engine, into the blob store. What is asserted is
-    // that the bytes stored are the bytes the corpus holds — a mock hands
-    // back what it was given, so only a socket can prove this.
+    // A real socket, a real `BODYSTRUCTURE`, and a real sectioned FETCH: the
+    // text axis of ADR 0017 end to end. `attachment-pdf` is the shape the
+    // whole decision is about — a few lines of words carrying a payload — and
+    // what is asserted is that the words arrive intact through io-imap's own
+    // parser while the payload stays on the server. A mock hands back what it
+    // was given, so only a socket can prove the section numbers were right.
     let server = server().await;
     let backend = backend_for(&server).await;
     let local = on_disk();
@@ -636,16 +638,39 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
 
     assert!(matches!(outcome, BackfillOutcome::Stored { .. }));
 
-    let stored = MessageRepository::new(&local.connection)
-        .get(id)
-        .expect("get")
-        .expect("row");
-    assert_eq!(stored.sync.body_state, BodyState::Full);
-    let blob = stored.raw_blob_id.expect("the raw message is kept");
+    let messages = MessageRepository::new(&local.connection);
+    let stored = messages.get(id).expect("get").expect("row");
+
+    // The words came through the wire and the parser intact.
+    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
+    let text = blobs.text.expect("the message's own text");
+    let fetched = String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8");
+    let expected =
+        postio_model::mime::parse(postio_model::test_corpus::load("attachment-pdf").bytes());
     assert_eq!(
-        local.blobs.get(&blob).expect("read the blob"),
-        postio_model::test_corpus::load("attachment-pdf").bytes(),
-        "the bytes the server sent, verbatim"
+        Some(fetched.trim()),
+        expected.body.text.as_deref().map(str::trim),
+        "the text section decoded to what the corpus says the body is"
+    );
+
+    // And the PDF did not.
+    assert!(
+        stored.raw_blob_id.is_none(),
+        "no whole-message fetch happened, so there is no raw blob to keep"
+    );
+    assert_eq!(
+        stored.sync.body_state,
+        BodyState::Partial,
+        "text local, payload still on the server"
+    );
+    assert!(
+        stored.attachments.iter().all(|part| part.blob_id.is_none()),
+        "nothing pulled the attachment's bytes"
+    );
+    let attachment_bytes: u64 = stored.attachments.iter().map(|part| part.size).sum();
+    assert!(
+        matches!(outcome, BackfillOutcome::Stored { bytes } if bytes < attachment_bytes),
+        "less crossed the wire than the payload alone would have cost"
     );
 }
 
