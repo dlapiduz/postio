@@ -1033,6 +1033,50 @@ the Drafts folder lists other clients' drafts only. That is #166, and it is the
 deliberate other half of this decision rather than an oversight.
 
 
+**A pending operation shadows what the server says about its target, and
+local-first is the reason.** `upsert_batch` drops a second set from its batch,
+on the same argument and in the same place as the draft copies above: any
+message with an undrained `Move` or `Delete` out of the mailbox being written.
+#368.
+
+Archiving is local-first — SQLite write, enqueue, emit, repaint — so between
+the keystroke and the queue draining, the server still lists the message where
+it was. A resync of that mailbox in that window fetches it, looks for a row
+under `(mailbox, UIDVALIDITY, UID)`, finds none *because the row is in Archive
+now*, and inserts a fresh one. The message the user just archived is back in
+the inbox. It leaves again by itself once the queue drains, which on a link
+that is down is indefinite, and nothing in the interface explains either
+event. Measured on the e2e suite as the difference between two runs of
+identical code at the same point: `store=[1@mb2 2@mb1 3@mb1]` when the drain
+won the race, `store=[1@mb1 2@mb1 3@mb1]` when a resync did.
+
+The end state was always right — a later resync removed it again — so this
+reads as flakiness rather than as a bug, which is how it survived. #364 was
+the test reacting to it.
+
+**The rule it qualifies:** local-first is not only "the UI never awaits the
+network". It is that *the local answer is the one the user sees until the
+server agrees*. A background resync overwriting a local decision that has not
+been carried out yet keeps the first half and breaks the second.
+
+Two details are load-bearing:
+
+- **It keys on the queue row's snapshot, not on the message row.** The local
+  half of a move nulls the row's `uid`/`uid_validity` in the same transaction
+  that enqueues, so by resync time the queue row is the only thing that still
+  remembers the server coordinates. That snapshot exists because of #289 — a
+  different bug with the same cause.
+- **The shadow lifts the moment the operation settles**, on `done` *or*
+  `failed`. One that outlived a move the server refused would hide the message
+  for ever, which is worse than the resurrection it prevents. Only `pending`
+  and `in_flight` shadow anything.
+
+`move` and `delete` are the only operations that qualify, because they are the
+only ones whose queue row names a mailbox the message is *leaving*
+(`Operation::mailbox()` returns `from` for both). A flag change moves nothing,
+and an `append` puts a message into a mailbox rather than taking it out.
+
+
 **A draft's place in the Drafts folder is a `messages` row the composer
 writes.** #51 stopped the synced copy of a draft becoming a second message row;
 what that left was a Drafts folder listing other clients' drafts and nothing

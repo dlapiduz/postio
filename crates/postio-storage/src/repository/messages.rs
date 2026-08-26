@@ -359,6 +359,11 @@ pub struct UpsertReport {
     /// Messages this store already holds as a draft of its own, and therefore
     /// did not store a second time. See [`MessageRepository::upsert_batch`].
     pub own_drafts: usize,
+    /// Messages the server still lists in a mailbox the user has already moved
+    /// them out of, whose move has not reached the server yet — so re-creating
+    /// the row would put back something the user watched leave. See
+    /// [`MessageRepository::upsert_batch`] and #368.
+    pub shadowed_by_pending: usize,
 }
 
 /// The blob keys for a message's decoded content.
@@ -495,6 +500,30 @@ impl<'a> MessageRepository<'a> {
     /// a row that was never written; a skip each caller had to remember is one
     /// a third caller would not. Shortening the `Vec` makes the batch mean
     /// "what was stored", which is what those loops already assume.
+    ///
+    /// # A pending move shadows what the server says (#368)
+    ///
+    /// The same shortening, for the same reason, on a second set. Archiving is
+    /// local-first: the row moves to Archive in SQLite, a `Move` is queued, the
+    /// list repaints, and the server is told when the queue drains. Until then
+    /// the server still lists the message where it was, so a resync of that
+    /// mailbox fetches it, finds no row under `(mailbox, validity, uid)` —
+    /// because the row is in Archive now — and inserts a fresh one. The message
+    /// the user just archived is back in the inbox, and stays there until the
+    /// queue drains, which on a link that is down is indefinite. It then
+    /// vanishes again on its own, with nothing in the interface explaining any
+    /// of it.
+    ///
+    /// So a message with an undrained `Move` or `Delete` out of the mailbox
+    /// being written is skipped: the local answer is the one the user sees
+    /// until the server agrees, which is what local-first means beyond not
+    /// blocking. The shadow is keyed on the queue row's *snapshot* of the
+    /// server coordinates (#289), because the local half of the move nulled
+    /// them on the message row itself.
+    ///
+    /// It lifts as soon as the operation settles — `Done` or `Failed`. A move
+    /// the server refused must stop hiding the message, or a failed archive
+    /// loses mail silently, which is worse than the bug this fixes.
     pub fn upsert_batch(&self, batch: &mut Vec<Message>) -> Result<UpsertReport> {
         let transaction = super::Scope::open(self.connection)?;
         let mut report = UpsertReport::default();
@@ -513,6 +542,22 @@ impl<'a> MessageRepository<'a> {
             }
         });
         report.own_drafts = before - batch.len();
+
+        // The same shape again, on the messages the user has already moved
+        // out of this mailbox and the server has not been told about yet.
+        let shadowed = shadowed_by_pending_operation(&transaction)?;
+        let before = batch.len();
+        batch.retain(|message| {
+            match (message.server.uid, message.server.uid_validity) {
+                (Some(uid), Some(validity)) => {
+                    !shadowed.contains(&(message.mailbox_id, validity.get(), uid.get()))
+                }
+                // No server identity, so no queue row can be shadowing it: the
+                // snapshot is of server coordinates, and this message has none.
+                _ => true,
+            }
+        });
+        report.shadowed_by_pending = before - batch.len();
 
         for message in batch.iter_mut() {
             let existing = match (message.server.uid, message.server.uid_validity) {
@@ -1527,6 +1572,48 @@ fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, u32,
            JOIN mailboxes ON mailboxes.account_id = drafts.account_id
                          AND mailboxes.role = 'drafts'
           WHERE drafts.uid IS NOT NULL AND drafts.uid_validity IS NOT NULL",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            MailboxId::new(row.get::<_, i64>(0)?),
+            row.get::<_, i64>(1)? as u32,
+            row.get::<_, i64>(2)? as u32,
+        ))
+    })?;
+    rows.collect::<rusqlite::Result<BTreeSet<_>>>()
+        .map_err(Into::into)
+}
+
+/// `(mailbox, uid_validity, uid)` for every message with an undrained
+/// operation moving it *out* of that mailbox — see
+/// [`MessageRepository::upsert_batch`] and #368.
+///
+/// Only `move` and `delete` qualify: they are the operations whose queue row
+/// names the mailbox the message is leaving (`Operation::mailbox()` returns
+/// `from` for both). A flag change does not move anything, and an `append`
+/// puts a message *into* a mailbox, so neither can make a fetched row a
+/// resurrection.
+///
+/// Only `pending` and `in_flight` qualify. `done` means the server has agreed
+/// and will stop listing the message where it was; `failed` means the move is
+/// not going to happen, and a shadow that outlived it would hide the message
+/// for ever — which is a worse bug than the one this prevents.
+///
+/// Keyed on the queue row's snapshot rather than the message row, because the
+/// local half of the move nulls the row's `uid`/`uid_validity` in the same
+/// transaction that enqueues (#289): by the time a resync runs, this row is
+/// the only thing that still remembers where the server has it.
+fn shadowed_by_pending_operation(
+    connection: &Connection,
+) -> Result<BTreeSet<(MailboxId, u32, u32)>> {
+    let mut statement = connection.prepare(
+        "SELECT mailbox_id, source_uid_validity, source_uid
+           FROM operation_queue
+          WHERE state IN ('pending', 'in_flight')
+            AND op_type IN ('move', 'delete')
+            AND mailbox_id IS NOT NULL
+            AND source_uid IS NOT NULL
+            AND source_uid_validity IS NOT NULL",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
