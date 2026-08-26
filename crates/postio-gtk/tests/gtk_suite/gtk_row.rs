@@ -166,6 +166,34 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     );
     row.set_keymap(&postio_core::Keymap::resolve(&Default::default()));
 
+    // A message with nothing to thread does not hint at opening one —
+    // `t` would either no-op or drill into a column of one, and a hint
+    // naming a key that does that is teaching the wrong keyboard.
+    row.set_row(Some(Row {
+        thread_count: 1,
+        ..canvas_row()
+    }));
+    pump();
+    assert_eq!(
+        row.hints(),
+        vec![
+            ("e".to_string(), "reply"),
+            ("a".to_string(), "archive"),
+        ],
+        "one message in the thread is not a thread to open"
+    );
+    row.set_row(Some(canvas_row()));
+    pump();
+    assert_eq!(
+        row.hints(),
+        vec![
+            ("e".to_string(), "reply"),
+            ("a".to_string(), "archive"),
+            ("t".to_string(), "thread"),
+        ],
+        "back on a threaded row, the hint returns"
+    );
+
     // ── selected and focused are different states ────────────────────────
     // Focus is where the keyboard is; selection is what an action will hit.
     // A row that drew them the same way would make bulk actions feel
