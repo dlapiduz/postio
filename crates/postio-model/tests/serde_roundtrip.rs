@@ -39,6 +39,7 @@ fn sample_account() -> Account {
         auth: AuthMethod::AppPassword,
         enabled: true,
         identities: vec![sample_identity()],
+        signatures: Vec::new(),
         created_at: at(1_000),
     }
 }
@@ -51,6 +52,8 @@ fn sample_identity() -> Identity {
         address: EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
         reply_to: Some(EmailAddress::new(None::<String>, "replies@example.com")),
         signature: Some(Signature {
+            id: Default::default(),
+            name: String::new(),
             text: "— Ada".into(),
             html: Some("<p>— Ada</p>".into()),
         }),

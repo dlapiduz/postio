@@ -8,7 +8,7 @@ use postio_model::{
     Account, AccountId, AuthMethod, EmailAddress, Identity, IdentityId, Signature,
     TransportSecurity,
 };
-use postio_storage::repository::{AccountRepository, IdentityRepository};
+use postio_storage::repository::{AccountRepository, IdentityRepository, SignatureRepository};
 use postio_storage::test_support;
 
 fn an_account() -> Account {
@@ -100,6 +100,8 @@ fn an_account_created_with_identities_gets_them_all_persisted() {
     let mut work = an_identity("ada@work.example");
     work.is_default = true;
     work.signature = Some(Signature {
+        id: Default::default(),
+        name: String::new(),
         text: "-- \nAda".to_owned(),
         html: None,
     });
@@ -372,4 +374,83 @@ fn deleting_an_account_takes_everything_that_hangs_off_it() {
         !accounts.delete(id).expect("delete again"),
         "deleting what is gone is false, not an error"
     );
+}
+
+#[test]
+fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
+    // #12: a signature is the account's, named, and chosen per message — not
+    // a property of the one identity that happens to be selected.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let mut account = an_account();
+    accounts.create(&mut account).expect("create");
+
+    let signatures = SignatureRepository::new(&connection);
+    let mut long = Signature::new("Long", "Lena Tomlin\nPostio")
+        .with_html("<p><strong>Lena Tomlin</strong><br>Postio</p>");
+    let mut short = Signature::new("Short", "— Lena");
+    signatures.create(account.id, &mut long).expect("create");
+    signatures.create(account.id, &mut short).expect("create");
+    assert!(long.id.is_assigned());
+
+    // They arrive with the account, in picker order.
+    let loaded = accounts
+        .get(account.id)
+        .expect("get")
+        .expect("the account is there");
+    assert_eq!(
+        loaded
+            .signatures
+            .iter()
+            .map(|signature| signature.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Long", "Short"]
+    );
+    assert_eq!(
+        loaded.signatures[0].html.as_deref(),
+        Some("<p><strong>Lena Tomlin</strong><br>Postio</p>"),
+        "the rich variant is part of the record"
+    );
+
+    // Renaming and rewriting one is an update, not a second row.
+    long.name = "Full".to_owned();
+    long.text = "Lena Tomlin".to_owned();
+    signatures.update(&long).expect("update");
+    let loaded = accounts.get(account.id).expect("get").expect("still there");
+    assert_eq!(loaded.signatures.len(), 2);
+    assert_eq!(loaded.signatures[0].name, "Full");
+    assert_eq!(loaded.signatures[0].text, "Lena Tomlin");
+
+    // And deleting one leaves the other.
+    assert!(signatures.delete(short.id).expect("delete"));
+    let loaded = accounts.get(account.id).expect("get").expect("still there");
+    assert_eq!(loaded.signatures.len(), 1);
+}
+
+#[test]
+fn two_accounts_never_see_each_others_signatures() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let mut mine = an_account();
+    accounts.create(&mut mine).expect("create");
+    let mut theirs = Account::new(
+        "Other",
+        EmailAddress::new(None::<String>, "other@example.net"),
+    );
+    accounts.create(&mut theirs).expect("create");
+
+    let signatures = SignatureRepository::new(&connection);
+    signatures
+        .create(mine.id, &mut Signature::new("Work", "Lena"))
+        .expect("create");
+    signatures
+        .create(theirs.id, &mut Signature::new("Work", "Someone else"))
+        .expect("create");
+
+    // The same name on both accounts is fine; the uniqueness is per account.
+    let loaded = accounts.get(mine.id).expect("get").expect("there");
+    assert_eq!(loaded.signatures.len(), 1);
+    assert_eq!(loaded.signatures[0].text, "Lena");
 }

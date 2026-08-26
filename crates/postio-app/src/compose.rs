@@ -69,6 +69,7 @@ pub fn install(
 ) {
     let composer = window.composer();
     composer.set_account(account);
+    install_identities(&composer, &database, account);
 
     let last_id = install_autosave(&composer, database.clone(), account);
     install_resume(window, &composer, database.clone(), last_id);
@@ -133,6 +134,32 @@ fn install_attachment_bytes(composer: &Composer, blobs: BlobStore) {
             .ok()?;
         Some(bytes)
     });
+}
+
+/// Puts the account's sending identities and named signatures in front of the
+/// user (#12).
+///
+/// Read once at startup rather than watched: both change only when the
+/// account is edited, which goes through the settings panel and is rare
+/// enough that a restart is a fair price — where getting it wrong means the
+/// composer offering an address the account no longer has.
+///
+/// Nothing called `set_identities` before this, so the picker had been built,
+/// tested and shown with an empty model since it was written: every draft
+/// signed with whatever `apply_identity` found on an account of none, which
+/// is nothing.
+fn install_identities(composer: &Composer, database: &Database, account: AccountId) {
+    let Ok(connection) = database.connection() else {
+        return;
+    };
+    match AccountRepository::new(&connection).get(account) {
+        Ok(Some(account)) => {
+            composer.set_identities(account.identities);
+            composer.set_signatures(account.signatures);
+        }
+        Ok(None) => tracing::warn!("the composer's account is not in the database"),
+        Err(error) => tracing::warn!(%error, "could not read the account's identities"),
+    }
 }
 
 /// Activating a draft's row in the Drafts folder opens it in the composer.

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::address::EmailAddress;
-use crate::ids::{AccountId, IdentityId};
+use crate::ids::{AccountId, IdentityId, SignatureId};
 
 /// How a connection is protected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -98,12 +98,42 @@ pub struct ServerConfig {
 }
 
 /// A signature appended to outgoing mail.
+///
+/// Owned by the account and named, rather than being a property of one
+/// identity (#12): a person has a long form and a short one, or one with a
+/// disclaimer for mail leaving the company, and which to use is a decision
+/// per message rather than per address. An identity names the one it signs
+/// with by default; the composer can point a draft at any of the others.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Signature {
+    /// Local id. Unassigned until it has been stored.
+    #[serde(default)]
+    pub id: SignatureId,
+    /// What the composer's picker shows. Unique within the account.
+    #[serde(default)]
+    pub name: String,
     /// Plain-text form.
     pub text: String,
-    /// Rich form, when the identity has one.
+    /// Rich form, when there is one.
     pub html: Option<String>,
+}
+
+impl Signature {
+    /// A signature called `name`, with `text` as its only form.
+    pub fn new(name: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            id: SignatureId::UNASSIGNED,
+            name: name.into(),
+            text: text.into(),
+            html: None,
+        }
+    }
+
+    /// The same signature with a rich form as well.
+    pub fn with_html(mut self, html: impl Into<String>) -> Self {
+        self.html = Some(html.into());
+        self
+    }
 }
 
 /// An address the user can send from, within an account.
@@ -164,6 +194,12 @@ pub struct Account {
     pub enabled: bool,
     /// Addresses this account can send from.
     pub identities: Vec<Identity>,
+    /// Every signature this account can sign with, in picker order (#12).
+    ///
+    /// An identity's own signature is one of these; the composer offers the
+    /// rest so a draft can sign differently without changing who it is from.
+    #[serde(default)]
+    pub signatures: Vec<Signature>,
     /// When the account was added.
     pub created_at: DateTime<Utc>,
 }
@@ -191,6 +227,7 @@ impl Account {
             auth: AuthMethod::Password,
             enabled: true,
             identities: Vec::new(),
+            signatures: Vec::new(),
             created_at: Utc::now(),
         }
     }

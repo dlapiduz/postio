@@ -289,6 +289,8 @@ fn rich_structure_survives_a_signature_swap() {
 
 fn signature(text: &str, html: Option<&str>) -> Signature {
     Signature {
+        id: Default::default(),
+        name: String::new(),
         text: text.to_owned(),
         html: html.map(str::to_owned),
     }

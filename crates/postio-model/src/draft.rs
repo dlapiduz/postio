@@ -209,6 +209,8 @@ mod tests {
         );
         identity.id = IdentityId::new(7);
         identity.signature = signature.map(|text| Signature {
+            id: Default::default(),
+            name: String::new(),
             text: text.to_owned(),
             html: None,
         });

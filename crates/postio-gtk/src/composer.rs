@@ -75,7 +75,7 @@ use postio_core::{CommandId, Context};
 use postio_model::address::{current_entry, format_list, parse_list};
 use postio_model::{
     Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
-    MessageBody,
+    MessageBody, Signature,
 };
 use postio_model::{reply, signature};
 
@@ -242,6 +242,9 @@ const NO_ATTACH_PATH: &str = "not attached — no attachment handler is connecte
 
 /// What the status line says when an image was pasted but nothing is
 /// listening on [`Composer::connect_inline_image`] to store its bytes.
+/// What the picker's first entry says: sign the way this identity signs.
+const SIGNATURE_FROM_IDENTITY: &str = "Identity signature";
+
 const NO_INLINE_PATH: &str = "not inserted — no inline-image handler is connected yet";
 
 /// Above this, an attachment's row calls out its size.
@@ -420,6 +423,11 @@ mod imp {
         /// that is not there cannot.
         pub detached: RefCell<Option<adw::Window>>,
         pub identity_row: gtk::Box,
+        /// The account's named signatures, and the picker over them (#12).
+        /// Entry 0 is the identity's own; the rest are the account's set, so
+        /// a draft can sign differently without changing who it is from.
+        pub signatures: RefCell<Vec<Signature>>,
+        pub signature: gtk::DropDown,
         pub identity: gtk::DropDown,
         pub identity_only: gtk::Label,
         /// The editing surface: ADR 0003's WebView, adopted for every
@@ -516,6 +524,8 @@ mod imp {
                 detach: gtk::Button::new(),
                 detached: RefCell::new(None),
                 identity_row: row(),
+                signatures: RefCell::new(Vec::new()),
+                signature: gtk::DropDown::from_strings(&[]),
                 identity: gtk::DropDown::from_strings(&[]),
                 identity_only: gtk::Label::new(None),
                 body: {
@@ -910,6 +920,40 @@ impl Composer {
         true
     }
 
+    /// Offers `signatures` in the picker, alongside the identity's own.
+    ///
+    /// Hidden entirely when the account has none: a picker with one entry is
+    /// a control that can only ever say what is already true.
+    pub fn set_signatures(&self, signatures: Vec<Signature>) {
+        let imp = self.imp();
+        let mut labels = vec![SIGNATURE_FROM_IDENTITY.to_owned()];
+        labels.extend(signatures.iter().map(|signature| signature.name.clone()));
+        imp.signature.set_model(Some(&gtk::StringList::new(
+            &labels.iter().map(String::as_str).collect::<Vec<_>>(),
+        )));
+        imp.signature.set_visible(!signatures.is_empty());
+        *imp.signatures.borrow_mut() = signatures;
+        imp.signature.set_selected(0);
+        self.apply_identity();
+    }
+
+    /// The signature this draft signs with: whichever the picker names, or
+    /// the identity's own when it names none.
+    fn chosen_signature(&self, identity: &Identity) -> Option<Signature> {
+        let imp = self.imp();
+        // An empty picker reports `INVALID_LIST_POSITION`, not zero — so this
+        // cannot be a subtraction on a raw index: entry 0 *and* "no entries at
+        // all" both mean the identity's own signature.
+        let chosen = match imp.signature.selected() {
+            gtk::INVALID_LIST_POSITION => None,
+            selected => (selected as usize).checked_sub(1),
+        };
+        match chosen {
+            Some(index) => imp.signatures.borrow().get(index).cloned(),
+            None => identity.signature.clone(),
+        }
+    }
+
     /// Sets where a signature goes on a reply and on a forward, from
     /// `[compose]`. Live: the next identity or signature change uses it.
     pub fn set_signature_placement(&self, on_reply: Placement, on_forward: Placement) {
@@ -949,11 +993,9 @@ impl Composer {
         // the signature the way the wire wants them — so one path serves
         // both, and placement (#12) means the same thing in each.
         let current = imp.body.document();
-        let wanted = postio_body::apply_signature(
-            &current,
-            identity.signature.as_ref(),
-            self.signature_placement(),
-        );
+        let signature = self.chosen_signature(&identity);
+        let wanted =
+            postio_body::apply_signature(&current, signature.as_ref(), self.signature_placement());
         if current == wanted {
             return;
         }
@@ -2287,6 +2329,23 @@ impl Composer {
 
         row.append(&imp.identity);
         row.append(&imp.identity_only);
+
+        // The signature picker sits on the From row because that is where the
+        // question "who is this from, and how does it sign" is answered, but
+        // it is a separate control on purpose: choosing a signature must not
+        // change the sending address, which is the whole point of #12.
+        imp.signature.add_css_class("postio-compose-identity");
+        imp.signature.add_css_class("flat");
+        imp.signature.set_halign(gtk::Align::End);
+        imp.signature
+            .update_property(&[gtk::accessible::Property::Label("Signature")]);
+        imp.signature.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.apply_identity()
+        ));
+        imp.signature.set_visible(false);
+        row.append(&imp.signature);
         row.clone()
     }
 
@@ -2412,6 +2471,12 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_body_eval(&self, script: &str) -> String {
         self.imp().body.test_eval(script)
+    }
+
+    /// Choose the signature at `index` in the picker, as a click would.
+    #[doc(hidden)]
+    pub fn test_choose_signature(&self, index: u32) {
+        self.imp().signature.set_selected(index);
     }
 
     /// Select a range of the body's `nth` text node, as a hand would before

@@ -46,6 +46,8 @@ fn account() -> Account {
         identity.id = IdentityId::new(id);
         identity.is_default = default;
         identity.signature = Some(Signature {
+            id: Default::default(),
+            name: String::new(),
             text: signature.to_owned(),
             html: None,
         });

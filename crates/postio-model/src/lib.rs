@@ -73,7 +73,7 @@ pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};
 pub use ids::{
     AccountId, AttachmentId, BlobId, ContactId, DraftId, IdentityId, LabelId, MailboxId, MessageId,
-    ModSeq, OperationId, RfcMessageId, ThreadId, Uid, UidValidity,
+    ModSeq, OperationId, RfcMessageId, SignatureId, ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleOverrides};

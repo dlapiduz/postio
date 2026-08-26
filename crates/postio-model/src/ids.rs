@@ -87,6 +87,10 @@ local_id!(
     IdentityId
 );
 local_id!(
+    /// Identifies a named [`Signature`](crate::Signature).
+    SignatureId
+);
+local_id!(
     /// Identifies a [`Mailbox`](crate::Mailbox).
     MailboxId
 );
