@@ -96,6 +96,9 @@ pub struct Reader {
     /// Called when `p` asks to see the parts panel for whatever is showing,
     /// with no chip to click — see [`Reader::connect_parts_requested`].
     on_parts_requested: Rc<RefCell<Vec<PartsRequestedHandler>>>,
+    /// Which of [`SCROLL_MARKERS`]' invisible anchors the pane is currently
+    /// at — see [`Reader::page_down`].
+    page: Rc<std::cell::Cell<u32>>,
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -251,6 +254,7 @@ impl Reader {
             chips,
             rendered: Rc::new(RefCell::new(Vec::new())),
             on_parts_requested: Rc::new(RefCell::new(Vec::new())),
+            page: Rc::new(std::cell::Cell::new(0)),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -266,6 +270,7 @@ impl Reader {
             let open = Rc::clone(&reader.open);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
+            let page = Rc::clone(&reader.page);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
                 if let Some(banner) = banner_weak.upgrade() {
@@ -276,6 +281,7 @@ impl Reader {
                         &highlight,
                         RemoteImages::Allowed,
                         &rendered,
+                        &page,
                     );
                 }
             });
@@ -286,6 +292,7 @@ impl Reader {
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
+            let page = Rc::clone(&reader.page);
             reader.banner.connect_always_allow(move || {
                 let sender = open.borrow().as_ref().and_then(|o| o.sender.clone());
                 if let Some(sender) = sender {
@@ -306,6 +313,7 @@ impl Reader {
                         &highlight,
                         RemoteImages::Allowed,
                         &rendered,
+                        &page,
                     );
                 }
             });
@@ -400,6 +408,7 @@ impl Reader {
             &self.highlight,
             remote,
             &self.rendered,
+            &self.page,
         );
     }
 
@@ -477,6 +486,7 @@ impl Reader {
             &wrap_document(&absent_html(state), RemoteImages::Blocked),
             Some(DOCUMENT_BASE_URI),
         );
+        self.page.set(0);
         // No body drawn, so nothing is being held back either — a caller
         // watching `connect_rendered` must not keep showing the previous
         // message's count.
@@ -504,9 +514,37 @@ impl Reader {
             &wrap_document("", RemoteImages::Blocked),
             Some(DOCUMENT_BASE_URI),
         );
+        self.page.set(0);
         for handler in self.rendered.borrow().iter() {
             handler(0);
         }
+    }
+
+    /// Scroll the pane down by about a screenful, without moving the
+    /// keyboard off wherever it already is (#438).
+    ///
+    /// A no-op with nothing open, and at the last marker [`SCROLL_MARKERS`]
+    /// lays down — walking past the end of a message is a stop, not a
+    /// wrap-around or an error.
+    pub fn page_down(&self) {
+        if self.open.borrow().is_none() {
+            return;
+        }
+        let next = (self.page.get() + 1).min(SCROLL_MARKERS - 1);
+        self.page.set(next);
+        self.view
+            .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{next}"));
+    }
+
+    /// Scroll the pane up by about a screenful. See [`Reader::page_down`].
+    pub fn page_up(&self) {
+        if self.open.borrow().is_none() {
+            return;
+        }
+        let previous = self.page.get().saturating_sub(1);
+        self.page.set(previous);
+        self.view
+            .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{previous}"));
     }
 }
 
@@ -524,6 +562,7 @@ fn render_open(
     highlight: &Rc<RefCell<Vec<String>>>,
     remote: RemoteImages,
     rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
+    page: &Rc<std::cell::Cell<u32>>,
 ) {
     let (body, sender) = {
         let guard = open.borrow();
@@ -541,8 +580,14 @@ fn render_open(
     banner.set_sender(sender.as_deref());
     banner.set_visible(remote == RemoteImages::Blocked && remote_blocked > 0);
 
-    let document = wrap_document(&contain_body(&content), remote);
+    let document = wrap_document(
+        &format!("{}{}", contain_body(&content), scroll_markers()),
+        remote,
+    );
     view.load_html(&document, Some(DOCUMENT_BASE_URI));
+    // `load_html` always starts a document at the top, whatever `page` said
+    // before this call -- see `Reader::page_down`.
+    page.set(0);
 
     for handler in rendered.borrow().iter() {
         handler(remote_blocked);
@@ -578,6 +623,60 @@ fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, u32) {
 /// stacked around the `WebView` rather than markup inside its document.
 fn contain_body(content: &str) -> String {
     format!(r#"<div class="postio-body">{content}</div>"#)
+}
+
+/// How many invisible scroll markers [`scroll_markers`] lays down.
+///
+/// Bounds how far `page_down` can walk a message, not how long a message can
+/// be: past the last marker further presses are a no-op, same as reaching
+/// the end of any scrollable view. 60 markers at [`SCROLL_MARKER_STEP_VH`]
+/// apart is generous enough that reaching it means an extraordinarily long
+/// message, not an ordinary one.
+const SCROLL_MARKERS: u32 = 60;
+
+/// How far apart the markers sit, in viewport heights.
+///
+/// Short of 100 so consecutive pages keep a sliver of what was on screen —
+/// paging with nothing carried over from the last screen is disorienting,
+/// the same reason a paged reader or terminal pager rarely pages by exactly
+/// one screen either.
+const SCROLL_MARKER_STEP_VH: u32 = 90;
+
+/// Invisible anchors spaced down the document, `#pos-0`, `#pos-1`, … —
+/// `Reader::page_down` and `page_up` jump between them.
+///
+/// This exists because there is no other way to move the reading pane's
+/// scroll position without JavaScript. `WebKitWebView` implements no
+/// `GtkScrollable` interface and exposes no scroll-by-amount call of its own
+/// (confirmed against the installed WebKitGTK's own introspection data, not
+/// assumed) — and JavaScript is off in this `WebView` on purpose, so
+/// `evaluate_javascript` is not an option either, confirmed the same way:
+/// it returns "Cannot execute JavaScript in this document" here. A same-
+/// document fragment navigation is the one scroll primitive the platform
+/// still gives a host application with both of those closed: it is what
+/// every browser already implements `#anchor` links with, needs no script,
+/// and `handle_decide_policy` only intercepts a *user's* click
+/// (`NavigationType::LinkClicked`) — an app-issued `load_uri` is `Other` and
+/// passes straight through, the same as `load_html` already does.
+///
+/// Placed at `top: Nvh`, not a pixel offset: `vh` is resolved against
+/// whatever the real viewport height is when WebKit lays the document out,
+/// so the markers land a consistent fraction of a screen apart on any
+/// window size without this code ever learning what that size is. Confirmed
+/// these contribute nothing to the document's scrollable height even when
+/// they land far past the real content -- `scrollHeight` measured identical
+/// with and without 50 such markers spanning 4500vh over one short
+/// paragraph -- so a short message cannot grow a phantom scrollbar from
+/// markers it never reaches.
+fn scroll_markers() -> String {
+    let mut markers = String::with_capacity(SCROLL_MARKERS as usize * 48);
+    for position in 0..SCROLL_MARKERS {
+        let top = position * SCROLL_MARKER_STEP_VH;
+        markers.push_str(&format!(
+            r#"<a id="pos-{position}" style="position:absolute;top:{top}vh;left:0;width:0;height:0;"></a>"#
+        ));
+    }
+    markers
 }
 
 /// Every scripting-adjacent `WebKitSettings` flag, turned off.
