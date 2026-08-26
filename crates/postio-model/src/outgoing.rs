@@ -22,9 +22,10 @@
 use chrono::Utc;
 use mail_builder::MessageBuilder;
 use mail_builder::headers::address::Address as MbAddress;
+use mail_builder::headers::content_type::ContentType as MbContentType;
 use mail_builder::headers::date::Date as MbDate;
 use mail_builder::headers::message_id::MessageId as MbMessageId;
-use mail_builder::mime::make_boundary;
+use mail_builder::mime::{BodyPart as MbBodyPart, MimePart as MbMimePart, make_boundary};
 
 use crate::account::Identity;
 use crate::address::EmailAddress;
@@ -160,7 +161,15 @@ fn assemble(
         builder = builder.bcc(addresses);
     }
     if let Some(text) = &draft.body.text {
-        builder = builder.text_body(text.clone());
+        // The public field directly, not `.body()`: that method sets a
+        // *different* one (`MessageBuilder::body`), a raw override that
+        // replaces the whole text/html/attachments assembly rather than
+        // supplying one part of it -- found by a test that came back with
+        // no HTML part at all. `.text_body(value)` is what should run here,
+        // it just always spells its own `Content-Type` as bare
+        // `text/plain`; this is that same assignment with the header
+        // `flowed_text_part` built instead.
+        builder.text_body = Some(flowed_text_part(text.clone()));
     }
     if let Some(html) = &draft.body.html {
         builder = builder.html_body(html.clone());
@@ -221,6 +230,25 @@ fn add_attachment<'x>(
             content,
         ),
     }
+}
+
+/// The `text/plain` MIME part for `text`, declared `format=flowed`.
+///
+/// Unconditional, not detected: `postio-model` has no HTML parser and no
+/// wrapping logic of its own — see the crate's own module docs on why an
+/// `ammonia` dependency does not belong on the crate everything else in the
+/// workspace waits on — so it cannot ask whether `text` actually is
+/// soft-wrapped RFC 3676 text. It does not have to. `postio_body::render`
+/// is the only path anything upstream uses to fill `draft.body.text`
+/// (issue #333), so by the time a string reaches here that has already
+/// happened; this only has to say so on the wire.
+fn flowed_text_part(text: String) -> MbMimePart<'static> {
+    MbMimePart::new(
+        MbContentType::new("text/plain")
+            .attribute("charset", "utf-8")
+            .attribute("format", "flowed"),
+        MbBodyPart::Text(text.into()),
+    )
 }
 
 /// A non-empty address list, or `None` — mail-builder writes a header even for
@@ -286,6 +314,35 @@ mod tests {
         assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
         assert_eq!(parsed.rfc_message_id, Some(built.message_id));
         assert!(parsed.date.is_some(), "a Date header was generated");
+    }
+
+    #[test]
+    fn the_text_part_advertises_format_flowed() {
+        // #333: `postio-model` cannot depend on `postio-body` to check
+        // whether `draft.body.text` actually is RFC 3676 wrapped -- see
+        // `flowed_text_part`'s own doc for why it advertises the header
+        // unconditionally instead. `mime::parse` exposes no accessor for a
+        // Content-Type parameter, so this reads the header off the raw
+        // bytes directly, the same way `bcc_recipients_never_appear_in_the_sent_bytes`
+        // already does for a header this crate cares about but has no
+        // parsed field for.
+        let ada = identity("ada@example.com");
+        let built = build(&draft(), &ada, &[], None);
+        let raw = String::from_utf8_lossy(&built.raw);
+
+        assert!(
+            raw.contains("Content-Type: text/plain;"),
+            "the text part should still say what it is: {raw}"
+        );
+        assert!(
+            raw.to_ascii_lowercase().contains(r#"format="flowed""#),
+            "the text part should advertise RFC 3676: {raw}"
+        );
+
+        // And the parser still finds the body it always did -- the header
+        // is additive, not a second way to spell the same part.
+        let parsed = mime::parse(&built.raw);
+        assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
     }
 
     #[test]
