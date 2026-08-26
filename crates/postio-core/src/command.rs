@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use postio_model::{DraftId, LabelId, MailboxId, MessageId, OperationRange, ThreadId};
+use postio_model::{AccountId, DraftId, LabelId, MailboxId, MessageId, OperationRange, ThreadId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {
@@ -260,13 +260,23 @@ pub enum MessageTarget {
     Batch {
         /// The queue rows the bulk action wrote.
         range: OperationRange,
-        /// The mailbox those messages are in now.
+        /// The account those messages belong to.
+        ///
+        /// Carried rather than looked up: a batch names no row to read an
+        /// account off, and the one mailbox read it used to take was only
+        /// ever answering this.
+        account: AccountId,
+        /// The mailbox those messages are in now, when they are all in one.
         ///
         /// Carried rather than derived because the handler needs it only to
         /// say which list has to reload, and asking the store "where are these
         /// 81,717 messages" to answer that would be the read this whole shape
         /// exists to avoid.
-        from: MailboxId,
+        ///
+        /// `None` when the action being undone never moved them together —
+        /// a bulk flag over a smart folder leaves every message where it was,
+        /// across as many folders as it spanned (#52).
+        from: Option<MailboxId>,
     },
 }
 

@@ -191,6 +191,19 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
+    /// Every flagged message in an account, wherever it is filed, less the
+    /// rows taken back out of the selection.
+    ///
+    /// The smart-folder half of the predicate story (#52). Unlike
+    /// [`MessageSet::InMailbox`], this one is **not stable across the action
+    /// it accompanies** when that action writes the flag it selects on — see
+    /// [`MessageSet::predicate`] for the ordering that depends on it.
+    Flagged {
+        /// The account the predicate is about.
+        account: AccountId,
+        /// Rows the user deselected. Built by clicking, so it is short.
+        except: Vec<MessageId>,
+    },
     /// Every message a run of queue rows named.
     ///
     /// This is how undo takes back a bulk action without naming its rows: the
@@ -215,6 +228,15 @@ pub enum MessageSet {
         /// The value that column has to hold.
         present: bool,
     },
+    /// The rows another set names that are in one particular folder.
+    ///
+    /// See [`MessageSet::within`].
+    InSourceMailbox {
+        /// The set being narrowed.
+        set: Box<MessageSet>,
+        /// The folder to keep.
+        mailbox: MailboxId,
+    },
 }
 
 impl MessageSet {
@@ -233,8 +255,32 @@ impl MessageSet {
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
-            MessageSet::Queued(_) => None,
+            // A smart folder is not a folder, here as everywhere else.
+            MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
+            MessageSet::InSourceMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::WithFlag { set, .. } => set.mailbox(),
+        }
+    }
+
+    /// Every flagged message in an account.
+    pub fn flagged(account: AccountId) -> Self {
+        MessageSet::Flagged {
+            account,
+            except: Vec::new(),
+        }
+    }
+
+    /// This set narrowed to the rows that are in `mailbox` right now.
+    ///
+    /// What a move out of a smart folder is grouped by: the queue's
+    /// `Operation::Move` payload carries one `from` for the whole run it
+    /// writes, so a set spanning folders has to be enqueued a folder at a
+    /// time. Narrowing is a column comparison, so each group is still a
+    /// predicate rather than a list of ids.
+    pub fn within(self, mailbox: MailboxId) -> Self {
+        MessageSet::InSourceMailbox {
+            set: Box::new(self),
+            mailbox,
         }
     }
 
@@ -278,6 +324,42 @@ impl MessageSet {
                 ),
                 vec![range.first.get(), range.last.get()],
             ),
+            // Deliberately *not* stable across the write it accompanies.
+            // `InMailbox`'s predicate still names the same rows after a move
+            // (they left the folder, so they leave the set, which is what the
+            // move meant). A role predicate does not: archiving everything
+            // flagged leaves the flag alone, so the set still matches
+            // afterwards -- but a bulk *unflag* over Flagged would empty its
+            // own predicate halfway through the statement.
+            //
+            // Which is why `enqueue_set` runs before the write in every bulk
+            // verb, and must go on doing so *on purpose* rather than by
+            // luck: the queue rows are written while the set still names the
+            // rows, and the write then narrows it to nothing.
+            MessageSet::Flagged { account, except } => {
+                let mut sql = format!(
+                    "messages.account_id = ?{first} AND messages.flagged = 1 \
+                     AND messages.deleted_locally = 0"
+                );
+                if !except.is_empty() {
+                    sql.push_str(&format!(
+                        " AND messages.id NOT IN ({})",
+                        placeholders(except.len(), first + 1)
+                    ));
+                }
+                let mut arguments = vec![account.get()];
+                arguments.extend(except.iter().map(|id| id.get()));
+                (sql, arguments)
+            }
+            MessageSet::InSourceMailbox { set, mailbox } => {
+                let (inner, mut arguments) = set.predicate(first);
+                let next = first + arguments.len();
+                arguments.push(mailbox.get());
+                (
+                    format!("({inner}) AND messages.mailbox_id = ?{next}"),
+                    arguments,
+                )
+            }
             MessageSet::WithFlag { set, flag, present } => {
                 let (inner, mut arguments) = set.predicate(first);
                 // The inner set numbered its parameters from `first` upwards
@@ -799,6 +881,29 @@ impl<'a> MessageRepository<'a> {
         let mut arguments = vec![mailbox_id.get()];
         arguments.extend(ids.iter().map(|id| id.get()));
         Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
+    }
+
+    /// The distinct folders the rows a [`MessageSet`] names are in right now.
+    ///
+    /// One indexed `SELECT DISTINCT` over the same predicate the write uses,
+    /// so it costs the *folders* the set spans rather than the messages in
+    /// it — an account with 81,717 flagged messages across six folders
+    /// answers six rows.
+    ///
+    /// A move out of a smart folder needs this because the queue's
+    /// `Operation::Move` payload carries a single `from` for the whole run
+    /// `enqueue_set` writes, so the move has to be grouped by source folder
+    /// and each group enqueued with its own origin. Narrowing a group is
+    /// [`MessageSet::within`], which keeps every group a predicate.
+    pub fn mailboxes_of_set(&self, set: &MessageSet) -> Result<Vec<MailboxId>> {
+        let (predicate, arguments) = set.predicate(1);
+        let sql = format!("SELECT DISTINCT messages.mailbox_id FROM messages WHERE {predicate}");
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(arguments), |row| {
+            row.get::<_, i64>(0).map(MailboxId::new)
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Moves every message a [`MessageSet`] names into `mailbox_id`,
