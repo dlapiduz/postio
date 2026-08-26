@@ -369,7 +369,14 @@ impl<'a> ThreadRepository<'a> {
 
     /// One window of the thread list, most recently active first.
     pub fn page(&self, query: &ThreadListQuery) -> Result<Vec<ThreadListRow>> {
-        let mut statement = self.connection.prepare(&self.explain(query))?;
+        self.page_with(query, "")
+    }
+
+    /// [`ThreadRepository::page`] with `tail` appended to the statement.
+    fn page_with(&self, query: &ThreadListQuery, tail: &str) -> Result<Vec<ThreadListRow>> {
+        let mut statement = self
+            .connection
+            .prepare(&format!("{}{tail}", self.explain(query)))?;
         let mut arguments = vec![query.account_id.get()];
         // `?2` when the query is folder-scoped, so the cursor follows at ?3/?4
         // rather than ?2/?3 — `explain` numbers them the same way.
@@ -471,13 +478,49 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
+    /// One window of the thread list at a row offset, for a list model that
+    /// scrolls by index.
+    ///
+    /// Prefer [`ThreadRepository::page`]: an offset is counted from the top of
+    /// the list every time, so a conversation that moves while the user
+    /// scrolls shifts every row down and this window silently skips one. The
+    /// store's seek marks exist to keep the offset small — see
+    /// `postio_runtime::store`.
+    pub fn page_at(&self, query: &ThreadListQuery, offset: u32) -> Result<Vec<ThreadListRow>> {
+        if offset == 0 {
+            return self.page(query);
+        }
+        self.page_with(query, &format!(" OFFSET {offset}"))
+    }
+
     /// How many threads the list would show.
     pub fn count(&self, account_id: AccountId) -> Result<u32> {
-        let count: i64 = self.connection.query_row(
-            "SELECT count(*) FROM threads WHERE account_id = ?1 AND message_count > 0",
-            [account_id.get()],
-            |row| row.get(0),
-        )?;
+        self.count_of(&ThreadListQuery::account(account_id))
+    }
+
+    /// How many threads `query`'s scope would show.
+    ///
+    /// The folder-scoped count is the same `EXISTS` the page uses, so the
+    /// number and the rows cannot disagree about what "in this folder" means.
+    pub fn count_of(&self, query: &ThreadListQuery) -> Result<u32> {
+        let count: i64 = match query.mailbox {
+            None => self.connection.query_row(
+                "SELECT count(*) FROM threads WHERE account_id = ?1 AND message_count > 0",
+                [query.account_id.get()],
+                |row| row.get(0),
+            )?,
+            Some(mailbox) => self.connection.query_row(
+                &format!(
+                    "SELECT count(*) FROM threads
+                      WHERE threads.account_id = ?1
+                        AND EXISTS (SELECT 1 FROM messages m
+                                     WHERE m.thread_id = threads.id
+                                       AND m.mailbox_id = ?2 AND m.{MEMBER})"
+                ),
+                [query.account_id.get(), mailbox.get()],
+                |row| row.get(0),
+            )?,
+        };
         Ok(count as u32)
     }
 
