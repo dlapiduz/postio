@@ -1208,20 +1208,29 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     );
     let message = postio_model::ids::MessageId::new(message);
 
-    let indexed_body = |id: i64| {
-        with_store(&database, "reading the indexed body", move |connection| {
-            Ok(connection
-                .query_row(
-                    "SELECT body FROM search_documents WHERE message_id = ?1",
+    // `search_documents.body` no longer exists: #379 moved the text corpus
+    // into `message_bodies_fts`, which is contentless and stores the words
+    // rather than the body. So "is it indexed" is a rowid lookup now, not a
+    // column read -- and the failure has to propagate, because the
+    // `unwrap_or_default()` this replaces turned "no such column" into "not
+    // indexed yet" and left the poll below reading a dead query until it
+    // timed out.
+    let body_is_indexed = |id: i64| {
+        with_store(
+            &database,
+            "looking for the indexed body",
+            move |connection| {
+                Ok(connection.query_row(
+                    "SELECT count(*) FROM message_bodies_fts WHERE rowid = ?1",
                     [id],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap_or_default())
-        })
+                    |row| row.get::<_, i64>(0),
+                )? > 0)
+            },
+        )
     };
     assert!(
-        indexed_body(message.get()).is_empty(),
-        "the body is not local yet, so its indexed text cannot be anything"
+        !body_is_indexed(message.get()),
+        "the body is not local yet, so nothing about it can be in the index"
     );
 
     assert!(
@@ -1231,7 +1240,7 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
 
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if !indexed_body(message.get()).is_empty() {
+            if body_is_indexed(message.get()) {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
