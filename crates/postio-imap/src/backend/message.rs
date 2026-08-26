@@ -494,6 +494,12 @@ impl FetchedMessage {
 
         if let Some(structure) = self.structure {
             message.content_type = Some(structure.content_type().to_owned());
+            // Where the message keeps its own words. This is the only place a
+            // `BODYSTRUCTURE` and a `Message` are both in hand, and the
+            // backfill downstream needs to *name* these sections rather than
+            // fetch the whole message and sift it (ADR 0017).
+            message.text_part_id = structure.text_part().map(|part| part.section().to_owned());
+            message.html_part_id = structure.html_part().map(|part| part.section().to_owned());
             message.attachments = structure.to_attachments(MessageId::UNASSIGNED);
         }
 
