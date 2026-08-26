@@ -100,6 +100,63 @@ pub struct MessageSummary {
     pub thread_count: u32,
 }
 
+/// One row of the threaded message list, as a frontend needs it.
+///
+/// A folder shows one row per conversation (ADR 0015), and this is that row.
+/// Three of its numbers are **scoped to the folder that was asked for** and
+/// one deliberately is not — see the fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSummary {
+    /// The conversation's id. The row's identity.
+    pub id: ThreadId,
+    /// The newest message of the conversation **in this folder**.
+    ///
+    /// What the row is drawn from and what opening the row reads, so every
+    /// surface that already takes a message — the reading pane, drag-out,
+    /// reply — keeps working without knowing this is a thread row. A reply
+    /// filed in Archive is not what the Inbox row should be showing.
+    pub representative: MessageSummary,
+    /// The conversation's subject: the normalised root subject.
+    pub subject: Option<String>,
+    /// Everyone who has written in it, in first-seen order.
+    ///
+    /// The row elides them for width; it is given all of them because which
+    /// ones survive eliding is a drawing decision, not a storage one.
+    pub participants: Vec<EmailAddress>,
+    /// How many messages the conversation holds, across every folder.
+    ///
+    /// **Not scoped.** The badge means how big the conversation is, wherever
+    /// it is filed (ADR 0015 Q2).
+    pub message_count: u32,
+    /// How many of its messages are unread **in this folder**.
+    ///
+    /// Scoped, so a conversation whose only unread member is filed elsewhere
+    /// reads as handled here — unread is what you act on from this folder.
+    pub unread_count: u32,
+    /// Whether any member **in this folder** is flagged.
+    pub flagged: bool,
+    /// Whether any member has an attachment.
+    pub has_attachments: bool,
+    /// When the conversation last moved; the list's sort key.
+    pub last_at: DateTime<Utc>,
+}
+
+impl ThreadSummary {
+    /// Whether anything in this folder's slice is unread.
+    pub fn has_unread(&self) -> bool {
+        self.unread_count > 0
+    }
+}
+
+/// One page of a folder's conversations, and how many there are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadPage {
+    /// How many conversations the scope matches, as of this read.
+    pub total: u32,
+    /// The rows themselves, most recently active first.
+    pub rows: Vec<ThreadSummary>,
+}
+
 /// One page of a mailbox, and how long the list is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessagePage {
@@ -167,6 +224,17 @@ pub trait MailStore: Send + Sync {
     /// One page of the message list, with the count that page was read
     /// against.
     fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage>;
+
+    /// One page of the *threaded* list, with the count it was read against.
+    ///
+    /// A real folder threads and a query view does not (ADR 0015), so this
+    /// answers only [`ListScope::Mailbox`] and [`ListScope::Account`];
+    /// anything else is a caller asking the wrong question and comes back as
+    /// an error rather than as message rows wearing a hat.
+    fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage>;
+
+    /// How many conversations the threaded list would show.
+    fn thread_count(&self, scope: ListScope) -> Read<'_, u32>;
 
     /// How many rows the list would show, without reading any of them.
     fn message_count(&self, scope: ListScope) -> Read<'_, u32>;
