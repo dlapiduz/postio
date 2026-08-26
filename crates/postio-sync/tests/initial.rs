@@ -297,3 +297,85 @@ async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
         last.target
     );
 }
+
+#[tokio::test]
+async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
+    // #77: within one mailbox the pass used to be strictly request/response —
+    // ask, wait, commit, ask again — so the connection sat idle for the whole
+    // local write. The next FETCH now goes out *before* the write, which puts
+    // the server to work on batch n+1 while SQLite is still taking batch n.
+    //
+    // Asserted on the mock's causal fetch log rather than a stopwatch (#125):
+    // "how many fetches had the server served by the time this batch was
+    // committed?" A sequential pass can only ever answer "this one".
+    let backend = server_with_messages(6).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+
+    let mut served_at_commit: Vec<usize> = Vec::new();
+    sync_mailbox_with_batch_size(
+        &connection,
+        &backend,
+        &inbox,
+        2,
+        &CancelToken::new(),
+        |_progress: Progress| served_at_commit.push(backend.header_fetches().len()),
+    )
+    .await
+    .expect("initial sync");
+
+    // Six messages in batches of two: three batches. When the first is
+    // committed the second has already been asked for; when the second is
+    // committed so has the third; the third has nothing to run ahead of.
+    assert_eq!(
+        served_at_commit,
+        vec![2, 3, 3],
+        "each batch should be requested while its predecessor is being written"
+    );
+}
+
+#[tokio::test]
+async fn running_ahead_never_reorders_or_loses_a_batch() {
+    // The pipelining must not disturb what #32's constraints pin: newest
+    // first, every message exactly once, and a resumable pass. Latency here
+    // is what makes the read-ahead genuinely outstanding during the write
+    // rather than answered inside the priming poll.
+    let backend = server_with_messages(7).await;
+    backend.set_latency(std::time::Duration::from_millis(5));
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+
+    let uid_validity = postio_model::UidValidity::new(1);
+    let mut batches: Vec<BTreeSet<u32>> = Vec::new();
+    let report = sync_mailbox_with_batch_size(
+        &connection,
+        &backend,
+        &inbox,
+        3,
+        &CancelToken::new(),
+        |_progress: Progress| batches.push(known_uids(&connection, inbox.id, uid_validity)),
+    )
+    .await
+    .expect("initial sync");
+
+    assert_eq!(report.inserted, 7);
+    assert_eq!(
+        batches.first().expect("a first batch"),
+        &BTreeSet::from([7, 6, 5]),
+        "the newest three still land first"
+    );
+    assert_eq!(
+        known_uids(&connection, inbox.id, uid_validity),
+        (1..=7).collect::<BTreeSet<u32>>(),
+        "every UID exactly once"
+    );
+    // One outstanding fetch at a time: a pass holds one pooled connection and
+    // read-ahead must not want a second.
+    assert_eq!(
+        backend.peak_in_flight(),
+        1,
+        "read-ahead must not put two fetches on the wire at once"
+    );
+}
