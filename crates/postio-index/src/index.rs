@@ -98,18 +98,6 @@ pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) 
     // a row that matches nothing and costs an index entry, which is worse
     // than no row at all.
 
-    // And still into the old column, deliberately and for one issue only.
-    // `SearchExecutor` matches all six columns of `messages_fts` in a single
-    // `MATCH` and takes its `bm25()` and `snippet()` from that same cursor,
-    // for reasons with a benchmark behind them (postio-y47) -- so dropping
-    // `search_documents.body` before the executor moves would stop body
-    // search working with every test in this crate still green. #408 is where
-    // the column goes, in the commit that teaches the executor to union two
-    // matches and generate its own highlights.
-    connection.execute(
-        "UPDATE search_documents SET body = ?1 WHERE message_id = ?2",
-        rusqlite::params![body.unwrap_or(""), message_id],
-    )?;
     Ok(())
 }
 
@@ -216,13 +204,12 @@ CREATE TABLE IF NOT EXISTS search_documents (
     sender      TEXT NOT NULL DEFAULT '',
     recipients  TEXT NOT NULL DEFAULT '',
     subject     TEXT NOT NULL DEFAULT '',
-    body        TEXT NOT NULL DEFAULT '',
     filenames   TEXT NOT NULL DEFAULT '',
     list_id     TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    sender, recipients, subject, body, filenames, list_id,
+    sender, recipients, subject, filenames, list_id,
     content = 'search_documents',
     content_rowid = 'message_id',
     tokenize = 'unicode61 remove_diacritics 2'
@@ -392,24 +379,24 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_messages_fts_ai
 AFTER INSERT ON search_documents
 BEGIN
-    INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames, list_id)
-    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames, new.list_id);
+    INSERT INTO messages_fts (rowid, sender, recipients, subject, filenames, list_id)
+    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.filenames, new.list_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_messages_fts_ad
 AFTER DELETE ON search_documents
 BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, body, filenames, list_id)
-    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.body, old.filenames, old.list_id);
+    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, filenames, list_id)
+    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.filenames, old.list_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_messages_fts_au
 AFTER UPDATE ON search_documents
 BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, body, filenames, list_id)
-    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.body, old.filenames, old.list_id);
-    INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames, list_id)
-    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames, new.list_id);
+    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, filenames, list_id)
+    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.filenames, old.list_id);
+    INSERT INTO messages_fts (rowid, sender, recipients, subject, filenames, list_id)
+    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.filenames, new.list_id);
 END;
 
 -- Everything that was already here.
@@ -542,6 +529,22 @@ mod tests {
         assert_eq!(matches(&connection, "invoice"), vec![message.id.get()]);
     }
 
+    /// Body matches, which live in their own contentless index now (#407)
+    /// rather than in `messages_fts`.
+    fn body_matches(connection: &Connection, query: &str) -> Vec<i64> {
+        let mut statement = connection
+            .prepare(
+                "SELECT rowid FROM message_bodies_fts
+                  WHERE message_bodies_fts MATCH ?1 ORDER BY rowid",
+            )
+            .expect("prepare");
+        statement
+            .query_map([query], |row| row.get(0))
+            .expect("query")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows")
+    }
+
     #[test]
     fn index_body_makes_body_text_searchable() {
         let database = test_support::memory();
@@ -556,7 +559,11 @@ mod tests {
 
         index_body(&connection, message.id.get(), Some("the rebuild is O(n^2)")).expect("index");
 
-        assert_eq!(matches(&connection, "rebuild"), vec![message.id.get()]);
+        assert_eq!(body_matches(&connection, "rebuild"), vec![message.id.get()]);
+        assert!(
+            matches(&connection, "rebuild").is_empty(),
+            "and not in the metadata index, which no longer carries bodies"
+        );
     }
 
     #[test]

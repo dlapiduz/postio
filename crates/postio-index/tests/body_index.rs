@@ -12,13 +12,9 @@
 //! `contentless_delete=1`, rowid = `message_id`, no content table underneath
 //! and nothing to keep in step with one.
 //!
-//! # What is deliberately still true here
-//!
-//! `search_documents.body` is still written. The executor matches all six
-//! columns of `messages_fts` in one `MATCH` and takes its snippet from it, so
-//! dropping the column now would silently stop body searches working; that
-//! half is #379's. These tests assert the new table is correct and *does not
-//! yet replace* the old column, which is the state this issue lands in.
+//! `search_documents.body` and `messages_fts.body` are gone as of #408, which
+//! moved the executor onto this table. The tests below are what says the two
+//! halves add up: the body is searchable here, and nowhere else.
 
 use postio_index::index::{ensure_schema, index_body, messages_missing_body_text};
 use postio_model::{BodyState, Message};
@@ -136,26 +132,21 @@ fn deleting_a_message_takes_its_body_with_it() {
 
 #[test]
 fn a_body_indexed_before_this_table_existed_is_found_by_the_maintenance_pass() {
-    // Every store that already indexed its bodies has them in
-    // `search_documents` and not here. The pass that catches a body up is
-    // driven by `messages_missing_body_text`, so it has to ask about *this*
-    // table -- asking the old column would answer "nothing to do" for every
-    // such message and the new index would stay empty for ever.
+    // A message whose body is local and not in this index -- which is every
+    // message in every store that indexed its bodies before this table
+    // existed. The pass that catches one up is driven by
+    // `messages_missing_body_text`, so it has to ask about *this* table;
+    // asking the column that used to hold bodies would have answered
+    // "nothing to do" for all of them and left the new index empty for ever.
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
     ensure_schema(&connection).expect("schema");
     let id = a_message(&connection, "Quarterly report");
-    connection
-        .execute(
-            "UPDATE search_documents SET body = 'already indexed' WHERE message_id = ?1",
-            [id],
-        )
-        .expect("the fixture writes an old-style row");
 
     assert_eq!(
         messages_missing_body_text(&connection, 10).expect("candidates"),
         vec![id],
-        "the old column being full says nothing about the new table"
+        "a body that is local and not indexed here is exactly the work"
     );
 
     index_body(&connection, id, Some("already indexed")).expect("catch up");
@@ -212,27 +203,4 @@ fn a_message_whose_body_is_still_on_the_server_is_not_a_candidate() {
             .expect("candidates")
             .is_empty()
     );
-}
-
-#[test]
-fn the_body_still_reaches_the_old_column_until_the_executor_moves() {
-    // Deliberate, and the thing to delete in #379. The executor matches all
-    // six columns of `messages_fts` in one `MATCH` and takes its snippet from
-    // it, so dropping `search_documents.body` here would stop body searches
-    // working with every test still green.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Quarterly report");
-
-    index_body(&connection, id, Some("the difference engine")).expect("index");
-
-    let found: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'difference'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query");
-    assert_eq!(found, 1, "body search must keep working while both exist");
 }
