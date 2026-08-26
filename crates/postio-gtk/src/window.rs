@@ -298,12 +298,13 @@ impl Window {
 
     /// Drill into `row`'s thread.
     ///
-    /// The messages are the ones the list already holds for that thread — see
-    /// [`crate::thread`] for why that is both enough to be useful today and
-    /// not always the whole thread.
+    /// Two paints, and the second one is the whole conversation. The column
+    /// goes up immediately from what the list already holds — this folder's
+    /// part of the thread — and the rest of it arrives from the store a
+    /// moment later, messages in other folders included (#44).
     ///
-    /// Public so a test, and whoever wires a real thread read later, can put
-    /// the column up without synthesizing a key event.
+    /// Public so a test, or a render, can put the column up without
+    /// synthesizing a key event.
     pub fn open_thread(&self, row: &crate::list::Row) {
         let Some(id) = row.thread else { return };
         // What the list already holds, first and synchronously. A drill-in is
@@ -317,10 +318,18 @@ impl Window {
             row.thread_count,
         );
 
-        // Then the rest of it. A thread routinely spans folders, and the part
-        // of it in *this* folder is all the list model has ever been able to
-        // offer -- less than that, if the page carrying a message has not been
-        // scrolled to. See #44.
+        // Then the rest of it, from the store.
+        //
+        // This is #44's fix, not #44's bug -- worth saying plainly, because
+        // the prose that used to be here was read as a description of the
+        // live behaviour and half of #436 was filed against it. What the
+        // *list model* can offer is this folder's part of the thread, and
+        // less than that if the page carrying a message has never been
+        // scrolled to. That is why this read exists: `FeedScope::Thread`
+        // resolves to a `WHERE messages.thread_id = ?` with no mailbox or
+        // account restriction, so what comes back is the conversation
+        // entire. `thread_cursor.rs` pins that by opening a thread whose
+        // messages really are filed in two different folders.
         let Some(source) = self.imp().messages.borrow().clone() else {
             return;
         };

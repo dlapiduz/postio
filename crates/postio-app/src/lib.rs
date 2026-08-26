@@ -332,6 +332,15 @@ pub struct Wired {
     /// dropping the `View` unhooks the handlers a moment after they are
     /// connected.
     pub search: Option<&'static postio_gtk::search::View>,
+    /// Which message the reading pane is showing, or is waiting to show.
+    ///
+    /// The same cell every surface that fills the pane writes — the list's
+    /// cursor, activation, and the thread column's cursor. Exposed because
+    /// "which message is on screen" is not answerable from the widgets: the
+    /// reader's header shows a subject, and a conversation's messages share
+    /// one. A test that has to tell two messages of the same thread apart
+    /// has nothing else to ask (#436).
+    pub showing: reading::Showing,
 }
 
 /// Point the window's panes at the store.
@@ -386,7 +395,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
-    reading::install(window, wiring, &feeds, showing);
+    reading::install(window, wiring, &feeds, showing.clone());
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
@@ -400,7 +409,11 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     catch_up_the_body_index(wiring);
     reclaim_disk(wiring);
 
-    Some(Wired { feeds, search })
+    Some(Wired {
+        feeds,
+        search,
+        showing,
+    })
 }
 
 /// Give back the disk nothing is using any more, out of the way.

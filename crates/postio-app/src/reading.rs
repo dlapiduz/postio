@@ -351,6 +351,42 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         move |row| parts.fill(&window, row)
     ));
 
+    // The thread column is walked with the same `j` and `k`, and owes the
+    // same answer.
+    //
+    // `ThreadView` announces every cursor move through `connect_activated`
+    // -- `move_cursor` -> `select_index` -> `announce` -- and until #436
+    // **nothing in the workspace was connected to it**. The signal was
+    // emitted into the void, so drilling into a conversation and walking it
+    // left the pane on whatever the mailbox list had last put there, which
+    // read as a drill-in that previews nothing.
+    //
+    // Same filler as the list, deliberately: a message opened from a thread
+    // is the same message, and a second path here is how the two would
+    // drift. The column hands back a `MessageId` rather than a `Row` because
+    // its rows *are* the list's rows and it keeps no second copy of them, so
+    // look the row up in what the column is currently showing. That walk is
+    // over a conversation -- a few hundred at the very worst -- not a
+    // mailbox.
+    window.thread().connect_activated(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        parts,
+        move |message| {
+            let row = window
+                .thread()
+                .rows()
+                .into_iter()
+                .find(|row| row.id == message);
+            // The column announced a message it is no longer showing --
+            // a fill landed between the move and this handler. The next
+            // move will say so again; painting a stale row would be worse.
+            let Some(row) = row else { return };
+            parts.fill(&window, row);
+        }
+    ));
+
     // Reconnecting (or losing the connection) has to repaint a pane that is
     // already showing a wait, not leave stale words on screen until the
     // cursor happens to move next -- see issue #117.
