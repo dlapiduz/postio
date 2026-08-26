@@ -12,7 +12,7 @@ use std::sync::Arc;
 use postio_core::ActionId;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::{CommandError, Dispatcher};
-use postio_core::state::{AppState, SharedState, ViewMode};
+use postio_core::state::{AppState, Scope, SharedState, ViewMode};
 use postio_core::{Command, CommandId, ConnectionState, Context, Event};
 use postio_model::{AccountId, DraftId, MailboxId, MessageId, ThreadId};
 
@@ -45,7 +45,7 @@ fn a_fresh_state_is_an_empty_list() {
     assert_eq!(state.context(), Context::List);
     assert!(state.selection().is_empty());
     assert_eq!(state.focus(), None);
-    assert_eq!(state.account(), None);
+    assert_eq!(state.scope().account(), None);
     assert_eq!(state.mailbox(), None);
     assert_eq!(state.search_query(), None);
 }
@@ -111,7 +111,7 @@ fn switching_accounts_reloads_the_mailbox_tree() {
 
     let events = state.open_account(AccountId::new(2));
 
-    assert_eq!(state.account(), Some(AccountId::new(2)));
+    assert_eq!(state.scope().account(), Some(AccountId::new(2)));
     assert_eq!(state.mailbox(), None, "the old account's mailbox is gone");
     assert!(
         events.contains(&Event::MailboxesChanged {
@@ -465,4 +465,81 @@ fn a_snapshot_can_be_read_without_holding_the_lock() {
     let snapshot: Arc<AppState> = Arc::new(state.snapshot());
 
     state.read(|live| assert_eq!(*live, *snapshot));
+}
+
+// ---------------------------------------------------------------------------
+// Scope replaces Option<AccountId>
+// ---------------------------------------------------------------------------
+
+/// ADR 0005 Q4 (#182). The old `account: Option<AccountId>` meant two things
+/// at once, and `None` was both of them. `Scope` splits them: a view is
+/// either one account's or it is every enabled account's, and there is always
+/// one of those.
+#[test]
+fn a_fresh_state_is_unified_over_nothing_rather_than_an_absent_account() {
+    let state = AppState::new();
+
+    assert_eq!(
+        state.scope(),
+        Scope::Unified,
+        "there is always a scope; unified over zero accounts is simply empty, \
+         which is what a fresh install shows"
+    );
+    assert_eq!(
+        state.scope().account(),
+        None,
+        "and `None` now means exactly one thing: not a single-account view"
+    );
+}
+
+#[test]
+fn opening_an_account_narrows_the_scope_to_it() {
+    let mut state = AppState::new();
+
+    let events = state.open_account(AccountId::new(7));
+
+    assert_eq!(state.scope(), Scope::Account(AccountId::new(7)));
+    assert_eq!(state.scope().account(), Some(AccountId::new(7)));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::MailboxesChanged { .. })),
+        "narrowing to an account has to repaint its folders"
+    );
+}
+
+/// The acceptance criterion that protects everyone who has one account: the
+/// single-account path must behave exactly as it did.
+#[test]
+fn one_account_still_behaves_as_it_always_did() {
+    let mut state = AppState::new();
+    state.open_account(AccountId::new(1));
+    state.open_mailbox(MailboxId::new(4));
+
+    assert_eq!(state.scope(), Scope::Account(AccountId::new(1)));
+    assert_eq!(state.mailbox(), Some(MailboxId::new(4)));
+
+    // Re-opening the same account is not a change, so it repaints nothing.
+    assert!(
+        state.open_account(AccountId::new(1)).is_empty(),
+        "re-opening the account already on screen must not churn the panes"
+    );
+}
+
+/// Widening drops the mailbox, for the same reason narrowing does: a folder
+/// belongs to one account, so it cannot survive a view that spans them all.
+#[test]
+fn widening_to_unified_drops_the_mailbox_that_belonged_to_one_account() {
+    let mut state = AppState::new();
+    state.open_account(AccountId::new(1));
+    state.open_mailbox(MailboxId::new(4));
+
+    state.open_unified();
+
+    assert_eq!(state.scope(), Scope::Unified);
+    assert_eq!(
+        state.mailbox(),
+        None,
+        "keeping it would let an action land in a folder the view no longer shows"
+    );
 }

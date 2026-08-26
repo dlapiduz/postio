@@ -28,7 +28,7 @@
 //! arrangement the canvas uses for the key hints on a focused row, so a key
 //! learned in the palette looks the same when it appears in the list.
 
-use postio_core::{ActionId, Context, Keymap, registry};
+use postio_core::{ActionId, Context, Keymap, Scope, registry};
 
 /// How many rows the palette will show at once.
 ///
@@ -175,12 +175,13 @@ const ID_PENALTY: i32 = 40;
 /// The rows to show for `query`, best first.
 ///
 /// Filtered to commands reachable in `context` — offering to send a draft from
-/// the message list is a row the user can only be disappointed by. An empty
-/// query returns everything applicable, in registry order, which is the order
-/// the cheat sheet uses.
-pub fn entries(keymap: &Keymap, context: Context, query: &str) -> Vec<Entry> {
+/// the message list is a row the user can only be disappointed by — and to
+/// those `scope` satisfies, so a unified view does not offer a `Move` with no
+/// account to move within (#182). An empty query returns everything
+/// applicable, in registry order.
+pub fn entries(keymap: &Keymap, context: Context, scope: Scope, query: &str) -> Vec<Entry> {
     let query = query.trim();
-    let mut found: Vec<Entry> = registry::reachable(context)
+    let mut found: Vec<Entry> = registry::reachable_in(context, scope)
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
             let by_id = score(query, spec.id.as_str());
@@ -233,6 +234,13 @@ pub fn highlight(title: &str, positions: &[usize]) -> String {
 mod tests {
     use super::*;
     use postio_core::CommandId;
+    use postio_model::AccountId;
+
+    /// These tests are about context filtering, so they run in the scope
+    /// where every command is available: one account's own mailboxes.
+    fn an_account() -> Scope {
+        Scope::Account(AccountId::new(1))
+    }
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
@@ -301,7 +309,7 @@ mod tests {
 
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
-        let listed = entries(&defaults(), Context::List, "");
+        let listed = entries(&defaults(), Context::List, an_account(), "");
         let expected: Vec<ActionId> = registry::reachable(Context::List)
             .map(|spec| spec.id)
             .collect();
@@ -316,7 +324,7 @@ mod tests {
     fn every_registry_command_is_reachable_from_some_context() {
         for spec in registry::all() {
             let reachable = Context::ALL.iter().any(|context| {
-                entries(&defaults(), *context, spec.title)
+                entries(&defaults(), *context, an_account(), spec.title)
                     .iter()
                     .any(|entry| entry.id == spec.id.into())
             });
@@ -326,7 +334,7 @@ mod tests {
 
     #[test]
     fn the_context_filter_hides_what_does_not_apply() {
-        let from_the_list = entries(&defaults(), Context::List, "send");
+        let from_the_list = entries(&defaults(), Context::List, an_account(), "send");
         assert!(
             !from_the_list
                 .iter()
@@ -334,7 +342,7 @@ mod tests {
             "offering to send from the message list is a row that can only disappoint"
         );
 
-        let from_the_composer = entries(&defaults(), Context::Composer, "send");
+        let from_the_composer = entries(&defaults(), Context::Composer, an_account(), "send");
         assert!(
             from_the_composer
                 .iter()
@@ -344,7 +352,7 @@ mod tests {
 
     #[test]
     fn a_command_is_findable_by_its_id_as_well_as_its_title() {
-        let found = entries(&defaults(), Context::List, "archive_th");
+        let found = entries(&defaults(), Context::List, an_account(), "archive_th");
 
         assert_eq!(
             found.first().map(|entry| entry.id),
@@ -354,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_title_match_outranks_an_id_match_for_the_same_query() {
-        let found = entries(&defaults(), Context::List, "archive");
+        let found = entries(&defaults(), Context::List, an_account(), "archive");
         let ranks: Vec<ActionId> = found.iter().map(|entry| entry.id).collect();
 
         let archive = ranks
@@ -365,7 +373,7 @@ mod tests {
 
     #[test]
     fn rows_carry_the_binding_in_force() {
-        let listed = entries(&defaults(), Context::List, "archive");
+        let listed = entries(&defaults(), Context::List, an_account(), "archive");
         let archive = listed
             .iter()
             .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
@@ -382,7 +390,7 @@ mod tests {
             .insert("archive".to_owned(), "y".to_owned());
         let keymap = Keymap::resolve(&overrides);
 
-        let listed = entries(&keymap, Context::List, "archive");
+        let listed = entries(&keymap, Context::List, an_account(), "archive");
         let archive = listed
             .iter()
             .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
@@ -395,14 +403,39 @@ mod tests {
         );
     }
 
+    /// The palette is the surface #182's acceptance names: a unified view
+    /// must not offer a destination it has no way to pick. The registry
+    /// decides; this proves the answer actually reaches the rows.
+    #[test]
+    fn a_unified_view_offers_no_move_and_an_account_view_does() {
+        let in_account: Vec<&str> = entries(&defaults(), Context::List, an_account(), "move")
+            .iter()
+            .map(|entry| entry.title)
+            .collect();
+        assert!(
+            in_account.iter().any(|title| *title == "Move to…"),
+            "an account view is exactly where moving into a folder means something: {in_account:?}"
+        );
+
+        let unified: Vec<&str> = entries(&defaults(), Context::List, Scope::Unified, "move")
+            .iter()
+            .map(|entry| entry.title)
+            .collect();
+        assert!(
+            !unified.iter().any(|title| *title == "Move to…"),
+            "offering Move across every account promises a folder the user was \
+             never given the chance to pick: {unified:?}"
+        );
+    }
+
     #[test]
     fn a_query_that_matches_nothing_lists_nothing() {
-        assert!(entries(&defaults(), Context::List, "zzzzz").is_empty());
+        assert!(entries(&defaults(), Context::List, an_account(), "zzzzz").is_empty());
     }
 
     #[test]
     fn the_list_is_capped() {
-        let listed = entries(&defaults(), Context::List, "");
+        let listed = entries(&defaults(), Context::List, an_account(), "");
 
         assert!(listed.len() <= MAX_ROWS);
     }
