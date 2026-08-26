@@ -457,3 +457,25 @@ fn a_document_with_no_links_has_no_hosts() {
     assert!(Document::from_text("just words").link_hosts().is_empty());
     assert!(Document::new().link_hosts().is_empty());
 }
+
+#[test]
+fn an_empty_paragraph_records_nothing_and_is_narrowed_away() {
+    // WebKit's list command nests the new `<ul>` inside the paragraph it
+    // formats; spec recovery splits that into an empty `<p>` on each side.
+    // An empty paragraph holds nothing a document needs to record — kept,
+    // it ships as a blank `<p></p>` in outgoing mail.
+    let document = parse("<p><ul><li>item one</li></ul></p>");
+    assert_eq!(
+        document.blocks,
+        vec![Block::List {
+            ordered: false,
+            items: vec![vec![Block::Paragraph(vec![Inline::Text(
+                "item one".into()
+            )])]],
+        }]
+    );
+    // A deliberate blank line is `<p><br></p>` — a Break, not empty — and
+    // must survive the narrowing that removes the truly empty one.
+    let spaced = parse("<p>a</p><p><br></p><p>b</p>");
+    assert_eq!(spaced.blocks.len(), 3, "the blank line is content");
+}

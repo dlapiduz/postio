@@ -119,6 +119,18 @@ command_ids! {
     AttachFile => "attach_file",
     /// Move the composition between the reading pane and a window of its own.
     DetachComposer => "detach_composer",
+    /// Make the selection bold, or un-bold it.
+    Bold => "bold",
+    /// Make the selection italic, or straighten it.
+    Italic => "italic",
+    /// Turn the current block into a bulleted list, or back.
+    BulletList => "bullet_list",
+    /// Turn the current block into a numbered list, or back.
+    NumberedList => "numbered_list",
+    /// Turn a link on the selection, asking for the address.
+    InsertLink => "insert_link",
+    /// Turn the current block into a quote, or back.
+    QuoteBlock => "quote_block",
     /// Undo the last undoable action.
     Undo => "undo",
     /// Open the command palette.
@@ -423,6 +435,18 @@ pub enum Command {
     /// step. Purely a view concern -- nothing downstream of the frontend can
     /// tell which container the draft is being typed into.
     DetachComposer,
+    /// Make the selection bold, or un-bold it.
+    Bold,
+    /// Make the selection italic, or straighten it.
+    Italic,
+    /// Turn the current block into a bulleted list, or back.
+    BulletList,
+    /// Turn the current block into a numbered list, or back.
+    NumberedList,
+    /// Turn a link on the selection, asking for the address.
+    InsertLink,
+    /// Turn the current block into a quote, or back.
+    QuoteBlock,
 
     // -- View and application --------------------------------------------
     /// Undo the last undoable action.
@@ -530,6 +554,12 @@ impl Command {
             Command::DiscardDraft => CommandId::DiscardDraft,
             Command::AttachFile { .. } => CommandId::AttachFile,
             Command::DetachComposer => CommandId::DetachComposer,
+            Command::Bold => CommandId::Bold,
+            Command::Italic => CommandId::Italic,
+            Command::BulletList => CommandId::BulletList,
+            Command::NumberedList => CommandId::NumberedList,
+            Command::InsertLink => CommandId::InsertLink,
+            Command::QuoteBlock => CommandId::QuoteBlock,
             Command::Undo => CommandId::Undo,
             Command::CommandPalette => CommandId::CommandPalette,
             Command::CheatSheet => CommandId::CheatSheet,
@@ -607,6 +637,12 @@ impl Command {
             CommandId::DiscardDraft => Command::DiscardDraft,
             CommandId::AttachFile => Command::AttachFile { path: None },
             CommandId::DetachComposer => Command::DetachComposer,
+            CommandId::Bold => Command::Bold,
+            CommandId::Italic => Command::Italic,
+            CommandId::BulletList => Command::BulletList,
+            CommandId::NumberedList => Command::NumberedList,
+            CommandId::InsertLink => Command::InsertLink,
+            CommandId::QuoteBlock => Command::QuoteBlock,
             CommandId::Undo => Command::Undo,
             CommandId::CommandPalette => Command::CommandPalette,
             CommandId::CheatSheet => Command::CheatSheet,

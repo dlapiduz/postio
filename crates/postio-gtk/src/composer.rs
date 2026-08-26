@@ -1281,8 +1281,69 @@ impl Composer {
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward if !self.is_open() => {
                 self.open_reply(id);
             }
+            CommandId::Bold if self.is_open() => {
+                self.imp().body.format(crate::editor::Format::Bold);
+            }
+            CommandId::Italic if self.is_open() => {
+                self.imp().body.format(crate::editor::Format::Italic);
+            }
+            CommandId::BulletList if self.is_open() => {
+                self.imp().body.format(crate::editor::Format::BulletList);
+            }
+            CommandId::NumberedList if self.is_open() => {
+                self.imp().body.format(crate::editor::Format::NumberedList);
+            }
+            CommandId::QuoteBlock if self.is_open() => {
+                self.imp().body.format(crate::editor::Format::QuoteBlock);
+            }
+            CommandId::InsertLink if self.is_open() => self.request_link(),
             _ => {}
         }
+    }
+
+    /// Ask for an address, then link the selection to it.
+    ///
+    /// The one formatting command that needs an argument, so the one that
+    /// opens a dialog — entry-first and Enter-to-confirm, since the hands
+    /// are on the keyboard by construction.
+    fn request_link(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("Link to…"),
+            Some(
+                "http, https or mailto. The selection becomes the link; with nothing selected, the address is inserted as its own text.",
+            ),
+        );
+        let entry = gtk::Entry::builder()
+            .placeholder_text("https://example.com/…")
+            .activates_default(true)
+            .build();
+        entry.update_property(&[gtk::accessible::Property::Label("Link address")]);
+        dialog.set_extra_child(Some(&entry));
+        dialog.add_responses(&[("cancel", "Cancel"), ("link", "Link")]);
+        dialog.set_response_appearance("link", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("link"));
+        dialog.set_close_response("cancel");
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                #[weak]
+                entry,
+                move |_, response| {
+                    if response != "link" {
+                        return;
+                    }
+                    let href = entry.text().to_string();
+                    if !composer.imp().body.create_link(&href) {
+                        composer.set_status(
+                            "That address was not linked: only http, https and mailto belong in mail.",
+                        );
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
     }
 
     /// Opens a reply, reply-all or forward for whatever

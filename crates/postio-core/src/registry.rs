@@ -427,6 +427,66 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
     },
+    CommandSpec {
+        id: CommandId::Bold,
+        title: "Bold",
+        default_binding: "ctrl+b",
+        alternate_bindings: &[],
+        // ctrl+b is the sidebar everywhere mail is read; the composer is not
+        // a message surface, so the convention every editor shares wins here.
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::Italic,
+        title: "Italic",
+        default_binding: "ctrl+i",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::BulletList,
+        title: "Bulleted list",
+        // The Docs/Gmail convention, and shift dodges nothing here — the
+        // digits are free in the composer either way.
+        default_binding: "ctrl+shift+8",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::NumberedList,
+        title: "Numbered list",
+        default_binding: "ctrl+shift+7",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::InsertLink,
+        title: "Insert link…",
+        // Everywhere else this is ctrl+k, and here ctrl+k is the palette —
+        // which is universal or it is not a palette. Shift is the tax.
+        default_binding: "ctrl+shift+k",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
+    CommandSpec {
+        id: CommandId::QuoteBlock,
+        title: "Quote block",
+        default_binding: "ctrl+shift+9",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+    },
     // -- View and application --------------------------------------------
     CommandSpec {
         id: CommandId::Undo,
