@@ -49,6 +49,7 @@
 
 pub mod accounts;
 pub mod change;
+pub mod compose;
 pub mod error;
 pub mod filters;
 pub mod keys;
@@ -71,6 +72,7 @@ use toml::{Table, Value};
 
 pub use accounts::{AccountConfig, AuthMethod, ImapConfig, MailSecurity, SmtpConfig};
 pub use change::ConfigChanged;
+pub use compose::{ComposeConfig, SignaturePlacement};
 pub use error::{ConfigError, Result};
 pub use filters::FilterConfig;
 pub use keys::KeyBindings;
@@ -146,6 +148,9 @@ pub struct Config {
     /// `[logging]` — how much Postio says about what it is doing.
     #[serde(default)]
     pub logging: LoggingConfig,
+    /// `[compose]` — where a signature goes when a quote sits under it.
+    #[serde(default)]
+    pub compose: ComposeConfig,
     /// Top-level keys this version of Postio does not know.
     #[serde(flatten)]
     pub extra: Extras,

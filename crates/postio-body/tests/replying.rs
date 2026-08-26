@@ -8,7 +8,8 @@
 //! exactly as `outgoing.rs` does for the hand-assembled shape.
 
 use postio_body::document::{Block, Document, Inline};
-use postio_body::{apply_signature, forwarded, parse, quoted_reply};
+use postio_body::{Placement, apply_signature, forwarded, parse, quoted_reply};
+use postio_model::account::Signature;
 
 /// See `outgoing.rs`: every remote-reference trick at once.
 const HOSTILE: &str = "html-tracking-pixel-remote-images.eml";
@@ -187,7 +188,11 @@ fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
         "On 2026-08-26, Ada wrote:",
     );
 
-    let signed = apply_signature(&reply, Some("Grace Hopper"));
+    let signed = apply_signature(
+        &reply,
+        Some(&signature("Grace Hopper", None)),
+        Placement::BelowQuote,
+    );
     let rendered = signed.to_text();
     assert!(rendered.contains("-- "), "{rendered}");
     assert!(rendered.contains("Grace Hopper"), "{rendered}");
@@ -199,14 +204,25 @@ fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
     );
 
     // Applying again changes nothing; switching identities swaps cleanly.
-    assert_eq!(apply_signature(&signed, Some("Grace Hopper")), signed);
-    let swapped = apply_signature(&signed, Some("Ada Lovelace"));
+    assert_eq!(
+        apply_signature(
+            &signed,
+            Some(&signature("Grace Hopper", None)),
+            Placement::BelowQuote
+        ),
+        signed
+    );
+    let swapped = apply_signature(
+        &signed,
+        Some(&signature("Ada Lovelace", None)),
+        Placement::BelowQuote,
+    );
     let rendered = swapped.to_text();
     assert!(rendered.contains("Ada Lovelace"), "{rendered}");
     assert!(!rendered.contains("Grace Hopper"), "{rendered}");
 
     // And taking the signature away leaves the written part alone.
-    let bare = apply_signature(&swapped, None);
+    let bare = apply_signature(&swapped, None, Placement::BelowQuote);
     assert!(!bare.to_text().contains("Ada Lovelace"));
     assert!(bare.to_text().contains("> original words"));
 }
@@ -219,7 +235,11 @@ fn a_separator_inside_the_quote_is_not_this_drafts_signature() {
     // lines is somebody else's.
     let source = Document::from_text("their words\n\n-- \nTheir Signature");
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
-    let signed = apply_signature(&reply, Some("My Sig"));
+    let signed = apply_signature(
+        &reply,
+        Some(&signature("My Sig", None)),
+        Placement::BelowQuote,
+    );
     let rendered = signed.to_text();
     assert!(
         rendered.contains("Their Signature"),
@@ -227,7 +247,7 @@ fn a_separator_inside_the_quote_is_not_this_drafts_signature() {
     );
     assert!(rendered.contains("My Sig"), "{rendered}");
 
-    let unsigned = apply_signature(&signed, None);
+    let unsigned = apply_signature(&signed, None, Placement::BelowQuote);
     assert!(
         unsigned.to_text().contains("Their Signature"),
         "removing my signature removed theirs: {}",
@@ -244,7 +264,11 @@ fn rich_structure_survives_a_signature_swap() {
         blocks: vec![Block::Paragraph(vec![Inline::Strong(vec![text("bold")])])],
     };
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
-    let signed = apply_signature(&reply, Some("Grace"));
+    let signed = apply_signature(
+        &reply,
+        Some(&signature("Grace", None)),
+        Placement::BelowQuote,
+    );
     assert!(
         signed.blocks.iter().any(|block| matches!(
             block,
@@ -257,4 +281,191 @@ fn rich_structure_survives_a_signature_swap() {
         )),
         "{signed:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #12: the rich variant, and where the signature sits
+// ---------------------------------------------------------------------------
+
+fn signature(text: &str, html: Option<&str>) -> Signature {
+    Signature {
+        text: text.to_owned(),
+        html: html.map(str::to_owned),
+    }
+}
+
+#[test]
+fn a_rich_signature_keeps_its_structure_instead_of_being_flattened() {
+    // The HTML variant has been in the model (and the schema) since the
+    // beginning with nothing to put it in; the composer has a rich body now.
+    // A signature with markup must arrive as markup, not as its text form.
+    let reply = quoted_reply(
+        &Document::from_text("their words"),
+        "On 2026-08-26, Ada wrote:",
+    );
+    let signed = apply_signature(
+        &reply,
+        Some(&signature(
+            "Grace Hopper\nRear Admiral",
+            Some("<p><strong>Grace Hopper</strong><br>Rear Admiral</p>"),
+        )),
+        Placement::BelowQuote,
+    );
+
+    assert!(
+        signed.blocks.iter().any(|block| matches!(
+            block,
+            Block::Paragraph(inlines)
+                if inlines.iter().any(|inline| matches!(inline, Inline::Strong(_)))
+        )),
+        "the rich variant was flattened: {signed:?}"
+    );
+    // And the plain rendering of that same document is still the text form a
+    // text-only recipient reads.
+    let rendered = signed.to_text();
+    assert!(rendered.contains("Grace Hopper"), "{rendered}");
+    assert!(rendered.contains("-- "), "{rendered}");
+}
+
+#[test]
+fn a_signature_with_no_rich_variant_falls_back_to_its_text() {
+    let reply = quoted_reply(
+        &Document::from_text("their words"),
+        "On 2026-08-26, Ada wrote:",
+    );
+    let signed = apply_signature(
+        &reply,
+        Some(&signature("Grace Hopper", None)),
+        Placement::BelowQuote,
+    );
+    assert!(signed.to_text().contains("Grace Hopper"));
+}
+
+#[test]
+fn placement_puts_the_signature_above_the_quote_when_asked() {
+    // Top-posting: the signature belongs under what was written and above the
+    // quoted message, which is where every client that top-posts puts it.
+    let reply = quoted_reply(
+        &Document::from_text("their words"),
+        "On 2026-08-26, Ada wrote:",
+    );
+    let signed = apply_signature(
+        &reply,
+        Some(&signature("Grace Hopper", None)),
+        Placement::AboveQuote,
+    );
+
+    let rendered = signed.to_text();
+    let sig_at = rendered.find("Grace Hopper").expect("the signature");
+    let quote_at = rendered.find("> their words").expect("the quote");
+    assert!(
+        sig_at < quote_at,
+        "the signature should sit above the quote:\n{rendered}"
+    );
+    // The quote is still whole, and still a quote.
+    assert!(
+        signed
+            .blocks
+            .iter()
+            .any(|block| matches!(block, Block::Quote(_))),
+        "{signed:?}"
+    );
+}
+
+#[test]
+fn swapping_placement_moves_the_signature_rather_than_adding_one() {
+    let reply = quoted_reply(
+        &Document::from_text("their words"),
+        "On 2026-08-26, Ada wrote:",
+    );
+    let sig = signature("Grace Hopper", None);
+    let below = apply_signature(&reply, Some(&sig), Placement::BelowQuote);
+    let above = apply_signature(&below, Some(&sig), Placement::AboveQuote);
+
+    assert_eq!(
+        above.to_text().matches("Grace Hopper").count(),
+        1,
+        "moving a signature must not leave the old one behind:\n{}",
+        above.to_text()
+    );
+    // And back again, idempotently.
+    let back = apply_signature(&above, Some(&sig), Placement::BelowQuote);
+    assert_eq!(back, below);
+}
+
+#[test]
+fn a_signature_above_the_quote_is_still_replaced_not_stacked() {
+    let reply = quoted_reply(
+        &Document::from_text("their words"),
+        "On 2026-08-26, Ada wrote:",
+    );
+    let first = apply_signature(
+        &reply,
+        Some(&signature("Grace Hopper", None)),
+        Placement::AboveQuote,
+    );
+    let second = apply_signature(
+        &first,
+        Some(&signature("Ada Lovelace", None)),
+        Placement::AboveQuote,
+    );
+    let rendered = second.to_text();
+    assert!(rendered.contains("Ada Lovelace"), "{rendered}");
+    assert!(!rendered.contains("Grace Hopper"), "{rendered}");
+    assert!(rendered.contains("> their words"), "{rendered}");
+}
+
+#[test]
+fn the_separator_sits_on_the_line_directly_above_the_signature() {
+    // RFC 3676: the line other clients fold on is exactly `-- ` immediately
+    // before the signature. A separator in a paragraph of its own renders
+    // with a blank line under it, and then nothing recognises it.
+    let signed = apply_signature(
+        &Document::from_text("Looking now."),
+        Some(&signature("Lena", None)),
+        Placement::BelowQuote,
+    );
+    let rendered = signed.to_text();
+    assert!(
+        rendered.contains("-- \nLena"),
+        "the separator must be adjacent to the signature:\n{rendered:?}"
+    );
+    // And in the rich rendering the two are one paragraph, one line apart.
+    let html = signed.to_html();
+    assert!(html.contains("-- <br>Lena"), "{html}");
+}
+
+#[test]
+fn a_paragraph_that_merely_starts_with_two_hyphens_is_not_a_separator() {
+    // "--fast is the flag you want" opens with the same two characters and is
+    // somebody's sentence, not the end of their message.
+    let written = Document::from_text("--fast is the flag you want\n\nMore below.");
+    let signed = apply_signature(
+        &written,
+        Some(&signature("Lena", None)),
+        Placement::BelowQuote,
+    );
+    let rendered = signed.to_text();
+    assert!(rendered.contains("--fast is the flag"), "{rendered}");
+    assert!(rendered.contains("More below."), "{rendered}");
+    assert!(rendered.contains("-- \nLena"), "{rendered}");
+}
+
+#[test]
+fn a_signature_on_an_empty_draft_leaves_somewhere_to_type() {
+    // Without a line above it the caret opens inside the separator paragraph,
+    // and the first word typed lands in front of the `-- `.
+    let signed = apply_signature(
+        &Document::new(),
+        Some(&signature("Lena", None)),
+        Placement::BelowQuote,
+    );
+    assert!(
+        matches!(signed.blocks.first(), Some(Block::Paragraph(inlines))
+            if !matches!(inlines.first(), Some(Inline::Text(text)) if text.starts_with("--"))),
+        "the draft should open on a line of its own: {signed:?}"
+    );
+    // One blank line then the separator — the spelling the plain-text
+    // pipeline has always put on the wire.
+    assert_eq!(signed.to_text(), "\n\n-- \nLena");
 }
