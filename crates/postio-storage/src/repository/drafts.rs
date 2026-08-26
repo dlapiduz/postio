@@ -179,6 +179,51 @@ impl<'a> DraftRepository<'a> {
         Ok(queued)
     }
 
+    /// Hands a draft to the operation queue to be sent, in one write.
+    ///
+    /// The sibling of [`save_and_sync`](Self::save_and_sync) for the other
+    /// verb, and local-first in the same way: the draft goes to
+    /// [`DraftState::Queued`] and the [`Operation::Send`] row is written now,
+    /// so the composer can close the moment the user presses the key and the
+    /// UI never waits on SMTP. `postio-sync::send` picks the row up whenever
+    /// there is a connection.
+    ///
+    /// # Why the draft is saved rather than merely marked
+    ///
+    /// Autosave is debounced, so a message typed and sent inside the quiet
+    /// period has never been written and has no [`DraftId`] — and the queued
+    /// operation names the draft by id, because a send carries no bytes for
+    /// the same reason [`Operation::SaveDraft`] does not: they are built when
+    /// it drains, from whatever the row says then. So this saves first and
+    /// enqueues against the id that save assigned.
+    ///
+    /// # Why the local row stays
+    ///
+    /// Every other terminal verb on a draft deletes it. This one must not:
+    /// `postio-sync::send` resolves a `Send` whose draft is gone as *obsolete*
+    /// and drops it, so deleting the row here would throw the message away
+    /// instead of sending it. The row is deleted by the drainer, after the
+    /// submission server has accepted it and the Sent copy is filed.
+    ///
+    /// Unlike `save_and_sync` this always returns a queue row: a send names no
+    /// mailbox, so there is no folder that might not exist yet to stop it.
+    pub fn queue_send(&self, draft: &mut Draft, at: DateTime<Utc>) -> Result<QueuedOperation> {
+        let scope = super::Scope::open(self.connection)?;
+
+        draft.state = DraftState::Queued;
+        draft.updated_at = at;
+        DraftRepository::new(&scope).save(draft)?;
+        let queued = OperationQueueRepository::new(&scope).enqueue(
+            draft.account_id,
+            OperationTarget::Draft(draft.id),
+            &Operation::Send { draft: draft.id },
+            at,
+        )?;
+
+        scope.commit()?;
+        Ok(queued)
+    }
+
     /// Deletes a draft and queues the removal of its server copy.
     ///
     /// The local row goes now: discarding a draft is local-first like every
