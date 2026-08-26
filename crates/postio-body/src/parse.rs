@@ -123,6 +123,16 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                     continue;
                 }
                 match block_for(child, &name) {
+                    // An empty paragraph records nothing, so it is narrowed
+                    // away like any other content the subset cannot say.
+                    // Editing machinery produces them: WebKit nests a new
+                    // list inside the paragraph it formats, and spec
+                    // recovery splits that into an empty `<p>` each side. A
+                    // deliberate blank line is `<p><br></p>` — a Break —
+                    // and is unaffected.
+                    Some(Block::Paragraph(inlines)) if inlines.is_empty() => {
+                        flush(blocks, loose);
+                    }
                     Some(block) => {
                         flush(blocks, loose);
                         blocks.push(block);

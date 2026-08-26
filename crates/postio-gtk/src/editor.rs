@@ -435,3 +435,81 @@ impl Editor {
         }
     }
 }
+
+/// A formatting gesture, as the registry's composer commands express them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    /// Toggle bold on the selection.
+    Bold,
+    /// Toggle italic on the selection.
+    Italic,
+    /// Toggle a bulleted list at the caret's block.
+    BulletList,
+    /// Toggle a numbered list at the caret's block.
+    NumberedList,
+    /// Toggle a quote block at the caret's block.
+    QuoteBlock,
+}
+
+impl Editor {
+    /// Apply a formatting toggle to the current selection.
+    ///
+    /// Each runs the editing command whose output the dialect contract test
+    /// pins, and each fires an `input` event, so the edit crosses the bridge
+    /// like any keystroke and lands on the same history.
+    pub fn format(&self, format: Format) {
+        // WebKit dispatches `input` for some editing commands and not others
+        // (bold yes, insertUnorderedList no), so the report is dispatched
+        // here rather than trusted — a duplicate is absorbed as a no-change.
+        let command = match format {
+            Format::Bold => "document.execCommand('bold');",
+            Format::Italic => "document.execCommand('italic');",
+            Format::BulletList => "document.execCommand('insertUnorderedList');",
+            Format::NumberedList => "document.execCommand('insertOrderedList');",
+            Format::QuoteBlock => {
+                // formatBlock toggles nothing on its own; the toggle is ours.
+                "if (document.queryCommandValue('formatBlock') === 'blockquote') { \
+                     document.execCommand('formatBlock', false, 'p'); \
+                 } else { \
+                     document.execCommand('formatBlock', false, 'blockquote'); \
+                 }"
+            }
+        };
+        self.run(&format!(
+            "{command} document.dispatchEvent(new Event('input'));"
+        ));
+    }
+
+    /// Turn the selection into a link to `href` — or, with nothing selected,
+    /// insert the address as its own link text.
+    ///
+    /// The scheme gate matches the canonical subset: anything but http,
+    /// https and mailto is refused here rather than silently dropped by the
+    /// parse later, so the caller can say so.
+    pub fn create_link(&self, href: &str) -> bool {
+        let allowed = ["http://", "https://", "mailto:"]
+            .iter()
+            .any(|scheme| href.starts_with(scheme));
+        if !allowed {
+            return false;
+        }
+        let escaped = href
+            .replace('\\', "")
+            .replace('\'', "%27")
+            .replace('"', "%22");
+        self.run(&format!(
+            "(() => {{ const sel = window.getSelection(); \
+               if (sel.rangeCount === 0) return; \
+               if (sel.isCollapsed) {{ \
+                 const a = document.createElement('a'); \
+                 a.href = '{escaped}'; a.textContent = '{escaped}'; \
+                 sel.getRangeAt(0).insertNode(a); \
+                 document.dispatchEvent(new Event('input')); \
+               }} else {{ \
+                 document.execCommand('createLink', false, '{escaped}'); \
+                 document.dispatchEvent(new Event('input')); \
+               }} }})()"
+        ));
+        true
+    }
+}
