@@ -6,7 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use postio_core::{Command, CommandId, Context, MessageTarget, Recovery, registry};
+use postio_core::{Command, CommandId, Context, MessageTarget, Recovery, Scope, registry};
+use postio_model::AccountId;
 
 /// The id vocabulary `postio-config`'s `DEFAULT_BINDINGS` already fixed.
 /// `[keys]` in `config.toml` references commands by these strings, so they are
@@ -282,4 +283,65 @@ fn commands_carry_their_target() {
     };
     assert_ne!(archive, explicit);
     assert_eq!(explicit.id(), CommandId::Archive);
+}
+
+// ---------------------------------------------------------------------------
+// Availability that depends on state, not on which surface has focus
+// ---------------------------------------------------------------------------
+
+/// `Move` is the first command whose availability turns on *state* rather
+/// than [`Context`], and ADR 0005 Q4 asks for the shape to be settled here
+/// rather than special-cased at each surface (#182).
+///
+/// A destination has to be one mailbox in one account. In `Scope::Unified`
+/// there is no such thing — the view spans every enabled account — so `Move`
+/// is *unavailable*, not a no-op that silently does nothing. The registry
+/// evaluates that, so the palette, the cheat sheet and the key hints all
+/// agree without any of them knowing why.
+#[test]
+fn move_is_unavailable_in_unified_scope_and_available_in_an_account() {
+    let account = Scope::Account(AccountId::new(1));
+
+    let in_account: Vec<CommandId> = registry::reachable_in(Context::List, account)
+        .filter_map(|action| action.id.builtin())
+        .collect();
+    assert!(
+        in_account.contains(&CommandId::Move),
+        "moving into a folder is exactly what an account scope is for"
+    );
+
+    let unified: Vec<CommandId> = registry::reachable_in(Context::List, Scope::Unified)
+        .filter_map(|action| action.id.builtin())
+        .collect();
+    assert!(
+        !unified.contains(&CommandId::Move),
+        "a unified view is a view, never a destination: offering Move there \
+         promises a folder the user cannot have picked"
+    );
+
+    // Everything else the list can do is untouched. A state predicate that
+    // quietly narrowed the whole surface would be the worse bug.
+    for still_there in [
+        CommandId::Archive,
+        CommandId::Delete,
+        CommandId::Reply,
+        CommandId::Flag,
+    ] {
+        assert!(
+            unified.contains(&still_there),
+            "{still_there} does not need one account and must survive Unified"
+        );
+    }
+}
+
+/// The scope-blind form still answers for everything, because
+/// `docs/keybindings.md` documents the whole vocabulary rather than one
+/// session's state — a reader looking up `m` must find it.
+#[test]
+fn the_scope_blind_listing_still_documents_every_command() {
+    let documented: Vec<CommandId> = registry::for_context(Context::List).map(|s| s.id).collect();
+    assert!(
+        documented.contains(&CommandId::Move),
+        "the reference documents the vocabulary, not the current scope"
+    );
 }
