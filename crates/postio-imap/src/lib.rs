@@ -65,5 +65,6 @@ pub mod discovery;
 pub mod imap;
 pub mod oauth;
 pub mod secret;
+mod single_flight;
 #[cfg(feature = "test-server")]
 pub mod test_server;
