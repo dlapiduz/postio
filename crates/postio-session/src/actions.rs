@@ -48,7 +48,7 @@ use postio_storage::repository::{
     ColumnFlag, FlagSource, MailboxRepository, MessageRepository, MessageSet,
     OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
-use postio_storage::{Database, PooledConnection};
+use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
 
 /// The commands this module answers.
 ///
@@ -178,6 +178,7 @@ impl Actions {
     ///
     /// `Err` is what the user sees: the bus turns a rejection into a quiet
     /// hint and a failure into something louder.
+    ///
     pub fn run(&self, command: &Command, events: &EventSink) -> Result<(), CommandError> {
         match command {
             Command::Undo => self.undo(events),
@@ -299,7 +300,7 @@ impl Actions {
         to: Destination,
         kind: UndoKind,
     ) -> Result<Vec<Applied>, CommandError> {
-        let mut connection = self.connect()?;
+        let (mut connection, _permit) = self.connect()?;
         match self.aim(&connection, target)? {
             // One unit per account, which is what `Applied::account` has
             // always said a unified-scope action becomes. A selection made in
@@ -532,7 +533,7 @@ impl Actions {
         flag: Flag,
         want: Option<bool>,
     ) -> Result<Applied, CommandError> {
-        let mut connection = self.connect()?;
+        let (mut connection, _permit) = self.connect()?;
         match self.aim(&connection, target)? {
             Aim::Rows(rows) => self.set_flag_rows(&mut connection, rows, flag, want),
             Aim::Bulk { set, account, from } => {
@@ -846,7 +847,7 @@ impl Actions {
     /// gesture with no answer rather than a bulk one, because "the thread of
     /// everything" is not a thing — so it is asked for rather than guessed at.
     fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
-        let connection = self.connect()?;
+        let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, &MessageTarget::Selection)? {
             Aim::Rows(rows) => rows,
             Aim::Bulk { .. } => {
@@ -860,8 +861,41 @@ impl Actions {
             .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
     }
 
-    fn connect(&self) -> Result<PooledConnection, CommandError> {
-        self.database.connection().map_err(store_failure)
+    /// A connection to write a verb through, and the right to write it ahead
+    /// of bulk background work.
+    ///
+    /// # Why a verb needs a permit at all (#425)
+    ///
+    /// Every verb in this module is a write somebody is waiting for. SQLite
+    /// takes one writer at a time and settles a collision with `busy_timeout`,
+    /// which is a retry loop rather than a queue — no ordering and no
+    /// fairness. During a first sync two backfill lanes commit batches back to
+    /// back with no gap between them, so an archive keystroke woke, lost,
+    /// backed off further, and lost again: **1.8 seconds** to write one row,
+    /// with the connection pool almost idle the whole time. The permit is what
+    /// puts a person's write in front of that, by construction rather than by
+    /// hoping for a gap. See [`postio_storage::WriteGate`].
+    ///
+    /// # Why here and not around `run`
+    ///
+    /// The gate is not re-entrant, and the connection has to be taken *before*
+    /// the permit or a permit-holder can end up waiting on the pool for a
+    /// connection a permit-waiter is holding. Both rules are satisfied by
+    /// scoping the pair to one call: the two verbs that resolve a target
+    /// before acting on it (`ArchiveThread`, `Undo`) do so in sequence, never
+    /// nested, so each step takes its own permit and releases it.
+    ///
+    /// The permit covers this module's reads as well as its writes. That costs
+    /// a backfill nothing measurable — they are indexed point reads on a
+    /// human's schedule, not scans — and it keeps the pairing impossible to
+    /// get wrong.
+    fn connect(&self) -> Result<(PooledConnection, WritePermit), CommandError> {
+        let connection = self.database.connection().map_err(store_failure)?;
+        let permit = self
+            .database
+            .write_gate()
+            .acquire(WritePriority::Interactive);
+        Ok((connection, permit))
     }
 
     fn stack(&self) -> std::sync::MutexGuard<'_, UndoStack> {

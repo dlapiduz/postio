@@ -49,6 +49,6 @@ pub mod seed;
 pub mod test_support;
 
 pub use blob::{BlobStore, BlobWriter, EvictionReport};
-pub use db::{Database, Pool, PooledConnection};
+pub use db::{Database, Pool, PooledConnection, WriteGate, WritePermit, WritePriority};
 pub use error::{Error, Result};
 pub use migrations::{Migration, MigrationReport, migrate, schema_version};

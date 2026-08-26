@@ -73,6 +73,7 @@ use postio_model::{
     FullResyncReason, Mailbox, MailboxId, MailboxStatus, Message, MessageId, ResyncPlan, Uid,
     UidValidity,
 };
+use postio_storage::PooledConnection;
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
@@ -131,7 +132,7 @@ pub enum Outcome {
 /// `on_progress` is only called when a full pass runs; see
 /// [`initial::sync_mailbox`].
 pub async fn resync_mailbox(
-    connection: &Connection,
+    connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
@@ -261,7 +262,7 @@ pub async fn resync_mailbox(
 ///   notices that the server holds fewer messages than we do and reconciles —
 ///   which is a great deal cheaper than discarding rows that are still right.
 async fn rebuild(
-    connection: &Connection,
+    connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     known_generation: Option<UidValidity>,

@@ -58,6 +58,7 @@ use postio_model::{Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
+use postio_storage::{PooledConnection, WritePriority};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::drain::SyncError;
@@ -72,6 +73,30 @@ pub type Result<T> = std::result::Result<T, SyncError>;
 /// commits and is visible in well under a second; large enough that a
 /// ten-thousand-message inbox does not need ten thousand round trips.
 pub const DEFAULT_BATCH_SIZE: usize = 200;
+
+/// How many messages one background write transaction covers.
+///
+/// A *batch* is what the network is asked for; a **write unit** is what
+/// SQLite's write lock is held for. They used to be the same thing, and #425
+/// is why they are not any more.
+///
+/// The write gate ([`postio_storage::WriteGate`]) guarantees a person's write
+/// never waits for more than the background unit already in progress. That
+/// guarantee is only worth what the unit costs, so the unit has to be small:
+/// a batch of two hundred held the lock for 90–200 ms, measured, which is an
+/// archive keystroke visibly lagging its keypress. Twenty-five holds it for
+/// 8–9 ms, inside CLAUDE.md's 16 ms interaction budget with room for a slower
+/// disk.
+///
+/// Smaller still would buy nothing: the cost of subdividing is one commit per
+/// unit, measured at 0.2–0.4 ms against 8 ms of work, and that ratio gets
+/// worse as the unit shrinks while the latency it buys is already under
+/// budget. Twenty-five is where those two curves cross for this schema.
+///
+/// This does not change how much a pass fetches, how it batches its `FETCH`es,
+/// or where an interrupted pass resumes — `uids_in` counts what committed, so
+/// a finer unit resumes at a finer grain.
+const WRITE_UNIT: usize = 25;
 
 /// What one committed batch reports, so the caller can drive a progress bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +141,7 @@ pub struct Report {
 /// if its `UIDVALIDITY` just changed, after the caller has wiped its stale
 /// rows. This function does not check either.
 pub async fn sync_mailbox(
-    connection: &Connection,
+    connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
@@ -139,7 +164,7 @@ pub async fn sync_mailbox(
 /// messages rather than needing hundreds of fixtures to see more than one.
 /// `batch_size` is clamped to at least one.
 pub async fn sync_mailbox_with_batch_size(
-    connection: &Connection,
+    connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
@@ -177,7 +202,7 @@ pub(crate) enum Coverage {
 
 /// The body of an enumeration pass. See [`sync_mailbox_with_batch_size`].
 pub(crate) async fn enumerate(
-    connection: &Connection,
+    connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
@@ -284,9 +309,9 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        // One transaction for the whole batch, which is what this module's own
-        // documentation has always claimed it does — "committing and threading
-        // each batch" — and did not.
+        // One transaction per *write unit* — a slice of the batch, not the
+        // whole of it. See `WRITE_UNIT` for the second half of #425's fix, and
+        // the gate below for the first.
         //
         // Every repository call below opens a savepoint of its own and
         // releases it, and a release is a real commit when nothing encloses
@@ -298,9 +323,11 @@ pub(crate) async fn enumerate(
         // transfer it was supposedly waiting on (`postio-0d9.7`).
         //
         // Enclosing them turns those savepoints into nested ones, which cost
-        // nothing to release, and leaves exactly one commit per batch. The
-        // durability story is unchanged: a batch was already the unit an
-        // interrupted pass resumed from.
+        // nothing to release, and leaves one commit per write unit. The
+        // durability story is unchanged: an interrupted pass resumes from
+        // `uids_in`, which counts whatever actually committed, so a unit
+        // smaller than a batch resumes at a finer grain rather than a worse
+        // one.
         //
         // IMMEDIATE, not DEFERRED, and this is the load-bearing part (#79).
         // The first statement below is a SELECT, so a deferred transaction
@@ -314,38 +341,52 @@ pub(crate) async fn enumerate(
         // UI thread, which writes local-first on every flag, archive and draft
         // autosave through this same pool. Taking the write lock up front is
         // what puts this back inside the five-second timeout.
-        let batch = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-            .map_err(postio_storage::Error::from)?;
-        let connection: &Connection = &batch;
+        for slice in messages.chunks_mut(WRITE_UNIT) {
+            // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
+            // stands this aside for a keystroke's write, and standing aside
+            // after taking SQLite's lock would be standing aside too late.
+            // Re-taken per unit rather than held across the batch, so a person
+            // waits for one unit at most (#425).
+            let permit = connection.write_gate().acquire(WritePriority::Background);
 
-        let upsert = MessageRepository::new(connection).upsert_batch(&mut messages)?;
-        report.inserted += upsert.inserted;
-        report.updated += upsert.updated;
+            let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+                .map_err(postio_storage::Error::from)?;
+            let connection: &Connection = &unit;
 
-        let threading = ThreadingRepository::new(connection, mailbox.account_id);
-        for message in &messages {
-            threading.thread(message)?;
-            report.threaded += 1;
-        }
+            let mut written: Vec<Message> = slice.to_vec();
+            let upsert = MessageRepository::new(connection).upsert_batch(&mut written)?;
+            report.inserted += upsert.inserted;
+            report.updated += upsert.updated;
 
-        // Only messages that were not already known before this pass: a
-        // `Coverage::Everything` re-enumeration re-fetches messages already
-        // stored (that is its whole point, refreshing what an untrustworthy
-        // incremental pull may have missed), and recording those again would
-        // count the same correspondent twice for one message.
-        if let Some(account) = &account {
-            for message in &messages {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known.contains(&uid.get()));
-                if is_new {
-                    crate::contacts::record(connection, account, message)?;
+            let threading = ThreadingRepository::new(connection, mailbox.account_id);
+            for message in &written {
+                threading.thread(message)?;
+                report.threaded += 1;
+            }
+
+            // Only messages that were not already known before this pass: a
+            // `Coverage::Everything` re-enumeration re-fetches messages already
+            // stored (that is its whole point, refreshing what an untrustworthy
+            // incremental pull may have missed), and recording those again would
+            // count the same correspondent twice for one message.
+            if let Some(account) = &account {
+                for message in &written {
+                    let is_new = message
+                        .server
+                        .uid
+                        .is_some_and(|uid| !known.contains(&uid.get()));
+                    if is_new {
+                        crate::contacts::record(connection, account, message)?;
+                    }
                 }
             }
-        }
 
-        batch.commit().map_err(postio_storage::Error::from)?;
+            unit.commit().map_err(postio_storage::Error::from)?;
+            // The ids `upsert_batch` assigned belong to the caller's messages,
+            // not to this unit's copy of them.
+            slice.clone_from_slice(&written);
+            drop(permit);
+        }
 
         // Where a first sync's wall clock actually goes, per batch: waiting on
         // the server, or writing to SQLite. `postio-0d9.7` asks for several
