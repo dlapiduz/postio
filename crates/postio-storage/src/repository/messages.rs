@@ -402,6 +402,57 @@ pub struct BackfillCandidate {
     pub received_at: DateTime<Utc>,
 }
 
+/// What an account's mail costs, and how much of it is here.
+///
+/// # Known before anything is downloaded
+///
+/// `BODYSTRUCTURE` arrives with the header sync, so `messages.size` and
+/// `attachments.size` are populated for mail nobody has fetched a byte of.
+/// That is what lets Postio say *"1.4 GB of mail, 11 GB of attachments"*
+/// before spending either — the one place in this design where the honest
+/// number is also the free one (ADR 0017).
+///
+/// Bytes are as the server reported them: wire sizes, still base64-inflated
+/// for anything encoded. That is the right unit for "what will this download
+/// cost", which is the question being asked. It is *not* the size on disk —
+/// blobs are compressed — and [`BlobStore::len_of`](crate::BlobStore::len_of)
+/// is what answers that one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StorageFootprint {
+    /// Messages the account has locally, headers or more.
+    pub messages: u64,
+    /// Every byte of every message, as `RFC822.SIZE` reported it.
+    pub total_bytes: u64,
+    /// Of that, what attachment payloads account for.
+    ///
+    /// Around 90% on a real account, and the reason the two axes exist.
+    pub attachment_bytes: u64,
+    /// What is already downloaded, on the same wire-size scale.
+    pub local_bytes: u64,
+    /// Whether every selectable mailbox has finished a header pass.
+    ///
+    /// `false` means these numbers are a **lower bound** and will grow. A
+    /// surface must say so — a total that silently climbs every few seconds
+    /// reads as a bug, and a total that is wrong is worse than one that admits
+    /// it is not finished yet.
+    pub complete: bool,
+}
+
+impl StorageFootprint {
+    /// What the text axis has to pull: everything that is not payload.
+    pub fn text_bytes(&self) -> u64 {
+        self.total_bytes.saturating_sub(self.attachment_bytes)
+    }
+
+    /// Whether there is no mail to describe.
+    ///
+    /// The empty state, which owes an answer of its own rather than "0 B of
+    /// 0 B" — a claim that reads like a bug.
+    pub fn is_empty(&self) -> bool {
+        self.messages == 0
+    }
+}
+
 /// Reads and writes [`Message`] rows.
 #[derive(Debug)]
 pub struct MessageRepository<'a> {
@@ -1134,6 +1185,75 @@ impl<'a> MessageRepository<'a> {
             read_backfill_candidate(row, mailbox_id)
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// One message's backfill candidate, if it still needs (part of) its body.
+    ///
+    /// For the interactive lane: the reading pane knows only which message was
+    /// opened, not which mailbox it lives in or what the server calls it, so
+    /// this looks both up rather than asking the caller to already know them.
+    /// `None` covers both "already has a full body" and "not there any more" —
+    /// either way there is nothing to fetch.
+    /// What `account_id`'s mail costs and how much of it is local.
+    ///
+    /// See [`StorageFootprint`] for what the numbers mean and why they are
+    /// available before anything is downloaded.
+    ///
+    /// Three aggregates rather than one query: they are over different tables
+    /// with different filters, and SQLite plans each against an index it
+    /// already has. This runs when a status line redraws, not per row.
+    pub fn footprint(&self, account_id: AccountId) -> Result<StorageFootprint> {
+        let (messages, total_bytes) = self.connection.query_row(
+            "SELECT count(*), coalesce(sum(size), 0) FROM messages
+              WHERE account_id = ?1 AND deleted_locally = 0",
+            [account_id.get()],
+            |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
+        )?;
+
+        let attachment_bytes: u64 = self.connection.query_row(
+            "SELECT coalesce(sum(a.size), 0) FROM attachments a
+               JOIN messages m ON m.id = a.message_id
+              WHERE m.account_id = ?1 AND m.deleted_locally = 0",
+            [account_id.get()],
+            |row| Ok(row.get::<_, i64>(0)? as u64),
+        )?;
+
+        // What is local: a message's whole size once every part is here, and
+        // only its text while its payloads are still on the server. `partial`
+        // is the ordinary steady state under ADR 0017, not an edge case.
+        let local_bytes: u64 = self.connection.query_row(
+            "SELECT coalesce(sum(
+                        CASE m.body_state
+                          WHEN 'full' THEN m.size
+                          WHEN 'partial' THEN m.size - coalesce(
+                              (SELECT sum(a.size) FROM attachments a
+                                WHERE a.message_id = m.id AND a.blob_id IS NULL), 0)
+                          ELSE 0
+                        END), 0)
+               FROM messages m
+              WHERE m.account_id = ?1 AND m.deleted_locally = 0",
+            [account_id.get()],
+            |row| Ok(row.get::<_, i64>(0)? as u64),
+        )?;
+
+        // Complete when no selectable mailbox is still waiting for its first
+        // full header pass. Anything less and the totals above are a floor.
+        let outstanding: i64 = self.connection.query_row(
+            "SELECT count(*) FROM mailboxes mb
+               LEFT JOIN sync_state s ON s.mailbox_id = mb.id
+              WHERE mb.account_id = ?1 AND mb.selectable = 1
+                AND (s.last_full_sync_at IS NULL)",
+            [account_id.get()],
+            |row| row.get(0),
+        )?;
+
+        Ok(StorageFootprint {
+            messages,
+            total_bytes,
+            attachment_bytes,
+            local_bytes,
+            complete: outstanding == 0,
+        })
     }
 
     /// One message's backfill candidate, if it still needs (part of) its body.
