@@ -44,7 +44,8 @@ use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_model::MailboxRole;
 use postio_model::ids::MailboxId;
 use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
-use postio_storage::seed::seed_large;
+use postio_storage::repository::{ThreadListQuery, ThreadRepository};
+use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
 /// A folder big enough that loading it would be the bug.
@@ -167,5 +168,91 @@ fn bench_where_the_time_goes(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_message_page, bench_where_the_time_goes);
+/// How many messages a seeded conversation holds.
+///
+/// Four is a real conversation rather than a degenerate one: a thread of one
+/// would make the thread list a message list wearing a hat, and the scoped
+/// subqueries this measures would each touch a single row.
+const PER_THREAD: usize = 4;
+
+/// What a page of the *threaded* list costs (ADR 0015, #306).
+///
+/// The same two claims as the message page, against the same budget, because
+/// a folder that threads is the ordinary folder now — a page of threads is
+/// what scrolling the Inbox asks for.
+///
+/// The shape being measured is the one the ADR chose over view-side
+/// collapse: a window over `threads` on `idx_threads_account_last_at`, with
+/// the folder's contribution as correlated subqueries **per row of the
+/// page**. If those had turned into work proportional to the folder, 100k
+/// would separate from 1k here.
+fn bench_thread_page(c: &mut Criterion) {
+    let seeded_threads = |messages: usize| {
+        let database = test_support::temp();
+        let report = seed_large(&database, 7, messages);
+        let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+        thread_seeded_messages(&database, report.account.id, PER_THREAD);
+        (database, report.account.id, inbox)
+    };
+
+    let (small, small_account, small_inbox) = seeded_threads(SMALL);
+    let (huge, huge_account, huge_inbox) = seeded_threads(HUGE);
+
+    let read = |database: &test_support::TempDatabase, query: &ThreadListQuery| {
+        let connection = database.connection().expect("a connection");
+        black_box(
+            ThreadRepository::new(&connection)
+                .page(query)
+                .expect("a page of threads"),
+        );
+    };
+
+    let small_query = ThreadListQuery::in_mailbox(small_account, small_inbox).limit(PAGE);
+    let huge_query = ThreadListQuery::in_mailbox(huge_account, huge_inbox).limit(PAGE);
+
+    c.bench_function("thread page, 1k mailbox", |b| {
+        b.iter(|| read(&small, &small_query))
+    });
+    c.bench_function("thread page, 100k mailbox", |b| {
+        b.iter(|| read(&huge, &huge_query))
+    });
+
+    // Ten pages in, by cursor — which is how the list actually scrolls, and
+    // the case that has to stay flat.
+    let deep = {
+        let connection = huge.connection().expect("a connection");
+        let threads = ThreadRepository::new(&connection);
+        let mut query = huge_query.clone();
+        for _ in 0..10 {
+            let page = threads.page(&query).expect("a page of threads");
+            let Some(last) = page.last() else { break };
+            query = huge_query.clone().after(last.cursor());
+        }
+        query
+    };
+    c.bench_function("thread page, 100k mailbox, ten pages down", |b| {
+        b.iter(|| read(&huge, &deep))
+    });
+
+    // Criterion reports; this fails. Same reasoning as the message page.
+    for (what, query) in [
+        ("the first page", &huge_query),
+        ("a page scrolled to", &deep),
+    ] {
+        read(&huge, query);
+        let start = Instant::now();
+        read(&huge, query);
+        let measured = start.elapsed();
+        if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
+            panic!("{what} of threads over a {HUGE}-message mailbox is over budget: {exceeded:?}");
+        }
+    }
+}
+
+criterion_group!(
+    benches,
+    bench_message_page,
+    bench_thread_page,
+    bench_where_the_time_goes
+);
 criterion_main!(benches);
