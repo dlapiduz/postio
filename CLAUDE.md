@@ -196,9 +196,19 @@ for a stranger who can't ask follow-ups:
 |---|---|
 | Why the fix is shaped this way | the commit body |
 | What you discovered on the way | a comment on the issue |
-| Work this revealed | a new issue (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
+| Work this revealed | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
 | A constraint future sessions must respect | `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
+
+**File through the script, because you will not think to search.** One bug
+collected three issue numbers in two days (#332, #392, #406), both duplicates
+filed by sessions that had just watched it happen. That is exactly when
+searching feels redundant — you are not wondering whether the bug exists, you
+saw it — so `issue-file.sh` searches for you and stops if it finds anything,
+open or closed. When it does, **comment on what is there instead**: a new
+occurrence on an existing issue is worth more than a second issue, because it
+is evidence the bug survived a fix or has come back. `--anyway` files if yours
+is genuinely different, and `--search-only` just looks.
 
 ## CI is paused
 
