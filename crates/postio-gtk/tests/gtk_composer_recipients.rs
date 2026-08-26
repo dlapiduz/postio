@@ -5,6 +5,12 @@
 //! Its own file: GTK is single-threaded and initialised once, so one
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 //!
+//! Every prefix here is four characters or more: below
+//! `MIN_COMPLETION_PREFIX` nothing is offered and the provider is not even
+//! consulted (#424), so a shorter prefix would prove nothing about matching.
+//! The threshold itself, and taking a suggestion by click or by Return, are
+//! covered in `gtk_suite/gtk_composer_recipient_select.rs`.
+//!
 //! `current_entry`'s own splitting rules are unit-tested in
 //! `postio-model`'s `address.rs` with no display; what needs one here is
 //! that typing actually shows the popover, that a real key event is not
@@ -56,13 +62,13 @@ fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
     settle();
 
     // ── Nothing connected: typing shows nothing ──────────────────────────
-    composer.test_set_to("gr");
+    composer.test_set_to("grac");
     settle();
     assert!(!composer.test_recipient_popover_visible());
 
     // ── Connected, but no candidates for this prefix: still nothing ──────
     composer.connect_recipient_suggestions(|prefix| {
-        if prefix == "gr" {
+        if prefix == "grac" {
             vec![
                 EmailAddress::new(Some("Grace Hopper"), "grace@example.com"),
                 EmailAddress::new(Some("Graham Bell"), "graham@example.net"),
@@ -71,16 +77,16 @@ fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
             Vec::new()
         }
     });
-    composer.test_set_to("zz");
+    composer.test_set_to("zzzz");
     settle();
     assert!(!composer.test_recipient_popover_visible());
 
     // ── A prefix with candidates shows the popover ───────────────────────
-    composer.test_set_to("gr");
+    composer.test_set_to("grac");
     settle();
     assert!(
         composer.test_recipient_popover_visible(),
-        "gr should offer Grace and Graham"
+        "grac should offer Grace and Graham"
     );
 
     // ── Accepting replaces only the token being typed ────────────────────
@@ -100,7 +106,7 @@ fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
     // field (a full round trip of the first address, not just its raw
     // text), so typing a second prefix after it must not disturb the first.
     let existing = postio_model::address::format_list(&composer.draft().to);
-    composer.test_set_to(&format!("{existing}, gr"));
+    composer.test_set_to(&format!("{existing}, grac"));
     settle();
     assert!(
         composer.test_recipient_popover_visible(),
@@ -110,7 +116,7 @@ fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
         composer.draft().to,
         vec![
             EmailAddress::new(Some("Grace Hopper"), "grace@example.com"),
-            EmailAddress::new(None::<String>, "gr"),
+            EmailAddress::new(None::<String>, "grac"),
         ],
         "the first address survived typing the start of a second"
     );

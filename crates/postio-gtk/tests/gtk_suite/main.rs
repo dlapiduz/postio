@@ -36,6 +36,7 @@ mod feed_results;
 mod gtk_composer_autosave;
 mod gtk_composer_document;
 mod gtk_composer_focus;
+mod gtk_composer_recipient_select;
 mod gtk_display_required;
 mod gtk_feeds;
 mod gtk_finder;
@@ -91,6 +92,19 @@ const CASES: &[(&str, fn())] = &[
         "gtk_composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped",
         gtk_composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped
             as fn(),
+    ),
+    (
+        "gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
+        gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field as fn(),
+    ),
+    (
+        "gtk_composer_recipient_select::return_commits_the_suggestion_the_popover_has_selected",
+        gtk_composer_recipient_select::return_commits_the_suggestion_the_popover_has_selected
+            as fn(),
+    ),
+    (
+        "gtk_composer_recipient_select::nothing_is_offered_until_four_characters_are_typed",
+        gtk_composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
