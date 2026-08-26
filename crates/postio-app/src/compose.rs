@@ -41,9 +41,10 @@ use gtk::prelude::*;
 use postio_gtk::composer::{Closing, Composer};
 use postio_gtk::window::Window;
 use postio_model::ids::{AccountId, MessageId};
+use postio_model::signature_default;
 use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress, MessageBody};
 use postio_storage::repository::{
-    AccountRepository, ContactRepository, DraftRepository, MessageRepository,
+    AccountRepository, ContactRepository, DraftRepository, MailboxRepository, MessageRepository,
 };
 use postio_storage::{BlobStore, Database};
 
@@ -70,6 +71,7 @@ pub fn install(
     let composer = window.composer();
     composer.set_account(account);
     install_identities(&composer, &database, account);
+    install_signature_default(&composer, window, database.clone(), account);
 
     let last_id = install_autosave(&composer, database.clone(), account);
     install_send(&composer, database.clone(), Rc::clone(&last_id));
@@ -161,6 +163,39 @@ fn install_identities(composer: &Composer, database: &Database, account: Account
         Ok(None) => tracing::warn!("the composer's account is not in the database"),
         Err(error) => tracing::warn!(%error, "could not read the account's identities"),
     }
+}
+
+/// Puts a resolved default in front of a brand-new draft, before the
+/// identity's own (#12's last item, #394): a mailbox's own signature
+/// overrides the account's default, which overrides the identity's.
+///
+/// Read fresh on every compose rather than once at startup like
+/// [`install_identities`] — the sidebar selection this depends on changes on
+/// every click, where the account's identities and named signatures change
+/// only through the settings panel.
+fn install_signature_default(
+    composer: &Composer,
+    window: &Window,
+    database: Database,
+    account: AccountId,
+) {
+    let sidebar = window.sidebar();
+    composer.connect_signature_default(move || {
+        let connection = database
+            .connection()
+            .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
+            .ok()?;
+        let account_default = AccountRepository::new(&connection)
+            .get(account)
+            .ok()
+            .flatten()?
+            .default_signature_id;
+        let mailbox_signature = sidebar
+            .selected()
+            .and_then(|id| MailboxRepository::new(&connection).get(id).ok().flatten())
+            .and_then(|mailbox| mailbox.signature_id);
+        signature_default::resolve(mailbox_signature, account_default)
+    });
 }
 
 /// Activating a draft's row in the Drafts folder opens it in the composer.
