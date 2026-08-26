@@ -464,6 +464,7 @@ fn surfaces() -> Vec<Surface> {
                         content_id: None,
                         disposition: postio_model::attachment::Disposition::Attachment,
                         part_id: Some("2".into()),
+                        part_headers: None,
                         blob_id: None,
                     }],
                 )

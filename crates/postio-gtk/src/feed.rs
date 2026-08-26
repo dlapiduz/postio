@@ -1004,6 +1004,9 @@ mod tests {
                 account: AccountId::new(1),
                 done: 412,
                 total: 2000,
+                // Nothing measured yet: these predate the field, and they are
+                // about the counter, not the size.
+                footprint: None,
             }),
             "the status changed and the tracker said it had not"
         );
@@ -1015,6 +1018,9 @@ mod tests {
             account: AccountId::new(1),
             done: 2000,
             total: 2000,
+            // Nothing measured yet: these predate the field, and they are
+            // about the counter, not the size.
+            footprint: None,
         });
         assert_eq!(
             tracker.status().backfill,
@@ -1040,6 +1046,9 @@ mod tests {
             account: account(),
             done: 412,
             total: 2000,
+            // Nothing measured yet: these predate the field, and they are
+            // about the counter, not the size.
+            footprint: None,
         });
         assert_eq!(
             tracker.status().lines(Instant::now()).0,
@@ -1078,6 +1087,9 @@ mod tests {
             account: AccountId::new(1),
             done: 2000,
             total: 2000,
+            // Nothing measured yet: these predate the field, and they are
+            // about the counter, not the size.
+            footprint: None,
         });
         assert_eq!(
             tracker.status().last_sync,
