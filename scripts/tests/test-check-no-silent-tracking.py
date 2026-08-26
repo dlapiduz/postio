@@ -112,6 +112,21 @@ def main() -> int:
         expect_text="One-Click",
     )
 
+    case(
+        "launching the system browser fails without recorded consent",
+        'Command::new("xdg-open").arg(url).spawn()\n',
+        should_fail=True,
+        expect_text="OAuth consent",
+    )
+
+    case(
+        "a browser launch with recorded consent passes",
+        "// POSTIO-CONSENT: only from the account's own \"Sign in\" action,\n"
+        "// one attempt per click, never on render.\n"
+        'Command::new("xdg-open").arg(url).spawn()\n',
+        should_fail=False,
+    )
+
     # Header names are case-insensitive and so is a patch author.
     case(
         "a lower-case spelling does not slip past",

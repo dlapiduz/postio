@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Refuse email's own tracking mechanisms unless consent is written down.
+"""Refuse a proactive connection or email's own tracking unless consent is
+written down.
 
 Postio's promise is one sentence: *nothing leaves this machine that the user
 did not ask for.* Blocking remote images is the visible half and the easy
-half. Email carries two other mechanisms that report a real human read the
-message, and both are trivial to add by accident because both look like
-ordinary features:
+half. Two other things are trivial to add by accident because both look like
+ordinary features, and both open a connection or send something the user did
+not necessarily mean to:
 
   * **Read receipts (MDN).** ``Disposition-Notification-To`` and
     ``Return-Receipt-To`` ask the client to send a message back on open. A
@@ -14,11 +15,19 @@ ordinary features:
   * **List-Unsubscribe One-Click.** ``List-Unsubscribe-Post`` invites a POST.
     Sending it confirms to a spammer that the address is real. Legitimate
     senders honour it; the ones worth unsubscribing from harvest it.
+  * **Opening the system browser.** ADR 0006 Q3's OAuth flow (``xdg-open``,
+    ``oauth::browser``) reaches outside the application entirely — a real
+    connection, just not one Postio's own sockets make. The same "was this
+    asked for, per attempt" question applies.
 
-Neither exists in Postio today, which is the whole reason this check does. A
-guard that fires when nothing is wrong is easy; what is hard is noticing the
-day a plausible patch adds ``Disposition-Notification-To`` handling with a
-setting that defaults to on. `postio-qhz.2` asked for exactly that guard.
+None of these existed in Postio when this check was written, which is the
+whole reason it does. A guard that fires when nothing is wrong is easy; what
+is hard is noticing the day a plausible patch adds
+``Disposition-Notification-To`` handling with a setting that defaults to on,
+or a browser launch reachable from somewhere other than one deliberate
+click. `postio-qhz.2` asked for exactly that guard, and ADR 0006 Q3 asked for
+it to keep growing: "so that 'Postio opened a connection' stays an
+enumerable list."
 
 # The rule
 
@@ -46,14 +55,19 @@ from pathlib import Path
 
 # --- The mechanisms ---------------------------------------------------------
 #
-# Spelled as they appear in a header name, which is how they appear in code
-# that acts on them. Matching is case-insensitive: header names are, and a
-# patch writing `disposition-notification-to` should not slip past.
+# Spelled as they appear in code: a header name for the email mechanisms
+# (matching is case-insensitive, since header names are, and a patch writing
+# `disposition-notification-to` should not slip past). The browser-launch
+# entry matches the actual spawn call rather than the bare program name --
+# `postio-gtk`'s attachment-parts panel already prints "xdg-open" as a
+# keybinding hint (a label, not an invocation), and a bare-name match would
+# demand consent prose next to a string that opens nothing.
 
 TRACKING: dict[str, str] = {
     "disposition-notification-to": "read receipt (MDN)",
     "return-receipt-to": "read receipt (legacy Return-Receipt-To)",
     "list-unsubscribe-post": "List-Unsubscribe One-Click",
+    'command::new("xdg-open")': "opens the user's system browser (OAuth consent, ADR 0006)",
 }
 
 # The marker that says a human decided how the user asks for this.
@@ -145,8 +159,10 @@ def main() -> int:
         print(f"  {problem}", file=sys.stderr)
     print(
         f"\n{len(problems)} occurrence(s).\n\n"
-        "These are email's own tracking mechanisms. Sending one tells the\n"
-        "sender that a real person read the message, and Postio's promise is\n"
+        "Each of these opens a connection or sends something without the\n"
+        "code saying how the user asked for it first — an email tracking\n"
+        "mechanism telling a sender the message was read, or a proactive\n"
+        "connection like launching the system browser. Postio's promise is\n"
         "that nothing leaves the machine the user did not ask for.\n\n"
         "If you are adding one deliberately, say how the user asks for it, in\n"
         "the file, on a line like:\n\n"
