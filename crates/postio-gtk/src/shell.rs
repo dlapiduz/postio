@@ -99,12 +99,21 @@ mod imp {
                 pane.add_css_class(class);
                 pane
             };
+            let reader = pane("postio-reader");
+            // The reader is the inner `Paned`'s *end* child, which `build`
+            // already tells to grow (`set_resize_end_child(true)`) -- but
+            // that only grows this box's own allocation. Nothing told the
+            // box itself to fill that allocation rather than sit at its
+            // natural width, so maximizing the window left it cropped
+            // (#428). `sidebar` and `list` sit against the fixed *start*
+            // side and must not do this.
+            reader.set_hexpand(true);
             Shell {
                 outer: gtk::Paned::new(gtk::Orientation::Horizontal),
                 inner: gtk::Paned::new(gtk::Orientation::Horizontal),
                 sidebar: pane("postio-sidebar"),
                 list: pane("postio-list"),
-                reader: pane("postio-reader"),
+                reader,
                 mode: Cell::new(Mode::default()),
                 sidebar_visible: Cell::new(true),
                 focused: Cell::new(Pane::default()),
