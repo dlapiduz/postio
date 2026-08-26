@@ -413,6 +413,21 @@ impl BlobStore {
         Ok(report)
     }
 
+    /// Deletes every stored blob the database no longer references.
+    ///
+    /// The reference set is read from the columns that hold a blob key:
+    /// `messages.raw_blob_id`, `body_text_blob_id`, `body_html_blob_id`,
+    /// `headers_blob_id` and `attachments.blob_id`. A blob younger than
+    /// `options.min_age` is left alone even if unreferenced — see the
+    /// [module docs](self).
+    ///
+    /// Files under the root that are not named like a digest are ignored
+    /// rather than deleted: this directory belongs to the user, and a sweep
+    /// that removes things it does not understand is a sweep nobody should run.
+    ///
+    /// Distinct from [`evict_to_fit`](Self::evict_to_fit): this removes blobs
+    /// nothing points at any more, and is always safe. Eviction removes blobs
+    /// something *does* point at, on purpose, and pays for it with a refetch.
     pub fn collect_garbage(
         &self,
         connection: &Connection,
