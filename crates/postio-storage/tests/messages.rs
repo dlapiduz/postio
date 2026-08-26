@@ -146,7 +146,10 @@ fn a_message_s_list_id_round_trips() {
     let id = messages.create(&mut message).expect("create");
 
     let stored = messages.get(id).expect("get").expect("the message");
-    assert_eq!(stored.list_id.as_deref(), Some("harbour-dev.lists.example.org"));
+    assert_eq!(
+        stored.list_id.as_deref(),
+        Some("harbour-dev.lists.example.org")
+    );
 }
 
 #[test]

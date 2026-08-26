@@ -779,7 +779,11 @@ fn list_id_from_text_keeps_the_bracketed_part_and_trims_the_rest() {
         Some("bare.example.org".to_string()),
         "and some senders send no brackets at all"
     );
-    assert_eq!(mime::list_id_from_text("   "), None, "whitespace is nothing");
+    assert_eq!(
+        mime::list_id_from_text("   "),
+        None,
+        "whitespace is nothing"
+    );
     assert_eq!(mime::list_id_from_text(""), None);
 }
 
