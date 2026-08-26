@@ -237,6 +237,18 @@ pub enum Event {
         done: u32,
         /// Messages that have entered the queue at all.
         total: u32,
+        /// What this account's mail weighs, as the server reported it, and how
+        /// much is already here.
+        ///
+        /// Free to know: `BODYSTRUCTURE` arrives with the header sync, so this
+        /// is available before a byte of body is fetched (ADR 0017). It is
+        /// what lets a surface say *"890 MB of 1.4 GB"* rather than only
+        /// counting messages, and what makes an attachment-policy setting
+        /// mean something — "always download attachments" is an abstraction,
+        /// "always download attachments: 11.0 GB" is a decision.
+        ///
+        /// `None` while nothing has been measured yet.
+        footprint: Option<MailFootprint>,
     },
 
     // -- Feedback --------------------------------------------------------
@@ -305,6 +317,32 @@ pub enum Event {
         /// The sections that moved.
         changed: crate::config::ConfigChange,
     },
+}
+
+/// What an account's mail costs, for a surface that has to say so.
+///
+/// Wire sizes as the server reported them — the answer to "what will this
+/// download cost", which is the question a person asks. Not the size on disk:
+/// blobs are compressed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailFootprint {
+    /// Every byte of every message the account knows about.
+    pub total_bytes: u64,
+    /// Of that, what attachment payloads account for.
+    ///
+    /// Around 90% on a real account (ADR 0017), which is why the two backfill
+    /// axes are governed separately and why this number is worth showing next
+    /// to the setting that decides whether they are fetched.
+    pub attachment_bytes: u64,
+    /// What is already downloaded.
+    pub local_bytes: u64,
+    /// Whether every selectable mailbox has finished a header pass.
+    ///
+    /// **`false` means every number here is a lower bound**, and a surface
+    /// must say so — "over 1.4 GB", not "1.4 GB". A total that silently climbs
+    /// every few seconds reads as a bug, and one that is simply wrong is worse
+    /// than one that admits it is still counting.
+    pub complete: bool,
 }
 
 #[cfg(test)]
