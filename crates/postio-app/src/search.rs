@@ -145,7 +145,8 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
             let scope = view.scope();
             let hits = ask(&database, &runtime, {
                 let query = query.clone();
-                move |connection| run(connection, account, &query, scope)
+                let blobs = blobs.clone();
+                move |connection| run(connection, &blobs, account, &query, scope)
             });
 
             glib::spawn_future_local({
@@ -202,14 +203,24 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
     });
 }
 
-/// One search against the index.
+/// How many hits get an excerpt cut for them.
+///
+/// Several screens' worth, and short of [`HIT_LIMIT`] on purpose. Each one
+/// costs a blob read, and a person who scrolls past fifty results without
+/// refining the query is doing something a snippet was not going to help
+/// with. Past this the row falls back to the message's own preview, which it
+/// already has.
+const SNIPPET_HITS: usize = 50;
+
+/// One search against the index, with an excerpt cut for each hit.
 fn run(
     connection: &PooledConnection,
+    blobs: &BlobStore,
     account: AccountId,
     query: &ParsedQuery,
     scope: Scope,
 ) -> Option<SearchResults> {
-    search(
+    let mut results = search(
         connection,
         &SearchRequest {
             account_id: account,
@@ -220,7 +231,50 @@ fn run(
         chrono::Utc::now(),
     )
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
-    .ok()
+    .ok()?;
+    snippet_hits(connection, blobs, query, &mut results);
+    Some(results)
+}
+
+/// Cuts each hit's excerpt out of its own body text.
+///
+/// # Why this is here and not in the executor
+///
+/// The boundary #408 settled. `snippet()` was an FTS5 function over indexed
+/// content and the body index has none — `message_bodies_fts` is
+/// `content = ''`, which is the point of it (#407). Reconstructing an
+/// excerpt needs the body, the body is in the blob store, and `postio-index`
+/// is a rusqlite-only leaf that `check-crate-boundaries.py` keeps that way.
+/// So the excerpt is cut where both halves are already in hand: here, in the
+/// composition root, which is holding a connection and a blob store anyway.
+///
+/// # Why it agrees with what matched
+///
+/// `postio_index::index::indexable_text` is the function the *indexer* uses
+/// to decide what a message's searchable text is — `text/plain` when there is
+/// one, the HTML rendered to text otherwise. Calling the same function means
+/// the string highlighted is the string that was indexed, rather than a
+/// second guess at it, and `postio_search::highlight`'s token rule is FTS5's
+/// own. A message with no local body gets no excerpt rather than a wrong one.
+fn snippet_hits(
+    connection: &PooledConnection,
+    blobs: &BlobStore,
+    query: &ParsedQuery,
+    results: &mut SearchResults,
+) {
+    let terms = postio_search::highlight::terms(query);
+    if terms.is_empty() {
+        // A structured-only query — `is:unread`, `in:archive` — has nothing to
+        // point at, and every hit's snippet stays empty exactly as it did
+        // when SQLite was cutting them.
+        return;
+    }
+    for hit in results.hits.iter_mut().take(SNIPPET_HITS) {
+        let body = crate::compose::load_body(connection, blobs, hit.message_id);
+        if let Some(text) = postio_index::index::indexable_text(&body) {
+            hit.snippet = postio_search::highlight::snippet(&text, &terms);
+        }
+    }
 }
 
 /// The second round trip: what the columns say about this result set.
@@ -536,3 +590,155 @@ fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
 /// draws only its own first rows, so this exists to stop a pathological store
 /// rather than to page a normal one.
 const CONTACT_LIMIT: u32 = 50_000;
+
+#[cfg(test)]
+mod tests {
+    //! Cutting a result's excerpt, which SQLite no longer does for us (#408).
+    //!
+    //! Nothing here needs a display: `run` takes a connection and a blob
+    //! store and hands back results, which is the whole of the seam.
+
+    use super::*;
+    use postio_search::facets::Scope;
+    use postio_storage::repository::MessageRepository;
+    use postio_storage::test_support;
+
+    /// A store with one message whose body is on disk, indexed the way the
+    /// backfill indexes it.
+    fn a_message_with_a_body(
+        body: &str,
+    ) -> (
+        postio_storage::test_support::TempDatabase,
+        BlobStore,
+        AccountId,
+    ) {
+        let database = test_support::temp();
+        let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+        let connection = database.connection().expect("checkout");
+        postio_index::index::ensure_schema(&connection).expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+        let mut message = postio_model::Message::new(account.id, mailbox, chrono::Utc::now());
+        message.subject = Some("Weekly notes".to_owned());
+        message.sync.body_state = postio_model::BodyState::Full;
+        let messages = MessageRepository::new(&connection);
+        messages.create(&mut message).expect("create");
+
+        let text = blobs.put(body.as_bytes()).expect("store the body");
+        messages
+            .set_body_blobs(
+                message.id,
+                &postio_storage::repository::BodyBlobs {
+                    text: Some(text),
+                    html: None,
+                    headers: None,
+                },
+                postio_model::BodyState::Full,
+            )
+            .expect("record it");
+        postio_index::index::index_body(&connection, message.id.get(), Some(body))
+            .expect("index it");
+        drop(connection);
+        (database, blobs, account.id)
+    }
+
+    fn search_for(
+        database: &postio_storage::test_support::TempDatabase,
+        blobs: &BlobStore,
+        account: AccountId,
+        text: &str,
+    ) -> SearchResults {
+        let connection = database.connection().expect("checkout");
+        let query = postio_search::parse(text, chrono::Utc::now().date_naive());
+        run(&connection, blobs, account, &query, Scope::AllMail).expect("a search")
+    }
+
+    #[test]
+    fn a_hit_gets_an_excerpt_cut_from_the_body_it_matched_in() {
+        let body = "Dear Ada,\n\nThe difference engine's seventh column is \
+                    finished and the drawings are with the printer.\n";
+        let (database, blobs, account) = a_message_with_a_body(body);
+
+        let results = search_for(&database, &blobs, account, "printer");
+
+        assert_eq!(results.hits.len(), 1);
+        let marked = postio_search::highlight::from_snippet(&results.hits[0].snippet);
+        assert_eq!(
+            marked
+                .matches
+                .iter()
+                .map(|range| &marked.text[range.clone()])
+                .collect::<Vec<_>>(),
+            vec!["printer"],
+            "snippet: {:?}",
+            results.hits[0].snippet
+        );
+    }
+
+    #[test]
+    fn what_is_marked_is_a_word_the_query_actually_matched() {
+        // The criterion ADR 0017 named as the thing that would falsify the
+        // contentless decision: a highlight regenerated from the blob that
+        // points at different words than FTS5 scored is worse than none.
+        //
+        // `maildir` contains `mail`, and a highlighter that searched for
+        // substrings would paint it — for a query that did not match this
+        // message on that word at all, because FTS5 tokenizes `maildir` as
+        // one token.
+        let (database, blobs, account) = a_message_with_a_body("the maildir is rebuilt nightly");
+
+        assert!(
+            search_for(&database, &blobs, account, "mail")
+                .hits
+                .is_empty(),
+            "the query does not match, so there is nothing to highlight"
+        );
+
+        let results = search_for(&database, &blobs, account, "maildir");
+        let marked = postio_search::highlight::from_snippet(&results.hits[0].snippet);
+        assert_eq!(
+            marked
+                .matches
+                .iter()
+                .map(|range| &marked.text[range.clone()])
+                .collect::<Vec<_>>(),
+            vec!["maildir"]
+        );
+    }
+
+    #[test]
+    fn a_query_with_nothing_to_point_at_leaves_the_snippet_alone() {
+        // A structured-only query — `is:unread`, `in:archive` — has no term
+        // to mark, and every hit's snippet stays empty exactly as it did when
+        // SQLite was cutting them.
+        let (database, blobs, account) = a_message_with_a_body("anything at all");
+
+        let results = search_for(&database, &blobs, account, "is:unread");
+
+        assert_eq!(results.hits.len(), 1);
+        assert!(results.hits[0].snippet.is_empty());
+    }
+
+    #[test]
+    fn a_hit_whose_body_is_not_on_this_machine_gets_no_excerpt_rather_than_a_wrong_one() {
+        // The message matched on its subject; its body is still on the
+        // server. An excerpt cut from nothing would be an empty line that
+        // looks like a body with no match in it.
+        let database = test_support::temp();
+        let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+        let connection = database.connection().expect("checkout");
+        postio_index::index::ensure_schema(&connection).expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection);
+        let mut message = postio_model::Message::new(account.id, mailbox, chrono::Utc::now());
+        message.subject = Some("The printer is fixed".to_owned());
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .expect("create");
+        drop(connection);
+
+        let results = search_for(&database, &blobs, account.id, "printer");
+
+        assert_eq!(results.hits.len(), 1, "the subject still matched");
+        assert!(results.hits[0].snippet.is_empty());
+    }
+}
