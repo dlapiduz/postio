@@ -53,7 +53,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_core::{ActionId, Context, Keymap};
+use postio_core::{ActionId, Context, Keymap, Scope};
 use postio_model::Contact;
 use postio_model::ids::MailboxId;
 use postio_model::mailbox::Mailbox;
@@ -381,6 +381,11 @@ mod imp {
         pub(super) keymap: RefCell<Keymap>,
         /// The workspace's context, for filtering which commands apply.
         pub(super) context: RefCell<Context>,
+        /// What the mail on screen belongs to. Beside `context` because it
+        /// answers the same question from the other side: `context` is which
+        /// surface has focus, this is what that surface is showing, and a
+        /// command can need either (#182).
+        pub(super) scope: RefCell<Scope>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
@@ -416,6 +421,7 @@ mod imp {
                 // The list is where the box opens from, and the context the
                 // commands are filtered by until the window says otherwise.
                 context: RefCell::new(Context::List),
+                scope: RefCell::new(Scope::default()),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
@@ -567,6 +573,13 @@ impl Finder {
     /// The workspace context, which decides what commands apply.
     pub fn set_context(&self, context: Context) {
         *self.imp().context.borrow_mut() = context;
+        self.refresh();
+    }
+
+    /// What the mail on screen belongs to, for the commands that need one
+    /// account rather than one surface — `Move`, so far (#182).
+    pub fn set_scope(&self, scope: Scope) {
+        *self.imp().scope.borrow_mut() = scope;
         self.refresh();
     }
 
@@ -1029,7 +1042,12 @@ impl Finder {
                 if let Some(live) = imp.live.borrow().as_ref() {
                     live.clear();
                 }
-                let found = entries(&imp.keymap.borrow(), *imp.context.borrow(), &query.text);
+                let found = entries(
+                    &imp.keymap.borrow(),
+                    *imp.context.borrow(),
+                    *imp.scope.borrow(),
+                    &query.text,
+                );
                 for entry in &found {
                     imp.list.append(&command_row(entry));
                 }
