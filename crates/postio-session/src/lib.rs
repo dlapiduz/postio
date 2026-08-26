@@ -47,9 +47,11 @@ pub mod paths;
 pub mod refresh;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use postio_core::bridge::EventSink;
 use postio_runtime::store::{MailStore, SqliteStore};
+use postio_storage::blob::{GarbageCollection, GarbageReport};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, Database};
 
@@ -410,6 +412,84 @@ pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error
     postio_index::index::ensure_schema(&connection)?;
     tracing::debug!("the search index is ready");
     Ok(())
+}
+
+/// How long a blob must have gone untouched before a sweep may call it garbage.
+///
+/// One hour, `GarbageCollection::default`'s own value, named here so the
+/// production caller is visibly *not* passing `Duration::ZERO`.
+///
+/// This is the one number in this module that is load-bearing rather than
+/// tuning. A blob is written before the row that references it is committed,
+/// so during that window an entirely healthy blob is indistinguishable from an
+/// orphan — and a sweep with no grace period deletes the body of a message
+/// that is mid-fetch. Tests pass `ZERO` deliberately and nothing else may.
+pub const BLOB_GRACE_PERIOD: Duration = Duration::from_secs(60 * 60);
+
+/// Delete blobs the database no longer references. Answers what went.
+///
+/// # Why this exists at all
+///
+/// `BlobStore::collect_garbage` was written, tested and documented, and no
+/// production code ever called it (#416) — the third instance in this project
+/// of a mechanism that exists, passes its tests, and is wired to nothing.
+///
+/// The consequence was not subtle. `MessageRepository::delete` removes the row
+/// and never touches blobs, *deliberately*, because the schema delegates
+/// reclamation to this sweep. With no caller, **deleting mail freed nothing,
+/// ever**. The worst case is not a user deleting anything: a `UIDVALIDITY`
+/// reset wipes and re-syncs a whole mailbox, orphaning every blob in it at
+/// once — gigabytes, from one server-side event nobody caused.
+///
+/// # Why it cannot lose anything
+///
+/// It sweeps only what nothing points at. `referenced_blobs` reads every
+/// column that holds a blob key and keeps anything named there; a blob that
+/// survives that filter is unreachable by definition, so there is no policy
+/// here and nothing to configure. That is what separates this from
+/// `BlobStore::evict_to_fit`, which removes blobs something *does* reference,
+/// on purpose, and pays for it with a refetch.
+///
+/// # Not on the startup path
+///
+/// It walks the blob directory, which on a backfilled archive is a lot of
+/// files. Startup has a 500 ms budget; callers put this on a worker, the same
+/// way [`index_local_bodies`] is spawned rather than awaited.
+pub fn reclaim_orphaned_blobs(
+    database: &Database,
+    blobs: &BlobStore,
+    min_age: Duration,
+) -> Result<GarbageReport, Box<dyn std::error::Error>> {
+    let connection = database.connection()?;
+    let report = blobs.collect_garbage(&connection, GarbageCollection { min_age })?;
+    if report.removed > 0 {
+        // Counts and bytes only: what was in those blobs is somebody's mail.
+        tracing::info!(
+            removed = report.removed,
+            bytes = report.bytes_reclaimed,
+            scanned = report.scanned,
+            "reclaimed blobs nothing references"
+        );
+    }
+    Ok(report)
+}
+
+/// Delete leftover `.part` files from fetches that never finished. Answers how
+/// many.
+///
+/// A cancelled or failed fetch removes its own temporary file when its writer
+/// drops, so this is for the case where no destructor ran at all — a power
+/// cut, an OOM kill, a crash mid-fetch. Nothing else will ever finish those
+/// files.
+///
+/// Cheap and bounded: one `read_dir` of a directory that is empty in the
+/// ordinary case, which is why this one *can* run on the startup path.
+pub fn purge_fetch_debris(blobs: &BlobStore) -> Result<usize, Box<dyn std::error::Error>> {
+    let purged = blobs.purge_temporary()?;
+    if purged > 0 {
+        tracing::info!(purged, "removed debris from fetches that never finished");
+    }
+    Ok(purged)
 }
 
 /// How many bodies one pass of [`index_local_bodies`] reads before letting go
