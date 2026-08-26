@@ -941,10 +941,16 @@ pub fn held_back_note(node: &Node, remote_images: u32, trackers: u32) -> Option<
         1 => "1 remote image".to_string(),
         many => format!("{many} remote images"),
     };
+    // "Likely", always. The count comes from a size heuristic
+    // (`postio_body::sanitize`) that reads what an `<img>` declares about
+    // itself and nothing else -- it cannot know a beacon from a very small
+    // picture, and it deliberately under-counts rather than accuse an
+    // ordinary image. The word is the difference between a signal and a
+    // claim, and both kinds are blocked identically either way (#174).
     let trackers = match trackers {
         0 => String::new(),
-        1 => "1 tracker".to_string(),
-        many => format!("{many} trackers"),
+        1 => "1 likely tracker".to_string(),
+        many => format!("{many} likely trackers"),
     };
     let what = match (images.is_empty(), trackers.is_empty()) {
         (false, false) => format!("{images} and {trackers}"),
