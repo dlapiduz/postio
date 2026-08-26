@@ -860,7 +860,7 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
 async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
     // The fallback under the payload axis. `BODY[2]` comes back encoded with
     // no headers, so a part whose `BODYSTRUCTURE` was never recorded -- a row
-    // synced before migration 0009 -- has nothing to decode against. Fetching
+    // synced before migration 0010 -- has nothing to decode against. Fetching
     // the whole message is slower and fatter, and it is the only answer that
     // is not "store base64 and call it a PDF".
     //

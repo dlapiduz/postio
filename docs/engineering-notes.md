@@ -911,7 +911,7 @@ What that means for anything reading a part:
 - **`attachments.part_headers` is what makes a section decodable.** `BODY[2.1]`
   returns encoded bytes and none of the part's own headers; `BODYSTRUCTURE`
   reported the type and the transfer encoding at header-sync time and this
-  column keeps them. A row without it — synced before migration 0009 — cannot
+  column keeps them. A row without it — synced before migration 0010 — cannot
   be fetched by section and falls back to a whole-message fetch.
 
 **`Engine::request_body` queues; it does not fetch.** `Ok(true)` means "there
