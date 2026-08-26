@@ -55,13 +55,27 @@ const HINT_COMMANDS: [(CommandId, &str); 3] = [
     (CommandId::Thread, "thread"),
 ];
 
-/// The hints for a keymap: each [`HINT_COMMANDS`] entry paired with the key it
-/// is bound to right now, dropping any that lost their key to a conflicting
-/// override — a hint naming a key that does not run it would teach the wrong
-/// keyboard.
+/// The hints for a keymap alone, `Thread` included: the rebinding behaviour
+/// [`hints_for_row`] shares with every entry in [`HINT_COMMANDS`], tested
+/// here without a row to keep that half of the contract separate from the
+/// thread-count filter.
+#[cfg(test)]
 fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
+    filtered_hints(keymap, true)
+}
+
+/// [`hints_for`], minus `Thread` when the row has nothing to thread — the
+/// same test the badge uses (`thread_count > 1`, in `build`), so the badge
+/// and the hint can never disagree. A row that has not arrived yet (`None`)
+/// has nothing to thread either.
+fn hints_for_row(keymap: &Keymap, row: Option<&Row>) -> Vec<(String, &'static str)> {
+    filtered_hints(keymap, row.is_some_and(|row| row.thread_count > 1))
+}
+
+fn filtered_hints(keymap: &Keymap, threaded: bool) -> Vec<(String, &'static str)> {
     HINT_COMMANDS
         .iter()
+        .filter(|(command, _)| threaded || *command != CommandId::Thread)
         .filter_map(|(command, label)| {
             keymap
                 .binding(*command)
@@ -70,9 +84,9 @@ fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
         .collect()
 }
 
-/// The registry's own bindings, so a row built with no keymap yet — every
-/// widget test, and the first frame before `postio-gtk::config` reads
-/// `config.toml` — still reads correctly rather than blank.
+/// [`hints_for`] against the registry's own bindings, for the tests that
+/// check a rebind reaches the hint without caring what the row's default is.
+#[cfg(test)]
 fn default_hints() -> Vec<(String, &'static str)> {
     hints_for(&Keymap::resolve(&Default::default()))
 }
@@ -471,10 +485,12 @@ mod imp {
     pub struct MessageRowView {
         pub(super) row: RefCell<Option<Row>>,
         pub(super) density: Cell<Density>,
-        /// The focused row's key hints — key and label, canvas order.
-        /// Generated from the live keymap so a rebound key still reads
-        /// correctly; see `postio-cpk`.
-        pub(super) hints: RefCell<Vec<(String, &'static str)>>,
+        /// The live keymap the focused row's key hints are generated from,
+        /// together with `row` — see [`super::MessageRowView::hints`]. Kept
+        /// as the keymap rather than the derived hints so a row change picks
+        /// up the same hints a keymap change would, with no ordering
+        /// dependency between `set_row` and `set_keymap` on bind.
+        pub(super) keymap: RefCell<Keymap>,
         pub(super) first: Cell<bool>,
         /// Whether an action would hit this row.
         pub(super) selected: Cell<bool>,
@@ -519,7 +535,7 @@ mod imp {
             MessageRowView {
                 row: RefCell::new(None),
                 density: Cell::new(Density::default()),
-                hints: RefCell::new(default_hints()),
+                keymap: RefCell::new(Keymap::resolve(&Default::default())),
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 cursor: Cell::new(false),
@@ -735,10 +751,15 @@ impl MessageRowView {
 
     /// The key and label pairs the focused row would reveal right now.
     ///
+    /// A function of both the keymap and the row: `Thread` drops out when
+    /// the row has nothing to thread (`thread_count <= 1`), matching the
+    /// badge's own test so the two can never disagree.
+    ///
     /// Public for the same reason [`Self::spoken`] is: a hint the row draws
     /// but nothing can read back is a hint nothing can prove correct.
     pub fn hints(&self) -> Vec<(String, &'static str)> {
-        self.imp().hints.borrow().clone()
+        let imp = self.imp();
+        hints_for_row(&imp.keymap.borrow(), imp.row.borrow().as_ref())
     }
 
     /// Regenerate the focused row's key hints from the live keymap.
@@ -747,10 +768,10 @@ impl MessageRowView {
     /// promise `postio-gtk::config` already keeps for the resolver, the
     /// palette and the cheat sheet.
     pub fn set_keymap(&self, keymap: &Keymap) {
-        let hints = hints_for(keymap);
-        if *self.imp().hints.borrow() != hints {
-            self.imp().hints.replace(hints);
-            self.imp().laid.replace(None);
+        let imp = self.imp();
+        if *imp.keymap.borrow() != *keymap {
+            imp.keymap.replace(keymap.clone());
+            imp.laid.replace(None);
             self.queue_resize();
         }
     }
@@ -1055,9 +1076,7 @@ impl MessageRowView {
         // Key hints are the focused row's alone: the app teaches its own
         // keyboard without the list carrying the clutter on every line.
         let hints = if focused {
-            self.imp()
-                .hints
-                .borrow()
+            hints_for_row(&self.imp().keymap.borrow(), row.as_ref())
                 .iter()
                 .map(|(key, label)| (line(&palette.key, key), line(&palette.hint, label)))
                 .collect()
@@ -1489,6 +1508,53 @@ mod tests {
                 ("t".to_string(), "thread"),
             ],
             "a rebind in [keys] must reach the hint, not just the resolver"
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_thread_drops_the_thread_hint() {
+        // Matches the badge's own threshold (`row.rs`'s `build`, filtering
+        // on `thread_count > 1`): the badge and the hint must never disagree
+        // about whether there is a thread here to open.
+        let keymap = Keymap::resolve(&Default::default());
+        let mut row = Row {
+            id: MessageId::new(1),
+            thread: None,
+            from: None,
+            subject: None,
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            draft: false,
+            has_attachments: false,
+            thread_count: 1,
+        };
+        assert_eq!(
+            hints_for_row(&keymap, Some(&row)),
+            vec![
+                ("e".to_string(), "reply"),
+                ("a".to_string(), "archive"),
+            ],
+            "one message in the thread is not a thread to open"
+        );
+
+        row.thread_count = 2;
+        assert_eq!(
+            hints_for_row(&keymap, Some(&row)),
+            vec![
+                ("e".to_string(), "reply"),
+                ("a".to_string(), "archive"),
+                ("t".to_string(), "thread"),
+            ],
+            "more than one message in the thread, so the hint returns"
+        );
+
+        assert_eq!(
+            hints_for_row(&keymap, None),
+            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+            "no row bound yet, nothing to thread either"
         );
     }
 
