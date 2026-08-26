@@ -1338,3 +1338,46 @@ fn the_shadow_lifts_once_the_operation_settles() {
         );
     }
 }
+
+#[test]
+fn the_sections_holding_a_message_s_text_round_trip() {
+    // What the text axis fetches instead of `BODY.PEEK[]` (ADR 0017). The
+    // header sync already parses these out of `BODYSTRUCTURE` and then throws
+    // them away; without them the backfill cannot name the parts it wants and
+    // has to pull the whole message, attachments included.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 202);
+    message.text_part_id = Some("1.1".to_owned());
+    message.html_part_id = Some("1.2".to_owned());
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.text_part_id.as_deref(), Some("1.1"));
+    assert_eq!(stored.html_part_id.as_deref(), Some("1.2"));
+}
+
+#[test]
+fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() {
+    // The migration cannot invent these for rows already on disk, and
+    // guessing `1` would be a wrong answer for every multipart message. NULL
+    // is the honest "not known", and the backfill falls back to fetching the
+    // whole message for such a row -- the same convention `content_type`
+    // (migration 0004) set for this table.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 203);
+    assert_eq!(message.text_part_id, None);
+    assert_eq!(message.html_part_id, None);
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.text_part_id, None);
+    assert_eq!(stored.html_part_id, None);
+}
