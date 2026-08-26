@@ -48,6 +48,7 @@
 //!   reconciliation that keeps a silently deaf `IDLE` from hiding new mail.
 
 pub mod backfill;
+pub mod blob_sink;
 pub mod coalesce;
 pub mod connect;
 mod contacts;
