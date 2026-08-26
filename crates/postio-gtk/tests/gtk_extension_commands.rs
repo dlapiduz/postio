@@ -114,7 +114,11 @@ fn the_cheat_sheet_teaches_it_under_where_it_came_from() {
     let ext = register(&id, "File to receipts", Some("ctrl+shift+f"));
     let namespace = ext.namespace();
 
-    let sections = cheatsheet::sections(&Keymap::resolve(&Default::default()));
+    let sections = cheatsheet::sections(
+        &Keymap::resolve(&Default::default()),
+        Context::List,
+        an_account(),
+    );
     let section = sections
         .iter()
         .find(|section| section.title == namespace)

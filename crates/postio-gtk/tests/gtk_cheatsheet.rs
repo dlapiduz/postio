@@ -16,7 +16,7 @@
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_core::{ActionId, CommandId, Keymap};
+use postio_core::{ActionId, CommandId, Context, Keymap};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 
@@ -72,10 +72,13 @@ fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {
         // is what keeps the count below a count of *registry* entries.
         .flat_map(|section| section.rows.iter().filter_map(|row| row.id))
         .collect();
+    // The sheet answers "what can I do now", so the count is what is
+    // reachable from where this window is standing — the message list, over
+    // the scope the window holds — rather than the whole registry (#182).
     assert_eq!(
         listed.len(),
-        postio_core::registry::all().count(),
-        "every command, once each"
+        postio_core::registry::reachable_in(Context::List, window.scope()).count(),
+        "every reachable command, once each"
     );
 
     // `?` again closes it — the key that opened it has to be able to close it.
