@@ -222,4 +222,5 @@ Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas
 proportion defer to it. Keys: `e` reply, `a`/`A` archive, `u` undo, `t`
 thread; all rebindable, table generated into `docs/keybindings.md`. Compose
 takes over the reading pane. The sidebar says "Flagged". v1 scope: Linux,
-IMAP+SMTP, one provider preset table, no OAuth, no AI (deferred to epic E12).
+IMAP+SMTP, one provider preset table, no AI (deferred to epic E12). OAuth is
+in scope — ADR 0006, tracked under #2.
