@@ -436,7 +436,7 @@ impl<'a> DraftRepository<'a> {
 
         let mut statement = self.connection.prepare(
             "SELECT id, filename, mime_type, size, content_id, disposition, disposition_raw,
-                    part_id, blob_id
+                    part_id, blob_id, part_headers
                FROM attachments WHERE draft_id = ?1 ORDER BY position, id",
         )?;
         let rows = statement.query_map([draft.id.get()], |row| {
@@ -462,6 +462,7 @@ impl<'a> DraftRepository<'a> {
                 )?,
                 part_id: row.get(7)?,
                 blob_id: row.get::<_, Option<String>>(8)?.map(BlobId::new),
+                part_headers: row.get(9)?,
             })
         })?;
         draft.attachments = rows.collect::<Result<_, _>>()?;
@@ -655,7 +656,7 @@ fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
                 "UPDATE attachments
                     SET position = ?2, filename = ?3, mime_type = ?4, size = ?5,
                         content_id = ?6, disposition = ?7, disposition_raw = ?8,
-                        part_id = ?9, blob_id = ?10
+                        part_id = ?9, blob_id = ?10, part_headers = ?11
                   WHERE id = ?1",
                 params![
                     attachment.id.get(),
@@ -668,14 +669,15 @@ fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
                     attachment.disposition.raw(),
                     attachment.part_id,
                     attachment.blob_id.as_ref().map(BlobId::as_str),
+                    attachment.part_headers,
                 ],
             )?;
         } else {
             connection.execute(
                 "INSERT INTO attachments (draft_id, position, filename, mime_type, size,
                                           content_id, disposition, disposition_raw, part_id,
-                                          blob_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                          blob_id, part_headers)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     draft.id.get(),
                     position as i64,
@@ -687,6 +689,7 @@ fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
                     attachment.disposition.raw(),
                     attachment.part_id,
                     attachment.blob_id.as_ref().map(BlobId::as_str),
+                    attachment.part_headers,
                 ],
             )?;
             attachment.id = AttachmentId::new(connection.last_insert_rowid());

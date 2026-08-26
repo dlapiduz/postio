@@ -994,6 +994,90 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
+    /// Sets `body_state` on its own, without touching the body blob keys.
+    ///
+    /// The one write [`set_body_blobs`](Self::set_body_blobs) cannot do: a
+    /// payload landing changes how much of the message is local without
+    /// changing where its text is. Kept separate rather than folded in
+    /// because reading the blob keys back only to write them again is how a
+    /// concurrent text fetch gets clobbered by a payload fetch.
+    pub fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET body_state = ?2 WHERE id = ?1",
+            params![id.get(), body_state.as_str()],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "message",
+                id: id.get(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Records where one payload part's bytes landed in the blob store.
+    ///
+    /// Keyed by the part's MIME path rather than its [`AttachmentId`],
+    /// deliberately. A refetch **replaces** a message's attachment rows —
+    /// the parser re-reads the structure and [`update`](Self::update) writes
+    /// the new set — so the row id the reading pane was holding does not
+    /// survive one. The path does: `2.1` is `2.1` in every reading of the
+    /// same message.
+    ///
+    /// `false` when no such part is on the message any more, which is the
+    /// same answer `Outcome::Gone` gives for a whole message: nothing went
+    /// wrong, there is simply nothing to write against.
+    pub fn set_attachment_blob(
+        &self,
+        message_id: MessageId,
+        part_id: &str,
+        blob_id: &BlobId,
+    ) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE attachments SET blob_id = ?3
+              WHERE message_id = ?1 AND part_id = ?2",
+            params![message_id.get(), part_id, blob_id.as_str()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Messages in `mailbox_id` whose text is local and whose payloads are
+    /// not — the backlog `AttachmentPolicy::Eager` drains.
+    ///
+    /// The complement of [`needing_backfill_from`](Self::needing_backfill_from),
+    /// which deliberately stops at `partial`: text local, payloads not, is
+    /// *settled* for the text lane and is exactly the work the payload lane
+    /// has left (#376, #377).
+    ///
+    /// A part with no `part_id` is not a candidate — there is no section to
+    /// name in a `FETCH`, so nothing can be asked for.
+    pub fn needing_payloads_from(
+        &self,
+        mailbox_id: MailboxId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<BackfillCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+                    mailboxes.path
+               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+              WHERE messages.mailbox_id = ?1
+                AND messages.body_state = 'partial'
+                AND messages.uid IS NOT NULL
+                AND messages.deleted_locally = 0
+                AND EXISTS (SELECT 1 FROM attachments
+                             WHERE attachments.message_id = messages.id
+                               AND attachments.blob_id IS NULL
+                               AND attachments.part_id IS NOT NULL)
+              ORDER BY messages.received_at DESC
+              LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = statement.query_map(params![mailbox_id.get(), limit, offset], |row| {
+            read_backfill_candidate(row, mailbox_id)
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Messages in `mailbox_id` still missing all or part of their body,
     /// newest first and windowed to `limit` — what a cold start, or a resync
     /// that just finished, seeds the backfill scheduler with.
@@ -1335,8 +1419,8 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
         connection.execute(
             "INSERT INTO attachments (message_id, position, filename, mime_type, size,
                                       content_id, disposition, disposition_raw, part_id,
-                                      blob_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                      part_headers, blob_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 id,
                 position as i64,
@@ -1347,6 +1431,7 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
                 attachment.disposition.as_str(),
                 attachment.disposition.raw(),
                 attachment.part_id,
+                attachment.part_headers,
                 attachment.blob_id.as_ref().map(BlobId::as_str),
             ],
         )?;
@@ -1524,7 +1609,7 @@ fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()>
 fn read_attachments(connection: &Connection, id: MessageId) -> Result<Vec<Attachment>> {
     let mut statement = connection.prepare(
         "SELECT id, filename, mime_type, size, content_id, disposition, disposition_raw,
-                part_id, blob_id
+                part_id, blob_id, part_headers
            FROM attachments WHERE message_id = ?1 ORDER BY position, id",
     )?;
     let rows = statement.query_map([id.get()], |row| {
@@ -1548,6 +1633,7 @@ fn read_attachments(connection: &Connection, id: MessageId) -> Result<Vec<Attach
             )?,
             part_id: row.get(7)?,
             blob_id: row.get::<_, Option<String>>(8)?.map(BlobId::new),
+            part_headers: row.get(9)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

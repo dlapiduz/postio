@@ -1437,3 +1437,146 @@ fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
         "the user can still ask for the rest of it"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The payload axis (ADR 0017, #377)
+// ---------------------------------------------------------------------------
+
+/// A message carrying one named payload part, text already local.
+fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
+    let mut message = a_message(mailbox, account, seconds);
+    message.sync.body_state = BodyState::Partial;
+    message.content_type = Some("multipart/mixed".to_owned());
+    let mut part = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 1_024);
+    part.filename = Some("notes.pdf".to_owned());
+    part.part_id = Some("2".to_owned());
+    part.part_headers = Some("Content-Type: application/pdf\r\n".to_owned());
+    message.attachments = vec![part];
+    message
+}
+
+#[test]
+fn a_fetched_payload_is_recorded_against_the_part_that_asked_for_it() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = with_a_payload(inbox, account.id, 400);
+    let id = messages.create(&mut message).expect("create");
+
+    let blob = postio_model::BlobId::new("a".repeat(64));
+    assert!(
+        messages
+            .set_attachment_blob(id, "2", &blob)
+            .expect("write the key"),
+        "the part is there to write against"
+    );
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.attachments[0].blob_id, Some(blob));
+    assert!(stored.attachments[0].is_downloaded());
+}
+
+#[test]
+fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
+    // The `part_id` the reading pane carries survives a refetch; an id from a
+    // structure the server has since changed does not. Answering `false`
+    // rather than erroring is what lets the caller treat it as "that part is
+    // gone" -- the same answer `Outcome::Gone` gives for a whole message.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = with_a_payload(inbox, account.id, 401);
+    let id = messages.create(&mut message).expect("create");
+
+    let blob = postio_model::BlobId::new("b".repeat(64));
+    assert!(!messages.set_attachment_blob(id, "7.3", &blob).expect("ask"));
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.attachments[0].blob_id, None);
+}
+
+#[test]
+fn what_explains_a_payloads_bytes_is_kept_beside_it() {
+    // Same reason `text_part_headers` exists (#376): `BODY[2]` hands back a
+    // part's *encoded* bytes and none of its headers, so nothing in the
+    // response says whether they are base64. `BODYSTRUCTURE` said so at
+    // header-sync time and this is where the answer is kept.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = with_a_payload(inbox, account.id, 402);
+    message.attachments[0].part_headers =
+        Some("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n".to_owned());
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(
+        stored.attachments[0].part_headers.as_deref(),
+        Some("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n"),
+    );
+}
+
+#[test]
+fn the_payload_backlog_is_the_partial_messages_still_missing_bytes() {
+    // What `eager` drains. The background *text* lane treats `partial` as
+    // settled (#376); the payload lane is the one that has work left there.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut wanted = with_a_payload(inbox, account.id, 403);
+    let wanted_id = messages.create(&mut wanted).expect("create");
+
+    let mut done = with_a_payload(inbox, account.id, 404);
+    done.attachments[0].blob_id = Some(postio_model::BlobId::new("c".repeat(64)));
+    messages.create(&mut done).expect("create");
+
+    let mut no_text_yet = a_message(inbox, account.id, 405);
+    no_text_yet.sync.body_state = BodyState::HeadersOnly;
+    messages.create(&mut no_text_yet).expect("create");
+
+    let candidates = messages
+        .needing_payloads_from(inbox, 10, 0)
+        .expect("candidates");
+
+    assert_eq!(
+        candidates.iter().map(|c| c.message_id).collect::<Vec<_>>(),
+        vec![wanted_id],
+        "only the message with a payload still on the server"
+    );
+}
+
+#[test]
+fn a_message_whose_payloads_have_all_landed_becomes_full() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = with_a_payload(inbox, account.id, 406);
+    let id = messages.create(&mut message).expect("create");
+
+    messages
+        .set_attachment_blob(id, "2", &postio_model::BlobId::new("d".repeat(64)))
+        .expect("write the key");
+    messages
+        .set_body_state(id, BodyState::Full)
+        .expect("settle it");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+    assert!(
+        messages
+            .needing_payloads_from(inbox, 10, 0)
+            .expect("candidates")
+            .is_empty(),
+        "nothing left to fetch for it"
+    );
+}
