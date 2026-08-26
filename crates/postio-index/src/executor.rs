@@ -30,7 +30,6 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
 
 use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
-use postio_search::highlight::{ELLIPSIS, MATCH_END, MATCH_START};
 use postio_search::query::{Filter, ParsedQuery, fts_literal};
 use postio_search::results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
 
@@ -55,10 +54,6 @@ const RANK_BY_RELEVANCE_LIMIT: u64 = 2_000;
 const RECENCY_POOL_MULTIPLIER: u32 = 2;
 /// [`CANDIDATE_POOL_MIN`], for a recency-ordered fetch.
 const RECENCY_POOL_MIN: u32 = 50;
-
-/// How many tokens of context [`snippet`](https://sqlite.org/fts5.html#the_snippet_function)
-/// keeps on either side of a match.
-const SNIPPET_TOKENS: i32 = 12;
 
 /// Recency's weight in [`rank_score`], relative to `bm25`'s native scale.
 const RECENCY_WEIGHT: f64 = 2.0;
@@ -251,6 +246,92 @@ pub fn rank_score(
     bm25 - RECENCY_WEIGHT * recency - SENDER_WEIGHT * affinity
 }
 
+/// How much a body match counts beside a metadata one.
+///
+/// The decision #408 asked to be written down. Free text used to be one
+/// `bm25()` over six columns, and FTS5's own length normalisation did the
+/// discriminating for us: a term in a short `subject` scored far better than
+/// the same term in a long `body`, which is why a search for "invoice" put
+/// the message *about* invoices above the one that mentions them. Two indexes
+/// means two scores with no shared corpus statistics, so that has to be said
+/// explicitly instead.
+///
+/// The rule is **the weighted sum of both**, body at half. Summing rather
+/// than taking the better of the two, because a message matching in *both* is
+/// the most relevant thing there is and should rank first. Half rather than a
+/// fitted constant, because the two scores are not on a common scale and
+/// pretending to a second decimal place would be false precision — what is
+/// being encoded is only the ordering "subject beats body, both beats
+/// either", and `a_subject_match_outranks_a_body_match` is the test that
+/// holds it.
+///
+/// bm25 is negative-is-better, so both terms pull the score down and a
+/// missing side contributes zero.
+const BODY_SCORE_WEIGHT: f64 = 0.5;
+
+/// The two free-text matches, unioned.
+///
+/// `UNION ALL` of two `MATCH`es rather than an `OR` of them: FTS5 needs
+/// `MATCH` as an index constraint, so it cannot be one side of a disjunction
+/// in a `WHERE`. Each index is matched in its own arm, where its `bm25()` is
+/// meaningful because that cursor is the one FTS5 matched.
+///
+/// **No `GROUP BY` here, deliberately.** Folding a message that matched in
+/// both into one row is the obvious thing to write and it costs the whole
+/// query: an aggregate forces SQLite to materialise every match before
+/// anything else runs, so a word in most of the mailbox built a 120,000-row
+/// temp table to answer a `LIMIT 50` — 297 ms against a 100 ms budget,
+/// measured. Without it the subquery is a co-routine and the rows stream.
+///
+/// The cost is that such a message appears twice, which each caller settles
+/// in the way that is cheap for it: the candidate pool de-duplicates in Rust
+/// as it reads, the counting queries say `DISTINCT`, and `hydrate` — which
+/// sees at most a pool's worth of ids — is the one place that aggregates, and
+/// therefore the one place the combined score is computed.
+/// The matches are written **first**, and pinned there. Left to itself SQLite
+/// cannot estimate a co-routine's size, so it drove from `messages` and
+/// probed the matches — walking every message in the account to answer a
+/// query that matched 1% of it, measured at 49 ms where the single-index
+/// version took 2.9. Driving from the matches is a point lookup per hit into
+/// `messages`' own primary key.
+const HITS_JOIN: &str = "FROM (
+             SELECT rowid AS rid, bm25(messages_fts) AS meta, NULL AS body
+               FROM messages_fts WHERE messages_fts MATCH ?
+             UNION ALL
+             SELECT rowid, NULL, bm25(message_bodies_fts)
+               FROM message_bodies_fts WHERE message_bodies_fts MATCH ?
+          ) hits CROSS JOIN messages m ON m.id = hits.rid";
+
+/// The same match, asked one message at a time.
+///
+/// Two plans, because two statements want opposite things. [`HITS_JOIN`] is
+/// driven *by* the match, which is what a query narrow enough to rank wants:
+/// walk the postings, look each hit up by primary key. This is driven by
+/// `messages` instead, and is what a query too broad to rank wants — ordered
+/// by `m.received_at` off that table's own index, stopping at `LIMIT` after a
+/// handful of rows, asking each one "did you match?".
+///
+/// The asking has to be a *docid seek*, and this shape is what makes it one:
+/// `rowid = m.id AND ... MATCH ?` gives FTS5 both constraints, and the plan
+/// says `VIRTUAL TABLE INDEX 0:=M5` — the `=` being the rowid. The obvious
+/// alternatives are both materialisations: probing [`HITS_JOIN`]'s union
+/// per row forces the co-routine into a temp table with an automatic index,
+/// and `m.id IN (SELECT rowid ...)` builds an ephemeral b-tree of every
+/// posting. On a word in most of the mailbox either is ~120 ms of setup to
+/// answer a `LIMIT 50`.
+const CORRELATED_MATCH: &str =
+    "(EXISTS (SELECT 1 FROM messages_fts WHERE rowid = m.id AND messages_fts MATCH ?)
+   OR EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id AND message_bodies_fts MATCH ?))";
+
+/// Which plan a statement asks for. See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    /// Driven by the match: walk the postings, look each hit up.
+    Driven,
+    /// Driven by `messages`: walk the rows, ask each whether it matched.
+    Probed,
+}
+
 /// One row pulled out of SQL before ranking.
 #[derive(Clone)]
 struct Candidate {
@@ -316,30 +397,46 @@ impl Plan {
         let mut has_match = false;
         let mut match_param = None;
 
-        if let Some(expr) = request.query.fts_match() {
-            // `messages_fts` is joined (see `Plan::join_sql`) and constrained
-            // *directly* by this `MATCH`, rather than through a subquery: the
-            // `bm25()`/`snippet()` calls in `Plan::fetch` are only meaningful
-            // against a cursor FTS5 itself considers matched, and a subquery
-            // MATCH on a separate, unconstrained join of the same virtual
-            // table does not give them that.
-            conditions.push("messages_fts MATCH ?".to_string());
-            let param = Value::Text(expr);
-            params.push(param.clone());
-            match_param = Some(param);
+        // Negated terms are excluded across the whole union rather than
+        // folded into each index's own `MATCH`, and that is a correctness
+        // fix rather than tidiness. `("report") NOT ("spam")` asked of
+        // `messages_fts` is true for a message whose "spam" is in its *body*
+        // — the metadata genuinely does not contain it — so the message came
+        // back from a query that had explicitly refused it. An exclusion has
+        // to be about the message, and only a condition outside the join can
+        // be.
+        for term in request.query.text_terms().filter(|term| term.negated) {
+            conditions.push(
+                "m.id NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)
+                 AND m.id NOT IN (SELECT rowid FROM message_bodies_fts
+                                   WHERE message_bodies_fts MATCH ?)"
+                    .to_string(),
+            );
+            let literal = Value::Text(fts_literal(&term.value));
+            params.push(literal.clone());
+            params.push(literal);
+        }
+
+        let positive = request
+            .query
+            .text_terms()
+            .filter(|term| !term.negated)
+            .map(|term| fts_literal(&term.value))
+            .collect::<Vec<_>>();
+        if !positive.is_empty() {
+            let expr = positive.join(" AND ");
+            // The match itself has moved into the join (see `Plan::join_sql`),
+            // because free text now has to reach two indexes and a row that
+            // matched in either one is a hit. `MATCH` cannot be written as an
+            // `OR` of two tables in a `WHERE` -- FTS5 needs it as an index
+            // constraint -- so each is matched in its own subquery and the
+            // join is what unions them.
+            //
+            // Nothing is pushed onto `params` here: the join's parameters sit
+            // before every condition's in the statement text, and
+            // `from_params` is what binds them.
+            match_param = Some(Value::Text(expr));
             has_match = true;
-        } else {
-            // No positive free text, so `fts_match` gave us nothing — but a
-            // query of only negated text (`-spam`) still has to exclude those
-            // messages. Each negated term becomes its own exclusion here,
-            // since there is no positive `MATCH` clause to fold it into.
-            for term in request.query.text_terms().filter(|term| term.negated) {
-                conditions.push(
-                    "m.id NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)"
-                        .to_string(),
-                );
-                params.push(Value::Text(fts_literal(&term.value)));
-            }
         }
 
         if let Some((sql, mut values)) = scope_condition(request.scope, request.account_id) {
@@ -366,15 +463,69 @@ impl Plan {
         }
     }
 
-    fn where_sql(&self) -> String {
-        self.conditions.join(" AND ")
+    /// How one statement reaches the free-text match.
+    ///
+    /// Not a tuning knob: the two forms have different *plans*, and which one
+    /// is right depends on what the statement is about to do with the rows.
+    /// See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
+    fn where_sql(&self, form: Form) -> String {
+        let mut conditions = self.conditions.clone();
+        if self.has_match {
+            conditions.push(
+                match form {
+                    Form::Driven => "hits.rid IS NOT NULL",
+                    Form::Probed => CORRELATED_MATCH,
+                }
+                .to_string(),
+            );
+        }
+        conditions.join(" AND ")
     }
 
-    fn join_sql(&self) -> &'static str {
-        if self.has_match {
-            "FROM messages m JOIN messages_fts ON messages_fts.rowid = m.id"
-        } else {
-            "FROM messages m"
+    /// Every parameter one statement binds, in the order its `?`s appear.
+    ///
+    /// The form decides that order, which is the whole reason this is not a
+    /// field: a driven statement matches in its `FROM`, so its two
+    /// expressions come first, and a probed one matches in its `WHERE`, so
+    /// they come last.
+    fn params_for(&self, form: Form) -> Vec<Value> {
+        match form {
+            Form::Driven => {
+                let mut params = self.match_params();
+                params.extend(self.params.iter().cloned());
+                params
+            }
+            Form::Probed => {
+                let mut params = self.params.clone();
+                params.extend(self.match_params());
+                params
+            }
+        }
+    }
+
+    fn source_sql(&self, form: Form) -> &'static str {
+        if !self.has_match {
+            return "FROM messages m";
+        }
+        match form {
+            Form::Driven => HITS_JOIN,
+            Form::Probed => "FROM messages m",
+        }
+    }
+
+    /// The expressions the free-text match binds, one per index.
+    ///
+    /// They come **before** every condition's, because the join is written
+    /// before the `WHERE` and SQLite binds `?` left to right. Kept as its own
+    /// list rather than pushed onto `params` in `build`, so that every caller
+    /// composing a statement has to think about the order once, here, rather
+    /// than each getting it right separately.
+    fn match_params(&self) -> Vec<Value> {
+        match &self.match_param {
+            // Once for each index. The same expression: a term the user typed
+            // is asked of the metadata and of the body, and either is a hit.
+            Some(expr) => vec![expr.clone(), expr.clone()],
+            None => Vec::new(),
         }
     }
 
@@ -395,11 +546,11 @@ impl Plan {
     /// here: `messages` first, driven by its own `(account_id, received_at)`
     /// index, with `messages_fts` tested one row at a time as a cheap
     /// point lookup rather than scanned.
-    fn fetch_join_sql(&self, rank_by_relevance: bool) -> &'static str {
-        match (self.has_match, rank_by_relevance) {
-            (true, true) => "FROM messages m JOIN messages_fts ON messages_fts.rowid = m.id",
-            (true, false) => "FROM messages m CROSS JOIN messages_fts ON messages_fts.rowid = m.id",
-            (false, _) => "FROM messages m",
+    fn fetch_form(&self, rank_by_relevance: bool) -> Form {
+        if rank_by_relevance {
+            Form::Driven
+        } else {
+            Form::Probed
         }
     }
 
@@ -412,11 +563,11 @@ impl Plan {
     /// past the cap. See [`SearchResults::total_hits_capped`].
     fn count(&self, connection: &Connection) -> Result<u64> {
         let sql = format!(
-            "SELECT count(*) FROM (SELECT 1 {} WHERE {} LIMIT ?)",
-            self.join_sql(),
-            self.where_sql()
+            "SELECT count(*) FROM (SELECT DISTINCT m.id {} WHERE {} LIMIT ?)",
+            self.source_sql(Form::Driven),
+            self.where_sql(Form::Driven)
         );
-        let mut params = self.params.clone();
+        let mut params = self.params_for(Form::Driven);
         params.push(Value::Integer(TOTAL_HITS_CAP as i64));
         let count: i64 = connection.query_row(&sql, params_from_iter(&params), |row| row.get(0))?;
         Ok(count as u64)
@@ -442,16 +593,17 @@ impl Plan {
                  coalesce(sum(flagged), 0),
                  coalesce(sum(has_attachments), 0),
                  coalesce(sum(size >= ?), 0)
-             FROM (SELECT m.seen, m.flagged, m.has_attachments, m.size {from} WHERE {where_sql} LIMIT ?)",
-            from = self.join_sql(),
-            where_sql = self.where_sql(),
+             FROM (SELECT DISTINCT m.id, m.seen, m.flagged, m.has_attachments, m.size
+                     {from} WHERE {where_sql} LIMIT ?)",
+            from = self.source_sql(Form::Driven),
+            where_sql = self.where_sql(Form::Driven),
         );
 
         // The `size >= ?` bind sits before every condition's parameter,
         // because the aggregate is in the outer SELECT and the conditions are
         // in the subquery.
         let mut params = vec![Value::Integer(LARGE_BYTES as i64)];
-        params.extend(self.params.iter().cloned());
+        params.extend(self.params_for(Form::Driven));
         params.push(Value::Integer(TOTAL_HITS_CAP as i64));
 
         let counts: [i64; 4] = connection.query_row(&sql, params_from_iter(&params), |row| {
@@ -477,14 +629,15 @@ impl Plan {
     fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
         let sql = format!(
             "SELECT name, count(*) AS hits FROM (
-                 SELECT mb.name AS name {from} JOIN mailboxes mb ON mb.id = m.mailbox_id
+                 SELECT DISTINCT m.id, mb.name AS name {from}
+                   JOIN mailboxes mb ON mb.id = m.mailbox_id
                   WHERE {where_sql} LIMIT ?)
              GROUP BY name ORDER BY hits DESC, name LIMIT ?",
-            from = self.join_sql(),
-            where_sql = self.where_sql(),
+            from = self.source_sql(Form::Driven),
+            where_sql = self.where_sql(Form::Driven),
         );
 
-        let mut params = self.params.clone();
+        let mut params = self.params_for(Form::Driven);
         params.push(Value::Integer(TOTAL_HITS_CAP as i64));
         params.push(Value::Integer(REFINE_FOLDERS as i64));
 
@@ -518,33 +671,97 @@ impl Plan {
         pool_size: u32,
         rank_by_relevance: bool,
     ) -> Result<Vec<Candidate>> {
-        let ids = self.fetch_candidate_ids(connection, pool_size, rank_by_relevance)?;
-        self.hydrate(connection, &ids)
+        let scored = self.fetch_candidates(connection, pool_size, rank_by_relevance)?;
+        self.hydrate(connection, &scored)
     }
 
-    fn fetch_candidate_ids(
+    /// The candidate pool: an id and the combined `bm25` for each, in the
+    /// order SQL chose them.
+    ///
+    /// The scores come back **here** rather than from `hydrate`, and that is
+    /// what keeps this affordable. Hydrating used to re-ask the indexes for
+    /// the scores of the ids it was given, which for a word in most of the
+    /// mailbox meant walking every posting a second time — 80 ms of a 100 ms
+    /// budget, whether the second walk was a `GROUP BY` over the whole union
+    /// or an `IN` list FTS5 declines to use as a docid constraint. The pool
+    /// query has the scores in hand already; carrying them out costs nothing.
+    fn fetch_candidates(
         &self,
         connection: &Connection,
         pool_size: u32,
         rank_by_relevance: bool,
-    ) -> Result<Vec<i64>> {
+    ) -> Result<Vec<(i64, f64)>> {
+        let form = self.fetch_form(rank_by_relevance);
+        // The row's own score on the driven path: without a `GROUP BY` each
+        // arm of the union contributes its own row, so a message that matched
+        // in both is ordered by its better half and summed below. That is a
+        // *pool* ordering, not the answer — `search` re-ranks what comes back
+        // through `rank_score` — so all it has to get right is which
+        // candidates are worth hydrating.
         let order_by = if rank_by_relevance {
-            "bm25(messages_fts)"
+            "coalesce(hits.meta, 0.0) + coalesce(hits.body, 0.0)"
         } else {
             "m.received_at DESC"
         };
+        // The probed path carries no scores, and that is a decision rather
+        // than an omission. It is only ever taken for a match too broad to
+        // rank by relevance — `search` says so — where `bm25` across the
+        // whole match is near-uniform anyway and recency is the fallback
+        // ranking on purpose. Asking for the scores there costs the plan:
+        // adding *any* column to this statement was enough to lose it and
+        // spend half a second (the same trap `fetch`'s own docs record for
+        // the hydrate columns), and correlated subqueries in the select list
+        // are no exception.
+        let scores = match (self.has_match, form) {
+            (true, Form::Driven) => "hits.meta, hits.body",
+            _ => "NULL, NULL",
+        };
+        let mut params: Vec<Value> = Vec::new();
         let sql = format!(
-            "SELECT m.id {from} WHERE {where_sql} ORDER BY {order_by} LIMIT ?",
-            from = self.fetch_join_sql(rank_by_relevance),
-            where_sql = self.where_sql(),
+            "SELECT m.id, {scores} {from} WHERE {where_sql} ORDER BY {order_by} LIMIT ?",
+            from = self.source_sql(form),
+            where_sql = self.where_sql(form),
         );
 
-        let mut params = self.params.clone();
-        params.push(Value::Integer(pool_size as i64));
+        params.extend(self.params_for(form));
+        // Asked for more than the pool, because the union can hand back the
+        // same message twice and the duplicates are folded below. Doubling is
+        // the bound: a message appears at most once per index.
+        params.push(Value::Integer(i64::from(pool_size).saturating_mul(2)));
 
         let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(&params), |row| row.get(0))?;
-        rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
+        let rows = statement.query_map(params_from_iter(&params), |row| {
+            let meta: Option<f64> = row.get(1)?;
+            let body: Option<f64> = row.get(2)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0),
+            ))
+        })?;
+
+        // Folded here rather than with a `GROUP BY`, which would cost a sort
+        // over the match set — the thing this whole shape exists to avoid.
+        // Adding the two is what makes "matched in both indexes" the best a
+        // message can do; `bm25` is negative-is-better, so each term pulls the
+        // score down and a missing side adds nothing.
+        let mut order: Vec<i64> = Vec::with_capacity(pool_size as usize);
+        let mut scored: std::collections::HashMap<i64, f64> =
+            std::collections::HashMap::with_capacity(pool_size as usize);
+        for row in rows {
+            let (id, score) = row?;
+            match scored.entry(id) {
+                std::collections::hash_map::Entry::Occupied(mut seen) => *seen.get_mut() += score,
+                std::collections::hash_map::Entry::Vacant(empty) => {
+                    empty.insert(score);
+                    order.push(id);
+                }
+            }
+        }
+        order.truncate(pool_size as usize);
+        Ok(order
+            .into_iter()
+            .map(|id| (id, scored.get(&id).copied().unwrap_or(0.0)))
+            .collect())
     }
 
     /// Fetches the full row for each of `ids`, preserving their order.
@@ -553,27 +770,26 @@ impl Plan {
     /// thousand), so the `IN` list and the per-row correlated subqueries here
     /// are cheap regardless of how many messages the query as a whole
     /// matched.
-    fn hydrate(&self, connection: &Connection, ids: &[i64]) -> Result<Vec<Candidate>> {
-        if ids.is_empty() {
+    /// Fetches the full row for each candidate, preserving the pool's order.
+    ///
+    /// No FTS at all: the scores arrived with the ids. This is strictly less
+    /// work than it was before the body index existed, when it re-computed
+    /// `bm25` and cut a `snippet()` here.
+    fn hydrate(&self, connection: &Connection, scored: &[(i64, f64)]) -> Result<Vec<Candidate>> {
+        if scored.is_empty() {
             return Ok(Vec::new());
         }
+        let ids: Vec<i64> = scored.iter().map(|(id, _)| *id).collect();
 
-        let score_columns = if self.has_match {
-            format!(
-                "bm25(messages_fts) AS bm25_score, \
-                 snippet(messages_fts, -1, '{MATCH_START}', '{MATCH_END}', '{ELLIPSIS}', {SNIPPET_TOKENS}) AS snippet"
-            )
-        } else {
-            "0.0 AS bm25_score, '' AS snippet".to_string()
-        };
+        // No `snippet()`. It is an FTS5 function over indexed content and
+        // `message_bodies_fts` has none by design (#407), so the excerpt is
+        // cut by `postio_search::highlight::snippet` from the body the
+        // caller reads out of the blob store. That is a stronger guarantee
+        // than this was: the text highlighted is the text that was indexed,
+        // rather than SQLite's reconstruction of a separate copy.
         let placeholders = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(", ");
-        let match_condition = if self.has_match {
-            " AND messages_fts MATCH ?"
-        } else {
-            ""
-        };
 
         let sql = format!(
             "SELECT
@@ -590,22 +806,16 @@ impl Plan {
                                                    WHERE r.message_id = m.id AND r.kind = 'from'
                                                    ORDER BY r.position LIMIT 1)
                       AND (c.account_id = ? OR c.account_id IS NULL)) AS sender_times_seen,
-                 {score_columns}
-             {from} WHERE m.id IN ({placeholders}){match_condition}",
-            from = self.join_sql(),
+                 0 AS unused
+             FROM messages m WHERE m.id IN ({placeholders})",
         );
 
-        // Parameter order must match the `?`s left to right: the contacts
-        // subquery's account id, then one per id in the `IN` list, then the
-        // free-text `MATCH` expression if the join needs it. The contacts
-        // lookup shares the request's account id, always `self.params[0]` —
-        // see `Plan::build`.
-        let mut params = Vec::with_capacity(ids.len() + 2);
+        // The contacts subquery's account id, then one per id in the `IN`
+        // list. The contacts lookup shares the request's account id, always
+        // `self.params[0]` — see `Plan::build`.
+        let mut params = Vec::with_capacity(ids.len() + 1);
         params.push(self.params[0].clone());
         params.extend(ids.iter().map(|id| Value::Integer(*id)));
-        if let Some(match_param) = &self.match_param {
-            params.push(match_param.clone());
-        }
 
         let mut statement = connection.prepare(&sql)?;
         let by_id: std::collections::HashMap<i64, Candidate> = statement
@@ -622,17 +832,28 @@ impl Plan {
                         from_name: row.get(5)?,
                         from_address: row.get(6)?,
                         sender_times_seen: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
-                        bm25: row.get(8)?,
-                        snippet: row.get(9)?,
+                        // Filled in below, from the pool.
+                        bm25: 0.0,
+                        // Filled by whoever can read the body — see
+                        // `SearchHit::snippet`.
+                        snippet: String::new(),
                         score: 0.0,
                     },
                 ))
             })?
             .collect::<rusqlite::Result<_>>()?;
 
-        // `hydrate`'s own query has no `ORDER BY`; the caller's ordering
-        // (by relevance or by recency) lives entirely in `ids`.
-        Ok(ids.iter().filter_map(|id| by_id.get(id).cloned()).collect())
+        // `hydrate`'s own query has no `ORDER BY`; the caller's ordering (by
+        // relevance or by recency) lives entirely in the pool's order.
+        Ok(scored
+            .iter()
+            .filter_map(|(id, score)| {
+                by_id.get(id).cloned().map(|mut candidate| {
+                    candidate.bm25 = *score;
+                    candidate
+                })
+            })
+            .collect())
     }
 }
 
