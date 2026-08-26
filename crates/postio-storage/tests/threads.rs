@@ -506,36 +506,58 @@ fn the_thread_list_plan_never_sorts() {
     let connection = database.connection().expect("checkout");
     let threads = ThreadRepository::new(&connection);
 
-    for after in [false, true] {
-        let mut query = ThreadListQuery::account(AccountId::new(1));
-        if after {
-            query = query.after(postio_storage::repository::ThreadCursor {
-                last_at: at(0),
-                id: ThreadId::new(10),
-            });
-        }
-        let sql = threads.explain(&query);
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .expect("prepare");
-        let arguments = vec![1i64; statement.parameter_count()];
-        let plan = statement
-            .query_map(rusqlite::params_from_iter(arguments), |row| {
-                row.get::<_, String>(3)
-            })
-            .expect("plan")
-            .collect::<Result<Vec<String>, _>>()
-            .expect("collect")
-            .join("\n");
+    for (label, base) in [
+        ("account", ThreadListQuery::account(AccountId::new(1))),
+        (
+            "mailbox",
+            ThreadListQuery::in_mailbox(AccountId::new(1), MailboxId::new(1)),
+        ),
+    ] {
+        for after in [false, true] {
+            let mut query = base.clone();
+            if after {
+                query = query.after(postio_storage::repository::ThreadCursor {
+                    last_at: at(0),
+                    id: ThreadId::new(10),
+                });
+            }
+            let sql = threads.explain(&query);
+            let mut statement = connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .expect("prepare");
+            let arguments = vec![1i64; statement.parameter_count()];
+            let plan = statement
+                .query_map(rusqlite::params_from_iter(arguments), |row| {
+                    row.get::<_, String>(3)
+                })
+                .expect("plan")
+                .collect::<Result<Vec<String>, _>>()
+                .expect("collect")
+                .join("\n");
 
-        assert!(
-            !plan.contains("TEMP B-TREE"),
-            "cursor={after}: the thread list must never sort:\n{plan}"
-        );
-        assert!(
-            plan.contains("idx_threads_account_last_at"),
-            "cursor={after}: expected the thread list index:\n{plan}"
-        );
+            assert!(
+                !plan.contains("TEMP B-TREE"),
+                "{label} / cursor={after}: the thread list must never sort:\n{plan}"
+            );
+            assert!(
+                plan.contains("idx_threads_account_last_at"),
+                "{label} / cursor={after}: expected the thread list index:\n{plan}"
+            );
+            assert!(
+                !plan.contains("SCAN threads") && !plan.contains("SCAN messages"),
+                "{label} / cursor={after}: the list must never scan a table:\n{plan}"
+            );
+            // The folder's contribution is correlated subqueries, and each of
+            // them has to seek the index migration 0012 added rather than
+            // walking a whole conversation and filtering.
+            if base.mailbox.is_some() {
+                assert!(
+                    plan.contains("idx_messages_thread_mailbox"),
+                    "{label} / cursor={after}: the folder slice must seek its \
+                     own index:\n{plan}"
+                );
+            }
+        }
     }
 }
 
@@ -584,4 +606,287 @@ fn merging_a_thread_into_itself_does_nothing() {
 
     let stored = threads.get(thread.id).expect("get").expect("still there");
     assert_eq!(stored.message_count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// The folder-scoped thread list (ADR 0015, #306)
+// ---------------------------------------------------------------------------
+//
+// A folder shows one row per conversation. The window is over `threads` and
+// never over messages that are then collapsed — reading rows to throw them
+// away is what breaks flat paging and the windowed-list invariant.
+//
+// Three things about a row are scoped to the folder rather than to the whole
+// conversation: whether the thread appears at all, which message represents
+// it, and how much of it is unread *here*. The total message count is not —
+// the badge means the size of the conversation (ADR 0015 Q2).
+
+/// A message in `mailbox`, unread, threaded into `thread`.
+fn unread_in(
+    connection: &Connection,
+    account: AccountId,
+    mailbox: MailboxId,
+    thread: ThreadId,
+    seconds: i64,
+) -> MessageId {
+    let mut message = Message::new(account, mailbox, at(seconds));
+    message.subject = Some("Tide gate interlock".to_owned());
+    message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
+    let id = MessageRepository::new(connection)
+        .create(&mut message)
+        .expect("create a message");
+    let threads = ThreadRepository::new(connection);
+    threads.add_message(thread, id).expect("thread it");
+    id
+}
+
+#[test]
+fn a_folder_only_shows_conversations_it_holds_a_message_of() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    let here = a_thread(&connection, account.id);
+    let elsewhere = a_thread(&connection, account.id);
+    unread_in(&connection, account.id, inbox, here.id, 10);
+    unread_in(&connection, account.id, archive, elsewhere.id, 20);
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("a page of threads");
+
+    let ids: Vec<ThreadId> = page.iter().map(|row| row.id).collect();
+    assert_eq!(
+        ids,
+        vec![here.id],
+        "a conversation with nothing filed in this folder is not this \
+         folder's row, even though it is newer"
+    );
+}
+
+#[test]
+fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
+    // The representative, and the reason it is scoped: a reply filed in
+    // Archive is not what the Inbox row should be showing.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    let thread = a_thread(&connection, account.id);
+    let in_inbox = unread_in(&connection, account.id, inbox, thread.id, 10);
+    let newest_overall = unread_in(&connection, account.id, archive, thread.id, 99);
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("a page of threads");
+
+    let latest = page[0].latest.as_ref().expect("a representative message");
+    assert_eq!(latest.id, in_inbox);
+    assert_ne!(
+        latest.id, newest_overall,
+        "the representative is the newest message *here*, not the newest \
+         message in the conversation"
+    );
+}
+
+#[test]
+fn unread_is_counted_in_this_folder_and_the_total_is_not() {
+    // ADR 0015 Q2, exactly: a thread whose only unread member is in another
+    // folder reads as handled in this one — but the badge still says how big
+    // the conversation is.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    let thread = a_thread(&connection, account.id);
+    // Two unread here, three unread over there.
+    unread_in(&connection, account.id, inbox, thread.id, 10);
+    unread_in(&connection, account.id, inbox, thread.id, 11);
+    for second in 20..23 {
+        unread_in(&connection, account.id, archive, thread.id, second);
+    }
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("a page of threads");
+
+    assert_eq!(page[0].unread_count, 2, "unread is this folder's slice");
+    assert_eq!(
+        page[0].message_count, 5,
+        "the count is the size of the conversation, wherever it is filed"
+    );
+}
+
+#[test]
+fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    let thread = a_thread(&connection, account.id);
+    // `message` marks Seen; `unread_in` does not.
+    let read = message(&connection, account.id, inbox, "ada", 10);
+    ThreadRepository::new(&connection)
+        .add_message(thread.id, read.id)
+        .expect("thread it");
+    unread_in(&connection, account.id, archive, thread.id, 20);
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("a page of threads");
+
+    assert!(
+        !page[0].has_unread(),
+        "the unread member is in another folder, so there is nothing to do \
+         about this conversation here"
+    );
+}
+
+#[test]
+fn the_account_scoped_list_is_unchanged_by_any_of_this() {
+    // Query views still list messages and the unified thread list still spans
+    // folders; scoping is something a folder asks for, not the new default.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    let thread = a_thread(&connection, account.id);
+    unread_in(&connection, account.id, inbox, thread.id, 10);
+    let newest = unread_in(&connection, account.id, archive, thread.id, 99);
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::account(account.id))
+        .expect("a page of threads");
+
+    assert_eq!(page[0].unread_count, 2);
+    assert_eq!(
+        page[0].latest.as_ref().expect("a newest message").id,
+        newest,
+        "unscoped, the newest message in the conversation represents it"
+    );
+}
+
+#[test]
+fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    let threads: Vec<Thread> = (0..5).map(|_| a_thread(&connection, account.id)).collect();
+    for (index, thread) in threads.iter().enumerate() {
+        unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10);
+    }
+
+    let repository = ThreadRepository::new(&connection);
+    let first = repository
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox).limit(2))
+        .expect("the first page");
+    assert_eq!(first.len(), 2);
+
+    let second = repository
+        .page(
+            &ThreadListQuery::in_mailbox(account.id, inbox)
+                .limit(2)
+                .after(first[1].cursor()),
+        )
+        .expect("the second page");
+
+    assert_eq!(second.len(), 2);
+    assert!(
+        second[0].last_at <= first[1].last_at,
+        "paging walks strictly backwards through the sort key"
+    );
+    let seen: Vec<ThreadId> = first
+        .iter()
+        .chain(second.iter())
+        .map(|row| row.id)
+        .collect();
+    let mut unique = seen.clone();
+    unique.sort_by_key(|id| id.get());
+    unique.dedup();
+    assert_eq!(unique.len(), seen.len(), "no row is paged twice");
+}
+
+#[test]
+fn a_hidden_message_is_not_what_a_folder_row_shows() {
+    // A message hidden pending a remote delete is not a member anywhere else
+    // either; the scoped representative has to agree.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    let thread = a_thread(&connection, account.id);
+    let visible = unread_in(&connection, account.id, inbox, thread.id, 10);
+    let hidden = unread_in(&connection, account.id, inbox, thread.id, 99);
+    connection
+        .execute(
+            "UPDATE messages SET deleted_locally = 1 WHERE id = ?1",
+            [hidden.get()],
+        )
+        .expect("hide it");
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("a page of threads");
+
+    assert_eq!(
+        page[0].latest.as_ref().expect("a representative").id,
+        visible
+    );
+    assert_eq!(page[0].unread_count, 1);
+}
+
+#[test]
+fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
+    // The claim ADR 0015 rests on: page k of *threads* costs what page k of
+    // messages costs. If the folder scoping had turned the window into
+    // something linear in the size of the mailbox, this is where it shows —
+    // the correlated subqueries are per row of the page, so twenty-five
+    // thousand conversations must not cost more than a handful.
+    use std::time::Instant;
+
+    let database = postio_storage::test_support::temp();
+    let report = postio_storage::seed::seed_large(&database, 7, 100_000);
+    let inbox = report
+        .mailbox(postio_model::mailbox::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    postio_storage::seed::thread_seeded_messages(&database, report.account.id, 4);
+
+    let connection = database.connection().expect("checkout");
+    let threads = ThreadRepository::new(&connection);
+    let query = ThreadListQuery::in_mailbox(report.account.id, inbox).limit(50);
+
+    let time = |query: &ThreadListQuery| {
+        let start = Instant::now();
+        let page = threads.page(query).expect("a page of threads");
+        (start.elapsed(), page)
+    };
+
+    let (first_duration, first) = time(&query);
+    assert_eq!(first.len(), 50, "a page is a window, never the folder");
+
+    // Ten pages in, which for messages is the same cost as the first.
+    let mut cursor = first.last().expect("a last row").cursor();
+    let mut deep_duration = first_duration;
+    for _ in 0..10 {
+        let (duration, page) = time(&query.clone().after(cursor));
+        assert_eq!(page.len(), 50);
+        cursor = page.last().expect("a last row").cursor();
+        deep_duration = duration;
+    }
+
+    // Generous, because this is wall-clock on a shared machine: the point is
+    // that paging is not *linear*, and linear here would be orders of
+    // magnitude rather than a factor of ten.
+    assert!(
+        deep_duration < first_duration * 10 + std::time::Duration::from_millis(50),
+        "a deep page of threads cost {deep_duration:?} against {first_duration:?} \
+         for the first, which is paging that grows with the folder"
+    );
 }
