@@ -35,8 +35,9 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
+use crate::auth::{StoredPasswordSource, TokenSource};
 use crate::backend::{BackendError, BackendResult, Capabilities};
-use crate::secret::{AccountKey, SecretStore};
+use crate::secret::{AccountKey, Password, SecretStore};
 
 use super::selection::Generations;
 use super::{ConnectionSettings, Dispatch, ImapConnector, ImapSession};
@@ -295,7 +296,14 @@ struct PoolInner {
 /// would each think they owned the whole allowance.
 pub struct ConnectionPool {
     settings: ConnectionSettings,
-    store: Arc<dyn SecretStore>,
+    /// Where this pool's credential comes from.
+    ///
+    /// A [`TokenSource`] rather than a [`SecretStore`] because a bearer token
+    /// expires and a password does not, and the difference has to be
+    /// somewhere: `invalidate` is what a rejected token needs and what a
+    /// rejected password correctly ignores (#193). `new` still takes a store
+    /// and wraps it, so a password account reaches exactly the same code.
+    tokens: Arc<dyn TokenSource>,
     key: AccountKey,
     connector: Arc<dyn ImapConnector>,
     config: PoolConfig,
@@ -327,6 +335,28 @@ impl ConnectionPool {
         connector: Arc<dyn ImapConnector>,
         config: PoolConfig,
     ) -> Self {
+        Self::with_token_source(
+            settings,
+            key,
+            Arc::new(StoredPasswordSource::new(store)),
+            connector,
+            config,
+        )
+    }
+
+    /// As [`new`](Self::new), reading the credential from a [`TokenSource`].
+    ///
+    /// What an OAuth account needs: the source owns refresh and expiry, and
+    /// this pool owns the one thing only it can see — that the server just
+    /// refused what the source handed over. ADR 0006 Q5 puts that discipline
+    /// at the layer that saw the rejection, which is here.
+    pub fn with_token_source(
+        settings: ConnectionSettings,
+        key: AccountKey,
+        tokens: Arc<dyn TokenSource>,
+        connector: Arc<dyn ImapConnector>,
+        config: PoolConfig,
+    ) -> Self {
         let capacity = config.max_connections.max(1);
         // A dedicated watcher needs a connection of its own *and* one left
         // over for commands. On a one-connection budget there is nothing to
@@ -336,7 +366,7 @@ impl ConnectionPool {
 
         Self {
             settings,
-            store,
+            tokens,
             key,
             connector,
             watch_dedicated: watch_slots > 0,
@@ -522,8 +552,29 @@ impl ConnectionPool {
     /// will be; `retrieve` returns it and it goes straight to the transport.
     #[tracing::instrument(skip_all, fields(endpoint = %self.settings.endpoint()))]
     async fn open(&self) -> BackendResult<ImapSession> {
-        let password = match self.store.retrieve(&self.key).await {
-            Ok(password) => password,
+        let credential = self.credential().await?;
+        match self.open_with(&credential).await {
+            Err(BackendError::Auth { account, reason }) => {
+                tracing::warn!("the server refused this credential; asking for a fresh one");
+                self.tokens.invalidate(&self.key).await;
+                let refreshed = self.credential().await?;
+                if refreshed.expose() == credential.expose() {
+                    // Nothing new to present. Re-sending the same bytes to a
+                    // server that has just refused them is a wasted round
+                    // trip, and it is the common case: `invalidate` on a
+                    // stored password is a documented no-op.
+                    return Err(BackendError::Auth { account, reason });
+                }
+                self.open_with(&refreshed).await
+            }
+            other => other,
+        }
+    }
+
+    /// The credential to present, from this pool's [`TokenSource`].
+    async fn credential(&self) -> BackendResult<Password> {
+        match self.tokens.access_token(&self.key).await {
+            Ok(password) => Ok(password),
             Err(error) => {
                 // Redacted: `SecretError` names the account so the *user* can
                 // see which one to fix, and that message is right on screen.
@@ -531,14 +582,18 @@ impl ConnectionPool {
                 // so the domain survives and the local part does not.
                 tracing::error!(
                     error = %postio_model::address::redact_addresses(&error.to_string()),
-                    "no credential for this account in the keyring"
+                    "no credential for this account"
                 );
-                return Err(error.into());
+                Err(error.into())
             }
-        };
+        }
+    }
+
+    /// One open attempt with the credential it is given.
+    async fn open_with(&self, password: &Password) -> BackendResult<ImapSession> {
         tracing::debug!("connecting");
         let mut session =
-            match ImapSession::open(&self.settings, &password, self.connector.as_ref()).await {
+            match ImapSession::open(&self.settings, password, self.connector.as_ref()).await {
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
