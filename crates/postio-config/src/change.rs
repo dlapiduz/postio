@@ -53,6 +53,8 @@ pub struct ConfigChanged {
     /// being restarted. This is the one section whose whole point is to be
     /// changed while something is going wrong.
     pub logging: bool,
+    /// `[compose]` — where a signature sits relative to a quote.
+    pub compose: bool,
 }
 
 impl ConfigChanged {
@@ -62,7 +64,13 @@ impl ConfigChanged {
     /// recognize — preserved verbatim, never dropped — compares equal on
     /// every field above and must not repaint anything.
     pub fn any(&self) -> bool {
-        self.ui || self.keys || self.accounts || self.sync || self.filters || self.logging
+        self.ui
+            || self.keys
+            || self.accounts
+            || self.sync
+            || self.filters
+            || self.logging
+            || self.compose
     }
 
     /// Compare two configurations section by section.
@@ -81,6 +89,7 @@ impl ConfigChanged {
             sync: old.sync != new.sync,
             filters: old.filters != new.filters,
             logging: old.logging != new.logging,
+            compose: old.compose != new.compose,
         }
     }
 }
