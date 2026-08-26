@@ -234,6 +234,12 @@ const UNSAVED: &str = "draft is in the composer only";
 const RETAINED: &str = "still holding the draft Esc kept";
 
 /// What the status line says when [`CommandId::Send`] has nowhere to go.
+///
+/// Reachable only with no account configured at all: the composition root
+/// connects [`Composer::connect_send`] whenever it has one. Before #423 it
+/// connected it never, so this was what sending did — always, on every
+/// account — and the wording was plausible enough to read as a setting
+/// somebody had missed rather than as a seam nobody had wired.
 const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 
 /// What the status line says when Reply/Reply All/Forward is pressed while
@@ -246,6 +252,14 @@ const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 /// say so: the bug this fixes was not the refusal, which is right, but that
 /// refusing looked identical to the key doing nothing at all.
 const REPLY_BLOCKED: &str = "not opened — finish or close the current draft first";
+
+/// What the status line says when `ctrl+Return` is pressed on a draft that is
+/// addressed to nobody.
+const NO_RECIPIENTS: &str = "not sent — add a recipient first";
+
+/// What the status line says when `ctrl+Return` is pressed on a draft that has
+/// already been handed over: it is the queue's now, not the composer's.
+const ALREADY_QUEUED: &str = "not sent again — this draft is already on its way";
 
 /// What the status line says when a file was chosen or dropped but nothing
 /// is listening on [`Composer::connect_attach`] to turn it into an attachment.
@@ -1044,12 +1058,38 @@ impl Composer {
     /// With nothing connected the draft stays exactly where it is and the
     /// status line names what is missing, rather than the composer emptying
     /// itself into a seam that does not exist yet.
+    ///
+    /// # Why the key checks what the button already checks
+    ///
+    /// [`refresh`](Self::refresh) greys the Send button out on
+    /// [`Draft::is_sendable`], so the pointer has never been able to send an
+    /// unaddressed or already-queued draft. `ctrl+Return` reaches this
+    /// directly and had no such guard, which cost nothing while the seam was
+    /// unwired — every send was a no-op. Now that it queues, the two ways of
+    /// asking for the same thing have to agree, and the two disagreements
+    /// both destroy something:
+    ///
+    /// * **No recipients.** The composer would clear and close, and the queued
+    ///   operation would drain as impossible — the words gone, and no message
+    ///   sent.
+    /// * **Already queued.** A draft resumed from the Drafts folder between
+    ///   the enqueue and the drain is still listed there, so it can be opened
+    ///   and sent a second time. That is a second `Operation::Send` against
+    ///   one draft, which is the recipient receiving the message twice.
     pub fn send(&self) {
         if self.imp().sent.borrow().is_empty() {
             self.set_status(NO_SEND_PATH);
             return;
         }
         let draft = self.draft();
+        if !draft.is_sendable() {
+            self.set_status(if draft.has_recipients() {
+                ALREADY_QUEUED
+            } else {
+                NO_RECIPIENTS
+            });
+            return;
+        }
         for handler in self.imp().sent.borrow().iter() {
             handler(&draft);
         }

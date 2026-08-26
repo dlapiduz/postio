@@ -507,6 +507,78 @@ fn discarding_a_draft_that_is_already_gone_is_not_an_error() {
     );
 }
 
+#[test]
+fn queueing_a_draft_for_sending_marks_it_and_enqueues_the_operation() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    assert_eq!(queued.operation, Operation::Send { draft: draft.id });
+    assert_eq!(queued.target, OperationTarget::Draft(draft.id));
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("the draft is still here")
+            .state,
+        DraftState::Queued,
+        "the row has to survive the enqueue: `postio-sync::send` builds the \
+         message's bytes from it when the operation drains, and resolves a \
+         missing draft as obsolete"
+    );
+    assert_eq!(draft.state, DraftState::Queued, "and the caller's copy too");
+}
+
+#[test]
+fn queueing_a_send_writes_the_draft_that_was_never_saved() {
+    // Ctrl+Enter can beat the debounced autosave: a draft typed and sent
+    // inside the quiet period has no row and no id yet. The enqueue names the
+    // draft by id, so there is no send to queue until there is one.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    assert!(!draft.id.is_assigned(), "nothing has saved it yet");
+
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    assert!(draft.id.is_assigned());
+    assert_eq!(queued.operation, Operation::Send { draft: draft.id });
+    assert!(drafts.get(draft.id).expect("get").is_some());
+}
+
+#[test]
+fn a_queued_send_does_not_need_a_drafts_mailbox() {
+    // Unlike `save_and_sync`, which has nowhere to file the draft until the
+    // first sync finds the folder, a send names no mailbox at all: SMTP is a
+    // different conversation from IMAP, and the Sent copy is resolved when the
+    // operation drains rather than now.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    assert_eq!(queued.operation, Operation::Send { draft: draft.id });
+    assert!(queued.mailbox_id.is_none());
+}
+
 // ---------------------------------------------------------------------------
 // The draft row and the message row are the same message
 // ---------------------------------------------------------------------------
