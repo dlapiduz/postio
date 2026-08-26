@@ -75,7 +75,7 @@ use postio_core::{CommandId, Context};
 use postio_model::address::{current_entry, format_list, parse_list};
 use postio_model::{
     Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
-    MessageBody, Signature,
+    MessageBody, Signature, SignatureId,
 };
 use postio_model::{reply, signature};
 
@@ -335,6 +335,13 @@ type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<EmailAddress>>;
 /// the keystroke does nothing rather than opening a broken composer.
 type ReplySourceProvider = Box<dyn Fn() -> Option<(Message, Account)>>;
 
+/// Answers "what should a brand-new draft sign with, before the identity's
+/// own?" (#394) — the composer has no notion of which mailbox the sidebar has
+/// selected, so whatever tracks that resolves the precedence and hands back
+/// only the answer. `None` means neither the mailbox nor the account has an
+/// opinion, and the picker stays on the identity's own signature.
+type SignatureDefaultProvider = Box<dyn Fn() -> Option<SignatureId>>;
+
 /// What [`Composer::connect_attach`] hands its result to, exactly once:
 /// `Some` with the finished attachment, `None` to reject the file (unreadable,
 /// say). Calling this is what actually adds the row — synchronously, for a
@@ -498,6 +505,10 @@ mod imp {
         /// Where `e`/`E`/`f` get the message and account to reply to. One
         /// slot, last registration wins: there is exactly one reading pane.
         pub reply_source: RefCell<Option<ReplySourceProvider>>,
+        /// What a brand-new draft should sign with, before the identity's own
+        /// (#394) — read at the moment `c` starts one, since which mailbox is
+        /// selected changes far more often than the account itself does.
+        pub signature_default: RefCell<Option<SignatureDefaultProvider>>,
         /// Where recipient completion gets its candidates. One slot: the
         /// same search serves `To`, `Cc` and `Bcc` alike.
         pub recipient_suggestions: RefCell<Option<RecipientSuggestions>>,
@@ -578,6 +589,7 @@ mod imp {
                 closed: RefCell::new(Vec::new()),
                 opened: RefCell::new(Vec::new()),
                 reply_source: RefCell::new(None),
+                signature_default: RefCell::new(None),
                 recipient_suggestions: RefCell::new(None),
                 signature_placement: Cell::new((Placement::AboveQuote, Placement::AboveQuote)),
                 attach: RefCell::new(None),
@@ -984,6 +996,46 @@ impl Composer {
         self.apply_identity();
     }
 
+    /// Selects the named signature with `id` in the picker, if the account
+    /// has it. `false` when it does not — the caller falls back to the
+    /// identity's own rather than leaving a stale selection in place.
+    fn select_signature(&self, id: SignatureId) -> bool {
+        let Some(index) = self
+            .imp()
+            .signatures
+            .borrow()
+            .iter()
+            .position(|signature| signature.id == id)
+        else {
+            return false;
+        };
+        // Entry 0 is always the identity's own; the account's signatures
+        // follow it, so the picker index is one past the account's own.
+        self.imp().signature.set_selected((index + 1) as u32);
+        true
+    }
+
+    /// Opens a fresh, unaddressed draft — what `c` starts when nothing is
+    /// already open. Resolves what it signs with through
+    /// [`connect_signature_default`](Self::connect_signature_default) rather
+    /// than leaving whatever a previous compose left the picker on: a mailbox
+    /// override applies here, an account default here, and "neither has an
+    /// opinion" resets the picker to the identity's own rather than an older
+    /// draft's choice (#394).
+    fn open_new_draft(&self) {
+        self.open(Draft::new(self.account()));
+        let resolved = self
+            .imp()
+            .signature_default
+            .borrow()
+            .as_ref()
+            .and_then(|provider| provider());
+        let selected = resolved.is_some_and(|id| self.select_signature(id));
+        if !selected {
+            self.imp().signature.set_selected(0);
+        }
+    }
+
     /// The signature this draft signs with: whichever the picker names, or
     /// the identity's own when it names none.
     fn chosen_signature(&self, identity: &Identity) -> Option<Signature> {
@@ -1174,6 +1226,17 @@ impl Composer {
         provider: impl Fn() -> Option<(Message, Account)> + 'static,
     ) {
         *self.imp().reply_source.borrow_mut() = Some(Box::new(provider));
+    }
+
+    /// Registers what a brand-new draft should sign with, before the
+    /// identity's own (#394) — called once, at the moment `c` starts one, so
+    /// it always answers for whichever mailbox is selected right then.
+    ///
+    /// `None` from the composer's own reads — nothing registered here, or the
+    /// provider itself answering `None` — leaves the picker on the identity's
+    /// own signature, exactly as it already was without this seam.
+    pub fn connect_signature_default(&self, provider: impl Fn() -> Option<SignatureId> + 'static) {
+        *self.imp().signature_default.borrow_mut() = Some(Box::new(provider));
     }
 
     /// Registers what completes a recipient prefix — contacts and previous
@@ -1449,7 +1512,7 @@ impl Composer {
                 } else if composer.is_open() {
                     composer.close();
                 } else {
-                    composer.open(Draft::new(composer.account()));
+                    composer.open_new_draft();
                 }
             }
         ));
@@ -1474,7 +1537,7 @@ impl Composer {
     /// Acts on the commands the composer owns, and ignores the rest.
     fn dispatch(&self, id: CommandId) {
         match id {
-            CommandId::Compose => self.open(Draft::new(self.account())),
+            CommandId::Compose => self.open_new_draft(),
             CommandId::Send if self.is_open() => self.send(),
             CommandId::SaveDraft if self.is_open() => self.save(),
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
