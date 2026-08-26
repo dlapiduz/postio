@@ -214,8 +214,10 @@ pub fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
     pump();
     let note = note_text(&window);
     assert!(
-        note.contains("3 remote images") && note.contains("1 tracker"),
-        "the note names what would load: {note:?}"
+        note.contains("3 remote images") && note.contains("1 likely tracker"),
+        "the note names what would load, and hedges the tracker count \
+         honestly -- the heuristic reads declared size and can be wrong \
+         about a picture (#174): {note:?}"
     );
 
     assert!(press(&window, gdk::Key::H));

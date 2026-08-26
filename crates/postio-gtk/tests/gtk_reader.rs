@@ -67,10 +67,12 @@ fn the_reader_renders_and_hardens_the_corpus() {
     );
 
     // What `postio_gtk::parts::PartsPanel::set_held_back` is wired from —
-    // every render's blocked-reference count, in order.
-    let rendered_counts: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
+    // every render's blocked-reference counts, in order, split into ordinary
+    // pictures and likely trackers (#174).
+    let rendered_counts: Rc<RefCell<Vec<postio_gtk::reader::HeldBack>>> =
+        Rc::new(RefCell::new(Vec::new()));
     let counts_for_reader = Rc::clone(&rendered_counts);
-    reader.connect_rendered(move |count| counts_for_reader.borrow_mut().push(count));
+    reader.connect_rendered(move |held| counts_for_reader.borrow_mut().push(held));
 
     window.set_child(Some(&reader.widget()));
     window.present();
@@ -114,11 +116,23 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "the banner should name the sender it would allow: {}",
         reader.banner_always_allow_label()
     );
+    // The fixture is built for exactly this split (#174): a 320x240 product
+    // shot, a 120x28 logo, and an open-rate beacon declaring `width="1"
+    // height="1"` and `width:1px; height:1px` in its style. All three are
+    // held back identically -- the split only changes what the parts panel
+    // calls them.
+    //
+    // Note every one of them is served from a host with `tracker` in its
+    // name, and two of them are pictures. That is the fixture making the
+    // point the heuristic rests on: the host says nothing.
     assert_eq!(
         rendered_counts.borrow().last().copied(),
-        Some(3),
-        "the fixture's three remote <img> tags should all be counted, \
-         not just flagged"
+        Some(postio_gtk::reader::HeldBack {
+            remote_images: 2,
+            trackers: 1,
+        }),
+        "the fixture's three remote <img> tags should all be counted, and \
+         the 1x1 beacon told apart from the two real pictures"
     );
 
     // ── a newsletter with nothing remote gets no banner ────────────────────
@@ -235,9 +249,10 @@ fn the_reader_renders_and_hardens_the_corpus() {
     );
     assert_eq!(
         rendered_counts.borrow().last().copied(),
-        Some(0),
-        "nothing is held back any more once the sender is allowed, and the \
-         parts panel's badge has to hear about that re-render too"
+        Some(postio_gtk::reader::HeldBack::default()),
+        "nothing is held back any more once the sender is allowed -- of \
+         either kind -- and the parts panel's badge has to hear about that \
+         re-render too"
     );
 
     let persisted = RemoteImageAllowList::load_from(&allowlist_path);

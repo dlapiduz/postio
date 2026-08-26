@@ -61,7 +61,30 @@ struct Open {
 
 /// Called with how many remote references the pane is currently holding
 /// back, every time a render decides that count anew.
-type RenderedHandler = Box<dyn Fn(u32)>;
+type RenderedHandler = Box<dyn Fn(HeldBack)>;
+
+/// What a render is holding back, split by kind.
+///
+/// Two numbers rather than one because the parts panel says them separately
+/// ("3 remote images and 1 likely tracker"), and a single total could not.
+/// The split comes from [`postio_body::Sanitized`]; see its `trackers` field
+/// for what the heuristic claims, which is less than the name suggests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HeldBack {
+    /// Ordinary remote pictures that were stripped.
+    pub remote_images: u32,
+    /// Stripped references whose declared size makes them likely beacons.
+    pub trackers: u32,
+}
+
+impl HeldBack {
+    /// Everything held back, whatever kind it was.
+    ///
+    /// What the banner asks: whether it has anything at all to offer.
+    pub fn total(self) -> u32 {
+        self.remote_images + self.trackers
+    }
+}
 
 /// The reading pane: a hardened `WebView`, and the remote-image banner
 /// (`postio-xxz`) that sits above it.
@@ -419,7 +442,7 @@ impl Reader {
     /// once" or "always allow" changes the count, so a caller wiring the
     /// parts panel's [`crate::parts::PartsPanel::set_held_back`] never goes
     /// stale.
-    pub fn connect_rendered(&self, handler: impl Fn(u32) + 'static) {
+    pub fn connect_rendered(&self, handler: impl Fn(HeldBack) + 'static) {
         self.rendered.borrow_mut().push(Box::new(handler));
     }
 
@@ -491,7 +514,7 @@ impl Reader {
         // watching `connect_rendered` must not keep showing the previous
         // message's count.
         for handler in self.rendered.borrow().iter() {
-            handler(0);
+            handler(HeldBack::default());
         }
     }
 
@@ -516,7 +539,7 @@ impl Reader {
         );
         self.page.set(0);
         for handler in self.rendered.borrow().iter() {
-            handler(0);
+            handler(HeldBack::default());
         }
     }
 
@@ -571,14 +594,14 @@ fn render_open(
         };
         (current.body.clone(), current.sender.clone())
     };
-    let (content, remote_blocked) = body_html(&body, remote);
+    let (content, held_back) = body_html(&body, remote);
     // After sanitizing and quote-folding, never before: ammonia would strip
     // the `<mark>` as an unknown tag, and there is no point running a matcher
     // over markup that has not been cleaned yet.
     let content = crate::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
-    banner.set_visible(remote == RemoteImages::Blocked && remote_blocked > 0);
+    banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
 
     let document = wrap_document(
         &format!("{}{}", contain_body(&content), scroll_markers()),
@@ -590,25 +613,28 @@ fn render_open(
     page.set(0);
 
     for handler in rendered.borrow().iter() {
-        handler(remote_blocked);
+        handler(held_back);
     }
 }
 
 /// The body markup: sanitized and quote-folded, but not yet wrapped in the
-/// document template [`wrap_document`] adds. The count is how many remote
-/// references were stripped — see [`sanitize::Sanitized::remote_blocked`].
-fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, u32) {
+/// document template [`wrap_document`] adds, plus what was held back to
+/// produce it — see [`sanitize::Sanitized`].
+fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, HeldBack) {
     if let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) {
         let sanitized = sanitize::sanitize_body(html, remote);
         return (
             quote::fold_html_quotes(&sanitized.html),
-            sanitized.remote_blocked,
+            HeldBack {
+                remote_images: sanitized.remote_blocked,
+                trackers: sanitized.trackers,
+            },
         );
     }
     if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        return (quote::text_to_html(text), 0);
+        return (quote::text_to_html(text), HeldBack::default());
     }
-    (String::new(), 0)
+    (String::new(), HeldBack::default())
 }
 
 /// Give a sender's content a bounded surface of its own (#323): a visible
@@ -944,9 +970,9 @@ mod tests {
 
     #[test]
     fn an_empty_body_produces_empty_content() {
-        let (content, blocked) = body_html(&MessageBody::default(), RemoteImages::Blocked);
+        let (content, held_back) = body_html(&MessageBody::default(), RemoteImages::Blocked);
         assert_eq!(content, "");
-        assert_eq!(blocked, 0);
+        assert_eq!(held_back, HeldBack::default());
     }
 
     #[test]
@@ -973,7 +999,16 @@ mod tests {
             text: None,
             html: Some(r#"<img src="https://tracker.example.org/o.gif">"#.to_owned()),
         };
-        assert_eq!(body_html(&body, RemoteImages::Blocked).1, 1);
+        // No declared size, so the size heuristic reads it as an ordinary
+        // picture whatever the host is called -- nothing here is domain-based
+        // (#174). Blocked identically either way.
+        assert_eq!(
+            body_html(&body, RemoteImages::Blocked).1,
+            HeldBack {
+                remote_images: 1,
+                trackers: 0
+            }
+        );
     }
 
     #[test]

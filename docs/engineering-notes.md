@@ -1077,19 +1077,32 @@ parts panel (postio-v62): the save worked for parts already downloaded and
 failed only for the ones that had to be fetched, which is the half nobody
 tests by hand.
 
-**The parts panel's held-back "trackers" count is always zero (postio-m2ex).**
-`PartsPanel::set_held_back(remote_images, trackers)` takes two counts, but
-`postio_body::Sanitized::remote_blocked` — the sanitizer's only signal — is
-one number: every `<img src>` pointing at a remote host, counted the same way
-whether it is a 1200px product photo or a 1×1 open-rate beacon. `Window::reader()`
-wires `Reader::connect_rendered` straight to `set_held_back(count, 0)`, so the
-note in the panel only ever says "N remote images", never "and 1 tracker",
-until something in `postio-body::sanitize` can actually tell the two apart
-(a size/dimension heuristic, most likely). Not a bug — `set_held_back`'s
-two-count shape was already there waiting for this, and postio-m2ex's own
-issue text called it out as the one part "needing a change outside
-postio-app". The tracker-detection work is its own issue (#174) rather than
-a heuristic guessed at under `set_held_back`'s wiring.
+**The tracker count is a size heuristic, and it under-counts on purpose
+(#174).** `postio_body::sanitize` splits what it strips into ordinary remote
+images and likely trackers. The rule the maintainer settled (2026-08-25) is
+the whole rule: **an `<img>` whose own declared dimensions are ≤ 2px in
+either axis, or which declares itself hidden (`display:none`,
+`visibility:hidden`), is a likely tracker.** Nothing reads the host or the
+path.
+
+Two things follow, and both are deliberate:
+
+- **A beacon that declares no size is counted as a picture.** Silence is the
+  ordinary case — most senders declare nothing — so reading it as a beacon
+  would label every plain image a tracker. Under-counting is the safe
+  direction here in a way over-counting is not.
+- **Never add a domain or path rule to "improve" it.** A list of known
+  tracking vendors is exactly the provider hard-coding CLAUDE.md forbids, it
+  rots from the day it is written, and it mislabels real pictures: the
+  corpus fixture `html-tracking-pixel-remote-images.eml` serves *all three*
+  of its images from hosts with `tracker` in the name, two of which are a
+  product shot and a logo. That fixture exists to make the point.
+
+The count only ever changes the parts panel's **wording** ("3 remote images
+and 1 likely tracker"). Both kinds are blocked identically, so a beacon the
+heuristic misses is still never fetched — being wrong here costs a noun, not
+a request. That is why the panel says "likely", and why revisiting this
+wants data about real mail rather than a cleverer rule.
 
 **An account is a row *and* a credential — never one of the two.** Onboarding
 writes both, and 0.1.0 wrote the row first. When the keyring write then failed
