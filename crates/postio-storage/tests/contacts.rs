@@ -187,8 +187,17 @@ fn seen(
     id
 }
 
+/// Frequency is the tie-break, not the lead.
+///
+/// Every contact here is last seen on the same day -- `seen(.., times, 0)`
+/// walks backwards from `at(0)`, so they all land on it -- which is what
+/// makes this a test about `times_seen` at all. It was named for ranking
+/// "most written to first" when frequency led the ordering; #424 put recency
+/// first, and the assertion below survived unchanged because a tie on
+/// recency is exactly the case where frequency still decides. The name now
+/// says that, so nobody reads it as the rule.
 #[test]
-fn autocomplete_ranks_the_most_written_to_address_first() {
+fn frequency_decides_between_addresses_used_equally_recently() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
     let account = test_support::account(&connection);
@@ -236,7 +245,8 @@ fn autocomplete_ranks_the_most_written_to_address_first() {
     assert_eq!(
         addresses,
         ["adam@example.com", "adele@example.com", "ada@example.com"],
-        "most written to first; quinn does not match the prefix at all"
+        "all three were last seen on the same day, so the most written to \
+         wins; quinn does not match the prefix at all"
     );
 }
 
@@ -271,6 +281,56 @@ fn a_tie_on_frequency_is_broken_by_recency() {
     assert_eq!(
         matches[0].address.address, "ada.two@example.com",
         "when two are equally familiar, the one written to yesterday wins"
+    );
+}
+
+/// #424: recency outranks frequency, so a robot cannot bury a person.
+///
+/// ADR 0007 Q6 names this exact pathology -- "`times_seen = 400` for a
+/// mailing list robot is not evidence that the user wants to write to it" --
+/// and answers it with *bands*, ranking `user`/`import` contacts above `mail`
+/// sightings and keeping `(times_seen DESC, last_seen_at DESC)` inside the
+/// mail band. There are no bands: `contacts` has no `source` column and every
+/// row here is a mail sighting, so the band that was supposed to rescue the
+/// person does not exist and frequency decides everything. Until it does,
+/// within-band order is the only lever, and the reported behaviour is what
+/// the address a person actually uses should get.
+#[test]
+fn the_address_used_most_recently_comes_before_the_one_used_most_often() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    // Seen constantly, and last seen a month before the person below.
+    seen(
+        &contacts,
+        account.id,
+        "Announce Robot",
+        "announce@example.net",
+        400,
+        0,
+    );
+    // Written to exactly once, today.
+    seen(
+        &contacts,
+        account.id,
+        "Anna Beck",
+        "anna@example.org",
+        1,
+        30,
+    );
+
+    let matches = contacts.search(Some(account.id), "an", 10).expect("search");
+    let addresses: Vec<&str> = matches
+        .iter()
+        .map(|contact| contact.address.address.as_str())
+        .collect();
+    assert_eq!(
+        addresses,
+        ["anna@example.org", "announce@example.net"],
+        "the address used most recently comes first; 400 sightings of a robot \
+         are not evidence that anybody wants to write to it"
     );
 }
 
