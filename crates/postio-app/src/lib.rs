@@ -442,6 +442,18 @@ fn reclaim_disk(wiring: &Wiring) {
         if let Err(error) = postio_session::purge_fetch_debris(&blobs) {
             tracing::warn!(%error, "could not remove debris from unfinished fetches");
         }
+        // Dragged-out mail, which is a privacy question rather than only a
+        // disk one: these are full plaintext copies of messages, outside the
+        // blob store, in a directory nothing audits (#278). The grace period
+        // is the guard -- see `reclaim_drag_exports` -- not a tuning knob.
+        match postio_session::reclaim_drag_exports(
+            &postio_session::paths::export_dir(),
+            postio_session::DRAG_EXPORT_GRACE_PERIOD,
+        ) {
+            Ok(0) => {}
+            Ok(removed) => tracing::debug!(removed, "reclaimed dragged-out exports"),
+            Err(error) => tracing::warn!(%error, "could not reclaim dragged-out exports"),
+        }
         if let Err(error) = postio_session::reclaim_orphaned_blobs(
             &database,
             &blobs,

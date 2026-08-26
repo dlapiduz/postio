@@ -66,10 +66,18 @@ where
 /// the drop and the read is a drop that silently produced nothing, and
 /// nothing anywhere reports an error.
 ///
-/// Nothing in Postio deletes this directory today, which is why that window
-/// never opens in practice. **Do not add a sweep over it without reading that
-/// test first** — a startup purge here would be the same class of bug as
-/// pointing this at the blob store's temporary directory, below.
+/// This directory *is* swept, at startup, by
+/// [`reclaim_drag_exports`](crate::reclaim_drag_exports) — it used to grow
+/// without bound, which was a privacy problem rather than only a disk one
+/// (#278). What keeps that sweep from being the bug described above is that
+/// it deletes nothing younger than
+/// [`DRAG_EXPORT_GRACE_PERIOD`](crate::DRAG_EXPORT_GRACE_PERIOD): a file a
+/// drop is still using is seconds old.
+///
+/// **Do not replace that age guard with a plain purge**, and read
+/// `crates/postio-app/tests/app_suite/drag_out_portal.rs` before changing it.
+/// A purge here would be the same class of bug as pointing this at the blob
+/// store's temporary directory, below.
 ///
 /// Not the blob store's temporary directory, which looks tempting and is
 /// wrong: `BlobStore::purge_temporary` deletes everything in there on start,
