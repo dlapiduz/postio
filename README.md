@@ -73,7 +73,25 @@ cargo run -p postio-app        # build and run
 cargo test --workspace         # never touches the network
 ```
 
-There is also a Flatpak manifest — see [`flatpak/`](flatpak/).
+### Installing
+
+To go from source to a working app — `postio` on your `$PATH`, Postio in the
+app grid with its icon:
+
+```bash
+scripts/install-local.sh               # builds --release, installs to ~/.local
+scripts/install-local.sh --uninstall   # removes exactly what it installed
+```
+
+Prefer a sandboxed build? The Flatpak manifest in [`flatpak/`](flatpak/)
+builds against the GNOME 50 runtime:
+
+```bash
+python3 flatpak/flatpak-cargo-generator.py Cargo.lock -o flatpak/cargo-sources.json
+flatpak-builder --user --install --force-clean flatpak/build-dir flatpak/dev.postio.Postio.json
+```
+
+One-time SDK setup and the details are in [`flatpak/README.md`](flatpak/README.md).
 
 First run opens onto a one-screen setup: type your email address and the
 autoconfig probe fills in the server settings (a preset table, Thunderbird
