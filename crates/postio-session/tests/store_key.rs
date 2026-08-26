@@ -129,6 +129,40 @@ async fn an_empty_entry_is_a_failed_write_and_is_minted_over() {
 }
 
 // ---------------------------------------------------------------------------
+// Before there is a runtime, because there is no store yet either
+// ---------------------------------------------------------------------------
+
+/// Deliberately not a `#[tokio::test]`: the whole point of the blocking form
+/// is that startup has no runtime when it needs the key. The store has to be
+/// open before the command bus can be built, and the bus has to exist before
+/// the runtime that pumps it.
+#[test]
+fn the_key_can_be_read_with_no_runtime_running() {
+    let keyring = MemorySecretStore::new();
+
+    let first = postio_session::store_key_blocking(&keyring).expect("a first run");
+    let second = postio_session::store_key_blocking(&keyring.reopen()).expect("a second run");
+
+    assert_eq!(first.to_hex(), second.to_hex());
+}
+
+#[test]
+fn a_locked_keyring_means_there_is_no_store_to_open() {
+    // What `postio_app::run` branches on. `open_store` is only reached on the
+    // `Ok` arm, so this is the point at which "a locked keyring means the mail
+    // does not open" is decided -- before a `Database` exists, rather than by
+    // something downstream noticing later.
+    let refused = postio_session::store_key_blocking(&MemorySecretStore::locked())
+        .expect_err("a locked keyring cannot answer");
+
+    assert!(matches!(refused, SecretError::Locked { .. }));
+    assert!(
+        refused.to_string().contains("unlock"),
+        "and the sentence that reaches the user says what to do: {refused}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Nothing about the key reaches a log
 // ---------------------------------------------------------------------------
 

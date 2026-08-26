@@ -124,9 +124,28 @@ pub fn run() -> glib::ExitCode {
     }
     timeline.mark(Phase::Styles);
 
+    // The store's key, before the store. ADR 0014 Q3: a locked keyring means
+    // the mail does not open, and there is no "open it unencrypted anyway" —
+    // the same rule `secret.rs` has kept for passwords since it was written.
+    //
+    // Built here rather than inside `Wiring::new` because this is the one
+    // startup step that needs it *before* there is a wiring at all, and an
+    // installation has exactly one keyring: handing the same instance on
+    // means the key read and every credential read go to the same place.
+    let secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore> =
+        std::sync::Arc::new(postio_imap::secret::KeyringSecretStore::default());
     // The store first: the command bus writes it, and the bus has to be built
     // before the runtime that pumps it.
-    let store = open_store();
+    let store = match postio_session::store_key_blocking(secrets.as_ref()) {
+        Ok(key) => open_store(&key),
+        Err(error) => {
+            // Safe verbatim: no `SecretError` carries key material, and this
+            // is the sentence that tells the user their keyring is locked and
+            // what to do about it.
+            tracing::error!(%error, "the store cannot be opened without its key");
+            None
+        }
+    };
 
     // What the user is looking at, as the handlers see it. `commands::mirror`
     // brings it into step with the window in the instant before a command is
@@ -211,6 +230,7 @@ pub fn run() -> glib::ExitCode {
             )
             .with_mailbox_roles(mailbox_roles.clone())
             .with_backfill(postio_session::backfill_policy(&sync_config))
+            .with_secrets(secrets.clone())
         });
     application.connect_activate(move |application| {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
