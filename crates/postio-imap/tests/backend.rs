@@ -1001,6 +1001,7 @@ fn a_fetched_message_becomes_a_domain_message() {
         message_id: Some(RfcMessageId::new("child@example.com")),
         in_reply_to: Some(RfcMessageId::new("root@example.com")),
         references: vec![RfcMessageId::new("root@example.com")],
+        list_id: Some("harbour-dev.lists.example.org".to_owned()),
     };
 
     let fetched = FetchedMessage {
@@ -1020,6 +1021,10 @@ fn a_fetched_message_becomes_a_domain_message() {
     assert_eq!(message.mailbox_id, MailboxId::new(2));
     assert_eq!(message.subject.as_deref(), Some("Re: the plan"));
     assert_eq!(message.normalized_subject(), "the plan");
+    assert_eq!(
+        message.list_id.as_deref(),
+        Some("harbour-dev.lists.example.org")
+    );
     assert_eq!(message.size, 4_096);
     assert_eq!(message.server.uid, Some(Uid::new(12)));
     assert_eq!(message.server.uid_validity, Some(UidValidity::new(4_242)));

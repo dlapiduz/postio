@@ -135,6 +135,38 @@ fn a_message_with_no_content_type_recorded_reads_back_as_none() {
 }
 
 #[test]
+fn a_message_s_list_id_round_trips() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 300);
+    message.list_id = Some("harbour-dev.lists.example.org".to_owned());
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.list_id.as_deref(), Some("harbour-dev.lists.example.org"));
+}
+
+#[test]
+fn a_message_with_no_list_id_reads_back_as_none() {
+    // Most mail is not list mail; a `None` here must stay `None`, not an
+    // empty string that would misread as a list with no name.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 301);
+    assert_eq!(message.list_id, None);
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.list_id, None);
+}
+
+#[test]
 fn flags_are_denormalized_so_the_list_never_parses_a_string() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");

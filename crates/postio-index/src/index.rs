@@ -162,31 +162,33 @@ CREATE TABLE IF NOT EXISTS search_documents (
     recipients  TEXT NOT NULL DEFAULT '',
     subject     TEXT NOT NULL DEFAULT '',
     body        TEXT NOT NULL DEFAULT '',
-    filenames   TEXT NOT NULL DEFAULT ''
+    filenames   TEXT NOT NULL DEFAULT '',
+    list_id     TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    sender, recipients, subject, body, filenames,
+    sender, recipients, subject, body, filenames, list_id,
     content = 'search_documents',
     content_rowid = 'message_id',
     tokenize = 'unicode61 remove_diacritics 2'
 );
 
--- messages -> search_documents: subject only. Sender/recipients/filenames
--- come from their own tables' triggers below, since a message row can be
--- inserted before or after its recipients and attachments.
+-- messages -> search_documents: subject and list_id, both scalar columns on
+-- `messages` itself. Sender/recipients/filenames come from their own
+-- tables' triggers below, since a message row can be inserted before or
+-- after its recipients and attachments.
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_ai
 AFTER INSERT ON messages
 BEGIN
-    INSERT INTO search_documents (message_id, subject)
-    VALUES (new.id, coalesce(new.subject, ''))
-    ON CONFLICT (message_id) DO UPDATE SET subject = excluded.subject;
+    INSERT INTO search_documents (message_id, subject, list_id)
+    VALUES (new.id, coalesce(new.subject, ''), coalesce(new.list_id, ''))
+    ON CONFLICT (message_id) DO UPDATE SET subject = excluded.subject, list_id = excluded.list_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_au
-AFTER UPDATE OF subject ON messages
+AFTER UPDATE OF subject, list_id ON messages
 BEGIN
-    UPDATE search_documents SET subject = coalesce(new.subject, '')
+    UPDATE search_documents SET subject = coalesce(new.subject, ''), list_id = coalesce(new.list_id, '')
     WHERE message_id = new.id;
 END;
 
@@ -278,24 +280,24 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_messages_fts_ai
 AFTER INSERT ON search_documents
 BEGIN
-    INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames)
-    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames);
+    INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames, list_id)
+    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames, new.list_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_messages_fts_ad
 AFTER DELETE ON search_documents
 BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, body, filenames)
-    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.body, old.filenames);
+    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, body, filenames, list_id)
+    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.body, old.filenames, old.list_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_messages_fts_au
 AFTER UPDATE ON search_documents
 BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, body, filenames)
-    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.body, old.filenames);
-    INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames)
-    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames);
+    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, body, filenames, list_id)
+    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.body, old.filenames, old.list_id);
+    INSERT INTO messages_fts (rowid, sender, recipients, subject, body, filenames, list_id)
+    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.body, new.filenames, new.list_id);
 END;
 
 -- Everything that was already here.
@@ -312,7 +314,7 @@ END;
 -- a second copy of every document. The `INSERT` into `search_documents` fires
 -- the FTS triggers below, so `messages_fts` follows without being touched
 -- here.
-INSERT INTO search_documents (message_id, subject, sender, recipients, filenames)
+INSERT INTO search_documents (message_id, subject, sender, recipients, filenames, list_id)
 SELECT
     m.id,
     coalesce(m.subject, ''),
@@ -323,7 +325,8 @@ SELECT
                WHERE r.message_id = m.id AND r.kind IN ('to', 'cc', 'bcc')), ''),
     coalesce((SELECT group_concat(a.filename, ' ')
                 FROM attachments a
-               WHERE a.message_id = m.id AND a.filename IS NOT NULL), '')
+               WHERE a.message_id = m.id AND a.filename IS NOT NULL), ''),
+    coalesce(m.list_id, '')
 FROM messages m
 -- `WHERE true` is not decoration: SQLite cannot tell an `ON CONFLICT` clause
 -- from the tail of the SELECT's own WHERE without it, and rejects the
@@ -365,6 +368,28 @@ mod tests {
             .expect("create message");
 
         assert_eq!(matches(&connection, "quarterly"), vec![message.id.get()]);
+        assert!(matches(&connection, "unrelated").is_empty());
+    }
+
+    #[test]
+    fn a_new_message_is_searchable_by_list_id() {
+        let database = test_support::memory();
+        let connection = database.connection().expect("checkout");
+        ensure_schema(&connection).expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+        let mut message = Message::new(account.id, mailbox, Utc::now());
+        message.list_id = Some("harbour-dev.lists.example.org".to_string());
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .expect("create message");
+
+        // `matches` runs an unquoted MATCH; a bare hyphen has its own
+        // meaning in FTS5 query syntax, so `list:`'s own value is quoted at
+        // the query-builder layer instead — see `fts_literal` and
+        // `list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address`
+        // in `tests/executor.rs` for that path end to end.
+        assert_eq!(matches(&connection, "lists"), vec![message.id.get()]);
         assert!(matches(&connection, "unrelated").is_empty());
     }
 

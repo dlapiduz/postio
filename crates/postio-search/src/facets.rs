@@ -45,13 +45,15 @@ pub enum Scope {
     Inbox,
     /// Mailing-list traffic.
     ///
-    /// **An approximation, for the same reason [`Filter::List`] is one:**
-    /// nothing in the schema stores `List-Id` yet (`postio-0bz` tracks
-    /// indexing it), so this means "in a mailbox that is not one of the
-    /// standard roles" — the folders list mail is filed into. That is right
-    /// for the setup the canvas draws and wrong for a mailbox that files
-    /// list mail into the inbox; the count says so either way, which is what
-    /// keeps it honest rather than silently empty.
+    /// **Still an approximation, though `List-Id` is indexed now (#9,
+    /// `messages.list_id`; see [`Filter::List`]):** this scope is "in a
+    /// mailbox that is not one of the standard roles" — the folders list
+    /// mail is filed into — rather than "carries a `List-Id`", which is a
+    /// deliberately different question the sidebar's own Lists section (not
+    /// yet built) would answer instead. That is right for the setup the
+    /// canvas draws and wrong for a mailbox that files list mail into the
+    /// inbox; the count says so either way, which is what keeps it honest
+    /// rather than silently empty.
     ///
     /// [`Filter::List`]: crate::query::Filter::List
     Lists,
