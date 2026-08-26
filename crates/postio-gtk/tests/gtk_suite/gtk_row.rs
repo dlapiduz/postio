@@ -176,10 +176,7 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     pump();
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("a".to_string(), "archive"),
-        ],
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
         "one message in the thread is not a thread to open"
     );
     row.set_row(Some(canvas_row()));
