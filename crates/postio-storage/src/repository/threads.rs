@@ -61,6 +61,16 @@ pub struct ThreadCursor {
 pub struct ThreadListQuery {
     /// Whose conversations. Threads never span accounts.
     pub account_id: AccountId,
+    /// The folder the list is showing, if it is showing one.
+    ///
+    /// A real folder threads (ADR 0015): only conversations holding a message
+    /// here appear, the row is drawn from the newest message *here*, and the
+    /// unread count is this folder's slice. `None` is the whole account,
+    /// which is what the unified list and the drill-in read.
+    ///
+    /// The total message count is never scoped — the badge means the size of
+    /// the conversation, wherever it is filed.
+    pub mailbox: Option<MailboxId>,
     /// How many rows at most.
     pub limit: u32,
     /// Where to resume; `None` starts at the most recently active thread.
@@ -72,6 +82,17 @@ impl ThreadListQuery {
     pub fn account(account_id: AccountId) -> Self {
         Self {
             account_id,
+            mailbox: None,
+            limit: DEFAULT_THREAD_PAGE_SIZE,
+            after: None,
+        }
+    }
+
+    /// The conversations a folder holds a message of.
+    pub fn in_mailbox(account_id: AccountId, mailbox: MailboxId) -> Self {
+        Self {
+            account_id,
+            mailbox: Some(mailbox),
             limit: DEFAULT_THREAD_PAGE_SIZE,
             after: None,
         }
@@ -99,20 +120,29 @@ pub struct ThreadListRow {
     pub subject: Option<String>,
     /// Everyone who has written in the thread, in first-seen order.
     pub participants: Vec<EmailAddress>,
-    /// How many messages the list would show.
+    /// How many messages the conversation holds, across every folder.
+    ///
+    /// Never scoped, even in a folder-scoped query: the badge means the size
+    /// of the conversation (ADR 0015 Q2).
     pub message_count: u32,
-    /// How many of them are unread.
+    /// How many are unread **within the query's scope**.
+    ///
+    /// In a folder that is this folder's slice, so a conversation whose only
+    /// unread member is filed elsewhere reads as handled here.
     pub unread_count: u32,
     /// Whether any member carries an attachment.
     pub has_attachments: bool,
-    /// Whether any member is flagged.
+    /// Whether any member **within the query's scope** is flagged.
     pub is_flagged: bool,
     /// When the conversation started.
     pub first_at: DateTime<Utc>,
     /// When it last moved; the sort key.
     pub last_at: DateTime<Utc>,
-    /// The newest message, which is what the row's snippet and sender come
-    /// from. `None` only for a thread whose messages have all been hidden.
+    /// The newest message **within the query's scope**, which is what the
+    /// row's snippet and sender come from — a reply filed in Archive is not
+    /// what the Inbox row should be showing.
+    ///
+    /// `None` only for a thread whose messages have all been hidden.
     pub latest: Option<MessageListRow>,
 }
 
@@ -341,6 +371,11 @@ impl<'a> ThreadRepository<'a> {
     pub fn page(&self, query: &ThreadListQuery) -> Result<Vec<ThreadListRow>> {
         let mut statement = self.connection.prepare(&self.explain(query))?;
         let mut arguments = vec![query.account_id.get()];
+        // `?2` when the query is folder-scoped, so the cursor follows at ?3/?4
+        // rather than ?2/?3 — `explain` numbers them the same way.
+        if let Some(mailbox) = query.mailbox {
+            arguments.push(mailbox.get());
+        }
         if let Some(cursor) = query.after {
             arguments.push(to_millis(cursor.last_at));
             arguments.push(cursor.id.get());
@@ -365,7 +400,7 @@ impl<'a> ThreadRepository<'a> {
         // Two more statements for the whole page, rather than two per row.
         let ids: Vec<ThreadId> = page.iter().map(|row| row.id).collect();
         let mut participants = self.participants_for(&ids)?;
-        let mut latest = self.latest_messages_for(&ids)?;
+        let mut latest = self.latest_messages_for(&ids, query.mailbox)?;
         for row in &mut page {
             row.participants = participants.remove(&row.id).unwrap_or_default();
             row.latest = latest.remove(&row.id);
@@ -374,18 +409,64 @@ impl<'a> ThreadRepository<'a> {
     }
 
     /// The SQL a thread page runs, for `EXPLAIN QUERY PLAN`.
+    ///
+    /// # Why the folder-scoped shape is still flat
+    ///
+    /// The window is over `threads`, ordered by `last_at DESC, id DESC` over
+    /// `idx_threads_account_last_at` — the same seek the unscoped list makes,
+    /// so SQLite never sorts and never scans the table. Everything the folder
+    /// contributes is a **correlated subquery per row of the page**, not a
+    /// join that widens the set being ordered: whether the folder holds any
+    /// of the conversation, how much of it is unread here, and whether any of
+    /// it is flagged here. Each of those seeks
+    /// `idx_messages_thread_mailbox (thread_id, mailbox_id, received_at DESC,
+    /// id DESC)`, which migration 0012 added for exactly this, and each is
+    /// bounded by the size of one conversation rather than by the mailbox.
+    ///
+    /// So a page costs `limit` index seeks plus a constant per row, whatever
+    /// the folder holds — which is what "page k of threads costs what page k
+    /// of messages costs" means. `the_thread_list_plan_never_sorts` is the
+    /// structural half of that claim and `store_reads` is the empirical half.
     pub fn explain(&self, query: &ThreadListQuery) -> String {
         // `message_count > 0` hides a conversation whose messages have all been
         // hidden: an empty row is not something the user can act on.
+        let Some(_) = query.mailbox else {
+            let cursor = if query.after.is_some() {
+                " AND (last_at, id) < (?2, ?3)"
+            } else {
+                ""
+            };
+            return format!(
+                "SELECT {THREAD_COLUMNS} FROM threads
+                  WHERE account_id = ?1 AND message_count > 0{cursor}
+                  ORDER BY last_at DESC, id DESC LIMIT {}",
+                query.limit
+            );
+        };
+
         let cursor = if query.after.is_some() {
-            " AND (last_at, id) < (?2, ?3)"
+            " AND (threads.last_at, threads.id) < (?3, ?4)"
         } else {
             ""
         };
+        // The folder's slice of one conversation. Spelled once and reused, so
+        // the three subqueries below cannot drift apart on what counts as a
+        // member here.
+        let slice = format!(
+            "FROM messages m
+              WHERE m.thread_id = threads.id AND m.mailbox_id = ?2 AND m.{MEMBER}"
+        );
         format!(
-            "SELECT {THREAD_COLUMNS} FROM threads
-              WHERE account_id = ?1 AND message_count > 0{cursor}
-              ORDER BY last_at DESC, id DESC LIMIT {}",
+            "SELECT threads.id, threads.account_id, threads.subject,
+                    threads.message_count,
+                    (SELECT count(*) {slice} AND m.seen = 0),
+                    threads.has_attachments,
+                    coalesce((SELECT max(m.flagged) {slice}), 0),
+                    threads.first_at, threads.last_at
+               FROM threads
+              WHERE threads.account_id = ?1
+                AND EXISTS (SELECT 1 {slice}){cursor}
+              ORDER BY threads.last_at DESC, threads.id DESC LIMIT {}",
             query.limit
         )
     }
@@ -452,10 +533,20 @@ impl<'a> ThreadRepository<'a> {
     ///
     /// One statement for the whole page: `row_number()` picks the newest per
     /// thread, and the sender lookups then run only for the rows that survive.
-    fn latest_messages_for(&self, ids: &[ThreadId]) -> Result<HashMap<ThreadId, MessageListRow>> {
+    fn latest_messages_for(
+        &self,
+        ids: &[ThreadId],
+        mailbox: Option<MailboxId>,
+    ) -> Result<HashMap<ThreadId, MessageListRow>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
+        // Still one statement for the whole page: the folder narrows what the
+        // window function ranks, it does not turn this into a query per row.
+        let scope = match mailbox {
+            Some(mailbox) => format!(" AND mailbox_id = {}", mailbox.get()),
+            None => String::new(),
+        };
         let sql = format!(
             "WITH ranked AS (
                  SELECT id, thread_id, subject, preview, received_at, seen, flagged, answered,
@@ -463,7 +554,7 @@ impl<'a> ThreadRepository<'a> {
                         row_number() OVER (PARTITION BY thread_id
                                            ORDER BY received_at DESC, id DESC) AS rank
                    FROM messages
-                  WHERE thread_id IN ({}) AND {MEMBER}
+                  WHERE thread_id IN ({}) AND {MEMBER}{scope}
              )
              SELECT messages.id, messages.thread_id, messages.subject, messages.preview,
                     messages.received_at, messages.seen, messages.flagged, messages.answered,
