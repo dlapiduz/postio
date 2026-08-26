@@ -167,6 +167,14 @@ jobs:
         # reported zero of postio-gtk's 305 passing tests. See #41.
         run: python3 scripts/checks/check-no-gtk-init-in-unit-tests.py
 
+      - name: Refuse a second display-needing test in one integration binary
+        # The other half of the same rule. Cargo gives each integration test
+        # FILE its own process, but libtest still runs the tests inside it on
+        # a thread pool -- so two that initialize GTK race, and the loser
+        # returns through its own "no display" guard and is reported as a
+        # pass. Three files had been running half their cases. See #355.
+        run: python3 scripts/checks/check-one-gtk-test-per-binary.py
+
       - name: Refuse a tokio await on the GTK main context
         # `spawn_future_local` runs on the glib main loop, which has no tokio
         # reactor. 0.1.0 awaited the keyring there and panicked with "there is
@@ -271,6 +279,13 @@ jobs:
         # Its own failure modes -- including the brace scanner that decides
         # where a test module ends -- are exercised instead.
         run: python3 scripts/tests/test-check-no-gtk-init-in-unit-tests.py
+
+      - name: Prove the one-GTK-test-per-binary check actually fails when violated
+        # Same reason as above: the tree is clean now that #355's three files
+        # moved into the harness. The case that matters most is the one that
+        # must NOT fail -- two tests where only one needs a display, which is
+        # gtk_shell.rs and is legitimate.
+        run: python3 scripts/tests/test-check-one-gtk-test-per-binary.py
 
       - name: Prove the lint-floor check actually fails when violated
         run: python3 scripts/tests/test-check-lint-floor.py

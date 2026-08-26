@@ -59,8 +59,7 @@ fn binding(window: &Window, id: CommandId) -> Option<String> {
         .and_then(|row| row.binding)
 }
 
-#[test]
-fn the_settings_panel_edits_the_file_in_place() {
+pub fn the_settings_panel_edits_the_file_in_place() {
     let root = std::env::temp_dir().join(format!("postio-settings-{}", std::process::id()));
     let state_dir = root.join("state");
     std::fs::create_dir_all(&state_dir).unwrap();
@@ -234,8 +233,7 @@ fn the_settings_panel_edits_the_file_in_place() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-#[test]
-fn a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log() {
+pub fn a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log() {
     // A binding the resolver dropped is not a debug log line nobody reads
     // interactively -- it is a setting the user wrote that did not take
     // effect, and the settings panel is where they would go to fix it.
