@@ -16,7 +16,7 @@ use postio_model::FlagSet;
 use super::state::{
     self, Mailbox, Message, flag_list, in_sequence_set, internal_date, sequence_set_of,
 };
-use super::wire::{Command, Conn, base64_decode, tokens, unquote, unwrap_parens};
+use super::wire::{Command, Conn, base64_decode, base64_encode, tokens, unquote, unwrap_parens};
 use super::{Fault, Quirk, Shared};
 
 /// The permanent flags every mailbox on this server accepts.
@@ -177,9 +177,12 @@ impl Session {
             .map(|token| token.to_ascii_uppercase())
             .unwrap_or_default();
 
-        if mechanism != "PLAIN" {
+        if !matches!(mechanism.as_str(), "PLAIN" | "OAUTHBEARER" | "XOAUTH2") {
             self.conn
-                .write_line(&format!("{} NO only PLAIN is supported here", command.tag))
+                .write_line(&format!(
+                    "{} NO {mechanism} is not supported here",
+                    command.tag
+                ))
                 .await?;
             return Ok(());
         }
@@ -197,14 +200,48 @@ impl Session {
             }
         };
 
-        let accepted = base64_decode(encoded.trim()).is_some_and(|decoded| {
-            let mut fields = decoded.split(|byte| *byte == 0);
-            let _authzid = fields.next();
-            let authcid = fields.next().unwrap_or_default();
-            let password = fields.next().unwrap_or_default();
+        let decoded = base64_decode(encoded.trim()).unwrap_or_default();
+        let accepted = {
             let state = self.shared.lock();
-            authcid == state.account.as_bytes() && password == state.password.as_bytes()
-        });
+            match mechanism.as_str() {
+                "PLAIN" => {
+                    let mut fields = decoded.split(|byte| *byte == 0);
+                    let _authzid = fields.next();
+                    let authcid = fields.next().unwrap_or_default();
+                    let password = fields.next().unwrap_or_default();
+                    authcid == state.account.as_bytes() && password == state.password.as_bytes()
+                }
+                // `user=<authcid>\x01auth=Bearer <token>\x01\x01`
+                "XOAUTH2" => match (sasl_field(&decoded, "user="), bearer_token(&decoded)) {
+                    (Some(user), Some(token)) => {
+                        user == state.account && token == state.access_token
+                    }
+                    _ => false,
+                },
+                // RFC 7628: a GS2 header, then the pairs.
+                // `n,a=<authcid>,\x01host=..\x01port=..\x01auth=Bearer <t>\x01\x01`
+                _ => match (gs2_authzid(&decoded), bearer_token(&decoded)) {
+                    (Some(user), Some(token)) => {
+                        user == state.account && token == state.access_token
+                    }
+                    _ => false,
+                },
+            }
+        };
+
+        // OAUTHBEARER does not fail with a bare tagged NO. RFC 7628 §3.2.3
+        // has the server send a JSON error *as a challenge*, the client
+        // acknowledge it with a single 0x01, and only then the NO. Skipping
+        // that leaves io-sasl's coroutine waiting for a challenge that never
+        // comes — a hang rather than a failure, which is the worse way for a
+        // test to be wrong.
+        if !accepted && mechanism == "OAUTHBEARER" {
+            let challenge = base64_encode(br#"{"status":"invalid_token"}"#);
+            self.conn.write_line(&format!("+ {challenge}")).await?;
+            // The client's `\x01`. Nothing to inspect; it only has to be
+            // consumed before the NO is written.
+            let _ = self.conn.read_line().await?;
+        }
 
         self.finish_auth(&command.tag, accepted).await
     }
@@ -1111,6 +1148,36 @@ fn matches(pattern: &str, path: &str) -> bool {
 }
 
 /// Kept honest by the module's own tests rather than by a client.
+/// The value of the first `\x01`-delimited field starting with `prefix`.
+///
+/// Both bearer mechanisms frame their payload the same way: fields separated
+/// by `0x01`, the whole thing terminated by two of them.
+fn sasl_field(payload: &[u8], prefix: &str) -> Option<String> {
+    payload
+        .split(|byte| *byte == 0x01)
+        .filter_map(|field| std::str::from_utf8(field).ok())
+        .find_map(|field| field.strip_prefix(prefix).map(str::to_owned))
+}
+
+/// The token out of an `auth=Bearer <token>` field.
+fn bearer_token(payload: &[u8]) -> Option<String> {
+    sasl_field(payload, "auth=")?
+        .strip_prefix("Bearer ")
+        .map(str::to_owned)
+}
+
+/// The `authcid` out of OAUTHBEARER's GS2 header: `n,a=<authcid>,`.
+///
+/// The header is the part before the first `0x01`, and is not a kv field --
+/// which is why it needs reading separately from [`sasl_field`].
+fn gs2_authzid(payload: &[u8]) -> Option<String> {
+    let header = payload.split(|byte| *byte == 0x01).next()?;
+    std::str::from_utf8(header)
+        .ok()?
+        .split(',')
+        .find_map(|part| part.strip_prefix("a=").map(str::to_owned))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

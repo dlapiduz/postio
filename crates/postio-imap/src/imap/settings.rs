@@ -7,7 +7,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use postio_model::{ServerConfig, TransportSecurity};
+use postio_model::{AuthMethod, ServerConfig, TransportSecurity};
 
 use crate::backend::{BackendError, BackendResult};
 use crate::discovery::{Encryption, preset_for_domain};
@@ -32,6 +32,16 @@ pub struct ConnectionSettings {
     pub security: TransportSecurity,
     /// The login name. Usually the full address; some providers template it.
     pub username: String,
+    /// Which SASL mechanism the credential is presented with.
+    ///
+    /// Data, not a branch: the credential itself is the same [`Password`] in
+    /// every case — a stored app password or whatever a
+    /// [`TokenSource`](crate::auth::TokenSource) returned — and this says how
+    /// to present it. Defaults to [`AuthMethod::Password`], so an account that
+    /// never mentions auth authenticates exactly as it always has (#193).
+    ///
+    /// [`Password`]: crate::secret::Password
+    pub auth: AuthMethod,
     /// How long a connect or handshake may take.
     pub connect_timeout: Duration,
 }
@@ -49,6 +59,7 @@ impl ConnectionSettings {
             port,
             security,
             username: username.into(),
+            auth: AuthMethod::default(),
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
         }
     }
@@ -90,6 +101,12 @@ impl ConnectionSettings {
     /// Sets how long a connect or handshake may take.
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
+        self
+    }
+
+    /// Sets which SASL mechanism the credential is presented with.
+    pub fn with_auth(mut self, auth: AuthMethod) -> Self {
+        self.auth = auth;
         self
     }
 

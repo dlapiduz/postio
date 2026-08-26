@@ -306,6 +306,38 @@ fn mark_index(token: &str) -> Option<usize> {
     inner.parse().ok()
 }
 
+/// Encodes a SASL server challenge as base64.
+///
+/// OAUTHBEARER needs it: its failure path is not a bare tagged `NO`. RFC 7628
+/// §3.2.3 has the server send a JSON error *as a challenge*, the client
+/// acknowledge with a single `0x01`, and only then the `NO`. A server that
+/// skipped the challenge would leave the client's coroutine waiting for
+/// something that never arrives, and the test would hang rather than fail.
+///
+/// Written out for the same reason [`base64_decode`] is.
+pub(super) fn base64_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut out = String::new();
+    for chunk in input.chunks(3) {
+        let bytes = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let triple = (u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]);
+        for index in 0..4 {
+            if index <= chunk.len() {
+                let shift = 18 - index * 6;
+                out.push(ALPHABET[((triple >> shift) & 0x3f) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// Decodes the base64 of a SASL initial response.
 ///
 /// Written out rather than pulled in: this is the only base64 in the crate,

@@ -126,6 +126,10 @@ impl Mailbox {
 pub(super) struct ServerState {
     pub(super) account: String,
     pub(super) password: String,
+    /// The bearer token OAUTHBEARER and XOAUTH2 accept (#193). Kept apart
+    /// from `password` on purpose: a test that presented either credential to
+    /// either mechanism and passed would be proving nothing.
+    pub(super) access_token: String,
     /// What the greeting advertises. Short by default: the provider Postio
     /// targets hides every extension until you have logged in.
     pub(super) banner: Vec<String>,
