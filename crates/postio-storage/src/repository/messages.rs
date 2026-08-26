@@ -1010,6 +1010,29 @@ impl<'a> MessageRepository<'a> {
         mailbox_id: MailboxId,
         limit: u32,
     ) -> Result<Vec<BackfillCandidate>> {
+        self.needing_backfill_from(mailbox_id, limit, 0)
+    }
+
+    /// As [`needing_backfill`](Self::needing_backfill), skipping the newest
+    /// `offset` candidates.
+    ///
+    /// For walking past a run of messages the scheduler cannot use. A message
+    /// over `max_body_bytes`, or one whose fetch already failed this session,
+    /// stays `body_state <> 'full'` for ever — so a folder whose newest batch
+    /// is entirely such messages would answer the same unusable rows on every
+    /// seed and the walk backwards through it would never start (#318).
+    ///
+    /// The offset is only stable for as long as the result set is, which is
+    /// the duration of one seed: nothing else writes `body_state` while the
+    /// engine's own loop is between awaits. A body landing between two calls
+    /// shifts the window by one, and the next call corrects it — this is a
+    /// backlog being refilled, not a page a user is reading.
+    pub fn needing_backfill_from(
+        &self,
+        mailbox_id: MailboxId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<BackfillCandidate>> {
         let mut statement = self.connection.prepare(
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path
@@ -1019,9 +1042,9 @@ impl<'a> MessageRepository<'a> {
                 AND messages.uid IS NOT NULL
                 AND messages.deleted_locally = 0
               ORDER BY messages.received_at DESC
-              LIMIT ?2",
+              LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = statement.query_map(params![mailbox_id.get(), limit], |row| {
+        let rows = statement.query_map(params![mailbox_id.get(), limit, offset], |row| {
             read_backfill_candidate(row, mailbox_id)
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
