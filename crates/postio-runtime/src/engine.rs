@@ -51,9 +51,9 @@ use postio_storage::{BlobStore, Database, Pool, PooledConnection};
 use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
 use postio_sync::{
-    Attention, Backfill, BackfillPolicy, BackfillProgress, Drainer, ReconnectPolicy, RetryPolicy,
-    SmtpContext, Supervisor, SyncError, SyncStatus, Wake, Watch, WatchPolicy, Watcher, backfill,
-    discover, initial, resync,
+    AttachmentPolicy, Attention, Backfill, BackfillPolicy, BackfillProgress, Drainer,
+    ReconnectPolicy, RetryPolicy, SmtpContext, Supervisor, SyncError, SyncStatus, Wake, Watch,
+    WatchPolicy, Watcher, backfill, discover, initial, resync,
 };
 // The crate root's `Outcome` is the *resync* one; a body has its own.
 use postio_sync::backfill::Outcome;
@@ -250,6 +250,12 @@ enum Job {
         message: MessageId,
         reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
     },
+    /// Fetch named payload sections of one message, ahead of everything else.
+    RequestPayloads {
+        message: MessageId,
+        parts: Vec<String>,
+        reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
+    },
     RequestWholeMessage {
         message: MessageId,
         reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
@@ -276,6 +282,13 @@ impl fmt::Debug for Job {
             Job::Sync { mailbox, .. } => write!(formatter, "Sync({mailbox})"),
             Job::SeedBackfill { mailbox, .. } => write!(formatter, "SeedBackfill({mailbox})"),
             Job::RequestBody { message, .. } => write!(formatter, "RequestBody({message})"),
+            Job::RequestPayloads { message, parts, .. } => {
+                write!(
+                    formatter,
+                    "RequestPayloads({message}, {} parts)",
+                    parts.len()
+                )
+            }
             Job::RequestWholeMessage { message, .. } => {
                 write!(formatter, "RequestWholeMessage({message})")
             }
@@ -376,6 +389,29 @@ impl Engine {
     /// already here, or the message is gone.
     pub async fn request_body(&self, message: MessageId) -> Result<bool, EngineError> {
         self.ask(|reply| Job::RequestBody { message, reply }).await
+    }
+
+    /// Asks for named payload sections of `message`, ahead of everything else.
+    ///
+    /// ADR 0017's payload axis: the background lane fetches a message's words
+    /// and leaves its attachments on the server, so this is what the reading
+    /// pane sends when somebody opens one. By section — `BODY.PEEK[2]` — not
+    /// the message around it, and the bytes land in `attachments.blob_id`.
+    ///
+    /// `false` means nothing was fetched, and there are three ways to mean it:
+    /// the bytes are already here, the message has no such part any more, or
+    /// [`AttachmentPolicy::Never`] is in force.
+    pub async fn request_payloads(
+        &self,
+        message: MessageId,
+        parts: Vec<String>,
+    ) -> Result<bool, EngineError> {
+        self.ask(|reply| Job::RequestPayloads {
+            message,
+            parts,
+            reply,
+        })
+        .await
     }
 
     /// Asks for every byte of `message`, not only the sections holding its
@@ -999,6 +1035,33 @@ fn top_up_backfill(parts: &EngineParts, pool: &Pool, state: &mut State) -> usize
         }
     }
 
+    // Every folder's *words* are local. Only now the payloads, and only if
+    // this installation asked for them: ADR 0017's two axes are ordered, not
+    // interleaved, because the text axis is what makes search complete and
+    // offline reading real, and an archive of attachments finished first
+    // would be a mailbox that still could not be searched.
+    if parts.backfill.attachments == AttachmentPolicy::Eager {
+        for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
+            let queued = match backfill::seed_payloads(
+                &connection,
+                &mut state.backfill,
+                mailbox.id,
+                parts.backfill.seed_batch,
+            ) {
+                Ok(queued) => queued,
+                Err(error) => {
+                    tracing::warn!(%error, "cannot top up the payloads for a folder");
+                    continue;
+                }
+            };
+            if queued > 0 {
+                tracing::debug!(mailbox = mailbox.id.get(), queued, "payloads topped up");
+                announce_backfill(parts, state, std::time::Instant::now());
+                return queued;
+            }
+        }
+    }
+
     // Every folder had nothing left to offer. Stop asking until something
     // changes.
     state.backfill_covered = true;
@@ -1357,6 +1420,20 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
             });
             // Unconditional, not the throttled `announce_backfill` above:
             // the interactive lane always wins (#316).
+            announce_backfill_now(parts, state, std::time::Instant::now());
+            let _ = reply.send(outcome);
+        }
+        Job::RequestPayloads {
+            message,
+            parts: sections,
+            reply,
+        } => {
+            let outcome = with_connection(pool, |connection| {
+                backfill::request_payloads(connection, &mut state.backfill, message, &sections)
+                    .map_err(|error| EngineError::new(error.to_string()))
+            });
+            // Interactive, like `RequestBody`: the user opened that chip and
+            // is watching a spinner for exactly these bytes (#316).
             announce_backfill_now(parts, state, std::time::Instant::now());
             let _ = reply.send(outcome);
         }
@@ -2299,7 +2376,7 @@ mod tests {
             uid: postio_model::Uid::new(n),
             size: 100,
             received_at: Utc::now(),
-            whole: false,
+            want: postio_sync::Want::Text,
         }
     }
 

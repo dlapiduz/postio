@@ -1562,3 +1562,247 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
 
     drop(engine);
 }
+
+// ---------------------------------------------------------------------------
+// The payload axis reaches the running engine (ADR 0017, #377)
+// ---------------------------------------------------------------------------
+
+const PDF: &[u8] = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
+const PDF_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
+
+/// A server holding one message whose text is section 1 and whose payload is
+/// section 2 — text plain, payload base64, and a `BODYSTRUCTURE` that says so.
+fn server_with_an_attachment() -> MockBackend {
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_imap::backend::PartNode::new("1", "text/plain", 27)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
+                .with_encoding("base64")
+                .with_filename("statement.pdf"),
+        ],
+    );
+    let raw = "From: Ada Lovelace <ada@example.com>\r\n\
+               To: Postio <postio@example.net>\r\n\
+               Subject: Your statement\r\n\
+               Message-ID: <statement@example.com>\r\n\
+               Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+               Content-Type: multipart/mixed; boundary=b\r\n\
+               \r\n\
+               --b\r\n\
+               Content-Type: text/plain; charset=utf-8\r\n\
+               \r\n\
+               Your statement is attached.\r\n\
+               --b--\r\n";
+    MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX").message(
+                MockMessage::new(raw.as_bytes().to_vec())
+                    .with_structure(structure)
+                    .with_part("1", &b"Your statement is attached."[..])
+                    .with_part("2", PDF_BASE64.as_bytes()),
+            ),
+        )
+        .build()
+}
+
+/// An engine over an empty store and [`server_with_an_attachment`], which
+/// discovers INBOX and syncs it on its own — no seeded rows, so every row the
+/// test reads was written by the engine doing what it does in the app.
+fn engine_over_a_real_sync(
+    backfill: postio_sync::BackfillPolicy,
+) -> (Engine, postio_storage::Database, postio_model::AccountId) {
+    let database = test_support::temp();
+    let account = {
+        let connection = database.connection().expect("checkout");
+        test_support::account(&connection)
+    };
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let (sink, _events) = event_channel();
+    let engine = Engine::spawn(EngineParts {
+        account: account.id,
+        database: (*database).clone(),
+        blobs,
+        backend: Arc::new(server_with_an_attachment()),
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        events: sink,
+        retry: Default::default(),
+        backfill,
+        reconnect: Default::default(),
+        watch: Default::default(),
+        network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
+    })
+    .expect("the engine starts");
+    let id = account.id;
+    // The `TempDatabase` guard has to outlive the engine, so it is leaked
+    // rather than returned alongside a `Database` that also borrows it.
+    let database = Box::leak(Box::new(database));
+    (engine, (**database).clone(), id)
+}
+
+/// Waits for `look` to answer `Some`, or gives up saying what it was after.
+async fn until_some<T>(
+    database: &postio_storage::Database,
+    what: &str,
+    look: impl Fn(&postio_storage::PooledConnection) -> Option<T>,
+) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            if let Ok(connection) = database.connection()
+                && let Some(found) = look(&connection)
+            {
+                return found;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("never saw {what}"))
+}
+
+/// The one message the mock holds, once the engine has synced it.
+async fn the_synced_message(
+    database: &postio_storage::Database,
+    account: postio_model::AccountId,
+) -> postio_model::MessageId {
+    until_some(database, "the message reach the store", |connection| {
+        let mailboxes = postio_storage::repository::MailboxRepository::new(connection)
+            .list_for_account(account)
+            .ok()?;
+        let inbox = mailboxes.iter().find(|mailbox| mailbox.path == "INBOX")?;
+        postio_storage::repository::MessageRepository::new(connection)
+            .page(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(inbox.id),
+                limit: 1,
+                after: None,
+            })
+            .ok()?
+            .first()
+            .map(|row| row.id)
+    })
+    .await
+}
+
+fn attachment_blob(
+    database: &postio_storage::Database,
+    message: postio_model::MessageId,
+) -> Option<postio_model::BlobId> {
+    let connection = database.connection().ok()?;
+    postio_storage::repository::MessageRepository::new(&connection)
+        .get(message)
+        .ok()??
+        .attachments
+        .first()?
+        .blob_id
+        .clone()
+}
+
+#[tokio::test]
+async fn the_default_policy_syncs_the_words_and_leaves_the_payload_on_the_server() {
+    // ADR 0017's whole reason for existing, at the level a person meets it:
+    // the engine runs, the mailbox lands, search has the words, and the
+    // eleven-twelfths of the mailbox that is payload bytes stays where it is.
+    let (engine, database, account) =
+        engine_over_a_real_sync(postio_sync::BackfillPolicy::default());
+    let message = the_synced_message(&database, account).await;
+
+    let state = until_some(&database, "the text land", |connection| {
+        let row = postio_storage::repository::MessageRepository::new(connection)
+            .get(message)
+            .ok()??;
+        (row.sync.body_state != postio_model::BodyState::HeadersOnly).then_some(row.sync.body_state)
+    })
+    .await;
+
+    assert_eq!(
+        state,
+        postio_model::BodyState::Partial,
+        "text local, payload not"
+    );
+    assert_eq!(
+        attachment_blob(&database, message),
+        None,
+        "nothing speculative pulls a payload under the default policy"
+    );
+    drop(engine);
+}
+
+#[tokio::test]
+async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
+    // The job the reading pane sends when somebody clicks a chip. Nothing
+    // else in this test touches the network, so the bytes arriving are the
+    // request having gone all the way out and back.
+    let (engine, database, account) =
+        engine_over_a_real_sync(postio_sync::BackfillPolicy::default());
+    let message = the_synced_message(&database, account).await;
+
+    // Wait for the text first: `request_payloads` reads the attachment rows,
+    // and asking before the header sync has written them proves nothing.
+    until_some(&database, "the text land", |connection| {
+        let row = postio_storage::repository::MessageRepository::new(connection)
+            .get(message)
+            .ok()??;
+        (row.sync.body_state == postio_model::BodyState::Partial).then_some(())
+    })
+    .await;
+
+    let asked = engine
+        .request_payloads(message, vec!["2".to_owned()])
+        .await
+        .expect("the engine answers");
+    assert!(asked, "there is a payload on the server to ask for");
+
+    let blob = until_some(&database, "the payload land", |_| {
+        attachment_blob(&database, message)
+    })
+    .await;
+
+    let connection = database.connection().expect("checkout");
+    let row = postio_storage::repository::MessageRepository::new(&connection)
+        .get(message)
+        .expect("get")
+        .expect("row");
+    assert_eq!(
+        row.sync.body_state,
+        postio_model::BodyState::Full,
+        "every part is local now"
+    );
+    assert!(row.attachments[0].is_downloaded());
+    let _ = blob;
+    drop(engine);
+}
+
+#[tokio::test]
+async fn eager_drains_the_payloads_with_nobody_asking() {
+    // The archive setting. Nothing here calls the engine at all: the same
+    // top-up that covers a folder's bodies covers its payloads once the words
+    // are all local.
+    let (engine, database, account) = engine_over_a_real_sync(postio_sync::BackfillPolicy {
+        attachments: postio_sync::AttachmentPolicy::Eager,
+        ..Default::default()
+    });
+    let message = the_synced_message(&database, account).await;
+
+    let blob = until_some(&database, "the payload land", |_| {
+        attachment_blob(&database, message)
+    })
+    .await;
+    let _ = blob;
+
+    let connection = database.connection().expect("checkout");
+    assert_eq!(
+        postio_storage::repository::MessageRepository::new(&connection)
+            .get(message)
+            .expect("get")
+            .expect("row")
+            .sync
+            .body_state,
+        postio_model::BodyState::Full,
+    );
+    drop(engine);
+}
