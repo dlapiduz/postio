@@ -133,11 +133,21 @@ fn e_shift_e_and_f_open_reply_reply_all_and_forward() {
 
     // ── Already composing: e does not reopen or reset it ─────────────────
     // The forward from the step above is still open; e is for the reading
-    // pane, not for replacing an in-progress composition with a new one.
+    // pane, not for replacing an in-progress composition with a new one --
+    // but it must not go silently ignored either (#426). The status line
+    // was already showing something ("draft is in the composer only", set
+    // when the forward opened), so the test is not "status is non-empty"
+    // but "status changed to say why e did nothing".
     press(&window, "e");
     assert_eq!(
         composer.draft().subject,
         "Fwd: Quarterly numbers",
         "e while composing must not clobber what is being written"
+    );
+    assert_eq!(
+        composer.status(),
+        "not opened — finish or close the current draft first",
+        "e while composing silently did nothing instead of explaining why: {:?}",
+        composer.status()
     );
 }

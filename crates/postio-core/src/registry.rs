@@ -134,6 +134,20 @@ const fn ctx(contexts: &'static [Context]) -> ContextSet {
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
 const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::Reader];
+/// `MESSAGE_SURFACES` plus the composer.
+///
+/// Reply, reply-all and forward have to *resolve* while a draft is already
+/// open, or the key is swallowed before `Composer::dispatch` ever sees it and
+/// pressing it looks identical to nothing being bound at all (#426).
+/// Availability is not success: the composer still refuses to replace an
+/// in-progress draft, it just gets the chance to say so instead of staying
+/// silent.
+const REPLY_SURFACES: &[Context] = &[
+    Context::List,
+    Context::Thread,
+    Context::Reader,
+    Context::Composer,
+];
 /// The surfaces that scroll through a list of messages.
 const LIST_SURFACES: &[Context] = &[
     Context::List,
@@ -308,7 +322,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Reply",
         default_binding: "e",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -318,7 +332,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Reply to all",
         default_binding: "E",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -328,7 +342,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Forward",
         default_binding: "f",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
