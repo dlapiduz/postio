@@ -17,6 +17,17 @@
 //! by [`index_body`] for the body text, since nothing in SQL can compute
 //! that column's value the way a trigger computes the others.
 //!
+//! # And why the bodies have a second table
+//!
+//! `search_documents` is an ordinary table, so a `body` column on it is the
+//! whole text corpus stored a second time — free while nothing was indexed
+//! (#327), and the entire mailbox now that everything is (ADR 0016).
+//! `message_bodies_fts` is `content = ''`: index, no text. It cannot be a
+//! seventh column on `messages_fts`, because a contentless table rewrites
+//! every column whenever one changes and the metadata columns are
+//! trigger-maintained from tables a trigger *can* read. So there are two
+//! tables, and each is the only shape its own maintainer can work with.
+//!
 //! `search_documents.message_id` cascades from `messages.id`, so deleting a
 //! message deletes its shadow row, which the standard external-content sync
 //! triggers below turn into the matching `messages_fts` deletion.
@@ -69,6 +80,32 @@ pub fn ensure_schema(connection: &Connection) -> Result<()> {
 /// is nothing to update. See [`ensure_schema`] for why the row always exists
 /// once the message does.
 pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) -> Result<()> {
+    // Delete then insert, because a contentless table has no `UPDATE`. The
+    // delete runs unconditionally: naming a rowid that is not there costs
+    // nothing, and a branch that skipped it would have to be right about
+    // something it cannot see.
+    connection.execute(
+        "DELETE FROM message_bodies_fts WHERE rowid = ?1",
+        [message_id],
+    )?;
+    if let Some(text) = body.filter(|text| !text.is_empty()) {
+        connection.execute(
+            "INSERT INTO message_bodies_fts (rowid, body) VALUES (?1, ?2)",
+            rusqlite::params![message_id, text],
+        )?;
+    }
+    // Clearing is therefore the delete on its own. An empty document would be
+    // a row that matches nothing and costs an index entry, which is worse
+    // than no row at all.
+
+    // And still into the old column, deliberately and for one issue only.
+    // `SearchExecutor` matches all six columns of `messages_fts` in a single
+    // `MATCH` and takes its `bm25()` and `snippet()` from that same cursor,
+    // for reasons with a benchmark behind them (postio-y47) -- so dropping
+    // `search_documents.body` before the executor moves would stop body
+    // search working with every test in this crate still green. #408 is where
+    // the column goes, in the commit that teaches the executor to union two
+    // matches and generate its own highlights.
     connection.execute(
         "UPDATE search_documents SET body = ?1 WHERE message_id = ?2",
         rusqlite::params![body.unwrap_or(""), message_id],
@@ -124,17 +161,30 @@ pub fn indexable_text(body: &MessageBody) -> Option<String> {
 /// is already caught up, which is what makes running it on every start
 /// affordable.
 ///
-/// `body_state = 'full'` and not merely "has a blob": the column says whether
-/// the bytes are on this machine, and a message the index claims to have read
-/// while its body is still on the server would make search answer for a
-/// corpus it does not have.
+/// `body_state` and not merely "has a blob": the column says whether the bytes
+/// are on this machine, and a message the index claims to have read while its
+/// body is still on the server would make search answer for a corpus it does
+/// not have.
+///
+/// **Both `full` and `partial`.** ADR 0017 split those apart: `partial` means
+/// the words are local and the attachment payloads are not, and it is the
+/// settled state of every text-backfilled message carrying an attachment —
+/// 15% of the reference mailbox. Asking only for `full`, which was the only
+/// state a fetched body could reach when this was written, skips every one of
+/// them, and the search corpus is precisely what the text axis exists to
+/// complete.
+///
+/// Asked of `message_bodies_fts` rather than of `search_documents.body`, and
+/// that matters for exactly one population, which is everybody: a store that
+/// indexed its bodies before this table existed has them in the old column,
+/// and asking the old column would answer "nothing to do" for every one of
+/// them while the new index stayed empty for ever.
 pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
     let mut statement = connection.prepare(
         "SELECT m.id
            FROM messages m
-           JOIN search_documents d ON d.message_id = m.id
-          WHERE m.body_state = 'full'
-            AND d.body = ''
+          WHERE m.body_state IN ('full', 'partial')
+            AND NOT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id)
           ORDER BY m.received_at DESC
           LIMIT ?1",
     )?;
@@ -150,6 +200,11 @@ pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result
 /// triggers (a batch insert with triggers temporarily disabled, for
 /// instance), or as a maintenance operation if the index is ever suspected
 /// to have drifted from its content.
+///
+/// It does **not** rebuild `message_bodies_fts`, and cannot: that table has no
+/// content table to regenerate from, which is the whole point of it. What
+/// catches a body up is [`messages_missing_body_text`] and the pass that
+/// reads the blob store, because the blob store is where the text is.
 pub fn rebuild(connection: &Connection) -> Result<()> {
     connection.execute_batch("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');")?;
     Ok(())
@@ -172,6 +227,55 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content_rowid = 'message_id',
     tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- Message bodies: the index, and no second copy of the text.
+--
+-- `content = ''` means FTS5 keeps its inverted index and not the text. The
+-- alternative is what `search_documents.body` still is: the entire text
+-- corpus duplicated inside SQLite, which was free while nothing was indexed
+-- (#327) and is the whole mailbox now that everything is (ADR 0016). It also
+-- breaks migration 0001's own rule, which `PRODUCT.md` §6 repeats -- SQLite
+-- holds the blob key and the metadata needed to list and search -- and every
+-- megabyte of it is a megabyte of pages ADR 0014 is about to encrypt under a
+-- 100 ms search budget.
+--
+-- `contentless_delete = 1` is what makes it usable rather than write-once: a
+-- plain contentless table cannot delete a row without being handed every
+-- original column value, and the original value is exactly what this design
+-- no longer keeps. Available since SQLite 3.43; the bundled build is 3.53.2,
+-- probed directly rather than assumed.
+--
+-- A table of its own rather than a seventh column on `messages_fts`, and
+-- that is forced rather than chosen: under `content = ''` changing *any*
+-- column means re-inserting them all, body included -- while the metadata
+-- columns are maintained by triggers on `messages`, `recipients` and
+-- `attachments`, and a trigger cannot read the blob store.
+-- `MessageRepository::update` fires those triggers on every backfill.
+--
+-- The rowid is the message id, which is what lets a body be found, replaced
+-- and deleted with no shadow row to keep in step.
+CREATE VIRTUAL TABLE IF NOT EXISTS message_bodies_fts USING fts5(
+    body,
+    content = '',
+    contentless_delete = 1,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+
+-- messages -> message_bodies_fts: deletion, and only deletion.
+--
+-- The one trigger this table has, and it is not optional. `search_documents`
+-- cascades from `messages` and its own delete trigger takes `messages_fts`
+-- with it; a contentless table has no content row to cascade, so without this
+-- the text of every deleted message stays matchable for ever and the index
+-- grows exactly the way moving the bodies here exists to stop.
+--
+-- Insertion has no trigger and cannot have one: nothing in SQL can compute a
+-- body. `index_body` is the only writer.
+CREATE TRIGGER IF NOT EXISTS trg_message_bodies_fts_ad
+AFTER DELETE ON messages
+BEGIN
+    DELETE FROM message_bodies_fts WHERE rowid = old.id;
+END;
 
 -- messages -> search_documents: subject and list_id, both scalar columns on
 -- `messages` itself. Sender/recipients/filenames come from their own
