@@ -1257,3 +1257,24 @@ async fn a_sectioned_fetch_for_a_part_nobody_seeded_is_rejected_not_empty() {
 
     assert!(matches!(result, Err(BackendError::Rejected { .. })));
 }
+
+#[test]
+fn an_attachment_carries_what_will_explain_its_payload_later() {
+    // The payload axis (#377) fetches `BODY[2]` on demand, which returns the
+    // part's encoded bytes and none of its headers -- exactly the problem
+    // `text_part_headers` already solves for the text axis. `BODYSTRUCTURE`
+    // reported the type and the encoding here, at header-sync time, and this
+    // is the only moment both it and the `Attachment` are in hand.
+    let part = PartNode::new("2", "application/pdf", 90_000)
+        .with_encoding("base64")
+        .with_filename("notes.pdf");
+
+    let attachment = part.to_attachment(MessageId::new(7));
+
+    assert_eq!(attachment.part_id.as_deref(), Some("2"));
+    assert_eq!(
+        attachment.part_headers.as_deref(),
+        Some("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n"),
+        "enough to decode the section without a second round trip for [2.MIME]"
+    );
+}
