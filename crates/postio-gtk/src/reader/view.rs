@@ -610,8 +610,9 @@ fn handle_decide_policy(
 ///
 /// The stylesheet is literal CSS, not the GTK `--postio-*` variables `tokens
 /// .css` defines — a `WebView`'s CSS engine has no notion of the GTK style
-/// context those live on. `data/reader.css` restates the same values by
-/// hand; see its header comment for the values that have to stay in sync.
+/// context those live on. `data/reader-tokens.css` is generated from the
+/// same design tokens as a literal `--r-*` palette (#296); `data/reader.css`
+/// is structure only, referencing those variables.
 fn wrap_document(content: &str, remote: RemoteImages) -> String {
     let css = reader_css();
     let csp = content_security_policy(remote);
@@ -626,10 +627,12 @@ fn wrap_document(content: &str, remote: RemoteImages) -> String {
 
 fn reader_css() -> String {
     let mut css = embedded_font_faces().to_owned();
-    if let Ok(bytes) = resources::read(resources::READER_CSS)
-        && let Ok(text) = String::from_utf8(bytes.to_vec())
-    {
-        css.push_str(&text);
+    for resource in [resources::READER_TOKENS_CSS, resources::READER_CSS] {
+        if let Ok(bytes) = resources::read(resource)
+            && let Ok(text) = String::from_utf8(bytes.to_vec())
+        {
+            css.push_str(&text);
+        }
     }
     css
 }

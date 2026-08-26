@@ -20,9 +20,13 @@
     <!-- Hand-written, and layered on top of the generated tokens. -->
     <file compressed="true">shell.css</file>
 
-    <!-- The reading pane's WebView stylesheet: a different CSS engine, so
-         its own hand-written literal colours rather than tokens.css's GTK
-         variables. -->
+    <!-- The reading pane's WebView palette: generated from the same Tokens
+         as tokens.css (#296), since a WebView's CSS engine cannot see the
+         GTK `--postio-*` variables tokens.css defines. -->
+    <file compressed="true">reader-tokens.css</file>
+
+    <!-- The reading pane's WebView stylesheet: structure only, referencing
+         the `--r-*` variables reader-tokens.css defines. -->
     <file compressed="true">reader.css</file>
 
     <!-- The application icon, in the directory layout GtkIconTheme expects
