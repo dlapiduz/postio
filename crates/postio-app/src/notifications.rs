@@ -42,10 +42,11 @@ use gtk::prelude::*;
 
 use postio_config::SyncConfig;
 use postio_gtk::window::Window;
+use postio_model::ids::AccountId;
 use postio_model::{MailboxId, MailboxRole, MessageId};
 use postio_runtime::store::MailStore;
 use postio_storage::Database;
-use postio_storage::repository::MailboxRepository;
+use postio_storage::repository::{AccountRepository, MailboxRepository};
 
 /// The action a click on a notification runs. Application-scoped because a
 /// notification's default action activates whether or not any window
@@ -128,13 +129,13 @@ impl Notifier {
         if messages.is_empty() {
             return;
         }
-        let role = match mailbox_role(&self.database, mailbox) {
-            Some(role) => role,
-            None => return,
+        let Some((role, account)) = mailbox_info(&self.database, mailbox) else {
+            return;
         };
         if !role_may_notify(&self.config, role) {
             return;
         }
+        let account_name = account_label(&self.database, account);
 
         let Some(application) = window.application() else {
             return;
@@ -154,7 +155,10 @@ impl Notifier {
             if rows.is_empty() {
                 return;
             }
-            application.send_notification(Some(&notification_id(mailbox)), &build(mailbox, &rows));
+            application.send_notification(
+                Some(&notification_id(mailbox)),
+                &build(mailbox, &rows, account_name.as_deref()),
+            );
         });
     }
 }
@@ -170,9 +174,10 @@ fn role_may_notify(config: &SyncConfig, role: MailboxRole) -> bool {
     config.notify && config.notify_roles.iter().any(|name| name == role.as_str())
 }
 
-/// What one arrived mailbox's role is, or `None` for a store this read
-/// cannot reach — never a reason to fail the sync pass that called this.
-fn mailbox_role(database: &Database, mailbox: MailboxId) -> Option<MailboxRole> {
+/// What one arrived mailbox's role and account are, or `None` for a store
+/// this read cannot reach — never a reason to fail the sync pass that
+/// called this.
+fn mailbox_info(database: &Database, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
     let connection = database
         .connection()
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
@@ -181,7 +186,30 @@ fn mailbox_role(database: &Database, mailbox: MailboxId) -> Option<MailboxRole> 
         .get(mailbox)
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?
-        .map(|mailbox| mailbox.role)
+        .map(|mailbox| (mailbox.role, mailbox.account_id))
+}
+
+/// The name to put on a notification for `account`, or `None` when only one
+/// account is enabled — naming the only account there is would be noise, not
+/// information (ADR 0005 Q13).
+fn account_label(database: &Database, account: AccountId) -> Option<String> {
+    let connection = database
+        .connection()
+        .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
+        .ok()?;
+    let repository = AccountRepository::new(&connection);
+    let enabled = repository
+        .list_enabled()
+        .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
+        .ok()?;
+    if enabled.len() < 2 {
+        return None;
+    }
+    repository
+        .get(account)
+        .map_err(|error| tracing::warn!(%error, "could not read the account to notify about"))
+        .ok()?
+        .map(|account| account.display_name)
 }
 
 /// The title and body a batch of arrivals reads as: one sender and subject
@@ -190,7 +218,14 @@ fn mailbox_role(database: &Database, mailbox: MailboxId) -> Option<MailboxRole> 
 /// Pure on purpose — `gio::Notification` has no getters to assert against
 /// (it is a write-only description, sent rather than introspected), so this
 /// is the half of [`build`] a test can actually check.
-fn content(rows: &[postio_runtime::store::MessageSummary]) -> (String, String) {
+fn content(
+    rows: &[postio_runtime::store::MessageSummary],
+    account: Option<&str>,
+) -> (String, String) {
+    let named = |title: String| match account {
+        Some(name) => format!("{title} — {name}"),
+        None => title,
+    };
     if let [only] = rows {
         let from = only
             .from
@@ -201,10 +236,10 @@ fn content(rows: &[postio_runtime::store::MessageSummary]) -> (String, String) {
             .subject
             .clone()
             .unwrap_or_else(|| "(no subject)".to_owned());
-        (from, subject)
+        (named(from), subject)
     } else {
         (
-            "New mail".to_owned(),
+            named("New mail".to_owned()),
             format!("{} new messages", rows.len()),
         )
     }
@@ -212,8 +247,12 @@ fn content(rows: &[postio_runtime::store::MessageSummary]) -> (String, String) {
 
 /// The notification itself, from [`content`], with a click target that says
 /// which mailbox and — for a single arrival — which message to focus.
-fn build(mailbox: MailboxId, rows: &[postio_runtime::store::MessageSummary]) -> gio::Notification {
-    let (title, body) = content(rows);
+fn build(
+    mailbox: MailboxId,
+    rows: &[postio_runtime::store::MessageSummary],
+    account: Option<&str>,
+) -> gio::Notification {
+    let (title, body) = content(rows, account);
     let notification = gio::Notification::new(&title);
     notification.set_body(Some(&body));
     notification.set_default_action_and_target_value(
@@ -378,18 +417,21 @@ mod tests {
 
     #[test]
     fn a_single_arrival_names_the_sender_and_the_subject() {
-        let (title, body) = content(&[summary("Ada Lovelace", "Quarterly report")]);
+        let (title, body) = content(&[summary("Ada Lovelace", "Quarterly report")], None);
         assert_eq!(title, "Ada Lovelace");
         assert_eq!(body, "Quarterly report");
     }
 
     #[test]
     fn a_burst_is_a_count_rather_than_one_popup_per_message() {
-        let (_, body) = content(&[
-            summary("Ada Lovelace", "One"),
-            summary("Bob", "Two"),
-            summary("Carol", "Three"),
-        ]);
+        let (_, body) = content(
+            &[
+                summary("Ada Lovelace", "One"),
+                summary("Bob", "Two"),
+                summary("Carol", "Three"),
+            ],
+            None,
+        );
         assert_eq!(body, "3 new messages");
     }
 
@@ -397,7 +439,61 @@ mod tests {
     fn a_missing_subject_still_reads_as_a_sentence() {
         let mut only = summary("Ada Lovelace", "");
         only.subject = None;
-        let (_, body) = content(&[only]);
+        let (_, body) = content(&[only], None);
         assert_eq!(body, "(no subject)");
+    }
+
+    // #189: notifications name the account when more than one is configured.
+
+    #[test]
+    fn a_single_arrival_names_the_account_when_one_is_given() {
+        let (title, _) = content(&[summary("Ada Lovelace", "Quarterly report")], Some("Work"));
+        assert_eq!(title, "Ada Lovelace — Work");
+    }
+
+    #[test]
+    fn a_burst_names_the_account_too() {
+        let (title, _) = content(
+            &[summary("Ada Lovelace", "One"), summary("Bob", "Two")],
+            Some("Work"),
+        );
+        assert_eq!(title, "New mail — Work");
+    }
+
+    #[test]
+    fn account_label_is_none_with_exactly_one_enabled_account() {
+        let database = postio_storage::test_support::memory();
+        let account = {
+            let connection = database.connection().expect("a connection");
+            postio_storage::test_support::account(&connection)
+        };
+        assert_eq!(
+            account_label(&database, account.id),
+            None,
+            "a single-account install must read exactly as it did before #189"
+        );
+    }
+
+    #[test]
+    fn account_label_names_the_account_once_a_second_is_enabled() {
+        let database = postio_storage::test_support::memory();
+        let (first, second) = {
+            let connection = database.connection().expect("a connection");
+            let first = postio_storage::test_support::account(&connection);
+            let mut second = postio_model::Account::new(
+                "Work",
+                EmailAddress::new(None::<String>, "grace@example.com"),
+            );
+            AccountRepository::new(&connection)
+                .create(&mut second)
+                .expect("create the second account");
+            (first, second)
+        };
+        assert_eq!(account_label(&database, second.id), Some("Work".to_owned()));
+        assert_eq!(
+            account_label(&database, first.id),
+            Some(first.display_name.clone()),
+            "both accounts get named once there is more than one"
+        );
     }
 }
