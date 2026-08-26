@@ -52,6 +52,7 @@ use postio_storage::BlobStore;
 use postio_storage::repository::{BackfillCandidate, BodyBlobs, MessageRepository};
 use rusqlite::Connection;
 
+use crate::blob_sink::BlobSink;
 use crate::drain::SyncError;
 
 /// This module's result type.
@@ -92,6 +93,25 @@ pub struct BackfillPolicy {
     /// and everything below the newest `seed_batch` messages of a folder was
     /// never fetched until somebody opened it (#318).
     pub seed_batch: u32,
+    /// The most background requests held in memory at once, across every
+    /// mailbox.
+    ///
+    /// The backlog is a `BinaryHeap` of requests, each carrying an owned
+    /// mailbox path. `seed_batch` bounds one folder's contribution, and
+    /// nothing bounded the sum — fine at 200 across forty folders, and not
+    /// fine the first time something re-seeds a whole folder. ADR 0017's
+    /// second axis: no mailbox is ever resident in this process.
+    ///
+    /// Overflow is *refused*, not evicted. The heap is newest-first, so
+    /// evicting would drop the mail most likely to be opened, and there is
+    /// nothing to lose by refusing: `body_state` is the durable record of what
+    /// still needs fetching, and [`seed`] re-reads it whenever the queue
+    /// drains. The heap is a window onto that record, never a second copy of
+    /// it.
+    ///
+    /// It bounds the *background* lane only. The interactive lane is subject
+    /// to none of the policy, this included.
+    pub max_backlog: usize,
 }
 
 impl Default for BackfillPolicy {
@@ -109,6 +129,11 @@ impl Default for BackfillPolicy {
             pause_on_metered: true,
             pause_when_active: true,
             seed_batch: 200,
+            // Twenty batches in flight: enough that a drained queue is
+            // re-seeded rather than starved, small enough that the heap and
+            // its owned paths stay a rounding error beside one message's
+            // bytes.
+            max_backlog: 4_000,
         }
     }
 }
@@ -372,6 +397,13 @@ impl Backfill {
         {
             self.progress.skipped += 1;
             self.set_aside.insert(request.message);
+            return false;
+        }
+        // Full. Not `set_aside`: this message is perfectly fetchable and will
+        // be offered again by the next `seed`, unlike one refused for its
+        // size. Recording it as skipped would misreport the backlog as
+        // permanently shorter than the work remaining.
+        if self.background.len() >= self.policy.max_backlog {
             return false;
         }
         self.lanes.insert(request.message, Lane::Background);
@@ -684,18 +716,29 @@ pub async fn fetch_body(
         return fetch_text_parts(connection, blobs, backend, request, message, cancel).await;
     }
 
-    let mut sink = VecSink::new();
+    // Straight to disk as it arrives, rather than into a `Vec` that doubles
+    // its way up to the message's size (ADR 0017, axis 2). This is the path
+    // the interactive lane takes for an oversized message, and the
+    // interactive lane ignores `max_body_bytes` by design -- so it is exactly
+    // the path where the buffer would have been worst.
+    let mut sink = BlobSink::new(blobs)?;
     backend
         .fetch_body(&request.path, request.uid, &mut sink, cancel)
         .await?;
-    if !sink.is_finished() {
+    let Some(blob) = sink.finished_blob() else {
         // The sink contract: without `finish` the bytes are a fragment, and a
-        // fragment stored as a message is worse than no message.
+        // fragment stored as a message is worse than no message. Nothing was
+        // published, so there is nothing to undo.
         return Err(SyncError::Backend(BackendError::Cancelled));
-    }
+    };
+    let bytes = sink.bytes();
 
-    let raw = sink.into_inner();
-    let bytes = raw.len() as u64;
+    // Read back to parse. The parser needs the message whole, so this is one
+    // exact-size allocation -- against the `Vec`'s doubling-and-copying, and
+    // against a second full pass to `put` it afterwards. The bytes are also
+    // durable before anything looks at them, so a parse that dies takes
+    // nothing with it.
+    let raw = blobs.get(&blob)?;
     // The ingest boundary of #277. `mime::parse` contains the panic itself, so
     // this is not what keeps sync alive -- it is what keeps the failure
     // visible. Without it a message whose bytes defeat the parser stores no
@@ -721,7 +764,7 @@ pub async fn fetch_body(
         headers: None,
     };
 
-    message.raw_blob_id = Some(blobs.put(&raw)?);
+    message.raw_blob_id = Some(blob);
     if message.preview.is_none() {
         message.preview = parsed.preview;
     }
