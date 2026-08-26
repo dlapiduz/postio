@@ -1115,3 +1115,57 @@ fn a_body_structure_becomes_attachment_metadata_without_any_bytes() {
     assert_eq!(attachments[0].part_id.as_deref(), Some("3"));
     assert!(attachments[1].is_inline());
 }
+
+#[test]
+fn a_fetched_message_carries_the_sections_holding_its_own_text() {
+    // ADR 0017's text axis fetches `BODY.PEEK[<section>]`, so the section
+    // numbers have to survive the header sync -- `into_message` is the only
+    // place that sees a `BODYSTRUCTURE` and a `Message` at the same time.
+    // The attachment here is what makes the assertion mean something: its
+    // section must not be mistaken for a body part.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            PartNode::new("1.1", "text/plain", 512),
+            PartNode::new("1.2", "text/html", 2048),
+            PartNode::new("2", "application/pdf", 40 * 1024 * 1024).with_filename("statement.pdf"),
+        ],
+    );
+    let fetched = FetchedMessage {
+        uid: Uid::new(1),
+        uid_validity: UidValidity::new(1),
+        mod_seq: None,
+        flags: FlagSet::new(),
+        internal_date: Utc.with_ymd_and_hms(2026, 8, 20, 9, 31, 0).unwrap(),
+        size: 40 * 1024 * 1024,
+        envelope: None,
+        structure: Some(structure),
+    };
+
+    let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
+
+    assert_eq!(message.text_part_id.as_deref(), Some("1.1"));
+    assert_eq!(message.html_part_id.as_deref(), Some("1.2"));
+    // And the payload stays where it was: metadata only, no bytes.
+    assert_eq!(message.attachments.len(), 1);
+    assert_eq!(message.attachments[0].part_id.as_deref(), Some("2"));
+}
+
+#[test]
+fn a_fetched_message_with_no_body_structure_names_no_text_sections() {
+    let fetched = FetchedMessage {
+        uid: Uid::new(1),
+        uid_validity: UidValidity::new(1),
+        mod_seq: None,
+        flags: FlagSet::new(),
+        internal_date: Utc.with_ymd_and_hms(2026, 8, 20, 9, 31, 0).unwrap(),
+        size: 100,
+        envelope: None,
+        structure: None,
+    };
+
+    let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
+
+    assert_eq!(message.text_part_id, None);
+    assert_eq!(message.html_part_id, None);
+}
