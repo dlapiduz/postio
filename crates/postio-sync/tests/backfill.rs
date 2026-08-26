@@ -79,6 +79,7 @@ fn request(mailbox: &Mailbox, id: MessageId, uid: u32, size: u64) -> BodyRequest
         uid: Uid::new(uid),
         size,
         received_at: at(uid as i64),
+        whole: false,
     }
 }
 
@@ -850,4 +851,84 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
         stored.raw_blob_id.is_some(),
         "the fallback fetched the whole message, so it keeps it"
     );
+}
+
+#[tokio::test]
+async fn opening_an_attachment_asks_for_the_whole_message() {
+    // The escape hatch from the text axis. The background lane leaves payloads
+    // on the server, so when the user opens one there has to be a way to get
+    // every byte -- otherwise ADR 0017 would have made attachments
+    // unopenable, which is not a trade anyone agreed to.
+    //
+    // Interactive by construction: nothing speculative reaches this path.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_big_attachment(1));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    let mut request = request(&local.inbox, id, uid, HUGE);
+    request.whole = true;
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert!(
+        stored.raw_blob_id.is_some(),
+        "every byte means every byte -- the raw message is what the part is cut from"
+    );
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+}
+
+#[tokio::test]
+async fn text_fetched_by_section_reaches_the_search_index() {
+    // #327 was "bodies are never indexed", and the fix hung `index_body_of`
+    // off the one place every body arrived. The text axis is a *second* place
+    // bodies arrive, so it needs its own proof -- otherwise ADR 0017 would
+    // quietly reintroduce the bug it exists to serve.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_big_attachment(1));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, HUGE),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let indexed: String = local
+        .connection
+        .query_row(
+            "SELECT body FROM search_documents WHERE message_id = ?1",
+            [id.get()],
+            |row| row.get(0),
+        )
+        .expect("the shadow row");
+    assert_eq!(indexed, "Your statement is attached.");
 }

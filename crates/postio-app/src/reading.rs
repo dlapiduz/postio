@@ -647,8 +647,11 @@ pub(crate) async fn part_bytes(
             // returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
             // engine's own loop claims the job, so the wait is ours.
+            // The whole message, not just its text: the parts this is about
+            // are exactly the ones the text axis leaves on the server (ADR
+            // 0017), and the user asked for these bytes by name.
             if !engine
-                .request_body(message)
+                .request_whole_message(message)
                 .await
                 .map_err(|error| error.message().to_string())?
             {
