@@ -802,6 +802,33 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: None,
     },
+    // -- Reader --------------------------------------------------------
+    CommandSpec {
+        id: CommandId::ScrollReaderDown,
+        title: "Scroll reading pane down",
+        default_binding: "Page_Down",
+        // `Space` reads a page and moves on in most mail and feed readers;
+        // offered alongside `Page_Down` rather than instead of it; see
+        // `ScrollReaderUp` for why the shifted form is its pair rather than
+        // a binding of its own.
+        alternate_bindings: &["space"],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        // What the pane is scrolled to is view state, not durable data —
+        // nothing here for undo to reach.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ScrollReaderUp,
+        title: "Scroll reading pane up",
+        default_binding: "Page_Up",
+        alternate_bindings: &["shift+space"],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

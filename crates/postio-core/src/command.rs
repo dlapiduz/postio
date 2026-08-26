@@ -169,6 +169,12 @@ command_ids! {
     OpenPartExternally => "open_part_externally",
     /// Render a held-back part once, loading what it references.
     RenderPartOnce => "render_part_once",
+    /// Scroll the reading pane down by about a screenful, without moving
+    /// the keyboard off the message list.
+    ScrollReaderDown => "scroll_reader_down",
+    /// Scroll the reading pane up by about a screenful, without moving the
+    /// keyboard off the message list.
+    ScrollReaderUp => "scroll_reader_up",
 }
 
 impl fmt::Display for CommandId {
@@ -489,6 +495,12 @@ pub enum Command {
     OpenPartExternally,
     /// Render a held-back part once, loading what it references.
     RenderPartOnce,
+
+    // -- Reader --------------------------------------------------------
+    /// Scroll the reading pane down by about a screenful.
+    ScrollReaderDown,
+    /// Scroll the reading pane up by about a screenful.
+    ScrollReaderUp,
 }
 
 impl Command {
@@ -579,6 +591,8 @@ impl Command {
             Command::SaveAllParts => CommandId::SaveAllParts,
             Command::OpenPartExternally => CommandId::OpenPartExternally,
             Command::RenderPartOnce => CommandId::RenderPartOnce,
+            Command::ScrollReaderDown => CommandId::ScrollReaderDown,
+            Command::ScrollReaderUp => CommandId::ScrollReaderUp,
         }
     }
 
@@ -662,6 +676,8 @@ impl Command {
             CommandId::SaveAllParts => Command::SaveAllParts,
             CommandId::OpenPartExternally => Command::OpenPartExternally,
             CommandId::RenderPartOnce => Command::RenderPartOnce,
+            CommandId::ScrollReaderDown => Command::ScrollReaderDown,
+            CommandId::ScrollReaderUp => Command::ScrollReaderUp,
         }
     }
 
