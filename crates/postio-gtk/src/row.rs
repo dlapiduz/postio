@@ -259,6 +259,37 @@ fn tone(selected: bool, unread: bool) -> usize {
     usize::from(selected) * 2 + usize::from(unread)
 }
 
+/// The rule a row draws above itself, if any.
+///
+/// The ordinary hairline reads fine against a plain ground; against a
+/// selected or cursor row's own tint it can wash out, in exactly the schemes
+/// where the tint and the hairline sit closest (canvas 3c: the checked and
+/// cursor grounds are a step from the hairline in light, and share dark's
+/// palette almost exactly). [`Edge::Strong`] is the higher-contrast rule for
+/// that ground.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Hairline,
+    Strong,
+}
+
+/// Which [`Edge`] a row draws above itself.
+///
+/// `None` above the first row: the list header draws that boundary itself
+/// (`.postio-list-header`'s own bottom rule), on purpose, so it holds
+/// whether or not the first row happens to be selected — a boundary that
+/// only shows up sometimes is not a boundary.
+fn top_edge(selected: bool, cursor: bool, first: bool) -> Option<Edge> {
+    if first {
+        return None;
+    }
+    Some(if selected || cursor {
+        Edge::Strong
+    } else {
+        Edge::Hairline
+    })
+}
+
 /// Everything the snapshot paints with, read off the cascade.
 ///
 /// Built from an invisible probe label rather than written down here, so a
@@ -274,6 +305,9 @@ struct Palette {
     hint: Ink,
     key: Ink,
     hairline: gdk::RGBA,
+    /// The higher-contrast rule [`top_edge`] picks over a selected or cursor
+    /// row's own tint.
+    hairline_strong: gdk::RGBA,
     selected_edge: gdk::RGBA,
     key_edge: gdk::RGBA,
     selected_bg: gdk::RGBA,
@@ -336,6 +370,7 @@ impl Palette {
             hint: ink(&["postio-row-hint"]),
             key: ink(&["postio-key"]),
             hairline: paint(&["postio-row-edge", "hairline"]),
+            hairline_strong: paint(&["postio-row-edge", "hairline", "strong"]),
             selected_edge: paint(&["postio-row-edge", "selected"]),
             key_edge: paint(&["postio-row-edge", "key"]),
             selected_bg: paint(&["postio-row-ground", "selected"]),
@@ -1187,9 +1222,14 @@ impl MessageRowView {
             fill(&palette.selected_edge, 0.0, 0.0, EDGE, height);
         }
 
-        // One hairline between rows, and none above the first.
-        if !selected && !cursor && !imp.first.get() {
-            fill(&palette.hairline, 0.0, 0.0, width, 1.0);
+        // One rule between rows, and none above the first — the header
+        // draws that boundary itself. A selected or cursor row still gets
+        // one, in the higher-contrast variant, so the tint reads as one row
+        // among rows rather than as paste-over.
+        match top_edge(selected, cursor, imp.first.get()) {
+            Some(Edge::Hairline) => fill(&palette.hairline, 0.0, 0.0, width, 1.0),
+            Some(Edge::Strong) => fill(&palette.hairline_strong, 0.0, 0.0, width, 1.0),
+            None => {}
         }
 
         // Nothing bound yet: the page is on its way. A skeleton says "this
@@ -1509,6 +1549,23 @@ mod tests {
             ],
             "a rebind in [keys] must reach the hint, not just the resolver"
         );
+    }
+
+    #[test]
+    fn a_selected_or_cursor_row_still_draws_a_boundary_above_itself() {
+        // Not first: an ordinary row gets the ordinary hairline.
+        assert_eq!(top_edge(false, false, false), Some(Edge::Hairline));
+        // Selected or the cursor: the tint would wash a plain hairline out,
+        // so the higher-contrast rule draws instead of nothing.
+        assert_eq!(top_edge(true, false, false), Some(Edge::Strong));
+        assert_eq!(top_edge(false, true, false), Some(Edge::Strong));
+        assert_eq!(top_edge(true, true, false), Some(Edge::Strong));
+        // The first row draws no edge of its own regardless of state — the
+        // header/rows boundary is the header's job, not the row's, so it
+        // cannot depend on which row happens to be selected.
+        assert_eq!(top_edge(false, false, true), None);
+        assert_eq!(top_edge(true, false, true), None);
+        assert_eq!(top_edge(false, true, true), None);
     }
 
     #[test]
