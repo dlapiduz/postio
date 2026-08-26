@@ -186,6 +186,19 @@ pub struct Message {
     /// yet — a draft still being composed, or a row synced before this field
     /// existed.
     pub content_type: Option<String>,
+    /// The `BODYSTRUCTURE` section holding the message's plain-text body —
+    /// `1`, `1.1`, and so on — or `None` when it has none, or when nothing has
+    /// parsed a structure for this row yet.
+    ///
+    /// Recorded because the backfill needs to *name* the part it wants. ADR
+    /// 0017's text axis fetches `BODY.PEEK[<section>]` rather than
+    /// `BODY.PEEK[]`, which is the difference between pulling a message's words
+    /// and pulling the forty-megabyte attachment nobody asked for. The header
+    /// sync already computes this and used to discard it.
+    pub text_part_id: Option<String>,
+    /// The `BODYSTRUCTURE` section holding the message's HTML body, on the same
+    /// terms as [`Message::text_part_id`].
+    pub html_part_id: Option<String>,
 
     /// Flags and keywords.
     pub flags: FlagSet,
@@ -229,6 +242,8 @@ impl Message {
             preview: None,
             attachments: Vec::new(),
             content_type: None,
+            text_part_id: None,
+            html_part_id: None,
             flags: FlagSet::new(),
             labels: Vec::new(),
             size: 0,
