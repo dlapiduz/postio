@@ -517,3 +517,117 @@ async fn a_network_nobody_reported_on_is_still_worth_trying() {
          worse than trying and failing"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A revoked grant, all the way to the user — ADR 0006 Q5, #194
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use postio_imap::auth::TokenSource;
+use postio_imap::imap::{ConnectionPool, ImapBackend, PoolConfig, RustlsConnector};
+use postio_imap::secret::{AccountKey, Password, SecretError};
+use postio_imap::test_server::{TestMailbox, TestServer};
+use postio_model::AuthMethod;
+
+/// A source whose grant is gone: every token it can mint is refused, and
+/// invalidating only makes it mint a different refused one.
+///
+/// The shape that matters. A source handing back the *same* token twice is
+/// already covered — the retry is skipped outright — and it would hide the
+/// question being asked here, which is what happens when the retry really
+/// runs and really fails.
+#[derive(Debug)]
+struct RevokedGrant {
+    minted: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl TokenSource for RevokedGrant {
+    async fn access_token(&self, _account: &AccountKey) -> Result<Password, SecretError> {
+        let n = self.minted.fetch_add(1, Ordering::SeqCst);
+        Ok(Password::new(format!("revoked-token-{n}")))
+    }
+
+    async fn invalidate(&self, _account: &AccountKey) {}
+}
+
+fn authenticate_attempts(server: &TestServer) -> usize {
+    server
+        .commands()
+        .iter()
+        .filter(|line| line.to_ascii_uppercase().contains("AUTHENTICATE"))
+        .count()
+}
+
+/// The last criterion of #194, and the one no single layer can state: a grant
+/// the provider has revoked costs exactly one retry, blocks the link, and
+/// then stops — no timer brings it back.
+///
+/// Composed rather than duplicated, which is the point. The pool decides
+/// *one retry*; the supervisor decides *stop asking*; neither knows about the
+/// other. What this asserts is that the two together do not add up to a
+/// client hammering a token endpoint that has already said no.
+#[tokio::test]
+async fn a_revoked_grant_reaches_attention_after_exactly_one_retry() {
+    let server = TestServer::builder()
+        .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=OAUTHBEARER"])
+        .access_token("the-token-this-account-no-longer-has")
+        .mailbox(TestMailbox::new("INBOX"))
+        .start()
+        .await;
+    let tokens = Arc::new(RevokedGrant {
+        minted: AtomicUsize::new(0),
+    });
+    let backend = ImapBackend::over(Arc::new(ConnectionPool::with_token_source(
+        server.settings().with_auth(AuthMethod::OAuth2),
+        AccountKey::new(server.account()),
+        Arc::clone(&tokens) as Arc<dyn TokenSource>,
+        Arc::new(RustlsConnector::new().expect("a connector")),
+        PoolConfig::default(),
+    )));
+    let mut supervisor = Supervisor::new(policy());
+
+    let change = supervisor.poll(&backend, at(0), MIDPOINT).await;
+
+    assert!(
+        matches!(change, Some(Link::Blocked(Blocker::Authentication(_)))),
+        "a revoked grant is the user's to resolve, not the backoff's: {change:?}"
+    );
+    assert_eq!(
+        authenticate_attempts(&server),
+        2,
+        "one attempt and one retry — never a third"
+    );
+
+    // An hour later, and again an hour after that. `Link::Blocked` is where
+    // the schedule stops: a client that kept trying would be asking a
+    // provider that has already said no, at whatever cadence the backoff had
+    // reached.
+    let minted = tokens.minted.load(Ordering::SeqCst);
+    for hour in 1..=2 {
+        assert_eq!(
+            supervisor.poll(&backend, at(hour * 3_600), MIDPOINT).await,
+            None,
+            "nothing is due, because nothing is scheduled"
+        );
+    }
+    assert_eq!(
+        authenticate_attempts(&server),
+        2,
+        "and no timer put another attempt on the wire"
+    );
+    assert_eq!(
+        tokens.minted.load(Ordering::SeqCst),
+        minted,
+        "nor asked the source to mint another token"
+    );
+
+    // And it comes back the moment the user has done something about it,
+    // which is what makes blocking safe rather than terminal.
+    assert!(matches!(
+        supervisor.retry_now(at(7_200)),
+        Some(Link::Waiting { .. })
+    ));
+}
