@@ -63,7 +63,10 @@ pub mod send;
 pub mod status;
 pub mod watch;
 
-pub use backfill::{Backfill, BackfillPolicy, BackfillProgress, BodyRequest, Claim, Priority};
+pub use backfill::{
+    AttachmentPolicy, Backfill, BackfillPolicy, BackfillProgress, BodyRequest, Claim, Priority,
+    Want,
+};
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
