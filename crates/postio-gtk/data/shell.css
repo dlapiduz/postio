@@ -676,6 +676,36 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* ── The reading pane's message header (#319) ────────────────────────
+   Sender, recipients, subject, date — sits above the remote-image banner
+   and the body, and does not scroll with either: it is a native sibling in
+   the reader's own box, never markup inside the WebView's document. */
+.postio-message-header {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
+.postio-message-header-subject {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.1rem;
+  color: var(--postio-ink);
+}
+
+.postio-message-header-sender {
+  color: var(--postio-ink);
+}
+
+.postio-message-header-date {
+  font-family: var(--postio-font-mono);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-message-header-recipients {
+  color: var(--postio-ink-secondary);
+}
+
 /* ── The list pane's named states (canvas 3d) ────────────────────────
    Inbox zero, offline and sync failure share one icon/title/detail/hints
    vocabulary, laid out one of two ways (`postio_gtk::list_state::Placement`):
