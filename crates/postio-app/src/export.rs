@@ -153,8 +153,13 @@ pub async fn export_messages(
                 let engine = engine.clone().ok_or(
                     "This account is not syncing, so that message cannot be fetched to export",
                 )?;
+                // Every byte, not the text axis: what is being written here
+                // is the original RFC 5322 message, and under ADR 0017 the
+                // background lane stores no raw source at all. `request_body`
+                // would fetch the words, leave `raw_blob_id` empty, and this
+                // would wait out its deadline for bytes nothing was fetching.
                 if !engine
-                    .request_body(*message)
+                    .request_whole_message(*message)
                     .await
                     .map_err(|error| error.message().to_string())?
                 {

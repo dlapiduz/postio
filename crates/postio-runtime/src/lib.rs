@@ -42,6 +42,13 @@ pub mod store;
 pub use engine::{
     DrainSummary, Engine, EngineError, EngineParts, Link, NetworkSource, NetworkState, SyncSummary,
 };
+// The two policies `EngineParts` is built with. Re-exported rather than left
+// to be reached for through `postio-sync`, because the composition root that
+// fills `EngineParts` in has no other reason to depend on that crate — and a
+// part that cannot be named from where the struct is constructed is a part
+// that stays `Default::default()`, which is what `body_fetch` did for the
+// whole life of this project.
+pub use postio_sync::{AttachmentPolicy, BackfillPolicy};
 pub use store::{
     ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, SqliteStore, StoreError,
 };

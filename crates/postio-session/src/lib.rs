@@ -68,6 +68,51 @@ pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
         .unwrap_or_default()
 }
 
+/// Read `[sync]` from `path` and turn it into the policy the engine backfills
+/// under.
+///
+/// The join `body_fetch` never had. `BackfillPolicy::background` has
+/// documented itself as "`[sync] body_fetch` in `config.toml`" since it was
+/// written, and `engine::start` spawned `BackfillPolicy::default()` — so
+/// turning bodies off in the file did nothing at all. ADR 0017's
+/// `attachment_fetch` is a setting worth more than that: it is the difference
+/// between a 1.4 GB store and a 12.4 GB one, so it is wired here and the
+/// older knob comes with it.
+///
+/// Read once at startup rather than kept live, for the reason
+/// `Wiring::with_mailbox_roles` gives: the engine is spawned with its parts,
+/// so a change applies at the next start. A file that will not parse leaves
+/// the defaults standing — the settings panel is where a broken file is
+/// reported, and syncing differently because of one would be a worse answer.
+pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPolicy {
+    let sync = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .map(|config| config.sync)
+        .unwrap_or_default();
+    backfill_policy(&sync)
+}
+
+/// [`backfill_policy_at`], for a `[sync]` section already in hand.
+pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::BackfillPolicy {
+    postio_runtime::BackfillPolicy {
+        // `lazy` and `eager` are both "yes, backfill"; they differ in *when*,
+        // and the engine has had one background lane since #318 covered a
+        // whole mailbox rather than its first batch. What would turn the lane
+        // off is a third value, and nobody has asked for one.
+        background: matches!(
+            sync.body_fetch,
+            postio_config::BodyFetch::Lazy | postio_config::BodyFetch::Eager
+        ),
+        attachments: match sync.attachment_fetch {
+            postio_config::AttachmentFetch::OnOpen => postio_runtime::AttachmentPolicy::OnOpen,
+            postio_config::AttachmentFetch::Eager => postio_runtime::AttachmentPolicy::Eager,
+            postio_config::AttachmentFetch::Never => postio_runtime::AttachmentPolicy::Never,
+        },
+        ..postio_runtime::BackfillPolicy::default()
+    }
+}
+
 /// What the frontend needs, once there is a store to give it.
 #[derive(Clone)]
 pub struct Wiring {
@@ -102,6 +147,13 @@ pub struct Wiring {
     /// anything that read the file itself could not be driven by a test.
     /// Empty is the ordinary case and resolves exactly as before.
     pub mailbox_roles: postio_model::RoleOverrides,
+    /// How the engine backfills, from `[sync]`.
+    ///
+    /// A part, like `mailbox_roles`, and for the same reason: how hard this
+    /// installation pulls at its server is a choice about *this installation*,
+    /// and `engine::start` reading the file itself could not be driven by a
+    /// test.
+    pub backfill: postio_runtime::BackfillPolicy,
 }
 
 impl Wiring {
@@ -129,6 +181,7 @@ impl Wiring {
             engine: refresh::EngineSlot::default(),
             secrets: Arc::new(postio_imap::secret::KeyringSecretStore::default()),
             mailbox_roles: postio_model::RoleOverrides::default(),
+            backfill: postio_runtime::BackfillPolicy::default(),
         }
     }
 
@@ -142,6 +195,13 @@ impl Wiring {
     /// worth on its own.
     pub fn with_mailbox_roles(mut self, roles: postio_model::RoleOverrides) -> Self {
         self.mailbox_roles = roles;
+        self
+    }
+
+    /// The same wiring, backfilling under `[sync]`'s answer rather than the
+    /// built-in default.
+    pub fn with_backfill(mut self, backfill: postio_runtime::BackfillPolicy) -> Self {
+        self.backfill = backfill;
         self
     }
 
