@@ -890,3 +890,62 @@ fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
          for the first, which is paging that grows with the folder"
     );
 }
+
+#[test]
+fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
+    // The count and the page must mean the same thing by "in this folder", or
+    // the list model's scrollbar promises rows the window cannot produce.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    for index in 0..4 {
+        let thread = a_thread(&connection, account.id);
+        unread_in(&connection, account.id, inbox, thread.id, index * 10);
+    }
+    for index in 0..3 {
+        let thread = a_thread(&connection, account.id);
+        unread_in(&connection, account.id, archive, thread.id, 100 + index * 10);
+    }
+
+    let repository = ThreadRepository::new(&connection);
+    let query = ThreadListQuery::in_mailbox(account.id, inbox);
+    assert_eq!(repository.count_of(&query).expect("a count"), 4);
+    assert_eq!(repository.page(&query).expect("a page").len(), 4);
+    assert_eq!(
+        repository.count(account.id).expect("an account count"),
+        7,
+        "the account still sees every conversation"
+    );
+}
+
+#[test]
+fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    let threads: Vec<Thread> = (0..6).map(|_| a_thread(&connection, account.id)).collect();
+    for (index, thread) in threads.iter().enumerate() {
+        unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10);
+    }
+
+    let repository = ThreadRepository::new(&connection);
+    let query = ThreadListQuery::in_mailbox(account.id, inbox).limit(2);
+    let all: Vec<ThreadId> = repository
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("every row")
+        .iter()
+        .map(|row| row.id)
+        .collect();
+
+    let second: Vec<ThreadId> = repository
+        .page_at(&query, 2)
+        .expect("an offset page")
+        .iter()
+        .map(|row| row.id)
+        .collect();
+
+    assert_eq!(second, all[2..4], "an offset window is the same window, moved");
+}
