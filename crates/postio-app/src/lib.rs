@@ -136,14 +136,15 @@ pub fn run() -> glib::ExitCode {
         std::sync::Arc::new(postio_imap::secret::KeyringSecretStore::default());
     // The store first: the command bus writes it, and the bus has to be built
     // before the runtime that pumps it.
-    let store = match postio_session::store_key_blocking(secrets.as_ref()) {
-        Ok(key) => open_store(&key),
+    let (store, no_store_because) = match postio_session::store_key_blocking(secrets.as_ref()) {
+        Ok(key) => (open_store(&key), None),
         Err(error) => {
-            // Safe verbatim: no `SecretError` carries key material, and this
-            // is the sentence that tells the user their keyring is locked and
-            // what to do about it.
+            // Safe verbatim: no `SecretError` carries key material. The same
+            // sentence goes to the log and to the screen, because the log is
+            // for a bug report and the screen is for the person who has to
+            // unlock their keyring.
             tracing::error!(%error, "the store cannot be opened without its key");
-            None
+            (None, Some(error.to_string()))
         }
     };
 
@@ -241,6 +242,15 @@ pub fn run() -> glib::ExitCode {
         // replaces it with itself.
         notifications::install_action(application, &window);
         let Some(wiring) = &wiring else {
+            // No store, and the one thing worse than a mail client that will
+            // not open is one that will not open and does not say why. A
+            // locked keyring is the recoverable case and its message says how
+            // (`SecretError::Locked` carries the hint), so it reaches the
+            // screen rather than only the log. A persistent surface with a
+            // Retry on it is #404.
+            if let Some(reason) = &no_store_because {
+                window.show_action_completed(reason, false);
+            }
             return;
         };
         let notifier = notifications::Notifier::new(
