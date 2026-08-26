@@ -2219,6 +2219,27 @@ accumulate — that directory reached 232 GB before anyone looked.
 
 ## Landing work
 
+**"Did it land" has to be asked more than once.** `gh pr merge --rebase`
+returns as soon as GitHub *accepts* the merge; the `git fetch` on the next line
+can still be answered before the new tip is visible. `issue-land.sh` asked
+once, and on 2026-08-26 that turned a few seconds of replication lag into
+`MERGE DID NOT LAND` for two landings out of three (#194, #299) — for work that
+was on `main` already.
+
+The wrong answer is the expensive one here. The message tells the session to
+rename the branch and land again, which opens a **second PR for commits already
+merged**, and to leave the worktree and the claim held. So the check now
+retries for `POSTIO_LANDED_TIMEOUT` (30s) and, when it does give up, prints the
+PR's own `state` beside its verdict: `MERGED` there means this check was wrong,
+not that the work is gone.
+
+The two directions have a test each and they are not the same test.
+`test-issue-land-312.py` is about a merge that **never happened** and must
+still fail; `test-issue-land-lagging-ref.py` is about one that happened
+**late** and must not. A retry helps only the second, which is why the first
+runs with a short `POSTIO_LANDED_TIMEOUT` rather than being relaxed.
+
+
 **`gh pr merge` exits 0 when it merges nothing, and `gh pr view` finds a PR
 that is already merged.** Put together, `issue-land.sh` announced `merged.`,
 deleted the remote branch, and exited 0 while the commits never reached

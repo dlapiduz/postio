@@ -159,6 +159,12 @@ def land(root: Path, target: Path, stub_dir: Path, origin: Path):
     environment["ORIGIN"] = str(origin)
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
+    # The state this test is about is permanent, not late: a merge that never
+    # happened will not appear however long the check waits. Shortening the
+    # window keeps that case fast; the lag case has a test of its own
+    # (`test-issue-land-lagging-ref.py`, #406).
+    environment["POSTIO_LANDED_TIMEOUT"] = "3"
+    environment["POSTIO_LANDED_POLL"] = "1"
     return subprocess.run(
         ["bash", "scripts/issue-land.sh", "-m", "feat(dummy): add a file"],
         cwd=root, env=environment, capture_output=True, text=True, timeout=90,

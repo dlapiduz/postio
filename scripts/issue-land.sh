@@ -336,25 +336,58 @@ gh pr merge --rebase
 # tip is never an ancestor of the base even on complete success. Subjects
 # survive, so they are what is compared, and `main` having moved on underneath
 # is fine -- this asks whether the work arrived, not whether it is the tip.
-git fetch -q origin "$BASE"
-LANDED=$(git log "origin/$BASE" --format=%s)
-MISSING=0
-while IFS= read -r subject; do
-    [ -n "$subject" ] || continue
-    printf '%s\n' "$LANDED" | grep -Fqx -- "$subject" || {
-        echo "not on origin/$BASE: $subject" >&2
-        MISSING=1
-    }
-done <<EOF_LANDING
+#
+# Asked repeatedly rather than once. `gh pr merge` returns as soon as GitHub
+# *accepts* the merge, and the fetch below can still be answered before the
+# new tip is visible -- which turned a few seconds of replication lag into
+# "MERGE DID NOT LAND" twice in three landings (#406), telling the session to
+# open a second PR for commits that were already on main. The state this
+# guards against (#312) is permanent, not late, so waiting a little costs it
+# nothing at all.
+LANDED_TIMEOUT="${POSTIO_LANDED_TIMEOUT:-30}"
+LANDED_POLL="${POSTIO_LANDED_POLL:-3}"
+LANDED_DEADLINE=$(( $(date +%s) + LANDED_TIMEOUT ))
+
+# The subjects of $LANDING that $1 does not carry, one per line.
+missing_from() {
+    while IFS= read -r subject; do
+        [ -n "$subject" ] || continue
+        printf '%s\n' "$1" | grep -Fqx -- "$subject" || printf '%s\n' "$subject"
+    done <<EOF_LANDING
 $LANDING
 EOF_LANDING
+}
 
-if [ "$MISSING" = 1 ]; then
+while :; do
+    git fetch -q origin "$BASE"
+    MISSING=$(missing_from "$(git log "origin/$BASE" --format=%s)")
+    [ -n "$MISSING" ] || break
+    [ "$(date +%s)" -lt "$LANDED_DEADLINE" ] || break
+    sleep "$LANDED_POLL"
+done
+
+if [ -n "$MISSING" ]; then
+    printf '%s\n' "$MISSING" | while IFS= read -r subject; do
+        echo "not on origin/$BASE: $subject" >&2
+    done
+    # What the PR itself says, because it is the one fact that tells "your
+    # work is unlanded" from "the ref never arrived": a MERGED state here
+    # means something went wrong with this check rather than with the merge,
+    # and the instructions below would be the wrong thing to follow.
+    STATE=$(gh pr view --json state --jq .state 2>/dev/null || echo "unknown")
     echo >&2
-    echo "MERGE DID NOT LAND. gh reported success and origin/$BASE does not" >&2
-    echo "carry the commits above. The remote branch $BRANCH is deliberately" >&2
-    echo "NOT deleted -- with the PR merged elsewhere or closed, it may be the" >&2
-    echo "only copy of this work besides this worktree." >&2
+    echo "MERGE DID NOT LAND after ${LANDED_TIMEOUT}s. gh reported success and" >&2
+    echo "origin/$BASE does not carry the commits above. The PR itself says:" >&2
+    echo "    state: $STATE" >&2
+    if [ "$STATE" = "MERGED" ]; then
+        echo "which disagrees with $BASE. Fetch again before doing anything --" >&2
+        echo "if the commits are there, the work landed and only this check" >&2
+        echo "was wrong; release the worktree as usual." >&2
+        exit 1
+    fi
+    echo "The remote branch $BRANCH is deliberately NOT deleted -- with the PR" >&2
+    echo "merged elsewhere or closed, it may be the only copy of this work" >&2
+    echo "besides this worktree." >&2
     echo >&2
     echo "Do not run issue-release.sh. Check the PR, then land onto a branch" >&2
     echo "name that is not already spoken for:" >&2

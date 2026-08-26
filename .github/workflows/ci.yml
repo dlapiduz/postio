@@ -261,6 +261,21 @@ jobs:
         # three-crate change merged without waiting for CI. #160.
         run: python3 scripts/tests/test-issue-land-rebase-handover.py
 
+      - name: Prove issue-land.sh does not report a merge that did not happen
+        # `gh pr merge` prints "already merged" and exits 0 when there is
+        # nothing to do, which once let the script announce success, delete
+        # the remote branch, and send the operator to remove the worktree
+        # holding the only copy. #312.
+        run: python3 scripts/tests/test-issue-land-312.py
+
+      - name: Prove issue-land.sh does not report a merge that did land
+        # The other direction, and the more expensive mistake: `gh pr merge`
+        # returns before the new tip is necessarily visible, so a single-shot
+        # check turned seconds of replication lag into "MERGE DID NOT LAND"
+        # and told the session to open a second PR for work already on main.
+        # #406.
+        run: python3 scripts/tests/test-issue-land-lagging-ref.py
+
       - name: Prove fuzz.sh says what is missing instead of failing late
         # Without cargo-fuzz it ran `cargo fuzz`, which made rustup download
         # a whole nightly toolchain and then failed with "no such command:
