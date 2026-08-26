@@ -21,6 +21,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
+//! cargo run -p postio-app --example shot -- /tmp/locked.png locked
 //! ```
 //!
 //! `demo` fills the panes from `postio_storage::seed` — a migrated in-memory
@@ -475,6 +476,18 @@ fn main() -> glib::ExitCode {
     }
     if flag("demo") {
         populate(&window);
+    }
+    // The screen a store that will not open puts up instead of the mail
+    // (#404). Rendered from the same words `SecretError::Locked` writes, so
+    // what this shows is what a person with a locked keyring sees.
+    if flag("locked") {
+        let screen = postio_gtk::unavailable::Unavailable::new();
+        screen.set_reason(
+            "the login keyring is locked, so Postio cannot read the password \
+             for ada@example.com. Unlock it in your keyring application — on \
+             GNOME that is Passwords and Keys — and try again.",
+        );
+        window.set_content(Some(&screen));
     }
     // The list has three row heights and a design that only works at one of
     // them is unfinished, so the shot can render any of them.
