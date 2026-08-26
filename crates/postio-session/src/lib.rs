@@ -206,6 +206,36 @@ async fn mint(
     Ok(key)
 }
 
+/// [`store_key`], for a caller that has no runtime yet.
+///
+/// Startup is the one place this is needed, and the shape of the sequence is
+/// why: the store has to be open before the command bus can be built, and the
+/// bus has to exist before the runtime that pumps it. So the one keyring read
+/// that gates all of it gets a runtime of its own — a single current-thread
+/// one, alive for exactly this call, on the thread that is about to open the
+/// store anyway.
+///
+/// Bounded, not indefinite: `KeyringSecretStore` already turns a Secret
+/// Service that never answers into an error rather than a hang, which is what
+/// keeps a broken keyring costing the window a moment instead of the session.
+pub fn store_key_blocking(
+    secrets: &dyn postio_imap::secret::SecretStore,
+) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return Err(postio_imap::secret::SecretError::Backend {
+                account: STORE_KEY_ENTRY.to_owned(),
+                reason: format!("no runtime to read the keyring with: {error}"),
+            });
+        }
+    };
+    runtime.block_on(store_key(secrets))
+}
+
 /// What the frontend needs, once there is a store to give it.
 #[derive(Clone)]
 pub struct Wiring {
@@ -311,11 +341,24 @@ impl Wiring {
 
 /// Open the local store, or explain why there is none.
 ///
+/// `store_key` is the master key this installation's store is encrypted
+/// under — see [`store_key`] for where it comes from and why a locked
+/// keyring means there is no store to open rather than an unencrypted one.
+///
 /// A missing or unreadable database is not a reason to refuse to start: the
 /// window opens, says it has never synced, and stays usable for everything
 /// that does not need mail. A mail client that will not open is worse than one
 /// with nothing in it.
-pub fn open_store() -> Option<(Database, BlobStore)> {
+pub fn open_store(store_key: &postio_storage::key::StoreKey) -> Option<(Database, BlobStore)> {
+    // Taken and not yet used, deliberately and for one slice only. ADR 0014
+    // lands as three sequenced pieces: this one mints and reads the key
+    // (#299), #300 issues `PRAGMA key` with its database subkey, and #301
+    // takes the blob subkeys. Requiring it *here*, at the moment the store
+    // opens, is what makes "a locked keyring means the mail does not open"
+    // true before there is anything encrypted to protect — so the ordering
+    // is proven by the time it starts mattering, rather than bolted on
+    // afterwards by whoever is holding #300.
+    let _store_key = store_key;
     let path = paths::store_path();
     let database = match Database::open(&path) {
         Ok(database) => database,
