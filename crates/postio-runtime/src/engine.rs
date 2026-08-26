@@ -442,6 +442,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 online: false,
                 to_sync: std::collections::VecDeque::new(),
                 watcher: None,
+                backfill_covered: false,
             };
             let mut ticker = tokio::time::interval(POLL_INTERVAL);
             // The first tick fires immediately; skipping it would leave the link
@@ -532,6 +533,30 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                     && pump_body(&parts, &pool, &mut state).await
                 {}
 
+                // Then queue the next batch, and fetch that too. `seed` takes
+                // the newest `seed_batch` messages still missing a body, and
+                // for the life of the project nothing ever called it a second
+                // time -- so the cap read as a horizon and everything below
+                // the first batch of a folder waited to be opened (#318).
+                //
+                // Only when the queue has genuinely drained: `is_idle` is
+                // false while the background lane is merely *paused* (metered,
+                // or the user is doing something), and topping up then would
+                // pull an entire archive into memory that policy has just said
+                // not to fetch.
+                while inbox.is_empty()
+                    && state.supervisor.link().is_online()
+                    && !has_queued_work(&parts, &pool)
+                    && state.backfill.is_idle()
+                    && top_up_backfill(&parts, &pool, &mut state) > 0
+                {
+                    while inbox.is_empty()
+                        && state.supervisor.link().is_online()
+                        && !has_queued_work(&parts, &pool)
+                        && pump_body(&parts, &pool, &mut state).await
+                    {}
+                }
+
                 // Then wait to be told about mail. This is the branch that idles,
                 // so it goes last and races the inbox: a job arriving while an
                 // `IDLE` is held must not wait out the timeout.
@@ -594,6 +619,16 @@ struct State {
     /// asking on an interval, and guessing wrong either wastes a connection
     /// or misses mail.
     watcher: Option<Watcher>,
+    /// Whether the last [`top_up_backfill`] found nothing left to queue.
+    ///
+    /// A latch, not a cache of the answer: it stops the engine re-asking
+    /// every folder on every loop iteration once the account is covered, and
+    /// is cleared by the two things that can make the answer change — a sync
+    /// that wrote something, and the link coming up. Without it, an account
+    /// whose remaining candidates are all set aside (over the size cap, or
+    /// failed this session) would re-run one query per folder every five
+    /// seconds for ever, finding the same nothing.
+    backfill_covered: bool,
 }
 
 /// Whether the account's queue has anything due right now.
@@ -627,6 +662,11 @@ fn came_up(state: &mut State) -> bool {
 /// the way one coming up mid-loop is. See the comment on that first attempt.
 async fn handle_link_transition(parts: &EngineParts, pool: &Pool, state: &mut State) {
     if came_up(state) {
+        // A session that failed bodies while the link was down set them
+        // aside; a link that has just come up is exactly when they are worth
+        // offering again, and when a folder that had nothing left may have
+        // grown one.
+        state.backfill_covered = false;
         let outcome = drain(parts, pool, state).await;
         announce_drain(&parts.events, parts.account, &outcome);
         // Before anything asks what is *in* a folder, find out which
@@ -867,6 +907,86 @@ async fn discover(parts: &EngineParts, pool: &Pool) {
     }
 }
 
+/// Queue the next batch of bodies, INBOX first, and say how many.
+///
+/// # Why a top-up exists at all
+///
+/// `backfill::seed` asks for the newest `seed_batch` messages of one folder
+/// that are still missing a body. That is a batch, and it was being used as a
+/// horizon: `postio-app` seeded every folder once at startup and nothing in
+/// the workspace ever called it again, so when those drained the background
+/// lane had nothing to do for the rest of the process. Every message below
+/// the first batch of its folder waited to be opened, and paid a round trip
+/// when it was (#318).
+///
+/// Nothing here remembers how far it has got, and nothing needs to: a body
+/// that lands sets `body_state` to `full`, which is what takes it out of
+/// `needing_backfill`. So each call naturally asks for the *next* batch, and
+/// the walk backwards through a folder is a property of the durable row
+/// rather than of a cursor that a restart would lose.
+///
+/// # Why it stops
+///
+/// Two kinds of message stay in `needing_backfill` however often they are
+/// offered: one over `max_body_bytes`, and one whose fetch failed this
+/// session. `Backfill::enqueue` sets both aside and answers "queued nothing",
+/// which is what this counts — so a folder whose only remaining candidates
+/// are those reports zero and the caller stops, rather than re-queueing a
+/// failing message in a tight loop against the server. `backfill_covered`
+/// then keeps the engine from re-asking every folder on every loop iteration
+/// until a sync or a reconnection says the answer may have changed.
+///
+/// INBOX first, by [`postio_sync::order::sync_priority`], for the reason
+/// [`queue_every_mailbox`] gives: the folder the user is reading is the one
+/// whose bodies are worth having first. It returns as soon as one folder
+/// yields work, so a large Archive never gets ahead of it.
+fn top_up_backfill(parts: &EngineParts, pool: &Pool, state: &mut State) -> usize {
+    if state.backfill_covered {
+        return 0;
+    }
+    let Ok(connection) = pool.get() else {
+        // Nothing to read folders with. Not latched: the next pass will have
+        // a connection, and latching here would stop the backfill for the
+        // life of the process over one busy moment.
+        return 0;
+    };
+    let mut mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
+        Ok(mailboxes) => mailboxes,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the account's folders to top up the backfill");
+            return 0;
+        }
+    };
+    mailboxes.sort_by_key(|mailbox| postio_sync::order::sync_priority(mailbox.role));
+
+    for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
+        let queued = match backfill::seed(
+            &connection,
+            &mut state.backfill,
+            mailbox.id,
+            parts.backfill.seed_batch,
+        ) {
+            Ok(queued) => queued,
+            Err(error) => {
+                tracing::warn!(%error, "cannot top up the backfill for a folder");
+                continue;
+            }
+        };
+        if queued > 0 {
+            // Counts and a folder id, which is all a log may carry about mail.
+            tracing::debug!(mailbox = mailbox.id.get(), queued, "backfill topped up");
+            announce_backfill(parts, state, std::time::Instant::now());
+            return queued;
+        }
+    }
+
+    // Every folder had nothing left to offer. Stop asking until something
+    // changes.
+    state.backfill_covered = true;
+    tracing::debug!("every folder's bodies are local, or set aside");
+    0
+}
+
 /// Line every selectable folder up for a sync pass, INBOX first.
 ///
 /// Sorted by [`postio_sync::order::sync_priority`], not by id and not by the
@@ -912,9 +1032,6 @@ fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
         );
     }
 }
-
-/// How many bodies one finished sync pass queues for its mailbox.
-const SEED_PER_MAILBOX: u32 = 200;
 
 /// How often a sync in progress tells the list that its mailbox has moved.
 ///
@@ -1711,10 +1828,16 @@ fn settle_pass(
             if summary.changed() {
                 // A sync is exactly when the set of messages missing a body
                 // changed, so it is exactly when the backfill is worth
-                // seeding again.
-                if let Err(error) =
-                    backfill::seed(connection, &mut state.backfill, mailbox, SEED_PER_MAILBOX)
-                {
+                // seeding again. It also means there is more to cover than
+                // the last top-up found: new mail arrives *above* whatever
+                // point the walk backwards through the archive had reached.
+                state.backfill_covered = false;
+                if let Err(error) = backfill::seed(
+                    connection,
+                    &mut state.backfill,
+                    mailbox,
+                    parts.backfill.seed_batch,
+                ) {
                     parts.events.emit(Event::Error {
                         message: error.to_string(),
                     });
@@ -2010,6 +2133,7 @@ mod tests {
             online: false,
             to_sync: std::collections::VecDeque::new(),
             watcher: None,
+            backfill_covered: false,
         }
     }
 

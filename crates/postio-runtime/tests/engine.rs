@@ -1236,3 +1236,329 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
          backfill happened to have fetched (#327)",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Covering a mailbox rather than the first batch of one (#318)
+// ---------------------------------------------------------------------------
+
+/// An engine whose backfill seeds in batches of `seed_batch`, over a mock
+/// INBOX holding `messages` messages with bodies.
+///
+/// A bespoke fixture rather than [`engine`]'s: what is under test is what
+/// happens once one batch has drained, and that only has a meaning when the
+/// mailbox is bigger than a batch. Ten and three rather than a real 40,000
+/// and 200, because the property is the same and the fixture is not the
+/// point.
+fn engine_seeding_in_batches(
+    messages: u32,
+    seed_batch: u32,
+) -> (
+    Engine,
+    postio_storage::Database,
+    postio_model::ids::MailboxId,
+    Arc<MockBackend>,
+) {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let account = test_support::account(&connection);
+    let inbox = test_support::mailbox(&connection, &account, "INBOX");
+    drop(connection);
+
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let (sink, _events) = event_channel();
+
+    let mut mailbox = MockMailbox::new("INBOX");
+    for n in 1..=messages {
+        mailbox = mailbox.message(MockMessage::new(
+            format!(
+                "From: Ada Lovelace <ada@example.com>\r\n\
+                 To: Postio <postio@example.net>\r\n\
+                 Subject: body {n}\r\n\
+                 Message-ID: <batch-{n}@example.com>\r\n\
+                 Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+                 \r\n\
+                 The bytes that had to travel to get here.\r\n"
+            )
+            .into_bytes(),
+        ));
+    }
+
+    let backend = Arc::new(MockBackend::builder().mailbox(mailbox).build());
+    let engine = Engine::spawn(EngineParts {
+        account: account.id,
+        database: database.clone(),
+        blobs,
+        backend: backend.clone(),
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        events: sink,
+        retry: Default::default(),
+        backfill: postio_sync::backfill::BackfillPolicy {
+            // The user is never "active" in a test, but leaving the pause on
+            // would make this depend on that staying true.
+            pause_when_active: false,
+            seed_batch,
+            ..Default::default()
+        },
+        reconnect: Default::default(),
+        watch: Default::default(),
+        network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
+    })
+    .expect("the engine starts");
+
+    (engine, database, inbox.id, backend)
+}
+
+/// Wait until `done`, or give up and answer what it saw last.
+async fn until(done: impl Fn() -> bool) -> bool {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+/// How many messages `mailbox` holds locally at all, body or no body.
+fn headers_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> i64 {
+    with_store(database, "counting headers", |connection| {
+        Ok(connection.query_row(
+            "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
+            [mailbox.get()],
+            |row| row.get::<_, i64>(0),
+        )?)
+    })
+}
+
+/// How many of `mailbox`'s messages have their body on this machine.
+fn bodies_local(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> i64 {
+    with_store(database, "counting local bodies", |connection| {
+        Ok(connection.query_row(
+            "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND body_state = 'full'",
+            [mailbox.get()],
+            |row| row.get::<_, i64>(0),
+        )?)
+    })
+}
+
+/// #318: a cap was implemented as a one-shot.
+///
+/// `seed` takes the newest `limit` messages still missing a body, which is a
+/// sensible batch — the comment on it says why a 40,000-message archive must
+/// not download itself on first run. What was missing is anything to call it
+/// a second time. The queue was seeded once per folder at startup, and when
+/// those drained the background lane had nothing to do for the rest of the
+/// process: every message below the first batch of its folder waited to be
+/// opened, and paid a round trip when it was.
+///
+/// So this asserts coverage, not throughput. Nobody opens anything; the
+/// engine is left alone with a mailbox bigger than one batch, and every
+/// eligible body has to end up local.
+#[tokio::test]
+async fn a_mailbox_larger_than_one_seed_is_covered_without_anyone_opening_it() {
+    const MESSAGES: u32 = 10;
+    const BATCH: u32 = 3;
+    let (engine, database, inbox, _backend) = engine_seeding_in_batches(MESSAGES, BATCH);
+
+    // The engine syncs and backfills on its own initiative once the link is
+    // up; nothing here asks it to, which is the point.
+    let covered = until(|| bodies_local(&database, inbox) == i64::from(MESSAGES)).await;
+
+    let local = bodies_local(&database, inbox);
+    assert!(
+        covered,
+        "{local} of {MESSAGES} bodies are local and the backfill has stopped. \
+         The queue is seeded once per folder at startup and nothing ever tops \
+         it up, so everything below the first batch of {BATCH} waits to be \
+         opened (#318)."
+    );
+
+    drop(engine);
+}
+
+/// #318, the other half: a message that arrives *after* startup.
+///
+/// Seeding used to happen once, in the composition root's startup loop, so a
+/// message discovered later got a row and no body until somebody opened it.
+/// The engine does re-seed a folder whose sync changed something — that much
+/// was already written — but only the top-up makes it matter, because without
+/// one a queue that had already drained had no reason to be looked at again.
+///
+/// Delivered through `append`, which is what the mock does for a message
+/// arriving now: a new UID, a bumped MODSEQ, and an `EXISTS` to whatever is
+/// idling. Nothing opens it.
+#[tokio::test]
+async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
+    const MESSAGES: u32 = 4;
+    let (engine, database, inbox, backend) = engine_seeding_in_batches(MESSAGES, 2);
+
+    assert!(
+        until(|| bodies_local(&database, inbox) == i64::from(MESSAGES)).await,
+        "the mailbox it started with never finished, so nothing below is \
+         about mail that arrived later"
+    );
+
+    backend
+        .append(
+            "INBOX",
+            &postio_imap::backend::AppendMessage::new(
+                b"From: Ada Lovelace <ada@example.com>\r\n\
+                  To: Postio <postio@example.net>\r\n\
+                  Subject: after the fact\r\n\
+                  Message-ID: <late-1@example.com>\r\n\
+                  Date: Mon, 1 Jun 2026 10:00:00 +0000\r\n\
+                  \r\n\
+                  Delivered while the client was already running.\r\n"
+                    .to_vec(),
+            ),
+        )
+        .await
+        .expect("the mock accepts a delivery");
+
+    let arrived = until(|| bodies_local(&database, inbox) == i64::from(MESSAGES) + 1).await;
+    assert!(
+        arrived,
+        "a message delivered after startup has {} of {} bodies local: it got \
+         a row and no body, and would have waited to be opened (#318)",
+        bodies_local(&database, inbox),
+        MESSAGES + 1
+    );
+
+    drop(engine);
+}
+
+/// The top-up must not become a way around the policy it sits under.
+///
+/// `pause_when_active` exists so speculative work gets out of the user's way,
+/// and the top-up runs exactly when the queue has drained — which, with the
+/// background lane paused, it never really does. Queuing another batch then
+/// would pull a whole archive into memory that policy has just said not to
+/// fetch, and would do it repeatedly.
+///
+/// `max_body_bytes` is the same argument in the other direction: a message
+/// over the cap stays `body_state <> 'full'` for ever, so every re-seed sees
+/// it again. It has to be counted skipped **once** and then left alone, or a
+/// top-up that keeps finding rows it cannot use would never stop.
+#[tokio::test]
+async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let account = test_support::account(&connection);
+    let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+    drop(connection);
+
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let (sink, _events) = event_channel();
+
+    let mut mailbox = MockMailbox::new("INBOX");
+    for n in 1..=6u32 {
+        mailbox = mailbox.message(MockMessage::new(
+            format!(
+                "From: Ada Lovelace <ada@example.com>\r\n\
+                 Subject: big {n}\r\n\
+                 Message-ID: <big-{n}@example.com>\r\n\
+                 Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+                 \r\n\
+                 {}\r\n",
+                "x".repeat(4096)
+            )
+            .into_bytes(),
+        ));
+    }
+
+    let backend = Arc::new(MockBackend::builder().mailbox(mailbox).build());
+    let engine = Engine::spawn(EngineParts {
+        account: account.id,
+        database: database.clone(),
+        blobs,
+        backend: backend.clone(),
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        events: sink,
+        retry: Default::default(),
+        backfill: postio_sync::backfill::BackfillPolicy {
+            // Every message in the fixture is over this, so the background
+            // lane is entitled to fetch none of them.
+            max_body_bytes: Some(64),
+            pause_when_active: false,
+            seed_batch: 2,
+            ..Default::default()
+        },
+        reconnect: Default::default(),
+        watch: Default::default(),
+        network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
+    })
+    .expect("the engine starts");
+
+    // Long enough for the headers to land and the queue to settle.
+    assert!(
+        until(|| headers_in(&database, inbox) == 6).await,
+        "the headers never synced, so nothing below is about the backfill"
+    );
+
+    // Then a delivery, which is what makes this test bite. An arrival syncs
+    // the folder, and a sync that changed something is exactly what tells the
+    // engine there may be more to cover -- so the top-up runs again and every
+    // one of these six rows comes back out of `needing_backfill`, because a
+    // message over the cap stays `body_state <> 'full'` for ever. Each has to
+    // be recognised and left alone rather than skipped a second time.
+    backend
+        .append(
+            "INBOX",
+            &postio_imap::backend::AppendMessage::new(
+                format!(
+                    "From: Ada Lovelace <ada@example.com>\r\n\
+                     Subject: big 7\r\n\
+                     Message-ID: <big-7@example.com>\r\n\
+                     Date: Mon, 1 Jun 2026 10:00:00 +0000\r\n\
+                     \r\n\
+                     {}\r\n",
+                    "x".repeat(4096)
+                )
+                .into_bytes(),
+            ),
+        )
+        .await
+        .expect("the mock accepts a delivery");
+
+    // Waited for in the *store*, not by asking the engine: every job this
+    // thread sends is a job the engine's loop must serve before it may sync
+    // or backfill again, so polling it would starve the very work under test.
+    assert!(
+        until(|| headers_in(&database, inbox) == 7).await,
+        "the delivery never reached the store, so the re-seed it triggers \
+         never happened"
+    );
+    // Settle, so a late re-seed has had its chance to double-count.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    assert_eq!(
+        bodies_local(&database, inbox),
+        0,
+        "the background lane fetched a body over `max_body_bytes`, so the \
+         top-up is going around the policy rather than under it"
+    );
+
+    let progress = engine.backfill_progress().await.expect("progress");
+    assert_eq!(
+        progress.skipped, 7,
+        "seven messages, {} skips: an over-cap message is counted again on \
+         every re-seed, so the status line's numbers drift upward for ever \
+         and the top-up has nothing telling it when to stop",
+        progress.skipped
+    );
+    assert_eq!(
+        progress.stored, 0,
+        "nothing should have been stored by the background lane"
+    );
+
+    drop(engine);
+}

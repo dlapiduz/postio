@@ -42,7 +42,7 @@
 //! to run alongside a background fetch simply drives two.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 use postio_imap::backend::{BackendError, MailBackend, VecSink};
@@ -80,6 +80,18 @@ pub struct BackfillPolicy {
     pub pause_on_metered: bool,
     /// Whether the user interacting pauses the background lane.
     pub pause_when_active: bool,
+    /// How many bodies one [`seed`] queues for one mailbox.
+    ///
+    /// A batch, not a horizon. The engine re-seeds whenever the queue drains,
+    /// so a mailbox is covered by however many batches it takes; this only
+    /// bounds how much of it is held in memory, and in front of an
+    /// interactive fetch, at any one moment.
+    ///
+    /// It was a private constant in the engine, and the queue was seeded once
+    /// per folder at startup and never again — so the cap read as a horizon,
+    /// and everything below the newest `seed_batch` messages of a folder was
+    /// never fetched until somebody opened it (#318).
+    pub seed_batch: u32,
 }
 
 impl Default for BackfillPolicy {
@@ -96,6 +108,7 @@ impl Default for BackfillPolicy {
             max_body_bytes: Some(5 * 1024 * 1024),
             pause_on_metered: true,
             pause_when_active: true,
+            seed_batch: 200,
         }
     }
 }
@@ -257,6 +270,20 @@ pub struct Backfill {
     user_active: bool,
     cancel: CancelToken,
     cancelled: bool,
+    /// Messages this session has offered and will not offer again.
+    ///
+    /// Two kinds: one over [`BackfillPolicy::max_body_bytes`], and one whose
+    /// fetch failed or found nothing there. Both stay `body_state <> 'full'`
+    /// in the store for ever, so without this every re-seed would offer them
+    /// again — re-counting the skip, or re-queueing a failing fetch in a tight
+    /// loop against the server. It holds failures and oversized mail only,
+    /// never the whole mailbox: a body that lands leaves `needing_backfill`
+    /// by becoming `full`.
+    ///
+    /// In memory, like the rest of the queue, so a restart offers them once
+    /// more — which is the retry a transient failure deserves and the only one
+    /// it gets.
+    set_aside: HashSet<MessageId>,
 }
 
 impl Backfill {
@@ -272,6 +299,7 @@ impl Backfill {
             user_active: false,
             cancel: CancelToken::new(),
             cancelled: false,
+            set_aside: HashSet::new(),
         }
     }
 
@@ -305,15 +333,25 @@ impl Backfill {
         self.user_active = active;
     }
 
-    /// Queues a body to fetch when there is nothing better to do.
+    /// Queues a body to fetch when there is nothing better to do. Answers
+    /// whether it actually joined the queue.
     ///
     /// A body over [`BackfillPolicy::max_body_bytes`] is counted as skipped and
     /// not queued — it stays on the server until somebody actually wants it, at
     /// which point [`request_now`](Self::request_now) fetches it regardless.
-    /// A message already known to the queue is ignored rather than duplicated.
-    pub fn enqueue(&mut self, request: BodyRequest) {
-        if self.cancelled || self.lanes.contains_key(&request.message) {
-            return;
+    /// A message already known to the queue is ignored rather than duplicated,
+    /// and so is one already [set aside](Self::set_aside).
+    ///
+    /// The answer is what lets a caller tell "there was more to do" from
+    /// "there were more rows, and none of them are worth offering again" —
+    /// which is what stops the engine's top-up looping (#318). It is also why
+    /// the size skip is counted once rather than on every re-seed.
+    pub fn enqueue(&mut self, request: BodyRequest) -> bool {
+        if self.cancelled
+            || self.lanes.contains_key(&request.message)
+            || self.set_aside.contains(&request.message)
+        {
+            return false;
         }
         if self
             .policy
@@ -321,11 +359,13 @@ impl Backfill {
             .is_some_and(|cap| request.size > cap)
         {
             self.progress.skipped += 1;
-            return;
+            self.set_aside.insert(request.message);
+            return false;
         }
         self.lanes.insert(request.message, Lane::Background);
         self.background.push(Entry(request));
         self.progress.pending += 1;
+        true
     }
 
     /// Asks for a body now, because the user is looking at it.
@@ -390,9 +430,34 @@ impl Backfill {
                 self.progress.stored += 1;
                 self.progress.bytes += bytes;
             }
-            Outcome::Gone => self.progress.gone += 1,
-            Outcome::Failed { .. } => self.progress.failed += 1,
+            // Set aside, both of them. The row stays `body_state <> 'full'`
+            // either way, so it comes back from `needing_backfill` on every
+            // re-seed for ever: without this, a message the server has no
+            // copy of, or one whose fetch keeps failing, would be re-queued
+            // the instant the queue drained and fetched again immediately —
+            // a retry loop at the speed of the engine's own loop. It is
+            // offered once more on the next reconnection, and once more on
+            // the next start, which is the retry a transient failure earns.
+            Outcome::Gone => {
+                self.progress.gone += 1;
+                self.set_aside.insert(message);
+            }
+            Outcome::Failed { .. } => {
+                self.progress.failed += 1;
+                self.set_aside.insert(message);
+            }
         }
+    }
+
+    /// Offers everything set aside one more time.
+    ///
+    /// A fetch that failed while the link was going down is not the same
+    /// message as one the server genuinely cannot produce, and there is no way
+    /// to tell them apart at the time. So a reconnection forgives them all: the
+    /// next seed offers them again, and anything that fails a second time is
+    /// set aside a second time.
+    pub fn forgive_set_aside(&mut self) {
+        self.set_aside.clear();
     }
 
     /// Stops the backfill and everything it has on the wire.
@@ -470,20 +535,40 @@ impl Backfill {
 /// and again after a mailbox finishes an initial sync or a resync, so whatever
 /// it just wrote headers for gets backfilled too.
 ///
-/// Returns how many requests were queued, for a caller that wants to log or
-/// report progress; not an error for there to be none.
+/// Returns how many requests actually **joined** the queue — not how many
+/// candidate rows were read.
+///
+/// The difference matters to the engine's top-up (#318), which repeats this
+/// until it stops producing work: a folder whose remaining candidates are all
+/// over the size cap, or all set aside after failing this session, answers
+/// rows for ever and must answer zero here, or the top-up would never stop.
+/// Not an error for there to be none.
 pub fn seed(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    let candidates = MessageRepository::new(connection).needing_backfill(mailbox_id, limit)?;
-    let count = candidates.len();
-    for candidate in candidates {
-        backfill.enqueue(candidate.into());
+    let messages = MessageRepository::new(connection);
+    let mut offset = 0;
+    loop {
+        let candidates = messages.needing_backfill_from(mailbox_id, limit, offset)?;
+        let read = candidates.len();
+        let queued = candidates
+            .into_iter()
+            .filter(|candidate| backfill.enqueue(candidate.clone().into()))
+            .count();
+        // A batch that queued nothing was a batch of messages the scheduler
+        // cannot use — over the size cap, or set aside after failing this
+        // session — and those stay `body_state <> 'full'` for ever. Walking
+        // past them is what lets the backfill reach the older mail behind
+        // them; without it a folder whose newest `limit` messages are all
+        // oversized would never be covered at all (#318).
+        if queued > 0 || read < limit as usize {
+            return Ok(queued);
+        }
+        offset += limit;
     }
-    Ok(count)
 }
 
 /// Asks the backfill for one message right now, looking up what it needs from

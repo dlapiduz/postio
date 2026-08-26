@@ -531,8 +531,10 @@ fn fetch_what_is_opened(
 /// Ask for the bodies worth having, one mailbox at a time.
 ///
 /// At startup, because a session that ended with mail unread should not have
-/// to fetch it again on the wire when the user opens it. `postio-26c` also
-/// wants this run again whenever a sync finishes; nothing emits that yet.
+/// to fetch it again on the wire when the user opens it. Seeding *again* is
+/// the engine's own business now: it tops the queue up when it drains and
+/// re-seeds a folder whose sync changed something, so this is the first batch
+/// rather than the only one (#318).
 fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
     let Ok(connection) = wiring.database.connection() else {
         return;
@@ -567,11 +569,18 @@ fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
     }
 }
 
-/// How many bodies to queue per mailbox at startup.
+/// How many bodies this startup pass queues per mailbox.
 ///
-/// A cap rather than the whole folder: the point is that what the user is
-/// likely to open next is already local, not that a 40,000-message archive
-/// downloads itself on first run.
+/// The first batch, not the horizon. The engine tops the queue up whenever it
+/// drains and seeds a folder again whenever a sync changes it, so a mailbox is
+/// covered by however many batches it takes — this only decides how much of it
+/// is on the wire before the engine's own loop takes over. It read as a
+/// horizon for the life of the project, because nothing ever seeded a second
+/// time and everything below the newest 200 messages of a folder waited to be
+/// opened (#318).
+///
+/// `postio_sync::backfill::BackfillPolicy::seed_batch` is what the engine uses
+/// for every batch after this one, and is where the size of them belongs.
 const BACKFILL_PER_MAILBOX: u32 = 200;
 
 /// What startup should do with the account this installation has, if any.
