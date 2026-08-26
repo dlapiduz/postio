@@ -9,7 +9,9 @@
 //! shapes three rules the schema follows:
 //!
 //! 1. **A missing or empty file is not an error.** It yields working defaults,
-//!    so first run needs nothing on disk.
+//!    so first run needs nothing on disk to *function* — [`Config::seed_if_missing`]
+//!    is a separate, later concern: Postio writes a starter file anyway, so
+//!    there is something to find and edit rather than a blank buffer.
 //! 2. **Unknown keys survive a round trip.** People hand-edit this file, and a
 //!    key written by a newer Postio (or a typo the user wants to see and fix)
 //!    must not be silently deleted when the settings panel saves. Every section
@@ -99,6 +101,17 @@ pub type Extras = Table;
 pub(crate) fn yes() -> bool {
     true
 }
+
+/// Prefixed onto a file [`Config::seed_if_missing`] writes. Every key below
+/// is a real, in-effect default, not a documented reference of every
+/// option — see the module docs for why a fuller generated reference is a
+/// separate, later effort.
+const STARTER_HEADER: &str = "\
+# Postio didn't find a config.toml here, so it wrote this one with its
+# current defaults. Every key is optional -- delete a key, a section, or
+# the whole file to fall back to Postio's default for it. Changes here
+# apply live; no restart needed.
+";
 
 /// The whole of `config.toml`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -243,6 +256,40 @@ impl Config {
     /// describe the user's accounts.
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
         let text = self.to_toml_string()?;
+        Self::write_text_to_path(&text, path)
+    }
+
+    /// Write a starter `config.toml` at `path` if nothing is there yet.
+    ///
+    /// Returns `Ok(true)` if it wrote one, `Ok(false)` if a file already
+    /// existed there — untouched either way, however it parses or fails to.
+    ///
+    /// The seeded file is [`Config::default`] in effect: [`load_from_path`]
+    /// on a missing path already yields the same defaults with no error, so
+    /// this changes discoverability, not behaviour. It exists so `Ctrl+E`
+    /// (or a file manager, or `cat`) has something to read and edit on first
+    /// run, rather than opening a blank buffer that documents nothing.
+    ///
+    /// [`load_from_path`]: Config::load_from_path
+    pub fn seed_if_missing(path: &Path) -> Result<bool> {
+        match std::fs::metadata(path) {
+            Ok(_) => Ok(false),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let text = format!("{STARTER_HEADER}\n{}", Self::default().to_toml_string()?);
+                Self::write_text_to_path(&text, path)?;
+                Ok(true)
+            }
+            Err(source) => Err(ConfigError::Write {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
+    /// Shared by [`Config::save_to_path`] and [`Config::seed_if_missing`],
+    /// which write different text to the same place under the same rules:
+    /// parent directories created, `0600` on Unix.
+    fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
                 path: parent.to_path_buf(),
@@ -320,6 +367,64 @@ mod tests {
         cfg.save_to_path(&path).unwrap();
 
         assert_eq!(Config::load_from_path(&path).unwrap(), cfg);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn seeding_a_missing_path_writes_the_defaults_in_effect() {
+        let dir =
+            std::env::temp_dir().join(format!("postio-cfg-seed-missing-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let wrote = Config::seed_if_missing(&path).unwrap();
+
+        assert!(wrote, "nothing was there, so this should have written one");
+        assert_eq!(Config::load_from_path(&path).unwrap(), Config::default());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.starts_with("# Postio didn't find a config.toml"),
+            "the seeded file should explain itself before the TOML starts"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn seeding_an_existing_file_never_touches_it() {
+        let dir =
+            std::env::temp_dir().join(format!("postio-cfg-seed-existing-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Deliberately not valid Config TOML -- proves seed_if_missing
+        // never parses or validates, only checks whether the path exists.
+        std::fs::write(&path, "not valid toml at all {{{").unwrap();
+
+        let wrote = Config::seed_if_missing(&path).unwrap();
+
+        assert!(!wrote, "a file was already there");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "not valid toml at all {{{",
+            "the existing file must be untouched, even though it does not parse"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn seeding_an_existing_empty_file_never_touches_it() {
+        let dir =
+            std::env::temp_dir().join(format!("postio-cfg-seed-empty-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "").unwrap();
+
+        let wrote = Config::seed_if_missing(&path).unwrap();
+
+        assert!(
+            !wrote,
+            "an empty file still counts as \"something is there\""
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
