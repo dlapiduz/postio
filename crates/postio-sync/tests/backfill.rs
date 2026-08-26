@@ -1002,3 +1002,59 @@ async fn text_that_is_not_part_one_is_still_found() {
         "the scan itself stayed on the server"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The backlog is bounded — ADR 0017, axis 2
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_background_backlog_stops_growing_at_its_cap() {
+    // The backlog is an in-memory `BinaryHeap` of requests, each carrying an
+    // owned mailbox path. It is fine at 200 per folder and it is not fine the
+    // first time something re-seeds "the whole folder" -- 81,744 entries is
+    // the reference account, and ADR 0017's rule is that no mailbox is ever
+    // resident in this process.
+    //
+    // Refusing the overflow rather than evicting the oldest: the heap is
+    // newest-first, so what would be evicted is the mail most likely to be
+    // opened, and `seed` re-reads from storage anyway. `body_state` is the
+    // durable record of what still needs fetching; the heap is only a window
+    // onto it.
+    let mut backfill = Backfill::new(BackfillPolicy {
+        max_backlog: 3,
+        ..policy()
+    });
+    let mailbox = Mailbox::new(postio_model::AccountId::new(1), "INBOX", None);
+
+    let queued = (1..=10)
+        .filter(|uid| backfill.enqueue(request(&mailbox, MessageId::new(*uid as i64), *uid, 100)))
+        .count();
+
+    assert_eq!(queued, 3, "the cap is a cap");
+    assert_eq!(backfill.progress().pending, 3);
+}
+
+#[test]
+fn the_user_is_never_refused_by_the_backlog_cap() {
+    // The rule that decides every question in this module: the interactive
+    // lane always wins. A full backlog is a statement about speculative work,
+    // and the message someone just opened is not speculative -- refusing it
+    // would be the cap turning into a bug wearing a policy's clothes.
+    let mut backfill = Backfill::new(BackfillPolicy {
+        max_backlog: 1,
+        ..policy()
+    });
+    let mailbox = Mailbox::new(postio_model::AccountId::new(1), "INBOX", None);
+
+    assert!(backfill.enqueue(request(&mailbox, MessageId::new(1), 1, 100)));
+    assert!(!backfill.enqueue(request(&mailbox, MessageId::new(2), 2, 100)));
+
+    backfill.request_now(request(&mailbox, MessageId::new(3), 3, 100));
+
+    let next = backfill.next_body().expect("work");
+    assert_eq!(
+        next.request.message,
+        MessageId::new(3),
+        "the one the user opened, ahead of the backlog and past its cap"
+    );
+}
