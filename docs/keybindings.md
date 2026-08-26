@@ -50,9 +50,9 @@ command from inside a text field.
 | `t` | Show thread | List, reader |  | `thread` |
 | `n` | Unread only | Thread |  | `toggle_thread_unread` |
 | `o` | Toggle order | Thread |  | `toggle_thread_order` |
-| `e` | Reply | List, thread, reader |  | `reply` |
-| `E` | Reply to all | List, thread, reader |  | `reply_all` |
-| `f` | Forward | List, thread, reader |  | `forward` |
+| `e` | Reply | List, thread, reader, composer |  | `reply` |
+| `E` | Reply to all | List, thread, reader, composer |  | `reply_all` |
+| `f` | Forward | List, thread, reader, composer |  | `forward` |
 | `a` | Archive | List, thread, reader | Undoable | `archive` |
 | `A` | Archive thread | List, thread, reader | Undoable | `archive_thread` |
 | `d` | Delete | List, thread, reader | Undoable | `delete` |

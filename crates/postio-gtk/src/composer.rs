@@ -236,6 +236,17 @@ const RETAINED: &str = "still holding the draft Esc kept";
 /// What the status line says when [`CommandId::Send`] has nowhere to go.
 const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 
+/// What the status line says when Reply/Reply All/Forward is pressed while
+/// the composer already has a draft open.
+///
+/// #426: `open` already refuses to replace a *retained* draft (the
+/// `Closing::Keep` branch, `RETAINED`'s own case) — typed prose with nowhere
+/// else to go is not something a second keystroke should be able to lose.
+/// The same refusal has to hold for a draft still in progress, and it has to
+/// say so: the bug this fixes was not the refusal, which is right, but that
+/// refusing looked identical to the key doing nothing at all.
+const REPLY_BLOCKED: &str = "not opened — finish or close the current draft first";
+
 /// What the status line says when a file was chosen or dropped but nothing
 /// is listening on [`Composer::connect_attach`] to turn it into an attachment.
 const NO_ATTACH_PATH: &str = "not attached — no attachment handler is connected yet";
@@ -1412,6 +1423,16 @@ impl Composer {
             }
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward if !self.is_open() => {
                 self.open_reply(id);
+            }
+            // #426: replacing an in-progress draft with a fresh reply would
+            // be the one composer verb that loses typed prose with no
+            // confirmation at all -- `request_discard` asks first for
+            // exactly this reason. Falling through to silence was the bug;
+            // the fix keeps the refusal and gives it a status line, the way
+            // `send()` explains a missing send path instead of doing
+            // nothing.
+            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
+                self.set_status(REPLY_BLOCKED);
             }
             CommandId::Bold if self.is_open() => {
                 self.imp().body.format(crate::editor::Format::Bold);

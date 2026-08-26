@@ -192,11 +192,26 @@ fn the_composer_keys_work_and_the_list_keys_do_not() {
         );
     }
 
-    for keys in ["a", "A", "e", "c", "j", "?", "/"] {
+    for keys in ["a", "A", "c", "j", "?", "/"] {
         assert_eq!(
             press(&mut resolver, keys, KeyContext::Composer),
             Outcome::Unhandled,
             "`{keys}` is a character while composing, not a command"
+        );
+    }
+
+    // #426: reply, reply-all and forward are the one exception -- they *do*
+    // resolve while composing, so `Composer::dispatch` gets the chance to
+    // explain why it is refusing instead of the key vanishing silently.
+    for (keys, expected) in [
+        ("e", CommandId::Reply),
+        ("E", CommandId::ReplyAll),
+        ("f", CommandId::Forward),
+    ] {
+        assert_eq!(
+            press(&mut resolver, keys, KeyContext::Composer),
+            Outcome::Command(expected.as_str().to_owned()),
+            "`{keys}` while composing must still reach the composer"
         );
     }
 }
