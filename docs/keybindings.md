@@ -68,6 +68,12 @@ command from inside a text field.
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
+| `ctrl+b` | Bold | Composer |  | `bold` |
+| `ctrl+i` | Italic | Composer |  | `italic` |
+| `ctrl+shift+8` | Bulleted list | Composer |  | `bullet_list` |
+| `ctrl+shift+7` | Numbered list | Composer |  | `numbered_list` |
+| `ctrl+shift+k` | Insert link… | Composer |  | `insert_link` |
+| `ctrl+shift+9` | Quote block | Composer |  | `quote_block` |
 | `u` | Undo | List, thread, reader |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |
