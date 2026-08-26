@@ -2,7 +2,7 @@
 
 use postio_model::{
     Account, AccountId, AuthMethod, EmailAddress, Identity, IdentityId, ServerConfig, Signature,
-    TransportSecurity,
+    SignatureId, TransportSecurity,
 };
 use rusqlite::{Connection, Row, params};
 
@@ -174,6 +174,7 @@ impl<'a> AccountRepository<'a> {
         drop(rows);
         drop(statement);
         account.identities = IdentityRepository::new(self.connection).list_for_account(id)?;
+        account.signatures = SignatureRepository::new(self.connection).list_for_account(id)?;
         Ok(Some(account))
     }
 
@@ -196,8 +197,10 @@ impl<'a> AccountRepository<'a> {
         drop(statement);
 
         let identities = IdentityRepository::new(self.connection);
+        let signatures = SignatureRepository::new(self.connection);
         for account in &mut accounts {
             account.identities = identities.list_for_account(account.id)?;
+            account.signatures = signatures.list_for_account(account.id)?;
         }
         Ok(accounts)
     }
@@ -369,6 +372,89 @@ fn update_identity(connection: &Connection, identity: &Identity, position: usize
     Ok(())
 }
 
+/// Reads and writes the account's named [`Signature`] set (#12).
+///
+/// Separate from [`IdentityRepository`] because a signature is no longer a
+/// property of one identity: it belongs to the account, and which one a
+/// message signs with is a decision the composer makes per draft.
+#[derive(Debug)]
+pub struct SignatureRepository<'a> {
+    connection: &'a Connection,
+}
+
+const SIGNATURE_COLUMNS: &str = "id, name, text, html";
+
+impl<'a> SignatureRepository<'a> {
+    /// Borrows a connection.
+    pub fn new(connection: &'a Connection) -> Self {
+        Self { connection }
+    }
+
+    /// Inserts a signature at the end of `account_id`'s list, assigning its id.
+    pub fn create(&self, account_id: AccountId, signature: &mut Signature) -> Result<SignatureId> {
+        let account = require_persisted(account_id.get(), "account")?;
+        let position: i64 = self.connection.query_row(
+            "SELECT coalesce(max(position) + 1, 0) FROM signatures WHERE account_id = ?1",
+            [account],
+            |row| row.get(0),
+        )?;
+        self.connection.execute(
+            "INSERT INTO signatures (account_id, name, text, html, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                account,
+                signature.name,
+                signature.text,
+                signature.html,
+                position
+            ],
+        )?;
+        signature.id = SignatureId::new(self.connection.last_insert_rowid());
+        Ok(signature.id)
+    }
+
+    /// Writes a signature back, leaving its position alone.
+    pub fn update(&self, signature: &Signature) -> Result<()> {
+        let id = require_persisted(signature.id.get(), "signature")?;
+        let changed = self.connection.execute(
+            "UPDATE signatures SET name = ?2, text = ?3, html = ?4 WHERE id = ?1",
+            params![id, signature.name, signature.text, signature.html],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "signature",
+                id,
+            });
+        }
+        Ok(())
+    }
+
+    /// Deletes a signature, returning whether there was one.
+    pub fn delete(&self, id: SignatureId) -> Result<bool> {
+        let deleted = self
+            .connection
+            .execute("DELETE FROM signatures WHERE id = ?1", [id.get()])?;
+        Ok(deleted > 0)
+    }
+
+    /// One account's signatures, in picker order.
+    pub fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Signature>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {SIGNATURE_COLUMNS} FROM signatures
+              WHERE account_id = ?1 ORDER BY position, id"
+        ))?;
+        let rows = statement.query_map([account_id.get()], |row| {
+            Ok(Signature {
+                id: SignatureId::new(row.get(0)?),
+                name: row.get(1)?,
+                text: row.get(2)?,
+                html: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
 fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
     let incoming_security: String = row.get(6)?;
     let outgoing_security: String = row.get(10)?;
@@ -394,6 +480,7 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
             .ok_or_else(|| to_sqlite(unknown_enum("accounts.auth_method", auth)))?,
         enabled: row.get(13)?,
         identities: Vec::new(),
+        signatures: Vec::new(),
         created_at: from_millis(row.get(14)?),
     })
 }
@@ -418,6 +505,11 @@ fn read_identity(row: &Row<'_>) -> rusqlite::Result<Identity> {
         signature: signature_text
             .map(|text| {
                 Ok::<_, rusqlite::Error>(Signature {
+                    // The identity's own signature is not a row in the named
+                    // set — it is what this identity signs with unless the
+                    // draft says otherwise (migration 0009).
+                    id: SignatureId::UNASSIGNED,
+                    name: String::new(),
                     text,
                     html: row.get(8)?,
                 })

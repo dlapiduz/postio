@@ -14,7 +14,7 @@ use postio_body::Placement;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_model::account::Signature;
+use postio_model::Signature;
 use postio_model::{Account, AccountId, Draft, DraftKind, EmailAddress, Identity, MessageBody};
 
 fn settle() {
@@ -35,6 +35,8 @@ fn account() -> Account {
     identity.id = postio_model::IdentityId::new(1);
     identity.is_default = true;
     identity.signature = Some(Signature {
+        id: Default::default(),
+        name: String::new(),
         text: "Lena Tomlin".to_owned(),
         html: Some("<p><strong>Lena Tomlin</strong></p>".to_owned()),
     });
@@ -110,5 +112,49 @@ fn the_configured_placement_decides_which_side_of_the_quote_signs() {
         signature_at > quote_at,
         "a reply configured to sign below the quote signed above it:\n{text}"
     );
+    assert_eq!(text.matches("-- ").count(), 1, "{text}");
+
+    // ── a named signature, chosen without changing the identity ──────────
+    composer.discard();
+    settle();
+    composer.set_signatures(vec![
+        Signature::new("Short", "— L"),
+        Signature::new("Long", "Lena Tomlin\nPostio"),
+    ]);
+    composer.open(rich_reply());
+    settle();
+
+    let from = composer.identity().map(|identity| identity.id);
+    composer.test_choose_signature(1);
+    settle();
+    let text = composer.document().to_text();
+    assert!(
+        text.contains("— L"),
+        "the chosen signature is the one used:\n{text}"
+    );
+    assert!(!text.contains("Lena Tomlin"), "{text}");
+    assert_eq!(text.matches("-- ").count(), 1, "signed once: {text}");
+    assert_eq!(
+        composer.identity().map(|identity| identity.id),
+        from,
+        "choosing a signature must not change who the message is from"
+    );
+
+    // Switching to another replaces rather than appends.
+    composer.test_choose_signature(2);
+    settle();
+    let text = composer.document().to_text();
+    assert!(text.contains("Lena Tomlin"), "{text}");
+    assert!(
+        !text.contains("— L"),
+        "the old signature stayed behind:\n{text}"
+    );
+    assert_eq!(text.matches("-- ").count(), 1, "{text}");
+
+    // And back to the identity's own.
+    composer.test_choose_signature(0);
+    settle();
+    let text = composer.document().to_text();
+    assert!(text.contains("Lena Tomlin"), "{text}");
     assert_eq!(text.matches("-- ").count(), 1, "{text}");
 }
