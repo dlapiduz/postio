@@ -382,6 +382,7 @@ pub struct Backfill {
     lanes: HashMap<MessageId, Lane>,
     progress: BackfillProgress,
     metered: bool,
+    disk_full: bool,
     user_active: bool,
     cancel: CancelToken,
     cancelled: bool,
@@ -421,6 +422,7 @@ impl Backfill {
             lanes: HashMap::new(),
             progress: BackfillProgress::default(),
             metered: false,
+            disk_full: false,
             user_active: false,
             cancel: CancelToken::new(),
             cancelled: false,
@@ -459,6 +461,30 @@ impl Backfill {
         self.user_active = active;
     }
 
+    /// Tells the backfill the store is at its disk ceiling.
+    ///
+    /// Set from `[storage] max_bytes` against what the blob store actually
+    /// occupies. Unlike the other pauses this one is not about politeness: a
+    /// full store with the lane still running is backfill fetching, eviction
+    /// freeing, and backfill fetching the same bytes again — a loop that burns
+    /// a data plan to stay exactly as full as it was.
+    ///
+    /// Like the other pauses, it does not apply to the interactive lane. That
+    /// is also the only way out: opening mail is what proves which blobs are
+    /// worth keeping, and a client that stopped serving reads when its cache
+    /// filled would be a client that had stopped working.
+    pub fn set_disk_full(&mut self, full: bool) {
+        self.disk_full = full;
+    }
+
+    /// Whether the background lane is held back right now, for any reason.
+    ///
+    /// What a status surface reports (#352): "not fetching" and "nothing left
+    /// to fetch" look identical from the outside and mean opposite things.
+    pub fn is_paused(&self) -> bool {
+        !self.background_runs()
+    }
+
     /// Queues a body to fetch when there is nothing better to do. Answers
     /// whether it actually joined the queue.
     ///
@@ -493,6 +519,12 @@ impl Backfill {
         // size. Recording it as skipped would misreport the backlog as
         // permanently shorter than the work remaining.
         if self.background.len() >= self.policy.max_backlog {
+            return false;
+        }
+        // Same reasoning for a store at its ceiling: nothing is wrong with
+        // this message, there is simply nowhere to put it yet. Queueing it
+        // would mean fetching bytes that eviction must immediately free.
+        if !self.background_runs() && self.disk_full {
             return false;
         }
         self.lanes.insert(request.message, Lane::Background);
@@ -653,6 +685,7 @@ impl Backfill {
     /// Whether the background lane may run right now.
     fn background_runs(&self) -> bool {
         self.policy.background
+            && !self.disk_full
             && !(self.policy.pause_on_metered && self.metered)
             && !(self.policy.pause_when_active && self.user_active)
     }
