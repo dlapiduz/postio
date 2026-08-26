@@ -34,7 +34,15 @@ use postio_core::{ActionId, Context, Keymap, Scope, registry};
 ///
 /// The list scrolls past this; the cap is on what is *built*, so a query that
 /// matches everything costs the same as one that matches three things.
-pub const MAX_ROWS: usize = 32;
+///
+/// Was 32, which turned out to be exactly `Context::List`'s reachable count
+/// at the time -- so tight it was already a coincidence, not a bound. #438
+/// added two commands there and an empty query silently stopped listing
+/// everything reachable, which is the one thing this cap is not supposed to
+/// cost (see `an_empty_query_lists_everything_reachable_in_registry_order`).
+/// Raised for headroom, not tuned to a new exact count -- the next command
+/// added to a full context should not trip this again.
+pub const MAX_ROWS: usize = 48;
 
 // ---------------------------------------------------------------------------
 // Matching
