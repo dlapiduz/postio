@@ -325,6 +325,30 @@ impl PartNode {
         self.encoding.as_deref()
     }
 
+    /// The part's MIME header block, rebuilt from what `BODYSTRUCTURE` said.
+    ///
+    /// `BODY[1.1]` hands back a part's encoded bytes and none of its headers,
+    /// so nothing in the response explains whether they are base64, or what
+    /// charset they are in. Both were reported at header-sync time; this
+    /// renders them back into the two headers a parser needs, so a fetched
+    /// section can be turned into a self-contained entity without spending a
+    /// second round trip on `BODY[1.1.MIME]` (ADR 0017).
+    ///
+    /// Only what was actually declared is written. RFC 2045's defaults --
+    /// `7bit`, `us-ascii` -- are the parser's to apply, and stating a guess
+    /// here would only risk contradicting it.
+    pub fn mime_headers(&self) -> String {
+        let mut headers = format!("Content-Type: {}", self.mime_type);
+        if let Some(charset) = &self.charset {
+            headers.push_str(&format!("; charset=\"{charset}\""));
+        }
+        headers.push_str("\r\n");
+        if let Some(encoding) = &self.encoding {
+            headers.push_str(&format!("Content-Transfer-Encoding: {encoding}\r\n"));
+        }
+        headers
+    }
+
     /// The size in bytes the server declared.
     pub fn size(&self) -> u64 {
         self.size
@@ -499,7 +523,9 @@ impl FetchedMessage {
             // backfill downstream needs to *name* these sections rather than
             // fetch the whole message and sift it (ADR 0017).
             message.text_part_id = structure.text_part().map(|part| part.section().to_owned());
+            message.text_part_headers = structure.text_part().map(PartNode::mime_headers);
             message.html_part_id = structure.html_part().map(|part| part.section().to_owned());
+            message.html_part_headers = structure.html_part().map(PartNode::mime_headers);
             message.attachments = structure.to_attachments(MessageId::UNASSIGNED);
         }
 

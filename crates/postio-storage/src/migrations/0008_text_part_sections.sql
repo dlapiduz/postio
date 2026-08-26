@@ -16,7 +16,17 @@
 -- the next resync re-reads its `BODYSTRUCTURE`. Same convention as
 -- `content_type` (0004) and `list_id` (0007).
 --
+-- The `_headers` columns are the part's MIME header block, rebuilt from what
+-- `BODYSTRUCTURE` said about it: content type, charset, transfer encoding.
+-- They exist because `BODY[1.1]` returns a part's *encoded* bytes with no
+-- headers of their own, and base64 with no `Content-Transfer-Encoding` to
+-- explain it is not text. Prepending these turns the fetched section back into
+-- a self-contained entity `mime::parse` can decode, at the cost of about
+-- twenty bytes a message and without a second round trip for `[1.1.MIME]`.
+--
 -- No index: these are only ever read by id, on the row the backfill has
 -- already selected.
 ALTER TABLE messages ADD COLUMN text_part_id TEXT;
+ALTER TABLE messages ADD COLUMN text_part_headers TEXT;
 ALTER TABLE messages ADD COLUMN html_part_id TEXT;
+ALTER TABLE messages ADD COLUMN html_part_headers TEXT;
