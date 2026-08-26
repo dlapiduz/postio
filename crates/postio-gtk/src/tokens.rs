@@ -441,6 +441,14 @@ fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenEr
         ("--r-ink-secondary", t.tint("color-text", 80.0)?),
         ("--r-dim", t.tint("color-text", 55.0)?),
         ("--r-hairline", t.need("color-divider")?.to_string()),
+        // High-contrast weight for the body container's edge (#323) — same
+        // step tokens.css's own `--postio-hairline-strong` uses in light.
+        (
+            "--r-hairline-strong",
+            t.need("color-neutral-400")?.to_string(),
+        ),
+        // Scheme-independent, so defined once here rather than in both roles.
+        ("--r-radius", t.need("radius-sm")?.to_string()),
         ("--r-accent", t.need("color-accent")?.to_string()),
         ("--r-quote-bg", t.tint("color-accent", 6.0)?),
         ("--r-match-bg", t.tint("color-accent", 28.0)?),
@@ -457,6 +465,10 @@ fn reader_dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenErr
         ),
         ("--r-dim", t.need("color-neutral-400")?.to_string()),
         ("--r-hairline", t.need("color-neutral-700")?.to_string()),
+        (
+            "--r-hairline-strong",
+            t.need("color-neutral-600")?.to_string(),
+        ),
         ("--r-accent", t.need("color-accent-400")?.to_string()),
         ("--r-quote-bg", t.tint("color-accent-400", 8.0)?),
         ("--r-match-bg", t.tint("color-accent-400", 32.0)?),
