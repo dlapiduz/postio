@@ -30,12 +30,13 @@ fn main() {
         Some(source) => {
             println!("cargo:rerun-if-changed={}", source.display());
             generate_tokens(&source, &data_dir.join("tokens.css"));
+            generate_reader_tokens(&source, &data_dir.join("reader-tokens.css"));
         }
         None => {
             println!(
                 "cargo:warning=Industry design system not found; \
-                 keeping the checked-in data/tokens.css. Set POSTIO_DESIGN_SYSTEM \
-                 to the styles.css to regenerate it."
+                 keeping the checked-in data/tokens.css and data/reader-tokens.css. \
+                 Set POSTIO_DESIGN_SYSTEM to the styles.css to regenerate them."
             );
         }
     }
@@ -78,27 +79,37 @@ fn design_system_path(manifest_dir: &Path) -> Option<PathBuf> {
 }
 
 fn generate_tokens(source: &Path, out: &Path) {
-    let css = std::fs::read_to_string(source)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", source.display()));
-
-    let parsed = tokens::Tokens::parse(&css)
-        .unwrap_or_else(|e| panic!("cannot read the design tokens in {}: {e}", source.display()));
-
-    // The banner records where the tokens came from, relative to the repository
-    // root, so the generated file stays identical no matter where the checkout
-    // lives.
+    let parsed = parse_source(source);
     let label = relative_label(source);
     let generated = tokens::generate(&parsed, &label)
         .unwrap_or_else(|e| panic!("cannot generate tokens.css: {e}"));
+    write_if_changed(out, &generated);
+}
 
-    // Write only on a real change: rewriting would bump the mtime on every
-    // build and make `rerun-if-changed=data/` loop.
+fn generate_reader_tokens(source: &Path, out: &Path) {
+    let parsed = parse_source(source);
+    let label = relative_label(source);
+    let generated = tokens::generate_reader(&parsed, &label)
+        .unwrap_or_else(|e| panic!("cannot generate reader-tokens.css: {e}"));
+    write_if_changed(out, &generated);
+}
+
+fn parse_source(source: &Path) -> tokens::Tokens {
+    let css = std::fs::read_to_string(source)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", source.display()));
+    tokens::Tokens::parse(&css)
+        .unwrap_or_else(|e| panic!("cannot read the design tokens in {}: {e}", source.display()))
+}
+
+/// Write only on a real change: rewriting would bump the mtime on every
+/// build and make `rerun-if-changed=data/` loop.
+fn write_if_changed(out: &Path, generated: &str) {
     let current = std::fs::read_to_string(out).unwrap_or_default();
     if current != generated {
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        std::fs::write(out, &generated)
+        std::fs::write(out, generated)
             .unwrap_or_else(|e| panic!("cannot write {}: {e}", out.display()));
     }
 }

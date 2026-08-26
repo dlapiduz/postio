@@ -3,10 +3,14 @@
  *
  * This is NOT the GTK stylesheet tokens.css/shell.css are. A `WebView` has
  * its own CSS engine with no notion of GTK's style context, so the
- * `--postio-*` custom properties tokens.css defines are invisible here —
- * every colour below is the same literal value tokens.css computes from the
- * Industry design system, restated by hand. If the design system's palette
- * moves, this file has to move with it; nothing regenerates it.
+ * `--postio-*` custom properties tokens.css defines are invisible here.
+ * Structure only, below: every colour is a `var(--r-*)` reference, and those
+ * variables are generated from the same design tokens by
+ * `crates/postio-gtk/src/tokens.rs::generate_reader` into the checked-in
+ * `data/reader-tokens.css`, loaded into this document ahead of this file
+ * (see `reader_css` in view.rs). Retune the design system, rebuild, and both
+ * sheets follow — the pipeline #296 fixed. A drift test
+ * (`tests/reader_tokens.rs`) fails the build if either falls out of sync.
  *
  * `@font-face` rules for Barlow / Barlow Condensed / IBM Plex Mono are
  * prepended at runtime (see `embedded_font_faces` in view.rs), not written
@@ -18,30 +22,6 @@
  * `<style>` tag before a body ever reaches this document (see
  * `reader/sanitize.rs`), so nothing here competes with a sender's CSS.
  */
-
-:root {
-  --r-ground: #f5f5f8;
-  --r-ink: #1d1f20;
-  --r-ink-secondary: rgba(29, 31, 32, 0.8);
-  --r-dim: rgba(29, 31, 32, 0.55);
-  --r-hairline: rgba(29, 31, 32, 0.16);
-  --r-accent: #5980a6;
-  --r-quote-bg: rgba(89, 128, 166, 0.06);
-  --r-match-bg: rgba(89, 128, 166, 0.28);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --r-ground: #2b2b2d;
-    --r-ink: #f5f5f8;
-    --r-ink-secondary: #e7e7ea;
-    --r-dim: #b7b7ba;
-    --r-hairline: #5d5d60;
-    --r-accent: #94bce3;
-    --r-quote-bg: rgba(148, 188, 227, 0.08);
-    --r-match-bg: rgba(148, 188, 227, 0.32);
-  }
-}
 
 * {
   box-sizing: border-box;

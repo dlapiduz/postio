@@ -1,0 +1,36 @@
+/* GENERATED FILE — do not edit by hand.
+ *
+ * Source : Design/_ds/industry-b0b46d6e-4b0c-403e-a94f-85bdc36b6c2f/styles.css
+ * Emitted by: crates/postio-gtk/build.rs via crates/postio-gtk/src/tokens.rs
+ * Regenerate: cargo build -p postio-gtk
+ *
+ * The `--r-*` custom properties data/reader.css's structural rules
+ * reference. A WebView has its own CSS engine with no notion of the GTK
+ * style context tokens.css's `--postio-*` variables live on, so these are
+ * literal values computed from the same Tokens — same parser, same drift
+ * test (tests/reader_tokens.rs), a different role mapping for the pane.
+ */
+
+:root {
+  --r-ground: #f5f5f8;
+  --r-ink: #1d1f20;
+  --r-ink-secondary: rgba(29, 31, 32, 0.8);
+  --r-dim: rgba(29, 31, 32, 0.55);
+  --r-hairline: rgba(29, 31, 32, 0.16);
+  --r-accent: #5980a6;
+  --r-quote-bg: rgba(89, 128, 166, 0.06);
+  --r-match-bg: rgba(89, 128, 166, 0.28);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --r-ground: #2b2b2d;
+    --r-ink: #f5f5f8;
+    --r-ink-secondary: #e7e7ea;
+    --r-dim: #b7b7ba;
+    --r-hairline: #5d5d60;
+    --r-accent: #94bce3;
+    --r-quote-bg: rgba(148, 188, 227, 0.08);
+    --r-match-bg: rgba(148, 188, 227, 0.32);
+  }
+}
