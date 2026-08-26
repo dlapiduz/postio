@@ -298,6 +298,7 @@ fn message_convenience_accessors() {
         content_id: None,
         disposition: Disposition::Attachment,
         part_id: None,
+        part_headers: None,
         blob_id: None,
     });
     assert!(message.has_attachments());

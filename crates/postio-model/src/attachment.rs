@@ -78,6 +78,19 @@ pub struct Attachment {
     pub disposition: Disposition,
     /// MIME part path within the message, e.g. `2.1`, for a lazy fetch.
     pub part_id: Option<String>,
+    /// The part's MIME header block, as `BODYSTRUCTURE` described it — content
+    /// type, charset, transfer encoding.
+    ///
+    /// `BODY[2.1]` hands back a part's *encoded* bytes and none of its
+    /// headers, so nothing in the fetch response says whether they are base64.
+    /// Prepending this turns the fetched section back into a self-contained
+    /// entity a parser can decode, without a second round trip for
+    /// `BODY[2.1.MIME]`. The same trick, and the same reason, as
+    /// [`Message::text_part_headers`](crate::Message::text_part_headers).
+    ///
+    /// `None` for a part nobody fetched by section — one carried on an
+    /// outgoing draft, or a row synced before the column existed.
+    pub part_headers: Option<String>,
     /// Blob store key, present once the bytes have been downloaded.
     pub blob_id: Option<BlobId>,
 }
@@ -94,6 +107,7 @@ impl Attachment {
             content_id: None,
             disposition: Disposition::Attachment,
             part_id: None,
+            part_headers: None,
             blob_id: None,
         }
     }
