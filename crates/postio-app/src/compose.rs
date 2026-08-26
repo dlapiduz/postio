@@ -53,14 +53,19 @@ const SUGGESTION_LIMIT: u32 = 8;
 
 /// Wires `window`'s composer to `database` for `account`: autosave with
 /// crash recovery, recipient completion from contacts, replying to whatever
-/// the list last opened, and attaching files into `blobs`. `runtime` is only
-/// for [`install_attach`] — everything else here is synchronous.
+/// the reading pane is showing, and attaching files into `blobs`. `runtime`
+/// is only for [`install_attach`] — everything else here is synchronous.
+///
+/// `showing` is the reading pane's own record of which message is on screen
+/// ([`crate::reading::Showing`]), which is what `e`, `E` and `f` have to act
+/// on. It is passed in rather than derived here for the reason #325 records.
 pub fn install(
     window: &Window,
     account: AccountId,
     database: Database,
     blobs: BlobStore,
     runtime: tokio::runtime::Handle,
+    showing: crate::reading::Showing,
 ) {
     let composer = window.composer();
     composer.set_account(account);
@@ -68,7 +73,7 @@ pub fn install(
     let last_id = install_autosave(&composer, database.clone(), account);
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
-    install_reply_source(window, &composer, database, blobs.clone());
+    install_reply_source(&composer, database, blobs.clone(), showing);
     install_attach(&composer, blobs, runtime);
 }
 
@@ -264,24 +269,33 @@ fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
     EmailAddress::new(name, contact.address.address.clone())
 }
 
-/// `e`/`E`/`f` reply to whatever the list last activated — read-only against
-/// [`postio_gtk::window::Window::list`]'s existing signal, so nothing here
-/// needs to touch the list itself.
+/// `e`/`E`/`f` reply to whatever the reading pane is showing.
+///
+/// # Why not the list's own activation
+///
+/// It used to keep a `Cell` of its own, fed by `List::connect_activated` —
+/// Enter, or a double click. Nobody reads mail that way here: the pane
+/// follows the *cursor* (#70, Cause B), so a session spent moving with `j`
+/// left that cell `None` from beginning to end and reply, reply-all and
+/// forward were all inert, silently (#325). Two copies of "the current
+/// message", updated by different signals, can only ever be one signal away
+/// from disagreeing; reading `showing` is the version of this that has no
+/// second copy to drift.
 fn install_reply_source(
-    window: &Window,
     composer: &Composer,
     database: Database,
     blobs: BlobStore,
+    showing: crate::reading::Showing,
 ) {
-    let current: Rc<Cell<Option<MessageId>>> = Rc::new(Cell::new(None));
-
-    window.list().connect_activated({
-        let current = Rc::clone(&current);
-        move |row| current.set(Some(row.id))
-    });
-
     composer.connect_reply_source(move || {
-        let id = current.get()?;
+        // `None` is ordinary: `e` on a window nobody has read from yet is
+        // nothing to reply to, not an error. It is logged all the same,
+        // because the *other* way to reach here is a miswiring, and #325
+        // spent its whole life indistinguishable from working software.
+        let Some(id) = showing.get() else {
+            tracing::debug!("reply asked for with no message in the reading pane");
+            return None;
+        };
         let connection = database
             .connection()
             .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
@@ -686,7 +700,14 @@ mod tests {
             window.present();
             settle();
 
-            install(&window, account, database, blobs, runtime.handle().clone());
+            install(
+                &window,
+                account,
+                database,
+                blobs,
+                runtime.handle().clone(),
+                crate::reading::Showing::default(),
+            );
             let composer = window.composer();
             composer.open(Draft::new(account));
             settle();
@@ -706,7 +727,14 @@ mod tests {
             window.present();
             settle();
 
-            install(&window, account, database, blobs, runtime.handle().clone());
+            install(
+                &window,
+                account,
+                database,
+                blobs,
+                runtime.handle().clone(),
+                crate::reading::Showing::default(),
+            );
             settle();
 
             let composer = window.composer();

@@ -392,17 +392,23 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // showing mailboxes and ignores `Event::SearchResults`.
     feeds.messages.set_result_source(sources);
 
+    // Which message is on screen: one cell, read by the pane that paints it
+    // and by the composer that replies to it. Two separately-updated copies
+    // is exactly what #325 was.
+    let showing = reading::Showing::default();
+
     compose::install(
         window,
         account.id,
         wiring.database.clone(),
         wiring.blobs.clone(),
         wiring.runtime.clone(),
+        showing.clone(),
     );
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
-    reading::install(window, wiring, &feeds);
+    reading::install(window, wiring, &feeds, showing);
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.

@@ -118,7 +118,14 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     // so the composer is closed first: a composer that was already holding
     // this draft would make the assertion below true without anything having
     // been activated.
-    compose::install(&window, account, database.clone(), blobs, bridge.handle());
+    compose::install(
+        &window,
+        account,
+        database.clone(),
+        blobs,
+        bridge.handle(),
+        postio_app::reading::Showing::default(),
+    );
     window.composer().close();
     while glib::MainContext::default().iteration(false) {}
     assert!(
