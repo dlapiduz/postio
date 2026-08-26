@@ -37,6 +37,7 @@ mod gtk_composer_autosave;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_recipient_select;
+mod gtk_composer_signature_default;
 mod gtk_display_required;
 mod gtk_feeds;
 mod gtk_finder;
@@ -107,6 +108,20 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_recipient_select::nothing_is_offered_until_four_characters_are_typed",
         gtk_composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
+    ),
+    (
+        "gtk_composer_signature_default::a_resolved_signature_wins_over_the_identity_s_own",
+        gtk_composer_signature_default::a_resolved_signature_wins_over_the_identity_s_own as fn(),
+    ),
+    (
+        "gtk_composer_signature_default::a_resolved_signature_the_account_does_not_have_falls_back_to_the_identity",
+        gtk_composer_signature_default::a_resolved_signature_the_account_does_not_have_falls_back_to_the_identity
+            as fn(),
+    ),
+    (
+        "gtk_composer_signature_default::no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere",
+        gtk_composer_signature_default::no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere
+            as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
