@@ -332,3 +332,106 @@ fn absorb(state: &Rc<EditorState>, html: &str) {
         handler(&current);
     }
 }
+
+impl Editor {
+    /// Fire-and-forget script in the surface. Host code only.
+    fn run(&self, script: &str) {
+        self.view
+            .evaluate_javascript(script, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
+    /// Script in the surface, waited out by pumping the main context.
+    ///
+    /// Test plumbing and nothing else — the composer's cursor assertions
+    /// need a synchronous answer, and a test is the one caller allowed to
+    /// pump from where it stands.
+    fn run_blocking(&self, script: &str) -> String {
+        let result: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let slot = result.clone();
+        self.view.evaluate_javascript(
+            script,
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            move |outcome| {
+                let value = outcome
+                    .map(|value| value.to_str().to_string())
+                    .unwrap_or_default();
+                *slot.borrow_mut() = Some(value);
+            },
+        );
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while result.borrow().is_none() && Instant::now() < deadline {
+            while gtk::glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        result.borrow_mut().take().unwrap_or_default()
+    }
+
+    /// Put the caret at the start of the body — where a reply is written,
+    /// above the quote and above the signature.
+    pub fn place_caret_start(&self) {
+        self.run(
+            "const r = document.createRange(); \
+             r.selectNodeContents(document.body); r.collapse(true); \
+             const s = window.getSelection(); \
+             s.removeAllRanges(); s.addRange(r);",
+        );
+    }
+
+    /// Pump until the editing shell is loaded and editable.
+    ///
+    /// `load` is asynchronous where the old `GtkTextBuffer` was not; the
+    /// blocking test helpers gate on this so a test that loads-then-types
+    /// keeps meaning what it meant.
+    fn wait_ready(&self) {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            let ready =
+                self.run_blocking("document.body && document.body.isContentEditable ? '1' : '0'");
+            if ready == "1" {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// The caret's character offset into the body's text, for assertions.
+    #[doc(hidden)]
+    pub fn caret_offset(&self) -> i32 {
+        self.wait_ready();
+        self.run_blocking(
+            "(() => { const s = window.getSelection(); \
+               if (s.rangeCount === 0) return '0'; \
+               const r = s.getRangeAt(0).cloneRange(); \
+               r.selectNodeContents(document.body); \
+               r.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset); \
+               return String(r.toString().length); })()",
+        )
+        .parse()
+        .unwrap_or(0)
+    }
+
+    /// Replace the body's content the way typing would — through the
+    /// editing machinery, so it registers as an edit.
+    #[doc(hidden)]
+    pub fn test_type(&self, text: &str) {
+        self.wait_ready();
+        let escaped = text.replace('\\', "\\\\").replace('\'', "\\'");
+        self.run_blocking(&format!(
+            "(() => {{ document.execCommand('selectAll'); \
+               document.execCommand('insertText', false, '{escaped}'); \
+               return 'typed'; }})()"
+        ));
+        // The edit report crosses the bridge asynchronously; a test that
+        // types and immediately reads the record raced it when the surface
+        // was a synchronous GtkTextBuffer. Wait the report out, so the old
+        // tests keep meaning what they meant.
+        let wanted = text.trim().to_owned();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while self.document().to_text().trim() != wanted && Instant::now() < deadline {
+            while gtk::glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}

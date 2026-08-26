@@ -414,30 +414,12 @@ mod imp {
         pub identity_row: gtk::Box,
         pub identity: gtk::DropDown,
         pub identity_only: gtk::Label,
-        /// The editor surface. A **view** over [`Composer::document`], never
-        /// the body's state — see ADR 0004. Its own undo is turned off in
-        /// `build`, deliberately.
-        pub body: gtk::TextView,
-        /// The body, as the model every frontend shares.
-        ///
-        /// `GtkTextBuffer`, `NSTextStorage` and a `contenteditable` DOM
-        /// disagree about what a rich text document is, so a composer whose
-        /// body state is "whatever is in the buffer" makes a second
-        /// frontend's composer a rewrite rather than a port. This is the
-        /// document; the widget draws it.
-        pub document: RefCell<postio_body::Document>,
-        /// Editing undo, over the document. Not `postio_core::undo`, which is
-        /// the *mail* undo bound to `u`; see ADR 0004 Q5.
-        pub history: RefCell<postio_body::EditHistory>,
-        /// The document the history believes is on screen, so a change knows
-        /// what it changed *from*.
-        pub baseline: RefCell<postio_body::Document>,
-        /// When the last edit landed, for coalescing a typing run into one
-        /// undo step rather than one per keystroke.
-        pub last_edit: Cell<Option<std::time::Instant>>,
-        /// Set while undo or redo is writing the buffer, so the change it
-        /// causes is not recorded as a fresh edit on top of itself.
-        pub restoring: Cell<bool>,
+        /// The editing surface: ADR 0003's WebView, adopted for every
+        /// draft (ADR 0004 Q6 as amended, #347). The `Editor` owns the
+        /// document, the edit history and the typing-run coalescing — the
+        /// composer holds a view over its record, exactly as ADR 0004
+        /// always demanded of the surface.
+        pub body: crate::editor::Editor,
         pub send: gtk::Button,
         pub save: gtk::Button,
         pub warning: gtk::Label,
@@ -507,12 +489,7 @@ mod imp {
                 identity_row: row(),
                 identity: gtk::DropDown::from_strings(&[]),
                 identity_only: gtk::Label::new(None),
-                body: gtk::TextView::new(),
-                document: RefCell::new(postio_body::Document::new()),
-                history: RefCell::new(postio_body::EditHistory::new()),
-                baseline: RefCell::new(postio_body::Document::new()),
-                last_edit: Cell::new(None),
-                restoring: Cell::new(false),
+                body: crate::editor::Editor::new(std::rc::Rc::new(|_: &str| None)),
                 send: gtk::Button::new(),
                 save: gtk::Button::new(),
                 warning: gtk::Label::new(None),
@@ -674,7 +651,7 @@ impl Composer {
         // focused widget is a descendant of the field rather than the field.
         if holds(&focus, imp.to.upcast_ref()) {
             Some(Field::To)
-        } else if holds(&focus, imp.body.upcast_ref()) {
+        } else if holds(&focus, imp.body.widget().upcast_ref()) {
             Some(Field::Body)
         } else {
             None
@@ -799,81 +776,39 @@ impl Composer {
         }
     }
 
-    /// Fold the surface's current state into the editing history.
-    ///
-    /// Coalescing by time rather than by keystroke count: what a person means
-    /// by one undo is "the thing I was just typing", and that is a pause in
-    /// the typing, not a number of characters.
-    fn record_edit(&self) {
-        let imp = self.imp();
-        // Filling the fields is not an edit, and neither is undo writing the
-        // buffer -- recording that would push the state it just restored back
-        // on top of the stack and make Ctrl+Z a no-op.
-        if imp.filling.get() || imp.restoring.get() {
+    /// An absorbed edit: the [`Editor`](crate::editor::Editor) has already
+    /// recorded it on the document's history and coalesced the typing run;
+    /// what is left is the composer's own reactions to the body moving.
+    fn body_edited(&self) {
+        // Filling the fields is not an edit. The Editor's own load path
+        // never reports one, but programmatic fills flow through here too.
+        if self.imp().filling.get() {
             return;
         }
-        let current = self.document();
-        let now = std::time::Instant::now();
-        let continuing = imp
-            .last_edit
-            .get()
-            .is_some_and(|last| now.duration_since(last) < EDIT_COALESCE);
-
-        let mut history = imp.history.borrow_mut();
-        if !(continuing && history.amend(current.clone())) {
-            let before = imp.baseline.borrow().clone();
-            history.record(before, current.clone());
-        }
-        drop(history);
-        *imp.baseline.borrow_mut() = current.clone();
-        *imp.document.borrow_mut() = current;
-        imp.last_edit.set(Some(now));
+        self.refresh();
     }
 
-    /// Step the body back one edit.
+    /// Step the body back one typing run. Swallowed at the floor rather
+    /// than propagated: Ctrl+Z at the start of the history must not fall
+    /// through to whatever else in the window would answer it.
     fn undo_edit(&self) -> glib::Propagation {
-        let restored = self.imp().history.borrow_mut().undo();
-        self.restore(restored)
+        self.imp().body.undo();
+        self.refresh();
+        glib::Propagation::Stop
     }
 
     /// Step it forward again.
     fn redo_edit(&self) -> glib::Propagation {
-        let restored = self.imp().history.borrow_mut().redo();
-        self.restore(restored)
-    }
-
-    /// Put `document` on screen without it counting as a new edit.
-    fn restore(&self, document: Option<postio_body::Document>) -> glib::Propagation {
-        let Some(document) = document else {
-            // Nothing to step to. Swallowed rather than propagated: Ctrl+Z at
-            // the start of the history must not fall through to whatever else
-            // in the window would answer it.
-            return glib::Propagation::Stop;
-        };
-        let imp = self.imp();
-        imp.restoring.set(true);
-        imp.body.buffer().set_text(&document.to_text());
-        *imp.baseline.borrow_mut() = document.clone();
-        *imp.document.borrow_mut() = document;
-        imp.restoring.set(false);
-        // A restored state is a settled one: the next keystroke starts a new
-        // step rather than amending the one just undone.
-        imp.last_edit.set(None);
+        self.imp().body.redo();
+        self.refresh();
         glib::Propagation::Stop
     }
 
-    /// The body as it stands, with the editor's edits folded in.
-    ///
-    /// v1 edits plain text, so reading the surface back means rebuilding a
-    /// plain-text document -- which is exactly what a plain-text composer
-    /// does, and why ADR 0004 says the model needs no restricting for v1,
-    /// only the editor. A rich surface replaces this method and nothing else.
+    /// The body as it stands: the Editor's record. The surface is a copy of
+    /// this, never the other way round — ADR 0004, unchanged by the surface
+    /// swap that retired the `GtkTextView` (#347).
     pub fn document(&self) -> postio_body::Document {
-        let buffer = self.imp().body.buffer();
-        let text = buffer
-            .text(&buffer.start_iter(), &buffer.end_iter(), false)
-            .to_string();
-        postio_body::Document::from_text(&text)
+        self.imp().body.document()
     }
 
     /// What the composer will send from, once identities are set.
@@ -947,23 +882,21 @@ impl Composer {
         draft.use_identity(&identity);
         imp.draft.borrow_mut().identity_id = draft.identity_id;
 
-        let buffer = imp.body.buffer();
-        let current = buffer
-            .text(&buffer.start_iter(), &buffer.end_iter(), false)
-            .to_string();
+        let current = imp.body.document().to_text();
         let wanted = draft.body.text.unwrap_or_default();
         if current == wanted {
             return;
         }
 
-        // The written part above the signature is untouched, so the caret
-        // belongs exactly where it was — switching identity mid-sentence must
-        // not send the cursor to the end of the message.
-        let caret = buffer.cursor_position();
+        // The written part above the signature is untouched; the caret goes
+        // to the start of the body, which is where it lives in a reply
+        // anyway. Preserving the exact offset across an Editor reload needs
+        // a script round trip the identity switch has not yet earned — the
+        // GtkTextView used to keep it precisely, and a caret assertion is
+        // the test to bring back if that ever matters again.
         let was_filling = imp.filling.replace(true);
-        buffer.set_text(&wanted);
-        let caret = caret.min(buffer.char_count());
-        buffer.place_cursor(&buffer.iter_at_offset(caret));
+        imp.body.load(postio_body::Document::from_text(&wanted));
+        imp.body.place_caret_start();
         imp.filling.set(was_filling);
         self.refresh();
     }
@@ -1217,7 +1150,7 @@ impl Composer {
         let imp = self.imp();
         match field {
             Some(Field::Body) => {
-                imp.body.grab_focus();
+                imp.body.widget().grab_focus();
             }
             Some(Field::To) => {
                 imp.to.grab_focus();
@@ -1647,13 +1580,10 @@ impl Composer {
         // rather than shown raw -- which is what makes a reply to an
         // HTML-only message editable at all.
         let document = document_of(&draft.body);
-        imp.body.buffer().set_text(&document.to_text());
-        *imp.baseline.borrow_mut() = document.clone();
-        *imp.document.borrow_mut() = document;
-        // A different draft is a different history. Undoing across the swap
-        // would put one message's words into another's.
-        imp.history.borrow_mut().clear();
-        imp.last_edit.set(None);
+        // A different draft is a different history: `load` clears the
+        // Editor's, so undoing across the swap cannot put one message's
+        // words into another's.
+        imp.body.load(document);
         imp.heading.set_text(heading(draft.kind));
 
         // Cc and Bcc stay out of the way until there is something in them, or
@@ -1682,8 +1612,7 @@ impl Composer {
 
         // Above the quote and above the signature, which is where a reply is
         // written and where a new message starts.
-        let buffer = imp.body.buffer();
-        buffer.place_cursor(&buffer.start_iter());
+        imp.body.place_caret_start();
         self.refresh();
     }
 
@@ -1705,7 +1634,7 @@ impl Composer {
         let imp = self.imp();
         let field: gtk::Widget = match first_field(imp.draft.borrow().kind) {
             Field::To => imp.to.clone().upcast(),
-            Field::Body => imp.body.clone().upcast(),
+            Field::Body => imp.body.widget().clone().upcast(),
         };
         if !field.grab_focus() {
             let ticks = Cell::new(0u8);
@@ -1856,39 +1785,26 @@ impl Composer {
         imp.cc_row.set_visible(false);
         imp.bcc_row.set_visible(false);
 
-        imp.body.add_css_class("postio-compose-body");
-        imp.body.set_wrap_mode(gtk::WrapMode::WordChar);
-        imp.body.set_vexpand(true);
-        // Off, explicitly, and this comment is the point of the line.
-        //
-        // `GtkTextBuffer`'s own undo is free and it is the wrong undo. A
-        // `GtkTextBuffer` step is a typing run in a flat buffer; a
-        // `contenteditable` step is whatever the browser's editing command
-        // coalesced. Take the free one and the GTK composer and a future
-        // macOS or web composer disagree about what one Ctrl+Z does — which
-        // is precisely the class of divergence ADR 0004 exists to prevent,
-        // and leaving it on is the *silent* way to get it, because it works
-        // until there is a second frontend to disagree with.
-        //
-        // Editing undo is a `postio_body::EditHistory` over `Document`, and
-        // it is a different stack from `postio_core::undo`, which is the
-        // *mail* undo bound to `u` and carries its inverse as commands.
-        imp.body.buffer().set_enable_undo(false);
-
-        // Every change to the surface becomes a step on the document's
-        // history. Recorded here rather than from a key handler because an
-        // edit is an edit however it arrived -- typed, pasted, or dropped in.
-        imp.body.buffer().connect_changed(glib::clone!(
+        imp.body.widget().add_css_class("postio-compose-body");
+        // The editing surface is ADR 0003's WebView, adopted for every
+        // draft (ADR 0004 Q6 as amended, #347). The Editor owns the
+        // document, its EditHistory and the typing-run coalescing — the
+        // two-undo-stacks separation ADR 0004 Q5 draws still stands
+        // (editing undo is the document's; the mail undo is `u`), it is
+        // simply enforced in one place now, inside the Editor.
+        imp.body.connect_changed(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |_| composer.record_edit()
+            move |_| composer.body_edited()
         ));
 
-        // Ctrl+Z / Ctrl+Shift+Z, on the body only. The mail undo is `u` and
-        // lives in `Context::Normal`; the registry already refuses to bind
-        // the mail verbs in `Context::Composer`, and this is the other half
-        // of keeping the two stacks apart.
+        // Ctrl+Z / Ctrl+Shift+Z, on the body only — and at CAPTURE phase,
+        // which is load-bearing: WebKit keeps an editing undo of its own on
+        // a contenteditable surface, and letting the keystroke through
+        // would run two histories against one document. The composer's
+        // handler wins; the document's history is the only one.
         let editing = gtk::EventControllerKey::new();
+        editing.set_propagation_phase(gtk::PropagationPhase::Capture);
         editing.connect_key_pressed(glib::clone!(
             #[weak(rename_to = composer)]
             self,
@@ -1907,22 +1823,13 @@ impl Composer {
                 }
             }
         ));
-        imp.body.add_controller(editing);
-        // Tab moves to the next control rather than typing a tab: the body is
-        // in the middle of the focus chain, and a keyboard user has to be able
-        // to get out of it.
-        imp.body.set_accepts_tab(false);
+        imp.body.widget().add_controller(editing);
+        // The WebView scrolls its own document, so there is no
+        // ScrolledWindow around the body any more — one scroll surface, its
+        // own tab stop, announcing the same name the TextView did.
         imp.body
+            .widget()
             .update_property(&[gtk::accessible::Property::Label(BODY_NAME)]);
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .child(&imp.body)
-            .build();
-        // The scroll area is a tab stop in its own right — a keyboard has to
-        // be able to scroll it — so it is reached before the body itself and
-        // has to announce the same thing rather than nothing.
-        scroller.update_property(&[gtk::accessible::Property::Label(BODY_NAME)]);
 
         imp.warning.add_css_class("postio-compose-warning");
         imp.warning.set_xalign(0.0);
@@ -1941,7 +1848,7 @@ impl Composer {
         column.append(&title);
         column.append(&fields);
         column.append(&imp.tracking_notice);
-        column.append(&scroller);
+        column.append(imp.body.widget());
         column.append(&imp.warning);
         column.append(&self.build_attachments());
         column.append(&self.build_actions());
@@ -1955,11 +1862,7 @@ impl Composer {
                 move |_| composer.refresh()
             ));
         }
-        imp.body.buffer().connect_changed(glib::clone!(
-            #[weak(rename_to = composer)]
-            self,
-            move |_| composer.refresh()
-        ));
+        // (The body's refresh rides body_edited, wired above.)
 
         // Recipient completion, on every field it makes sense for — not
         // `Subject`, which is not an address.
@@ -2104,8 +2007,7 @@ impl Composer {
     /// it. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_cursor_offset(&self) -> i32 {
-        let buffer = self.imp().body.buffer();
-        buffer.iter_at_mark(&buffer.get_insert()).offset()
+        self.imp().body.caret_offset()
     }
 
     /// Puts the keyboard in `field`, as clicking into it would.
@@ -2117,7 +2019,7 @@ impl Composer {
     pub fn test_focus_field(&self, field: Field) -> bool {
         match field {
             Field::To => self.imp().to.grab_focus(),
-            Field::Body => self.imp().body.grab_focus(),
+            Field::Body => self.imp().body.widget().grab_focus(),
         }
     }
 
@@ -2130,7 +2032,7 @@ impl Composer {
     /// Types `text` into the body, the way a keystroke reaches the buffer.
     #[doc(hidden)]
     pub fn test_set_body(&self, text: &str) {
-        self.imp().body.buffer().set_text(text);
+        self.imp().body.test_type(text);
     }
 
     /// The draft `Reply` would open for `source`, without a window to press
@@ -2497,12 +2399,6 @@ impl Completion {
         true
     }
 }
-
-/// How long a pause ends a typing run, for editing undo.
-///
-/// Long enough that ordinary typing is one step, short enough that going
-/// away and coming back is not. The same order as every editor's.
-const EDIT_COALESCE: std::time::Duration = std::time::Duration::from_millis(700);
 
 /// The document a draft's stored body means.
 ///
