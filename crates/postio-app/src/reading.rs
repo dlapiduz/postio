@@ -46,6 +46,16 @@ use postio_storage::repository::MessageRepository;
 
 use crate::Wiring;
 
+/// Which message the reading pane is showing, or is waiting to show.
+///
+/// Shared rather than private because it is the answer to two questions that
+/// must never differ: what to paint, and what `e` replies to. `compose.rs`
+/// kept a second copy fed by `List::connect_activated` alone, so a session
+/// spent reading with `j` left it `None` and reply, reply-all and forward
+/// were all inert (#325). One cell, created by the composition root and
+/// handed to both, is what makes that class of drift unrepresentable.
+pub type Showing = Rc<Cell<Option<MessageId>>>;
+
 /// Fill the reading pane when a message is opened.
 ///
 /// Hooked to the same activation the body backfill listens for, so opening a
@@ -56,11 +66,11 @@ use crate::Wiring;
 /// already renders it, so this reuses that seam (`Folders::status`,
 /// `Folders::connect_status`) rather than opening a second one onto the
 /// engine.
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
-    // What the pane is showing, or is waiting to show. Set the instant a row
-    // is activated rather than when the body lands, so a reply that arrives
-    // late can tell it is late.
-    let showing: Rc<Cell<Option<MessageId>>> = Rc::new(Cell::new(None));
+pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
+    // `showing` is what the pane is showing, or is waiting to show. Set the
+    // instant the cursor reaches a row rather than when the body lands, so a
+    // body that arrives late can tell it is late. `compose.rs` reads the
+    // same cell -- see [`Showing`].
     // What that message is made of, kept so a chip can open the tree without
     // going back to the store. Metadata only — see `Opened`.
     let opened: Rc<RefCell<Option<Opened>>> = Rc::new(RefCell::new(None));
@@ -371,7 +381,7 @@ struct Fill {
     blobs: BlobStore,
     runtime: tokio::runtime::Handle,
     /// What the pane is showing, or is waiting to show.
-    showing: Rc<Cell<Option<MessageId>>>,
+    showing: Showing,
     opened: Rc<RefCell<Option<Opened>>>,
     /// Whether the engine has no connection at all right now. Read by
     /// [`Fill::fill`] to pick `Absent::Offline` over `Absent::Partial`, and
