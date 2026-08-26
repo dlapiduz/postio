@@ -2152,13 +2152,19 @@ RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
 ## The shared cargo target directory
 
 **sccache's server outlives the worktree that started it, and
-`issue-release.sh` can leave it pointing at a directory that no longer
-exists.** `.cargo/config.toml` sets `TMPDIR = { value = "target/tmp",
-relative = true }`, which resolves against *the workspace root of whoever
-started the sccache server*. The server is one machine-wide daemon, it keeps
-the environment it was launched with, and it is the process that actually
-creates the compiler's temporary files. So releasing the worktree that
-happened to start it breaks every subsequent build on the box:
+`issue-release.sh` could leave it pointing at a directory that no longer
+exists.** Fixed in #359 — `scripts/rustc-wrapper.sh` now pins the daemon's
+`TMPDIR` to `${SCCACHE_DIR:-~/.cache/sccache}/tmp`, which outlives every
+worktree. The rest of this entry stays: it is still exactly what you will see
+from a daemon started *before* that fix, and the mechanism explains a second
+thing that was quietly wrong.
+
+`.cargo/config.toml` sets `TMPDIR = { value = "target/tmp", relative = true }`,
+which resolves against *the workspace root of whoever started the sccache
+server*. The server is one machine-wide daemon, it keeps the environment it
+was launched with, and it is the process that actually creates the compiler's
+temporary files. So releasing the worktree that happened to start it broke
+every subsequent build on the box:
 
 ```
 sccache: encountered fatal error
@@ -2172,8 +2178,29 @@ The path in the message names a worktree you may never have worked in, and
 `unicode-ident` is whatever happened to compile first — neither has anything
 to do with the failure. **Check whether anyone else is mid-build
 (`pgrep -af rustc`), then `sccache --stop-server`**; the next `cargo` starts a
-fresh server with the current `TMPDIR`. Do not do it while another session is
-compiling — the running build dies with it.
+fresh server, which under the fix takes the pinned directory and cannot go
+stale again. Do not do it while another session is compiling — the running
+build dies with it.
+
+Two measured facts behind the fix, kept because neither is what the
+configuration looks like it says:
+
+- **A client's `TMPDIR` is ignored entirely.** Start the daemon with one
+  `TMPDIR`, delete that directory, then compile from a worktree whose own
+  `TMPDIR` is perfectly valid: it still fails naming the deleted path. Only
+  the daemon's copy, taken at spawn, is ever consulted.
+- **rustc and the linker inherit the daemon's `TMPDIR`, not cargo's.** So
+  `TMPDIR = target/tmp` has governed the compiler's scratch only on boxes
+  with no sccache. With sccache the tmpfs protection that setting exists to
+  provide was *accidental* — it held because the donating worktree's
+  `target/tmp` happened to be on disk, and a daemon spawned from a plain
+  shell takes the real `/tmp`, a 6 GB tmpfs here, which is precisely the
+  "Disk quota exceeded" failure the setting was written to prevent.
+
+The pinned directory is re-`mkdir -p`'d on every wrapper invocation, so
+clearing `~/.cache/sccache` no longer strands a running daemon either — the
+next compile recreates the directory underneath it. That is the property the
+old arrangement could not have: a released worktree is gone for good.
 
 
 **It hands you other worktrees' artifacts, and the compile error then names a
