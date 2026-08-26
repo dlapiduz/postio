@@ -257,7 +257,9 @@ fn build_fetched_message(
             MessageDataItem::ModSeq(value) => mod_seq = Some(ModSeq::new(value.get())),
             MessageDataItem::Envelope(wire) => envelope = Some(wire),
             MessageDataItem::BodyStructure(wire) => structure = Some(wire),
-            MessageDataItem::BodyExt { section, data, .. } if section == Some(list_id_section()) => {
+            MessageDataItem::BodyExt { section, data, .. }
+                if section == Some(list_id_section()) =>
+            {
                 list_id = list_id_from_header(nstring_to_string(data).as_deref());
             }
             MessageDataItem::BodyExt { data, .. } => {
@@ -819,9 +821,7 @@ mod tests {
     #[test]
     fn a_list_id_header_line_is_reduced_to_its_bracketed_identifier() {
         assert_eq!(
-            list_id_from_header(Some(
-                "List-Id: Harbour dev <harbour-dev.lists.example.org>"
-            )),
+            list_id_from_header(Some("List-Id: Harbour dev <harbour-dev.lists.example.org>")),
             Some("harbour-dev.lists.example.org".to_string())
         );
         assert_eq!(list_id_from_header(None), None);
