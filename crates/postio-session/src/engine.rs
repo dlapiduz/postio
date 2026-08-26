@@ -28,7 +28,7 @@ use postio_imap::imap::{
     ConnectionPool, ConnectionSettings, ImapBackend, PoolConfig, RustlsConnector,
 };
 use postio_imap::secret::{AccountKey, SecretStore};
-use postio_model::Account;
+use postio_model::{Account, AccountId};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
 use postio_storage::{BlobStore, Database};
 
@@ -125,4 +125,135 @@ fn settings(server: &postio_model::account::ServerConfig) -> ConnectionSettings 
         server.security,
         server.username.clone(),
     )
+}
+
+// ---------------------------------------------------------------------------
+// One engine per enabled account
+// ---------------------------------------------------------------------------
+
+/// Why the root refused to start the engines it was asked for.
+///
+/// A refusal rather than a silent truncation: an account whose engine never
+/// started is an account whose mail silently stops arriving, and "some of your
+/// mail is syncing" is the kind of half-state a mail client must never be in
+/// without saying so (#183).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupRefusal {
+    /// More enabled accounts than the connection pool can serve at once.
+    TooManyAccounts {
+        /// How many enabled accounts were found.
+        accounts: usize,
+        /// How many engines this pool can carry.
+        budget: usize,
+    },
+}
+
+impl std::fmt::Display for StartupRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StartupRefusal::TooManyAccounts { accounts, budget } => write!(
+                f,
+                "{accounts} accounts are enabled but this database pool can \
+                 serve {budget} at once. Disable an account, or raise the \
+                 pool size, and restart."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StartupRefusal {}
+
+/// How many engines a pool of `max_connections` can carry.
+///
+/// One connection per engine, and one left for the frontend — which reads on
+/// every repaint and must never be the caller that waits. Saturating rather
+/// than panicking on a one-connection pool: the answer there is "no engines",
+/// which [`start_all`] reports as a refusal with a sentence rather than
+/// starting one and deadlocking against the UI.
+pub fn engine_budget(max_connections: usize) -> usize {
+    max_connections.saturating_sub(1)
+}
+
+/// Start one engine per *enabled* account.
+///
+/// ADR 0005 Q3: the first account is not special, so there is no
+/// `first_account` here — any code that treats one differently fails exactly
+/// once, in the field. Every enabled account gets an engine of its own, with
+/// its own connection, its own queue and its own backoff, so one unreachable
+/// server cannot stall the others.
+///
+/// Refuses rather than truncating when there are more accounts than the pool
+/// can serve. Starting nine of ten engines would leave the tenth account
+/// looking permanently offline with nothing in the interface explaining why.
+pub fn start_all(
+    accounts: &[Account],
+    database: &Database,
+    blobs: BlobStore,
+    events: EventSink,
+    secrets: Arc<dyn SecretStore>,
+    mailbox_roles: postio_model::RoleOverrides,
+    backfill: postio_runtime::BackfillPolicy,
+) -> Result<Vec<(AccountId, Engine)>, StartupRefusal> {
+    let enabled: Vec<&Account> = accounts.iter().filter(|account| account.enabled).collect();
+    let budget = engine_budget(database.pool().max_connections());
+
+    if enabled.len() > budget {
+        return Err(StartupRefusal::TooManyAccounts {
+            accounts: enabled.len(),
+            budget,
+        });
+    }
+
+    let mut engines = Vec::with_capacity(enabled.len());
+    for account in enabled {
+        // A transport that cannot be built costs *that* account its sync and
+        // nothing else — `start` already logs why. The others still run.
+        if let Some(engine) = start(
+            account,
+            database,
+            blobs.clone(),
+            events.clone(),
+            Arc::clone(&secrets),
+            mailbox_roles.clone(),
+            backfill,
+        ) {
+            engines.push((account.id, engine));
+        }
+    }
+    Ok(engines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pool_keeps_one_connection_back_for_the_frontend() {
+        // The UI reads on every repaint; an engine that took the last
+        // connection would make the window wait on the network it is not
+        // allowed to wait on.
+        assert_eq!(engine_budget(4), 3);
+        assert_eq!(engine_budget(2), 1);
+    }
+
+    #[test]
+    fn a_single_connection_pool_carries_no_engines_rather_than_deadlocking() {
+        assert_eq!(engine_budget(1), 0);
+        assert_eq!(engine_budget(0), 0);
+    }
+
+    #[test]
+    fn the_refusal_says_what_to_do_about_it() {
+        let refusal = StartupRefusal::TooManyAccounts {
+            accounts: 10,
+            budget: 3,
+        };
+        let said = refusal.to_string();
+
+        assert!(said.contains("10") && said.contains('3'), "{said}");
+        assert!(
+            said.contains("Disable an account") && said.contains("restart"),
+            "a refusal the user cannot act on is a hang with extra steps: {said}"
+        );
+    }
 }
