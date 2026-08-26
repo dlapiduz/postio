@@ -1554,6 +1554,14 @@ impl Composer {
         let Some((source, account)) = found else {
             return;
         };
+        // The picker has to speak for *this* account before `open` fills the
+        // draft: `fill` resolves the draft's `identity_id` against whatever
+        // `imp.identities` already holds, and that was last set for the
+        // window's own default account -- never refreshed for a reply to a
+        // message that arrived somewhere else (#189). Without this, a reply
+        // to account B silently sent as account A's identity.
+        self.set_identities(account.identities.clone());
+        self.set_signatures(account.signatures.clone());
         if let Some(draft) = reply_draft(id, &source, &account) {
             // After, not before: `open` calls `fill`, which clears the
             // notice for every fresh composition — a reply's own domains
