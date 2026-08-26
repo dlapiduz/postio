@@ -1085,7 +1085,7 @@ async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool 
         });
     }
     state.backfill.finished(message, outcome);
-    announce_backfill(parts, state);
+    announce_backfill(parts, state, std::time::Instant::now());
     true
 }
 
@@ -1115,23 +1115,70 @@ async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool 
 /// empty, which is seeding: that is when the denominator becomes known, and
 /// a line that appears only once a fetch has completed is silent for exactly
 /// the stretch someone is most likely to be watching it.
-fn announce_backfill(parts: &EngineParts, state: &mut State) {
-    const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+///
+/// `now` is a parameter rather than a read of the clock, for the same reason
+/// [`Repaint::batch_committed`] and [`StatusTracker::on_progress`] take one:
+/// a throttle a test cannot step through can only be tested by sleeping —
+/// see engine.rs's own unit tests below, and issue #316's second cause,
+/// which a real-time integration test could reproduce only by accident of
+/// how fast the machine running it happened to be.
+fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
+    let (done, total, drained) = backfill_snapshot(state);
 
-    let progress = state.backfill.progress();
-    let done = progress.settled();
-    let total = done + progress.pending + progress.in_flight;
-
-    let drained = progress.pending == 0 && progress.in_flight == 0;
     let opening = state.backfill_announced.is_none();
-    let now = std::time::Instant::now();
     let due = state
         .backfill_announced
-        .is_none_or(|last| now.duration_since(last) >= MIN_INTERVAL);
+        .is_none_or(|last| now.duration_since(last) >= BACKFILL_ANNOUNCE_INTERVAL);
 
     if !(drained || opening || due) {
         return;
     }
+    emit_backfill_progress(parts, state, done, total, drained, now);
+}
+
+/// How often [`announce_backfill`] is allowed to report a settled body, at
+/// most. [`StatusTracker`] holds its own progress line to the same floor,
+/// for the same reason.
+const BACKFILL_ANNOUNCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Announces the backfill's current progress unconditionally — never
+/// throttled.
+///
+/// Issue #316's third cause: [`Job::RequestBody`] called the same throttled
+/// [`announce_backfill`] a background body settling does, so whether the
+/// reading pane's own open was ever reported at all depended on where the
+/// 250 ms window happened to be. The floor above exists to protect the
+/// engine from the firehose of events a fast archive produces (see
+/// [`announce_backfill`]'s doc comment) — not from a person opening a
+/// second message a moment after the first. `backfill.rs`'s own module doc
+/// puts it as "the interactive lane always wins"; the status line honours
+/// the same rule by never making a click wait out a background pass's
+/// throttle window.
+fn announce_backfill_now(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
+    let (done, total, drained) = backfill_snapshot(state);
+    emit_backfill_progress(parts, state, done, total, drained, now);
+}
+
+/// `(done, total, drained)` as of right now — the read [`announce_backfill`]
+/// and [`announce_backfill_now`] both act on.
+fn backfill_snapshot(state: &State) -> (usize, usize, bool) {
+    let progress = state.backfill.progress();
+    let done = progress.settled();
+    let total = done + progress.pending + progress.in_flight;
+    let drained = progress.pending == 0 && progress.in_flight == 0;
+    (done, total, drained)
+}
+
+/// Updates the throttle clock and emits the report both announce functions
+/// share.
+fn emit_backfill_progress(
+    parts: &EngineParts,
+    state: &mut State,
+    done: usize,
+    total: usize,
+    drained: bool,
+    now: std::time::Instant,
+) {
     // Forget the clock once the queue is empty, so the next backfill's first
     // report is prompt rather than waiting out a window that started during
     // the last one.
@@ -1164,7 +1211,7 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
             // denominator becomes known, and a status line that appears only
             // once a fetch has completed is silent for exactly the stretch
             // the user is most likely to be watching it.
-            announce_backfill(parts, state);
+            announce_backfill(parts, state, std::time::Instant::now());
             let _ = reply.send(outcome);
         }
         Job::RequestBody { message, reply } => {
@@ -1172,7 +1219,9 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
                 backfill::request_body(connection, &mut state.backfill, message)
                     .map_err(|error| EngineError::new(error.to_string()))
             });
-            announce_backfill(parts, state);
+            // Unconditional, not the throttled `announce_backfill` above:
+            // the interactive lane always wins (#316).
+            announce_backfill_now(parts, state, std::time::Instant::now());
             let _ = reply.send(outcome);
         }
         Job::RetryNow { reply } => {
@@ -1964,14 +2013,17 @@ mod tests {
         }
     }
 
-    fn parts_over(database: Database) -> EngineParts {
+    /// `EngineParts` over `database`, with the receiving end of its own
+    /// event channel — kept, not discarded, so a test can see what got
+    /// announced.
+    fn parts_over(database: Database) -> (EngineParts, postio_core::bridge::EventStream) {
         let connection = database.connection().expect("checkout");
         let account = postio_storage::test_support::account(&connection);
         drop(connection);
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(directory.keep()).expect("a blob store");
-        let (sink, _events) = postio_core::bridge::event_channel();
-        EngineParts {
+        let (sink, events) = postio_core::bridge::event_channel();
+        let parts = EngineParts {
             account: account.id,
             database,
             blobs,
@@ -1985,7 +2037,8 @@ mod tests {
             watch: WatchPolicy::default(),
             network: NetworkSource::Ignored,
             mailbox_roles: Default::default(),
-        }
+        };
+        (parts, events)
     }
 
     /// postio-0d9.6: a 37,699-message Archive was queued ahead of an
@@ -1997,7 +2050,7 @@ mod tests {
     #[test]
     fn queueing_every_mailbox_puts_inbox_first_and_orders_the_rest_by_role() {
         let database = postio_storage::test_support::memory();
-        let parts = parts_over(database.clone());
+        let (parts, _events) = parts_over(database.clone());
         let connection = database.connection().expect("checkout");
 
         // Created deliberately out of role order, archive first, so a queue
@@ -2080,5 +2133,117 @@ mod tests {
         let _repaint = Repaint::new(sink, AccountId::new(1), MailboxId::new(4));
 
         assert_eq!(events.len(), 0);
+    }
+
+    // -- The backfill announce throttle (issue #316) -------------------
+
+    /// A body request the backfill has never seen before, distinct per `n`
+    /// so several can be claimed without colliding.
+    fn body_request(n: u32) -> backfill::BodyRequest {
+        backfill::BodyRequest {
+            message: MessageId::new(n as i64),
+            mailbox: MailboxId::new(1),
+            path: "INBOX".to_string(),
+            uid: postio_model::Uid::new(n),
+            size: 100,
+            received_at: Utc::now(),
+        }
+    }
+
+    /// Documents the throttle `announce_backfill` still has, over an
+    /// explicit clock rather than a real one — see its own doc comment for
+    /// why a real-time version of this test would prove nothing reliably.
+    #[test]
+    fn a_second_announcement_inside_the_floor_is_throttled() {
+        let database = postio_storage::test_support::memory();
+        let (parts, events) = parts_over(database);
+        let mut state = empty_state();
+        let t0 = Instant::now();
+
+        state.backfill.request_now(body_request(1));
+        announce_backfill(&parts, &mut state, t0);
+        assert_eq!(events.len(), 1, "the first claim must announce at once");
+
+        state.backfill.request_now(body_request(2));
+        announce_backfill(&parts, &mut state, t0 + Duration::from_millis(10));
+        assert_eq!(
+            events.len(),
+            1,
+            "10ms is well inside the 250ms floor -- a second background-\
+             shaped announce this soon must still be throttled"
+        );
+    }
+
+    /// Issue #316, cause 3: an interactive open must never wait out a
+    /// background pass's throttle window the way the test above shows a
+    /// second ordinary announce does.
+    #[test]
+    fn announce_backfill_now_is_never_throttled() {
+        let database = postio_storage::test_support::memory();
+        let (parts, events) = parts_over(database);
+        let mut state = empty_state();
+        let t0 = Instant::now();
+
+        state.backfill.request_now(body_request(1));
+        announce_backfill(&parts, &mut state, t0);
+        assert_eq!(events.len(), 1);
+
+        // A second interactive claim, 10ms later -- exactly the timing the
+        // test above proves the throttled path swallows.
+        state.backfill.request_now(body_request(2));
+        announce_backfill_now(&parts, &mut state, t0 + Duration::from_millis(10));
+
+        assert_eq!(
+            events.len(),
+            2,
+            "an interactive open must be announced immediately, throttle \
+             window or not"
+        );
+        match events.try_next() {
+            Some(Event::BackfillProgress { done, total, .. }) => {
+                assert_eq!((done, total), (0, 1), "the first announce")
+            }
+            other => panic!("expected the first BackfillProgress, got {other:?}"),
+        }
+        match events.try_next() {
+            Some(Event::BackfillProgress { done, total, .. }) => {
+                assert_eq!(
+                    (done, total),
+                    (0, 2),
+                    "the second announce must reflect both claims"
+                )
+            }
+            other => panic!("expected the second BackfillProgress, got {other:?}"),
+        }
+    }
+
+    /// A drain always reports and resets the clock, whichever announce
+    /// function reaches it — `emit_backfill_progress` is the one place both
+    /// funnel through, and this is what stops a finished queue from sticking
+    /// at `2000 of 2000` (the same trap `SyncProgress` avoids).
+    #[test]
+    fn a_drained_queue_resets_the_throttle_clock() {
+        let database = postio_storage::test_support::memory();
+        let (parts, events) = parts_over(database);
+        let mut state = empty_state();
+        let t0 = Instant::now();
+
+        state.backfill.request_now(body_request(1));
+        announce_backfill(&parts, &mut state, t0);
+        let claim = state.backfill.next_body().expect("the claim just queued");
+        state
+            .backfill
+            .finished(claim.request.message, Outcome::Gone);
+        announce_backfill(&parts, &mut state, t0 + Duration::from_millis(10));
+        assert_eq!(
+            events.len(),
+            2,
+            "a drain must always be reported, throttle or not"
+        );
+        assert_eq!(
+            state.backfill_announced, None,
+            "a drained queue must reset the clock, or the next backfill's \
+             first report waits out a window that started during this one"
+        );
     }
 }
