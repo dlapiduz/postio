@@ -191,8 +191,29 @@ Three constraints on how:
   incompressibility probe over the first 128 KiB, and record the outcome in the
   header's format byte.
 
-Expected: the 1.43 GB text axis lands **under 350 MB on disk**. Payloads
-compress by essentially nothing, which is the correct result.
+**Measured, and lower than this ADR first claimed.** The original text here
+said mail compresses 5–8x and projected the 1.43 GB text axis landing under
+350 MB. That is true of mail text *in bulk* and not of mail text compressed one
+body at a time, which is what a content-addressed store does. Measured on the
+project's own corpus, over decoded `text/*` bodies only (median body: 325
+bytes):
+
+| | ratio |
+|---|---:|
+| per blob, zstd-3, no dictionary — what ships | **1.57x** |
+| the same bodies in one frame — the ceiling a shared dictionary approaches | 2.19x |
+| whole `.eml` files per blob, base64 payloads included | 1.37x |
+
+Small inputs are the whole story: zstd has almost no window to work with in a
+few hundred bytes, and a dictionary is the standard answer. Real accounts skew
+larger than this corpus, so real ratios sit above these — but the honest
+planning number for the text axis is **around 2x, not 4x**, until a dictionary
+exists. Payloads compress by essentially nothing, which is the correct result.
+
+That is a smaller prize than this ADR first advertised, and it does not change
+the decision: 2x on the corpus that search reads is worth having, and the
+*format* work is what has to happen now regardless, because a container that
+cannot name its dictionary can never gain one.
 
 ### The database: shrink the content, do not compress the pages
 
