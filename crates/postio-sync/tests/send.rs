@@ -89,12 +89,18 @@ fn a_draft(account: &Account, to: &str) -> Draft {
     draft
 }
 
-async fn store_password(secrets: &MemorySecretStore, account: &Account) {
+/// The password world behind the [`TokenSource`] seam, which is what a
+/// password account's composition root builds.
+///
+/// [`TokenSource`]: postio_imap::auth::TokenSource
+async fn a_password_source(account: &Account) -> postio_imap::auth::StoredPasswordSource {
+    let secrets = std::sync::Arc::new(MemorySecretStore::new());
     let key = AccountKey::new(&account.address.address);
     secrets
         .store(&key, &Password::new("app-specific-password"))
         .await
         .expect("store the password");
+    postio_imap::auth::StoredPasswordSource::new(secrets)
 }
 
 /// A transcript that accepts everything: `EHLO`, `AUTH PLAIN`, the mail
@@ -156,8 +162,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
         .build();
     backend.connect().await.expect("connect");
 
-    let secrets = MemorySecretStore::new();
-    store_password(&secrets, &account).await;
+    let tokens = a_password_source(&account).await;
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
@@ -166,7 +171,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
         &backend,
         SmtpContext {
             connector: &connector,
-            secrets: &secrets,
+            tokens: &tokens,
             blobs: &blobs.store,
         },
         account.id,
@@ -229,8 +234,7 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
         .build();
     backend.connect().await.expect("connect");
 
-    let secrets = MemorySecretStore::new();
-    store_password(&secrets, &account).await;
+    let tokens = a_password_source(&account).await;
     let script = script_replying_to_rcpt("550 no such user");
     let connector = ScriptedConnector::new(script);
     let blobs = TempBlobs::new();
@@ -240,7 +244,7 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
         &backend,
         SmtpContext {
             connector: &connector,
-            secrets: &secrets,
+            tokens: &tokens,
             blobs: &blobs.store,
         },
         account.id,
@@ -291,8 +295,7 @@ async fn a_transient_rejection_is_deferred_rather_than_failed() {
         .build();
     backend.connect().await.expect("connect");
 
-    let secrets = MemorySecretStore::new();
-    store_password(&secrets, &account).await;
+    let tokens = a_password_source(&account).await;
     let script = script_replying_to_rcpt("450 mailbox temporarily unavailable");
     let connector = ScriptedConnector::new(script);
     let blobs = TempBlobs::new();
@@ -302,7 +305,7 @@ async fn a_transient_rejection_is_deferred_rather_than_failed() {
         &backend,
         SmtpContext {
             connector: &connector,
-            secrets: &secrets,
+            tokens: &tokens,
             blobs: &blobs.store,
         },
         account.id,
@@ -345,8 +348,7 @@ async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
         .build();
     backend.connect().await.expect("connect");
 
-    let secrets = MemorySecretStore::new();
-    store_password(&secrets, &account).await;
+    let tokens = a_password_source(&account).await;
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
@@ -355,7 +357,7 @@ async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
         &backend,
         SmtpContext {
             connector: &connector,
-            secrets: &secrets,
+            tokens: &tokens,
             blobs: &blobs.store,
         },
         account.id,
@@ -408,8 +410,7 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
         .build();
     backend.connect().await.expect("connect");
 
-    let secrets = MemorySecretStore::new();
-    store_password(&secrets, &account).await;
+    let tokens = a_password_source(&account).await;
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
@@ -420,7 +421,7 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
         &backend,
         SmtpContext {
             connector: &connector,
-            secrets: &secrets,
+            tokens: &tokens,
             blobs: &blobs.store,
         },
         account.id,
@@ -434,4 +435,168 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
         "the draft does not outlive the message it became"
     );
     assert_eq!(backend.status("Sent").await.expect("status").exists, 1);
+}
+
+// ---------------------------------------------------------------------------
+// The account's TokenSource, shared with IMAP — ADR 0006 Q5, #194
+// ---------------------------------------------------------------------------
+
+/// Hands out `first` until invalidated, then `second`, counting both.
+///
+/// The same shape `postio-imap`'s pool tests use, because it is the same
+/// discipline being asserted on the other side of the account.
+#[derive(Debug)]
+struct RotatingSource {
+    first: String,
+    second: String,
+    invalidated: std::sync::atomic::AtomicUsize,
+}
+
+impl RotatingSource {
+    fn new(first: &str, second: &str) -> Self {
+        Self {
+            first: first.to_owned(),
+            second: second.to_owned(),
+            invalidated: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl postio_imap::auth::TokenSource for RotatingSource {
+    async fn access_token(
+        &self,
+        _account: &AccountKey,
+    ) -> Result<Password, postio_imap::secret::SecretError> {
+        Ok(Password::new(
+            if self.invalidated.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                &self.first
+            } else {
+                &self.second
+            },
+        ))
+    }
+
+    async fn invalidate(&self, _account: &AccountKey) {
+        self.invalidated
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Every `AUTH PLAIN` argument the transcript saw, decoded.
+///
+/// SASL PLAIN is `\0user\0secret` in base64, so this is what the server was
+/// actually told — the only place "which credential was presented" can
+/// honestly be read.
+fn presented_credentials(connector: &ScriptedConnector) -> Vec<String> {
+    use base64::Engine;
+    connector
+        .log()
+        .commands()
+        .iter()
+        .filter_map(|line| line.strip_prefix("AUTH PLAIN ").map(str::to_owned))
+        .filter_map(|argument| {
+            base64::engine::general_purpose::STANDARD
+                .decode(argument.trim())
+                .ok()
+        })
+        .filter_map(|decoded| String::from_utf8(decoded).ok())
+        .map(|sasl| sasl.rsplit('\0').next().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// Queues one send and drains it, so the tests below differ only in the
+/// credential and the transcript.
+async fn send_with(
+    tokens: &dyn postio_imap::auth::TokenSource,
+    connector: &ScriptedConnector,
+) -> postio_sync::DrainReport {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _sent) = account_with_sent(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let blobs = TempBlobs::new();
+
+    drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector,
+            tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_send_presents_what_the_accounts_token_source_hands_out() {
+    // The other half of "one `TokenSource` per account". Sending used to read
+    // the keyring directly, under the account's own key -- which for an OAuth
+    // account holds no password at all, so the send presented nothing usable
+    // however healthy the IMAP side was.
+    let tokens = RotatingSource::new("the-access-token", "unused");
+    let connector = ScriptedConnector::new(accepting_script());
+
+    let report = send_with(&tokens, &connector).await;
+
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert_eq!(
+        presented_credentials(&connector),
+        vec!["the-access-token".to_owned()],
+        "the credential on the wire is the source's, not the keyring's"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_send_credential_is_invalidated_once_and_retried_once() {
+    // The same discipline the IMAP pool keeps, at the other place a
+    // credential meets a server: an access token that expired between the
+    // last IMAP command and this send is the ordinary case, not the edge.
+    //
+    // The transcript refuses every `AUTH`, so what is asserted is the shape
+    // of the attempt rather than its luck -- two credentials presented, the
+    // second one different from the first, and then a stop. A source that
+    // kept being asked would show a third.
+    let tokens = RotatingSource::new("stale-token", "fresh-token");
+    let script = SmtpScript::new("220 mail.example.com ESMTP ready")
+        .on("EHLO", "250-mail.example.com\r\n250 AUTH PLAIN")
+        .on("AUTH PLAIN", "535 5.7.8 authentication failed")
+        .on("QUIT", "221 bye");
+    let connector = ScriptedConnector::new(script);
+
+    let report = send_with(&tokens, &connector).await;
+
+    assert!(
+        report.failed.is_empty() || report.applied == 0,
+        "{report:?}"
+    );
+    assert_eq!(
+        presented_credentials(&connector),
+        vec!["stale-token".to_owned(), "fresh-token".to_owned()],
+        "the stale one, then the fresh one, and never a third"
+    );
+    assert_eq!(
+        tokens.invalidated.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "invalidated once, so the source knew to produce something else"
+    );
 }

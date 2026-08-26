@@ -33,8 +33,9 @@
 //! in that window; see [`send`].
 
 use chrono::Utc;
+use postio_imap::auth::{TokenSource, with_credential};
 use postio_imap::backend::{AppendMessage, MailBackend};
-use postio_imap::secret::{AccountKey, SecretStore};
+use postio_imap::secret::AccountKey;
 use postio_model::ids::{AccountId, DraftId};
 use postio_model::{
     Attachment, Flag, FlagSet, MailboxId, MailboxRole, OutgoingAttachment, mime, outgoing,
@@ -63,9 +64,19 @@ use crate::drain::{Outcome, Result};
 pub struct SmtpContext<'a> {
     /// Opens the connection a send is carried over.
     pub connector: &'a dyn SmtpConnector,
-    /// Where the account's password is kept — the same one IMAP uses; see
-    /// `postio_smtp::settings`.
-    pub secrets: &'a dyn SecretStore,
+    /// Where the account's credential comes from — **the same instance the
+    /// IMAP pool holds** (ADR 0006 Q5).
+    ///
+    /// One per account, not one per connection. Sharing is what makes a
+    /// rejection seen by one side visible to the other, and what stops two
+    /// simultaneous refreshes on a provider that rotates its refresh token —
+    /// where the second one invalidates the first.
+    ///
+    /// A `TokenSource` rather than a `SecretStore` because for an OAuth
+    /// account the keyring holds no password at all under the account's own
+    /// key: it holds a refresh token under a different one, and the
+    /// credential to present is minted from it.
+    pub tokens: &'a dyn TokenSource,
     /// Where attachment bytes are read from, and the sent copy is written to.
     pub blobs: &'a BlobStore,
 }
@@ -230,27 +241,39 @@ pub(crate) async fn send(
     job: &SendJob,
 ) -> Outcome {
     let key = AccountKey::new(&job.account_address);
-    let password = match smtp.secrets.retrieve(&key).await {
-        Ok(password) => password,
+    // The same invalidate-and-try-once-more the IMAP pool keeps, from the
+    // same place (ADR 0006 Q5). An access token that expired between the last
+    // IMAP command and this send is the ordinary case, not the edge — and
+    // this side is where the *user* is watching, because a send that failed
+    // is a message that did not go.
+    let opened = with_credential(
+        smtp.tokens,
+        &key,
+        postio_smtp::error::SmtpError::is_authentication_failure,
+        |credential| async move {
+            // Exactly one `to_owned`, for the reason `postio_imap`'s own
+            // credential copy gives: `SecretString::from` goes through
+            // `String::into_boxed_str`, which reallocates whenever capacity
+            // exceeds length and frees the buffer holding the password
+            // without overwriting it. `str::to_owned` allocates exactly
+            // `len`, so this moves instead. #144.
+            let password = SecretString::from(credential.expose().to_owned());
+            SmtpSession::open(&job.outgoing, &password, smtp.connector).await
+        },
+    )
+    .await;
+
+    let mut session = match opened {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => return outcome_from_smtp_error(error),
         Err(error) => {
             return Outcome::Failed {
                 reason: format!(
-                    "could not read the password for {}: {error}",
+                    "could not read the credential for {}: {error}",
                     job.account_address
                 ),
             };
         }
-    };
-    // Exactly one `to_owned`, for the reason `postio_imap`'s own credential
-    // copy gives: `SecretString::from` goes through `String::into_boxed_str`,
-    // which reallocates whenever capacity exceeds length and frees the buffer
-    // holding the password without overwriting it. `str::to_owned` allocates
-    // exactly `len`, so this moves instead. #144.
-    let password = SecretString::from(password.expose().to_owned());
-
-    let mut session = match SmtpSession::open(&job.outgoing, &password, smtp.connector).await {
-        Ok(session) => session,
-        Err(error) => return outcome_from_smtp_error(error),
     };
 
     let cancel = CancelToken::new();

@@ -1124,7 +1124,9 @@ mod tests {
             backend: Arc::new(MockBackend::builder().mailbox(mailbox).build()),
             // Never dialled: nothing here queues a send.
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+                postio_imap::secret::MemorySecretStore::default(),
+            ))),
             events: sink,
             retry: Default::default(),
             backfill: Default::default(),
