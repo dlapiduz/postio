@@ -507,7 +507,7 @@ fn render_open(
     banner.set_sender(sender.as_deref());
     banner.set_visible(remote == RemoteImages::Blocked && remote_blocked > 0);
 
-    let document = wrap_document(&content, remote);
+    let document = wrap_document(&contain_body(&content), remote);
     view.load_html(&document, Some(DOCUMENT_BASE_URI));
 
     for handler in rendered.borrow().iter() {
@@ -530,6 +530,20 @@ fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, u32) {
         return (quote::text_to_html(text), 0);
     }
     (String::new(), 0)
+}
+
+/// Give a sender's content a bounded surface of its own (#323): a visible
+/// edge between what Postio wrote and what arrived in the message, so a
+/// sender styling their markup to imitate application chrome has a harder
+/// time — the boundary is a security affordance as much as a visual one.
+///
+/// Only ever wraps a real body. [`Reader::show_absent`] and [`Reader::clear`]
+/// bypass this and call [`wrap_document`] directly, so Postio's own words —
+/// the "downloading" placeholder among them — stay outside the container,
+/// same as the banner and the header do by already being native GTK widgets
+/// stacked around the `WebView` rather than markup inside its document.
+fn contain_body(content: &str) -> String {
+    format!(r#"<div class="postio-body">{content}</div>"#)
 }
 
 /// Every scripting-adjacent `WebKitSettings` flag, turned off.
@@ -841,5 +855,18 @@ mod tests {
         assert!(doc.contains("<style>"));
         assert!(doc.contains("<p>hi</p>"));
         assert!(doc.contains("Content-Security-Policy"));
+    }
+
+    /// #323: a sender's content sits inside a bounded container, distinct
+    /// from Postio's own words — this is the seam `render_open` uses, so
+    /// proving it here proves the container actually reaches what a real
+    /// render produces, not just that the CSS rule exists unused.
+    #[test]
+    fn a_rendered_body_sits_inside_its_own_container() {
+        let document = wrap_document(&contain_body("<p>hi</p>"), RemoteImages::Blocked);
+        assert!(
+            document.contains(r#"<div class="postio-body"><p>hi</p></div>"#),
+            "{document}"
+        );
     }
 }

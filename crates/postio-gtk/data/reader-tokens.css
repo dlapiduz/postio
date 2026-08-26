@@ -17,6 +17,8 @@
   --r-ink-secondary: rgba(29, 31, 32, 0.8);
   --r-dim: rgba(29, 31, 32, 0.55);
   --r-hairline: rgba(29, 31, 32, 0.16);
+  --r-hairline-strong: #b7b7ba;
+  --r-radius: 2px;
   --r-accent: #5980a6;
   --r-quote-bg: rgba(89, 128, 166, 0.06);
   --r-match-bg: rgba(89, 128, 166, 0.28);
@@ -29,6 +31,7 @@
     --r-ink-secondary: #e7e7ea;
     --r-dim: #b7b7ba;
     --r-hairline: #5d5d60;
+    --r-hairline-strong: #7a7a7d;
     --r-accent: #94bce3;
     --r-quote-bg: rgba(148, 188, 227, 0.08);
     --r-match-bg: rgba(148, 188, 227, 0.32);

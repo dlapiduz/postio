@@ -131,6 +131,50 @@ fn reader_css_has_no_colour_literal_tokens_rs_also_computes() {
     );
 }
 
+/// Every `var(--r-*)` `reader.css` uses must be defined in the generated
+/// palette. A typo in a role name would otherwise silently drop a
+/// declaration at runtime — the same check `tests/tokens.rs` runs for the
+/// GTK sheet.
+#[test]
+fn every_r_variable_reader_css_uses_is_defined() {
+    let palette = generated();
+    let defined: Vec<String> = palette
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("--r-"))
+        .filter_map(|l| l.split(':').next())
+        .map(|n| format!("--r-{}", n.trim()))
+        .collect();
+
+    let css = strip_comments(&reader_css());
+    let mut rest = css.as_str();
+    while let Some(i) = rest.find("var(--r-") {
+        rest = &rest[i + 4..];
+        let end = rest.find(')').expect("unterminated var()");
+        let name = rest[..end].trim().to_string();
+        assert!(
+            defined.contains(&name),
+            "`{name}` is used in reader.css but never defined in reader-tokens.css"
+        );
+        rest = &rest[end..];
+    }
+}
+
+/// #323's acceptance: the message body renders inside a bounded surface,
+/// with an edge that gains weight under `prefers-contrast: more` rather than
+/// disappearing — the same "hairlines carry meaning" rule tokens.css follows.
+#[test]
+fn the_body_has_a_bounded_container_with_a_high_contrast_edge() {
+    let css = reader_css();
+    assert!(
+        css.contains(".postio-body {"),
+        "reader.css should define the body's container"
+    );
+    assert!(css.contains("border: 1px solid var(--r-hairline)"));
+    assert!(css.contains("border-radius: var(--r-radius)"));
+    assert!(css.contains("@media (prefers-contrast: more)"));
+    assert!(css.contains("var(--r-hairline-strong)"));
+}
+
 /// Drop `/* … */` so a check can look at the rules rather than the
 /// commentary — comments legitimately cite an issue number like `#296`.
 fn strip_comments(css: &str) -> String {
