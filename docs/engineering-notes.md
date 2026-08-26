@@ -882,26 +882,37 @@ the exact move that hid this. **If a test goes red after touching a fixture,
 the failure *is* the bug; do not restore the fixture's shortcut to make it
 pass.**
 
-**A received attachment's bytes are not in `Attachment::blob_id`.** That
-column is only ever filled on the way *out* — `postio_app::compose` puts a
-file the user attached into the blob store and records its key. Nothing in
-the receive path writes it, so for every message that arrived from a server
-it is `None`, and `parts::Node::downloaded` is correspondingly always false.
-What the backfill actually stores is the whole raw message under
-`Message::raw_blob_id` (`postio-sync/src/backfill.rs`), so a received part is
-extracted from that with `mime::parse` and matched by its MIME path
-(`Attachment::part_id`, e.g. `2.1`). `postio_app::reading::part_bytes` is the
-worked example. Anything written against `node.downloaded` or
-`attachment.blob_id` for incoming mail is reading a field that will never be
-set — including inline `cid:` resolution, which is why an inline image that
-"should obviously work" may quietly never render.
+**A received attachment's bytes are in `Attachment::blob_id` once somebody
+has opened it, and not before.** For the whole life of this project that
+column was filled only on the way *out* — `postio_app::compose` putting a
+file the user attached into the blob store — so it was `None` for every
+message that had ever arrived from a server and `parts::Node::downloaded` was
+correspondingly always false. [ADR
+0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)'s
+payload axis (#377) gave it its first receive-path writer.
 
-This is scheduled to stop being true. [ADR
-0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md) splits
-the backfill so the text axis no longer stores raw source at all, which leaves
-`part_bytes` with nothing to re-parse and gives `attachments.blob_id` its first
-receive-path writer. Until that lands, the paragraph above is still the truth on
-`main` — but do not build a *new* workaround against it.
+What that means for anything reading a part:
+
+- **`node.downloaded` is now true for received mail, and means it.** The
+  attachment chip can honestly offer "download" versus "open", and inline
+  `cid:` resolution has a field to read that is actually set. It is still
+  false until the part is fetched, which for `AttachmentPolicy::OnOpen` — the
+  default — is when the user opens or saves it.
+- **`postio_app::reading::part_bytes` is the worked example**, and it has
+  three cases rather than one: the part's own blob, the raw message when
+  there is one, and a fetch when there is neither. Do not re-parse a raw blob
+  without checking `blob_id` first; and do not assume a raw blob exists, because
+  under the text axis the background lane never stores one.
+- **The blob id is taken on the *decoded* payload**, not on the base64 that
+  came off the wire. That is what makes two messages carrying the same file
+  share one blob, and what makes a part fetched eagerly and the same part
+  fetched on open land identically instead of twice. Anything that stores a
+  payload must decode first (`postio_model::mime::decode_entity`).
+- **`attachments.part_headers` is what makes a section decodable.** `BODY[2.1]`
+  returns encoded bytes and none of the part's own headers; `BODYSTRUCTURE`
+  reported the type and the transfer encoding at header-sync time and this
+  column keeps them. A row without it — synced before migration 0009 — cannot
+  be fetched by section and falls back to a whole-message fetch.
 
 **`Engine::request_body` queues; it does not fetch.** `Ok(true)` means "there
 was something to fetch", not "here it is" — the message goes to the front of
