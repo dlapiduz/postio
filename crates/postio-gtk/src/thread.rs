@@ -151,15 +151,42 @@ pub fn people(rows: &[Row]) -> usize {
 /// The line under the subject: how much of the thread this is, who is in it,
 /// and the way out.
 ///
-/// `total` is what [`Row::thread_count`](crate::list::Row::thread_count)
-/// claims the thread holds. When it is larger than what is on screen the line
-/// says so — a column that showed three of six messages and called it the
-/// thread would be lying about the one thing the user came here to see.
-pub fn summary(shown: usize, total: u32, people: usize, back_to: Option<&str>) -> String {
-    let messages = match (shown, total as usize) {
-        (1, whole) if whole <= 1 => "1 message".to_string(),
-        (shown, whole) if shown >= whole => format!("{shown} messages"),
-        (shown, whole) => format!("{shown} of {whole} messages here"),
+/// Three counts, because there are two different reasons the column can be
+/// showing fewer messages than the conversation holds and they must not read
+/// alike:
+///
+/// * `shown` — the rows on screen, after `unread_only` has had its say.
+/// * `resident` — every message of the thread this machine actually has.
+/// * `total` — what [`Row::thread_count`](crate::list::Row::thread_count)
+///   claims the thread holds.
+///
+/// `resident < total` is an **absence**: messages exist that are not here, so
+/// the line says `n of m messages here`. A column that showed three of six
+/// messages and called it the thread would be lying about the one thing the
+/// user came here to see.
+///
+/// `shown < resident` is a **filter**: "unread only" is on and the rest are a
+/// keystroke away. Reporting that the same way would claim five messages are
+/// missing when none are — the same lie from the other direction, and the one
+/// #447 was filed for.
+pub fn summary(
+    shown: usize,
+    resident: usize,
+    total: u32,
+    people: usize,
+    back_to: Option<&str>,
+) -> String {
+    // The list row's badge can lag what the column holds, so the conversation
+    // is never smaller than what is already in hand.
+    let whole = (total as usize).max(resident);
+    let messages = if shown < resident {
+        format!("{shown} unread of {whole} messages")
+    } else {
+        match (resident, whole) {
+            (1, whole) if whole <= 1 => "1 message".to_string(),
+            (resident, whole) if resident >= whole => format!("{resident} messages"),
+            (resident, whole) => format!("{resident} of {whole} messages here"),
+        }
     };
     let people = match people {
         0 => String::new(),
@@ -569,6 +596,7 @@ impl ThreadView {
 
         imp.meta.set_text(&summary(
             imp.shown.borrow().len(),
+            imp.all.borrow().len(),
             imp.total.get(),
             people,
             imp.back_to.borrow().as_deref(),
@@ -904,7 +932,7 @@ mod tests {
     #[test]
     fn the_summary_reads_the_way_the_canvas_writes_it() {
         assert_eq!(
-            summary(6, 6, 4, Some("Inbox")),
+            summary(6, 6, 6, 4, Some("Inbox")),
             "6 messages · 4 people · Esc back to Inbox"
         );
     }
@@ -912,7 +940,7 @@ mod tests {
     #[test]
     fn a_thread_the_column_cannot_see_all_of_says_so() {
         assert_eq!(
-            summary(3, 6, 2, Some("Inbox")),
+            summary(3, 3, 6, 2, Some("Inbox")),
             "3 of 6 messages here · 2 people · Esc back to Inbox",
             "calling three of six messages `the thread` would be a lie"
         );
@@ -921,17 +949,53 @@ mod tests {
     #[test]
     fn one_of_anything_is_not_plural() {
         assert_eq!(
-            summary(1, 1, 1, Some("Inbox")),
+            summary(1, 1, 1, 1, Some("Inbox")),
             "1 message · 1 person · Esc back to Inbox"
         );
     }
 
     #[test]
     fn a_summary_with_nowhere_named_still_names_the_way_out() {
-        assert_eq!(summary(2, 2, 1, None), "2 messages · 1 person · Esc back");
         assert_eq!(
-            summary(2, 2, 1, Some("")),
+            summary(2, 2, 2, 1, None),
             "2 messages · 1 person · Esc back"
+        );
+        assert_eq!(
+            summary(2, 2, 2, 1, Some("")),
+            "2 messages · 1 person · Esc back"
+        );
+    }
+
+    #[test]
+    fn filtering_to_unread_is_not_the_same_as_messages_missing() {
+        // The column holds the whole conversation and is *hiding* five of
+        // them, because "unread only" is on. "3 of 8 messages here" would
+        // report the filter as an absence -- five messages this machine does
+        // not have -- which is the one thing that wording exists to say
+        // honestly (#447).
+        assert_eq!(
+            summary(3, 8, 8, 2, Some("Inbox")),
+            "3 unread of 8 messages · 2 people · Esc back to Inbox"
+        );
+    }
+
+    #[test]
+    fn a_filtered_column_that_is_also_incomplete_still_counts_the_whole_thread() {
+        // Both at once: six of the eight are here, and "unread only" hides
+        // three of those six. The denominator stays the conversation.
+        assert_eq!(
+            summary(3, 6, 8, 2, Some("Inbox")),
+            "3 unread of 8 messages · 2 people · Esc back to Inbox"
+        );
+    }
+
+    #[test]
+    fn a_filter_that_hides_nothing_reads_as_the_whole_thread() {
+        // "Unread only" is on and every message is unread, so nothing is
+        // hidden and there is nothing to qualify.
+        assert_eq!(
+            summary(8, 8, 8, 2, Some("Inbox")),
+            "8 messages · 2 people · Esc back to Inbox"
         );
     }
 
@@ -939,7 +1003,7 @@ mod tests {
     fn a_stale_total_never_makes_the_count_read_backwards() {
         // The list row's badge can lag what the column actually holds.
         assert_eq!(
-            summary(6, 2, 3, Some("Inbox")),
+            summary(6, 6, 2, 3, Some("Inbox")),
             "6 messages · 3 people · Esc back to Inbox"
         );
     }
