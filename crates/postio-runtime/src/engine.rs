@@ -39,13 +39,14 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use postio_core::event::MailFootprint;
 use postio_imap::auth::TokenSource;
 use postio_imap::backend::{BackendError, MailBackend};
 use postio_model::RoleOverrides;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::repository::{
-    MailboxRepository, OperationQueueRepository, SyncStateRepository,
+    MailboxRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
 };
 use postio_storage::{BlobStore, Database, Pool, PooledConnection};
 use postio_sync::initial::Progress;
@@ -499,6 +500,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             let mut state = State {
                 backfill: Backfill::new(parts.backfill),
                 backfill_announced: None,
+                footprint: None,
                 supervisor: Supervisor::new(parts.reconnect),
                 status: RefCell::new(StatusTracker::new()),
                 online: false,
@@ -654,6 +656,11 @@ struct State {
     /// throttles the same way `StatusTracker` throttles a sync pass's
     /// batches and for the same reason. See [`announce_backfill`].
     backfill_announced: Option<std::time::Instant>,
+    /// What this account's mail weighs, as last measured.
+    ///
+    /// Cached rather than read per announcement: see [`emit_backfill_progress`]
+    /// for why a status-line redraw must not cost a table scan.
+    footprint: Option<MailFootprint>,
     supervisor: Supervisor,
     /// The account's status line.
     ///
@@ -1385,6 +1392,14 @@ fn emit_backfill_progress(
     drained: bool,
     now: std::time::Instant,
 ) {
+    // The footprint is four aggregates over `messages` and `attachments`, and
+    // this is called every 250 ms while a backfill runs. Recomputed only when
+    // the queue opens or drains -- the moments the totals can actually have
+    // moved by much -- and cached in between, so a status line redraw never
+    // costs a scan of an 81,744-message table.
+    if state.footprint.is_none() || drained {
+        state.footprint = measure(parts);
+    }
     // Forget the clock once the queue is empty, so the next backfill's first
     // report is prompt rather than waiting out a window that started during
     // the last one.
@@ -1394,7 +1409,25 @@ fn emit_backfill_progress(
         account: parts.account,
         done: done as u32,
         total: total as u32,
+        footprint: state.footprint,
     });
+}
+
+/// Reads this account's mail footprint, or `None` if the store cannot answer.
+///
+/// Never fatal: a status line that cannot say how many bytes there are should
+/// fall back to saying how many messages there are, not stop the backfill.
+fn measure(parts: &EngineParts) -> Option<MailFootprint> {
+    let connection = parts.database.connection().ok()?;
+    let footprint = MessageRepository::new(&connection)
+        .footprint(parts.account)
+        .ok()?;
+    Some(MailFootprint {
+        total_bytes: footprint.total_bytes,
+        attachment_bytes: footprint.attachment_bytes,
+        local_bytes: footprint.local_bytes,
+        complete: footprint.complete,
+    })
 }
 
 async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
@@ -2240,6 +2273,7 @@ mod tests {
         State {
             backfill: Backfill::new(BackfillPolicy::default()),
             backfill_announced: None,
+            footprint: None,
             supervisor: Supervisor::new(ReconnectPolicy::default()),
             status: RefCell::new(StatusTracker::new()),
             online: false,
@@ -2453,6 +2487,54 @@ mod tests {
                 )
             }
             other => panic!("expected the second BackfillProgress, got {other:?}"),
+        }
+    }
+
+    /// The progress line can say what the mail weighs, not only how many
+    /// messages there are.
+    ///
+    /// The whole point of #383: `BODYSTRUCTURE` arrives with the header sync,
+    /// so the totals are free — and the reason it is worth saying is that
+    /// "12,400 of 81,744" tells someone nothing about whether to wait.
+    #[test]
+    fn backfill_progress_carries_what_the_mail_weighs() {
+        let database = postio_storage::test_support::memory();
+        let (parts, events) = parts_over(database.clone());
+        let connection = database.connection().expect("checkout");
+        let inbox =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "INBOX");
+
+        let repository = MessageRepository::new(&connection);
+        let mut message =
+            postio_model::Message::new(account_of(&parts).id, inbox.id, chrono::Utc::now());
+        message.size = 5_000;
+        message.server.uid = Some(postio_model::Uid::new(1));
+        message.server.uid_validity = Some(postio_model::UidValidity::new(1));
+        message.attachments = vec![postio_model::Attachment::new(
+            postio_model::MessageId::UNASSIGNED,
+            "application/pdf",
+            4_000,
+        )];
+        repository.create(&mut message).expect("create");
+        drop(connection);
+
+        let mut state = empty_state();
+        state.backfill.request_now(body_request(1));
+        announce_backfill_now(&parts, &mut state, std::time::Instant::now());
+
+        match events.try_next() {
+            Some(Event::BackfillProgress { footprint, .. }) => {
+                let footprint = footprint.expect("the store could answer");
+                assert_eq!(footprint.total_bytes, 5_000);
+                assert_eq!(footprint.attachment_bytes, 4_000);
+                assert_eq!(footprint.local_bytes, 0, "nothing fetched yet");
+                assert!(
+                    !footprint.complete,
+                    "no folder has finished a header pass, so this is a floor \
+                     and the surface must say \"over\""
+                );
+            }
+            other => panic!("expected a BackfillProgress, got {other:?}"),
         }
     }
 
