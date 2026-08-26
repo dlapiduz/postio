@@ -606,6 +606,34 @@ only part of #121 a session on the host cannot answer.
 
 ## Storage, sync & search internals
 
+**Only a *missing* keyring entry mints a store key.** ADR 0014 Q3, landed in
+#299 as `postio_session::store_key`. The store is encrypted under the key of
+its first open, so minting a second one does not produce a second key — it
+produces a mailbox nobody can read. `SecretError::Locked`, `Timeout` and
+`Backend` all mean "the keyring did not answer", never "there is no key", and
+a service that treated any of them as a first run would silently destroy a
+store the moment a keyring was slow. `NotFound` is the only first run. An
+*empty* entry is minted over, and that is not an exception: nothing can have
+been encrypted under an empty key.
+
+A **corrupt** entry — text that is not 64 hex characters — is refused and left
+alone. Corrupt is a store that cannot be opened; replaced is a store that can
+never be opened again.
+
+**The `derive_key` contexts in `postio_storage::key::Purpose` are on-disk
+format.** `"postio db"`, `"postio blob content"`, `"postio blob id"`. Change
+one and every existing store's subkey changes with it, which is to say every
+existing store stops opening. `tests/store_key.rs` pins them for that reason
+rather than for tidiness.
+
+**Nothing renders a key.** `StoreKey` and `Subkey` have hand-written `Debug`
+impls that print `<redacted>`, and the material is behind `expose()`/`to_hex()`
+so every use is short and obvious in review. The failure mode this guards is
+not somebody logging the key on purpose — it is a `#[derive(Debug)]` on a
+struct that happens to hold one, which turns any `dbg!`, any `?err` and any
+panic message into a full compromise of the store.
+
+
 **One `TokenSource` per account, and never a second.** ADR 0006 Q5, made real
 in #194. The composition root (`postio_session::engine::start`) builds one and
 hands *that instance* to the account's IMAP pool and to `EngineParts::tokens`,
