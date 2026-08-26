@@ -26,6 +26,7 @@ mod search_results;
 mod search_wiring;
 mod send_wiring;
 mod startup_repair;
+mod thread_cursor_preview;
 mod window_drain;
 mod wiring;
 
@@ -115,6 +116,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
         startup_repair::an_account_with_no_credential_lands_on_the_repair_screen as fn(),
+    ),
+    (
+        "thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane",
+        thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane as fn(),
     ),
     (
         "window_drain::an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes",

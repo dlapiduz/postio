@@ -351,6 +351,30 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         move |row| parts.fill(&window, row)
     ));
 
+    // The thread column's own cursor, the same wiring one surface over
+    // (#436). `ThreadView::connect_activated` already fires on cursor
+    // movement, not only true activation -- `select_index` calls its
+    // `announce` unconditionally -- so the column itself was never the bug;
+    // nothing in the composition root was listening. `rows()` is the
+    // column's own idea of what is on screen, which is what the id it
+    // announces is drawn from.
+    window.thread().connect_activated(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        parts,
+        move |message| {
+            let row = window
+                .thread()
+                .rows()
+                .into_iter()
+                .find(|row| row.id == message);
+            if let Some(row) = row {
+                parts.fill(&window, row);
+            }
+        }
+    ));
+
     // Reconnecting (or losing the connection) has to repaint a pane that is
     // already showing a wait, not leave stale words on screen until the
     // cursor happens to move next -- see issue #117.
