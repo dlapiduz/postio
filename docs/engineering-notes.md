@@ -606,6 +606,52 @@ only part of #121 a session on the host cannot answer.
 
 ## Storage, sync & search internals
 
+**The search executor has two SQL plans, and which one a statement gets is not
+a preference.** #408, and every number here was measured against the 120,000-
+message `search_budget` bench.
+
+- A query narrow enough to rank is **driven by the match**: walk the postings
+  of both FTS indexes, look each hit up in `messages` by primary key.
+- One too broad to rank is **driven by `messages`**, ordered by its own
+  `(account_id, received_at)` index, asking each row "did you match?" through a
+  correlated `EXISTS` with `rowid = m.id AND … MATCH ?`. That shape is what
+  makes FTS5 answer with a docid seek — the plan says
+  `VIRTUAL TABLE INDEX 0:=M5`, and the `=` is the rowid.
+
+Getting it wrong is expensive in both directions, and every wrong turn was
+tried: letting SQLite choose cost **49 ms** on a word matching 1% of the
+corpus (it drove from `messages` and probed a co-routine it could not size); a
+`GROUP BY` over the union cost **297 ms** on a common word (an aggregate must
+materialise every match before anything runs); probing the union per row cost
+**570 ms**; and `count` driven by `messages` cost **2.8 s** on a rare word.
+
+Two consequences worth knowing before editing that file:
+
+- **Adding a column to the candidate-pool statement can lose its plan.** The
+  file already recorded this for the hydrate columns; it is equally true of
+  correlated subqueries in the select list, which is why the broad path
+  carries no `bm25` at all. That is deliberate rather than missing — the path
+  is only taken when the match is too wide to rank, where bm25 is near-uniform
+  and recency is the intended fallback.
+- **`hydrate` touches no FTS table.** The scores ride out with the candidate
+  pool. Re-asking the indexes for the scores of ids you already have is the
+  297 ms mistake wearing a different hat.
+
+**Free text scores are summed, body at half** (`BODY_SCORE_WEIGHT`). Before
+the body left `messages_fts`, one bm25 over six columns did this implicitly:
+FTS5's length normalisation put a term in a short `subject` well above the
+same term in a long `body`. Two indexes have no shared corpus statistics, so
+it is stated. Summing rather than taking the better of the two, so a message
+matching in *both* ranks first. The tests assert that ordering, never the
+number.
+
+**A negated term must be excluded outside the match, not inside it.**
+`("report") NOT ("spam")` asked of `messages_fts` is *true* for a message
+whose "spam" is in its body — the metadata genuinely does not contain it — so
+the message comes back from a query that explicitly refused it. Exclusions are
+about the message and belong in the `WHERE`.
+
+
 **Only a *missing* keyring entry mints a store key.** ADR 0014 Q3, landed in
 #299 as `postio_session::store_key`. The store is encrypted under the key of
 its first open, so minting a second one does not produce a second key — it
