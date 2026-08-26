@@ -1415,6 +1415,13 @@ impl Window {
             CommandId::SaveAllParts => self.parts().save_all(),
             CommandId::OpenPartExternally => self.parts().open_externally(),
             CommandId::RenderPartOnce => self.parts().render_once(),
+
+            // Scrolling the pane without moving the keyboard off the list
+            // (#438) is the reader's own business the same way the parts
+            // panel's cursor is -- nothing outside this window needs to hear
+            // about it.
+            CommandId::ScrollReaderDown => self.reader().page_down(),
+            CommandId::ScrollReaderUp => self.reader().page_up(),
             _ => return false,
         }
         true

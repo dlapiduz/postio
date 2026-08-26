@@ -47,6 +47,7 @@ mod gtk_list_recycling;
 mod gtk_list_reload;
 mod gtk_move_picker;
 mod gtk_parts;
+mod gtk_reader_scroll;
 mod gtk_reading_pane;
 mod gtk_row;
 mod gtk_saved_searches_live;
@@ -155,6 +156,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_parts::the_parts_panel_walks_a_message_without_fetching_any_of_it",
         gtk_parts::the_parts_panel_walks_a_message_without_fetching_any_of_it as fn(),
+    ),
+    (
+        "gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time",
+        gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time as fn(),
+    ),
+    (
+        "gtk_reader_scroll::a_new_message_resets_the_scroll_position",
+        gtk_reader_scroll::a_new_message_resets_the_scroll_position as fn(),
+    ),
+    (
+        "gtk_reader_scroll::paging_with_nothing_open_does_nothing",
+        gtk_reader_scroll::paging_with_nothing_open_does_nothing as fn(),
     ),
     (
         "gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer",
