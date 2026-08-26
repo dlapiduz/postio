@@ -1127,3 +1127,214 @@ fn rows_for_drops_what_the_store_no_longer_holds() {
             .is_empty()
     );
 }
+
+// ── A resync must not resurrect what an undrained operation has moved ─────
+//
+// Archiving is local-first: the row moves to Archive in SQLite, a Move is
+// queued, the list repaints. The server is told later, when the queue drains.
+// In that window the server still lists the message in INBOX, so an INBOX
+// resync fetches it and `upsert_batch` — which keys on (mailbox, validity,
+// uid) — finds no row there and inserts a fresh one. The message the user
+// just archived is back in the inbox, and stays there until the queue drains,
+// which on a link that is down is indefinite (#368).
+
+/// Enqueues `operation` against `message`, exactly as the local write does:
+/// the enqueue snapshots the server coordinates before the local half nulls
+/// them (#289).
+fn enqueue_and_move_locally(
+    connection: &Connection,
+    account: postio_model::AccountId,
+    message: MessageId,
+    operation: &postio_model::Operation,
+    destination: MailboxId,
+) {
+    use postio_storage::repository::OperationQueueRepository;
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account,
+            postio_model::OperationTarget::Message(message),
+            operation,
+            at(0),
+        )
+        .expect("enqueue");
+    // The local half: the row moves, and its server coordinates go with the
+    // queue row rather than staying on a message that is no longer there.
+    connection
+        .execute(
+            "UPDATE messages SET mailbox_id = ?2, uid = NULL, uid_validity = NULL WHERE id = ?1",
+            [message.get(), destination.get()],
+        )
+        .expect("local move");
+}
+
+fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",
+            [mailbox.get()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("count") as usize
+}
+
+#[test]
+fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    let messages = MessageRepository::new(&connection);
+
+    // A message the server has in INBOX, synced normally.
+    let mut batch = vec![a_message(inbox, account.id, 40)];
+    messages.upsert_batch(&mut batch).expect("first sync");
+    let message = batch[0].id;
+    let (uid, validity) = (
+        batch[0].server.uid.expect("uid"),
+        batch[0].server.uid_validity.expect("validity"),
+    );
+
+    // The user archives it. Nothing has reached the server yet.
+    enqueue_and_move_locally(
+        &connection,
+        account.id,
+        message,
+        &postio_model::Operation::Move {
+            from: inbox,
+            to: archive.id,
+        },
+        archive.id,
+    );
+    assert_eq!(
+        rows_in(&connection, inbox),
+        0,
+        "the archive was local-first"
+    );
+    assert_eq!(rows_in(&connection, archive.id), 1);
+
+    // Now an INBOX resync runs before the queue drains. The server still
+    // lists the message in INBOX, so this is exactly what it hands back.
+    let mut resynced = vec![a_message(inbox, account.id, 40)];
+    resynced[0].server.uid = Some(uid);
+    resynced[0].server.uid_validity = Some(validity);
+    let report = messages.upsert_batch(&mut resynced).expect("resync upsert");
+
+    assert_eq!(
+        rows_in(&connection, inbox),
+        0,
+        "the archived message came back to the inbox: the resync re-created a \
+         row the user had already moved, and it will sit there until the \
+         queue drains (#368)"
+    );
+    assert_eq!(
+        rows_in(&connection, archive.id),
+        1,
+        "and it must still be the one copy, in Archive where the user put it"
+    );
+    assert_eq!(
+        report.shadowed_by_pending, 1,
+        "the skip should be reported rather than silent"
+    );
+}
+
+#[test]
+fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let trash = test_support::mailbox(&connection, &account, "Trash");
+    let messages = MessageRepository::new(&connection);
+
+    let mut batch = vec![a_message(inbox, account.id, 41)];
+    messages.upsert_batch(&mut batch).expect("first sync");
+    let message = batch[0].id;
+    let (uid, validity) = (
+        batch[0].server.uid.expect("uid"),
+        batch[0].server.uid_validity.expect("validity"),
+    );
+
+    enqueue_and_move_locally(
+        &connection,
+        account.id,
+        message,
+        &postio_model::Operation::Delete {
+            from: inbox,
+            trash: trash.id,
+        },
+        trash.id,
+    );
+
+    let mut resynced = vec![a_message(inbox, account.id, 41)];
+    resynced[0].server.uid = Some(uid);
+    resynced[0].server.uid_validity = Some(validity);
+    messages.upsert_batch(&mut resynced).expect("resync upsert");
+
+    assert_eq!(
+        rows_in(&connection, inbox),
+        0,
+        "a pending delete has the same shape as a pending move and needs the \
+         same shadow (#368)"
+    );
+    assert_eq!(rows_in(&connection, trash.id), 1);
+}
+
+#[test]
+fn the_shadow_lifts_once_the_operation_settles() {
+    use postio_model::OperationState;
+    use postio_storage::repository::OperationQueueRepository;
+
+    for settled in [OperationState::Done, OperationState::Failed] {
+        let database = test_support::memory();
+        let connection = database.connection().expect("checkout");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let archive = test_support::mailbox(&connection, &account, "Archive");
+        let messages = MessageRepository::new(&connection);
+
+        let mut batch = vec![a_message(inbox, account.id, 42)];
+        messages.upsert_batch(&mut batch).expect("first sync");
+        let message = batch[0].id;
+        let (uid, validity) = (
+            batch[0].server.uid.expect("uid"),
+            batch[0].server.uid_validity.expect("validity"),
+        );
+
+        enqueue_and_move_locally(
+            &connection,
+            account.id,
+            message,
+            &postio_model::Operation::Move {
+                from: inbox,
+                to: archive.id,
+            },
+            archive.id,
+        );
+
+        // The queue row settles, one way or the other.
+        let queue = OperationQueueRepository::new(&connection);
+        let pending = queue.pending(account.id, at(0)).expect("pending");
+        let id = pending.first().expect("one queued row").id;
+        match settled {
+            OperationState::Done => queue.mark_done(id, at(1)).expect("done"),
+            _ => queue
+                .mark_failed(id, at(1), "server said no")
+                .expect("failed"),
+        }
+
+        // A server that still lists the message in INBOX is now telling us
+        // something we have to believe: either the move never happened, or
+        // it happened and this is a genuinely different message at that UID.
+        // Either way the shadow must be gone, or a failed move hides a
+        // message for ever.
+        let mut resynced = vec![a_message(inbox, account.id, 42)];
+        resynced[0].server.uid = Some(uid);
+        resynced[0].server.uid_validity = Some(validity);
+        messages.upsert_batch(&mut resynced).expect("resync upsert");
+
+        assert_eq!(
+            rows_in(&connection, inbox),
+            1,
+            "{settled:?}: the shadow must lift when the operation settles, or \
+             a move the server refused would hide the message for ever"
+        );
+    }
+}
