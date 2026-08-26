@@ -46,9 +46,14 @@
 //! how to fill a mailbox that is, or is becoming, empty of a UID range.
 
 use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Poll;
 
 use chrono::Utc;
-use postio_imap::backend::{BackendError, MailBackend, SelectMode, UidSet};
+use postio_imap::backend::{
+    BackendError, BackendResult, FetchedMessage, MailBackend, SelectMode, UidSet,
+};
 use postio_model::{Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
@@ -227,17 +232,47 @@ pub(crate) async fn enumerate(
         Coverage::Everything => 0,
     };
 
-    for chunk in missing.chunks(batch_size) {
+    // Every batch's UID set up front. A fetch that is still outstanding while
+    // the previous batch is being written has to borrow its set from
+    // something that outlives the iteration that started it.
+    let batches: Vec<UidSet> = missing
+        .chunks(batch_size)
+        .map(|chunk| chunk.iter().map(|&uid| Uid::new(uid)).collect())
+        .collect();
+
+    // The batch that has been asked for but not yet folded in: either still
+    // on the wire, or already answered while it was being primed.
+    let mut ahead: Option<ReadAhead<'_>> = None;
+
+    for index in 0..batches.len() {
         if cancel.is_cancelled() {
             return Err(SyncError::Backend(BackendError::Cancelled));
         }
 
-        let uids: UidSet = chunk.iter().map(|&uid| Uid::new(uid)).collect();
         let asked_at = std::time::Instant::now();
-        let mut fetched = backend
-            .fetch_headers(&mailbox.path, &uids, None, cancel)
-            .await?;
+        let mut fetched = match ahead.take() {
+            Some(ReadAhead::Answered(answer)) => answer?,
+            Some(ReadAhead::OnTheWire(fetching)) => fetching.await?,
+            None => {
+                backend
+                    .fetch_headers(&mailbox.path, &batches[index], None, cancel)
+                    .await?
+            }
+        };
         let fetch_took = asked_at.elapsed();
+
+        // Ask for the next batch *now*, before taking SQLite's write lock:
+        // one poll is what puts the FETCH on the wire, and the server then
+        // works on it for the whole of the local write instead of waiting for
+        // it (#77). At most one fetch is ever outstanding, so a pass still
+        // wants exactly one pooled connection.
+        //
+        // Nothing from a read-ahead is committed until the iteration that
+        // consumes it, so cancelling simply drops it — an interrupted pass
+        // resumes from `uids_in` exactly as it always has.
+        if index + 1 < batches.len() && !cancel.is_cancelled() {
+            ahead = Some(read_ahead(backend, &mailbox.path, &batches[index + 1], cancel).await);
+        }
         fetched.sort_unstable_by_key(|message| std::cmp::Reverse(message.uid));
 
         let mut messages: Vec<Message> = fetched
@@ -335,4 +370,35 @@ pub(crate) async fn enumerate(
 
     SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
     Ok(report)
+}
+
+/// A batch asked for ahead of time. See the read-ahead in [`enumerate`].
+enum ReadAhead<'a> {
+    /// The `FETCH` is out and the answer has not arrived yet.
+    OnTheWire(Pin<Box<dyn Future<Output = BackendResult<Vec<FetchedMessage>>> + Send + 'a>>),
+    /// The backend answered while the request was being primed — a mock, a
+    /// cache, or a server that was simply quick.
+    Answered(BackendResult<Vec<FetchedMessage>>),
+}
+
+/// Start a fetch and poll it once, so the request reaches the server before
+/// the caller goes off to do something blocking.
+///
+/// The single poll is the whole mechanism: a future does nothing until it is
+/// polled, so a fetch merely *created* before a write would still be sitting
+/// unsent when the write finished. Polling with the caller's own waker —
+/// rather than a throwaway one — means the later `await` picks it up exactly
+/// as if it had been awaited all along.
+async fn read_ahead<'a>(
+    backend: &'a dyn MailBackend,
+    mailbox: &'a str,
+    uids: &'a UidSet,
+    cancel: &'a CancelToken,
+) -> ReadAhead<'a> {
+    let mut fetching = backend.fetch_headers(mailbox, uids, None, cancel);
+    let primed = std::future::poll_fn(|context| Poll::Ready(fetching.as_mut().poll(context))).await;
+    match primed {
+        Poll::Ready(answer) => ReadAhead::Answered(answer),
+        Poll::Pending => ReadAhead::OnTheWire(fetching),
+    }
 }
