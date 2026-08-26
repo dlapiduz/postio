@@ -146,7 +146,18 @@ database or to `config.toml`.
 Search is FTS5 over that database, in `postio-index`. Tantivy and hybrid
 lexical/vector retrieval were considered; the vector half is now
 [ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks FTS5 results rather
-than replacing them.
+than replacing them. **The index stores no second copy of a body**: SQLite holds
+the inverted index, the blob store holds the text, and result highlighting is
+generated from the blob.
+
+**The store is a complete replica, and it has a budget.** Under §14's backfill
+every message's text ends up local, so the database and blob store together hold
+the whole mailbox rather than a recent slice of it. Blobs are compressed at rest,
+and because everything except drafts and the operation queue can be re-synced,
+the store has a configurable size limit past which it evicts what it can refetch
+— raw source first, then attachment payloads, never the text that search is made
+of. [ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
+is the reasoning.
 
 ---
 
@@ -269,8 +280,19 @@ nothing a sender wrote is ever re-emitted to a third party (§21).
 ## 11. Attachments
 
 Download, open, save as, and preview where practical — inline images and PDF
-first. Attachments are fetched lazily, like bodies, and are indexed by
-filename: `has:attach`, `filename:contract`.
+first. Indexed by filename: `has:attach`, `filename:contract`.
+
+**Attachments are the one thing fetched lazily.** Bodies are not: every message's
+text is pulled unprompted and to completion (§14), because search and offline
+reading depend on it. Attachment payloads are different — they are ~90% of a
+mailbox by weight and contribute nothing to search but their filename — so they
+arrive when the user opens or saves one, and a message whose text is local but
+whose payloads are not is a normal, fully searchable, fully readable state.
+Inline images small enough to matter for rendering come with the text, so HTML
+mail reads correctly offline. Someone who wants a complete archive can ask for
+attachments eagerly; someone on a metered link can refuse them entirely.
+[ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
+has the measurements and the policy.
 
 ---
 
@@ -311,7 +333,8 @@ somebody remembers.
 
 Invisible most of the time. Incremental sync, automatic reconnection with
 exponential backoff, IMAP IDLE, QRESYNC/CONDSTORE where the server has them,
-lazy body and attachment fetch, cancellation, and progress reporting.
+eager body backfill and lazy attachment fetch, cancellation, and progress
+reporting.
 
 **Backfill runs to completion, not to a fixed initial pull.** Every
 selectable folder pulls every message's body, eventually, in the
@@ -320,6 +343,18 @@ explicitly; nothing is excluded by default. [ADR
 0016](decisions/0016-full-mailbox-backfill-by-default.md) is the reasoning;
 `postio-sync::BackfillPolicy` is what throttles it responsibly (size cap,
 metered/active pauses) without capping *how much* eventually arrives.
+
+**Bodies are eager; attachments are lazy.** Backfill has two axes and they are
+governed separately. The *text axis* — headers, every `text/*` part, and inline
+images small enough to matter for rendering — runs to completion for every
+message, and is what §7's search and §15's offline promise are made of. The
+*payload axis* — attachment bytes — defaults to fetching on open, because it is
+around nine tenths of a mailbox by weight and contributes nothing to search but
+a filename. A message with its text local and its payloads not is the ordinary
+steady state, not a half-synced one.
+[ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
+prices both axes against a real 81,744-message account and settles the memory,
+disk, compression and encryption consequences.
 
 **The UI never awaits the network.** Every mutating action is: SQLite write →
 enqueue the remote operation → emit the event → repaint. The sync engine drains
@@ -440,6 +475,14 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
   forwarded phishing mail cannot make a recipient run what its own user was
   protected from.
 - No telemetry, no crash reporting, no update ping.
+- **The local store holds the whole mailbox, and it is encrypted.** §14's
+  backfill means this machine ends up with a complete copy of the user's mail
+  rather than a recent slice, which is exactly why
+  [ADR 0014](decisions/0014-encryption-at-rest.md)'s at-rest encryption is a
+  requirement and not a nicety. A consequence worth stating plainly rather than
+  burying: a backup of `$XDG_DATA_HOME` is a backup of the entire mailbox, and
+  the key that opens it lives in the keyring, not beside it. Losing the keyring
+  entry costs a re-sync; it never costs mail.
 - Credentials in the OS keyring; TLS wherever the server offers it.
 - **Logs never carry message content** — no bodies, subjects or recipient
   addresses, at any level. Ids, counts and outcomes.
