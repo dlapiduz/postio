@@ -1,7 +1,8 @@
 //! Mailboxes: the folder tree, its special-use roles, and the sidebar's counts.
 
 use postio_model::{
-    AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, Uid, UidValidity,
+    AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, SignatureId, Uid,
+    UidValidity,
 };
 use rusqlite::{Connection, Row, params};
 
@@ -23,7 +24,7 @@ pub struct MailboxRepository<'a> {
 const MAILBOX_COLUMNS: &str = "\
 m.id, m.account_id, m.parent_id, m.name, m.path, m.delimiter, m.role, m.selectable,
 m.subscribed, m.total_count, m.unread_count, m.flagged_count, m.last_synced_at,
-s.uid_validity, s.uid_next, s.highest_mod_seq";
+s.uid_validity, s.uid_next, s.highest_mod_seq, m.signature_id";
 
 const FROM_MAILBOXES: &str = "\
 FROM mailboxes m LEFT JOIN sync_state s ON s.mailbox_id = m.id";
@@ -49,8 +50,8 @@ impl<'a> MailboxRepository<'a> {
         transaction.execute(
             "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
                                     selectable, subscribed, total_count, unread_count,
-                                    flagged_count, last_synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                    flagged_count, last_synced_at, signature_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 account_id,
                 optional_id(mailbox.parent_id),
@@ -64,6 +65,7 @@ impl<'a> MailboxRepository<'a> {
                 mailbox.counts.unread,
                 mailbox.counts.flagged,
                 mailbox.last_synced_at.map(to_millis),
+                optional_signature_id(mailbox.signature_id),
             ],
         )?;
         let id = MailboxId::new(transaction.last_insert_rowid());
@@ -88,7 +90,8 @@ impl<'a> MailboxRepository<'a> {
             "UPDATE mailboxes
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
                     role = ?7, selectable = ?8, subscribed = ?9, total_count = ?10,
-                    unread_count = ?11, flagged_count = ?12, last_synced_at = ?13
+                    unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
+                    signature_id = ?14
               WHERE id = ?1",
             params![
                 id,
@@ -104,6 +107,7 @@ impl<'a> MailboxRepository<'a> {
                 mailbox.counts.unread,
                 mailbox.counts.flagged,
                 mailbox.last_synced_at.map(to_millis),
+                optional_signature_id(mailbox.signature_id),
             ],
         )?;
         if changed == 0 {
@@ -360,9 +364,14 @@ fn read_mailbox(row: &Row<'_>) -> rusqlite::Result<Mailbox> {
             .get::<_, Option<i64>>(15)?
             .map(|value| ModSeq::new(value as u64)),
         last_synced_at: row.get::<_, Option<i64>>(12)?.map(from_millis),
+        signature_id: row.get::<_, Option<i64>>(16)?.map(SignatureId::new),
     })
 }
 
 fn optional_id(id: Option<MailboxId>) -> Option<i64> {
     id.filter(|id| id.is_assigned()).map(MailboxId::get)
+}
+
+fn optional_signature_id(id: Option<SignatureId>) -> Option<i64> {
+    id.filter(|id| id.is_assigned()).map(SignatureId::get)
 }

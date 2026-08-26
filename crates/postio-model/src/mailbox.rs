@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AccountId, MailboxId, ModSeq, Uid, UidValidity};
+use crate::ids::{AccountId, MailboxId, ModSeq, SignatureId, Uid, UidValidity};
 
 /// What a mailbox is *for*, independent of what the server calls it.
 ///
@@ -278,6 +278,12 @@ pub struct Mailbox {
     pub selectable: bool,
     /// Whether the account is subscribed to it.
     pub subscribed: bool,
+    /// A signature that overrides the account's own default when composing
+    /// from this folder (#394) — see [`signature_default::resolve`]. Local
+    /// preference, never server state: unlike every field below this one,
+    /// nothing in a sync pass ever sets or reads it.
+    #[serde(default)]
+    pub signature_id: Option<SignatureId>,
     /// Cached counts.
     pub counts: MailboxCounts,
     /// Generation of the mailbox's UID space; a change invalidates every UID.
@@ -309,6 +315,7 @@ impl Mailbox {
             role,
             selectable: true,
             subscribed: true,
+            signature_id: None,
             counts: MailboxCounts::default(),
             uid_validity: None,
             uid_next: None,
