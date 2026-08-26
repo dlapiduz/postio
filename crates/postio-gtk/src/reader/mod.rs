@@ -11,8 +11,8 @@
 //!   sanitized output `lu6` produces.
 //! * [`postio-xxz`](banner) — the remote-image banner and its
 //!   [`allowlist::RemoteImageAllowList`], both consuming the
-//!   [`postio_body::Sanitized::remote_blocked`] count the sanitizer already
-//!   computes.
+//!   counts the sanitizer already computes ([`postio_body::Sanitized`],
+//!   split into ordinary images and likely trackers by [`HeldBack`]).
 //! * `#319` — [`message_header`], the sender/recipients/subject/date strip
 //!   above the banner: the reading pane's answer to the three questions a
 //!   reader asks before it ever reaches the body.
@@ -42,4 +42,4 @@ pub use allowlist::RemoteImageAllowList;
 pub use message_header::MessageHeader;
 pub use postio_body::{RemoteImages, quote, sanitize};
 pub use scheme::BlobSource;
-pub use view::{Absent, Reader};
+pub use view::{Absent, HeldBack, Reader};

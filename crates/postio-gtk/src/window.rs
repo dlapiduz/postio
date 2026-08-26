@@ -552,7 +552,11 @@ impl Window {
         // initial render would go stale the moment either is used.
         reader.connect_rendered({
             let window = self.clone();
-            move |count| window.parts().set_held_back(count, 0)
+            move |held| {
+                window
+                    .parts()
+                    .set_held_back(held.remote_images, held.trackers)
+            }
         });
 
         let _ = self.imp().reader.set(reader.clone());
