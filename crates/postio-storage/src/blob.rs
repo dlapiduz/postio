@@ -336,6 +336,83 @@ impl BlobStore {
     /// Files under the root that are not named like a digest are ignored
     /// rather than deleted: this directory belongs to the user, and a sweep
     /// that removes things it does not understand is a sweep nobody should run.
+    /// Deletes refetchable blobs, oldest mail first, until the store fits in
+    /// `budget` bytes.
+    ///
+    /// # What may go, and in what order
+    ///
+    /// The local store is a cache of the server — ADR 0014 says so plainly,
+    /// and everything except drafts and the operation queue can be re-synced.
+    /// So it can have a ceiling. What eviction is allowed to take, in order:
+    ///
+    /// 1. **Raw message source.** The cheapest loss: nothing reads it except
+    ///    "view source" and forward-as-`message/rfc822`, both rare and both
+    ///    refetchable.
+    /// 2. **Attachment payloads.** Something the user asked for once, and can
+    ///    ask for again.
+    ///
+    /// **Never message text.** It is the corpus search is made of, and losing
+    /// it would shrink search silently — `body_state` would still say the body
+    /// is local, so not even #352's honesty surface could report the gap.
+    /// Drafts and the queue are not blobs and are never in scope.
+    ///
+    /// # Oldest mail first, not least-recently-used
+    ///
+    /// There is no access time to sort by. Blobs are immutable, so a file's
+    /// mtime is when it was written rather than when it was read, and atime is
+    /// unusable under `relatime`/`noatime` — while adding a column touched on
+    /// every read would mean a write on every read.
+    ///
+    /// The message's own `received_at` is a better key anyway: it is already
+    /// indexed, it needs no bookkeeping, and it is the exact mirror of the
+    /// backfill, which fetches newest first. Fetch newest first, evict oldest
+    /// first.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] if a blob cannot be deleted, or a database error if the
+    /// rows that reference them cannot be updated. A pass that fails partway
+    /// has still freed whatever it freed; nothing is left inconsistent,
+    /// because each blob's row is cleared in the same statement batch that
+    /// deletes it.
+    pub fn evict_to_fit(&self, connection: &Connection, budget: u64) -> Result<EvictionReport> {
+        let mut report = EvictionReport::default();
+        let mut occupied: u64 = self
+            .stored_blobs()?
+            .iter()
+            .map(|(_, path)| std::fs::metadata(path).map(|m| m.len()).unwrap_or(0))
+            .sum();
+        report.bytes_remaining = occupied;
+        if occupied <= budget {
+            return Ok(report);
+        }
+
+        for candidate in evictable(connection)? {
+            if occupied <= budget {
+                break;
+            }
+            let Ok(path) = self.path_of(&candidate.blob) else {
+                continue;
+            };
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                // Already gone -- a concurrent collection, or a store somebody
+                // tidied by hand. The row still points at it, so carry on and
+                // clear that.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => return Err(Error::Io { path, source }),
+            }
+            candidate.forget(connection)?;
+            occupied = occupied.saturating_sub(size);
+            report.removed += 1;
+            report.bytes_reclaimed += size;
+        }
+
+        report.bytes_remaining = occupied;
+        Ok(report)
+    }
+
     pub fn collect_garbage(
         &self,
         connection: &Connection,
@@ -469,6 +546,117 @@ pub struct GarbageReport {
 }
 
 /// Every blob key the database currently points at.
+/// One blob eviction may take, and the row that points at it.
+#[derive(Debug)]
+struct Evictable {
+    blob: BlobId,
+    /// Which kind of reference to clear once the bytes are gone.
+    reference: Reference,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Reference {
+    /// `messages.raw_blob_id` for this message.
+    RawSource(i64),
+    /// `attachments.blob_id` for this attachment, whose message is this.
+    Payload { attachment: i64, message: i64 },
+}
+
+impl Evictable {
+    /// Stops the database claiming bytes that are no longer on disk.
+    fn forget(&self, connection: &Connection) -> Result<()> {
+        match self.reference {
+            Reference::RawSource(message) => {
+                // No `body_state` change: raw source was never what `full`
+                // meant. The text and every payload are still local, so the
+                // message is exactly as complete as it was.
+                connection.execute(
+                    "UPDATE messages SET raw_blob_id = NULL WHERE id = ?1",
+                    [message],
+                )?;
+            }
+            Reference::Payload {
+                attachment,
+                message,
+            } => {
+                connection.execute(
+                    "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
+                    [attachment],
+                )?;
+                // `full` means every part is local and one no longer is, so
+                // the honest state is `partial` -- which is also what makes
+                // the attachment chip offer "download" again (ADR 0017).
+                connection.execute(
+                    "UPDATE messages SET body_state = 'partial'
+                      WHERE id = ?1 AND body_state = 'full'",
+                    [message],
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Everything eviction may take, in the order it may take it.
+///
+/// Raw source before payloads, and within each, oldest mail first. See
+/// [`BlobStore::evict_to_fit`] for why that is the ordering.
+fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
+    let mut out = Vec::new();
+
+    let mut statement = connection.prepare(
+        "SELECT id, raw_blob_id FROM messages
+          WHERE raw_blob_id IS NOT NULL
+          ORDER BY received_at ASC, id ASC",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(Evictable {
+            reference: Reference::RawSource(row.get(0)?),
+            blob: BlobId::new(row.get::<_, String>(1)?),
+        })
+    })?;
+    for row in rows {
+        out.push(row?);
+    }
+
+    let mut statement = connection.prepare(
+        "SELECT a.id, a.blob_id, m.id FROM attachments a
+           JOIN messages m ON m.id = a.message_id
+          WHERE a.blob_id IS NOT NULL
+          ORDER BY m.received_at ASC, a.id ASC",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(Evictable {
+            reference: Reference::Payload {
+                attachment: row.get(0)?,
+                message: row.get(2)?,
+            },
+            blob: BlobId::new(row.get::<_, String>(1)?),
+        })
+    })?;
+    for row in rows {
+        out.push(row?);
+    }
+
+    Ok(out)
+}
+
+/// What one eviction pass did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EvictionReport {
+    /// Blobs deleted.
+    pub removed: u64,
+    /// Bytes returned to the filesystem.
+    pub bytes_reclaimed: u64,
+    /// Bytes still occupied after the pass.
+    ///
+    /// Above the budget means eviction ran out of things it was allowed to
+    /// take — the store is full of text, which is never evicted. The caller
+    /// (the backfill) is expected to stop rather than keep fetching into a
+    /// store that cannot make room.
+    pub bytes_remaining: u64,
+}
+
 fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
     const SQL: &str = "\
 SELECT raw_blob_id       FROM messages    WHERE raw_blob_id       IS NOT NULL

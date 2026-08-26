@@ -58,6 +58,7 @@ pub mod logging;
 pub mod paths;
 pub mod secrets;
 mod source;
+pub mod storage;
 pub mod sync;
 pub mod ui;
 pub mod validate;
@@ -78,6 +79,7 @@ pub use filters::FilterConfig;
 pub use keys::KeyBindings;
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
+pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, SyncConfig};
 pub use ui::{Density, Theme, UiConfig};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
@@ -148,6 +150,9 @@ pub struct Config {
     /// `[logging]` — how much Postio says about what it is doing.
     #[serde(default)]
     pub logging: LoggingConfig,
+    /// `[storage]` — how much disk the local store may use.
+    #[serde(default)]
+    pub storage: StorageConfig,
     /// `[compose]` — where a signature goes when a quote sits under it.
     #[serde(default)]
     pub compose: ComposeConfig,

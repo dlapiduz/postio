@@ -55,6 +55,10 @@ pub struct ConfigChanged {
     pub logging: bool,
     /// `[compose]` — where a signature sits relative to a quote.
     pub compose: bool,
+    /// `[storage]` — the disk ceiling, so lowering it can take effect without
+    /// a restart. Raising it is what a user does when eviction has started
+    /// costing them refetches, and they should not have to restart to stop it.
+    pub storage: bool,
 }
 
 impl ConfigChanged {
@@ -71,6 +75,7 @@ impl ConfigChanged {
             || self.filters
             || self.logging
             || self.compose
+            || self.storage
     }
 
     /// Compare two configurations section by section.
@@ -90,6 +95,7 @@ impl ConfigChanged {
             filters: old.filters != new.filters,
             logging: old.logging != new.logging,
             compose: old.compose != new.compose,
+            storage: old.storage != new.storage,
         }
     }
 }
