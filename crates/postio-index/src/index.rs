@@ -201,10 +201,12 @@ AFTER INSERT ON recipients
 WHEN new.message_id IS NOT NULL
 BEGIN
     UPDATE search_documents SET
-        sender = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                  FROM recipients WHERE message_id = new.message_id AND kind = 'from'),
-        recipients = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                      FROM recipients WHERE message_id = new.message_id AND kind IN ('to', 'cc', 'bcc'))
+        sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                  FROM recipients r JOIN addresses a ON a.id = r.address_id
+                 WHERE r.message_id = new.message_id AND r.kind = 'from'),
+        recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                      FROM recipients r JOIN addresses a ON a.id = r.address_id
+                     WHERE r.message_id = new.message_id AND r.kind IN ('to', 'cc', 'bcc'))
     WHERE message_id = new.message_id;
 END;
 
@@ -213,10 +215,12 @@ AFTER DELETE ON recipients
 WHEN old.message_id IS NOT NULL
 BEGIN
     UPDATE search_documents SET
-        sender = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                  FROM recipients WHERE message_id = old.message_id AND kind = 'from'),
-        recipients = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                      FROM recipients WHERE message_id = old.message_id AND kind IN ('to', 'cc', 'bcc'))
+        sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                  FROM recipients r JOIN addresses a ON a.id = r.address_id
+                 WHERE r.message_id = old.message_id AND r.kind = 'from'),
+        recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                      FROM recipients r JOIN addresses a ON a.id = r.address_id
+                     WHERE r.message_id = old.message_id AND r.kind IN ('to', 'cc', 'bcc'))
     WHERE message_id = old.message_id;
 END;
 
@@ -224,17 +228,21 @@ CREATE TRIGGER IF NOT EXISTS trg_search_documents_recipients_au
 AFTER UPDATE ON recipients
 BEGIN
     UPDATE search_documents SET
-        sender = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                  FROM recipients WHERE message_id = old.message_id AND kind = 'from'),
-        recipients = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                      FROM recipients WHERE message_id = old.message_id AND kind IN ('to', 'cc', 'bcc'))
+        sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                  FROM recipients r JOIN addresses a ON a.id = r.address_id
+                 WHERE r.message_id = old.message_id AND r.kind = 'from'),
+        recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                      FROM recipients r JOIN addresses a ON a.id = r.address_id
+                     WHERE r.message_id = old.message_id AND r.kind IN ('to', 'cc', 'bcc'))
     WHERE message_id = old.message_id AND old.message_id IS NOT NULL;
 
     UPDATE search_documents SET
-        sender = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                  FROM recipients WHERE message_id = new.message_id AND kind = 'from'),
-        recipients = (SELECT coalesce(group_concat(coalesce(name, '') || ' ' || address, ' '), '')
-                      FROM recipients WHERE message_id = new.message_id AND kind IN ('to', 'cc', 'bcc'))
+        sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                  FROM recipients r JOIN addresses a ON a.id = r.address_id
+                 WHERE r.message_id = new.message_id AND r.kind = 'from'),
+        recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
+                      FROM recipients r JOIN addresses a ON a.id = r.address_id
+                     WHERE r.message_id = new.message_id AND r.kind IN ('to', 'cc', 'bcc'))
     WHERE message_id = new.message_id AND new.message_id IS NOT NULL;
 END;
 
@@ -318,10 +326,11 @@ INSERT INTO search_documents (message_id, subject, sender, recipients, filenames
 SELECT
     m.id,
     coalesce(m.subject, ''),
-    coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || r.address, ' ')
-                FROM recipients r WHERE r.message_id = m.id AND r.kind = 'from'), ''),
-    coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || r.address, ' ')
-                FROM recipients r
+    coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || a.address, ' ')
+                FROM recipients r JOIN addresses a ON a.id = r.address_id
+               WHERE r.message_id = m.id AND r.kind = 'from'), ''),
+    coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || a.address, ' ')
+                FROM recipients r JOIN addresses a ON a.id = r.address_id
                WHERE r.message_id = m.id AND r.kind IN ('to', 'cc', 'bcc')), ''),
     coalesce((SELECT group_concat(a.filename, ' ')
                 FROM attachments a

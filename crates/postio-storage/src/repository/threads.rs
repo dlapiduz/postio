@@ -421,13 +421,14 @@ impl<'a> ThreadRepository<'a> {
             return Ok(HashMap::new());
         }
         let sql = format!(
-            "SELECT messages.thread_id, recipients.name, recipients.address,
+            "SELECT messages.thread_id, recipients.name, addresses.address,
                     min(messages.received_at) AS first_seen
                FROM messages
                JOIN recipients ON recipients.message_id = messages.id
+               JOIN addresses ON addresses.id = recipients.address_id
               WHERE messages.thread_id IN ({}) AND messages.{MEMBER}
                 AND recipients.kind = 'from'
-              GROUP BY messages.thread_id, recipients.address_normalized
+              GROUP BY messages.thread_id, recipients.address_id
               ORDER BY messages.thread_id, first_seen, recipients.id",
             placeholders(ids.len(), 1)
         );
@@ -470,7 +471,8 @@ impl<'a> ThreadRepository<'a> {
                     (SELECT name FROM recipients
                       WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
                       ORDER BY recipients.position LIMIT 1),
-                    (SELECT address FROM recipients
+                    (SELECT addresses.address FROM recipients
+                        JOIN addresses ON addresses.id = recipients.address_id
                       WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
                       ORDER BY recipients.position LIMIT 1)
                FROM ranked JOIN messages ON messages.id = ranked.id

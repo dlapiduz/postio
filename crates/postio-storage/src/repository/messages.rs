@@ -435,7 +435,8 @@ messages.size,
 (SELECT name FROM recipients
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
-(SELECT address FROM recipients
+(SELECT addresses.address FROM recipients
+    JOIN addresses ON addresses.id = recipients.address_id
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1)";
 
@@ -1400,16 +1401,14 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
     ] {
         for (position, address) in addresses.iter().enumerate() {
             connection.execute(
-                "INSERT INTO recipients (message_id, kind, position, name, address,
-                                         address_normalized)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO recipients (message_id, kind, position, name, address_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     id,
                     kind,
                     position as i64,
                     address.name,
-                    address.address,
-                    address.normalized(),
+                    address_id(connection, address)?,
                 ],
             )?;
         }
@@ -1579,10 +1578,34 @@ pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
     })
 }
 
+/// The id of `address`, inserting it if this store has not seen it before.
+///
+/// Keyed on the normalized form, so `Ada@Example.com` and `ada@example.com`
+/// resolve to one row — which is what `from:` has always meant by "the same
+/// correspondent" (migration 0011).
+///
+/// `ON CONFLICT DO NOTHING` then `SELECT` rather than `INSERT OR REPLACE`: the
+/// row may already be referenced by hundreds of recipients, and replacing it
+/// would churn an id they all point at to rewrite a column with the same value.
+pub(crate) fn address_id(connection: &Connection, address: &EmailAddress) -> Result<i64> {
+    let normalized = address.normalized();
+    connection.execute(
+        "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
+         ON CONFLICT (address_normalized) DO NOTHING",
+        params![address.address, normalized],
+    )?;
+    Ok(connection.query_row(
+        "SELECT id FROM addresses WHERE address_normalized = ?1",
+        [&normalized],
+        |row| row.get(0),
+    )?)
+}
+
 fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()> {
     let mut statement = connection.prepare(
-        "SELECT kind, name, address FROM recipients
-          WHERE message_id = ?1 ORDER BY kind, position, id",
+        "SELECT r.kind, r.name, a.address FROM recipients r
+           JOIN addresses a ON a.id = r.address_id
+          WHERE r.message_id = ?1 ORDER BY r.kind, r.position, r.id",
     )?;
     let rows = statement.query_map([message.id.get()], |row| {
         Ok((
