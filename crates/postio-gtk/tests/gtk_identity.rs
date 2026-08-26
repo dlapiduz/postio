@@ -137,7 +137,14 @@ fn the_reply_comes_from_the_address_it_was_sent_to_and_signs_once() {
     );
     assert_eq!(
         body(&composer),
-        "Looking now.\n\n> Small diff.\n\n-- \nLena Tomlin · Postio",
+        // Space-stuffed: `reply.body.text` sets `> Small diff.` as ordinary
+        // typed text (there is no `Block::Quote` here -- `Document::
+        // from_text` never builds one), and #333 made this crate's
+        // outgoing text RFC 3676 `format=flowed`. A line that starts with
+        // `>` is exactly the case format=flowed space-stuffing exists for:
+        // without the leading space a flowed-aware reader could not tell
+        // this apart from a real quote marker.
+        "Looking now.\n\n > Small diff.\n\n-- \nLena Tomlin · Postio",
         "signed once, below the quote, where RFC 3676 says a signature goes"
     );
     assert_eq!(
@@ -151,7 +158,8 @@ fn the_reply_comes_from_the_address_it_was_sent_to_and_signs_once() {
     settle();
     assert_eq!(
         body(&composer),
-        "Looking now.\n\n> Small diff.\n\n-- \nLena",
+        // Space-stuffed, same reason as above.
+        "Looking now.\n\n > Small diff.\n\n-- \nLena",
         "the old signature went with the old identity"
     );
 
