@@ -267,6 +267,19 @@ fn nstring_to_string(value: NString<'static>) -> Option<String> {
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// As [`nstring_to_string`], for a field that carries prose rather than a
+/// structured token — the subject, or a display name — and so can carry an
+/// RFC 2047 encoded word: a sender's client folds non-ASCII into the
+/// envelope this way, and the ENVELOPE response hands it over undecoded.
+/// `mailbox`, `host`, message ids and the date stay on
+/// [`nstring_to_string`]; none of them is header prose an encoder ever
+/// touches.
+fn nstring_to_header_text(value: NString<'static>) -> Option<String> {
+    value
+        .into_option()
+        .map(|bytes| postio_model::mime::decode_header_text(&bytes))
+}
+
 fn istring_to_string(value: &IString<'static>) -> String {
     String::from_utf8_lossy(&value.clone().into_inner()).into_owned()
 }
@@ -296,7 +309,7 @@ fn parse_rfc2822(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 fn envelope_from_wire(wire: WireEnvelope<'static>, references: Vec<RfcMessageId>) -> Envelope {
     Envelope {
         date: nstring_to_string(wire.date).and_then(|text| parse_rfc2822(&text)),
-        subject: nstring_to_string(wire.subject),
+        subject: nstring_to_header_text(wire.subject),
         from: wire
             .from
             .into_iter()
@@ -321,7 +334,7 @@ fn envelope_from_wire(wire: WireEnvelope<'static>, references: Vec<RfcMessageId>
 fn address_from_wire(address: WireAddress<'static>) -> Option<EmailAddress> {
     let mailbox = nstring_to_string(address.mailbox)?;
     let host = nstring_to_string(address.host)?;
-    let name = nstring_to_string(address.name);
+    let name = nstring_to_header_text(address.name);
     Some(EmailAddress::new(name, format!("{mailbox}@{host}")))
 }
 
@@ -714,6 +727,47 @@ mod tests {
         let mapped = address_from_wire(address).expect("a real address");
         assert_eq!(mapped.name.as_deref(), Some("Ada Lovelace"));
         assert_eq!(mapped.address, "ada@example.com");
+    }
+
+    #[test]
+    fn an_encoded_word_display_name_decodes_rather_than_reaching_the_row_raw() {
+        // Base64 UTF-8 for "Café" — a display name a sender's client folded
+        // into RFC 2047 rather than sending as raw UTF-8.
+        let address = WireAddress {
+            name: NString::try_from("=?UTF-8?B?Q2Fmw6k=?=").unwrap(),
+            adl: NString::NIL,
+            mailbox: NString::try_from("cafe").unwrap(),
+            host: NString::try_from("example.com").unwrap(),
+        };
+
+        let mapped = address_from_wire(address).expect("a real address");
+        assert_eq!(mapped.name.as_deref(), Some("Café"));
+    }
+
+    fn empty_envelope() -> WireEnvelope<'static> {
+        WireEnvelope {
+            date: NString::NIL,
+            subject: NString::NIL,
+            from: Vec::new(),
+            sender: Vec::new(),
+            reply_to: Vec::new(),
+            to: Vec::new(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            in_reply_to: NString::NIL,
+            message_id: NString::NIL,
+        }
+    }
+
+    #[test]
+    fn an_encoded_word_subject_is_decoded_not_shown_raw() {
+        let wire = WireEnvelope {
+            subject: NString::try_from("=?UTF-8?B?Q2Fmw6k=?=").unwrap(),
+            ..empty_envelope()
+        };
+
+        let envelope = envelope_from_wire(wire, Vec::new());
+        assert_eq!(envelope.subject.as_deref(), Some("Café"));
     }
 
     #[test]
