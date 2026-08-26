@@ -519,29 +519,60 @@ fn catch_up_the_body_index(wiring: &Wiring) {
 /// drain whatever the last session left queued — is already under way while
 /// the list is drawing.
 pub fn start_syncing(window: &Window, wiring: &Wiring) {
-    let Some(account) = first_account(&wiring.database) else {
+    let accounts = enabled_accounts(&wiring.database);
+    if accounts.is_empty() {
         return;
-    };
-    let Some(sync) = engine::start(
-        &account,
+    }
+
+    let engines = match engine::start_all(
+        &accounts,
         &wiring.database,
         wiring.blobs.clone(),
         wiring.events.clone(),
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
-    ) else {
-        return;
+    ) {
+        Ok(engines) => engines,
+        Err(refusal) => {
+            // A sentence, not a hang. Starting some of the engines would
+            // leave the rest of the accounts looking permanently offline
+            // with nothing explaining why (#183).
+            tracing::error!(%refusal, "not starting the sync engines");
+            return;
+        }
     };
-    // Leaked for the same reason the feeds are: it lives as long as the
-    // process, and dropping it at exit would stop the engine a moment before
-    // the process ends anyway.
-    let sync: &'static _ = Box::leak(Box::new(sync));
-    // `Refresh` is the one command that needs it, and it is pressed long
-    // after the bus was built.
-    wiring.engine.fill(sync.clone());
-    seed_the_backfill(sync, wiring);
-    fetch_what_is_opened(window, sync, wiring.runtime.clone());
+
+    for (account, sync) in engines {
+        // Leaked for the same reason the feeds are: it lives as long as the
+        // process, and dropping it at exit would stop the engine a moment
+        // before the process ends anyway.
+        let sync: &'static _ = Box::leak(Box::new(sync));
+        // `Refresh` is the one command that needs it, and it is pressed long
+        // after the bus was built. The first engine fills the slot; the
+        // others are reached through their own account's work.
+        wiring.engine.fill(sync.clone());
+        seed_the_backfill(account, sync, wiring);
+        fetch_what_is_opened(window, sync, wiring.runtime.clone());
+    }
+}
+
+/// Every account that participates in sync.
+///
+/// ADR 0005 Q3: the first account is not special. This replaces
+/// `first_account` on the sync path — any code that treats one account
+/// differently fails exactly once, in the field.
+fn enabled_accounts(database: &Database) -> Vec<postio_model::Account> {
+    let Ok(connection) = database.connection() else {
+        tracing::error!("cannot read the accounts");
+        return Vec::new();
+    };
+    postio_storage::repository::AccountRepository::new(&connection)
+        .list_enabled()
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, "cannot read the accounts");
+            Vec::new()
+        })
 }
 
 /// Jump a message to the front of the backfill when it is opened.
@@ -571,15 +602,16 @@ fn fetch_what_is_opened(
 /// the engine's own business now: it tops the queue up when it drains and
 /// re-seeds a folder whose sync changed something, so this is the first batch
 /// rather than the only one (#318).
-fn seed_the_backfill(sync: &'static postio_runtime::Engine, wiring: &Wiring) {
+fn seed_the_backfill(
+    account: postio_model::AccountId,
+    sync: &'static postio_runtime::Engine,
+    wiring: &Wiring,
+) {
     let Ok(connection) = wiring.database.connection() else {
         return;
     };
-    let Some(account) = first_account(&wiring.database) else {
-        return;
-    };
     let mailboxes = match postio_storage::repository::MailboxRepository::new(&connection)
-        .list_for_account(account.id)
+        .list_for_account(account)
     {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
