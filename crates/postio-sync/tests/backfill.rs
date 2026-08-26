@@ -1459,3 +1459,43 @@ fn a_part_asked_for_while_another_is_still_queued_joins_it() {
     );
     assert!(backfill.next_body().is_none());
 }
+
+// ---------------------------------------------------------------------------
+// The disk budget stops the lane — ADR 0017, axis 3
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_full_store_pauses_the_background_lane_rather_than_thrashing() {
+    // Backfill fetches, eviction frees, backfill fetches the same bytes
+    // again: a store at its ceiling with the lane still running is a loop
+    // that burns a data plan to stay exactly as full as it was. The lane
+    // stops instead, and #352 is the surface that says so.
+    let mut backfill = Backfill::new(policy());
+    let mailbox = Mailbox::new(postio_model::AccountId::new(1), "INBOX", None);
+
+    backfill.set_disk_full(true);
+    assert!(!backfill.enqueue(request(&mailbox, MessageId::new(1), 1, 100)));
+    assert!(backfill.is_paused());
+
+    backfill.set_disk_full(false);
+    assert!(backfill.enqueue(request(&mailbox, MessageId::new(1), 1, 100)));
+}
+
+#[test]
+fn a_full_store_never_refuses_the_user() {
+    // Same rule as every other pause in this module: the interactive lane
+    // wins. Someone opening a message is not speculative work, and a store
+    // over its ceiling is a statement about speculative work.
+    //
+    // It is also the only way out: opening mail is what proves which blobs
+    // are worth keeping, and a client that stopped serving reads when its
+    // cache filled would be a client that had stopped working.
+    let mut backfill = Backfill::new(policy());
+    let mailbox = Mailbox::new(postio_model::AccountId::new(1), "INBOX", None);
+
+    backfill.set_disk_full(true);
+    backfill.request_now(request(&mailbox, MessageId::new(7), 7, 100));
+
+    let next = backfill.next_body().expect("work");
+    assert_eq!(next.request.message, MessageId::new(7));
+}
