@@ -845,9 +845,31 @@ impl Composer {
     /// Note `html` is *regenerated*, never carried over. Before this it was
     /// passed through from whatever the draft was opened with, so editing the
     /// text of a reply left an HTML half describing the text before the edit.
+    ///
+    /// `text` is [`Document::to_flowed_text`], not `to_text` — RFC 3676
+    /// `format=flowed` (#333), soft-wrapped at 72 columns. This is the one
+    /// place that matters: the `MessageBody` built here is what a draft is
+    /// filed as *and* what actually gets sent, so wrapping happens exactly
+    /// once, before either.
+    ///
+    /// One consequence worth knowing about rather than discovering:
+    /// [`source_document`] falls back to [`postio_body::Document::from_text`]
+    /// for a plain-text message with no HTML part, and `from_text` does not
+    /// unwrap soft breaks. Replying to (or reopening) a plain-text message
+    /// this composer itself sent will show the wrapped line breaks as if
+    /// they were typed that way. Fixing that safely needs to know whether a
+    /// message's *own* `Content-Type` actually said `format=flowed` —
+    /// information `MessageBody` does not carry today, and doing this
+    /// generally enough to be safe for mail from other senders is exactly
+    /// what issue #333 scoped out. Filed as #456 rather than guessed at
+    /// here.
     fn body(&self) -> MessageBody {
         let document = self.document();
-        let text = document.to_text();
+        // `html`'s half of `render` costs a real `to_html` and a `harden`
+        // pass; keeping it behind `is_plain_text()`'s check, as before,
+        // means a plain-text draft never pays for HTML it is about to
+        // throw away.
+        let text = document.to_flowed_text();
         MessageBody {
             text: (!text.is_empty()).then_some(text),
             html: (!document.is_plain_text()).then(|| postio_body::render(&document).1),
