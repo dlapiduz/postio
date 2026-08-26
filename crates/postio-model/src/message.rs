@@ -196,9 +196,20 @@ pub struct Message {
     /// and pulling the forty-megabyte attachment nobody asked for. The header
     /// sync already computes this and used to discard it.
     pub text_part_id: Option<String>,
+    /// That part's MIME headers, rebuilt from `BODYSTRUCTURE`.
+    ///
+    /// `BODY[1.1]` hands back a part's *encoded* bytes and none of its
+    /// headers, so the charset and transfer encoding that explain those bytes
+    /// have to come from somewhere. Prepending this to the fetched section
+    /// makes a self-contained entity [`crate::mime::parse`] can decode,
+    /// without spending a second round trip on `BODY[1.1.MIME]`.
+    pub text_part_headers: Option<String>,
     /// The `BODYSTRUCTURE` section holding the message's HTML body, on the same
     /// terms as [`Message::text_part_id`].
     pub html_part_id: Option<String>,
+    /// The HTML part's MIME headers, on the same terms as
+    /// [`Message::text_part_headers`].
+    pub html_part_headers: Option<String>,
 
     /// Flags and keywords.
     pub flags: FlagSet,
@@ -243,7 +254,9 @@ impl Message {
             attachments: Vec::new(),
             content_type: None,
             text_part_id: None,
+            text_part_headers: None,
             html_part_id: None,
+            html_part_headers: None,
             flags: FlagSet::new(),
             labels: Vec::new(),
             size: 0,

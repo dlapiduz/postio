@@ -1169,3 +1169,33 @@ fn a_fetched_message_with_no_body_structure_names_no_text_sections() {
     assert_eq!(message.text_part_id, None);
     assert_eq!(message.html_part_id, None);
 }
+
+#[test]
+fn a_part_rebuilds_the_mime_headers_that_explain_its_bytes() {
+    // `BODY[1.1]` returns encoded bytes and no headers. Without the charset
+    // and the transfer encoding that explain them, base64 is not text -- and
+    // fetching `[1.1.MIME]` to find out costs a second round trip per part
+    // per message. `BODYSTRUCTURE` already said both at header-sync time.
+    let part = PartNode::new("1.1", "text/plain", 512)
+        .with_charset("iso-8859-1")
+        .with_encoding("quoted-printable");
+
+    let headers = part.mime_headers();
+
+    assert_eq!(
+        headers,
+        "Content-Type: text/plain; charset=\"iso-8859-1\"\r\n\
+         Content-Transfer-Encoding: quoted-printable\r\n"
+    );
+}
+
+#[test]
+fn a_part_that_declared_no_charset_or_encoding_rebuilds_only_its_type() {
+    // Absent is not the same as defaulted. RFC 2045 says a missing
+    // `Content-Transfer-Encoding` is `7bit` and a missing charset is
+    // `us-ascii`, and `mime::parse` applies exactly those rules -- so writing
+    // a guess here would only risk contradicting the parser later.
+    let part = PartNode::new("1", "text/html", 2048);
+
+    assert_eq!(part.mime_headers(), "Content-Type: text/html\r\n");
+}
