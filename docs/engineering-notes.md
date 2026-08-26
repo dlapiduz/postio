@@ -1262,8 +1262,28 @@ out of `#[cfg(test)] mod tests` into `tests/` is only half the fix
 function per file** for anything that touches a display, the way
 `gtk_style.rs`, `gtk_accessibility.rs` and now `gtk_toast.rs` are.
 Deterministic under `--test-threads=1`, intermittent otherwise, so it reads
-as flakiness. `gtk_composer_autosave.rs` and `gtk_finder.rs` still have this
-shape — see #41.
+as flakiness — see #41.
+
+The failure is usually quieter than an abort, which is why this note sat here
+naming two files that "still have this shape" while nothing ever went red.
+Every GTK test opens with the same guard — `if adw::init().is_err() ||
+gdk::Display::default().is_none() { eprintln!("skipping: no display");
+return; }` — written for a headless box, and it cannot tell that case apart
+from "another thread in this process got GTK first". So the losing test
+returns before asserting anything, and libtest calls that a pass. Measured on
+`gtk_composer_autosave.rs` (#355): three consecutive runs took 1.88s, 1.89s
+and 0.42s, the fast one being the run where the debounce test — the one with
+real timing to prove — was the half that evaporated. *Which* of the two
+vanishes is thread scheduling, so it is a fresh coin flip every run, and that
+file had been reporting `ok` for both since the day it was written.
+
+`gtk_composer_autosave.rs`, `gtk_finder.rs` and `gtk_settings.rs` (this note
+missed the third) are now cases in `tests/gtk_suite/`, and
+`scripts/checks/check-one-gtk-test-per-binary.py` refuses a new one — a rule
+written down here plainly did not hold on its own. A file may still carry
+several tests when only one needs a display: `gtk_shell.rs` builds a window
+in one and parses the stylesheet as text in the other, and the check is
+written to allow exactly that.
 
 **A scroll area is a tab stop, and an unnamed one announces nothing.**
 `GtkScrolledWindow` takes the keyboard so it can be scrolled with one, which

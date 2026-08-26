@@ -46,8 +46,7 @@ fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
     }
 }
 
-#[test]
-fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() {
+pub fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() {
     let state_dir =
         std::env::temp_dir().join(format!("postio-composer-autosave-{}", std::process::id()));
     std::fs::create_dir_all(&state_dir).unwrap();
@@ -122,8 +121,7 @@ fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() {
 /// once, update forever after — so a wiring that did not carry the id forward
 /// would silently insert a fresh row on every debounce tick instead of
 /// updating the one row the draft actually is.
-#[test]
-fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
+pub fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
     let state_dir = std::env::temp_dir().join(format!(
         "postio-composer-autosave-id-{}",
         std::process::id()
