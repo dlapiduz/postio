@@ -479,3 +479,52 @@ fn an_empty_paragraph_records_nothing_and_is_narrowed_away() {
     let spaced = parse("<p>a</p><p><br></p><p>b</p>");
     assert_eq!(spaced.blocks.len(), 3, "the blank line is content");
 }
+
+#[test]
+fn the_editor_form_round_trips_an_inline_image_through_the_editing_scheme() {
+    // The editing shell's CSP allows img-src postio-cid: and nothing else,
+    // so the editor form emits that scheme; the wire form stays cid:. The
+    // round trip back through parse is what keeps a pasted image in the
+    // document across every edit that follows.
+    let mut document = Document::new();
+    document.blocks.push(Block::Paragraph(vec![
+        Inline::Text("see ".to_owned()),
+        Inline::Image {
+            content_id: ContentId::parse("photo-1@postio.invalid").unwrap(),
+            alt: "the lamp".to_owned(),
+        },
+    ]));
+
+    let editor_html = document.editor_html();
+    assert!(
+        editor_html.contains("src=\"postio-cid:photo-1%40postio.invalid\""),
+        "{editor_html}"
+    );
+    assert!(
+        !editor_html.contains("src=\"cid:"),
+        "the editor form must not carry the wire scheme: {editor_html}"
+    );
+    assert_eq!(parse(&editor_html), document);
+
+    // The wire form is unchanged by the editor form existing.
+    assert!(
+        document.to_html().contains("src=\"cid:"),
+        "{}",
+        document.to_html()
+    );
+}
+
+#[test]
+fn a_postio_cid_source_that_smuggles_a_url_is_still_refused() {
+    // ContentId's own rules hold on the editing scheme too: percent-decoding
+    // must never turn a crafted src into something a URL parser would chase.
+    let document = parse("<p><img src=\"postio-cid:%2F%2Fevil.example%2Fx\" alt=\"\"></p>");
+    assert!(
+        !document
+            .blocks
+            .iter()
+            .any(|block| matches!(block, Block::Paragraph(inlines)
+                if inlines.iter().any(|inline| matches!(inline, Inline::Image { .. })))),
+        "{document:?}"
+    );
+}

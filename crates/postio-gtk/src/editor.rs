@@ -303,7 +303,7 @@ impl Editor {
     pub fn load(&self, document: Document) {
         self.state.history.borrow_mut().clear();
         self.state.last_edit.set(None);
-        seed(&self.view, &document.to_html());
+        seed(&self.view, &document.editor_html());
         *self.state.document.borrow_mut() = document;
     }
 
@@ -356,7 +356,7 @@ impl Editor {
     /// the shared tail of undo and redo.
     fn show(&self, document: Document) {
         self.state.last_edit.set(None);
-        seed(&self.view, &document.to_html());
+        seed(&self.view, &document.editor_html());
         *self.state.document.borrow_mut() = document;
         let current = self.state.document.borrow();
         for handler in self.state.changed.borrow().iter() {
@@ -499,6 +499,12 @@ impl Editor {
         }
     }
 
+    /// Script against the surface, for assertions about the rendered DOM.
+    #[doc(hidden)]
+    pub fn test_eval(&self, script: &str) -> String {
+        self.run_blocking(script)
+    }
+
     /// Select `from..to` inside the first paragraph's text node, for tests
     /// that format a selection rather than a caret.
     #[doc(hidden)]
@@ -596,5 +602,42 @@ impl Editor {
                }} }})()"
         ));
         true
+    }
+
+    /// Put an inline image at the caret — the tail of a paste or drop whose
+    /// bytes are already in the blob store under `content_id`.
+    ///
+    /// The `src` is built from a [`postio_body::ContentId`], so only an id
+    /// that satisfied its rules can ever reach the DOM; the shell's CSP and
+    /// the `postio-cid:` scheme handler take it from there.
+    pub fn insert_image(&self, content_id: &postio_body::ContentId, alt: &str) {
+        let mut img = String::from("<img src=\"");
+        img.push_str(&postio_body::editor_image_src(content_id));
+        img.push_str("\" alt=\"");
+        for c in alt.chars() {
+            match c {
+                '&' => img.push_str("&amp;"),
+                '<' => img.push_str("&lt;"),
+                '>' => img.push_str("&gt;"),
+                '"' => img.push_str("&quot;"),
+                other => img.push(other),
+            }
+        }
+        img.push_str("\">");
+        let escaped = img.replace('\\', "\\\\").replace('\'', "\\'");
+        // A paste can be the first gesture into a fresh body, before any
+        // click or keystroke has given the document a caret — insertHTML
+        // silently does nothing without one, so fall back to the end.
+        self.run(&format!(
+            "(() => {{ const sel = window.getSelection(); \
+               if (sel.rangeCount === 0) {{ \
+                 const range = document.createRange(); \
+                 range.selectNodeContents(document.body); \
+                 range.collapse(false); \
+                 sel.addRange(range); \
+               }} \
+               document.execCommand('insertHTML', false, '{escaped}'); \
+               document.dispatchEvent(new Event('input')); }})()"
+        ));
     }
 }

@@ -193,12 +193,21 @@ fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
         // `Inline::Image` holds a `ContentId` and nothing else.
         "img" => {
             let src = attribute(handle, "src")?;
-            let cid = src.strip_prefix("cid:").or_else(|| {
-                src.strip_prefix("CID:")
-                    .or_else(|| src.strip_prefix("Cid:"))
-            })?;
+            // The editing shell's own scheme comes back through the bridge;
+            // percent-decoding first and then `ContentId::parse` means a
+            // crafted src can never decode into something URL-shaped.
+            let cid = if let Some(encoded) = src.strip_prefix("postio-cid:") {
+                crate::sanitize::percent_decode(encoded)
+            } else {
+                src.strip_prefix("cid:")
+                    .or_else(|| {
+                        src.strip_prefix("CID:")
+                            .or_else(|| src.strip_prefix("Cid:"))
+                    })?
+                    .to_owned()
+            };
             Some(Inline::Image {
-                content_id: ContentId::parse(cid)?,
+                content_id: ContentId::parse(&cid)?,
                 alt: attribute(handle, "alt").unwrap_or_default(),
             })
         }

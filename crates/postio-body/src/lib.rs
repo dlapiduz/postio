@@ -41,7 +41,7 @@ pub mod quote;
 pub mod replying;
 pub mod sanitize;
 
-pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
 pub use edit::{EditHistory, EditStep};
 pub use outgoing::{harden, render};
 pub use parse::parse;

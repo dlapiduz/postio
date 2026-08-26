@@ -74,7 +74,65 @@ pub fn install(
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
     install_reply_source(&composer, database, blobs.clone(), showing);
-    install_attach(&composer, blobs, runtime);
+    install_attach(&composer, blobs.clone(), runtime.clone());
+    install_inline_image(&composer, blobs.clone(), runtime);
+    install_attachment_bytes(&composer, blobs);
+}
+
+/// Writes pasted image bytes into `blobs` and mints a `Content-ID` for the
+/// inline attachment, off the main thread like [`install_attach`].
+///
+/// The id is the blob digest at `postio.invalid` — unique by construction
+/// (same bytes, same blob, same reference) and on a reserved domain, so it
+/// can never collide with, or be mistaken for, anything real.
+fn install_inline_image(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime::Handle) {
+    composer.connect_inline_image(move |bytes, mime_type, then| {
+        let blobs = blobs.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        runtime.spawn_blocking(move || {
+            let attachment = inline_attachment(&blobs, bytes, &mime_type);
+            let _ = sender.send_blocking(attachment);
+        });
+        gtk::glib::spawn_future_local(async move {
+            then(receiver.recv().await.ok().flatten());
+        });
+    });
+}
+
+/// Blocking half of [`install_inline_image`].
+fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
+    let size = bytes.len() as u64;
+    let blob_id = blobs
+        .put(&bytes)
+        .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
+        .ok()?;
+
+    let extension = mime_type.strip_prefix("image/").unwrap_or("png");
+    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
+    attachment.filename = Some(format!("inline-image.{extension}"));
+    attachment.disposition = postio_model::attachment::Disposition::Inline;
+    attachment.content_id = Some(format!("{}@postio.invalid", blob_id.as_str()));
+    attachment.blob_id = Some(blob_id);
+    Some(attachment)
+}
+
+/// Resolves an attachment's bytes for the composer's inline-image display.
+///
+/// Synchronous, as the scheme handler requires; a blob read is a local file
+/// open, the same cost the reader already pays per inline image.
+fn install_attachment_bytes(composer: &Composer, blobs: BlobStore) {
+    composer.connect_attachment_bytes(move |attachment| {
+        let blob_id = attachment.blob_id.as_ref()?;
+        let mut file = blobs
+            .reader(blob_id)
+            .map_err(|error| tracing::warn!(%error, "could not read an inline image blob"))
+            .ok()?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes)
+            .map_err(|error| tracing::warn!(%error, "could not read an inline image blob"))
+            .ok()?;
+        Some(bytes)
+    });
 }
 
 /// Activating a draft's row in the Drafts folder opens it in the composer.
