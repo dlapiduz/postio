@@ -18,6 +18,9 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # let an inherited dependency turn default features off, and turning them off
 # is the entire point here.
 postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
+# The search index's body column. A body is only ever indexable at the moment
+# it lands, and this crate is where it lands -- see `fetch_body` (#327).
+postio-index.workspace = true
 postio-model.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true

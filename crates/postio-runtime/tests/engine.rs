@@ -1164,3 +1164,75 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
          waiting on the ticker's first tick instead of happening at once",
     );
 }
+
+/// #327: the body a *person* asked for is indexed too, not only a backfill's.
+///
+/// The two arrive by different routes — `Job::RequestBody` jumps the queue
+/// with `Lane::Interactive`, a backfill is seeded per mailbox at startup —
+/// and search coverage that followed only the second would be bounded by
+/// whatever the backfill happened to have reached. The engine settles both
+/// through one `pump_body`, so this asserts the property at the layer where
+/// that claim is actually testable rather than trusting the shared call.
+#[tokio::test]
+async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
+    let (engine, database, report, _events) = engine();
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+    give_the_inbox_uids(&database, inbox.id);
+
+    with_store(&database, "creating the search schema", |connection| {
+        postio_index::index::ensure_schema(connection).expect("the search schema");
+        Ok(())
+    });
+
+    // The same constraint the test above documents: a message the mock
+    // actually holds, so this is about indexing and not about a UID nobody
+    // can answer for.
+    let message = with_store(
+        &database,
+        "a message the mock actually holds",
+        |connection| {
+            Ok(connection.query_row(
+                "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
+                [inbox.id.get()],
+                |row| row.get::<_, i64>(0),
+            )?)
+        },
+    );
+    let message = postio_model::ids::MessageId::new(message);
+
+    let indexed_body = |id: i64| {
+        with_store(&database, "reading the indexed body", move |connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT body FROM search_documents WHERE message_id = ?1",
+                    [id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_default())
+        })
+    };
+    assert!(
+        indexed_body(message.get()).is_empty(),
+        "the body is not local yet, so its indexed text cannot be anything"
+    );
+
+    assert!(
+        engine.request_body(message).await.expect("request_body"),
+        "there was nothing to fetch for a message the mock holds"
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if !indexed_body(message.get()).is_empty() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect(
+        "the body the user opened landed in the blob store and never reached \
+         the search index, so search covers only whatever the background \
+         backfill happened to have fetched (#327)",
+    );
+}

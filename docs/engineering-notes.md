@@ -1087,6 +1087,46 @@ Similarly, `Sidebar::select` is documented as selecting "without reporting it
 back as a user action", so a test that uses it changes the sidebar and leaves
 the list showing the previous folder. Click the row instead.
 
+**A search-index column no trigger can compute needs an owner at the point the
+data lands, and a pass that heals what that owner missed** (2026-08-25, #327).
+`search_documents` is filled two ways: sender, recipients, subject and
+attachment filenames come from SQL triggers on their own tables and were
+always correct, while `body` can only ever be written by a caller, because the
+text lives in the blob store. `index_body` was written, unit-tested and
+benched — and no production code ever called it, so that one column was empty
+on every message in every real store for the life of the project. It presented
+as "search is inconsistent" rather than "search is broken", which is the
+expensive part: one search box gave different answers to the same word
+depending on whether it was in a subject or a body, with nothing on screen to
+say which kind of question had been asked.
+
+The shape the fix settled on generalises. The write goes where the data
+lands and nowhere else — `postio_sync::backfill::fetch_body` is the single
+funnel every body passes through, background backfill and the interactive
+fetch of whatever the user just opened alike — and it goes *after* the
+storage commit point, so a crash leaves a body that is local but unindexed
+rather than an index entry for bytes that are not here. That residue is then
+swept by `postio_session::index_local_bodies`, which asks
+`messages_missing_body_text` for rows whose body is local and whose indexed
+text is empty: it costs one query that finds nothing on a store that is caught
+up, so it can run on every start, and it is spawned on the runtime rather than
+called on the startup path because its first run over an existing archive
+reads a blob per message.
+
+**`Document::to_text` and `Document::to_search_text` have opposite rules about
+link addresses, on purpose.** `to_text` spells a link as `label <href>`,
+because a quoted reply that drops the address leaves "click here" pointing at
+nothing. An index must not: a message that links to `tracker.example` does not
+say "tracker.example" anywhere a reader can see, so indexing the address makes
+that message a hit for a word it never contained — and one shortener would
+answer for every campaign that used it. Same for the `[image]` placeholder,
+which would make every message carrying a picture a hit for "image". Reach for
+`to_search_text` whenever the destination is a haystack rather than a reader,
+and go through `postio_index::index::index_body_of` rather than `index_body`
+with text you extracted yourself — the rule "raw markup must never reach this
+column" is kept by the crate that owns the column precisely so the next caller
+cannot forget it.
+
 
 ## Testing infrastructure
 

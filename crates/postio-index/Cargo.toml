@@ -10,6 +10,11 @@ repository.workspace = true
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+# The HTML-to-text extraction the `body` column requires. Owned here rather
+# than left to every caller: "raw markup must never reach this column" is a
+# rule about the column, and a rule enforced by the crate that holds it
+# cannot be forgotten by the next caller the way a doc comment can (#327).
+postio-body = { workspace = true }
 postio-model = { workspace = true }
 postio-search = { workspace = true }
 rusqlite = { version = "0.40.2", features = ["bundled"] }

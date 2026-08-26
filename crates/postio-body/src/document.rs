@@ -326,15 +326,46 @@ impl Document {
     /// mail's `text/plain` part unreadable. **Do not reach for `html2text`** —
     /// convert from here.
     pub fn to_text(&self) -> String {
+        self.render_text(Links::Spelled)
+    }
+
+    /// The document as the words a person would read, for a search index.
+    ///
+    /// [`to_text`](Self::to_text) is written for *quoting*, where a link's
+    /// address is the point: dropping it leaves "click here" pointing at
+    /// nothing. An index wants the opposite. A message that links to
+    /// `tracker.example` does not say "tracker.example" anywhere a reader can
+    /// see, so indexing it makes that message a hit for a word it never
+    /// contained — and one tracking redirect would then answer for every
+    /// campaign that used the same shortener. Same for the `[image]`
+    /// placeholder, which would make every message carrying a picture a hit
+    /// for the word "image".
+    ///
+    /// A link whose visible text *is* its address still indexes as that
+    /// address: that is what the message says.
+    pub fn to_search_text(&self) -> String {
+        self.render_text(Links::LabelOnly)
+    }
+
+    fn render_text(&self, links: Links) -> String {
         let mut out = String::new();
         for (index, block) in self.blocks.iter().enumerate() {
             if index > 0 {
                 out.push_str("\n\n");
             }
-            write_block_text(&mut out, block, 0);
+            write_block_text(&mut out, block, 0, links);
         }
         out
     }
+}
+
+/// How a rendered-to-text link spells itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Links {
+    /// Label and address, the way a quoted reply needs it.
+    Spelled,
+    /// The visible label alone, the way an index needs it.
+    LabelOnly,
 }
 
 // ---------------------------------------------------------------------------
@@ -504,16 +535,16 @@ fn write_inline(out: &mut String, inline: &Inline) {
 // Text out
 // ---------------------------------------------------------------------------
 
-fn write_block_text(out: &mut String, block: &Block, depth: usize) {
+fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links) {
     let indent = "    ".repeat(depth);
     match block {
         Block::Paragraph(inlines) => {
             out.push_str(&indent);
-            write_inlines_text(out, inlines, &indent);
+            write_inlines_text(out, inlines, &indent, links);
         }
         Block::Heading { inlines, .. } => {
             out.push_str(&indent);
-            write_inlines_text(out, inlines, &indent);
+            write_inlines_text(out, inlines, &indent, links);
         }
         Block::List { ordered, items } => {
             for (index, item) in items.iter().enumerate() {
@@ -530,7 +561,7 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize) {
                     if nth > 0 {
                         out.push_str("\n\n");
                     }
-                    write_block_text(out, block, if nth > 0 { depth + 1 } else { 0 });
+                    write_block_text(out, block, if nth > 0 { depth + 1 } else { 0 }, links);
                 }
             }
         }
@@ -542,7 +573,7 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize) {
                 if index > 0 {
                     inner.push_str("\n\n");
                 }
-                write_block_text(&mut inner, block, 0);
+                write_block_text(&mut inner, block, 0, links);
             }
             for (index, line) in inner.split('\n').enumerate() {
                 if index > 0 {
@@ -572,32 +603,41 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize) {
     }
 }
 
-fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str) {
+fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links: Links) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.push_str(text),
             Inline::Strong(inner) | Inline::Emphasis(inner) => {
-                write_inlines_text(out, inner, indent)
+                write_inlines_text(out, inner, indent, links)
             }
             Inline::Code(text) => out.push_str(text),
             // The address is the point of a link in plain text, and dropping
-            // it would leave "click here" pointing at nothing.
+            // it would leave "click here" pointing at nothing. An index is
+            // the one reader that wants the label alone -- see
+            // [`Document::to_search_text`].
             Inline::Link { href, inlines } => {
                 let mut label = String::new();
-                write_inlines_text(&mut label, inlines, indent);
-                if label.trim() == href.as_str() || label.trim().is_empty() {
-                    out.push_str(href.as_str());
-                } else {
-                    let _ = write!(out, "{label} <{}>", href.as_str());
+                write_inlines_text(&mut label, inlines, indent, links);
+                match links {
+                    Links::LabelOnly => out.push_str(&label),
+                    Links::Spelled if label.trim() == href.as_str() || label.trim().is_empty() => {
+                        out.push_str(href.as_str())
+                    }
+                    Links::Spelled => {
+                        let _ = write!(out, "{label} <{}>", href.as_str());
+                    }
                 }
             }
-            Inline::Image { alt, .. } => {
-                if alt.is_empty() {
-                    out.push_str("[image]");
-                } else {
+            Inline::Image { alt, .. } => match (links, alt.is_empty()) {
+                // A picture with no alt text says nothing; only a reader
+                // looking at the layout needs to be told one was here.
+                (Links::LabelOnly, true) => {}
+                (Links::LabelOnly, false) => out.push_str(alt),
+                (Links::Spelled, true) => out.push_str("[image]"),
+                (Links::Spelled, false) => {
                     let _ = write!(out, "[image: {alt}]");
                 }
-            }
+            },
             Inline::Break => {
                 out.push('\n');
                 out.push_str(indent);

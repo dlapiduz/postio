@@ -2436,6 +2436,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "criterion",
+ "postio-body",
  "postio-model",
  "postio-search",
  "postio-storage",
@@ -2548,6 +2549,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "postio-imap",
+ "postio-index",
  "postio-model",
  "postio-smtp",
  "postio-storage",

@@ -419,7 +419,44 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // handlers that answer the box a moment after they were connected.
     let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
+    catch_up_the_body_index(wiring);
+
     Some(Wired { feeds, search })
+}
+
+/// Index the bodies that were already on this machine, out of the way.
+///
+/// `postio_sync::backfill::fetch_body` indexes each body as it lands, so
+/// everything fetched from now on is covered. This is the mail that arrived
+/// before that call existed: `index_body` was written, tested and benched and
+/// nothing ever called it, so `search_documents.body` was empty on every
+/// message in every real store and search matched metadata only (#327).
+///
+/// # On the runtime, and after the window
+///
+/// The first pass over an existing archive reads a blob per message, which is
+/// minutes of I/O on a large one — nothing a startup budget of 500 ms can
+/// hold. So it is spawned, exactly as `seed_the_backfill` spawns its seeding,
+/// and search fills in behind a window that is already usable. Every pass
+/// after the first costs one query that finds nothing.
+///
+/// Here rather than in `start_syncing` because it dials nothing: a store
+/// opened with no account, or with the network down, still has bodies on
+/// disk and should still become searchable.
+///
+/// `spawn_blocking`, not `spawn`: this is synchronous SQLite and synchronous
+/// blob reads from beginning to end, and a blocking call inside a tokio task
+/// stalls whatever else that worker was meant to poll.
+fn catch_up_the_body_index(wiring: &Wiring) {
+    let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::index_local_bodies(&database, &blobs) {
+            // Recoverable, and the same judgement `ensure_search_index`
+            // makes: a mail client whose body search is behind still reads
+            // mail, and the next start tries again.
+            tracing::warn!(%error, "could not index the bodies already on disk");
+        }
+    });
 }
 
 /// Bring the account's connection up and keep it up.

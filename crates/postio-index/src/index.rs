@@ -30,6 +30,7 @@
 //! `postio-search`'s own concern, layered on top of tables `postio-storage`
 //! already created.
 
+use postio_model::MessageBody;
 use rusqlite::Connection;
 
 use crate::error::Result;
@@ -73,6 +74,72 @@ pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) 
         rusqlite::params![body.unwrap_or(""), message_id],
     )?;
     Ok(())
+}
+
+/// Indexes a message's body, whichever form it arrived in.
+///
+/// The call every producer of a body should make, rather than
+/// [`index_body`] with text it extracted itself. "Raw markup must never reach
+/// this column" is a rule about the column, so the crate that owns the column
+/// is where it is kept: an HTML-only message goes through
+/// [`postio_body::parse`] and is indexed as what it *says*, never as its
+/// markup — otherwise every such message is a hit for `div`, for `href`, and
+/// for the host of every tracking redirect it carries.
+///
+/// `text/plain` wins when there is one. It is what the sender wrote, the
+/// HTML alternative is a rendering of the same words, and indexing both would
+/// double the index for no new hits.
+///
+/// A message with neither form clears the column rather than leaving stale
+/// text behind — the same shape as `index_body(.., None)`.
+pub fn index_body_of(connection: &Connection, message_id: i64, body: &MessageBody) -> Result<()> {
+    index_body(connection, message_id, indexable_text(body).as_deref())
+}
+
+/// The plain text that represents `body` in the index, if it has any.
+///
+/// Separate from [`index_body_of`] so it can be tested without a database,
+/// and so the maintenance pass and the sync path provably agree on what a
+/// message's indexable text *is*.
+pub fn indexable_text(body: &MessageBody) -> Option<String> {
+    if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
+        return Some(text.to_owned());
+    }
+    let html = body.html.as_deref()?;
+    // `to_search_text`, not `to_text`: the latter spells a link out as
+    // `label <href>` because a quoted reply needs the address, and an index
+    // must not — see its own documentation. Both walk `postio_body`'s closed
+    // document subset rather than doing a general markup-to-text pass, which
+    // is the thing that makes most mail's plain-text part unreadable.
+    let text = postio_body::parse(html).to_search_text();
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// Message ids whose body is local but whose indexed text is empty, newest
+/// first and windowed to `limit`.
+///
+/// What a store that predates body indexing needs to catch up on, and what
+/// any body that missed its write at fetch time — a crash between the commit
+/// point and the index write — shows up in afterwards. Empty on a store that
+/// is already caught up, which is what makes running it on every start
+/// affordable.
+///
+/// `body_state = 'full'` and not merely "has a blob": the column says whether
+/// the bytes are on this machine, and a message the index claims to have read
+/// while its body is still on the server would make search answer for a
+/// corpus it does not have.
+pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
+    let mut statement = connection.prepare(
+        "SELECT m.id
+           FROM messages m
+           JOIN search_documents d ON d.message_id = m.id
+          WHERE m.body_state = 'full'
+            AND d.body = ''
+          ORDER BY m.received_at DESC
+          LIMIT ?1",
+    )?;
+    let rows = statement.query_map([limit], |row| row.get::<_, i64>(0))?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
 /// Rebuilds `messages_fts` from `search_documents`.
