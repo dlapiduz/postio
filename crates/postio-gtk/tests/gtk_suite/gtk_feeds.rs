@@ -240,6 +240,7 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         account: AccountId::new(ACCOUNT),
         done: 412,
         total: 2000,
+        footprint: None,
     });
     pump();
     assert_eq!(
@@ -257,6 +258,7 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         account: AccountId::new(ACCOUNT),
         done: 2000,
         total: 2000,
+        footprint: None,
     });
     pump();
     assert_eq!(
