@@ -42,6 +42,7 @@ mod gtk_feeds;
 mod gtk_finder;
 mod gtk_flagged;
 mod gtk_focus_visible;
+mod gtk_list_focus_return;
 mod gtk_list_recycling;
 mod gtk_list_reload;
 mod gtk_move_picker;
@@ -129,6 +130,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_focus_visible::taking_focus_changes_what_is_drawn",
         gtk_focus_visible::taking_focus_changes_what_is_drawn as fn(),
+    ),
+    (
+        "gtk_list_focus_return::shift_tab_from_after_the_list_returns_to_the_cursor_row",
+        gtk_list_focus_return::shift_tab_from_after_the_list_returns_to_the_cursor_row as fn(),
+    ),
+    (
+        "gtk_list_focus_return::tab_from_before_the_list_also_returns_to_the_cursor_row",
+        gtk_list_focus_return::tab_from_before_the_list_also_returns_to_the_cursor_row as fn(),
     ),
     (
         "gtk_list_recycling::a_list_view_builds_a_bounded_window_however_big_the_model_is",
