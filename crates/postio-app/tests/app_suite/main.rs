@@ -25,6 +25,7 @@ mod search_index;
 mod search_results;
 mod search_wiring;
 mod send_wiring;
+mod signature_default_wiring;
 mod startup_repair;
 mod thread_cursor_preview;
 mod window_drain;
@@ -112,6 +113,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "send_wiring::ctrl_return_queues_the_draft_for_sending",
         send_wiring::ctrl_return_queues_the_draft_for_sending as fn(),
+    ),
+    (
+        "signature_default_wiring::compose_signs_with_the_selected_mailbox_or_account_default",
+        signature_default_wiring::compose_signs_with_the_selected_mailbox_or_account_default
+            as fn(),
     ),
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
