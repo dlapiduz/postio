@@ -124,91 +124,17 @@ pub fn run() -> glib::ExitCode {
     }
     timeline.mark(Phase::Styles);
 
-    // The store's key, before the store. ADR 0014 Q3: a locked keyring means
-    // the mail does not open, and there is no "open it unencrypted anyway" —
-    // the same rule `secret.rs` has kept for passwords since it was written.
-    //
-    // Built here rather than inside `Wiring::new` because this is the one
-    // startup step that needs it *before* there is a wiring at all, and an
-    // installation has exactly one keyring: handing the same instance on
-    // means the key read and every credential read go to the same place.
-    let secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore> =
-        std::sync::Arc::new(postio_imap::secret::KeyringSecretStore::default());
-    // The store first: the command bus writes it, and the bus has to be built
-    // before the runtime that pumps it.
-    let (store, no_store_because) = match postio_session::store_key_blocking(secrets.as_ref()) {
-        Ok(key) => (open_store(&key), None),
-        Err(error) => {
-            // Safe verbatim: no `SecretError` carries key material. The same
-            // sentence goes to the log and to the screen, because the log is
-            // for a bug report and the screen is for the person who has to
-            // unlock their keyring.
-            tracing::error!(%error, "the store cannot be opened without its key");
-            (None, Some(error.to_string()))
-        }
-    };
-
     // What the user is looking at, as the handlers see it. `commands::mirror`
     // brings it into step with the window in the instant before a command is
     // sent; nothing else writes it.
     let state = SharedState::default();
-    // Filled in when the window is fed and an engine actually starts, which is
-    // later than this and may not happen at all. `Refresh` reads it at the
-    // moment it is pressed.
-    let engine = refresh::EngineSlot::default();
-    let builder = match &store {
-        Some((database, _)) => actions::wire(
-            Dispatcher::builder(),
-            actions::Actions::new(database.clone(), state.clone()),
-        ),
-        // No store, so no local verb can do anything. An empty bus still
-        // answers — every command comes back as "not wired up in this build" —
-        // which is a sentence on screen rather than a key that does nothing.
-        None => Dispatcher::builder(),
-    };
-    let bus = refresh::wire(builder, engine.clone(), state.clone()).build();
 
-    // What the bus answers, asked before it is handed over: the window's
-    // action seam carries *every* gesture, and the ones another consumer owns
-    // must not come back as "not wired up in this build".
-    let wired: Vec<postio_core::CommandId> = bus.wired().collect();
+    // An installation has exactly one keyring, and every credential read goes
+    // to the same instance: the store key here, and every account password
+    // through `Wiring::secrets`.
+    let secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore> =
+        std::sync::Arc::new(postio_imap::secret::KeyringSecretStore::default());
 
-    // Every producer's events, and every consumer's view of them. The bus's
-    // handlers and the sync engine are two producers; the window is one
-    // subscriber, and ADR 0013 exists so that an MCP server can be a second
-    // one without stealing the window's repaints.
-    let hub = EventHub::new();
-    // The engine is not a command handler, so the bridge never hands it a
-    // sink; it holds one of its own on the same hub.
-    let sink = hub.sink();
-
-    // The runtime: the tokio threads every read is polled on and every command
-    // is handled on.
-    let runtime = match Bridge::builder().build_with_events(bus, hub.sink()) {
-        Ok(bridge) => Some(bridge),
-        Err(error) => {
-            tracing::error!(%error, "no runtime, so no mail");
-            None
-        }
-    };
-
-    // Taken on the first `activate`. `EventStream` is not `Clone` — there is
-    // one queue and exactly one reader of it — and `activate` can fire again
-    // when a second launch raises the window. `Rc` rather than a plain
-    // `RefCell`: `onboarding::install` holds its own clone and drains it from
-    // its own closure, once its screen has created the account `activate` did
-    // not find one for at startup.
-    //
-    // One subscription rather than the `Vec<Option<EventStream>>` this used to
-    // be: fan-in is the hub's now, so the window no longer collects a stream
-    // per producer by hand.
-    let events = Rc::new(std::cell::RefCell::new(Some(hub.subscribe("window"))));
-
-    let application = app::build_with(timeline);
-
-    // Connected *after* the frontend's own handler, so the window it makes is
-    // already there to be fed. Signal handlers run in the order they were
-    // connected, which is the whole of the arrangement.
     // `[mailboxes]`, read once here alongside `[sync]` and for the same
     // reason `notifications::config_at` gives. Which folder this server calls
     // its archive is settled at discovery, and discovery runs inside the
@@ -217,62 +143,65 @@ pub fn run() -> glib::ExitCode {
         .as_deref()
         .map(postio_session::mailbox_roles_at)
         .unwrap_or_default();
-    let wiring = runtime
-        .as_ref()
-        .zip(store)
-        .map(|(bridge, (database, blobs))| Wiring {
-            engine,
-            ..Wiring::new(
-                database,
-                blobs,
-                bridge.handle(),
-                sink.clone(),
-                bridge.commands(),
-            )
-            .with_mailbox_roles(mailbox_roles.clone())
-            .with_backfill(postio_session::backfill_policy(&sync_config))
-            .with_secrets(secrets.clone())
-        });
-    application.connect_activate(move |application| {
-        let Some(window) = application.active_window().and_downcast::<Window>() else {
-            return;
-        };
-        // Exists before the first notification can, and re-registering on a
-        // second `activate` (a second launch raising the window) just
-        // replaces it with itself.
-        notifications::install_action(application, &window);
-        let Some(wiring) = &wiring else {
-            // No store, and the one thing worse than a mail client that will
-            // not open is one that will not open and does not say why. A
-            // locked keyring is the recoverable case and its message says how
-            // (`SecretError::Locked` carries the hint), so it reaches the
-            // screen rather than only the log. A persistent surface with a
-            // Retry on it is #404.
-            if let Some(reason) = &no_store_because {
-                window.show_action_completed(reason, false);
-            }
-            return;
-        };
-        let notifier = notifications::Notifier::new(
-            wiring.database.clone(),
-            wiring.store.clone(),
-            wiring.runtime.clone(),
-            sync_config.clone(),
-        );
 
-        open_or_onboard(
-            &window,
-            wiring,
-            state.clone(),
-            wired.clone(),
-            Rc::clone(&events),
-            notifier,
-        );
+    let context = Rc::new(Installation {
+        secrets,
+        state,
+        mailbox_roles,
+        sync_config: sync_config.clone(),
+    });
+
+    // The store's key, before the store. ADR 0014 Q3: a locked keyring means
+    // the mail does not open, and there is no "open it unencrypted anyway" —
+    // the same rule `secret.rs` has kept for passwords since it was written.
+    //
+    // Blocking, and only here: there is no window yet to freeze and no
+    // runtime yet to defer to. The retry on the screen below runs the same
+    // read on a thread, because by then there *is* a window.
+    let first = postio_session::store_key_blocking(context.secrets.as_ref())
+        .map_err(|error| error.to_string())
+        .and_then(|key| open_with(&key, &context));
+    let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
+    let refused = match first {
+        Ok(ready) => {
+            *opened.borrow_mut() = Some(ready);
+            None
+        }
+        Err(reason) => {
+            // Safe verbatim: no `SecretError` carries key material. The same
+            // sentence goes to the log and to the screen, because the log is
+            // for a bug report and the screen is for the person who has to
+            // unlock their keyring.
+            tracing::error!(reason, "the store did not open");
+            Some(reason)
+        }
+    };
+
+    let application = app::build_with(timeline);
+
+    // Connected *after* the frontend's own handler, so the window it makes is
+    // already there to be fed. Signal handlers run in the order they were
+    // connected, which is the whole of the arrangement.
+    application.connect_activate({
+        let opened = Rc::clone(&opened);
+        let context = Rc::clone(&context);
+        move |application| {
+            let Some(window) = application.active_window().and_downcast::<Window>() else {
+                return;
+            };
+            // Exists before the first notification can, and re-registering on
+            // a second `activate` (a second launch raising the window) just
+            // replaces it with itself.
+            notifications::install_action(application, &window);
+            present(&window, &opened, &context, refused.clone());
+        }
     });
 
     let code = application.run();
-    if let Some(bridge) = runtime {
-        bridge.shutdown();
+    // Taken rather than borrowed: `shutdown` consumes the bridge, and by here
+    // the window is gone and nothing else is going to read this.
+    if let Some(ready) = opened.borrow_mut().take() {
+        ready.bridge.shutdown();
     }
     code
 }
@@ -703,6 +632,198 @@ fn seed_the_backfill(
 /// `postio_sync::backfill::BackfillPolicy::seed_batch` is what the engine uses
 /// for every batch after this one, and is where the size of them belongs.
 const BACKFILL_PER_MAILBOX: u32 = 200;
+
+/// The choices about *this installation* that outlive a failed start.
+///
+/// Named for what it holds rather than for when it runs: `Startup` in this
+/// module is already the enum that decides between an account and onboarding.
+///
+/// Held so a retry can rebuild everything the first attempt could not: which
+/// keyring, which folder is the archive, how hard to sync. None of it depends
+/// on the store, which is exactly why it survives the store not opening.
+struct Installation {
+    secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore>,
+    state: SharedState,
+    mailbox_roles: postio_model::RoleOverrides,
+    sync_config: postio_config::SyncConfig,
+}
+
+/// Everything downstream of the store key.
+///
+/// Built in one go because it is one dependency chain — the store feeds the
+/// command bus, the bus feeds the runtime, the runtime feeds the wiring — and
+/// a half-built one is not a state anything downstream knows how to handle.
+/// Either the mail opens or a screen says why.
+struct Opened {
+    wiring: Wiring,
+    /// What the bus answers, asked before it was handed over: the window's
+    /// action seam carries *every* gesture, and the ones another consumer
+    /// owns must not come back as "not wired up in this build".
+    wired: Vec<postio_core::CommandId>,
+    /// Taken on the first `activate`. `EventStream` is not `Clone` — there is
+    /// one queue and exactly one reader of it — and `activate` can fire again
+    /// when a second launch raises the window.
+    events: Rc<std::cell::RefCell<Option<EventStream>>>,
+    /// The tokio threads every read is polled on. Held to the end of `run`,
+    /// which is what shuts it down.
+    bridge: postio_core::bridge::Bridge,
+}
+
+/// Opens the store under `key` and builds the bus, the runtime and the wiring.
+///
+/// The whole of what a locked keyring was standing between the user and, so
+/// that a retry has one function to call rather than a sequence to reproduce.
+fn open_with(
+    key: &postio_storage::key::StoreKey,
+    context: &Installation,
+) -> Result<Opened, String> {
+    let (database, blobs) = open_store(key)?;
+
+    // Filled in when the window is fed and an engine actually starts, which
+    // is later than this and may not happen at all. `Refresh` reads it at the
+    // moment it is pressed.
+    let engine = refresh::EngineSlot::default();
+    let builder = actions::wire(
+        Dispatcher::builder(),
+        actions::Actions::new(database.clone(), context.state.clone()),
+    );
+    let bus = refresh::wire(builder, engine.clone(), context.state.clone()).build();
+    let wired: Vec<postio_core::CommandId> = bus.wired().collect();
+
+    // Every producer's events, and every consumer's view of them. The bus's
+    // handlers and the sync engine are two producers; the window is one
+    // subscriber, and ADR 0013 exists so that an MCP server can be a second
+    // one without stealing the window's repaints.
+    let hub = EventHub::new();
+    // The engine is not a command handler, so the bridge never hands it a
+    // sink; it holds one of its own on the same hub.
+    let sink = hub.sink();
+    let bridge = Bridge::builder()
+        .build_with_events(bus, hub.sink())
+        .map_err(|error| {
+            tracing::error!(%error, "no runtime, so no mail");
+            format!("Postio could not start its runtime: {error}")
+        })?;
+
+    let wiring = Wiring {
+        engine,
+        ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
+            .with_mailbox_roles(context.mailbox_roles.clone())
+            .with_backfill(postio_session::backfill_policy(&context.sync_config))
+            .with_secrets(context.secrets.clone())
+    };
+
+    Ok(Opened {
+        wiring,
+        wired,
+        // One subscription rather than the `Vec<Option<EventStream>>` this
+        // used to be: fan-in is the hub's now, so the window no longer
+        // collects a stream per producer by hand.
+        events: Rc::new(std::cell::RefCell::new(Some(hub.subscribe("window")))),
+        bridge,
+    })
+}
+
+/// Puts either the mail or the reason there is none in front of the user.
+///
+/// Called on `activate`, and again by the retry on the screen below — which
+/// is why it is a function rather than the body of a closure.
+fn present(
+    window: &Window,
+    opened: &Rc<std::cell::RefCell<Option<Opened>>>,
+    context: &Rc<Installation>,
+    refused: Option<String>,
+) {
+    // Borrowed, checked, and dropped before anything else runs: the retry
+    // closure installed below writes this same cell, and a borrow left open
+    // across it is a `borrow_mut` panic waiting for whoever edits this next.
+    let ready = opened.borrow().is_some();
+    if ready {
+        let held = opened.borrow();
+        let ready = held.as_ref().expect("just checked");
+        let notifier = notifications::Notifier::new(
+            ready.wiring.database.clone(),
+            ready.wiring.store.clone(),
+            ready.wiring.runtime.clone(),
+            context.sync_config.clone(),
+        );
+        open_or_onboard(
+            window,
+            &ready.wiring,
+            context.state.clone(),
+            ready.wired.clone(),
+            Rc::clone(&ready.events),
+            notifier,
+        );
+        return;
+    }
+
+    // No store. ADR 0014 Q3 means that is a hard stop rather than a degraded
+    // mode, so the window says so and offers the one action that can change
+    // it. #404: this was a toast, which vanished while the condition did not.
+    let screen = postio_gtk::unavailable::Unavailable::new();
+    screen.set_reason(
+        refused
+            .as_deref()
+            .unwrap_or("Postio could not open its local store."),
+    );
+    window.set_content(Some(&screen));
+    screen.focus_retry();
+
+    screen.connect_retry({
+        let screen = screen.clone();
+        let window = window.clone();
+        let opened = Rc::clone(opened);
+        let context = Rc::clone(context);
+        move || {
+            screen.set_busy(true);
+            // On a thread, not on this one. Reading the keyring is a D-Bus
+            // round trip against a service that may be showing the user a
+            // passphrase prompt of its own, and `store_key_blocking` waits
+            // out `KEYRING_TIMEOUT` for it. There is no runtime to defer to
+            // here — building one is what failed — so this is the plain
+            // thread the situation calls for.
+            let (sender, receiver) = async_channel::bounded(1);
+            let secrets = context.secrets.clone();
+            std::thread::spawn(move || {
+                let read = postio_session::store_key_blocking(secrets.as_ref())
+                    .map_err(|error| error.to_string());
+                let _ = sender.send_blocking(read);
+            });
+
+            glib::spawn_future_local({
+                let screen = screen.clone();
+                let window = window.clone();
+                let opened = Rc::clone(&opened);
+                let context = Rc::clone(&context);
+                async move {
+                    let read = match receiver.recv().await {
+                        Ok(read) => read,
+                        Err(_) => Err("Postio stopped reading the keyring before                                        it answered."
+                            .to_owned()),
+                    };
+                    screen.set_busy(false);
+                    // The key is only half of it: the store still has to
+                    // open, and `open_with` is the same function the first
+                    // attempt ran, so a retry that succeeds continues exactly
+                    // as a normal start would.
+                    match read.and_then(|key| open_with(&key, &context)) {
+                        Ok(ready) => {
+                            tracing::info!("the store opened on a retry");
+                            *opened.borrow_mut() = Some(ready);
+                            present(&window, &opened, &context, None);
+                        }
+                        Err(reason) => {
+                            tracing::warn!(reason, "the store still did not open");
+                            screen.set_reason(&reason);
+                            screen.focus_retry();
+                        }
+                    }
+                }
+            });
+        }
+    });
+}
 
 /// What startup should do with the account this installation has, if any.
 ///

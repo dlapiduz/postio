@@ -94,4 +94,5 @@ pub mod thread;
 pub mod thread_row;
 pub mod toast;
 pub mod tokens;
+pub mod unavailable;
 pub mod window;
