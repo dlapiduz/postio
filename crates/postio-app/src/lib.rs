@@ -83,6 +83,20 @@ pub fn run() -> glib::ExitCode {
     let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
 
+    // First run: config.toml does not exist yet. Postio's own defaults still
+    // apply with nothing on disk (postio_config::Config::load_from_path says
+    // so), so this changes discoverability, not behaviour -- Ctrl+E and a
+    // file manager find a real file to read and edit rather than a blank
+    // buffer. Before the watcher below, so there is nothing to race: the
+    // watcher only needs to notice changes from here on, not this one.
+    if let Some(path) = config_path.as_deref() {
+        match postio_config::Config::seed_if_missing(path) {
+            Ok(true) => tracing::info!(path = %path.display(), "seeded a starter config.toml"),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error, "could not seed a starter config.toml"),
+        }
+    }
+
     // `[sync]`'s notification settings, read once here rather than kept
     // live — see `notifications::config_at`.
     let sync_config = config_path
