@@ -234,3 +234,174 @@ async fn a_source_with_nothing_new_is_not_retried() {
          retry must not happen at all"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Three sessions, one refresh — the acceptance criterion of #194
+// ---------------------------------------------------------------------------
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
+use std::time::Duration;
+
+use postio_imap::oauth::{OwnClientTokenSource, TokenResponse};
+use postio_imap::secret::MemorySecretStore;
+
+/// A token endpoint that hands back `TOKEN`, counts what it served, and is
+/// slow enough that three callers really overlap on it.
+///
+/// Written here rather than reached for: what this test is about is the
+/// *count*, and a helper that hid the counting would hide the assertion.
+fn slow_counting_token_endpoint() -> (url::Url, Arc<AtomicUsize>) {
+    let served = Arc::new(AtomicUsize::new(0));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let counter = Arc::clone(&served);
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                break;
+            }
+            let mut length = 0usize;
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).expect("header line");
+                let header = header.trim_end();
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut discard = vec![0u8; length];
+            let _ = reader.read_exact(&mut discard);
+            counter.fetch_add(1, Ordering::SeqCst);
+            // Long enough that a pool opening three sessions has all three
+            // waiting on this one request, which is the shape being tested.
+            std::thread::sleep(Duration::from_millis(150));
+
+            let body = format!(r#"{{"access_token":"{TOKEN}","expires_in":3600}}"#);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    (
+        format!("http://127.0.0.1:{port}/token").parse().unwrap(),
+        served,
+    )
+}
+
+/// Counts how many `access_token` calls are inside the wrapped source at
+/// once.
+///
+/// Without this the refresh count proves nothing: a pool that opened its
+/// three connections one after another would refresh once too, because the
+/// first refresh fills the cache the other two then read. What is being
+/// tested is what happens when they *overlap*, so the overlap has to be
+/// asserted rather than assumed — and asserted causally, not with a
+/// stopwatch, which goes vacuous exactly when the machine is slow.
+#[derive(Debug)]
+struct Overlap {
+    inner: Arc<dyn TokenSource>,
+    live: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+#[async_trait]
+impl TokenSource for Overlap {
+    async fn access_token(&self, account: &AccountKey) -> Result<Password, SecretError> {
+        let live = self.live.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(live, Ordering::SeqCst);
+        let token = self.inner.access_token(account).await;
+        self.live.fetch_sub(1, Ordering::SeqCst);
+        token
+    }
+
+    async fn invalidate(&self, account: &AccountKey) {
+        self.inner.invalidate(account).await;
+    }
+}
+
+/// ADR 0006 Q5's whole point, at the layer a person meets it: a pool bringing
+/// three connections up on an expired token refreshes once and opens three
+/// sessions, rather than sending three refreshes and — on a provider that
+/// rotates its refresh token — invalidating two of its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn three_sessions_on_an_expired_token_cost_one_refresh() {
+    let server = oauth_server("OAUTHBEARER").await;
+    let (token_url, refreshes) = slow_counting_token_endpoint();
+
+    let source = Arc::new(OwnClientTokenSource::new(
+        Arc::new(MemorySecretStore::new()),
+        token_url,
+        "client-1",
+        None,
+    ));
+    let account = AccountKey::new(server.account());
+    source
+        .seed(
+            &account,
+            TokenResponse {
+                access_token: Password::new("expired"),
+                refresh_token: Some(Password::new("the-refresh-token")),
+                expires_in: Some(Duration::from_secs(0)),
+                token_type: "Bearer".to_owned(),
+                scope: None,
+            },
+        )
+        .await
+        .expect("seed succeeds");
+
+    let watched = Arc::new(Overlap {
+        inner: Arc::clone(&source) as Arc<dyn TokenSource>,
+        live: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+    });
+    let pool = Arc::new(ConnectionPool::with_token_source(
+        server.settings().with_auth(AuthMethod::OAuth2),
+        account,
+        Arc::clone(&watched) as Arc<dyn TokenSource>,
+        Arc::new(connector()),
+        PoolConfig::default(),
+    ));
+
+    let mut opening = tokio::task::JoinSet::new();
+    for _ in 0..3 {
+        let pool = Arc::clone(&pool);
+        opening.spawn(async move { pool.acquire(Priority::Interactive).await.map(|_| ()) });
+    }
+    let mut opened = 0;
+    while let Some(joined) = opening.join_next().await {
+        joined
+            .expect("the task should not panic")
+            .expect("every session should open");
+        opened += 1;
+    }
+
+    assert_eq!(opened, 3, "three sessions");
+    assert_eq!(
+        watched.peak.load(Ordering::SeqCst),
+        3,
+        "all three were asking for a credential at the same moment — without \
+         that the refresh count below would pass for the wrong reason"
+    );
+    assert_eq!(
+        refreshes.load(Ordering::SeqCst),
+        1,
+        "and one round trip to the token endpoint between them"
+    );
+    assert_eq!(
+        authenticate_attempts(&server),
+        3,
+        "each session authenticated once — the refreshed token was right \
+         first time, so nothing was retried"
+    );
+}
