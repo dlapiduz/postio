@@ -23,17 +23,16 @@
 //!
 //! # Where the messages come from
 //!
-//! From the rows the list already holds. The list is a windowed model over the
-//! mailbox, so it knows every message it has paged in — and in a per-message
-//! list, the rows sharing a `ThreadId` *are* the thread as this folder sees
-//! it. That needs no new read path, which is why `t` works today rather than
-//! after something wires a thread query.
-//!
-//! It is also, honestly, not always the whole thread: a message filed in
-//! Archive is not in this folder's model, and a page the list has not reached
-//! is not resident either. [`Row::thread_count`] says how many there really
-//! are, so when the two disagree the header says which is which rather than
-//! quietly showing a short thread. `postio-6p1` tracks reading the rest.
+//! Two paints. [`crate::window::Window::open_thread`] first fills this from
+//! whatever rows the list already holds for the `ThreadId` — instant, and at
+//! best a folder's worth, since a message filed in Archive is not in this
+//! folder's model and a page the list has not scrolled to is not resident
+//! either. It then asks the store for the whole conversation, unrestricted by
+//! mailbox or account (#44), and [`ThreadView::fill`] replaces the paint with
+//! that answer once it lands — without moving the cursor out from under
+//! whoever is already reading. [`Row::thread_count`] is what the header
+//! compares the first paint's count against, so a thread still missing its
+//! second paint says so rather than looking merely short.
 //!
 //! [`Row::thread_count`]: crate::list::Row::thread_count
 

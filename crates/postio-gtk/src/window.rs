@@ -298,9 +298,10 @@ impl Window {
 
     /// Drill into `row`'s thread.
     ///
-    /// The messages are the ones the list already holds for that thread — see
-    /// [`crate::thread`] for why that is both enough to be useful today and
-    /// not always the whole thread.
+    /// Paints twice. First with whatever the list already holds for that
+    /// thread, which is at best a folder's worth and at worst a page that has
+    /// not been scrolled to — see [`crate::thread`]. Then with a real read of
+    /// the whole conversation (below), which supersedes it.
     ///
     /// Public so a test, and whoever wires a real thread read later, can put
     /// the column up without synthesizing a key event.
@@ -317,10 +318,11 @@ impl Window {
             row.thread_count,
         );
 
-        // Then the rest of it. A thread routinely spans folders, and the part
-        // of it in *this* folder is all the list model has ever been able to
-        // offer -- less than that, if the page carrying a message has not been
-        // scrolled to. See #44.
+        // Then the whole conversation. `FeedScope::Thread` is answered from
+        // `idx_messages_thread` with no mailbox or account restriction (#44):
+        // a message filed in Archive, or on a page the list never scrolled
+        // to, is not in what `thread_rows` gave the paint above, and is in
+        // this.
         let Some(source) = self.imp().messages.borrow().clone() else {
             return;
         };
