@@ -82,6 +82,23 @@ pub fn install(window: &Window) {
 ///
 /// Separate so a test can point at a temporary directory rather than the
 /// developer's own configuration.
+/// Push `[compose]` into the composer: where a signature sits relative to a
+/// quote, per draft kind (#12).
+fn apply_compose(window: &Window, config: &Config) {
+    window.composer().set_signature_placement(
+        placement(config.compose.signature_on_reply),
+        placement(config.compose.signature_on_forward),
+    );
+}
+
+/// The schema's spelling, as the body crate's.
+fn placement(setting: postio_config::SignaturePlacement) -> postio_body::Placement {
+    match setting {
+        postio_config::SignaturePlacement::AboveQuote => postio_body::Placement::AboveQuote,
+        postio_config::SignaturePlacement::BelowQuote => postio_body::Placement::BelowQuote,
+    }
+}
+
 pub fn install_at(window: &Window, path: &Path) {
     let mut service = ConfigService::load(path);
     report(service.status().errors());
@@ -89,6 +106,7 @@ pub fn install_at(window: &Window, path: &Path) {
     window.apply_ui(&service.config().ui);
     window.list().set_density(service.config().ui.density);
     window.list().set_keymap(service.keymap().clone());
+    apply_compose(window, service.config());
     window.settings().load(path);
     window
         .sidebar()
@@ -162,6 +180,9 @@ pub fn install_at(window: &Window, path: &Path) {
             if update.changed.ui {
                 window.apply_ui(&service.config().ui);
                 window.list().set_density(service.config().ui.density);
+            }
+            if update.changed.compose {
+                apply_compose(&window, service.config());
             }
             if update.changed.filters {
                 window

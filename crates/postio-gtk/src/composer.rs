@@ -70,6 +70,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, glib};
+use postio_body::Placement;
 use postio_core::{CommandId, Context};
 use postio_model::address::{current_entry, format_list, parse_list};
 use postio_model::{
@@ -467,6 +468,10 @@ mod imp {
         /// Where recipient completion gets its candidates. One slot: the
         /// same search serves `To`, `Cc` and `Bcc` alike.
         pub recipient_suggestions: RefCell<Option<RecipientSuggestions>>,
+        /// Where the signature sits on a reply and on a forward (#12), from
+        /// `[compose]`. New mail has no quote, so placement cannot mean
+        /// anything there.
+        pub signature_placement: Cell<(Placement, Placement)>,
         /// Where a chosen or dropped file becomes attachment metadata. One
         /// slot: the same handler serves the file chooser and drag-and-drop.
         pub attach: RefCell<Option<AttachHandler>>,
@@ -539,6 +544,7 @@ mod imp {
                 opened: RefCell::new(Vec::new()),
                 reply_source: RefCell::new(None),
                 recipient_suggestions: RefCell::new(None),
+                signature_placement: Cell::new((Placement::AboveQuote, Placement::AboveQuote)),
                 attach: RefCell::new(None),
                 inline_image: RefCell::new(None),
                 attachment_bytes: RefCell::new(None),
@@ -904,6 +910,23 @@ impl Composer {
         true
     }
 
+    /// Sets where a signature goes on a reply and on a forward, from
+    /// `[compose]`. Live: the next identity or signature change uses it.
+    pub fn set_signature_placement(&self, on_reply: Placement, on_forward: Placement) {
+        self.imp().signature_placement.set((on_reply, on_forward));
+    }
+
+    /// The placement this draft's kind asks for.
+    fn signature_placement(&self) -> Placement {
+        let (on_reply, on_forward) = self.imp().signature_placement.get();
+        match self.imp().draft.borrow().kind {
+            DraftKind::Reply | DraftKind::ReplyAll => on_reply,
+            DraftKind::Forward => on_forward,
+            // Nothing is quoted, so both placements put it in the same place.
+            DraftKind::New => Placement::BelowQuote,
+        }
+    }
+
     /// Puts the selected identity, and its signature, into the draft.
     ///
     /// Idempotent, because [`Draft::use_identity`] replaces the signature
@@ -919,19 +942,18 @@ impl Composer {
         draft.use_identity(&identity);
         imp.draft.borrow_mut().identity_id = draft.identity_id;
 
+        // At the block level for every draft, never through text: flattening
+        // a rich quote to `> ` lines to swap a signature would be the
+        // identity dropdown quietly destroying the reply (#340). The plain
+        // form is still exactly right — `to_text` renders the separator and
+        // the signature the way the wire wants them — so one path serves
+        // both, and placement (#12) means the same thing in each.
         let current = imp.body.document();
-        let wanted = if current.is_plain_text() {
-            postio_body::Document::from_text(draft.body.text.as_deref().unwrap_or_default())
-        } else {
-            // At the block level, never through text: flattening a rich
-            // quote to `> ` lines to swap a signature would be the identity
-            // dropdown quietly destroying the reply (#340).
-            let signature = identity
-                .signature
-                .as_ref()
-                .map(|signature| signature.text.as_str());
-            postio_body::apply_signature(&current, signature)
-        };
+        let wanted = postio_body::apply_signature(
+            &current,
+            identity.signature.as_ref(),
+            self.signature_placement(),
+        );
         if current == wanted {
             return;
         }

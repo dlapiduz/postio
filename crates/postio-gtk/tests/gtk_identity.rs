@@ -96,7 +96,7 @@ fn the_reply_comes_from_the_address_it_was_sent_to_and_signs_once() {
     );
     assert_eq!(
         body(&composer),
-        "\n\n-- \nLena\n",
+        "\n\n-- \nLena",
         "and it opens already signed, above the signature"
     );
     composer.discard();
@@ -135,7 +135,7 @@ fn the_reply_comes_from_the_address_it_was_sent_to_and_signs_once() {
     );
     assert_eq!(
         body(&composer),
-        "Looking now.\n\n> Small diff.\n\n-- \nLena Tomlin · Postio\n",
+        "Looking now.\n\n> Small diff.\n\n-- \nLena Tomlin · Postio",
         "signed once, below the quote, where RFC 3676 says a signature goes"
     );
     assert_eq!(
@@ -149,7 +149,7 @@ fn the_reply_comes_from_the_address_it_was_sent_to_and_signs_once() {
     settle();
     assert_eq!(
         body(&composer),
-        "Looking now.\n\n> Small diff.\n\n-- \nLena\n",
+        "Looking now.\n\n> Small diff.\n\n-- \nLena",
         "the old signature went with the old identity"
     );
 
