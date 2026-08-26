@@ -39,8 +39,8 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use postio_imap::auth::TokenSource;
 use postio_imap::backend::{BackendError, MailBackend};
-use postio_imap::secret::SecretStore;
 use postio_model::RoleOverrides;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
@@ -173,8 +173,15 @@ pub struct EngineParts {
     /// The SMTP side. Without it `Operation::Send` fails outright, which is
     /// not a bug — a queue with nothing to send through cannot send.
     pub smtp: Arc<dyn SmtpConnector>,
-    /// Where the account's password lives. The same one IMAP uses.
-    pub secrets: Arc<dyn SecretStore>,
+    /// Where the account's credential comes from — **the same instance the
+    /// IMAP pool behind `backend` holds** (ADR 0006 Q5).
+    ///
+    /// One per account rather than one per connection. Sharing is what lets a
+    /// rejection seen on one side be seen on the other, and what keeps a
+    /// provider that rotates its refresh token from having two simultaneous
+    /// refreshes invalidate each other. Building a second source here would
+    /// look identical and be exactly that bug.
+    pub tokens: Arc<dyn TokenSource>,
     /// Where the engine reports what it did.
     pub events: EventSink,
     /// How hard to retry a failed operation.
@@ -1500,7 +1507,7 @@ async fn drain(
 
     let smtp = SmtpContext {
         connector: parts.smtp.as_ref(),
-        secrets: parts.secrets.as_ref(),
+        tokens: parts.tokens.as_ref(),
         blobs: &parts.blobs,
     };
     let drainer = Drainer::with_policy(parts.backend.as_ref(), parts.retry).with_smtp(smtp);
@@ -2258,7 +2265,9 @@ mod tests {
             blobs,
             backend: Arc::new(postio_imap::backend::MockBackend::new()),
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+                postio_imap::secret::MemorySecretStore::default(),
+            ))),
             events: sink,
             retry: RetryPolicy::default(),
             backfill: BackfillPolicy::default(),

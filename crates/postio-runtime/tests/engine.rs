@@ -73,7 +73,9 @@ fn engine_with(
         // Never dialled: nothing in these tests queues a send, and the
         // connector is only consulted when one does.
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
@@ -824,7 +826,9 @@ fn engine_over_arc(
         blobs,
         backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
@@ -964,7 +968,9 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
@@ -1064,7 +1070,9 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
         blobs,
         backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
@@ -1291,7 +1299,9 @@ fn engine_seeding_in_batches(
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: postio_sync::backfill::BackfillPolicy {
@@ -1480,7 +1490,9 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: postio_sync::backfill::BackfillPolicy {
@@ -1628,7 +1640,9 @@ fn engine_over_a_real_sync(
         blobs,
         backend: Arc::new(server_with_an_attachment()),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill,

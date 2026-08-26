@@ -88,7 +88,9 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
         blobs,
         backend: Arc::new(server()),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        secrets: Arc::new(postio_imap::secret::MemorySecretStore::default()),
+        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+            postio_imap::secret::MemorySecretStore::default(),
+        ))),
         events: sink,
         retry: Default::default(),
         backfill: Default::default(),
