@@ -58,8 +58,31 @@ use postio_session::{Wiring, actions};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, test_support};
 
+/// The local row for `rfc_message_id`, if the store has one.
+///
+/// Phase 3 identifies the message it delivered rather than counting rows —
+/// see there for why.
+fn id_of(
+    database: &postio_storage::Database,
+    rfc_message_id: &str,
+) -> Option<postio_model::MessageId> {
+    let connection = database.connection().ok()?;
+    connection
+        .query_row(
+            "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
+            [rfc_message_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .ok()
+        .map(postio_model::MessageId::new)
+}
+
 /// The corpus messages the server starts with, and the list must show.
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
+
+/// The `Message-ID` of the fixture phase 3 delivers, so the row it produces
+/// can be named rather than counted.
+const DELIVERED_MESSAGE_ID: &str = "<harbour-dev.20260302T081200.a1@lists.example.org>";
 
 const INBOX_PATH: &str = "INBOX";
 const ARCHIVE_PATH: &str = "Archive";
@@ -71,6 +94,15 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
+    // Off unless asked for. There was no way to see inside this test at all,
+    // and diagnosing #364 meant adding one — which is a thing the next person
+    // should not have to do again. `POSTIO_LOG=postio_runtime=debug` and so on.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            std::env::var("POSTIO_LOG").unwrap_or_else(|_| "off".into()),
+        ))
+        .with_test_writer()
+        .try_init();
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under the headless runner to exercise this)");
         return;
@@ -265,16 +297,50 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         server.uids(INBOX_PATH)
     );
 
-    // ── 3. server → window: a delivery mid-watch grows the list ───────────
-    let shown_before = list.model().n_items();
+    // ── 3. server → window: a delivery mid-watch reaches the list ─────────
+    //
+    // # Why this names the message instead of counting rows
+    //
+    // It used to assert `n_items() == shown_before + 1`, and that made the
+    // suite fail about one run in eight (#364) — every time looking like a
+    // regression in whatever was being landed, because it is the last gate
+    // before a merge.
+    //
+    // The count was never the claim. `shown_before` is snapshotted straight
+    // after phase 2, which waits for the message to reach the server's
+    // Archive and *not* for anything local; the archived row's departure from
+    // INBOX arrives separately and can still be outstanding here. Worse, it
+    // can arrive and then be undone: an INBOX resync that runs before the
+    // MOVE has drained re-creates the row it just removed, and a later resync
+    // removes it again. So `shown_before` was 3 on some runs and 2 on others,
+    // for the same correct behaviour, and only one of those makes
+    // `shown_before + 1` reachable.
+    //
+    // Naming the message sidesteps all of it. "A delivery reaches the list"
+    // is a statement about one message being on screen, so that is what is
+    // asserted — of the row the server actually delivered, found by its
+    // `Message-ID`, in the model the list is drawing from. It cannot pass for
+    // the wrong reason the way a total can, and it does not care what the
+    // archive is doing in the background.
     let commands_before = server.commands().len();
+    assert!(
+        id_of(&database, DELIVERED_MESSAGE_ID).is_none(),
+        "the fixture phase 3 delivers is already in the store, so its arrival \
+         would prove nothing"
+    );
     server.deliver(INBOX_PATH, TestMessage::corpus("list-thread-01-root"));
+
     let deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < deadline && list.model().n_items() != shown_before + 1 {
+    let mut delivered = None;
+    while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
+        delivered = id_of(&database, DELIVERED_MESSAGE_ID);
+        if delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
-    if list.model().n_items() != shown_before + 1 {
+    if !delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
         let connection = database.connection().expect("a connection");
         let local: i64 = connection
             .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
@@ -285,7 +351,13 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             .skip(commands_before)
             .collect();
         panic!(
-            "the delivery never reached the list: showing {} of {shown_before}+1 rows, store holds {local} messages, server commands after deliver: {after:?}",
+            "the delivery never reached the list: the store {}, the list shows \
+             {} rows and does not hold that message; store holds {local} \
+             messages, server commands after deliver: {after:?}",
+            match delivered {
+                Some(id) => format!("has it as {id:?}"),
+                None => "never got a row for it".to_owned(),
+            },
             list.model().n_items(),
         );
     }

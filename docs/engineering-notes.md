@@ -1087,6 +1087,40 @@ Similarly, `Sidebar::select` is documented as selecting "without reporting it
 back as a user action", so a test that uses it changes the sidebar and leaves
 the list showing the previous folder. Click the row instead.
 
+**An integration test must assert the thing it names, not a number that
+happens to move when it happens** (2026-08-26, #364). `e2e.rs`'s delivery
+phase asserted `n_items() == shown_before + 1`, and failed about one run in
+eight for the life of the suite. Because `issue-land.sh` runs it on the way to
+every merge, that is somebody's landing rejected most days, and it looks
+exactly like a regression in whatever they were working on — two of mine were,
+and establishing otherwise took eight runs on `main` against eight on the
+branch.
+
+The count was never the claim. `shown_before` was snapshotted straight after a
+phase that waits for the *server* to have the archived message, which says
+nothing about the local row: the departure from INBOX arrives separately, and
+can even be undone and redone while the queue drains (#368). So the baseline
+was 3 on some runs and 2 on others, for identical correct behaviour, and only
+one of those makes `shown_before + 1` reachable. It now finds the delivered
+row by its `Message-ID` and asserts *that message* is in the list model — the
+sentence the phase was always trying to say, and one no timing can make
+unreachable.
+
+The general rule: **when a test waits for a total, ask what would have to be
+true for that total to be wrong while the software is right.** A count is
+shared by every row, so any other row moving underneath it corrupts the
+measurement silently. An identity is not. Prefer waiting for the specific
+message, widget or row the phase is about, and reach for a count only when the
+count really is the property — and then settle it against the store rather
+than against whatever the list happens to be showing.
+
+Two supporting habits this cost a day to learn. **Instrument before
+theorising**: three plausible explanations were wrong, and a dump of
+`(id, mailbox_id)` at fixed checkpoints settled it in one run. **And a
+long-running integration test needs a way to see inside it** — `e2e.rs` had
+no tracing subscriber at all, so `POSTIO_LOG` did nothing there; it has one
+now, off unless the variable is set.
+
 **A search-index column no trigger can compute needs an owner at the point the
 data lands, and a pass that heals what that owner missed** (2026-08-25, #327).
 `search_documents` is filled two ways: sender, recipients, subject and
