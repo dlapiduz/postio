@@ -313,6 +313,14 @@ Invisible most of the time. Incremental sync, automatic reconnection with
 exponential backoff, IMAP IDLE, QRESYNC/CONDSTORE where the server has them,
 lazy body and attachment fetch, cancellation, and progress reporting.
 
+**Backfill runs to completion, not to a fixed initial pull.** Every
+selectable folder pulls every message's body, eventually, in the
+background — not just the newest few hundred. A folder can be excluded
+explicitly; nothing is excluded by default. [ADR
+0016](decisions/0016-full-mailbox-backfill-by-default.md) is the reasoning;
+`postio-sync::BackfillPolicy` is what throttles it responsibly (size cap,
+metered/active pauses) without capping *how much* eventually arrives.
+
 **The UI never awaits the network.** Every mutating action is: SQLite write →
 enqueue the remote operation → emit the event → repaint. The sync engine drains
 the queue later and somewhere else. `ARCHITECTURE.md` §1.
