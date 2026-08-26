@@ -48,9 +48,10 @@ fi
 mkdir -p "$WORKTREES" "$CLAIMS"
 
 # Candidates: open, labelled `ready`, unclaimed, and not blocked by anything
-# still open. `epic`, `icebox` and `needs-architecture` are never agent work --
-# an epic is a container, an icebox item is deferred, and needs-architecture
-# means a human has to decide something first.
+# still open. `epic`, `icebox`, `needs-architecture` and `needs-maintainer`
+# are never agent work -- an epic is a container, an icebox item is deferred,
+# needs-architecture means the architect (an agent, via /ux-architect) has to
+# decide something first, and needs-maintainer means only the maintainer can.
 args=(issue list --state open --limit 200
       --json number,title,labels,assignees,blockedBy,milestone)
 [ -n "$MILESTONE" ] && args+=(--milestone "$MILESTONE")
@@ -62,7 +63,7 @@ import json, os, re, sys
 want = os.environ.get("WANT") or ""
 rows = []
 skipped = []
-SKIP = {"epic", "icebox", "needs-architecture", "in-progress", "blocked"}
+SKIP = {"epic", "icebox", "needs-architecture", "needs-maintainer", "in-progress", "blocked"}
 
 for i in json.load(sys.stdin):
     names = {l["name"] for l in i["labels"]}
