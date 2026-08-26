@@ -1191,6 +1191,47 @@ up, so it can run on every start, and it is spawned on the runtime rather than
 called on the startup path because its first run over an existing archive
 reads a blob per message.
 
+**The backfill horizon is "all of it, in batches, newest first"** (2026-08-25,
+#318). How far back Postio pulls bodies unprompted is a real product decision —
+it is time, disk and somebody's data plan — and for the life of the project it
+was made by accident. `postio-app` seeded 200 bodies per folder at startup and
+nothing ever called `seed_backfill` again, so a *cap* was doing the work of a
+*horizon*: when that first batch drained the background lane had nothing to do
+for the rest of the process, every message below the newest 200 of its folder
+waited to be opened, and the status line's denominator was the size of the
+seed rather than the work outstanding.
+
+The horizon chosen is the whole account, reached in batches: the engine tops
+the queue up whenever it has genuinely drained, INBOX first by
+`sync_priority`, and re-seeds a folder whose sync changed something. The
+throttling is left to the policy that already existed for it —
+`pause_on_metered`, `pause_when_active`, `max_body_bytes` — rather than to a
+smaller number, because those are the knobs that know *why* they are pausing.
+`BackfillPolicy::seed_batch` (200) is what a batch is; it bounds how much is
+held in memory and how much can sit in front of an interactive fetch, and it
+is no longer a horizon in disguise.
+
+Three things make the walk terminate, and all three are load-bearing:
+
+- **`body_state` is the cursor.** A body that lands becomes `full` and leaves
+  `needing_backfill`, so each seed naturally asks for the *next* batch. Nothing
+  remembers a position, which is why a restart resumes correctly rather than
+  starting over.
+- **`Backfill::set_aside`** holds what this session will not offer again: a
+  message over `max_body_bytes`, and one whose fetch failed or found nothing.
+  Both stay `body_state <> 'full'` for ever, so without this a drained queue
+  would re-queue a failing message immediately and retry it at the speed of the
+  engine's own loop. It is cleared on reconnection, and lost on restart, which
+  is the retry a transient failure gets.
+- **`seed` pages past a batch it could not use.** A folder whose newest
+  `seed_batch` messages are *all* over the cap would otherwise answer the same
+  unusable rows for ever and the walk would never start. `seed` reports what it
+  actually queued, not what it read, which is what the top-up loop stops on.
+
+`State::backfill_covered` is the latch that keeps a covered account from
+re-asking every folder on every loop iteration; a sync that wrote something and
+a link coming up are the two things that clear it.
+
 **`Document::to_text` and `Document::to_search_text` have opposite rules about
 link addresses, on purpose.** `to_text` spells a link as `label <href>`,
 because a quoted reply that drops the address leaves "click here" pointing at
