@@ -1,6 +1,8 @@
 # ADR 0005 — Multiple accounts and the unified inbox
 
-- **Status:** Accepted — **GO** (2026-08-24), **substantially revised 2026-08-24**
+- **Status:** Accepted — **GO** (2026-08-24), **substantially revised 2026-08-24**,
+  **Q5 answered from measurement 2026-08-26**
+  ([#435](https://github.com/dlapiduz/postio/issues/435))
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -207,6 +209,117 @@ Two small additions:
   in `postio-search::Field` and one arm in the parser, and it keeps
   `[filters]` expressive enough to survive multi-account without a second
   syntax.
+
+### Q5a — Unified search needs an index of its own (#435)
+
+**Decided from measurement, 2026-08-26.** The two bullets above are still
+right, and they quietly assumed a third thing that is not: that
+`Scope::Unified` is `Scope::Account` with the predicate *removed*, and that
+removing a predicate cannot make a query slower. It can, and here it does.
+
+`idx_messages_account_list` is `(account_id, received_at DESC, id DESC)`. A
+composite index can only supply `ORDER BY received_at DESC` when its leading
+column is pinned to a single value. `Scope::Account` pins it; `Scope::Unified`
+does not, and there is no `(received_at DESC, id DESC)` index without
+`account_id` in front of it. The executor's recency path
+(`Plan::fetch_form` → `Form::Probed`) exists precisely because it can walk
+that index in the requested order and stop at `LIMIT`. Unscoped, it cannot,
+and falls back to a full scan into a temp b-tree.
+
+**Decision: add `idx_messages_recency ON messages (received_at DESC, id DESC)`
+and let the planner take it when no account is named.** Unified search stays
+one query with a predicate removed, exactly as Q5 says.
+
+#### What was measured
+
+A four-account corpus, 30,000 messages each, interleaved in time so a unified
+recency order genuinely has to merge them. Best of five, warm.
+
+Only the **broad** case is affected, and that follows from the executor's own
+shape: `rank_by_relevance = has_match && total_hits <= RANK_BY_RELEVANCE_LIMIT`
+(2,000). Under that threshold a query is ranked by `bm25` and takes
+`Form::Driven`, whose `ORDER BY` is a score and never touches
+`idx_messages_account_list` at all. Over it, the query is recency-ordered and
+takes `Form::Probed`, which is the path that needs the index.
+
+Broad match — every message contains the term, so `Form::Probed`:
+
+| plan | time | query plan |
+|---|---|---|
+| account-scoped (today) | **7.8 ms** | `SEARCH m USING COVERING INDEX idx_messages_account_list` |
+| unified, no new index | **20.3 s** | `SCAN m …` + `USE TEMP B-TREE FOR ORDER BY` |
+| unified + `idx_messages_recency` | **18.8 ms** | `SCAN m USING COVERING INDEX idx_messages_recency` |
+| per-account `UNION ALL`, merged | **32.4 ms** | 4 × `SEARCH …` + `USE TEMP B-TREE FOR ORDER BY` |
+
+Narrow match — `Form::Driven`, ranked by relevance:
+
+| plan | time |
+|---|---|
+| account-scoped | 2.0 ms |
+| unified | 2.3 ms |
+
+So the regression is real, it is a factor of ~2,600, and it is confined to one
+of the two plan forms. The index removes it.
+
+#### Why not per-account `UNION ALL`
+
+It was the more conservative-looking option and it measured worse on every
+axis that matters:
+
+- **Slower**, 32.4 ms against 18.8 ms, and it *still* sorts in a temp b-tree —
+  the merge needs one. It does not avoid the cost the index was supposed to
+  buy off; it pays it in a different place.
+- **The cost is per account**, because each arm has to walk far enough to fill
+  its own `LIMIT` before the merge can discard most of it. Four accounts pay
+  four times for a page of fifty.
+- **It is a third scoring surface.** The two ranked plans already sum scores
+  across two indexes (#379); merging ranked pages across accounts adds another
+  thing that has to stay coherent with `rank_score`.
+- **It forces "unified" to become a loop**, which is exactly the shape #186
+  must not be pushed into by a storage decision — see below.
+
+#### The objection to the index does not survive measurement
+
+The case against a unified index was write throughput and disk on the largest
+table in the store. Measured:
+
+- **Disk: 2.2 MiB for 120,000 messages** — about 19 bytes per message, on rows
+  that already carry a subject, recipients and an FTS posting list.
+- **Writes: below noise.** 20,000 inserts timed with the index, without it,
+  and with it again gave 2.73 s / 4.91 s / 2.76 s — the slow run is the middle
+  one, in both orderings, which is the page churn from the delete between
+  runs and not the index. There is no measurable insert penalty at this size.
+
+That is a real cost and a small one, paid by every account to make a feature
+work for the accounts that use it — the same trade `idx_messages_account_list`
+itself already makes.
+
+#### What this settles for #186
+
+#186 asks what a search scope *is*. This answers it from the storage end:
+**scopes stay predicates and compose as predicates.** A role scope keeps
+building `role = 'inbox'`, and account scope is one more `AND` that may or may
+not be present. `scope_condition` today builds `account_id = ? AND role =
+'inbox'`, so "Inbox" means *this account's* inbox; with the index in place a
+cross-account Inbox is the same query with the first conjunct dropped, not a
+different query.
+
+Had the answer been `UNION ALL`, "unified" would have become a loop over
+accounts and every scope would have had to compose *inside* an iteration —
+a different and worse enum.
+
+#### Two things this does not settle
+
+- **Facet counts run the query once per scope** (`executor.rs:201`), so the
+  tri-tab multiplies whatever a unified search costs. At 18.8 ms a three-scope
+  tab is ~56 ms: inside the `<100 ms` budget, but with much less headroom than
+  the 7.8 ms single-account case implies. Worth its own measurement before the
+  tri-tab grows a fourth scope.
+- **`search_budget.rs` cannot see any of this.** It is 120,000 messages across
+  *one* account, where unified and account-scoped are the same query, so it
+  would stay green straight through this regression. A multi-account corpus is
+  a prerequisite for #186's "search budget bench unchanged" criterion meaning
+  anything, and is tracked separately.
 
 ---
 
@@ -571,6 +684,13 @@ Smaller, and each is a real decision rather than a note.
 **A database per account.** Rejected in Q1: forks the FTS5 index and makes
 cross-account search unrankable.
 
+**Per-account `UNION ALL` for unified search.** Rejected in Q5a on
+measurement: slower than the unified index it was meant to avoid (32.4 ms
+against 18.8 ms), still needs a temp b-tree for the merge, costs a walk per
+account to fill one page, and adds a third scoring surface to keep coherent
+with `rank_score`. It would also have forced unified search to be a loop, and
+so forced #186's scope enum into a worse shape.
+
 **Threads that span accounts.** Rejected in Q2: it makes thread identity depend
 on account membership, costs the list its index, and requires splitting threads
 on account removal — to buy something read-time grouping already gives.
@@ -609,6 +729,16 @@ one that is wrong.
   compiler everywhere it matters.
 - `postio-search` gains one `Field`; `docs/keybindings.md` and the config
   reference regenerate themselves (`ARCHITECTURE.md` §2).
+- **A migration adding `idx_messages_recency ON messages (received_at DESC,
+  id DESC)`** (Q5a). 2.2 MiB per 120,000 messages, no measurable insert cost,
+  and without it unified recency-ordered search is 20 seconds rather than 19
+  milliseconds. It belongs in the same change that teaches the executor to
+  drop the `account_id` predicate, or an earlier one — never a later one, and
+  there is no reason to land it on its own ahead of #186, where it would cost
+  writes and disk to speed up a query nothing can yet ask.
+- **`search_budget.rs` needs a multi-account corpus** (Q5a). Today it cannot
+  distinguish a unified search from an account-scoped one, so it would stay
+  green through the regression the index exists to prevent.
 - The `Move` command becomes context-conditional on scope, which is the first
   time a command's availability depends on state rather than on `Context`.
   That is a registry question, not a frontend one — resolve it as a predicate
