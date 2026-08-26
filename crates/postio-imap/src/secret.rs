@@ -176,7 +176,13 @@ impl fmt::Display for AccountKey {
 /// Everything that can go wrong reaching a credential.
 ///
 /// No variant carries a password, so these are safe to log verbatim.
-#[derive(Debug, thiserror::Error)]
+///
+/// `Clone` because a failure is *shared*: one refresh attempt answers every
+/// caller that was waiting on it (ADR 0006 Q5, #194), and a revoked grant
+/// that each waiter re-attempted would be the stampede that discipline
+/// exists to prevent. Every field is already an owned `String` or a number,
+/// so cloning copies a sentence and nothing else.
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum SecretError {
     /// The keyring exists but will not open. Recoverable by the user, so the
     /// message says how.

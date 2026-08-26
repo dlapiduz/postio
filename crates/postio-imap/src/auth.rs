@@ -22,9 +22,10 @@
 //!   works for exactly one token lifetime and then looks like a broken
 //!   account.
 //!
-//! What deliberately does not live here: single-flight refresh and the
-//! rejected-token → `Attention` routing (#194), and the OAuth authorization
-//! flow itself (#192). This module is the seam they plug into.
+//! What deliberately does not live here: the OAuth authorization flow itself
+//! (#192), and the routing that turns a rejected credential into something
+//! the user is asked to fix — that belongs at the layer which saw the server
+//! say no. This module is the seam they plug into.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -33,6 +34,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::secret::{AccountKey, CommandSecretStore, Password, SecretError, SecretStore};
+use crate::single_flight::SingleFlight;
 
 /// Where a session's credential comes from.
 ///
@@ -108,6 +110,14 @@ pub struct BrokerTokenSource {
     /// Tokens already obtained. `Password` zeroizes on drop, so an evicted
     /// or replaced token does not linger.
     cache: Mutex<HashMap<AccountKey, Password>>,
+    /// One broker run per account at a time, its result shared.
+    ///
+    /// A pool opening three sessions on a cold cache used to spawn three
+    /// processes. Brokers are idempotent reads, so that was harmless and
+    /// wasteful — until a broker that refreshes as a side effect, which is
+    /// what `oama` and `mutt_oauth2.py` do, meets a provider that rotates its
+    /// refresh token (ADR 0006 Q5).
+    obtaining: SingleFlight<AccountKey, Result<Password, SecretError>>,
 }
 
 impl BrokerTokenSource {
@@ -121,26 +131,43 @@ impl BrokerTokenSource {
         Self {
             command: CommandSecretStore::new(argv),
             cache: Mutex::new(HashMap::new()),
+            obtaining: SingleFlight::default(),
         }
+    }
+
+    /// The token already obtained for `account`, if there is one.
+    fn cached(&self, account: &AccountKey) -> Option<Password> {
+        self.cache
+            .lock()
+            .expect("token cache mutex")
+            .get(account)
+            .cloned()
     }
 }
 
 #[async_trait]
 impl TokenSource for BrokerTokenSource {
     async fn access_token(&self, account: &AccountKey) -> Result<Password, SecretError> {
-        if let Some(token) = self.cache.lock().expect("token cache mutex").get(account) {
-            return Ok(token.clone());
+        if let Some(token) = self.cached(account) {
+            return Ok(token);
         }
-
-        // Two concurrent misses run the broker twice; that is harmless
-        // (brokers are idempotent reads) and single-flight is #194's
-        // business, alongside the refresh stampede it exists for.
-        let token = self.command.retrieve(account).await?;
-        self.cache
-            .lock()
-            .expect("token cache mutex")
-            .insert(account.clone(), token.clone());
-        Ok(token)
+        self.obtaining
+            .run(account, async {
+                // Checked again inside the flight, for the reason
+                // `OwnClientTokenSource` gives: a caller that arrives as the
+                // previous run lands should take its answer rather than spawn
+                // a process to learn the same thing.
+                if let Some(token) = self.cached(account) {
+                    return Ok(token);
+                }
+                let token = self.command.retrieve(account).await?;
+                self.cache
+                    .lock()
+                    .expect("token cache mutex")
+                    .insert(account.clone(), token.clone());
+                Ok(token)
+            })
+            .await
     }
 
     async fn invalidate(&self, account: &AccountKey) {
@@ -166,5 +193,46 @@ mod tests {
         let rendered = format!("{source:?}");
 
         assert!(!rendered.contains("t0ps3cret"), "{rendered}");
+    }
+
+    /// A pool opening three sessions on a cold cache used to spawn three
+    /// broker processes. Harmless while a broker is a pure read, and not
+    /// harmless once it refreshes as a side effect — which is what `oama` and
+    /// `mutt_oauth2.py` do — against a provider that rotates its refresh
+    /// token on every use (ADR 0006 Q5).
+    ///
+    /// Counted by having the broker leave a mark: the file it appends to is
+    /// the only honest record of how many processes actually ran.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_callers_run_the_broker_once() {
+        let marks = std::env::temp_dir().join(format!("postio-broker-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marks);
+        let script = format!(
+            "printf 'x' >> {}; sleep 0.2; printf 'brokered-token'",
+            marks.display()
+        );
+        let source = Arc::new(BrokerTokenSource::new(["sh", "-c", &script]));
+        let account = AccountKey::new("ada@example.com");
+
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..4 {
+            let (source, account) = (Arc::clone(&source), account.clone());
+            tasks.spawn(async move { source.access_token(&account).await });
+        }
+        let mut tokens = Vec::new();
+        while let Some(joined) = tasks.join_next().await {
+            tokens.push(joined.expect("the task should not panic").expect("a token"));
+        }
+
+        let runs = std::fs::read_to_string(&marks).expect("the broker ran at least once");
+        let _ = std::fs::remove_file(&marks);
+
+        assert_eq!(runs.len(), 1, "four callers, one process");
+        assert_eq!(tokens.len(), 4);
+        assert!(
+            tokens
+                .iter()
+                .all(|token| token.expose() == "brokered-token")
+        );
     }
 }
