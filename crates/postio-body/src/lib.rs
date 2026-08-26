@@ -38,6 +38,7 @@ pub mod edit;
 pub mod outgoing;
 pub mod parse;
 pub mod quote;
+pub mod replying;
 pub mod sanitize;
 
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
@@ -45,4 +46,5 @@ pub use edit::{EditHistory, EditStep};
 pub use outgoing::{harden, render};
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
+pub use replying::{apply_signature, forwarded, quoted_reply};
 pub use sanitize::{CID_SCHEME, RemoteImages, Sanitized, sanitize_body};
