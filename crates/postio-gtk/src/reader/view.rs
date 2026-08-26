@@ -36,6 +36,7 @@ use webkit6::prelude::*;
 
 use super::allowlist::RemoteImageAllowList;
 use super::banner::RemoteImageBanner;
+use super::message_header::MessageHeader;
 use super::scheme::{self, BlobSource};
 use crate::resources;
 use postio_body::quote;
@@ -72,6 +73,7 @@ type RenderedHandler = Box<dyn Fn(u32)>;
 pub struct Reader {
     container: gtk::Box,
     view: webkit6::WebView,
+    header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
@@ -223,11 +225,16 @@ impl Reader {
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
 
+        let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
 
         let chips = crate::parts::Chips::new();
 
+        // The header sits above the banner and does not scroll away with
+        // the body (#319): it is a sibling in this native box, never markup
+        // inside the `WebView`'s document.
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        container.append(&header.widget());
         container.append(&banner.widget());
         container.append(&view);
         container.append(&chips.widget());
@@ -235,6 +242,7 @@ impl Reader {
         let reader = Reader {
             container,
             view,
+            header,
             banner,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
@@ -324,6 +332,12 @@ impl Reader {
         self.banner.is_visible()
     }
 
+    /// The message header (#319), for tests that want to assert on its
+    /// fields directly rather than parsing the rendered document.
+    pub fn header(&self) -> Rc<MessageHeader> {
+        Rc::clone(&self.header)
+    }
+
     /// The banner's "always allow" button label, naming whichever sender it
     /// would exempt.
     pub fn banner_always_allow_label(&self) -> String {
@@ -339,6 +353,25 @@ impl Reader {
     /// As [`click_always_allow`](Self::click_always_allow), for "show once".
     pub fn click_show_once(&self) {
         self.banner.emit_show_once();
+    }
+
+    /// Fills in the header (#319): sender, recipients, subject, date — the
+    /// three questions a reader asks first, put on screen before the body
+    /// even arrives.
+    ///
+    /// Independent of [`render`](Self::render)/[`show_absent`](Self::show_absent):
+    /// the envelope is known as soon as headers have synced, well before a
+    /// body might be, so a header-only message gets exactly the same header
+    /// a message with a body does.
+    pub fn set_message_header(
+        &self,
+        from: &[postio_model::address::EmailAddress],
+        to: &[postio_model::address::EmailAddress],
+        cc: &[postio_model::address::EmailAddress],
+        subject: Option<&str>,
+        date: chrono::DateTime<chrono::Utc>,
+    ) {
+        self.header.set_message(from, to, cc, subject, date);
     }
 
     /// Render `body` into the pane.
@@ -465,6 +498,7 @@ impl Reader {
     pub fn clear(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
+        self.header.clear();
         self.banner.set_visible(false);
         self.view.load_html(
             &wrap_document("", RemoteImages::Blocked),
