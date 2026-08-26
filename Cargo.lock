@@ -2553,6 +2553,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "chrono",
+ "getrandom 0.3.4",
  "postio-model",
  "postio-storage",
  "rusqlite",
@@ -2560,6 +2561,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "zeroize",
  "zstd",
 ]
 

@@ -16,6 +16,13 @@ test-support = ["dep:tempfile", "postio-model/test-corpus"]
 
 [dependencies]
 blake3 = "1.8.7"
+# The store's master key comes from the kernel's entropy pool and nowhere
+# else (ADR 0014 Q3). `getrandom` is the OS RNG with no generator in front of
+# it to be reproduced.
+getrandom = "0.3.4"
+# Key material overwrites itself when it drops, the same discipline
+# `postio-imap`'s `Password` already keeps.
+zeroize = "1.9.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model = { version = "0.1.0", path = "../postio-model" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
