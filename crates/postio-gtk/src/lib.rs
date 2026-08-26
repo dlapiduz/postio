@@ -67,6 +67,7 @@ pub mod cheatsheet;
 pub mod composer;
 pub mod config;
 pub mod drag_out;
+pub mod editor;
 pub mod feed;
 pub mod finder;
 pub mod fonts;
