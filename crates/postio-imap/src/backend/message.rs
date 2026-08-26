@@ -389,6 +389,12 @@ impl PartNode {
         attachment.content_id = self.content_id.clone();
         attachment.disposition = self.disposition.clone();
         attachment.part_id = Some(self.section.clone());
+        // What will explain the bytes when somebody fetches `BODY[<section>]`
+        // and gets them back encoded, with no headers of their own (ADR 0017,
+        // the payload axis). This is the only moment a `BODYSTRUCTURE` and an
+        // `Attachment` are both in hand, so it is here or it is a second
+        // round trip for `[<section>.MIME]` per part.
+        attachment.part_headers = Some(self.mime_headers());
         attachment
     }
 }
