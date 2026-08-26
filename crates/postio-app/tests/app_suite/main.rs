@@ -80,6 +80,14 @@ const CASES: &[(&str, fn())] = &[
         search_index::a_store_the_application_opened_can_be_searched as fn(),
     ),
     (
+        "search_index::a_store_that_predates_body_indexing_catches_up",
+        search_index::a_store_that_predates_body_indexing_catches_up as fn(),
+    ),
+    (
+        "search_index::opening_the_window_indexes_local_bodies_without_being_asked",
+        search_index::opening_the_window_indexes_local_bodies_without_being_asked as fn(),
+    ),
+    (
         "search_results::a_query_puts_the_matching_messages_in_the_list",
         search_results::a_query_puts_the_matching_messages_in_the_list as fn(),
     ),

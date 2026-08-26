@@ -204,14 +204,111 @@ pub fn open_store() -> Option<(Database, BlobStore)> {
 /// `messages_fts` did not exist on any real store and search had nothing to
 /// search — `postio-x4e`, and the ninth instance of `postio-bl2`.
 ///
-/// Message *bodies* are a separate matter: they live in the blob store, no
-/// trigger can reach them, and `index_body` has to be called when a backfill
-/// lands one. That half is still missing.
+/// Message *bodies* are a separate matter: they live in the blob store, so no
+/// trigger can reach them and nothing here can either — this function has no
+/// blob store. `postio_sync::backfill::fetch_body` indexes each body as it
+/// lands, and [`index_local_bodies`] catches up whatever landed before that
+/// call existed (#327).
 pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error::Error>> {
     let connection = database.connection()?;
     postio_index::index::ensure_schema(&connection)?;
     tracing::debug!("the search index is ready");
     Ok(())
+}
+
+/// How many bodies one pass of [`index_local_bodies`] reads before letting go
+/// of its connection.
+///
+/// The pass holds a pooled connection and reads a blob per message, and the
+/// rest of the application shares that pool. Batching bounds how long any one
+/// checkout lasts without making the pass itself stop early: it keeps taking
+/// batches until there is nothing left.
+const INDEX_BODY_BATCH: u32 = 200;
+
+/// Index every message whose body is already on this machine and whose
+/// indexed text is empty. Answers how many it indexed.
+///
+/// # Why this exists at all
+///
+/// `postio_index::index::index_body` was written, tested and benched, and no
+/// production code ever called it — so `search_documents.body` was empty on
+/// every message in every real store, and search matched metadata only
+/// (#327). The fix proper is in `postio_sync::backfill::fetch_body`, where
+/// every body lands. This is the other half: mail that was already local when
+/// that call did not exist, and any body whose index write was lost between
+/// the storage commit point and it.
+///
+/// # Why it is safe to run on every start
+///
+/// It is driven by
+/// [`messages_missing_body_text`](postio_index::index::messages_missing_body_text),
+/// which asks for messages whose body is local *and* whose indexed text is
+/// empty — so on a store that is caught up it does one query, finds nothing,
+/// and returns. Re-indexing a message overwrites one column of one row keyed
+/// by `message_id`; there is no row to duplicate.
+///
+/// # Not on the startup path
+///
+/// The first run over an existing archive reads a blob per message, which is
+/// minutes of I/O on a large one. Callers must put this on a worker — the
+/// application spawns it on the runtime after the window is up — because a
+/// mail client that will not draw until its search index is warm has traded
+/// the wrong thing for search.
+///
+/// Errors on one message are logged and skipped rather than abandoning the
+/// pass: one unreadable blob should cost that message its body search, not
+/// every message after it.
+pub fn index_local_bodies(
+    database: &Database,
+    blobs: &BlobStore,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut indexed = 0usize;
+    loop {
+        let connection = database.connection()?;
+        let candidates =
+            postio_index::index::messages_missing_body_text(&connection, INDEX_BODY_BATCH)?;
+        if candidates.is_empty() {
+            break;
+        }
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            let body = match messages.body_blobs(message) {
+                Ok(Some(stored)) => postio_model::MessageBody {
+                    text: stored.text.and_then(|id| read_text(blobs, &id)),
+                    html: stored.html.and_then(|id| read_text(blobs, &id)),
+                },
+                // The row says its body is local and it names no blobs. That
+                // is a message that genuinely had none -- a header-only
+                // notification, say -- and writing the empty string is how it
+                // stops being asked about on every start.
+                Ok(None) => postio_model::MessageBody::default(),
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a body to index");
+                    continue;
+                }
+            };
+            match postio_index::index::index_body_of(&connection, *id, &body) {
+                Ok(()) => indexed += 1,
+                Err(error) => tracing::debug!(message = id, %error, "cannot index a body"),
+            }
+        }
+        let taken = candidates.len();
+        drop(connection);
+        if taken < INDEX_BODY_BATCH as usize {
+            break;
+        }
+    }
+    if indexed > 0 {
+        // A count and nothing else: what a log may carry about mail.
+        tracing::info!(indexed, "indexed bodies that were already local");
+    }
+    Ok(indexed)
+}
+
+/// One body blob as text, or nothing if it cannot be read or is not UTF-8.
+fn read_text(blobs: &BlobStore, id: &postio_model::BlobId) -> Option<String> {
+    String::from_utf8(blobs.get(id).ok()?).ok()
 }
 
 /// The account to open, if the store holds one.
