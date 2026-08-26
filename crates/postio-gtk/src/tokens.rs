@@ -388,6 +388,81 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     Ok(out)
 }
 
+/// Generate `data/reader-tokens.css` from the parsed design system: the
+/// `--r-*` custom properties `data/reader.css`'s structural rules reference.
+///
+/// A `WebView` has its own CSS engine with no notion of the GTK style
+/// context `--postio-*` variables live on (see [`generate`]'s module docs),
+/// so this emits literal values — the same parser and the same tint/ramp
+/// math, mapped onto the reader's own, smaller role set. Unlike GTK, WebKit
+/// honours `@media (prefers-color-scheme: dark)` directly, so the reader
+/// needs no `postio-dark` class equivalent.
+pub fn generate_reader(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
+    let mut out = String::with_capacity(2 * 1024);
+
+    writeln!(out, "/* GENERATED FILE — do not edit by hand.").unwrap();
+    writeln!(out, " *").unwrap();
+    writeln!(out, " * Source : {source}").unwrap();
+    writeln!(
+        out,
+        " * Emitted by: crates/postio-gtk/build.rs via crates/postio-gtk/src/tokens.rs"
+    )
+    .unwrap();
+    writeln!(out, " * Regenerate: cargo build -p postio-gtk").unwrap();
+    writeln!(out, " *").unwrap();
+    writeln!(
+        out,
+        " * The `--r-*` custom properties data/reader.css's structural rules\n\
+         \x20* reference. A WebView has its own CSS engine with no notion of the GTK\n\
+         \x20* style context tokens.css's `--postio-*` variables live on, so these are\n\
+         \x20* literal values computed from the same Tokens — same parser, same drift\n\
+         \x20* test (tests/reader_tokens.rs), a different role mapping for the pane."
+    )
+    .unwrap();
+    writeln!(out, " */\n").unwrap();
+
+    write_scheme(&mut out, ":root", &reader_light_roles(tokens)?)?;
+
+    writeln!(out, "@media (prefers-color-scheme: dark) {{").unwrap();
+    writeln!(out, "  :root {{").unwrap();
+    for (name, value) in reader_dark_roles(tokens)? {
+        writeln!(out, "    {name}: {value};").unwrap();
+    }
+    writeln!(out, "  }}").unwrap();
+    writeln!(out, "}}").unwrap();
+
+    Ok(out)
+}
+
+fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
+    Ok(vec![
+        ("--r-ground", t.need("color-neutral-100")?.to_string()),
+        ("--r-ink", t.need("color-text")?.to_string()),
+        ("--r-ink-secondary", t.tint("color-text", 80.0)?),
+        ("--r-dim", t.tint("color-text", 55.0)?),
+        ("--r-hairline", t.need("color-divider")?.to_string()),
+        ("--r-accent", t.need("color-accent")?.to_string()),
+        ("--r-quote-bg", t.tint("color-accent", 6.0)?),
+        ("--r-match-bg", t.tint("color-accent", 28.0)?),
+    ])
+}
+
+fn reader_dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
+    Ok(vec![
+        ("--r-ground", t.need("color-neutral-900")?.to_string()),
+        ("--r-ink", t.need("color-neutral-100")?.to_string()),
+        (
+            "--r-ink-secondary",
+            t.need("color-neutral-200")?.to_string(),
+        ),
+        ("--r-dim", t.need("color-neutral-400")?.to_string()),
+        ("--r-hairline", t.need("color-neutral-700")?.to_string()),
+        ("--r-accent", t.need("color-accent-400")?.to_string()),
+        ("--r-quote-bg", t.tint("color-accent-400", 8.0)?),
+        ("--r-match-bg", t.tint("color-accent-400", 32.0)?),
+    ])
+}
+
 /// One scheme block: semantic roles first, then the libadwaita overrides they
 /// feed. Both lists are ordered, so the output is byte-reproducible.
 fn write_scheme(

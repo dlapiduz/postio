@@ -14,6 +14,12 @@ pub const TOKENS_CSS: &str = "/dev/postio/Postio/tokens.css";
 /// Postio's own widget styles, layered on top of the tokens.
 pub const SHELL_CSS: &str = "/dev/postio/Postio/shell.css";
 
+/// The reading pane's generated palette (#296): the `--r-*` custom
+/// properties [`READER_CSS`]'s structural rules reference, computed from the
+/// same design tokens as [`TOKENS_CSS`] but as literal values, since a
+/// `WebView`'s CSS engine cannot see GTK's `--postio-*` variables.
+pub const READER_TOKENS_CSS: &str = "/dev/postio/Postio/reader-tokens.css";
+
 /// The reading pane's stylesheet, injected into the `WebView` — see
 /// `reader::view`. Separate from [`SHELL_CSS`] because it targets a
 /// different CSS engine entirely and cannot use the GTK `--postio-*`
