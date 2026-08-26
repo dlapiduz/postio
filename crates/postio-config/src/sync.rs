@@ -7,6 +7,7 @@
 //! max_connections = 5      # per account
 //! sync_on_startup = true
 //! body_fetch = "lazy"      # lazy | eager
+//! attachment_fetch = "on_open" # on_open | eager | never
 //! initial_sync_messages = 5000
 //! notify = true            # desktop notifications for new mail
 //! notify_roles = ["inbox"] # which mailboxes' arrivals notify
@@ -25,6 +26,29 @@ pub enum BodyFetch {
     Lazy,
     /// Download bodies as soon as headers arrive.
     Eager,
+}
+
+/// When an attachment's bytes are downloaded — ADR 0017's payload axis.
+///
+/// A different question from [`BodyFetch`], and it has to be: on a real
+/// mailbox, attachment payloads are ~90% of the bytes and none of the words.
+/// Every message's *text* is fetched to completion because that is what makes
+/// search complete and offline reading real; a PDF contributes its filename to
+/// search and nothing else. So this is the choice between a 1.4 GB store and a
+/// 12.4 GB one, and it is worth being asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentFetch {
+    /// Fetch a payload when it is opened or saved, and never before. The
+    /// local-first default: metadata is synced for every part, so
+    /// `has:attachment` and `filename:` answer with nothing downloaded.
+    #[default]
+    OnOpen,
+    /// Download payloads behind the text too, for a complete offline archive.
+    Eager,
+    /// Never download a payload, not even on open. Filename search and
+    /// nothing more.
+    Never,
 }
 
 fn poll_interval_secs() -> u64 {
@@ -64,6 +88,9 @@ pub struct SyncConfig {
     /// When to download bodies.
     #[serde(default)]
     pub body_fetch: BodyFetch,
+    /// When to download attachment payloads.
+    #[serde(default)]
+    pub attachment_fetch: AttachmentFetch,
     /// How many messages the first sync reaches back for, newest first.
     #[serde(default = "initial_sync_messages")]
     pub initial_sync_messages: u32,
@@ -90,6 +117,7 @@ impl Default for SyncConfig {
             max_connections: max_connections(),
             sync_on_startup: true,
             body_fetch: BodyFetch::default(),
+            attachment_fetch: AttachmentFetch::default(),
             initial_sync_messages: initial_sync_messages(),
             notify: true,
             notify_roles: notify_roles(),

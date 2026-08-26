@@ -47,6 +47,7 @@ pub fn start(
     events: EventSink,
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
+    backfill: postio_runtime::BackfillPolicy,
 ) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
 
@@ -82,7 +83,7 @@ pub fn start(
         secrets,
         events,
         retry: Default::default(),
-        backfill: Default::default(),
+        backfill,
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::NetworkManager,

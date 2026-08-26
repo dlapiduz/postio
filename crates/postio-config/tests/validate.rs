@@ -228,6 +228,10 @@ fn every_enum_field_is_checked() {
         ("ui.theme", "[ui]\ntheme = \"sepia\"\n"),
         ("sync.body_fetch", "[sync]\nbody_fetch = \"whenever\"\n"),
         (
+            "sync.attachment_fetch",
+            "[sync]\nattachment_fetch = \"sometimes\"\n",
+        ),
+        (
             "accounts.a.imap.security",
             "[accounts.a.imap]\nsecurity = \"maybe-tls\"\n",
         ),

@@ -210,6 +210,7 @@ pub fn run() -> glib::ExitCode {
                 bridge.commands(),
             )
             .with_mailbox_roles(mailbox_roles.clone())
+            .with_backfill(postio_session::backfill_policy(&sync_config))
         });
     application.connect_activate(move |application| {
         let Some(window) = application.active_window().and_downcast::<Window>() else {
@@ -498,6 +499,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.events.clone(),
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
+        wiring.backfill,
     ) else {
         return;
     };
