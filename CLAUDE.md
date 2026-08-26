@@ -16,7 +16,8 @@ scripts/issue-release.sh <n>            # remove the worktree
 ```
 
 An issue is yours when it is open, labelled `ready`, unassigned, and blocked
-by nothing still open. Never take `epic`, `icebox`, or `needs-architecture`.
+by nothing still open. Never take `epic`, `icebox`, `needs-architecture`, or
+`needs-maintainer`.
 Priority is `p0`…`p4`; the claim script picks the most important thing, and
 `scripts/issue-claim.sh 42` takes a specific one.
 
@@ -39,6 +40,11 @@ costs a round trip that may not come back for hours. Stop only when:
    backlog for unlabelled work.
 2. A decision is genuinely the maintainer's: scope, product direction, a
    trade-off with no defensible default. ("Which name is nicer" is yours.)
+   Label it `needs-maintainer` and comment with the specific question and
+   the options — don't just stop silently, and don't reach for
+   `needs-architecture` instead: that one is `/ux-architect`'s queue, for a
+   design or architecture call an agent can actually make. This is for the
+   ones only the maintainer can.
 3. Context is nearly gone.
 
 Whichever applies, **land or commit what you have first**. Uncommitted work is
@@ -197,6 +203,8 @@ for a stranger who can't ask follow-ups:
 | Why the fix is shaped this way | the commit body |
 | What you discovered on the way | a comment on the issue |
 | Work this revealed | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
+| Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
+| Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
 | A constraint future sessions must respect | `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
 
