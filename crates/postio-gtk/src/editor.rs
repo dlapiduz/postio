@@ -21,8 +21,11 @@
 //! [`NetworkSession`]: webkit6::NetworkSession
 //! [`WebContext`]: webkit6::WebContext
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
+use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
 use crate::reader::scheme::{self, BlobSource};
@@ -37,10 +40,23 @@ pub const EDITOR_BASE_URI: &str = "postio-editor:///";
 /// blob scheme.
 const EDITOR_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src postio-cid:";
 
-/// The profile settings the dialect contract depends on, applied the moment
-/// the document exists so no gesture can run before them.
-const PROFILE_SCRIPT: &str = "document.execCommand('defaultParagraphSeparator', false, 'p'); \
-     document.execCommand('styleWithCSS', false, 'false');";
+/// The bridge script — profile settings plus edit reporting.
+///
+/// `include_str!` rather than a runtime resource lookup: compiled into the
+/// binary is the property ADR 0003's "shipped in the bundle" exists for,
+/// and it removes a registration-order dependency from every test that
+/// builds an editor. The file lives beside the other bundled assets in
+/// `data/`.
+const EDITOR_SCRIPT: &str = include_str!("../data/editor.js");
+
+/// The script-message channel the bridge reports edits on.
+const EDITED_MESSAGE: &str = "postioEdited";
+
+/// How long after an edit the next one still amends the same undo step.
+///
+/// What makes a typing run one `Ctrl+Z` rather than one per keystroke; the
+/// pause that ends a run is a human pause, so the default is human-sized.
+const COALESCE: Duration = Duration::from_millis(700);
 
 /// Build the editing view: JavaScript on for the host, everything else the
 /// reader's lockdown list closes, closed.
@@ -49,25 +65,32 @@ const PROFILE_SCRIPT: &str = "document.execCommand('defaultParagraphSeparator', 
 /// #341 lands them in the blob store. The view arrives empty; [`seed`] loads
 /// the editing shell.
 pub fn editing_view(source: Rc<dyn BlobSource>) -> webkit6::WebView {
+    let content = webkit6::UserContentManager::new();
+    content.add_script(&webkit6::UserScript::new(
+        EDITOR_SCRIPT,
+        webkit6::UserContentInjectedFrames::TopFrame,
+        webkit6::UserScriptInjectionTime::End,
+        &[],
+        &[],
+    ));
+    view_with(&content, source)
+}
+
+/// The shared assembly: session, context, scheme, settings, policy.
+fn view_with(
+    content: &webkit6::UserContentManager,
+    source: Rc<dyn BlobSource>,
+) -> webkit6::WebView {
     let network_session = webkit6::NetworkSession::new_ephemeral();
     network_session.set_persistent_credential_storage_enabled(false);
 
     let context = webkit6::WebContext::new();
     scheme::register(&context, source);
 
-    let content = webkit6::UserContentManager::new();
-    content.add_script(&webkit6::UserScript::new(
-        PROFILE_SCRIPT,
-        webkit6::UserContentInjectedFrames::TopFrame,
-        webkit6::UserScriptInjectionTime::End,
-        &[],
-        &[],
-    ));
-
     let view = webkit6::WebView::builder()
         .web_context(&context)
         .network_session(&network_session)
-        .user_content_manager(&content)
+        .user_content_manager(content)
         .settings(&editing_settings())
         .hexpand(true)
         .vexpand(true)
@@ -147,4 +170,165 @@ fn handle_decide_policy(
         return true;
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// The bridge
+// ---------------------------------------------------------------------------
+
+/// What a change handler receives: the document as it now stands.
+type ChangedHandler = Box<dyn Fn(&Document)>;
+
+struct EditorState {
+    document: RefCell<Document>,
+    history: RefCell<EditHistory>,
+    changed: RefCell<Vec<ChangedHandler>>,
+    last_edit: Cell<Option<Instant>>,
+    coalesce: Duration,
+}
+
+/// The editing surface with its document attached: Document in, WebKit's
+/// dialect out, Document again.
+///
+/// The DOM is a working copy and never the record (ADR 0004 Q3): every edit
+/// the bridge script reports is parsed straight back into the canonical
+/// [`Document`], and that parse — total, narrowing — is the sanitisation on
+/// the way out that hardening requirement 5 demands. Undo is the document's
+/// own ([`EditHistory`]), never the widget's, with a typing run coalesced
+/// into one step by [`EditHistory::amend`] inside a human-sized pause.
+pub struct Editor {
+    view: webkit6::WebView,
+    state: Rc<EditorState>,
+}
+
+impl Editor {
+    /// An editor over `source` for its `postio-cid:` images.
+    pub fn new(source: Rc<dyn BlobSource>) -> Self {
+        Self::with_coalesce(source, COALESCE)
+    }
+
+    /// As [`new`](Self::new), choosing the typing-run window — what the
+    /// tests use to make coalescing deterministic instead of racing a
+    /// wall clock.
+    pub fn with_coalesce(source: Rc<dyn BlobSource>, coalesce: Duration) -> Self {
+        let content = webkit6::UserContentManager::new();
+        content.add_script(&webkit6::UserScript::new(
+            EDITOR_SCRIPT,
+            webkit6::UserContentInjectedFrames::TopFrame,
+            webkit6::UserScriptInjectionTime::End,
+            &[],
+            &[],
+        ));
+        content.register_script_message_handler(EDITED_MESSAGE, None);
+
+        let view = view_with(&content, source);
+        let state = Rc::new(EditorState {
+            document: RefCell::new(Document::new()),
+            history: RefCell::new(EditHistory::new()),
+            changed: RefCell::new(Vec::new()),
+            last_edit: Cell::new(None),
+            coalesce,
+        });
+
+        content.connect_script_message_received(Some(EDITED_MESSAGE), {
+            let state = state.clone();
+            move |_, value| {
+                if !value.is_string() {
+                    return;
+                }
+                absorb(&state, &value.to_str());
+            }
+        });
+
+        Editor { view, state }
+    }
+
+    /// The widget to embed. The pane owns layout; the editor owns content.
+    pub fn widget(&self) -> &webkit6::WebView {
+        &self.view
+    }
+
+    /// Show `document` for editing, forgetting any previous history — a
+    /// draft opening, not an edit.
+    pub fn load(&self, document: Document) {
+        self.state.history.borrow_mut().clear();
+        self.state.last_edit.set(None);
+        seed(&self.view, &document.to_html());
+        *self.state.document.borrow_mut() = document;
+    }
+
+    /// The document as it now stands. The record; the DOM is its copy.
+    pub fn document(&self) -> Document {
+        self.state.document.borrow().clone()
+    }
+
+    /// Run `handler` after every absorbed edit, undo and redo.
+    pub fn connect_changed(&self, handler: impl Fn(&Document) + 'static) {
+        self.state.changed.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Step back one typing run. `Ctrl+Z`.
+    pub fn undo(&self) {
+        let Some(document) = self.state.history.borrow_mut().undo() else {
+            return;
+        };
+        self.show(document);
+    }
+
+    /// Step forward again.
+    pub fn redo(&self) {
+        let Some(document) = self.state.history.borrow_mut().redo() else {
+            return;
+        };
+        self.show(document);
+    }
+
+    /// Whether `Ctrl+Z` has anywhere to go.
+    pub fn can_undo(&self) -> bool {
+        self.state.history.borrow().can_undo()
+    }
+
+    /// Put `document` on screen and on record, ending any typing run —
+    /// the shared tail of undo and redo.
+    fn show(&self, document: Document) {
+        self.state.last_edit.set(None);
+        seed(&self.view, &document.to_html());
+        *self.state.document.borrow_mut() = document;
+        let current = self.state.document.borrow();
+        for handler in self.state.changed.borrow().iter() {
+            handler(&current);
+        }
+    }
+}
+
+/// Fold one reported edit into the record.
+///
+/// A free function over the shared state, not a method: the script-message
+/// handler holds only the `Rc`, never a whole `Editor`, so dropping the
+/// editor drops the state as soon as WebKit lets go of the closure.
+fn absorb(state: &Rc<EditorState>, html: &str) {
+    let after = parse(html);
+    let before = state.document.borrow().clone();
+    if after == before {
+        return;
+    }
+
+    let now = Instant::now();
+    let within_run = state
+        .last_edit
+        .get()
+        .is_some_and(|last| now.duration_since(last) < state.coalesce);
+    {
+        let mut history = state.history.borrow_mut();
+        if !(within_run && history.amend(after.clone())) {
+            history.record(before, after.clone());
+        }
+    }
+    state.last_edit.set(Some(now));
+
+    *state.document.borrow_mut() = after;
+    let current = state.document.borrow();
+    for handler in state.changed.borrow().iter() {
+        handler(&current);
+    }
 }
