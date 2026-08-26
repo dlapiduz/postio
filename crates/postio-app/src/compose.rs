@@ -276,15 +276,19 @@ fn install_autosave(
 /// `DraftRepository::save_and_sync`. It costs nothing extra here: the queue
 /// row is written inside the same transaction, and the engine sends it when
 /// there is a connection. A run of autosaves folds into one upload.
+///
+/// `interactive_write` rather than a bare connection: a draft autosave is a
+/// write the person typing is waiting on, so it goes ahead of a backfill's
+/// bulk writes rather than queueing behind them (#425).
 fn save_draft(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
-    let connection = database.connection()?;
+    let (connection, _permit) = database.interactive_write()?;
     DraftRepository::new(&connection).save_and_sync(draft, Utc::now())?;
     Ok(())
 }
 
 /// Discard: the local row goes now, and the server copy is queued for removal.
 fn delete_draft(database: &Database, id: DraftId) -> postio_storage::Result<()> {
-    let connection = database.connection()?;
+    let (connection, _permit) = database.interactive_write()?;
     DraftRepository::new(&connection).discard(id, Utc::now())?;
     Ok(())
 }
@@ -337,7 +341,7 @@ fn install_send(composer: &Composer, database: Database, last_id: Rc<Cell<Option
 /// Send: the draft goes to `Queued` and its `Operation::Send` row is written,
 /// in one transaction — see `DraftRepository::queue_send`.
 fn queue_send(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
-    let connection = database.connection()?;
+    let (connection, _permit) = database.interactive_write()?;
     DraftRepository::new(&connection).queue_send(draft, Utc::now())?;
     Ok(())
 }

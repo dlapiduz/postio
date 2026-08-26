@@ -861,6 +861,46 @@ thin. `engine::sync_wave` is the one place that does this and is written to
 that rule (#32): it pops its mailboxes and takes all of its connections in a
 plain `for` loop, and only then builds the `FuturesUnordered`.
 
+**`busy_timeout` is a retry loop, not a queue — interactive writes need a
+permit** (#425). SQLite takes one writer at a time even under WAL, and
+`PRAGMA busy_timeout` settles a collision by making the loser sleep and try
+again, backing off up to 100 ms. There is no ordering in that and no
+fairness: each retry is a fresh race. During a first sync the sync lanes
+commit write units back to back with essentially no gap between one `COMMIT`
+and the next `BEGIN IMMEDIATE`, so a keystroke's write loses that race over
+and over. Measured: an archive took **1.8 seconds** to write one row, with the
+connection pool almost idle the whole time (`Pool::get` returned in two
+microseconds).
+
+Two things that look like fixes are not. A **bigger pool** does nothing — the
+pool was never the contended resource. **Shorter background transactions** do
+almost nothing either: cut to an eighth of their size, the same write still
+took half a second, because the number of races to lose grew as fast as each
+one shrank. This is the trap worth not re-deriving; both were leading
+hypotheses on #425 and both were wrong.
+
+What works is `postio_storage::WriteGate`: an application-level queue in front
+of SQLite's write lock, with two priorities. A background writer never
+*begins* a write while an interactive one is waiting, so a person waits at
+most for the background unit already in progress — and `initial::WRITE_UNIT`
+(25 messages, ~8 ms) is what keeps that bound inside the interaction budget.
+Both halves are load-bearing: the gate without a bounded unit would make a
+keystroke wait out a whole 200-message batch, and a bounded unit without the
+gate is the "shorter transactions" non-fix above.
+
+Two rules for anything that writes. **Take the pooled connection first, then
+the permit** — a permit-holder blocked in `Pool::get` can be waiting on a
+connection held by a permit-waiter. And **one permit at a time per thread**:
+the gate is not re-entrant, so nesting deadlocks against itself, which is why
+`Actions` takes its permit in `connect()` (one per write unit) rather than
+around `run`, where the verbs that resolve a target before acting on it would
+nest.
+
+A writer that takes no permit is invisible to the gate and is starved exactly
+as before. That is not a safety bug, but it is the first thing to check if
+"the UI froze during a sync" ever comes back. The interactive writers today
+are `postio_session::actions` and `postio_app::compose`.
+
 **Concurrent mailbox sync: what bounds it, and what it must not break** (#32).
 `engine::sync_wave` runs `sync_lanes(pool)` mailbox passes at once — the
 database pool's size less two reserved connections (UI reads, engine
