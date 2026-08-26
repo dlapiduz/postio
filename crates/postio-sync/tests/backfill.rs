@@ -568,15 +568,36 @@ async fn a_cancelled_fetch_stores_nothing() {
 // And it reaches the search index
 // ---------------------------------------------------------------------------
 
-/// The indexed body text for `id`, or `None` if it has no shadow row at all.
-fn indexed_body(connection: &postio_storage::PooledConnection, id: MessageId) -> Option<String> {
+/// Whether `id`'s body has been indexed at all.
+///
+/// `message_bodies_fts` is `content = ''` — contentless — so unlike the
+/// `search_documents.body` column these tests used to read, there is no text
+/// to read back: the index keeps what it needs to answer a query and nothing
+/// else (ADR 0016, and the reason it exists is that the column was the whole
+/// mailbox duplicated inside SQLite). Presence and matching are therefore the
+/// only two questions available, and between them they are the ones these
+/// tests were always really asking.
+fn body_is_indexed(connection: &postio_storage::PooledConnection, id: MessageId) -> bool {
     connection
         .query_row(
-            "SELECT body FROM search_documents WHERE message_id = ?1",
+            "SELECT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = ?1)",
             [id.get()],
-            |row| row.get::<_, String>(0),
+            |row| row.get::<_, bool>(0),
         )
-        .ok()
+        .unwrap_or(false)
+}
+
+/// Whether `id`'s indexed body matches `query` — an FTS5 match expression, so
+/// a bare word or a `"quoted phrase"`.
+fn body_matches(connection: &postio_storage::PooledConnection, id: MessageId, query: &str) -> bool {
+    connection
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM message_bodies_fts
+                             WHERE rowid = ?1 AND message_bodies_fts MATCH ?2)",
+            rusqlite::params![id.get(), query],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap_or(false)
 }
 
 /// Issue #327: `index_body` existed, was tested, and nothing ever called it.
@@ -596,11 +617,10 @@ async fn a_fetched_body_becomes_searchable_text() {
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[1];
 
-    assert_eq!(
-        indexed_body(&local.connection, id).as_deref(),
-        Some(""),
-        "the header pass leaves the body column empty, which is the state \
-         this test is about leaving behind"
+    assert!(
+        !body_is_indexed(&local.connection, id),
+        "the header pass indexes no body — it has none to index — which is \
+         the state this test is about leaving behind"
     );
 
     fetch_body(
@@ -613,9 +633,8 @@ async fn a_fetched_body_becomes_searchable_text() {
     .await
     .expect("fetch");
 
-    assert_eq!(
-        indexed_body(&local.connection, id).as_deref(),
-        Some(format!("The body of note {uid}.\r\n").as_str()),
+    assert!(
+        body_matches(&local.connection, id, &format!("\"body of note {uid}\"")),
         "the body landed in the blob store and never reached the index, so \
          a word that appears only in a message's body finds nothing (#327)"
     );
@@ -660,17 +679,19 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
     .await
     .expect("fetch");
 
-    let indexed = indexed_body(&local.connection, id).expect("a shadow row");
     assert!(
-        indexed.contains("stayed nominal"),
-        "an HTML-only message is not findable by anything it actually says: \
-         indexed as {indexed:?}"
+        body_is_indexed(&local.connection, id),
+        "an HTML-only message reached the index at all"
+    );
+    assert!(
+        body_matches(&local.connection, id, "\"stayed nominal\""),
+        "an HTML-only message is not findable by anything it actually says"
     );
     for markup in ["div", "href", "tracker.example"] {
         assert!(
-            !indexed.contains(markup),
-            "{markup:?} is in the index, so this message is a hit for a word \
-             it never contained: {indexed:?}"
+            !body_matches(&local.connection, id, markup),
+            "{markup:?} matches, so this message is a hit for a word it never \
+             contained — the markup went into the index instead of the text"
         );
     }
 }
@@ -926,15 +947,10 @@ async fn text_fetched_by_section_reaches_the_search_index() {
     .await
     .expect("fetch");
 
-    let indexed: String = local
-        .connection
-        .query_row(
-            "SELECT body FROM search_documents WHERE message_id = ?1",
-            [id.get()],
-            |row| row.get(0),
-        )
-        .expect("the shadow row");
-    assert_eq!(indexed, "Your statement is attached.");
+    assert!(
+        body_matches(&local.connection, id, "\"statement is attached\""),
+        "the text part's words did not reach the index"
+    );
 }
 
 #[tokio::test]
