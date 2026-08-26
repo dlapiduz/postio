@@ -207,7 +207,7 @@ impl Actions {
         events: &EventSink,
         recording: Recording,
     ) -> Result<(), CommandError> {
-        let applied = match command {
+        let applied: Vec<Applied> = match command {
             Command::Archive { target } => self.relocate(
                 target,
                 Destination::Role(MailboxRole::Archive),
@@ -238,19 +238,21 @@ impl Actions {
                 })?;
                 self.relocate(target, Destination::Mailbox(to), UndoKind::Move)?
             }
-            Command::Flag { target, flagged } => self.set_flag(target, Flag::Flagged, *flagged)?,
+            Command::Flag { target, flagged } => {
+                vec![self.set_flag(target, Flag::Flagged, *flagged)?]
+            }
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
             Command::MarkUnread { target, unread } => {
-                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?
+                vec![self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?]
             }
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
-            Command::MarkReadOnDwell { message } => self.set_flag(
+            Command::MarkReadOnDwell { message } => vec![self.set_flag(
                 &MessageTarget::Messages(vec![*message]),
                 Flag::Seen,
                 Some(true),
-            )?,
+            )?],
             other => {
                 return Err(CommandError::rejected(format!(
                     "`{}` is not wired up yet",
@@ -258,7 +260,9 @@ impl Actions {
                 )));
             }
         };
-        self.announce(applied, events, recording);
+        for unit in applied {
+            self.announce(unit, events, recording);
+        }
         Ok(())
     }
 
@@ -294,13 +298,58 @@ impl Actions {
         target: &MessageTarget,
         to: Destination,
         kind: UndoKind,
-    ) -> Result<Applied, CommandError> {
+    ) -> Result<Vec<Applied>, CommandError> {
         let mut connection = self.connect()?;
         match self.aim(&connection, target)? {
-            Aim::Rows(rows) => self.relocate_rows(&mut connection, rows, to, kind),
-            Aim::Bulk { set, account, from } => {
-                self.relocate_set(&mut connection, set, account, from, to, kind)
+            // One unit per account, which is what `Applied::account` has
+            // always said a unified-scope action becomes. A selection made in
+            // a unified view can span accounts, and each message has to land
+            // in *its own* account's folder: a role destination resolves per
+            // account, and filing one account's mail into another's Archive
+            // would move it on a server it does not belong to (#182).
+            Aim::Rows(rows) => {
+                let mut by_account: BTreeMap<AccountId, Vec<Message>> = BTreeMap::new();
+                for row in rows {
+                    by_account.entry(row.account_id).or_default().push(row);
+                }
+                // Every destination resolves *before* anything is written.
+                // Each account's relocation commits its own transaction, so a
+                // failure discovered half way through would leave some of the
+                // selection moved and the rest not, with an error claiming
+                // the whole thing failed. An account with no Archive folder
+                // has to stop the action while stopping it is still free.
+                for account in by_account.keys() {
+                    mailbox_for(&connection, *account, to)?;
+                }
+
+                let mut units = Vec::with_capacity(by_account.len());
+                let mut nothing_to_do = None;
+                for (_, rows) in by_account {
+                    match self.relocate_rows(&mut connection, rows, to, kind) {
+                        Ok(unit) => units.push(unit),
+                        // Everything in this account was already filed. That
+                        // is not a failure for the accounts that were not —
+                        // but if *no* account had anything to do, the user
+                        // still deserves the sentence.
+                        Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
+                        Err(error) => return Err(error),
+                    }
+                }
+                match (units.is_empty(), nothing_to_do) {
+                    (true, Some(reason)) => Err(CommandError::Rejected(reason)),
+                    _ => Ok(units),
+                }
             }
+            // A bulk action is already one account's: the predicate names a
+            // mailbox, and a mailbox belongs to one account.
+            Aim::Bulk { set, account, from } => Ok(vec![self.relocate_set(
+                &mut connection,
+                set,
+                account,
+                from,
+                to,
+                kind,
+            )?]),
         }
     }
 
@@ -386,7 +435,15 @@ impl Actions {
         to: Destination,
         kind: UndoKind,
     ) -> Result<Applied, CommandError> {
+        // Every row here belongs to one account — `relocate` grouped them —
+        // so the role destination resolves once, against that account's own
+        // folders rather than against whichever account came first in a
+        // selection that might span several (#182).
         let account = rows[0].account_id;
+        debug_assert!(
+            rows.iter().all(|row| row.account_id == account),
+            "relocate_rows is single-account by construction; `relocate` groups"
+        );
         let destination = mailbox_for(connection, account, to)?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
@@ -910,7 +967,8 @@ mod tests {
     use postio_model::mailbox::MailboxRole;
     use postio_model::{Account, Flag, MailboxId, Message, MessageId, Operation, OperationTarget};
     use postio_storage::repository::{
-        MailboxRepository, MessageRepository, OperationQueueRepository, ThreadRepository,
+        AccountRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
+        ThreadRepository,
     };
     use postio_storage::test_support;
 
@@ -1063,6 +1121,88 @@ mod tests {
     }
 
     // ── Archive ──────────────────────────────────────────────────────────
+
+    /// ADR 0005 Q4 (#182). A unified view spans every enabled account, so a
+    /// selection made in one can hold messages from several — and each has to
+    /// land in *its own* account's Archive.
+    ///
+    /// The alternative is not a cosmetic slip: filing one account's mail into
+    /// another account's folder moves it on a server it does not belong to,
+    /// and the queued `Move` carries it there for real once the link is up.
+    #[test]
+    fn archiving_across_accounts_files_each_message_in_its_own_archive() {
+        let world = world();
+
+        // A second account, with its own inbox and its own Archive.
+        let (other_account, other_inbox, other_archive) = {
+            let connection = world.database.connection().expect("a connection");
+            let mut account = postio_model::Account::new(
+                "Other",
+                postio_model::EmailAddress::new(Some("Other"), "other@example.net"),
+            );
+            AccountRepository::new(&connection)
+                .create(&mut account)
+                .expect("the second account");
+            let inbox = test_support::mailbox(&connection, &account, "INBOX");
+            let archive = test_support::mailbox(&connection, &account, "Archive");
+            (account, inbox.id, archive.id)
+        };
+
+        let mine = world.message(world.inbox, &[]);
+        let theirs = {
+            let connection = world.database.connection().expect("a connection");
+            let mut message = Message::new(other_account.id, other_inbox, Utc::now());
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message in the other account")
+        };
+
+        // Both marked, as a unified view lets them be.
+        world.looking_at(world.inbox, &[mine, theirs], Some(mine));
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("archive");
+
+        assert_eq!(
+            world.mailbox_of(mine),
+            world.archive,
+            "the first account's message goes to its own Archive"
+        );
+        assert_eq!(
+            world.mailbox_of(theirs),
+            other_archive,
+            "and the second account's message goes to *its* Archive — not to \
+             whichever account happened to be first in the selection"
+        );
+
+        // The queued moves have to agree, or the server is told the wrong
+        // thing once the link comes up. Read against the *other* account's
+        // queue: rows are per account, and `world.queued()` only sees the
+        // first one's — which is the point.
+        let theirs_queued: Vec<(OperationTarget, Operation)> = {
+            let connection = world.database.connection().expect("a connection");
+            OperationQueueRepository::new(&connection)
+                .pending(other_account.id, Utc::now())
+                .expect("a read")
+                .into_iter()
+                .map(|row| (row.target, row.operation))
+                .collect()
+        };
+        assert!(
+            theirs_queued.contains(&(
+                OperationTarget::Message(theirs),
+                Operation::Move {
+                    from: other_inbox,
+                    to: other_archive
+                }
+            )),
+            "the queued move must name the other account's own folders, and be \
+             filed under that account: {theirs_queued:?}"
+        );
+    }
 
     #[test]
     fn archiving_the_cursor_row_files_it_and_queues_the_move() {
