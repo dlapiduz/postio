@@ -26,30 +26,38 @@ use crate::address::{self, EmailAddress};
 use crate::attachment::Attachment;
 use crate::draft::{Draft, DraftKind};
 use crate::ids::AttachmentId;
-use crate::message::Message;
+use crate::message::{Message, MessageBody};
 use crate::subject;
 
-/// Builds a reply to `source`'s sender only.
-pub fn reply(source: &Message, account: &Account) -> Draft {
-    build_reply(source, account, false)
+/// Builds a reply to `source`'s sender only, starting from `quote`.
+///
+/// The quote arrives rather than being computed — ADR 0003 Q3's inversion.
+/// Quoting rich content means parsing untrusted markup, the parser lives in
+/// `postio-body`, and that crate depends on this one; a caller with both
+/// builds the quote (`postio_body::quoted_reply`) and hands it down. A
+/// caller with nothing better uses [`plain_quote`].
+pub fn reply(source: &Message, account: &Account, quote: MessageBody) -> Draft {
+    build_reply(source, account, false, quote)
 }
 
 /// Builds a reply to `source`'s sender and every other original recipient.
 ///
 /// Never includes any of `account`'s own identities, and never lists the same
-/// address twice across `To` and `Cc`.
-pub fn reply_all(source: &Message, account: &Account) -> Draft {
-    build_reply(source, account, true)
+/// address twice across `To` and `Cc`. See [`reply`] for where `quote` comes
+/// from.
+pub fn reply_all(source: &Message, account: &Account, quote: MessageBody) -> Draft {
+    build_reply(source, account, true, quote)
 }
 
 /// Builds a forward of `source`: a blank set of recipients for the user to
-/// fill in, the original content quoted below a forwarding header block, and
+/// fill in, `body` — the original content below a forwarding header block,
+/// built by the caller as [`reply`] describes or by [`plain_forward`] — and
 /// its attachments carried over.
-pub fn forward(source: &Message, account: &Account) -> Draft {
+pub fn forward(source: &Message, account: &Account, body: MessageBody) -> Draft {
     let mut draft = Draft::new(account.id);
     draft.kind = DraftKind::Forward;
     draft.subject = subject::forward_subject(source.subject.as_deref().unwrap_or_default());
-    draft.body.text = Some(forward_body(source));
+    draft.body = body;
     draft.attachments = carried_attachments(source);
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
@@ -58,7 +66,7 @@ pub fn forward(source: &Message, account: &Account) -> Draft {
     draft
 }
 
-fn build_reply(source: &Message, account: &Account, all: bool) -> Draft {
+fn build_reply(source: &Message, account: &Account, all: bool, quote: MessageBody) -> Draft {
     let mut draft = Draft::new(account.id);
     draft.kind = if all {
         DraftKind::ReplyAll
@@ -74,7 +82,7 @@ fn build_reply(source: &Message, account: &Account, all: bool) -> Draft {
     let (to, cc) = reply_recipients(source, account, all);
     draft.to = to;
     draft.cc = cc;
-    draft.body.text = Some(quote_body(source));
+    draft.body = quote;
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
         draft.use_identity(identity);
@@ -161,17 +169,59 @@ fn exclude_self_and_seen(
 /// `postio_gtk::composer::quotable` is the one that does. Before it existed,
 /// an HTML-only message quoted as an attribution line with nothing under it.
 fn quote_body(source: &Message) -> String {
-    let attribution = format!(
+    let attribution = attribution(source);
+    match source.body.text.as_deref() {
+        Some(text) if !text.is_empty() => format!("\n\n{attribution}\n{}", quote_lines(text)),
+        _ => format!("\n\n{attribution}\n"),
+    }
+}
+
+/// The line that introduces a quote: `On 2026-08-26, Ada Lovelace wrote:`.
+///
+/// Public because the rich quote is built above this crate (see [`reply`])
+/// and both forms must say the same thing.
+pub fn attribution(source: &Message) -> String {
+    format!(
         "On {}, {} wrote:",
         source.best_date().format("%Y-%m-%d"),
         source
             .primary_from()
             .map(EmailAddress::display)
             .unwrap_or("someone")
-    );
-    match source.body.text.as_deref() {
-        Some(text) if !text.is_empty() => format!("\n\n{attribution}\n{}", quote_lines(text)),
-        _ => format!("\n\n{attribution}\n"),
+    )
+}
+
+/// The conventional header block a forward opens with, one line per entry.
+///
+/// Public for the same reason as [`attribution`].
+pub fn forward_header(source: &Message) -> Vec<String> {
+    let from = source
+        .primary_from()
+        .map(EmailAddress::to_string)
+        .unwrap_or_default();
+    vec![
+        "---------- Forwarded message ----------".to_owned(),
+        format!("From: {from}"),
+        format!("Date: {}", source.best_date().format("%Y-%m-%d %H:%M")),
+        format!("Subject: {}", source.subject.as_deref().unwrap_or_default()),
+        format!("To: {}", address::format_list(&source.to)),
+    ]
+}
+
+/// Today's plain-text quote as a [`MessageBody`] — the fallback for a caller
+/// that cannot build a rich one.
+pub fn plain_quote(source: &Message) -> MessageBody {
+    MessageBody {
+        text: Some(quote_body(source)),
+        html: None,
+    }
+}
+
+/// The plain-text forward body, as [`plain_quote`] is to [`reply`].
+pub fn plain_forward(source: &Message) -> MessageBody {
+    MessageBody {
+        text: Some(forward_body(source)),
+        html: None,
     }
 }
 
@@ -195,23 +245,9 @@ fn quote_lines(text: &str) -> String {
 /// quote-prefixed, since a forward presents the whole message rather than
 /// answering a fragment of it.
 fn forward_body(source: &Message) -> String {
-    let from = source
-        .primary_from()
-        .map(EmailAddress::to_string)
-        .unwrap_or_default();
-    let date = source.best_date().format("%Y-%m-%d %H:%M");
-    let subject = source.subject.as_deref().unwrap_or_default();
-    let to = address::format_list(&source.to);
+    let header = forward_header(source).join("\n");
     let body = source.body.text.as_deref().unwrap_or_default();
-
-    format!(
-        "\n\n---------- Forwarded message ----------\n\
-         From: {from}\n\
-         Date: {date}\n\
-         Subject: {subject}\n\
-         To: {to}\n\n\
-         {body}"
-    )
+    format!("\n\n{header}\n\n{body}")
 }
 
 /// `source`'s attachments, ready to belong to a draft rather than a sent
@@ -278,7 +314,7 @@ mod tests {
     #[test]
     fn a_reply_goes_to_the_sender_with_a_re_subject_and_a_quote() {
         let source = a_message();
-        let draft = reply(&source, &account("grace@example.com"));
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert_eq!(draft.kind, DraftKind::Reply);
         assert_eq!(draft.in_reply_to, Some(MessageId::new(42)));
@@ -303,7 +339,7 @@ mod tests {
     fn a_reply_prefers_reply_to_over_from() {
         let mut source = a_message();
         source.reply_to = vec![EmailAddress::new(None::<String>, "list@example.org")];
-        let draft = reply(&source, &account("grace@example.com"));
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert_eq!(
             draft.to,
@@ -315,7 +351,7 @@ mod tests {
     fn replying_to_an_unpersisted_message_sets_no_in_reply_to() {
         let mut source = a_message();
         source.id = MessageId::UNASSIGNED;
-        let draft = reply(&source, &account("grace@example.com"));
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert!(draft.in_reply_to.is_none());
     }
@@ -326,7 +362,7 @@ mod tests {
 
         let mut source = a_message();
         source.thread_id = Some(ThreadId::new(7));
-        let draft = reply(&source, &account("grace@example.com"));
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert_eq!(draft.thread_id, Some(ThreadId::new(7)));
     }
@@ -335,7 +371,7 @@ mod tests {
     fn replying_twice_never_stacks_re_re() {
         let mut source = a_message();
         source.subject = Some("Re: Quarterly report".to_owned());
-        let draft = reply(&source, &account("grace@example.com"));
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert_eq!(draft.subject, "Re: Quarterly report");
     }
@@ -353,7 +389,7 @@ mod tests {
         let mut source = a_message();
         source.to = vec![personal.address.clone()];
 
-        let draft = reply(&source, &work);
+        let draft = reply(&source, &work, plain_quote(&source));
         assert_eq!(draft.identity_id, Some(IdentityId::new(2)));
     }
 
@@ -361,7 +397,7 @@ mod tests {
     fn a_reply_with_no_fetched_body_still_gets_an_attribution() {
         let mut source = a_message();
         source.body = MessageBody::default();
-        let draft = reply(&source, &account("grace@example.com"));
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
 
         let body = draft.body.text.expect("still a body");
         assert!(body.contains("On 2026-03-01, Ada Lovelace wrote:"));
@@ -384,7 +420,7 @@ mod tests {
         ];
         source.cc = vec![EmailAddress::new(None::<String>, "turing@example.org")];
 
-        let draft = reply_all(&source, &account("grace@example.com"));
+        let draft = reply_all(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert_eq!(
             draft.to,
@@ -412,7 +448,7 @@ mod tests {
         // header block from a real client sometimes has.
         source.cc = vec![EmailAddress::new(Some("Ada"), "ADA@EXAMPLE.COM")];
 
-        let draft = reply_all(&source, &account("grace@example.com"));
+        let draft = reply_all(&source, &account("grace@example.com"), plain_quote(&source));
 
         assert_eq!(draft.to.len(), 1);
         assert!(
@@ -428,7 +464,11 @@ mod tests {
     #[test]
     fn a_forward_has_no_recipients_yet_and_a_fwd_subject() {
         let source = a_message();
-        let draft = forward(&source, &account("grace@example.com"));
+        let draft = forward(
+            &source,
+            &account("grace@example.com"),
+            plain_forward(&source),
+        );
 
         assert_eq!(draft.kind, DraftKind::Forward);
         assert!(draft.to.is_empty() && draft.cc.is_empty());
@@ -443,10 +483,14 @@ mod tests {
     #[test]
     fn a_forward_carries_the_original_headers_and_body_unquoted() {
         let source = a_message();
-        let body = forward(&source, &account("grace@example.com"))
-            .body
-            .text
-            .expect("a forward body");
+        let body = forward(
+            &source,
+            &account("grace@example.com"),
+            plain_forward(&source),
+        )
+        .body
+        .text
+        .expect("a forward body");
 
         assert!(body.contains("From: Ada Lovelace <ada@example.com>"));
         assert!(body.contains("Subject: Quarterly report"));
@@ -467,7 +511,11 @@ mod tests {
         attachment.blob_id = Some(crate::ids::BlobId::new("b".repeat(64)));
         source.attachments = vec![attachment];
 
-        let draft = forward(&source, &account("grace@example.com"));
+        let draft = forward(
+            &source,
+            &account("grace@example.com"),
+            plain_forward(&source),
+        );
 
         assert_eq!(draft.attachments.len(), 1);
         let carried = &draft.attachments[0];
