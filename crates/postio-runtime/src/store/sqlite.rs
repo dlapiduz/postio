@@ -12,12 +12,13 @@ use std::sync::{Arc, Mutex};
 
 use postio_storage::repository::{
     ListCursor, ListQuery, ListScope as StorageScope, MailboxRepository, MessageListRow,
-    MessageRepository, ThreadRepository,
+    MessageRepository, ThreadCursor, ThreadListQuery, ThreadListRow, ThreadRepository,
 };
 use postio_storage::{Database, Pool};
 
 use crate::store::{
-    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
+    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError, ThreadPage,
+    ThreadSummary,
 };
 
 impl From<ListScope> for StorageScope {
@@ -43,7 +44,12 @@ pub struct SqliteStore {
     pool: Pool,
     /// Where each page boundary starts, so a page does not have to be
     /// counted to from the top of the folder every time. See [`Marks`].
-    marks: Arc<Mutex<Marks>>,
+    marks: Arc<Mutex<Marks<ListCursor>>>,
+    /// The same, for the threaded list. Its own, because a folder that
+    /// threads and the same folder listed by message are different windows
+    /// with different row counts -- one set of marks would have each read
+    /// clearing the other's.
+    thread_marks: Arc<Mutex<Marks<ThreadCursor>>>,
 }
 
 /// Remembered page boundaries for one scope.
@@ -70,15 +76,26 @@ pub struct SqliteStore {
 /// and the order shifted; the consequence is one page off by a row, which is
 /// exactly what a plain `OFFSET` does in the same situation and what
 /// `page_at`'s own documentation warns about.
-#[derive(Debug, Default)]
-struct Marks {
+#[derive(Debug)]
+struct Marks<C> {
     /// The row count the marks were taken against.
     total: Option<u32>,
     /// Offset of a page boundary, and the cursor the row before it left.
-    at: BTreeMap<u32, ListCursor>,
+    at: BTreeMap<u32, C>,
 }
 
-impl Marks {
+// Derived `Default` would demand `C: Default`, and a cursor has no sensible
+// zero -- an empty map does.
+impl<C> Default for Marks<C> {
+    fn default() -> Self {
+        Marks {
+            total: None,
+            at: BTreeMap::new(),
+        }
+    }
+}
+
+impl<C: Copy> Marks<C> {
     /// Forget everything if the list is not the length it was.
     fn check(&mut self, total: u32) {
         if self.total != Some(total) {
@@ -88,7 +105,7 @@ impl Marks {
     }
 
     /// The nearest remembered boundary at or before `offset`.
-    fn nearest(&self, offset: u32) -> Option<(u32, ListCursor)> {
+    fn nearest(&self, offset: u32) -> Option<(u32, C)> {
         self.at
             .range(..=offset)
             .next_back()
@@ -96,7 +113,7 @@ impl Marks {
     }
 
     /// Remember where the page after `offset` begins.
-    fn remember(&mut self, offset: u32, cursor: ListCursor) {
+    fn remember(&mut self, offset: u32, cursor: C) {
         // Bounded: a folder read end to end at 50 a page leaves 2,000 marks
         // for 100,000 messages, and each is two integers. Worth the memory to
         // never walk the folder again.
@@ -113,6 +130,7 @@ impl SqliteStore {
         SqliteStore {
             pool: database.pool().clone(),
             marks: Arc::new(Mutex::new(Marks::default())),
+            thread_marks: Arc::new(Mutex::new(Marks::default())),
         }
     }
 
@@ -160,6 +178,59 @@ impl SqliteStore {
                 .map(|row| summarise(row, &threads))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(MessagePage { total, rows })
+        })
+        .await
+    }
+
+    /// One page of the threaded list.
+    ///
+    /// The same shape as [`SqliteStore::read_page`], over the thread window
+    /// instead of the message one: count and rows from one connection and one
+    /// moment, seek to the nearest boundary anybody has already read, and
+    /// remember where this page ended so the next one can seek too.
+    async fn read_thread_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
+        let marks = self.thread_marks.clone();
+        self.read(move |connection| {
+            let query = thread_query(connection, request.scope, request.limit)?;
+            let threads = ThreadRepository::new(connection);
+            let total = threads.count_of(&query)?;
+
+            let start = {
+                let mut marks = marks.lock().expect("not poisoned");
+                marks.check(total);
+                marks.nearest(request.offset)
+            };
+            let (seek, skip) = match start {
+                Some((at, cursor)) => (Some(cursor), request.offset - at),
+                None => (None, request.offset),
+            };
+            let rows = threads.page_at(
+                &ThreadListQuery {
+                    after: seek,
+                    ..query.clone()
+                },
+                skip,
+            )?;
+            if let Some(last) = rows.last() {
+                marks
+                    .lock()
+                    .expect("not poisoned")
+                    .remember(request.offset + rows.len() as u32, last.cursor());
+            }
+
+            let rows = rows
+                .into_iter()
+                .map(summarise_thread)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ThreadPage { total, rows })
+        })
+        .await
+    }
+
+    async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
+        self.read(move |connection| {
+            let query = thread_query(connection, scope, 0)?;
+            Ok(ThreadRepository::new(connection).count_of(&query)?)
         })
         .await
     }
@@ -273,6 +344,71 @@ fn count(
 /// indexed point reads, off the UI thread. Counting them in the list query
 /// itself would be faster still, and belongs in `postio-storage` when the
 /// badge is worth a join.
+/// The thread query a scope asks for, or why it cannot have one.
+///
+/// Folders thread; query views list messages (ADR 0015). Flagged and a thread
+/// drill-in are not folders, and answering them with conversations would be
+/// the wrong answer rather than a missing one — so this refuses instead of
+/// quietly picking a scope.
+fn thread_query(
+    connection: &postio_storage::PooledConnection,
+    scope: ListScope,
+    limit: u32,
+) -> Result<ThreadListQuery, StoreError> {
+    match scope {
+        ListScope::Mailbox(mailbox) => {
+            // One row read to learn whose folder it is. The account is not
+            // decoration: `threads.account_id` is the leading column of
+            // `idx_threads_account_last_at`, so without it the window has no
+            // index to seek and the whole flat-paging argument collapses.
+            let account = MailboxRepository::new(connection)
+                .get(mailbox)?
+                .ok_or_else(|| StoreError::new("That folder is no longer here"))?
+                .account_id;
+            Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
+        }
+        ListScope::Account(account) => Ok(ThreadListQuery::account(account).limit(limit)),
+        ListScope::Flagged(_) | ListScope::Thread(_) => Err(StoreError::new(
+            "That view lists messages rather than conversations",
+        )),
+    }
+}
+
+/// One thread row, as the frontend needs it.
+fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
+    // A thread with no visible message in scope cannot be drawn, and the
+    // query does not produce one -- the representative is what makes the row
+    // exist. Reported rather than unwrapped, because "cannot happen" is how
+    // panics get shipped.
+    let latest = row.latest.ok_or_else(|| {
+        StoreError::new("A conversation in this folder has no message to show for it")
+    })?;
+    Ok(ThreadSummary {
+        id: row.id,
+        subject: row.subject,
+        participants: row.participants,
+        message_count: row.message_count.max(1),
+        unread_count: row.unread_count,
+        flagged: row.is_flagged,
+        has_attachments: row.has_attachments,
+        last_at: row.last_at,
+        representative: MessageSummary {
+            id: latest.id,
+            thread: latest.thread_id,
+            from: latest.from,
+            subject: latest.subject,
+            preview: latest.preview,
+            received_at: latest.received_at,
+            seen: latest.seen,
+            flagged: latest.flagged,
+            answered: latest.answered,
+            draft: latest.draft,
+            has_attachments: latest.has_attachments,
+            thread_count: row.message_count.max(1),
+        },
+    })
+}
+
 fn summarise(
     row: MessageListRow,
     threads: &ThreadRepository<'_>,
@@ -307,6 +443,14 @@ impl MailStore for SqliteStore {
 
     fn message_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_count(scope))
+    }
+
+    fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage> {
+        Box::pin(self.read_thread_page(request))
+    }
+
+    fn thread_count(&self, scope: ListScope) -> Read<'_, u32> {
+        Box::pin(self.read_thread_count(scope))
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {

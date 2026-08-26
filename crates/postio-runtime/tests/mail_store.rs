@@ -63,6 +63,16 @@ impl MailStore for Fake {
         Box::pin(async move { Ok(total) })
     }
 
+    // This fake is about the message window; the thread window has its own
+    // coverage in `thread_store.rs`.
+    fn thread_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ThreadPage> {
+        Box::pin(async { Ok(postio_runtime::store::ThreadPage { total: 0, rows: Vec::new() }) })
+    }
+
+    fn thread_count(&self, _: ListScope) -> Read<'_, u32> {
+        Box::pin(async { Ok(0) })
+    }
+
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
         // Keyed off the position the id encodes, so the answer is in the
         // order asked rather than the order the fake happens to iterate.
@@ -155,6 +165,12 @@ async fn a_read_that_fails_carries_a_sentence_rather_than_a_sql_error() {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn message_count(&self, _: ListScope) -> Read<'_, u32> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
+        fn thread_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ThreadPage> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
+        fn thread_count(&self, _: ListScope) -> Read<'_, u32> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn message_rows(&self, _: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
