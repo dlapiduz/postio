@@ -580,12 +580,15 @@ impl Plan {
                  m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
                  (SELECT name FROM recipients WHERE message_id = m.id AND kind = 'from'
                     ORDER BY position LIMIT 1) AS from_name,
-                 (SELECT address FROM recipients WHERE message_id = m.id AND kind = 'from'
-                    ORDER BY position LIMIT 1) AS from_address,
+                 (SELECT a.address FROM recipients r JOIN addresses a ON a.id = r.address_id
+                    WHERE r.message_id = m.id AND r.kind = 'from'
+                    ORDER BY r.position LIMIT 1) AS from_address,
                  (SELECT max(c.times_seen) FROM contacts c
-                    WHERE c.address_normalized = (SELECT address_normalized FROM recipients
-                                                   WHERE message_id = m.id AND kind = 'from'
-                                                   ORDER BY position LIMIT 1)
+                    WHERE c.address_normalized = (SELECT a.address_normalized
+                                                    FROM recipients r
+                                                    JOIN addresses a ON a.id = r.address_id
+                                                   WHERE r.message_id = m.id AND r.kind = 'from'
+                                                   ORDER BY r.position LIMIT 1)
                       AND (c.account_id = ? OR c.account_id IS NULL)) AS sender_times_seen,
                  {score_columns}
              {from} WHERE m.id IN ({placeholders}){match_condition}",

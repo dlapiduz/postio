@@ -696,11 +696,21 @@ fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
         .expect("seed messages");
     connection
         .execute(
-            "INSERT INTO recipients (message_id, kind, position, name, address,
-                                     address_normalized)
-             SELECT id, 'from', 0, 'Sender ' || id, 'sender' || id || '@example.com',
-                    'sender' || id || '@example.com'
-               FROM messages WHERE mailbox_id = ?1",
+            "INSERT INTO addresses (address, address_normalized)
+             SELECT 'sender' || id || '@example.com', 'sender' || id || '@example.com'
+               FROM messages WHERE mailbox_id = ?1
+             ON CONFLICT (address_normalized) DO NOTHING",
+            [mailbox.get()],
+        )
+        .expect("seed addresses");
+    connection
+        .execute(
+            "INSERT INTO recipients (message_id, kind, position, name, address_id)
+             SELECT m.id, 'from', 0, 'Sender ' || m.id, a.id
+               FROM messages m
+               JOIN addresses a
+                 ON a.address_normalized = 'sender' || m.id || '@example.com'
+              WHERE m.mailbox_id = ?1",
             [mailbox.get()],
         )
         .expect("seed senders");
@@ -1579,4 +1589,109 @@ fn a_message_whose_payloads_have_all_landed_becomes_full() {
             .is_empty(),
         "nothing left to fetch for it"
     );
+}
+
+#[test]
+fn two_messages_from_the_same_sender_share_one_address_row() {
+    // `recipients` and its indexes are 56 MB of a 163 MB database -- 34%, and
+    // larger than `messages` itself -- because 378,819 rows each store an
+    // address and its lowercased near-duplicate. An account corresponds with
+    // tens of thousands of distinct addresses, not 378,819 (ADR 0017).
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    for uid in [400, 401, 402] {
+        let mut message = a_message(inbox, account.id, uid);
+        // Exactly two correspondents, the same two every time -- the shape a
+        // real mailbox has at scale, where a few thousand people account for
+        // hundreds of thousands of header rows.
+        message.from = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "ada@example.com",
+        )];
+        message.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "grace@example.com",
+        )];
+        message.cc.clear();
+        messages.create(&mut message).expect("create");
+    }
+
+    let addresses: i64 = connection
+        .query_row("SELECT count(*) FROM addresses", [], |row| row.get(0))
+        .expect("count");
+    let recipients: i64 = connection
+        .query_row("SELECT count(*) FROM recipients", [], |row| row.get(0))
+        .expect("count");
+
+    assert_eq!(recipients, 6, "three messages, two addresses each");
+    assert_eq!(addresses, 2, "but only two distinct addresses stored");
+}
+
+#[test]
+fn an_address_is_shared_case_insensitively() {
+    // The point of `address_normalized` in the first place: `Ada@Example.com`
+    // and `ada@example.com` are one correspondent, and `from:` has always
+    // matched them as one. Sharing a row is what makes that structural rather
+    // than a rule every query has to remember.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    for (uid, spelling) in [(410, "Ada@Example.com"), (411, "ada@example.com")] {
+        let mut message = a_message(inbox, account.id, uid);
+        message.from = vec![postio_model::EmailAddress::new(None::<String>, spelling)];
+        message.to.clear();
+        message.cc.clear();
+        messages.create(&mut message).expect("create");
+    }
+
+    let addresses: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM addresses WHERE address_normalized = 'ada@example.com'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(addresses, 1, "one correspondent, however it was spelled");
+
+    // And the row that exists keeps the first spelling seen, rather than
+    // flip-flopping as later mail arrives.
+    let stored: String = connection
+        .query_row(
+            "SELECT address FROM addresses WHERE address_normalized = 'ada@example.com'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the row");
+    assert_eq!(stored, "Ada@Example.com");
+}
+
+#[test]
+fn a_message_still_reads_back_the_addresses_it_was_given() {
+    // The normalization must be invisible above the repository: the verbatim
+    // spelling and the display name are per-header facts and stay on the
+    // recipient row, while only the addr-spec is shared.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 420);
+    message.from = vec![postio_model::EmailAddress::new(
+        Some("Ada Lovelace"),
+        "Ada@Example.com",
+    )];
+    message.to = vec![
+        postio_model::EmailAddress::new(Some("Grace Hopper"), "grace@example.com"),
+        postio_model::EmailAddress::new(None::<String>, "katherine@example.com"),
+    ];
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert_eq!(stored.from, message.from, "verbatim spelling and name kept");
+    assert_eq!(stored.to, message.to, "and header order preserved");
 }
