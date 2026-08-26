@@ -1071,7 +1071,7 @@ impl Window {
         // Breakpoints only fire once the window has a size, so the restored
         // state goes on first and the breakpoints correct it if it does not
         // fit.
-        self.restore(&shell);
+        self.restore(&shell, &sidebar);
         shell.install_breakpoints(self);
         header.sidebar_toggle.set_active(shell.sidebar_visible());
 
@@ -1396,6 +1396,7 @@ impl Window {
             CommandId::PrevFolder => {
                 self.sidebar().step(-1);
             }
+            CommandId::ToggleFolder => self.sidebar().toggle_focused(),
 
             // The parts panel. Reached through `Context::Parts` for the same
             // reason the folders are — see `postio-14b`. Set and cleared by
@@ -1759,12 +1760,34 @@ impl Window {
     }
 
     /// Reopen where the last session left off.
-    fn restore(&self, shell: &Shell) {
+    ///
+    /// Takes `sidebar` directly rather than reading it back with
+    /// `self.sidebar()`: this runs from `constructed()` before
+    /// `imp().sidebar` is set, so that accessor would panic.
+    fn restore(&self, shell: &Shell, sidebar: &Sidebar) {
         let state = WindowState::load();
         self.set_default_size(state.width, state.height);
         self.set_maximized(state.maximized);
         shell.set_divider_positions(state.sidebar_width, state.list_width);
         shell.set_sidebar_visible(state.sidebar_visible);
+
+        // Which folders are closed (#324). A save on every toggle rather
+        // than batched with the rest of the window's state: it is cheap,
+        // frequent enough that batching would mean losing it more often on
+        // a crash, and simple enough not to need `save_state`'s own timing.
+        sidebar.set_collapsed(crate::state::SidebarState::load().collapsed_folders);
+        sidebar.connect_collapsed_changed(glib::clone!(
+            #[weak]
+            sidebar,
+            move || {
+                let state = crate::state::SidebarState {
+                    collapsed_folders: sidebar.collapsed(),
+                };
+                if let Err(error) = state.save() {
+                    tracing::warn!(%error, "cannot save which folders are collapsed");
+                }
+            }
+        ));
     }
 
     /// Write the geometry and the divider positions back out.

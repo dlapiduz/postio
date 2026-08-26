@@ -77,6 +77,7 @@ command from inside a text field.
 | `g f` | Focus the folder list | List, thread, reader, search |  | `focus_sidebar` |
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |
 | `k` or `Up` | Previous folder | Folder list |  | `prev_folder` |
+| `space` | Expand or collapse folder | Folder list |  | `toggle_folder` |
 | `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |
 | `j` or `Down` | Next part | Parts panel |  | `next_part` |
