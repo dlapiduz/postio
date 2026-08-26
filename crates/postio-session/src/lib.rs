@@ -113,6 +113,99 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
     }
 }
 
+/// The keyring entry the store's master key lives under.
+///
+/// Not an address, and it cannot become one: there is no `@` in it, so it
+/// can never collide with an account's own entry however many accounts an
+/// installation grows. Written out rather than derived from the store path
+/// because the key has to be findable by a person in `seahorse` when they
+/// want to know what Postio keeps — the label reads
+/// "Postio (local store encryption key)".
+pub const STORE_KEY_ENTRY: &str = "local store encryption key";
+
+/// The master key this installation's store is encrypted under, minting one
+/// on first run.
+///
+/// ADR 0014 Q3, the service half. The material is
+/// [`postio_storage::key::StoreKey`]; this is where it comes from.
+///
+/// # What is and is not a first run
+///
+/// Only a *missing* entry mints a key, and that distinction is the whole of
+/// the safety here. A locked keyring, a keyring that did not answer in time,
+/// a backend that errored — none of them mean "there is no key", and minting
+/// one for any of them would encrypt the next thing written under something
+/// the existing store knows nothing about. The mailbox would be gone rather
+/// than merely unavailable, which is a far worse answer than refusing to
+/// start.
+///
+/// An *empty* entry is the one exception, and it is not really one: nothing
+/// can have been encrypted under an empty key, so the store behind it is
+/// either absent or already unopenable. Treating it as a first run is what
+/// gives a half-finished first run a way out, and it is the same tolerance
+/// [`postio_app::startup_route`] extends to an empty password.
+///
+/// # No plaintext fallback
+///
+/// There is no "open it unencrypted anyway", here or anywhere. `secret.rs`
+/// has refused that for passwords since it was written and ADR 0014 Q3
+/// extends it: a locked keyring means the mail does not open, and
+/// [`SecretError::Locked`] survives to the caller precisely so it can be
+/// routed to the surface that asks the user to unlock it rather than to
+/// onboarding, which would ask them to set up an account they already have.
+///
+/// [`postio_app::startup_route`]: https://github.com/dlapiduz/postio
+/// [`SecretError::Locked`]: postio_imap::secret::SecretError::Locked
+pub async fn store_key(
+    secrets: &dyn postio_imap::secret::SecretStore,
+) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    use postio_imap::secret::{AccountKey, SecretError};
+    use postio_storage::key::StoreKey;
+
+    let entry = AccountKey::new(STORE_KEY_ENTRY);
+    match secrets.retrieve(&entry).await {
+        Ok(stored) if !stored.is_empty() => {
+            // Refused rather than replaced. A corrupt entry is a store that
+            // cannot be opened; a replaced one is a store that can never be
+            // opened again.
+            StoreKey::from_hex(stored.expose()).map_err(|error| SecretError::Backend {
+                account: STORE_KEY_ENTRY.to_owned(),
+                reason: error.to_string(),
+            })
+        }
+        Ok(_) => {
+            tracing::warn!("the store key entry is empty; treating this as a first run");
+            mint(secrets, &entry).await
+        }
+        Err(SecretError::NotFound { .. }) => mint(secrets, &entry).await,
+        // Locked, Timeout, Backend. None of them mean "there is no key".
+        Err(error) => Err(error),
+    }
+}
+
+/// Generates a key and writes it down before anything is encrypted under it.
+///
+/// The order matters: a key handed back and never stored would encrypt a
+/// store nobody can open again, so the write is what makes the key real.
+async fn mint(
+    secrets: &dyn postio_imap::secret::SecretStore,
+    entry: &postio_imap::secret::AccountKey,
+) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    let key = postio_storage::key::StoreKey::generate();
+    // The one place the key becomes text. `to_hex` hands back a buffer that
+    // overwrites itself, and `Password` keeps that discipline from here on.
+    secrets
+        .store(
+            entry,
+            &postio_imap::secret::Password::new(key.to_hex().as_str()),
+        )
+        .await?;
+    // No key material, no length, nothing derived from it. That the store is
+    // now encrypted is worth a line; what it is encrypted with is not.
+    tracing::info!("this store has a new encryption key");
+    Ok(key)
+}
+
 /// What the frontend needs, once there is a store to give it.
 #[derive(Clone)]
 pub struct Wiring {
