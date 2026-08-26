@@ -149,6 +149,10 @@ pub struct Message {
     pub in_reply_to: Option<RfcMessageId>,
     /// RFC 5322 `References`, oldest ancestor first.
     pub references: Vec<RfcMessageId>,
+    /// The bracketed identifier out of `List-Id` (RFC 2919), when the
+    /// message belongs to a mailing list. What lets a list be detected
+    /// without the user naming it anywhere.
+    pub list_id: Option<String>,
 
     /// `From`. A list because RFC 5322 permits more than one author.
     pub from: Vec<EmailAddress>,
@@ -211,6 +215,7 @@ impl Message {
             rfc_message_id: None,
             in_reply_to: None,
             references: Vec::new(),
+            list_id: None,
             from: Vec::new(),
             sender: None,
             reply_to: Vec::new(),
