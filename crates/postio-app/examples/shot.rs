@@ -20,6 +20,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/box.png demo command
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
+//! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
 //! ```
 //!
 //! `demo` fills the panes from `postio_storage::seed` — a migrated in-memory
@@ -575,6 +576,29 @@ fn main() -> glib::ExitCode {
         // not the cursor.
         list.next_row();
         settle(&window);
+    }
+
+    // The reader stays empty by default -- `selected` above is the list's
+    // own bulk-selection state, not the reading pane. `open` puts a message
+    // there the way `e`/`Enter` on a real row would, through the same
+    // `Window::show_message` the running application calls, so a shot can
+    // show the reader as something other than an empty pane.
+    if flag("open") {
+        window.show_message(
+            &postio_model::MessageBody {
+                text: None,
+                html: Some("<p>A message, for a shot that wants one.</p>".to_string()),
+            },
+            None,
+        );
+        // WebKit's load is async, on its own clock the frame-counting
+        // `settle` above does not wait on -- wall time instead of frames.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let context = glib::MainContext::default();
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     let (width, height) = (target.width(), target.height());

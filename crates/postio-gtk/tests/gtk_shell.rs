@@ -60,6 +60,23 @@ fn the_plate_layout_matches_the_canvas() {
         shell.list().width()
     );
 
+    // The reader's pane, and the reader's own widget inside it, both have to
+    // ask for horizontal space -- `hexpand` isn't inherited from the inner
+    // `Paned` growing the pane's *allocation*; something inside still has to
+    // say it wants to fill that allocation rather than sit at its natural
+    // width (#428). `vexpand` was already correct on both; this is the same
+    // property one axis over.
+    assert!(
+        shell.reader().hexpands(),
+        "the reader's pane must ask for horizontal space, or maximizing the \
+         window leaves it cropped to its old width"
+    );
+    assert!(
+        window.reader().widget().hexpands(),
+        "the reader's own widget must ask for horizontal space too, not \
+         just the pane holding it"
+    );
+
     // Widening the window must not steal the list's width — the reader
     // absorbs it.
     let list_before = shell.list().width();
