@@ -277,9 +277,16 @@ pub struct ContactHit {
 /// whole box, so `gh` finds Grace Hopper here exactly as `wd` finds
 /// `wayland-devel` one mode over.
 ///
-/// Ties break on how often the correspondent has been seen, which is the same
-/// ranking `ContactRepository::search` uses and the reason an empty query
-/// offers the people you actually write to.
+/// Ties break on how often the correspondent has been seen, which is the
+/// reason an empty query offers the people you actually write to.
+///
+/// This is deliberately *not* the order `ContactRepository::search` returns
+/// any more. #424 put recency first there, because composing to somebody is
+/// about who you are writing to now. Finding is a different question — it
+/// asks whose mail to go and read — and the people worth offering for that
+/// are the ones there is a lot of mail from. The two surfaces answer
+/// differently on purpose; if that ever stops being true, this is the comment
+/// that was wrong.
 pub fn contacts(contacts: &[Contact], query: &str) -> Vec<ContactHit> {
     let query = query.trim();
     let mut found: Vec<ContactHit> = contacts
