@@ -896,6 +896,13 @@ worked example. Anything written against `node.downloaded` or
 set — including inline `cid:` resolution, which is why an inline image that
 "should obviously work" may quietly never render.
 
+This is scheduled to stop being true. [ADR
+0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md) splits
+the backfill so the text axis no longer stores raw source at all, which leaves
+`part_bytes` with nothing to re-parse and gives `attachments.blob_id` its first
+receive-path writer. Until that lands, the paragraph above is still the truth on
+`main` — but do not build a *new* workaround against it.
+
 **`Engine::request_body` queues; it does not fetch.** `Ok(true)` means "there
 was something to fetch", not "here it is" — the message goes to the front of
 the backfill and the bytes land when the engine's own loop claims the job. A
@@ -2549,3 +2556,46 @@ headless, `postio-app` and examples reach the real display — before #315 the
 README's own `cargo run -p postio-app` launched the app invisibly.
 `scripts/tests/test-headless-runner.py` pins the contract with a stubbed
 mutter, so it runs anywhere, fast.
+
+**The measured shape of a real mailbox: ~90% of the bytes are attachments,
+carried by ~15% of the messages.** Every sizing argument in this project ends
+up needing these numbers, so they are recorded once rather than re-derived.
+Taken from the same reference account cited above (81,744 messages), whose
+`BODYSTRUCTURE` metadata is fully synced — which is the useful part, because it
+means all of this is knowable *before a single body byte is fetched*:
+
+| | messages | bytes |
+|---|---:|---:|
+| the whole mailbox | 81,744 | 12.43 GB |
+| … attachment payloads | 25,752 parts | 11.00 GB (88.5%) |
+| … headers + `text/*` | all | 1.43 GB (11.5%) |
+| carrying an attachment | 12,712 (15.5%) | 11.26 GB (90.6%) |
+| carrying none | 69,032 (84.5%) | 1.17 GB (9.4%) |
+| over the 5 MB `max_body_bytes` cap | 539 (0.66%) | 6.02 GB (48.4%) |
+| distinct attachments by (filename, size) | 13,099 of 22,878 | 7.69 GB of 10.96 GB |
+
+By MIME type the payloads are dominated by `application/pdf` (5.0 GB),
+`image/jpeg` (2.6 GB), `application/zip` (0.76 GB) and
+`application/octet-stream` (0.66 GB) — all already compressed, which is why
+[ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
+skips compression for them and expects the whole saving to come from the text.
+`disposition = 'inline'` is 2.64 GB of the total: CID images in HTML mail, which
+is why small inline parts ride with the text axis rather than the payload axis.
+
+Two consequences that keep catching people out. **The existing 5 MB cap is not
+a rounding error — it is half the mailbox**, refused by declining 0.66% of
+messages; any argument about raising or lowering it is an argument about
+gigabytes. And **the last-30%-dedup is free**: content addressing collapses
+22,878 attachment parts to 13,099 distinct ones, provided the id is taken on the
+decoded payload rather than on its base64.
+
+**The database's own weight, measured the same way** (`dbstat`, on a store with
+81,744 messages and only 902 bodies fetched, so this is very close to a pure
+metadata cost): 163 MB total, of which `recipients` and its four indexes are
+**56 MB — 34%, larger than `messages` itself** (378,819 rows at 4.6 per message,
+each storing an address and its lowercased near-duplicate). Two of those indexes,
+`idx_recipients_draft` and `idx_attachments_draft`, are not partial and so index
+a column that is NULL on every row in the table; `idx_recipients_draft` alone is
+6 MB. Per message the metadata costs about 2 KB. Anyone projecting a store's
+size should start from that number and add the text corpus, not from the
+message count alone.
