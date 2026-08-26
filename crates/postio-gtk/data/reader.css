@@ -39,7 +39,7 @@ body {
   font-family: "Barlow", sans-serif;
   font-size: 14px;
   line-height: 1.55;
-  padding: 20px 24px;
+  padding: 16px 20px;
   /* Long unbroken tokens (a tracking URL, a base64 fragment a sender left
      visible) must wrap rather than force horizontal scroll on the pane. */
   overflow-wrap: anywhere;
@@ -47,6 +47,33 @@ body {
 
 body:empty::before {
   content: "";
+}
+
+/* The message body's own bounded surface (postio-3s2): a sender's content
+   sits inside this, distinct from Postio's own words. The banner and the
+   header (#319) never render into this document at all — they are native
+   GTK widgets stacked around the `WebView` — so this is the only edge that
+   needs drawing. A hairline is the only edge this design draws (see
+   tokens.rs), so the boundary is a border, not a shadow or a card fill.
+
+   `min-height` keeps a one-line plain-text message from reading as a
+   truncated or broken box; `overflow-x` contains a sender's wide table or
+   marketing layout so the *pane* never scrolls sideways. */
+.postio-body {
+  padding: 20px 24px;
+  border: 1px solid var(--r-hairline);
+  border-radius: var(--r-radius);
+  min-height: 3em;
+  overflow-x: auto;
+}
+
+/* High contrast: the edge gains weight rather than changing colour scheme,
+   the same treatment tokens.css's own hairlines get. */
+@media (prefers-contrast: more) {
+  .postio-body {
+    border-width: 2px;
+    border-color: var(--r-hairline-strong);
+  }
 }
 
 p {
