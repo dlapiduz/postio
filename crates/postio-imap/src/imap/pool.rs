@@ -552,41 +552,29 @@ impl ConnectionPool {
     /// will be; `retrieve` returns it and it goes straight to the transport.
     #[tracing::instrument(skip_all, fields(endpoint = %self.settings.endpoint()))]
     async fn open(&self) -> BackendResult<ImapSession> {
-        let credential = self.credential().await?;
-        match self.open_with(&credential).await {
-            Err(BackendError::Auth { account, reason }) => {
-                tracing::warn!("the server refused this credential; asking for a fresh one");
-                self.tokens.invalidate(&self.key).await;
-                let refreshed = self.credential().await?;
-                if refreshed.expose() == credential.expose() {
-                    // Nothing new to present. Re-sending the same bytes to a
-                    // server that has just refused them is a wasted round
-                    // trip, and it is the common case: `invalidate` on a
-                    // stored password is a documented no-op.
-                    return Err(BackendError::Auth { account, reason });
-                }
-                self.open_with(&refreshed).await
-            }
-            other => other,
-        }
-    }
-
-    /// The credential to present, from this pool's [`TokenSource`].
-    async fn credential(&self) -> BackendResult<Password> {
-        match self.tokens.access_token(&self.key).await {
-            Ok(password) => Ok(password),
-            Err(error) => {
-                // Redacted: `SecretError` names the account so the *user* can
-                // see which one to fix, and that message is right on screen.
-                // A log is a different audience — it gets pasted into issues —
-                // so the domain survives and the local part does not.
-                tracing::error!(
-                    error = %postio_model::address::redact_addresses(&error.to_string()),
-                    "no credential for this account"
-                );
-                Err(error.into())
-            }
-        }
+        // The invalidate-and-try-once-more discipline lives in `auth` because
+        // the SMTP path needs exactly the same one, and a paragraph written
+        // twice drifts: the way it drifts is that one copy keeps retrying,
+        // which against a revoked grant is an endless pair of round trips to
+        // a server that has already said no (ADR 0006 Q5).
+        crate::auth::with_credential(
+            self.tokens.as_ref(),
+            &self.key,
+            BackendError::is_authentication_failure,
+            |credential| async move { self.open_with(&credential).await },
+        )
+        .await
+        .map_err(|error| {
+            // Redacted: `SecretError` names the account so the *user* can
+            // see which one to fix, and that message is right on screen.
+            // A log is a different audience — it gets pasted into issues —
+            // so the domain survives and the local part does not.
+            tracing::error!(
+                error = %postio_model::address::redact_addresses(&error.to_string()),
+                "no credential for this account"
+            );
+            BackendError::from(error)
+        })?
     }
 
     /// One open attempt with the credential it is given.
