@@ -224,6 +224,31 @@ mod imp {
         fn grab_focus(&self) -> bool {
             self.view.grab_focus()
         }
+
+        /// Tab or Shift-Tab arriving from outside lands on the cursor row,
+        /// not wherever GTK's own container focus algorithm would put it.
+        ///
+        /// `grab_focus()` above already lands on the cursor row correctly —
+        /// that has never been the bug. The gap is the *other* way focus can
+        /// reach this widget: GTK's own keynav traversal, which does not go
+        /// through `grab_focus` at all and instead asks the widget where to
+        /// put focus via this vfunc. Left to its default, entering backward
+        /// (Shift-Tab) picks the last realized row and entering forward
+        /// picks the first, exactly like an ordinary container walking its
+        /// children — which is wrong here, because a row's cursor position
+        /// is state the container already tracks and the default algorithm
+        /// cannot see (#437).
+        ///
+        /// Only for a *fresh* arrival, checked by `focus_child()` being
+        /// `None`: once focus is already inside (tabbing from one row to
+        /// another), the default algorithm's ordinary child-to-child
+        /// traversal is exactly what should run, so it is left alone.
+        fn focus(&self, direction_type: gtk::DirectionType) -> bool {
+            if self.obj().focus_child().is_some() {
+                return self.parent_focus(direction_type);
+            }
+            self.view.grab_focus()
+        }
     }
     impl BinImpl for MessageListView {}
 }
