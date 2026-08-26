@@ -93,3 +93,5 @@ command from inside a text field.
 | `S` | Save all parts | Parts panel |  | `save_all_parts` |
 | `x` | Open part externally | Parts panel |  | `open_part_externally` |
 | `H` | Render part once | Parts panel |  | `render_part_once` |
+| `Page_Down` or `space` | Scroll reading pane down | List, thread, reader |  | `scroll_reader_down` |
+| `Page_Up` or `shift+space` | Scroll reading pane up | List, thread, reader |  | `scroll_reader_up` |
