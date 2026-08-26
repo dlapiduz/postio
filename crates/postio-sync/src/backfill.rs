@@ -754,6 +754,31 @@ pub fn request_body(
     Ok(true)
 }
 
+/// As [`request_body`], but asks for every byte of the message.
+///
+/// Not the way an attachment is opened — that is [`request_payloads`], which
+/// asks for the one section somebody clicked. This is for the callers that
+/// genuinely need the *original bytes*: dragging a message out as
+/// `message/rfc822`, "view source", and eventually verifying a signature over
+/// the bytes it was made across.
+///
+/// Under ADR 0017 the text axis stores no raw source, so those bytes are not
+/// on this machine for any message the background lane fetched, and there is
+/// nowhere to get them but the server.
+pub fn request_whole(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    message_id: MessageId,
+) -> Result<bool> {
+    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+        return Ok(false);
+    };
+    let mut request = BodyRequest::from(candidate);
+    request.want = Want::Whole;
+    backfill.request_now(request);
+    Ok(true)
+}
+
 /// Asks for named payload parts of one message, now, because the user opened
 /// one of them.
 ///
