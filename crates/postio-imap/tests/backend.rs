@@ -11,7 +11,7 @@ use chrono::{TimeZone, Utc};
 use postio_imap::backend::{
     AppendMessage, BackendError, BodyPart, Capabilities, Capability, Disposition, Envelope, Fault,
     FetchedMessage, FlagChange, MailBackend, MailboxFilter, MailboxStatus, MailboxSummary,
-    MockBackend, MockMailbox, PartNode, SelectMode, UidSet, VecSink,
+    MockBackend, MockMailbox, MockMessage, PartNode, SelectMode, UidSet, VecSink,
 };
 use postio_imap::cancel::CancelToken;
 use postio_model::{
@@ -1198,4 +1198,62 @@ fn a_part_that_declared_no_charset_or_encoding_rebuilds_only_its_type() {
     let part = PartNode::new("1", "text/html", 2048);
 
     assert_eq!(part.mime_headers(), "Content-Type: text/html\r\n");
+}
+
+#[tokio::test]
+async fn a_seeded_part_is_what_a_sectioned_fetch_returns() {
+    // The text axis fetches `BODY[1.1]`, so the mock has to be able to answer
+    // one. It has no MIME parser and should not grow one -- every parser test
+    // would then be testing the parser against itself -- so the bytes of a
+    // section are seeded, the same way the envelope and the structure are.
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX").message(
+                MockMessage::new(&b"Subject: quarterly\r\n\r\nignored"[..])
+                    .with_part("1.1", &b"the words that matter"[..]),
+            ),
+        )
+        .build();
+    backend.connect().await.expect("connect");
+
+    let mut sink = VecSink::new();
+    backend
+        .fetch_part(
+            "INBOX",
+            Uid::new(1),
+            &BodyPart::Section("1.1".to_owned()),
+            &mut sink,
+            &CancelToken::new(),
+        )
+        .await
+        .expect("the seeded part");
+
+    assert_eq!(sink.into_inner(), b"the words that matter");
+}
+
+#[tokio::test]
+async fn a_sectioned_fetch_for_a_part_nobody_seeded_is_rejected_not_empty() {
+    // Silence would be indistinguishable from a message whose part is
+    // genuinely empty, and a test asserting "no body" would then pass for the
+    // wrong reason.
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX")
+                .message(MockMessage::new(&b"Subject: quarterly\r\n\r\nignored"[..])),
+        )
+        .build();
+    backend.connect().await.expect("connect");
+
+    let mut sink = VecSink::new();
+    let result = backend
+        .fetch_part(
+            "INBOX",
+            Uid::new(1),
+            &BodyPart::Section("1.1".to_owned()),
+            &mut sink,
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert!(matches!(result, Err(BackendError::Rejected { .. })));
 }
