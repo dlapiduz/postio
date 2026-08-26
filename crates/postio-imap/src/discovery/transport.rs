@@ -203,13 +203,13 @@ const CANCELLED: &str = "the discovery probe was cancelled";
 /// forever instead of stopping, which is the exact opposite of the point.
 /// [`io::ErrorKind::ConnectionAborted`] says what happened and no layer
 /// retries it.
-struct Cancellable<S> {
+pub(crate) struct Cancellable<S> {
     inner: S,
     cancel: CancelToken,
 }
 
 impl<S> Cancellable<S> {
-    fn new(inner: S, cancel: CancelToken) -> Self {
+    pub(crate) fn new(inner: S, cancel: CancelToken) -> Self {
         Self { inner, cancel }
     }
 
@@ -274,7 +274,7 @@ impl PimalayaTransport {
     }
 
     /// The autoconfig endpoints speak plain HTTP/1.1 over TLS.
-    fn tls() -> pimalaya_stream::tls::Tls {
+    pub(crate) fn tls() -> pimalaya_stream::tls::Tls {
         pimalaya_stream::tls::Tls {
             rustls: pimalaya_stream::tls::Rustls {
                 alpn: vec!["http/1.1".into()],
@@ -291,7 +291,7 @@ impl PimalayaTransport {
 /// bounding the retry loop above it — connecting with the default would
 /// leave a minute per read, which for an abandoned request is a minute of
 /// socket held for nobody.
-fn connect_options() -> pimalaya_stream::stream::TcpConnectOptions {
+pub(crate) fn connect_options() -> pimalaya_stream::stream::TcpConnectOptions {
     pimalaya_stream::stream::TcpConnectOptions {
         retry: pimalaya_stream::retry::Retry::Until(DISCOVERY_IO_TIMEOUT),
         ..Default::default()
@@ -304,7 +304,10 @@ fn connect_options() -> pimalaya_stream::stream::TcpConnectOptions {
 /// `pimalaya-stream` so it keeps `io-pim-discovery`'s own semantics for the
 /// `tcp` scheme exactly — a direct connection, no proxy — while gaining a
 /// connect deadline and read/write deadlines it never had.
-fn connect_tcp(url: &url::Url, cancel: &CancelToken) -> anyhow::Result<Cancellable<TcpStream>> {
+pub(crate) fn connect_tcp(
+    url: &url::Url,
+    cancel: &CancelToken,
+) -> anyhow::Result<Cancellable<TcpStream>> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("TCP URL `{url}` has no host"))?;

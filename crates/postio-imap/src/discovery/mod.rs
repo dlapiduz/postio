@@ -98,7 +98,10 @@
 mod builtin;
 mod providers_toml;
 mod settings;
-mod transport;
+// `pub(crate)`, not `mod`: `crate::oauth`'s token exchange rides the same
+// TCP/TLS connect helpers this transport uses for autoconfig (ADR 0006 Q2),
+// and needs the module path to reach them.
+pub(crate) mod transport;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
