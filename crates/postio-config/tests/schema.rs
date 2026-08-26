@@ -282,6 +282,29 @@ fn parses_the_sync_section() {
 }
 
 #[test]
+fn attachments_are_fetched_on_open_unless_the_file_says_otherwise() {
+    // ADR 0017's payload axis. ~90% of a mailbox by weight is attachment
+    // bytes nothing can index, so the default has to be the one that leaves
+    // them where they are -- and it has to hold for a file that has never
+    // mentioned `[sync]` at all.
+    let cfg = Config::from_toml_str("").unwrap();
+    assert_eq!(
+        cfg.sync.attachment_fetch,
+        postio_config::AttachmentFetch::OnOpen
+    );
+
+    for (text, expected) in [
+        ("eager", postio_config::AttachmentFetch::Eager),
+        ("never", postio_config::AttachmentFetch::Never),
+        ("on_open", postio_config::AttachmentFetch::OnOpen),
+    ] {
+        let cfg = Config::from_toml_str(&format!("[sync]\nattachment_fetch = \"{text}\"\n"))
+            .unwrap_or_else(|error| panic!("{text} should parse: {error}"));
+        assert_eq!(cfg.sync.attachment_fetch, expected);
+    }
+}
+
+#[test]
 fn parses_named_filters() {
     let cfg = Config::from_toml_str(
         r#"

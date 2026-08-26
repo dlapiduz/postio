@@ -592,6 +592,19 @@ fn root_type(
 /// is never going to work says so while the user is still looking at it.
 const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Where one part's bytes are, when they are on this machine at all.
+enum PartSource {
+    /// The part's own blob — what ADR 0017's payload axis writes into
+    /// `attachments.blob_id` when somebody opens an attachment.
+    Payload(BlobId),
+    /// The whole raw message, from which the part is cut.
+    ///
+    /// Two rows still land here: one fetched before the payload axis existed,
+    /// and one whose `BODYSTRUCTURE` was never recorded, so no section could
+    /// be named and every byte was the only answer.
+    Raw(BlobId),
+}
+
 /// One part's bytes, fetched first if they are not on this machine yet.
 ///
 /// # Why this is the seam rather than the save handler
@@ -603,17 +616,17 @@ const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// downloaded, fetching it first" an ordinary async test over a mock server
 /// instead of something that needs a display and a file chooser.
 ///
-/// # Where a received part's bytes actually are
+/// # Where a received part's bytes are
 ///
-/// Not in `Attachment::blob_id`. That field is only ever filled on the way
-/// *out* — `compose` puts a file the user attached into the blob store and
-/// records its key — and nothing in the receive path writes it. What the
-/// backfill stores is the whole raw message under `Message::raw_blob_id`, so
-/// a received part is extracted from that rather than looked up.
+/// In `Attachment::blob_id`, once somebody has opened it. That column was
+/// filled only on the way *out* for the whole life of this project — a
+/// composer attaching a file — and the receive path stored the whole raw
+/// message instead, so a part had to be cut back out of it with `mime::parse`
+/// on every open. ADR 0017 ended that: the text axis stores no raw source at
+/// all, and the payload axis fetches `BODY.PEEK[<part_id>]` on demand.
 ///
-/// So the fetch to wait for is the *message's*, not the part's: one round
-/// trip brings every part with it, and asking again per attachment would be
-/// the same bytes downloaded once per chip.
+/// So the fetch to wait for is the *part's*, and asking twice costs nothing:
+/// the second open reads the blob and never reaches the network.
 ///
 /// Returns `Err` rather than an empty file when the bytes cannot be had. A
 /// zero-byte attachment on disk looks like a saved file and is not one.
@@ -626,48 +639,50 @@ pub(crate) async fn part_bytes(
 ) -> Result<Vec<u8>, String> {
     // Resolved once, before anything is fetched, and deliberately.
     //
-    // A fetch REPLACES the message's attachment rows -- the parser re-reads
-    // the structure and `MessageRepository::update` writes the new set -- so
-    // the `AttachmentId` the panel is holding does not survive it. The MIME
-    // path does: `2` is `2` in every parse of the same bytes. So the id is
-    // turned into a path here, while it still means something, and the path
-    // is what is used on the far side.
-    let (raw, part_id) = raw_and_part(database, message, attachment)?;
-    let part_id = part_id.ok_or("That part has no place in the message to read it from")?;
+    // A whole-message fetch REPLACES the message's attachment rows -- the
+    // parser re-reads the structure and `MessageRepository::update` writes the
+    // new set -- so the `AttachmentId` the panel is holding does not survive
+    // it. The MIME path does: `2` is `2` in every parse of the same bytes. So
+    // the id is turned into a path here, while it still means something, and
+    // the path is what is used on the far side.
+    let part_id = part_path(database, message, attachment)?
+        .ok_or("That part has no place in the message to read it from")?;
 
-    let raw = match raw {
-        Some(raw) => raw,
+    let source = match locate_part(database, message, &part_id)? {
+        Some(source) => source,
         // Never downloaded. This is the one place in the reading pane allowed
         // to reach the network, and only because the user asked for these
         // bytes by name.
         None => {
             let engine =
                 engine.ok_or("This account is not syncing, so that part cannot be fetched")?;
-            // `request_body` puts the message at the front of the backfill and
-            // returns as soon as it is queued -- `true` means "there was
+            // `request_payloads` puts the section at the front of the backfill
+            // and returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
             // engine's own loop claims the job, so the wait is ours.
-            // The whole message, not just its text: the parts this is about
-            // are exactly the ones the text axis leaves on the server (ADR
-            // 0017), and the user asked for these bytes by name.
             if !engine
-                .request_whole_message(message)
+                .request_payloads(message, vec![part_id.clone()])
                 .await
                 .map_err(|error| error.message().to_string())?
             {
-                return Err("There is nothing to fetch for that message".into());
+                return Err("There is nothing to fetch for that part".into());
             }
-            wait_for_body(database, message).await?
+            wait_for_part(database, message, &part_id).await?
         }
     };
 
-    let bytes = blobs.get(&raw).map_err(|error| error.to_string())?;
-    postio_model::mime::parse(&bytes)
-        .parts
-        .into_iter()
-        .find(|part| part.attachment.part_id.as_deref() == Some(part_id.as_str()))
-        .map(|part| part.content)
-        .ok_or_else(|| "That part is not in the message the server sent".into())
+    match source {
+        PartSource::Payload(blob) => blobs.get(&blob).map_err(|error| error.to_string()),
+        PartSource::Raw(blob) => {
+            let bytes = blobs.get(&blob).map_err(|error| error.to_string())?;
+            postio_model::mime::parse(&bytes)
+                .parts
+                .into_iter()
+                .find(|part| part.attachment.part_id.as_deref() == Some(part_id.as_str()))
+                .map(|part| part.content)
+                .ok_or_else(|| "That part is not in the message the server sent".into())
+        }
+    }
 }
 
 /// Put one part's bytes where the user asked for them.
@@ -825,22 +840,71 @@ pub(crate) async fn wait_for_body(
     }
 }
 
-/// The raw-message blob key, and the MIME path of the wanted part.
+/// Wait for a queued part to land, or give up saying so.
 ///
-/// Read together because both come off the same row, and the caller needs the
-/// part's path whether or not the bytes have arrived yet.
-fn raw_and_part(
+/// [`wait_for_body`]'s sibling, and the same polling for the same reason. It
+/// watches for either shape the bytes can arrive in: the part's own blob,
+/// which is what a payload fetch writes, and the raw message, which is what
+/// the whole-message fallback writes for a row whose section could not be
+/// named.
+async fn wait_for_part(
+    database: &Database,
+    message: MessageId,
+    part_id: &str,
+) -> Result<PartSource, String> {
+    let deadline = std::time::Instant::now() + BODY_WAIT;
+    loop {
+        // A read that fails here is usually the writer we are waiting for
+        // holding the table, so contention is a reason to look again rather
+        // than to give up. Only the deadline ends this.
+        match locate_part(database, message, part_id) {
+            Ok(Some(source)) => return Ok(source),
+            Ok(None) => {}
+            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
+            Err(_) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("That part did not arrive in time — it is still \
+                        downloading, so try again in a moment"
+                .into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// The MIME path of one attachment row, while the row id still means
+/// something.
+fn part_path(
     database: &Database,
     message: MessageId,
     attachment: AttachmentId,
-) -> Result<(Option<BlobId>, Option<String>), String> {
-    let row = read_message(database, message)?;
-    let part_id = row
+) -> Result<Option<String>, String> {
+    Ok(read_message(database, message)?
         .attachments
         .iter()
         .find(|part| part.id == attachment)
-        .and_then(|part| part.part_id.clone());
-    Ok((row.raw_blob_id, part_id))
+        .and_then(|part| part.part_id.clone()))
+}
+
+/// Whether `part_id`'s bytes are on this machine, and in which shape.
+///
+/// The part's own blob first: it is the exact bytes, and reading it costs a
+/// file open where the raw message costs a parse of the whole thing.
+fn locate_part(
+    database: &Database,
+    message: MessageId,
+    part_id: &str,
+) -> Result<Option<PartSource>, String> {
+    let row = read_message(database, message)?;
+    if let Some(blob) = row
+        .attachments
+        .iter()
+        .find(|part| part.part_id.as_deref() == Some(part_id))
+        .and_then(|part| part.blob_id.clone())
+    {
+        return Ok(Some(PartSource::Payload(blob)));
+    }
+    Ok(row.raw_blob_id.map(PartSource::Raw))
 }
 
 /// Just the raw-message blob key. What the wait watches for.
@@ -983,9 +1047,10 @@ mod tests {
         for n in 1..=40 {
             // multipart/mixed, so part 2 is a real attachment the parser
             // will hand back with its own decoded bytes.
-            mailbox = mailbox.message(MockMessage::new(
-                format!(
-                    "From: Ada Lovelace <ada@example.com>\r\n\
+            mailbox = mailbox.message(
+                MockMessage::new(
+                    format!(
+                        "From: Ada Lovelace <ada@example.com>\r\n\
                      To: Postio <postio@example.net>\r\n\
                      Subject: part {n}\r\n\
                      Message-ID: <part-{n}@example.com>\r\n\
@@ -1003,9 +1068,15 @@ mod tests {
                      \r\n\
                      {ATTACHED}\r\n\
                      --edge--\r\n"
+                    )
+                    .into_bytes(),
                 )
-                .into_bytes(),
-            ));
+                // So a `BODY.PEEK[2]` has something to answer with. The mock
+                // has no MIME parser and rejects a section nobody seeded, so
+                // without this a payload fetch fails rather than quietly
+                // costing nothing.
+                .with_part("2", ATTACHED.as_bytes()),
+            );
         }
 
         // `seed` writes bodies as NotFetched and assigns no UID -- it exists
@@ -1065,6 +1136,34 @@ mod tests {
         .expect("an engine");
 
         (database, blobs, engine, newest)
+    }
+
+    /// As [`a_part_not_here`], but with the MIME headers `BODYSTRUCTURE` would
+    /// have recorded — so the part can be fetched by section rather than by
+    /// dragging the whole message across.
+    ///
+    /// The distinction is ADR 0017's payload axis: a row that has these takes
+    /// one `BODY.PEEK[2]`, and a row that does not falls back to every byte,
+    /// because a fetched section arrives encoded with nothing to say how.
+    fn a_part_fetchable_by_section(database: &Database, message: MessageId) -> AttachmentId {
+        a_part_not_here(database, message);
+        let connection = database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let mut row = messages.get(message).expect("a read").expect("the message");
+        row.attachments[0].part_headers = Some("Content-Type: application/pdf\r\n".to_owned());
+        // The row id changes under this: `update` replaces a message's
+        // attachment rows rather than editing them, which is the very reason
+        // `part_bytes` resolves an id to a MIME path before it fetches
+        // anything. So the id is read back after the write, not before.
+        update_with_retry(&messages, &mut row);
+        messages
+            .get(message)
+            .expect("a read")
+            .expect("the message")
+            .attachments
+            .first()
+            .expect("the part was written")
+            .id
     }
 
     /// The attachment row for the message the mock will serve, and its id.
@@ -1251,5 +1350,59 @@ mod tests {
             into.path().join("report.pdf").exists(),
             "the leaf after the failure must still be saved"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // The payload axis (ADR 0017, #377)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn opening_a_part_fetches_that_section_and_nothing_around_it() {
+        // The column the receive path never wrote. The message here is
+        // `multipart/mixed` with a forty-byte payload, but the shape is the
+        // one that matters: on the reference account the same fetch used to
+        // drag the whole message, and ~90% of a mailbox by weight is
+        // attachments FTS5 cannot index.
+        let (database, blobs, engine, message) = world();
+        let part = a_part_fetchable_by_section(&database, message);
+
+        let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
+            .await
+            .expect("the part is fetched and handed back");
+
+        assert_eq!(String::from_utf8_lossy(&bytes).trim(), ATTACHED);
+
+        let connection = database.connection().expect("a connection");
+        let row = MessageRepository::new(&connection)
+            .get(message)
+            .expect("a read")
+            .expect("the message");
+        assert!(
+            row.attachments[0].is_downloaded(),
+            "the bytes have to be recorded against the part, or the chip              still cannot tell 'download' from 'open'"
+        );
+        assert!(
+            row.raw_blob_id.is_none(),
+            "and the message around the part was never pulled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_part_already_on_this_machine_is_read_without_an_engine_at_all() {
+        // The second open. Passing `None` for the engine is the strongest
+        // form of "no network fetch" this seam can state: any path that
+        // reached for the server would refuse instead of answering.
+        let (database, blobs, engine, message) = world();
+        let part = a_part_fetchable_by_section(&database, message);
+
+        part_bytes(&database, &blobs, Some(engine), message, part)
+            .await
+            .expect("the first open fetches it");
+
+        let bytes = part_bytes(&database, &blobs, None, message, part)
+            .await
+            .expect("the second open must not need a server");
+
+        assert_eq!(String::from_utf8_lossy(&bytes).trim(), ATTACHED);
     }
 }

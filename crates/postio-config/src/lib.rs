@@ -78,7 +78,7 @@ pub use filters::FilterConfig;
 pub use keys::KeyBindings;
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
-pub use sync::{BodyFetch, SyncConfig};
+pub use sync::{AttachmentFetch, BodyFetch, SyncConfig};
 pub use ui::{Density, Theme, UiConfig};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
