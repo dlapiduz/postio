@@ -214,19 +214,18 @@ fn insert_recipients(connection: &Connection, message_id: i64, message: &Message
         ("bcc", message.bcc.iter().collect()),
     ];
     for (kind, addresses) in groups.drain(..) {
-        for (position, address) in addresses.into_iter().enumerate() {
+        for (position, address) in addresses.iter().enumerate() {
             connection
                 .execute(
                     "INSERT INTO recipients
-                         (message_id, kind, position, name, address, address_normalized)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                         (message_id, kind, position, name, address_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         message_id,
                         kind,
                         position as i64,
                         address.name,
-                        address.address,
-                        address.normalized(),
+                        address_id(connection, address),
                     ],
                 )
                 .expect("insert recipient");
@@ -234,10 +233,32 @@ fn insert_recipients(connection: &Connection, message_id: i64, message: &Message
     }
 }
 
+/// The id of `address`, inserting it if it is new.
+///
+/// Migration 0011 shares one row per correspondent, so a hand-written
+/// recipient has to name one rather than carry the string itself.
+fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
+    connection
+        .execute(
+            "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
+             ON CONFLICT (address_normalized) DO NOTHING",
+            params![address.address, address.normalized()],
+        )
+        .expect("insert address");
+    connection
+        .query_row(
+            "SELECT id FROM addresses WHERE address_normalized = ?1",
+            [address.normalized()],
+            |row| row.get(0),
+        )
+        .expect("the address row")
+}
+
 fn read_addresses(connection: &Connection, message_id: i64, kind: &str) -> Vec<EmailAddress> {
     connection
         .prepare(
-            "SELECT name, address FROM recipients
+            "SELECT r.name, a.address FROM recipients r
+               JOIN addresses a ON a.id = r.address_id
              WHERE message_id = ?1 AND kind = ?2 ORDER BY position",
         )
         .expect("prepare")
@@ -511,9 +532,14 @@ fn a_draft_and_its_recipients_are_storable() {
     for (kind, address) in [("to", &draft.to[0]), ("bcc", &draft.bcc[0])] {
         connection
             .execute(
-                "INSERT INTO recipients (draft_id, kind, position, name, address, address_normalized)
-                 VALUES (?1, ?2, 0, ?3, ?4, ?5)",
-                params![draft_id, kind, address.name, address.address, address.normalized()],
+                "INSERT INTO recipients (draft_id, kind, position, name, address_id)
+                 VALUES (?1, ?2, 0, ?3, ?4)",
+                params![
+                    draft_id,
+                    kind,
+                    address.name,
+                    address_id(&connection, address)
+                ],
             )
             .expect("insert draft recipient");
     }
@@ -533,8 +559,8 @@ fn a_recipient_belongs_to_a_message_or_a_draft_but_never_both() {
     let connection = migrated();
     let error = connection
         .execute(
-            "INSERT INTO recipients (kind, position, address, address_normalized)
-             VALUES ('to', 0, 'x@example.com', 'x@example.com')",
+            "INSERT INTO recipients (kind, position, address_id)
+             VALUES ('to', 0, 1)",
             [],
         )
         .expect_err("a recipient must have an owner");

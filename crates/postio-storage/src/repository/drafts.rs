@@ -414,8 +414,9 @@ impl<'a> DraftRepository<'a> {
 
     fn fill(&self, draft: &mut Draft) -> Result<()> {
         let mut statement = self.connection.prepare(
-            "SELECT kind, name, address FROM recipients
-              WHERE draft_id = ?1 ORDER BY kind, position, id",
+            "SELECT r.kind, r.name, a.address FROM recipients r
+               JOIN addresses a ON a.id = r.address_id
+              WHERE r.draft_id = ?1 ORDER BY r.kind, r.position, r.id",
         )?;
         let rows = statement.query_map([draft.id.get()], |row| {
             Ok((
@@ -610,16 +611,14 @@ fn write_recipients(connection: &Connection, draft: &Draft) -> Result<()> {
     for (kind, addresses) in [("to", &draft.to), ("cc", &draft.cc), ("bcc", &draft.bcc)] {
         for (position, address) in addresses.iter().enumerate() {
             connection.execute(
-                "INSERT INTO recipients (draft_id, kind, position, name, address,
-                                         address_normalized)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO recipients (draft_id, kind, position, name, address_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     draft.id.get(),
                     kind,
                     position as i64,
                     address.name,
-                    address.address,
-                    address.normalized(),
+                    crate::repository::messages::address_id(connection, address)?,
                 ],
             )?;
         }
