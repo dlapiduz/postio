@@ -47,7 +47,7 @@ pub mod seed;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
-pub use blob::BlobStore;
+pub use blob::{BlobStore, BlobWriter};
 pub use db::{Database, Pool, PooledConnection};
 pub use error::{Error, Result};
 pub use migrations::{Migration, MigrationReport, migrate, schema_version};

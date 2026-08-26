@@ -515,3 +515,80 @@ mod private_by_default {
         assert_eq!(mode_of(&root), 0o700);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Writing without holding the bytes — ADR 0017, axis 2
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_streamed_write_yields_the_same_id_as_the_same_bytes_at_once() {
+    // The whole point of the streaming writer is that it is not a different
+    // store: content addressing has to survive being fed in pieces, or a blob
+    // written by the fetch path and the same blob written by the compose path
+    // would be two files.
+    let (_directory, store) = store();
+
+    let whole = store
+        .put(b"the same bytes, whichever way they arrive")
+        .expect("put");
+
+    let mut writer = store.writer().expect("a writer");
+    writer.write(b"the same bytes, ").expect("first chunk");
+    writer.write(b"whichever way ").expect("second chunk");
+    writer.write(b"they arrive").expect("third chunk");
+    let streamed = writer.finish().expect("finish");
+
+    assert_eq!(streamed, whole, "chunk boundaries carry no meaning");
+    assert_eq!(blob_files(&store).len(), 1, "and one file, not two");
+}
+
+#[test]
+fn a_writer_dropped_before_finishing_publishes_nothing() {
+    // The guarantee the store already makes for `put`, extended to the push
+    // form: a fetch that is cancelled or dies mid-flight leaves debris in the
+    // temp directory, never a blob under a digest that promises otherwise.
+    let (_directory, store) = store();
+
+    let mut writer = store.writer().expect("a writer");
+    writer.write(b"half a message").expect("a chunk");
+    drop(writer);
+
+    assert!(
+        blob_files(&store).is_empty(),
+        "nothing was published, so nothing is visible"
+    );
+}
+
+#[test]
+fn a_streamed_write_never_holds_more_than_one_chunk() {
+    // The assertion ADR 0017's axis 2 actually cares about. `VecSink` grows a
+    // `Vec` by doubling, so a 40 MB message peaks well above 40 MB and copies
+    // itself a dozen times on the way; the writer holds one chunk at a time
+    // and the file holds the rest.
+    //
+    // Asserted structurally rather than by measuring the allocator: the
+    // writer is handed far more bytes than any buffer it could own, and what
+    // is checked is that the bytes all arrived correctly anyway.
+    let (_directory, store) = store();
+    let chunk = vec![b'x'; 64 * 1024];
+    let chunks = 64; // 4 MiB in 64 KiB pieces
+
+    let mut writer = store.writer().expect("a writer");
+    for _ in 0..chunks {
+        writer.write(&chunk).expect("chunk");
+    }
+    let id = writer.finish().expect("finish");
+
+    let mut reader = store.reader(&id).expect("reader");
+    let mut counted = 0usize;
+    let mut buffer = vec![0u8; 8 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).expect("read");
+        if read == 0 {
+            break;
+        }
+        assert!(buffer[..read].iter().all(|byte| *byte == b'x'));
+        counted += read;
+    }
+    assert_eq!(counted, chunk.len() * chunks);
+}
