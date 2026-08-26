@@ -256,6 +256,56 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
         "a sent draft is not still sitting in the composer"
     );
 
+    // ── ctrl+Return refuses what the Send button is greyed out for ───────
+    //
+    // The button has always been insensitive on `Draft::is_sendable`; the key
+    // reached `send` directly. That cost nothing while the seam was unwired
+    // (#423) because every send was a no-op. Now that a send queues, the two
+    // have to agree — see `Composer::send` for what each disagreement costs.
+    let mut unaddressed = started();
+    unaddressed.to.clear();
+    composer.open(unaddressed);
+    settle();
+    press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
+    assert_eq!(
+        sent.borrow().len(),
+        1,
+        "a draft addressed to nobody was handed to the send seam anyway; it \
+         would clear the composer and drain as impossible, losing the words"
+    );
+    assert!(composer.is_open(), "so the composer keeps it");
+    assert!(
+        composer.status().contains("add a recipient"),
+        "and says what is missing: {:?}",
+        composer.status()
+    );
+
+    // Already on its way: reachable because a queued draft keeps its row in
+    // the Drafts folder until the drainer deletes it, so it can be resumed
+    // between the enqueue and the send. A second `Operation::Send` against
+    // one draft is the recipient receiving the message twice.
+    composer.discard();
+    settle();
+    let mut queued = started();
+    queued.state = postio_model::DraftState::Queued;
+    composer.open(queued);
+    settle();
+    press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
+    assert_eq!(
+        sent.borrow().len(),
+        1,
+        "a draft already handed to the queue was queued a second time"
+    );
+    assert!(composer.is_open());
+    assert!(
+        composer.status().contains("already on its way"),
+        "and says why, rather than naming a recipient that is right there: \
+         {:?}",
+        composer.status()
+    );
+    composer.discard();
+    settle();
+
     // ── The header's Compose button reaches the same command ─────────────
     //
     // Every action needs a key *and* a control: `c` and this button are the

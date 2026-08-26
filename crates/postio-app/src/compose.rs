@@ -72,6 +72,7 @@ pub fn install(
     install_identities(&composer, &database, account);
 
     let last_id = install_autosave(&composer, database.clone(), account);
+    install_send(&composer, database.clone(), Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
     install_reply_source(&composer, database, blobs.clone(), showing);
@@ -285,6 +286,59 @@ fn save_draft(database: &Database, draft: &mut Draft) -> postio_storage::Result<
 fn delete_draft(database: &Database, id: DraftId) -> postio_storage::Result<()> {
     let connection = database.connection()?;
     DraftRepository::new(&connection).discard(id, Utc::now())?;
+    Ok(())
+}
+
+/// Sending: the draft becomes a queue row, and stops being the composer's.
+///
+/// This is the seam #423 was about. `Composer::connect_send` had no caller
+/// anywhere in the workspace from the composer's first commit, so
+/// `Composer::send` found its handler list empty on every press of
+/// `ctrl+Return` and said so in wording that read like a misconfigured
+/// account. No message had ever been sendable through the UI.
+///
+/// Nothing here waits for SMTP, and nothing here opens a connection: the
+/// write is one local transaction, and `postio-sync::send` drains the row it
+/// leaves whenever there is a network. That is the same local-first rule the
+/// autosave beside it follows, and it is what lets the composer close the
+/// instant the key is pressed.
+///
+/// # Why this clears `last_id`
+///
+/// `Composer::send` closes with [`Closing::Drop`], and the close handler
+/// [`install_autosave`] registered discards whatever `last_id` is holding —
+/// which is precisely the draft just queued. Left alone, the local row would
+/// be deleted a moment after the enqueue, and `postio-sync::send` resolves a
+/// `Send` whose draft is gone as obsolete: the message would vanish rather
+/// than be sent. Taking the id here is what tells the close path that this
+/// draft has already been dealt with.
+///
+/// It is taken on failure too, and deliberately. A queue write that fails
+/// leaves the autosaved row where it is, `Editing`, listed in the Drafts
+/// folder and recoverable; letting the close path run instead would delete
+/// the user's words on the way out. Losing the send is recoverable, losing
+/// the message is not.
+fn install_send(composer: &Composer, database: Database, last_id: Rc<Cell<Option<DraftId>>>) {
+    composer.connect_send(move |draft| {
+        // Cloned because the seam hands out `&Draft`: unlike a save, which
+        // writes the assigned id back onto the composer's own draft, nothing
+        // survives this — the composer is about to be refilled and closed.
+        let mut draft = draft.clone();
+        last_id.set(None);
+        if let Err(error) = queue_send(&database, &mut draft) {
+            // The draft is still in the store, unsent and unqueued. Not a
+            // status line: `Composer::send` closes straight after this, so
+            // there is nothing on screen left to read it.
+            tracing::error!(%error, "could not queue the draft for sending");
+        }
+    });
+}
+
+/// Send: the draft goes to `Queued` and its `Operation::Send` row is written,
+/// in one transaction — see `DraftRepository::queue_send`.
+fn queue_send(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
+    let connection = database.connection()?;
+    DraftRepository::new(&connection).queue_send(draft, Utc::now())?;
     Ok(())
 }
 
