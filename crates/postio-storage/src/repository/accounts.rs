@@ -23,7 +23,7 @@ pub struct AccountRepository<'a> {
 const ACCOUNT_COLUMNS: &str = "\
 id, display_name, address, address_name, incoming_host, incoming_port, incoming_security,
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
-auth_method, enabled, created_at";
+auth_method, enabled, created_at, default_signature_id";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -43,8 +43,9 @@ impl<'a> AccountRepository<'a> {
             "INSERT INTO accounts (display_name, address, address_name, incoming_host,
                                    incoming_port, incoming_security, incoming_username,
                                    outgoing_host, outgoing_port, outgoing_security,
-                                   outgoing_username, auth_method, enabled, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                   outgoing_username, auth_method, enabled, created_at,
+                                   default_signature_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 account.display_name,
                 account.address.address,
@@ -60,6 +61,7 @@ impl<'a> AccountRepository<'a> {
                 account.auth.as_str(),
                 account.enabled,
                 to_millis(account.created_at),
+                optional_signature_id(account.default_signature_id),
             ],
         )?;
 
@@ -102,7 +104,7 @@ impl<'a> AccountRepository<'a> {
                     incoming_host = ?5, incoming_port = ?6, incoming_security = ?7,
                     incoming_username = ?8, outgoing_host = ?9, outgoing_port = ?10,
                     outgoing_security = ?11, outgoing_username = ?12, auth_method = ?13,
-                    enabled = ?14, created_at = ?15
+                    enabled = ?14, created_at = ?15, default_signature_id = ?16
               WHERE id = ?1",
             params![
                 id,
@@ -120,6 +122,7 @@ impl<'a> AccountRepository<'a> {
                 account.auth.as_str(),
                 account.enabled,
                 to_millis(account.created_at),
+                optional_signature_id(account.default_signature_id),
             ],
         )?;
         if changed == 0 {
@@ -481,6 +484,7 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
         enabled: row.get(13)?,
         identities: Vec::new(),
         signatures: Vec::new(),
+        default_signature_id: row.get::<_, Option<i64>>(15)?.map(SignatureId::new),
         created_at: from_millis(row.get(14)?),
     })
 }
@@ -530,6 +534,10 @@ fn parse_security(value: &str, column: &'static str) -> rusqlite::Result<Transpo
 /// asked for", which is exactly the case.
 fn to_sqlite(error: Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+}
+
+fn optional_signature_id(id: Option<SignatureId>) -> Option<i64> {
+    id.filter(|id| id.is_assigned()).map(SignatureId::get)
 }
 
 /// `?1, ?2, ...` for `count` parameters, offset by one for the leading id.

@@ -57,6 +57,7 @@ pub mod operation;
 pub mod outgoing;
 pub mod reply;
 pub mod signature;
+pub mod signature_default;
 pub mod subject;
 pub mod sync;
 #[cfg(feature = "test-corpus")]

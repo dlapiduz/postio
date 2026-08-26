@@ -40,6 +40,7 @@ fn sample_account() -> Account {
         enabled: true,
         identities: vec![sample_identity()],
         signatures: Vec::new(),
+        default_signature_id: Some(SignatureId::new(4)),
         created_at: at(1_000),
     }
 }
@@ -81,6 +82,7 @@ fn sample_mailbox() -> Mailbox {
         uid_next: Some(Uid::new(900)),
         highest_mod_seq: Some(ModSeq::new(4_000)),
         last_synced_at: Some(at(2_000)),
+        signature_id: Some(SignatureId::new(5)),
     }
 }
 
