@@ -55,12 +55,13 @@ use std::path::Path;
 use adw::prelude::*;
 use gtk::glib;
 use postio_config::Config;
+use postio_config::filters::Reorder;
 use postio_config::validate::Checked;
 use postio_config::watch::ConfigWatcher;
 use postio_core::{CommandId, ConfigService, Event};
 
 use crate::finder::Mode;
-use crate::sidebar::SavedSearch;
+use crate::sidebar::{SavedSearch, SavedSearchAction};
 use crate::window::Window;
 
 /// Load `config.toml`, apply it to `window`, and keep applying it.
@@ -116,6 +117,23 @@ pub fn install_at(window: &Window, path: &Path) {
         move |query| {
             if let Some(window) = window.upgrade() {
                 window.run_search(&query);
+            }
+        }
+    });
+    window.sidebar().connect_saved_search_action({
+        let path = path.to_path_buf();
+        let window = window.downgrade();
+        move |key, action| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            match action {
+                SavedSearchAction::Rename => request_rename(&window, &path, &key),
+                SavedSearchAction::MoveUp => move_saved_search(&window, &path, &key, Reorder::Up),
+                SavedSearchAction::MoveDown => {
+                    move_saved_search(&window, &path, &key, Reorder::Down)
+                }
+                SavedSearchAction::Delete => request_delete(&window, &path, &key),
             }
         }
     });
@@ -201,15 +219,21 @@ pub fn install_at(window: &Window, path: &Path) {
     });
 }
 
-/// The pinned entries of `[filters]`, as the sidebar widget wants them.
+/// The pinned entries of `[filters]`, as the sidebar widget wants them --
+/// in [`Config::ordered_filter_keys`]'s order, which `Sidebar::
+/// set_saved_searches` now draws exactly as given (#292).
 fn saved_searches(config: &Config) -> Vec<SavedSearch> {
     config
-        .filters
-        .iter()
-        .filter(|(_, filter)| filter.pinned)
-        .map(|(name, filter)| SavedSearch {
-            name: name.clone(),
-            query: filter.query.clone(),
+        .ordered_filter_keys()
+        .into_iter()
+        .filter_map(|key| {
+            let filter = config.filters.get(&key)?;
+            let name = filter.name.clone().unwrap_or_else(|| key.clone());
+            Some(SavedSearch {
+                key,
+                name,
+                query: filter.query.clone(),
+            })
         })
         .collect()
 }
@@ -236,6 +260,131 @@ fn save_current_search(window: &Window, path: &Path) {
     config.save_filter(&query);
     if let Err(error) = config.save_to_path(path) {
         tracing::warn!(%error, "could not save the search");
+        return;
+    }
+    window
+        .sidebar()
+        .set_saved_searches(&saved_searches(&config));
+}
+
+/// Move `key` up or down among the pinned filters, and repaint.
+///
+/// No confirmation: [`postio_core::Recovery`] has nothing to say about a
+/// reorder because it destroys nothing -- moving it back is the same
+/// action once more, the same as any other position swap.
+fn move_saved_search(window: &Window, path: &Path, key: &str, direction: Reorder) {
+    let mut config = Config::load_from_path(path).unwrap_or_default();
+    if !config.move_filter(key, direction) {
+        return;
+    }
+    if let Err(error) = config.save_to_path(path) {
+        tracing::warn!(%error, "could not save the reordered searches");
+        return;
+    }
+    window
+        .sidebar()
+        .set_saved_searches(&saved_searches(&config));
+}
+
+/// Ask before deleting -- the one saved-search verb the registry's
+/// `discard_draft` precedent applies to: nothing here can be undone from a
+/// toast (issue #292 weighed the undo stack directly and it does not fit a
+/// config-file edit; see the issue for why), and re-creating a deleted
+/// search costs retyping the query. `discard_draft` is the one other
+/// [`Recovery::Confirm`][r] command in this application, and this reuses
+/// its exact `adw::AlertDialog` shape rather than adding a second kind of
+/// dialog for the same purpose.
+///
+/// [r]: postio_core::Recovery
+fn request_delete(window: &Window, path: &Path, key: &str) {
+    let dialog = adw::AlertDialog::new(
+        Some("Delete this saved search?"),
+        Some("It can be saved again from the same query, but the query itself is gone."),
+    );
+    dialog.add_responses(&[("keep", "Keep"), ("delete", "Delete")]);
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("keep"));
+    dialog.set_close_response("keep");
+    dialog.connect_response(None, {
+        let path = path.to_path_buf();
+        let key = key.to_owned();
+        let window = window.downgrade();
+        move |_, response| {
+            if response != "delete" {
+                return;
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            delete_saved_search(&window, &path, &key);
+        }
+    });
+    dialog.present(Some(window));
+}
+
+fn delete_saved_search(window: &Window, path: &Path, key: &str) {
+    let mut config = Config::load_from_path(path).unwrap_or_default();
+    if !config.delete_filter(key) {
+        return;
+    }
+    if let Err(error) = config.save_to_path(path) {
+        tracing::warn!(%error, "could not save after deleting the search");
+        return;
+    }
+    window
+        .sidebar()
+        .set_saved_searches(&saved_searches(&config));
+}
+
+/// Ask for a new display name, pre-filled with the one showing now.
+///
+/// The same `adw::AlertDialog` shape [`request_delete`] uses, with an entry
+/// as its extra child instead of a second response -- one dialog widget
+/// reused for both of this feature's questions, rather than a second kind
+/// for "type something" beside the one already in the app for "are you
+/// sure".
+fn request_rename(window: &Window, path: &Path, key: &str) {
+    let config = Config::load_from_path(path).unwrap_or_default();
+    let Some(filter) = config.filters.get(key) else {
+        return;
+    };
+    let current = filter.name.clone().unwrap_or_else(|| key.to_owned());
+
+    let entry = gtk::Entry::new();
+    entry.set_text(&current);
+    entry.set_activates_default(true);
+
+    let dialog = adw::AlertDialog::new(Some("Rename this saved search?"), None);
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_responses(&[("cancel", "Cancel"), ("rename", "Rename")]);
+    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("rename"));
+    dialog.set_close_response("cancel");
+    dialog.connect_response(None, {
+        let path = path.to_path_buf();
+        let key = key.to_owned();
+        let entry = entry.clone();
+        let window = window.downgrade();
+        move |_, response| {
+            if response != "rename" {
+                return;
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            rename_saved_search(&window, &path, &key, &entry.text());
+        }
+    });
+    dialog.present(Some(window));
+}
+
+fn rename_saved_search(window: &Window, path: &Path, key: &str, name: &str) {
+    let mut config = Config::load_from_path(path).unwrap_or_default();
+    if !config.rename_filter(key, name) {
+        return;
+    }
+    if let Err(error) = config.save_to_path(path) {
+        tracing::warn!(%error, "could not save the renamed search");
         return;
     }
     window

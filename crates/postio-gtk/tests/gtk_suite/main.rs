@@ -219,6 +219,19 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_sidebar_saved_searches::the_context_menu_reaches_the_action_handler_with_the_right_key",
+        gtk_sidebar_saved_searches::the_context_menu_reaches_the_action_handler_with_the_right_key
+            as fn(),
+    ),
+    (
+        "gtk_sidebar_saved_searches::the_first_row_has_no_move_up_entry",
+        gtk_sidebar_saved_searches::the_first_row_has_no_move_up_entry as fn(),
+    ),
+    (
+        "gtk_sidebar_saved_searches::the_last_row_has_no_move_down_entry",
+        gtk_sidebar_saved_searches::the_last_row_has_no_move_down_entry as fn(),
+    ),
+    (
         "gtk_sidebar_tree::folders_nest_collapse_and_a_noselect_parent_only_toggles",
         gtk_sidebar_tree::folders_nest_collapse_and_a_noselect_parent_only_toggles as fn(),
     ),
