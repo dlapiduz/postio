@@ -190,6 +190,124 @@ pub fn highlight(text: &str, terms: &[String]) -> Highlighted {
     }
 }
 
+/// How many tokens of context a [`snippet`] carries around its match.
+///
+/// Was FTS5's `snippet()` argument, and stays the same number so a result row
+/// is the length it has always been. Wide enough to show the phrase in a
+/// sentence, short enough for one line of a list row at the design canvas's
+/// widths.
+pub const SNIPPET_TOKENS: usize = 12;
+
+/// A one-line excerpt of `text` around where `terms` matched, with each match
+/// wrapped in [`MATCH_START`]/[`MATCH_END`].
+///
+/// # Why Postio makes this and SQLite no longer does
+///
+/// `snippet()` is an FTS5 function over the *indexed content*, and the body
+/// index has none: `message_bodies_fts` is `content = ''`, which is the whole
+/// point of it (#407). So the excerpt is cut here instead, from the same text
+/// the caller handed [`crate::index`-adjacent] indexing — which is a stronger
+/// guarantee than the old one rather than a weaker one, because it is
+/// literally the string that was indexed rather than SQLite's reconstruction
+/// of it.
+///
+/// # Matching what matched
+///
+/// [`find`]'s token rule is FTS5's own, so a word this marks is a word FTS5
+/// would have matched. What it deliberately cannot do is know *which* column
+/// FTS5 scored: a query that hit only the subject leaves the body with no
+/// match, and this then answers a leading excerpt rather than nothing, which
+/// is what the row wants and what `snippet()` did in the same situation.
+///
+/// # Whitespace
+///
+/// Collapsed to single spaces. A body is full of newlines and a result row is
+/// one line; the token *sequence* is unchanged by this, since whitespace is a
+/// separator to the tokenizer either way, so it cannot change what matches.
+pub fn snippet(text: &str, terms: &[String]) -> String {
+    let flat = collapse_whitespace(text);
+    let tokens = tokenize(&flat);
+    if tokens.is_empty() {
+        return String::new();
+    }
+    let found = find(&flat, terms);
+
+    // The window, in tokens. Centred on the first match when there is one,
+    // and the opening of the text when there is not.
+    let first = found.first().and_then(|range| {
+        tokens
+            .iter()
+            .position(|(span, _)| span.start >= range.start)
+    });
+    let (from_token, to_token) = match first {
+        Some(index) => (
+            index.saturating_sub(SNIPPET_TOKENS / 2),
+            (index + SNIPPET_TOKENS / 2 + 1).min(tokens.len()),
+        ),
+        None => (0, SNIPPET_TOKENS.min(tokens.len())),
+    };
+
+    // Cut at token boundaries, except at the ends of the text itself: an
+    // untrimmed window is the whole string, and stopping at the last token
+    // would drop the full stop after it.
+    let from = if from_token == 0 {
+        0
+    } else {
+        tokens[from_token].0.start
+    };
+    let to = if to_token == tokens.len() {
+        flat.len()
+    } else {
+        tokens[to_token - 1].0.end
+    };
+    let mut out = String::with_capacity(to - from + 8);
+    if from_token > 0 {
+        out.push_str(ELLIPSIS);
+    }
+
+    // Markers go in as the window is copied out, so the offsets never have to
+    // be adjusted for the ones already written.
+    let mut cursor = from;
+    for range in found {
+        if range.end <= from {
+            continue;
+        }
+        if range.start >= to {
+            break;
+        }
+        let start = range.start.max(from);
+        let end = range.end.min(to);
+        out.push_str(&flat[cursor..start]);
+        out.push(MATCH_START);
+        out.push_str(&flat[start..end]);
+        out.push(MATCH_END);
+        cursor = end;
+    }
+    out.push_str(&flat[cursor..to]);
+    if to_token < tokens.len() {
+        out.push_str(ELLIPSIS);
+    }
+    out
+}
+
+/// Every run of whitespace as one space, and no leading or trailing space.
+fn collapse_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_space = false;
+    for character in text.chars() {
+        if character.is_whitespace() {
+            in_space = !out.is_empty();
+        } else {
+            if in_space {
+                out.push(' ');
+                in_space = false;
+            }
+            out.push(character);
+        }
+    }
+    out
+}
+
 /// Splits text into `(byte range, folded token)` the way FTS5's default
 /// tokenizer does: runs of alphanumerics, everything else a separator.
 fn tokenize(text: &str) -> Vec<(Range<usize>, String)> {
@@ -453,5 +571,149 @@ mod tests {
             assert!(found.text.is_char_boundary(matched.start));
             assert!(found.text.is_char_boundary(matched.end));
         }
+    }
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    //! The excerpt Postio cuts now that FTS5 cannot (#408).
+
+    use super::*;
+
+    fn marked(text: &str, terms: &[&str]) -> String {
+        let terms: Vec<String> = terms.iter().map(|term| (*term).to_owned()).collect();
+        snippet(text, &terms)
+            .replace(MATCH_START, "[")
+            .replace(MATCH_END, "]")
+    }
+
+    #[test]
+    fn the_match_is_wrapped_where_it_was_found() {
+        assert_eq!(
+            marked("The quarterly report is attached.", &["report"]),
+            "The quarterly [report] is attached."
+        );
+    }
+
+    #[test]
+    fn a_long_body_is_cut_around_the_match_and_says_so() {
+        let text = format!("{} needle {}", "alpha ".repeat(40), "omega ".repeat(40));
+
+        let out = marked(&text, &["needle"]);
+
+        assert!(out.starts_with('…'), "{out}");
+        assert!(out.ends_with('…'), "{out}");
+        assert!(out.contains("[needle]"), "{out}");
+        assert!(
+            out.matches("alpha").count() <= SNIPPET_TOKENS,
+            "the window is a window: {out}"
+        );
+    }
+
+    #[test]
+    fn text_with_no_match_still_gives_the_row_its_opening() {
+        // What `snippet()` did in the same situation: a query that hit the
+        // subject leaves the body unmatched, and a blank line under the
+        // subject would be a worse answer than the first words of the mail.
+        let text = "alpha ".repeat(40);
+
+        let out = marked(&text, &["needle"]);
+
+        assert!(out.starts_with("alpha"), "{out}");
+        assert!(out.ends_with('…'), "{out}");
+        assert!(!out.contains('['), "nothing matched, so nothing is marked");
+    }
+
+    #[test]
+    fn a_phrase_marks_the_whole_phrase_and_not_its_words_apart() {
+        // The one multi-token query Postio's grammar can express: `text :=
+        // word | '"' phrase '"'`. `find`'s consecutive-token rule is what
+        // makes it agree with the `"quarterly report"` FTS5 matched.
+        let out = marked(
+            "A quarterly summary, then the quarterly report itself.",
+            &["quarterly report"],
+        );
+
+        assert!(out.contains("[quarterly report]"), "{out}");
+        assert_eq!(out.matches('[').count(), 1, "the loose word is not a hit");
+    }
+
+    #[test]
+    fn every_match_in_the_window_is_marked_not_only_the_first() {
+        let out = marked("report about the report", &["report"]);
+
+        assert_eq!(out, "[report] about the [report]");
+    }
+
+    #[test]
+    fn a_match_at_either_end_does_not_leave_a_stray_marker() {
+        assert_eq!(marked("needle", &["needle"]), "[needle]");
+        assert_eq!(marked("a needle", &["needle"]), "a [needle]");
+        assert_eq!(marked("needle a", &["needle"]), "[needle] a");
+    }
+
+    #[test]
+    fn newlines_become_spaces_without_moving_what_matched() {
+        // A body is full of them and a result row is one line. The tokenizer
+        // treats whitespace as a separator either way, so collapsing it
+        // cannot change which tokens match.
+        assert_eq!(
+            marked("Dear Ada,\n\n   The report\tis ready.\n", &["report"]),
+            "Dear Ada, The [report] is ready."
+        );
+    }
+
+    #[test]
+    fn a_star_is_a_character_and_not_a_prefix_search() {
+        // Postio's grammar has no prefix operator: `ParsedQuery::fts_match`
+        // wraps every term with `fts_literal`, which quotes it, and a `*`
+        // inside an FTS5 string literal is a character. `unicode61` then
+        // drops it as a separator, so `report*` is the term `report` --
+        // exactly as this marks it. Pinned because "prefix queries highlight
+        // correctly" is only answerable as "there are none".
+        let out = marked("The report and the reporting", &["report*"]);
+
+        assert!(out.contains("[report]"), "{out}");
+        assert!(
+            !out.contains("[reporting]"),
+            "a prefix search would have matched this, and there is no prefix \
+             search: {out}"
+        );
+    }
+
+    #[test]
+    fn near_is_a_word_and_not_an_operator() {
+        // Same reason as the star. `NEAR` reaches FTS5 quoted, so it is the
+        // token `near` and nothing else -- there is no proximity query for a
+        // highlight to disagree with.
+        let out = marked("the mill is near the store", &["near"]);
+
+        assert_eq!(out, "the mill is [near] the store");
+    }
+
+    #[test]
+    fn text_with_no_tokens_at_all_produces_nothing() {
+        assert_eq!(snippet("", &["report".to_owned()]), "");
+        assert_eq!(snippet("   \n\t ", &["report".to_owned()]), "");
+    }
+
+    #[test]
+    fn what_is_marked_is_what_from_snippet_reads_back() {
+        // The two halves have to agree, or a row draws its highlight
+        // somewhere the query never matched.
+        let terms = vec!["report".to_owned()];
+        let text = "The quarterly report is attached.";
+
+        let read_back = from_snippet(&snippet(text, &terms));
+
+        assert_eq!(read_back.text, text);
+        assert_eq!(
+            read_back
+                .matches
+                .iter()
+                .map(|range| &read_back.text[range.clone()])
+                .collect::<Vec<_>>(),
+            vec!["report"]
+        );
     }
 }
