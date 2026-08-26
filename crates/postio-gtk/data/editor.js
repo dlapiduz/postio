@@ -22,3 +22,19 @@ document.addEventListener('input', () => {
         document.body.innerHTML
     );
 });
+
+/* The reflection channel: the formatting in force where the caret sits, as
+ * a space-joined list of the registry command ids it maps to. Reported on
+ * both selection movement and edits, because either one can move the caret
+ * in or out of a Strong run; the host dedups. */
+function reportFormat() {
+    const active = [];
+    if (document.queryCommandState('bold')) active.push('bold');
+    if (document.queryCommandState('italic')) active.push('italic');
+    if (document.queryCommandState('insertUnorderedList')) active.push('bullet_list');
+    if (document.queryCommandState('insertOrderedList')) active.push('numbered_list');
+    if (document.queryCommandValue('formatBlock') === 'blockquote') active.push('quote_block');
+    window.webkit.messageHandlers.postioFormat.postMessage(active.join(' '));
+}
+document.addEventListener('selectionchange', reportFormat);
+document.addEventListener('input', reportFormat);
