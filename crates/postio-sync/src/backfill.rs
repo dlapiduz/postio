@@ -112,6 +112,41 @@ pub struct BackfillPolicy {
     /// It bounds the *background* lane only. The interactive lane is subject
     /// to none of the policy, this included.
     pub max_backlog: usize,
+    /// What to do about attachment payloads — the *other* axis, governed
+    /// separately from everything above it.
+    pub attachments: AttachmentPolicy,
+}
+
+/// When an attachment's bytes are downloaded — ADR 0017's payload axis.
+///
+/// The fields above this one govern the **text** axis: headers and every
+/// `text/*` part, for every message, to completion, because that is the corpus
+/// search answers from and the corpus offline reading needs. Payloads are a
+/// different question with a different answer. On the reference account they
+/// are 11.00 GB of a 12.43 GB mailbox — 88.5% of the weight, and none of it
+/// anything FTS5 can index. A PDF contributes its filename to search and
+/// nothing else.
+///
+/// So this is a real choice rather than a tuning knob: it is the difference
+/// between ~1.4 GB on disk and ~12.4 GB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AttachmentPolicy {
+    /// Fetch a payload when the user opens or saves it, and never before.
+    ///
+    /// The default, and the one ADR 0016 stays affordable under. Metadata is
+    /// still synced for every part, so `has:attachment` and `filename:`
+    /// answer completely without a byte having moved.
+    #[default]
+    OnOpen,
+    /// Backfill payloads behind the text, for a genuinely complete offline
+    /// archive on a machine with the disk for one.
+    Eager,
+    /// Never fetch a payload, not even when the user opens it.
+    ///
+    /// Filename search and nothing more. An explicit refusal rather than a
+    /// silent failure: the reader says the bytes are not here and were not
+    /// asked for, which is a sentence a person can act on.
+    Never,
 }
 
 impl Default for BackfillPolicy {
@@ -134,6 +169,7 @@ impl Default for BackfillPolicy {
             // its owned paths stay a rounding error beside one message's
             // bytes.
             max_backlog: 4_000,
+            attachments: AttachmentPolicy::default(),
         }
     }
 }
@@ -168,16 +204,58 @@ pub struct BodyRequest {
     pub size: u64,
     /// When the server received it. The backlog's sort key.
     pub received_at: DateTime<Utc>,
-    /// Fetch the entire message rather than only the sections holding its
-    /// text.
+    /// Which bytes of it to ask the server for.
+    pub want: Want,
+}
+
+/// Which bytes of a message one request is after — ADR 0017's two axes, plus
+/// the fallback for a row that predates them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Want {
+    /// The sections holding the message's own words: the text axis, and what
+    /// every background request asks for.
     ///
-    /// False for everything the background lane queues — that is the text axis
-    /// of ADR 0017, and pulling payloads nobody asked for is what it exists to
-    /// stop. Set by [`request_whole`] for the one case that genuinely needs
-    /// every byte: the user opening an attachment on a message whose payloads
-    /// were left on the server. They asked for those bytes by name, so this is
-    /// the interactive lane paying the interactive lane's price.
-    pub whole: bool,
+    /// Pulling payloads nobody asked for is exactly what the split exists to
+    /// stop, so this is the default and the other two are opted into.
+    #[default]
+    Text,
+    /// Named payload sections, by the `BODYSTRUCTURE` path
+    /// `Attachment::part_id` holds — `2`, `2.1`.
+    ///
+    /// The payload axis. Interactive when the user opened one of them, and
+    /// background when [`AttachmentPolicy::Eager`] is draining the backlog.
+    Payloads(Vec<String>),
+    /// Every byte, headers included.
+    ///
+    /// Two rows still need this: one whose `BODYSTRUCTURE` was never recorded,
+    /// so no section can be named; and one whose payload has no
+    /// `Attachment::part_headers`, so a fetched section could not be decoded.
+    /// Slower and fatter, and the only answer that is not a guess.
+    Whole,
+}
+
+impl Want {
+    /// Folds another request for the same message into this one.
+    ///
+    /// Two payload requests union their parts: one round trip, both parts.
+    /// Anything else has no smaller answer than every byte — a text request
+    /// and a payload request together are the whole message, and a
+    /// whole-message fallback on either side already was.
+    fn absorb(&mut self, other: &Want) {
+        if self == other {
+            return;
+        }
+        match (&mut *self, other) {
+            (Want::Payloads(mine), Want::Payloads(theirs)) => {
+                for part in theirs {
+                    if !mine.contains(part) {
+                        mine.push(part.clone());
+                    }
+                }
+            }
+            _ => *self = Want::Whole,
+        }
+    }
 }
 
 impl From<BackfillCandidate> for BodyRequest {
@@ -189,8 +267,8 @@ impl From<BackfillCandidate> for BodyRequest {
             uid: candidate.uid,
             size: candidate.size,
             received_at: candidate.received_at,
-            // The text axis is the default; only `request_whole` opts out.
-            whole: false,
+            // The text axis is the default; the payload axis opts in.
+            want: Want::Text,
         }
     }
 }
@@ -321,6 +399,16 @@ pub struct Backfill {
     /// more — which is the retry a transient failure deserves and the only one
     /// it gets.
     set_aside: HashSet<MessageId>,
+    /// Requests that arrived while the same message was already on the wire,
+    /// re-offered the moment it settles.
+    ///
+    /// Two attachment chips clicked in quick succession. A fetch already on
+    /// the wire cannot grow a part, and the second request has nowhere to go —
+    /// [`Backfill`] tracks one lane per message, deliberately, because that is
+    /// what bounds how long anything can be stuck behind the backfill. Dropping
+    /// it silently would leave the second spinner turning until the reading
+    /// pane's own deadline gave up on bytes nobody was fetching.
+    deferred: HashMap<MessageId, BodyRequest>,
 }
 
 impl Backfill {
@@ -337,6 +425,7 @@ impl Backfill {
             cancel: CancelToken::new(),
             cancelled: false,
             set_aside: HashSet::new(),
+            deferred: HashMap::new(),
         }
     }
 
@@ -418,17 +507,42 @@ impl Backfill {
     /// cap, the metered pause and the active-user pause all exist to keep
     /// speculative work out of the way, and this is not speculative.
     ///
-    /// A message already in the backlog is *promoted* rather than queued twice,
-    /// and one already on the wire is left alone — the fetch the user is
-    /// waiting for is the one already running.
+    /// A message already in the backlog is *promoted* rather than queued twice.
+    /// One already queued in front absorbs this request's
+    /// [`Want`](Want::absorb) rather than dropping it, and one already on the
+    /// wire holds it until that fetch settles — a second attachment clicked
+    /// while the first is downloading is a part to fetch next, not a part to
+    /// forget.
     pub fn request_now(&mut self, request: BodyRequest) {
         if self.cancelled {
             return;
         }
         match self.lanes.get(&request.message) {
-            // Already being fetched, or already at the front. Either way the
-            // user is not waiting any less for a second copy.
-            Some(Lane::InFlight | Lane::Interactive) => return,
+            // On the wire. Nothing can be added to a fetch already running, so
+            // this waits for it: `finished` offers it again.
+            Some(Lane::InFlight) => {
+                match self.deferred.entry(request.message) {
+                    std::collections::hash_map::Entry::Occupied(mut held) => {
+                        held.get_mut().want.absorb(&request.want);
+                    }
+                    std::collections::hash_map::Entry::Vacant(empty) => {
+                        empty.insert(request);
+                    }
+                }
+                return;
+            }
+            // Queued in front already. One round trip can answer both, so the
+            // request that will run absorbs this one's want.
+            Some(Lane::Interactive) => {
+                for queued in self
+                    .interactive
+                    .iter_mut()
+                    .filter(|queued| queued.message == request.message)
+                {
+                    queued.want.absorb(&request.want);
+                }
+                return;
+            }
             Some(Lane::Background) => {
                 // The stale heap entry is skipped on its way out; the count
                 // does not move, because the message did not leave the queue.
@@ -491,6 +605,12 @@ impl Backfill {
                 self.set_aside.insert(message);
             }
         }
+        // Whatever was asked for while this was on the wire. Offered even
+        // after a failure: it is the user asking a second time, and a request
+        // they made by hand earns the attempt a speculative one would not.
+        if let Some(held) = self.deferred.remove(&message) {
+            self.request_now(held);
+        }
     }
 
     /// Offers everything set aside one more time.
@@ -516,6 +636,7 @@ impl Backfill {
         self.interactive.clear();
         self.background.clear();
         self.lanes.clear();
+        self.deferred.clear();
         self.progress.pending = 0;
         self.progress.in_flight = 0;
     }
@@ -633,25 +754,136 @@ pub fn request_body(
     Ok(true)
 }
 
-/// As [`request_body`], but asks for every byte of the message.
+/// Asks for named payload parts of one message, now, because the user opened
+/// one of them.
 ///
-/// The escape hatch from the text axis, for the one caller that needs the
-/// parts it deliberately did not fetch: someone opening an attachment on a
-/// `partial` message. Until the payload axis fetches parts individually
-/// (#377) this is how those bytes arrive, and it is still on-demand — nothing
-/// speculative pulls a payload.
-pub fn request_whole(
+/// The interactive half of ADR 0017's payload axis. The background lane
+/// fetches text and leaves payloads on the server, so this is the only thing
+/// that ever asks for them on demand — and it asks by section, not by
+/// message: `BODY.PEEK[2]` for the part somebody clicked, not `BODY.PEEK[]`
+/// for the forty megabytes it happens to sit beside.
+///
+/// Returns `false` when there is nothing to fetch, and each way of meaning
+/// that is a different sentence the reading pane can say:
+///
+/// * [`AttachmentPolicy::Never`] — the bytes were never going to be fetched.
+/// * every named part already has its bytes — read the blob instead.
+/// * the message has no local row, or no `UID`, or is already `full`.
+///
+/// A part whose [`Attachment::part_headers`](postio_model::Attachment) were
+/// never recorded escalates the request to [`Want::Whole`]: `BODY[2]` comes
+/// back encoded with nothing to say how, and storing base64 as though it were
+/// a PDF is worse than the extra bandwidth.
+pub fn request_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
+    parts: &[String],
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+    if backfill.policy().attachments == AttachmentPolicy::Never {
+        return Ok(false);
+    }
+    let messages = MessageRepository::new(connection);
+    let Some(candidate) = messages.backfill_candidate(message_id)? else {
         return Ok(false);
     };
+    let Some(message) = messages.get(message_id)? else {
+        return Ok(false);
+    };
+
+    let mut wanted = Vec::new();
+    let mut needs_every_byte = false;
+    for part_id in parts {
+        let Some(attachment) = message
+            .attachments
+            .iter()
+            .find(|attachment| attachment.part_id.as_deref() == Some(part_id.as_str()))
+        else {
+            continue;
+        };
+        if attachment.blob_id.is_some() {
+            continue;
+        }
+        if attachment.part_headers.is_none() {
+            needs_every_byte = true;
+        }
+        wanted.push(part_id.clone());
+    }
+    if wanted.is_empty() {
+        return Ok(false);
+    }
+
     let mut request = BodyRequest::from(candidate);
-    request.whole = true;
+    request.want = if needs_every_byte {
+        Want::Whole
+    } else {
+        Want::Payloads(wanted)
+    };
     backfill.request_now(request);
     Ok(true)
+}
+
+/// Queues the payloads of up to `limit` text-backfilled messages in
+/// `mailbox_id`, and answers how many requests joined the queue.
+///
+/// The background half of the payload axis, and only ever called under
+/// [`AttachmentPolicy::Eager`]: for someone who wants a genuinely complete
+/// offline archive and has the disk for it. On the reference account that is
+/// the difference between ~1.4 GB and ~12.4 GB, which is why it is a choice
+/// and not a default.
+///
+/// Walks past a batch it cannot use for the same reason [`seed`] does (#318):
+/// a message set aside after a failed fetch stays `partial` for ever, so a
+/// folder whose newest batch is all such messages would answer the same rows
+/// on every seed and never reach the mail behind them.
+pub fn seed_payloads(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    mailbox_id: MailboxId,
+    limit: u32,
+) -> Result<usize> {
+    let messages = MessageRepository::new(connection);
+    let mut offset = 0;
+    loop {
+        let candidates = messages.needing_payloads_from(mailbox_id, limit, offset)?;
+        let read = candidates.len();
+        let mut queued = 0;
+        for candidate in candidates {
+            let message_id = candidate.message_id;
+            let Some(message) = messages.get(message_id)? else {
+                continue;
+            };
+            let wanted = pending_payloads(&message);
+            if wanted.is_empty() {
+                continue;
+            }
+            let mut request = BodyRequest::from(candidate);
+            request.want = Want::Payloads(wanted);
+            if backfill.enqueue(request) {
+                queued += 1;
+            }
+        }
+        if queued > 0 || read < limit as usize {
+            return Ok(queued);
+        }
+        offset += limit;
+    }
+}
+
+/// The sections of `message` whose bytes are not on this machine yet.
+///
+/// A part with no `part_id` is not one of them: there is no section to name in
+/// a `FETCH`, so nothing can be asked for. Neither is one with no
+/// `part_headers` — see [`request_payloads`] for why a headerless section
+/// cannot be decoded — which the eager lane skips rather than escalating to a
+/// whole-message fetch, because nobody is waiting for it.
+fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
+    message
+        .attachments
+        .iter()
+        .filter(|attachment| attachment.blob_id.is_none() && attachment.part_headers.is_some())
+        .filter_map(|attachment| attachment.part_id.clone())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -707,13 +939,26 @@ pub async fn fetch_body(
         return Ok(Outcome::Gone);
     };
 
-    // The text axis, when the header sync left us a map of where the words
-    // are. `content_type` is what says a `BODYSTRUCTURE` was parsed at all —
-    // a message that is nothing but an attachment has no text sections and
-    // must still take this path, or the fallback would fetch the payload this
-    // exists to avoid.
-    if !request.whole && message.content_type.is_some() {
-        return fetch_text_parts(connection, blobs, backend, request, message, cancel).await;
+    match &request.want {
+        // The payload axis: named sections, nothing around them.
+        Want::Payloads(parts) => {
+            let parts = parts.clone();
+            return fetch_payloads(
+                connection, blobs, backend, request, &message, &parts, cancel,
+            )
+            .await;
+        }
+        // The text axis, when the header sync left us a map of where the words
+        // are. `content_type` is what says a `BODYSTRUCTURE` was parsed at all —
+        // a message that is nothing but an attachment has no text sections and
+        // must still take this path, or the fallback would fetch the payload this
+        // exists to avoid.
+        Want::Text if message.content_type.is_some() => {
+            return fetch_text_parts(connection, blobs, backend, request, message, cancel).await;
+        }
+        // Every byte: asked for, or the only answer left for a row whose
+        // structure was never recorded.
+        Want::Text | Want::Whole => {}
     }
 
     // Straight to disk as it arrives, rather than into a `Vec` that doubles
@@ -770,7 +1015,26 @@ pub async fn fetch_body(
     }
     messages.update(&mut message)?;
 
-    // The commit point.
+    // Every payload arrived with the message, so record where each one landed
+    // — the same content-addressed blob the payload axis would have written,
+    // because `ParsedPart::content` is decoded and `BlobStore::put` names a
+    // blob after its plaintext. A part fetched here and the same part fetched
+    // by section are one blob, not two.
+    //
+    // Matched by MIME path rather than by position: the attachment rows came
+    // from `BODYSTRUCTURE` at header-sync time and this parse is a second,
+    // independent reading of the same message.
+    for part in &parsed.parts {
+        let Some(part_id) = part.attachment.part_id.as_deref() else {
+            continue;
+        };
+        let blob = blobs.put(&part.content)?;
+        messages.set_attachment_blob(request.message, part_id, &blob)?;
+    }
+
+    // The commit point. `Full` unconditionally, and honestly: whatever the
+    // parse could not match to a row is still in the raw blob, which is what
+    // `postio_app::reading::part_bytes` falls back to.
     messages.set_body_blobs(request.message, &stored, BodyState::Full)?;
 
     // And into the search index, *after* the commit point.
@@ -902,18 +1166,8 @@ async fn fetch_text_parts(
 
     // `partial` means text local, payloads not — the variant migration 0001
     // declared and nothing had ever written until ADR 0017 gave it a meaning.
-    // Nothing fills `blob_id` on the receive path yet (#377), so today any
-    // message carrying a part settles here; that is honest rather than
-    // provisional, and it is what tells the reader to offer "download".
-    let state = if message
-        .attachments
-        .iter()
-        .all(|part| part.blob_id.is_some())
-    {
-        BodyState::Full
-    } else {
-        BodyState::Partial
-    };
+    // It is what tells the reader to offer "download" rather than "open".
+    let state = state_for(&message.attachments);
 
     // The commit point, after which the body is local as far as anything else
     // is concerned. See `fetch_body` for why it is last.
@@ -928,6 +1182,140 @@ async fn fetch_text_parts(
         );
     }
     Ok(Outcome::Stored { bytes })
+}
+
+/// Fetches named payload sections and records where each one landed.
+///
+/// The payload axis of ADR 0017, and the first thing in this codebase ever to
+/// write `attachments.blob_id` on the receive path. Before it that column was
+/// filled only on the way *out*, by a composer attaching a file, so
+/// `Attachment::is_downloaded` was false for every message that had ever
+/// arrived from a server and `postio_app::reading::part_bytes` re-parsed the
+/// whole raw message to cut one part out of it.
+///
+/// # Rebuilding an entity from a section
+///
+/// The same trick [`fetch_text_parts`] uses, for the same reason: `BODY[2]`
+/// returns a part's *encoded* bytes and none of its headers, so nothing in the
+/// response says whether they are base64. `BODYSTRUCTURE` said so at
+/// header-sync time and `Attachment::part_headers` kept the answer, so
+/// prepending it makes a self-contained entity — no `[2.MIME]` round trip.
+///
+/// # Why the id is taken on the decoded bytes
+///
+/// Content addressing gives dedup for free, but only over a form two copies of
+/// the same file actually share. Base64 does not qualify: the same PDF wrapped
+/// at a different line length is different bytes. Decoded, it is the same file,
+/// and on the reference account 22,878 named parts collapse to 13,099 distinct
+/// — 10.96 GB to 7.69 GB.
+///
+/// It is also what makes an eager fetch and an on-open fetch land *identically*
+/// rather than giving one attachment two blob ids.
+///
+/// # No raw blob
+///
+/// Nothing to keep: the message around the part was never fetched. That is the
+/// point.
+async fn fetch_payloads(
+    connection: &Connection,
+    blobs: &BlobStore,
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    message: &postio_model::Message,
+    parts: &[String],
+    cancel: &CancelToken,
+) -> Result<Outcome> {
+    let messages = MessageRepository::new(connection);
+    let mut bytes = 0u64;
+
+    for part_id in parts {
+        let Some(attachment) = message
+            .attachments
+            .iter()
+            .find(|attachment| attachment.part_id.as_deref() == Some(part_id.as_str()))
+        else {
+            // The structure moved under the request while it sat in the queue.
+            // Settled rather than failed, as `Outcome::Gone` is for a message.
+            continue;
+        };
+        if attachment.blob_id.is_some() {
+            // It landed while this was queued — a second chip clicked on the
+            // same part, or an eager pass that got there first. Not worth a
+            // round trip for bytes already on the disk.
+            continue;
+        }
+        let Some(headers) = attachment.part_headers.clone() else {
+            // Refused rather than guessed. See `request_payloads`: this should
+            // have been escalated to a whole-message fetch before it got here.
+            tracing::debug!(
+                message = request.message.get(),
+                "a payload with no recorded encoding was not fetched"
+            );
+            continue;
+        };
+
+        let mut sink = VecSink::new();
+        backend
+            .fetch_part(
+                &request.path,
+                request.uid,
+                &BodyPart::Section(part_id.clone()),
+                &mut sink,
+                cancel,
+            )
+            .await?;
+        if !sink.is_finished() {
+            // The sink contract, same as every other path here: without
+            // `finish` the bytes are a fragment, and half a file written to
+            // disk under a name that says it is whole is worse than no file.
+            return Err(SyncError::Backend(BackendError::Cancelled));
+        }
+        let raw = sink.into_inner();
+        bytes += raw.len() as u64;
+
+        let mut entity = headers.into_bytes();
+        entity.extend_from_slice(b"\r\n");
+        entity.extend_from_slice(&raw);
+        let Some(decoded) = mime::decode_entity(&entity) else {
+            // The ingest boundary of #277 again: ids and sizes only, because
+            // the bytes that defeated the decoder are somebody's mail.
+            tracing::warn!(
+                message = request.message.get(),
+                bytes = entity.len(),
+                "a fetched payload could not be decoded; leaving it on the server"
+            );
+            continue;
+        };
+
+        let blob = blobs.put(&decoded)?;
+        messages.set_attachment_blob(request.message, part_id, &blob)?;
+    }
+
+    // The commit point for this axis. Re-read rather than reasoned about: the
+    // rows above were written one at a time, and what matters here is whether
+    // *every* part is local now — including ones this request never asked for.
+    if let Some(settled) = messages.get(request.message)? {
+        let state = state_for(&settled.attachments);
+        if settled.sync.body_state != state {
+            messages.set_body_state(request.message, state)?;
+        }
+    }
+
+    Ok(Outcome::Stored { bytes })
+}
+
+/// How much of a message is local, given what its parts have.
+///
+/// `full` means every byte; `partial` means the words are here and something
+/// hanging off them is not. That distinction is what #352 needs in order to
+/// tell the user when search is answering for an incomplete corpus, and what
+/// the attachment chip needs in order to say "download" rather than "open".
+fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
+    if attachments.iter().all(|part| part.blob_id.is_some()) {
+        BodyState::Full
+    } else {
+        BodyState::Partial
+    }
 }
 
 /// Stores one decoded body form, skipping an empty one so a message with no
@@ -960,7 +1348,7 @@ mod tests {
             uid: Uid::new(uid),
             size,
             received_at: at(uid as i64),
-            whole: false,
+            want: Want::Text,
         }
     }
 

@@ -879,7 +879,7 @@ fn body_request(mailbox: &Mailbox, message: MessageId, uid: Uid) -> BodyRequest 
         uid,
         size: 0,
         received_at: at(9),
-        whole: false,
+        want: postio_sync::backfill::Want::Text,
     }
 }
 

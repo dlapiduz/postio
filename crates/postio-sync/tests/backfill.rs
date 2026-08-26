@@ -10,7 +10,10 @@ use postio_model::{BodyState, Mailbox, MessageId, Uid, UidValidity};
 use postio_storage::BlobStore;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support::{self, TempDatabase};
-use postio_sync::backfill::{Backfill, BackfillPolicy, BodyRequest, Outcome, fetch_body};
+use postio_sync::backfill::{
+    AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Priority, Want, fetch_body,
+    request_payloads, seed_payloads,
+};
 use postio_sync::sync_mailbox;
 
 const INBOX: &str = "INBOX";
@@ -79,7 +82,7 @@ fn request(mailbox: &Mailbox, id: MessageId, uid: u32, size: u64) -> BodyRequest
         uid: Uid::new(uid),
         size,
         received_at: at(uid as i64),
-        whole: false,
+        want: Want::Text,
     }
 }
 
@@ -854,11 +857,12 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
 }
 
 #[tokio::test]
-async fn opening_an_attachment_asks_for_the_whole_message() {
-    // The escape hatch from the text axis. The background lane leaves payloads
-    // on the server, so when the user opens one there has to be a way to get
-    // every byte -- otherwise ADR 0017 would have made attachments
-    // unopenable, which is not a trade anyone agreed to.
+async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
+    // The fallback under the payload axis. `BODY[2]` comes back encoded with
+    // no headers, so a part whose `BODYSTRUCTURE` was never recorded -- a row
+    // synced before migration 0009 -- has nothing to decode against. Fetching
+    // the whole message is slower and fatter, and it is the only answer that
+    // is not "store base64 and call it a PDF".
     //
     // Interactive by construction: nothing speculative reaches this path.
     let inbox = MockMailbox::new(INBOX)
@@ -872,7 +876,7 @@ async fn opening_an_attachment_asks_for_the_whole_message() {
     let (id, uid) = rows[0];
 
     let mut request = request(&local.inbox, id, uid, HUGE);
-    request.whole = true;
+    request.want = Want::Whole;
 
     fetch_body(
         &local.connection,
@@ -1057,4 +1061,401 @@ fn the_user_is_never_refused_by_the_backlog_cap() {
         MessageId::new(3),
         "the one the user opened, ahead of the backlog and past its cap"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The payload axis (ADR 0017, #377)
+// ---------------------------------------------------------------------------
+
+/// A small payload and the base64 the server would hand back for it.
+///
+/// Written out rather than encoded here on purpose: the point of the fixture
+/// is that the bytes on the wire are *not* the bytes in the blob store, and a
+/// test that encoded the expectation itself could not tell the two apart.
+const PDF: &[u8] = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
+const PDF_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
+
+/// A message whose text is section 1 and whose payload is section 2, with
+/// both seeded on the server the way a real one would be: the text plain, the
+/// payload base64, and `BODYSTRUCTURE` saying so.
+fn with_a_payload(uid: u32, filename: &str) -> MockMessage {
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
+                .with_encoding("base64")
+                .with_filename(filename),
+        ],
+    );
+    MockMessage::new(
+        format!(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             Subject: Statement {uid}\r\n\
+             Message-ID: <statement-{uid}@example.com>\r\n\
+             Content-Type: multipart/mixed; boundary=b\r\n\
+             \r\n\
+             --b\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             Your statement is attached.\r\n\
+             --b--\r\n"
+        )
+        .into_bytes(),
+    )
+    .with_internal_date(at(uid as i64))
+    .with_structure(structure)
+    .with_part("1", &b"Your statement is attached."[..])
+    .with_part("2", PDF_BASE64.as_bytes())
+}
+
+/// Header-sync one message carrying a payload, then backfill its text, so the
+/// row is left exactly where the payload axis picks it up: `partial`.
+async fn a_partial_message(local: &Local, backend: &MockBackend) -> (MessageId, u32) {
+    let rows = headers(local, backend).await;
+    let (id, uid) = rows[0];
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        backend,
+        &request(&local.inbox, id, uid, 4_096),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("text");
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert_eq!(
+        stored.sync.body_state,
+        BodyState::Partial,
+        "the fixture has to start where the payload axis begins"
+    );
+    (id, uid)
+}
+
+#[test]
+fn a_payload_is_fetched_when_it_is_opened_and_not_before() {
+    assert_eq!(AttachmentPolicy::default(), AttachmentPolicy::OnOpen);
+    assert_eq!(
+        BackfillPolicy::default().attachments,
+        AttachmentPolicy::OnOpen,
+        "ADR 0017: ~90% of a mailbox by weight is payloads, and pulling them \
+         by default is the cost the split exists to refuse"
+    );
+}
+
+#[tokio::test]
+async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
+    // The column the schema has had since migration 0001 and the receive path
+    // has never written. Before this, `Attachment::is_downloaded` was false
+    // for every message that ever arrived from a server.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+
+    let mut backfill = Backfill::new(policy());
+    assert!(
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        "there is a payload on the server to ask for"
+    );
+    let claim = backfill.next_body().expect("a claim");
+    assert_eq!(
+        claim.priority,
+        Priority::Interactive,
+        "the user asked for these bytes by name and is watching a spinner"
+    );
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        &claim.cancel,
+    )
+    .await
+    .expect("fetch");
+
+    let messages = MessageRepository::new(&local.connection);
+    let stored = messages.get(id).expect("get").expect("row");
+    let part = &stored.attachments[0];
+    assert!(part.is_downloaded(), "the chip can honestly say 'open' now");
+    let blob = part.blob_id.clone().expect("a key");
+    assert_eq!(
+        local.blobs.get(&blob).expect("read"),
+        PDF,
+        "decoded, not the base64 that came off the wire"
+    );
+    assert!(
+        stored.raw_blob_id.is_none(),
+        "a payload fetch pulls the payload, not the message around it"
+    );
+    assert_eq!(
+        stored.sync.body_state,
+        BodyState::Full,
+        "every part is local now"
+    );
+}
+
+#[tokio::test]
+async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+
+    let mut backfill = Backfill::new(policy());
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+    let claim = backfill.next_body().expect("a claim");
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        &claim.cancel,
+    )
+    .await
+    .expect("fetch");
+    let after_first = backend.calls();
+
+    assert!(
+        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        "the bytes are here; opening it again must not reach the network"
+    );
+    assert!(backfill.next_body().is_none());
+    assert_eq!(backend.calls(), after_first);
+}
+
+#[tokio::test]
+async fn two_messages_carrying_the_same_file_share_one_blob() {
+    // Dedup is worth real bytes: on the reference account 22,878 named
+    // attachment parts collapse to 13,099 distinct. Content addressing gets
+    // it for free -- provided the id is taken on the decoded payload and not
+    // on the base64, which differs by line wrapping alone.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"))
+        .message(with_a_payload(2, "a-different-name.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let messages = MessageRepository::new(&local.connection);
+    let mut keys = Vec::new();
+
+    for (id, uid) in rows {
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&local.inbox, id, uid, 4_096),
+            &CancelToken::new(),
+        )
+        .await
+        .expect("text");
+
+        let mut backfill = Backfill::new(policy());
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+        let claim = backfill.next_body().expect("a claim");
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &claim.request,
+            &claim.cancel,
+        )
+        .await
+        .expect("fetch");
+
+        let stored = messages.get(id).expect("get").expect("row");
+        keys.push(stored.attachments[0].blob_id.clone().expect("a key"));
+    }
+
+    assert_eq!(keys[0], keys[1], "the same bytes are the same blob");
+}
+
+#[tokio::test]
+async fn never_leaves_a_payload_on_the_server_even_when_it_is_opened() {
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+
+    let mut backfill = Backfill::new(BackfillPolicy {
+        attachments: AttachmentPolicy::Never,
+        ..policy()
+    });
+
+    assert!(
+        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        "filename search and nothing more -- that is what `never` promises"
+    );
+    assert!(backfill.next_body().is_none());
+}
+
+#[tokio::test]
+async fn eager_queues_the_payloads_the_text_lane_left_behind() {
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+
+    let mut backfill = Backfill::new(BackfillPolicy {
+        attachments: AttachmentPolicy::Eager,
+        ..policy()
+    });
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed"),
+        1
+    );
+
+    let claim = backfill.next_body().expect("a claim");
+    assert_eq!(claim.request.message, id);
+    assert_eq!(
+        claim.priority,
+        Priority::Background,
+        "nobody is watching a spinner for a speculative payload"
+    );
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        &claim.cancel,
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert!(stored.attachments[0].is_downloaded());
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+    assert_eq!(
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed"),
+        0,
+        "and there is nothing left for it to find"
+    );
+}
+
+#[tokio::test]
+async fn a_message_is_full_only_once_its_last_payload_is_local() {
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
+                .with_encoding("base64")
+                .with_filename("first.pdf"),
+            postio_imap::backend::PartNode::new("3", "text/csv", 10).with_filename("rows.csv"),
+        ],
+    );
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(
+            with_a_payload(1, "first.pdf")
+                .with_structure(structure)
+                .with_part("3", &b"name,size\n"[..]),
+        );
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+    let messages = MessageRepository::new(&local.connection);
+
+    for (part, expected) in [("2", BodyState::Partial), ("3", BodyState::Full)] {
+        let mut backfill = Backfill::new(policy());
+        request_payloads(&local.connection, &mut backfill, id, &[part.to_owned()]).expect("ask");
+        let claim = backfill.next_body().expect("a claim");
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &claim.request,
+            &claim.cancel,
+        )
+        .await
+        .expect("fetch");
+        assert_eq!(
+            messages.get(id).expect("get").expect("row").sync.body_state,
+            expected,
+            "after fetching part {part}"
+        );
+    }
+}
+
+#[test]
+fn a_part_asked_for_while_another_is_on_the_wire_is_not_lost() {
+    // Two chips clicked in quick succession. The second request cannot join a
+    // fetch already on the wire, and dropping it silently would leave the
+    // second spinner turning until it timed out -- so it waits for the first
+    // to settle and is offered again.
+    let local = local();
+    let mut backfill = Backfill::new(policy());
+
+    let mut first = request(&local.inbox, MessageId::new(1), 1, 4_096);
+    first.want = Want::Payloads(vec!["2".to_owned()]);
+    let mut second = first.clone();
+    second.want = Want::Payloads(vec!["3".to_owned()]);
+
+    backfill.request_now(first);
+    let claim = backfill.next_body().expect("a claim");
+    backfill.request_now(second);
+    assert!(
+        backfill.next_body().is_none(),
+        "one fetch at a time is what keeps the user off the back of the queue"
+    );
+
+    backfill.finished(claim.request.message, Outcome::Stored { bytes: 10 });
+
+    let next = backfill.next_body().expect("the deferred request");
+    assert_eq!(next.request.want, Want::Payloads(vec!["3".to_owned()]));
+}
+
+#[test]
+fn a_part_asked_for_while_another_is_still_queued_joins_it() {
+    let local = local();
+    let mut backfill = Backfill::new(policy());
+
+    let mut first = request(&local.inbox, MessageId::new(1), 1, 4_096);
+    first.want = Want::Payloads(vec!["2".to_owned()]);
+    let mut second = first.clone();
+    second.want = Want::Payloads(vec!["3".to_owned()]);
+
+    backfill.request_now(first);
+    backfill.request_now(second);
+
+    let claim = backfill.next_body().expect("a claim");
+    assert_eq!(
+        claim.request.want,
+        Want::Payloads(vec!["2".to_owned(), "3".to_owned()]),
+        "one round trip, both parts"
+    );
+    assert!(backfill.next_body().is_none());
 }
