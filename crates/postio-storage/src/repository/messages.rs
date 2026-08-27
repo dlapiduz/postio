@@ -726,8 +726,20 @@ impl<'a> MessageRepository<'a> {
         let unacknowledged = unacknowledged_flag_changes(&transaction)?;
 
         for message in batch.iter_mut() {
-            let existing = match (message.server.uid, message.server.uid_validity) {
-                (Some(uid), Some(validity)) => find_by_generation_uid(
+            // The identity is what names a message (#543); the wire pair is
+            // the fallback for rows synced before it existed. Matching the
+            // pair first would let a backend whose uids are synthetic
+            // enumeration hints (#544) insert a second copy of a message it
+            // already holds.
+            let by_identity = match &message.server.remote_id {
+                Some(remote_id) => {
+                    find_by_remote_id(&transaction, message.mailbox_id, remote_id)?
+                }
+                None => None,
+            };
+            let existing = match (by_identity, message.server.uid, message.server.uid_validity) {
+                (Some(id), _, _) => Some(id),
+                (None, Some(uid), Some(validity)) => find_by_generation_uid(
                     &transaction,
                     message.mailbox_id,
                     Generation::new(validity.get()),
@@ -1815,6 +1827,22 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
     }
 
     Ok(())
+}
+
+/// A row by the backend's own identity — the match the engine prefers.
+fn find_by_remote_id(
+    connection: &Connection,
+    mailbox_id: MailboxId,
+    remote_id: &RemoteId,
+) -> Result<Option<MessageId>> {
+    let mut statement = connection.prepare(
+        "SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2",
+    )?;
+    let mut rows = statement.query(params![mailbox_id.get(), remote_id.as_str()])?;
+    Ok(match rows.next()? {
+        Some(row) => Some(MessageId::new(row.get(0)?)),
+        None => None,
+    })
 }
 
 /// The engine-facing lookup: the caller tracks an opaque [`Generation`],
