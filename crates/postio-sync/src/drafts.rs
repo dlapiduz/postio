@@ -305,9 +305,7 @@ async fn save(
             None
         }
     };
-    if let Err(error) =
-        DraftRepository::new(connection).set_server_copy(draft, location.as_ref())
-    {
+    if let Err(error) = DraftRepository::new(connection).set_server_copy(draft, location.as_ref()) {
         // The draft was discarded while its own upload was in flight. The copy
         // just made is orphaned, so the folder is flagged rather than left
         // silently wrong.

@@ -17,7 +17,7 @@
 //! * [`ResyncPlan::Full`] — re-enumerate from scratch. Per
 //!   [`ResyncPlan::Full`]'s own docs this always means *discarding cached
 //!   UIDs*, not just the ones that changed generation, so every `Full` reason
-//!   — not only [`FullResyncReason::UidValidityChanged`] — wipes this
+//!   — not only [`FullResyncReason::GenerationChanged`] — wipes this
 //!   mailbox's local rows before [`initial::sync_mailbox`] repopulates it.
 //!   Getting this specific case wrong is the one CLAUDE.md calls out by name:
 //!   a `UIDVALIDITY` change that is not wiped silently corrupts state, because
@@ -70,8 +70,8 @@ use chrono::Utc;
 use postio_imap::backend::{MailBackend, MailboxStatus as ServerStatus, SelectMode, UidSet};
 use postio_imap::cancel::CancelToken;
 use postio_model::{
-    FullResyncReason, Mailbox, MailboxId, MailboxStatus, Message, MessageId, ResyncPlan, Uid,
-    UidValidity,
+    FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
+    ResyncPlan, Uid,
 };
 use postio_storage::PooledConnection;
 use postio_storage::repository::{
@@ -155,7 +155,7 @@ pub async fn resync_mailbox(
                 connection,
                 backend,
                 mailbox,
-                previous.uid_validity,
+                previous.generation,
                 cancel,
                 on_progress,
             )
@@ -176,8 +176,8 @@ pub async fn resync_mailbox(
                 reason = ?reason,
                 "falling back to a full resync"
             );
-            if let Some(uid_validity) = previous.uid_validity {
-                wipe_mailbox(connection, mailbox.id, uid_validity)?;
+            if let Some(generation) = previous.generation {
+                wipe_mailbox(connection, mailbox.id, generation)?;
             }
             sync_state.observe(mailbox.id, &reported, Utc::now())?;
             let report =
@@ -225,7 +225,7 @@ pub async fn resync_mailbox(
                         connection,
                         backend,
                         mailbox,
-                        previous.uid_validity,
+                        previous.generation,
                         cancel,
                         on_progress,
                     )
@@ -251,7 +251,7 @@ pub async fn resync_mailbox(
 ///
 /// * **The generation moved.** Every local UID is meaningless, so the rows
 ///   under it are wiped before the mailbox is read again — the
-///   [`UIDVALIDITY`](FullResyncReason::UidValidityChanged) rebuild, reported
+///   [generation](FullResyncReason::GenerationChanged) rebuild, reported
 ///   exactly as the planned path reports it, so a caller cannot tell whether
 ///   the change was discovered by comparing statuses or by being refused one.
 /// * **The generation held.** The UIDs are still good and only the *pull* was
@@ -265,14 +265,14 @@ async fn rebuild(
     connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
-    known_generation: Option<UidValidity>,
+    known_generation: Option<Generation>,
     cancel: &CancelToken,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
     let selected = backend.select(&mailbox.path, SelectMode::ReadWrite).await?;
     let reported = to_model_status(&selected);
 
-    let renumbered = known_generation.is_some_and(|known| known != selected.uid_validity);
+    let renumbered = known_generation.is_some_and(|known| known != selected.generation);
     if renumbered && let Some(stale) = known_generation {
         wipe_mailbox(connection, mailbox.id, stale)?;
     }
@@ -301,7 +301,7 @@ async fn rebuild(
 
     Ok(if renumbered {
         Outcome::Full {
-            reason: FullResyncReason::UidValidityChanged,
+            reason: FullResyncReason::GenerationChanged,
             report,
         }
     } else {
@@ -323,7 +323,7 @@ async fn incremental(
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
-    let known = messages.uids_in(mailbox.id, selected.uid_validity)?;
+    let known = messages.uids_in(mailbox.id, selected.generation)?;
     let known_set: UidSet = known.iter().copied().collect();
     let known_count = known.len() as u32;
 
@@ -414,7 +414,7 @@ async fn incremental(
 
         let mut ids = Vec::with_capacity(vanished.len());
         for uid in vanished {
-            if let Some(message) = messages.by_uid(mailbox.id, selected.uid_validity, uid)? {
+            if let Some(message) = messages.by_uid(mailbox.id, selected.generation, uid)? {
                 ids.push(message.id);
             }
         }
@@ -450,7 +450,7 @@ fn unaccounted_arrivals(
     (floor < selected.uid_next.get()).then(|| Uid::new(floor))
 }
 
-/// Removes every locally known message under `uid_validity`.
+/// Removes every locally known message under `generation`.
 ///
 /// Goes through [`MessageRepository::uids_in`] rather than the windowed list
 /// query: a `UIDVALIDITY` reset means every row under the old generation is
@@ -459,14 +459,14 @@ fn unaccounted_arrivals(
 fn wipe_mailbox(
     connection: &Connection,
     mailbox_id: MailboxId,
-    uid_validity: UidValidity,
+    generation: Generation,
 ) -> Result<()> {
     let messages = MessageRepository::new(connection);
-    let uids = messages.uids_in(mailbox_id, uid_validity)?;
+    let uids = messages.uids_in(mailbox_id, generation)?;
 
     let mut ids = Vec::with_capacity(uids.len());
     for uid in uids {
-        if let Some(message) = messages.by_uid(mailbox_id, uid_validity, uid)? {
+        if let Some(message) = messages.by_uid(mailbox_id, generation, uid)? {
             ids.push(message.id);
         }
     }
@@ -475,7 +475,7 @@ fn wipe_mailbox(
 }
 
 fn to_model_status(selected: &ServerStatus) -> MailboxStatus {
-    let mut status = MailboxStatus::new(selected.uid_validity).with_uid_next(selected.uid_next);
+    let mut status = MailboxStatus::new(selected.generation).with_uid_next(selected.uid_next);
     if let Some(mod_seq) = selected.highest_mod_seq {
         status = status.with_highest_mod_seq(mod_seq);
     }

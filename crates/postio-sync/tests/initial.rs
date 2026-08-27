@@ -43,10 +43,10 @@ fn local(connection: &Connection) -> (AccountId, Mailbox) {
 fn known_uids(
     connection: &Connection,
     mailbox_id: MailboxId,
-    uid_validity: postio_model::UidValidity,
+    generation: postio_model::Generation,
 ) -> BTreeSet<u32> {
     MessageRepository::new(connection)
-        .uids_in(mailbox_id, uid_validity)
+        .uids_in(mailbox_id, generation)
         .expect("uids_in")
         .into_iter()
         .map(Uid::get)
@@ -61,7 +61,7 @@ async fn the_newest_batch_lands_before_the_oldest_one() {
     let (_account, inbox) = local(&connection);
 
     let mut batches: Vec<BTreeSet<u32>> = Vec::new();
-    let uid_validity = postio_model::UidValidity::new(1);
+    let uid_validity = postio_model::Generation::new(1);
     sync_mailbox_with_batch_size(
         &connection,
         &backend,
@@ -117,7 +117,7 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
         "a cancelled pass must not silently succeed"
     );
     assert_eq!(
-        known_uids(&connection, inbox.id, postio_model::UidValidity::new(1)),
+        known_uids(&connection, inbox.id, postio_model::Generation::new(1)),
         BTreeSet::from([4, 5]),
         "only the first batch should have committed"
     );
@@ -145,7 +145,7 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     assert_eq!(resumed.inserted, 3);
     assert_eq!(resumed.updated, 0);
     assert_eq!(
-        known_uids(&connection, inbox.id, postio_model::UidValidity::new(1)),
+        known_uids(&connection, inbox.id, postio_model::Generation::new(1)),
         BTreeSet::from([1, 2, 3, 4, 5])
     );
     assert!(
@@ -193,11 +193,11 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
 
     let messages = MessageRepository::new(&connection);
     let parent = messages
-        .by_uid(inbox.id, postio_model::UidValidity::new(1), Uid::new(1))
+        .by_uid(inbox.id, postio_model::Generation::new(1), Uid::new(1))
         .expect("look up parent")
         .expect("parent stored");
     let reply = messages
-        .by_uid(inbox.id, postio_model::UidValidity::new(1), Uid::new(2))
+        .by_uid(inbox.id, postio_model::Generation::new(1), Uid::new(2))
         .expect("look up reply")
         .expect("reply stored");
 
@@ -347,7 +347,7 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
     let connection = database.connection().expect("checkout");
     let (_account, inbox) = local(&connection);
 
-    let uid_validity = postio_model::UidValidity::new(1);
+    let uid_validity = postio_model::Generation::new(1);
     let mut batches: Vec<BTreeSet<u32>> = Vec::new();
     let report = sync_mailbox_with_batch_size(
         &connection,

@@ -4,8 +4,8 @@ use chrono::{TimeZone, Utc};
 use rusqlite::Connection;
 
 use postio_model::{
-    Account, AccountId, EmailAddress, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, Uid,
-    UidValidity,
+    Account, AccountId, EmailAddress, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole,
+    ModSeq, Uid,
 };
 use postio_storage::repository::{AccountRepository, MailboxRepository};
 use postio_storage::test_support;
@@ -46,7 +46,7 @@ fn a_mailbox_round_trips_through_the_database() {
     let mailboxes = MailboxRepository::new(&connection);
 
     let mut mailbox = Mailbox::new(account_id, "INBOX", Some('/'));
-    mailbox.uid_validity = Some(UidValidity::new(1_707_000_000));
+    mailbox.generation = Some(Generation::new(1_707_000_000));
     mailbox.uid_next = Some(Uid::new(4_412));
     mailbox.highest_mod_seq = Some(ModSeq::new(90_210));
     mailbox.last_synced_at = Some(Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap());
@@ -69,7 +69,7 @@ fn synchronization_state_lives_in_its_own_table() {
     let mailboxes = MailboxRepository::new(&connection);
 
     let mut mailbox = Mailbox::new(account_id, "INBOX", None);
-    mailbox.uid_validity = Some(UidValidity::new(7));
+    mailbox.generation = Some(Generation::new(7));
     let id = mailboxes.create(&mut mailbox).expect("create");
 
     let uid_validity: i64 = connection
@@ -90,7 +90,7 @@ fn synchronization_state_lives_in_its_own_table() {
         )
         .expect("update sync state");
     let stored = mailboxes.get(id).expect("get").expect("the mailbox");
-    assert_eq!(stored.uid_validity, Some(UidValidity::new(8)));
+    assert_eq!(stored.generation, Some(Generation::new(8)));
     assert_eq!(stored.uid_next, Some(Uid::new(100)));
 }
 
@@ -105,7 +105,7 @@ fn a_mailbox_that_has_never_been_synced_says_so() {
     let id = mailboxes.create(&mut mailbox).expect("create");
 
     let stored = mailboxes.get(id).expect("get").expect("the mailbox");
-    assert_eq!(stored.uid_validity, None);
+    assert_eq!(stored.generation, None);
     assert_eq!(stored.uid_next, None);
     assert_eq!(stored.highest_mod_seq, None);
     assert_eq!(stored.last_synced_at, None);
@@ -252,7 +252,7 @@ fn updating_a_mailbox_changes_its_row_and_its_sync_state() {
     mailbox.name = "Projects (renamed)".to_owned();
     mailbox.subscribed = false;
     mailbox.role = MailboxRole::Archive;
-    mailbox.uid_validity = Some(UidValidity::new(99));
+    mailbox.generation = Some(Generation::new(99));
     mailbox.last_synced_at = Some(Utc.with_ymd_and_hms(2026, 3, 2, 10, 0, 0).unwrap());
     mailboxes.update(&mailbox).expect("update");
 

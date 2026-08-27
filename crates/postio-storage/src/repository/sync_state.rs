@@ -9,7 +9,7 @@
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, MailboxId, MailboxStatus, ModSeq, ResyncPlan, SyncState, Uid, UidValidity,
+    AccountId, Generation, MailboxId, MailboxStatus, ModSeq, ResyncPlan, SyncState, Uid,
 };
 use rusqlite::{Connection, Row, params};
 
@@ -26,13 +26,13 @@ use crate::error::{Error, Result};
 /// messages it describes commit or roll back together:
 ///
 /// ```no_run
-/// # use postio_model::{MailboxStatus, MailboxId, UidValidity};
+/// # use postio_model::{Generation, MailboxStatus, MailboxId};
 /// # use postio_storage::repository::SyncStateRepository;
 /// # fn main() -> Result<(), postio_storage::Error> {
 /// # let database = postio_storage::Database::open("postio.db")?;
 /// # let mut connection = database.connection()?;
 /// # let mailbox = MailboxId::new(1);
-/// # let status = MailboxStatus::new(UidValidity::new(1));
+/// # let status = MailboxStatus::new(Generation::new(1));
 /// let transaction = connection.transaction()?;
 /// // ... write the fetched messages ...
 /// SyncStateRepository::new(&transaction).observe(mailbox, &status, chrono::Utc::now())?;
@@ -113,7 +113,7 @@ impl<'a> SyncStateRepository<'a> {
             params![
                 mailbox_id,
                 account_id,
-                state.uid_validity.map(|value| i64::from(value.get())),
+                state.generation.map(|value| i64::from(value.get())),
                 state.uid_next.map(|value| i64::from(value.get())),
                 state.highest_mod_seq.map(|value| value.get() as i64),
                 state.last_full_sync_at.map(to_millis),
@@ -192,9 +192,9 @@ fn read_state(row: &Row<'_>) -> rusqlite::Result<SyncState> {
     Ok(SyncState {
         mailbox_id: MailboxId::new(row.get(0)?),
         account_id: AccountId::new(row.get(1)?),
-        uid_validity: row
+        generation: row
             .get::<_, Option<i64>>(2)?
-            .map(|value| UidValidity::new(value as u32)),
+            .map(|value| Generation::new(value as u32)),
         uid_next: row
             .get::<_, Option<i64>>(3)?
             .map(|value| Uid::new(value as u32)),

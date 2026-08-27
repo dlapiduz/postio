@@ -64,7 +64,7 @@ async fn conforms(backend: &dyn MailBackend) {
         .await
         .expect("select");
     assert_eq!(inbox.exists, 3);
-    assert_eq!(inbox.uid_validity, UidValidity::new(GENERATION));
+    assert_eq!(inbox.generation, postio_model::Generation::new(GENERATION));
     assert_eq!(inbox.uid_next, Uid::new(4));
     assert_eq!(inbox.highest_mod_seq, Some(ModSeq::new(BASELINE)));
     assert!(!inbox.read_only);
@@ -151,8 +151,8 @@ async fn conforms(backend: &dyn MailBackend) {
         .expect("append")
         .expect("UIDPLUS reports APPENDUID");
     assert_eq!(
-        landed.uid_validity,
-        backend.status("Archive").await.unwrap().uid_validity
+        postio_model::Generation::new(landed.uid_validity.get()),
+        backend.status("Archive").await.unwrap().generation
     );
     assert_eq!(backend.status("Archive").await.expect("status").exists, 2);
 

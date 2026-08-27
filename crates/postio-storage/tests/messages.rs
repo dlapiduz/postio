@@ -511,7 +511,7 @@ fn a_message_can_be_found_by_its_server_uid() {
     let mut message = a_message(inbox, account.id, 30);
     let id = messages.create(&mut message).expect("create");
     let uid = message.server.uid.unwrap();
-    let validity = message.server.uid_validity.unwrap();
+    let validity = postio_model::Generation::new(message.server.uid_validity.unwrap().get());
 
     assert_eq!(
         messages
@@ -522,7 +522,7 @@ fn a_message_can_be_found_by_its_server_uid() {
     );
     assert!(
         messages
-            .by_uid(inbox, UidValidity::new(100), uid)
+            .by_uid(inbox, postio_model::Generation::new(100), uid)
             .expect("by uid")
             .is_none(),
         "a UID means nothing under a different UIDVALIDITY"
@@ -530,7 +530,7 @@ fn a_message_can_be_found_by_its_server_uid() {
     assert_eq!(messages.uids_in(inbox, validity).expect("uids"), vec![uid]);
     assert!(
         messages
-            .uids_in(inbox, UidValidity::new(100))
+            .uids_in(inbox, postio_model::Generation::new(100))
             .expect("uids")
             .is_empty()
     );
@@ -1387,8 +1387,7 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     let mut resynced = vec![a_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
-    resynced[0].server.remote_id =
-        Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
+    resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     let report = messages.upsert_batch(&mut resynced).expect("resync upsert");
 
     assert_eq!(
@@ -1439,8 +1438,7 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
     let mut resynced = vec![a_message(inbox, account.id, 41)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
-    resynced[0].server.remote_id =
-        Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
+    resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     messages.upsert_batch(&mut resynced).expect("resync upsert");
 
     assert_eq!(
@@ -1941,8 +1939,7 @@ fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
     let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
-    resynced[0].server.remote_id =
-        Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
+    resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     messages.upsert_batch(&mut resynced).expect("resync upsert");
 
     assert!(
@@ -1980,8 +1977,7 @@ fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
     let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
-    resynced[0].server.remote_id =
-        Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
+    resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     resynced[0].flags.insert(postio_model::Flag::Flagged);
     messages.upsert_batch(&mut resynced).expect("resync upsert");
 
@@ -2033,8 +2029,7 @@ fn a_drained_flag_stops_being_protected() {
     let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
-    resynced[0].server.remote_id =
-        Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
+    resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     messages.upsert_batch(&mut resynced).expect("resync upsert");
 
     assert!(

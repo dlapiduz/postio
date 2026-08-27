@@ -401,7 +401,7 @@ async fn selecting_reports_uid_validity_uid_next_and_the_mod_sequence() {
         .await
         .unwrap();
 
-    assert_eq!(status.uid_validity, UidValidity::new(4_242));
+    assert_eq!(status.generation, postio_model::Generation::new(4_242));
     assert_eq!(status.exists, 3);
     assert_eq!(status.uid_next, Uid::new(4));
     assert_eq!(status.highest_mod_seq, Some(ModSeq::new(900)));
@@ -522,7 +522,12 @@ async fn a_large_body_arrives_in_chunks_so_nothing_buffers_it_whole() {
     let cancel = CancelToken::new();
     let mut sink = VecSink::new();
     backend
-        .fetch_body("INBOX", &postio_model::RemoteId::new("1:1"), &mut sink, &cancel)
+        .fetch_body(
+            "INBOX",
+            &postio_model::RemoteId::new("1:1"),
+            &mut sink,
+            &cancel,
+        )
         .await
         .unwrap();
 
@@ -560,13 +565,7 @@ async fn a_part_fetch_asks_for_a_section_not_the_whole_message() {
         .await
         .unwrap();
     backend
-        .fetch_part(
-            "INBOX",
-            &rid(1),
-            &BodyPart::Headers,
-            &mut headers,
-            &cancel,
-        )
+        .fetch_part("INBOX", &rid(1), &BodyPart::Headers, &mut headers, &cancel)
         .await
         .unwrap();
 
@@ -927,7 +926,7 @@ async fn the_mock_can_simulate_a_uidvalidity_change() {
         .await
         .unwrap();
 
-    assert_ne!(before.uid_validity, after.uid_validity);
+    assert_ne!(before.generation, after.generation);
 
     // A fetch that still believes the old generation is refused, rather than
     // being answered with UIDs that mean something else now.
@@ -1334,7 +1333,11 @@ async fn a_remote_id_from_a_dead_generation_is_refused_not_reinterpreted() {
 
     let stale = postio_model::RemoteId::new("1:1");
     let error = backend
-        .store_flags("INBOX", &[stale], &FlagChange::Add(FlagSet::from_iter([Flag::Seen])))
+        .store_flags(
+            "INBOX",
+            &[stale],
+            &FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+        )
         .await
         .expect_err("a dead generation's id must not store anything");
 

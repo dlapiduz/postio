@@ -79,9 +79,9 @@ pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};
 pub use ids::{
-    AccountId, AttachmentId, BlobId, ContactGroupId, ContactId, DraftId, IdentityId, LabelId,
-    MailboxId, MessageId, ModSeq, OperationId, RemoteId, RfcMessageId, SignatureId, ThreadId,
-    Uid, UidValidity,
+    AccountId, AttachmentId, BlobId, ContactGroupId, ContactId, DraftId, Generation, IdentityId,
+    LabelId, MailboxId, MessageId, ModSeq, OperationId, RemoteId, RfcMessageId, SignatureId,
+    ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleOverrides};

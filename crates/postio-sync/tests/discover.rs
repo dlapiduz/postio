@@ -149,7 +149,7 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
         .by_role(account.id, MailboxRole::Inbox)
         .expect("by role")
         .expect("an inbox");
-    inbox.uid_validity = Some(postio_model::UidValidity::new(42));
+    inbox.generation = Some(postio_model::Generation::new(42));
     inbox.highest_mod_seq = Some(postio_model::ModSeq::new(900));
     mailboxes.update(&inbox).expect("record a synced inbox");
 
@@ -158,7 +158,7 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
         .expect("second pass");
 
     let after = mailboxes.get(inbox.id).expect("get").expect("still there");
-    assert_eq!(after.uid_validity, Some(postio_model::UidValidity::new(42)));
+    assert_eq!(after.generation, Some(postio_model::Generation::new(42)));
     assert_eq!(after.highest_mod_seq, Some(postio_model::ModSeq::new(900)));
 }
 

@@ -2571,7 +2571,6 @@ mod tests {
             postio_model::Message::new(account_of(&parts).id, inbox.id, chrono::Utc::now());
         message.size = 5_000;
         message.server.uid = Some(postio_model::Uid::new(1));
-        message.server.uid_validity = Some(postio_model::UidValidity::new(1));
         message.server.remote_id = Some(postio_model::RemoteId::new("1:1"));
         message.attachments = vec![postio_model::Attachment::new(
             postio_model::MessageId::UNASSIGNED,
