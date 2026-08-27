@@ -763,6 +763,13 @@ impl Finder {
         let imp = self.imp();
         match self.mode() {
             Mode::Search => {
+                // Enter means "search now": the debounce is sized to typing
+                // cadence (see `crate::search::DEBOUNCE`), which is long
+                // enough to feel when the query is finished and the person
+                // has asked for it. The queued run goes out immediately.
+                if let Some(live) = imp.live.borrow().as_ref() {
+                    live.flush();
+                }
                 let parsed = imp.parsed.borrow().clone();
                 for handler in imp.on_search.borrow().iter() {
                     handler(&parsed);

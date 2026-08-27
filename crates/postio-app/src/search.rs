@@ -160,6 +160,12 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
                 let held = held.clone();
                 async move {
                     let Ok(Some(results)) = hits.recv().await else {
+                        // The store could not be read, so there is no answer
+                        // coming. Saying so is what lets the box send out
+                        // whatever query queued up behind this run — the
+                        // single-flight rule holds it until the outstanding
+                        // run resolves, one way or the other.
+                        live.settled(sequence);
                         return;
                     };
                     // Counts, a scope and a duration: never the query text or
