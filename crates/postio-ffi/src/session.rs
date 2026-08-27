@@ -39,6 +39,27 @@ pub enum SessionError {
     },
 }
 
+impl SessionError {
+    /// Maps a keyring failure onto the case the frontend routes on.
+    ///
+    /// A match rather than `to_string`, and that is the entire point of this
+    /// function. ADR 0014's rule is that [`SecretError::Locked`] must survive
+    /// to the surface that asks the user to unlock, rather than being
+    /// flattened into "something went wrong" and sent to onboarding — which
+    /// would ask somebody with perfectly good mail to set up an account they
+    /// already have. Every other keyring failure is a store that will not
+    /// open, which is the honest reading: no key, no store.
+    fn from_secret_error(error: postio_imap::secret::SecretError) -> Self {
+        let message = error.to_string();
+        match error {
+            postio_imap::secret::SecretError::Locked { .. } => {
+                SessionError::KeyringLocked { message }
+            }
+            _ => SessionError::StoreUnavailable { message },
+        }
+    }
+}
+
 /// How to open a session.
 ///
 /// Not a `uniffi::Record`: it can carry a caller-supplied runtime and command
@@ -48,6 +69,7 @@ pub enum SessionError {
 pub struct SessionOptions {
     store_path: Option<std::path::PathBuf>,
     bridge: Option<(tokio::runtime::Handle, CommandSender)>,
+    secrets: Option<Arc<dyn postio_imap::secret::SecretStore>>,
     #[cfg(feature = "testing")]
     in_memory: bool,
 }
@@ -58,6 +80,7 @@ impl SessionOptions {
         Self {
             store_path: None,
             bridge: None,
+            secrets: None,
             #[cfg(feature = "testing")]
             in_memory: false,
         }
@@ -69,6 +92,18 @@ impl SessionOptions {
             store_path: Some(path.into()),
             ..Self::at_default_path()
         }
+    }
+
+    /// Reads the store's key from `secrets` rather than the OS keyring.
+    ///
+    /// The default is this installation's real keyring, which is right for a
+    /// shipping application and wrong for a test: a test that reached for the
+    /// login keyring would prompt on a developer's machine and hang on a
+    /// headless one. It is also how the locked-keyring path is exercised at
+    /// all, since a working keyring cannot be asked to refuse.
+    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
+        self.secrets = Some(secrets);
+        self
     }
 
     /// A session over a store that exists only in memory.
@@ -158,6 +193,16 @@ impl Session {
 
 impl Session {
     /// Opens a session, or says why it could not.
+    ///
+    /// # This blocks
+    ///
+    /// Reading the store's key from the OS keyring is a synchronous round
+    /// trip that can wait on a user prompt, and it has to finish before there
+    /// is a store — so this blocks the calling thread, bounded by the
+    /// keyring's own timeout rather than indefinitely. `postio-app` does the
+    /// same thing before any window exists. **A Swift caller must not invoke
+    /// it on the main actor**: it belongs in a launch task, with the unlock
+    /// surface shown if it comes back [`SessionError::KeyringLocked`].
     pub fn open(options: SessionOptions) -> Result<Arc<Self>, SessionError> {
         let (sink, events) = event_channel();
 
@@ -204,26 +249,34 @@ impl Session {
             }));
         }
 
-        // The on-disk path is the next slice, and it is not a matter of
-        // calling `Database::open`: ADR 0014 puts the store's key in the OS
-        // keyring, so opening it means asking for that key first — which is
-        // where `KeyringLocked` starts being returned for real rather than
-        // merely being declared. Saying so is better than half-opening a
-        // store whose encryption is not wired.
-        //
-        // Everything assembled above is dropped here deliberately, and named
-        // so that the compiler agrees it was on purpose.
-        drop((
+        // The keyring first, and only then the store. ADR 0014: the store is
+        // encrypted under a key that lives in the OS keyring, and there is no
+        // "open it unencrypted anyway" — so a keyring that will not answer
+        // means there is no store to open, not a store to open differently.
+        // Asking in this order is what makes that true rather than merely
+        // intended: nothing has touched the database by the time the key is
+        // refused, so a locked keyring leaves no half-made store behind.
+        let secrets: Arc<dyn postio_imap::secret::SecretStore> = match options.secrets {
+            Some(secrets) => secrets,
+            None => Arc::new(postio_imap::secret::KeyringSecretStore::default()),
+        };
+        let key = postio_session::store_key_blocking(secrets.as_ref())
+            .map_err(SessionError::from_secret_error)?;
+
+        let path = options
+            .store_path
+            .unwrap_or_else(postio_session::paths::store_path);
+        let (database, blobs) = postio_session::open_store_at(path, &key)
+            .map_err(|message| SessionError::StoreUnavailable { message })?;
+
+        let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
+        Ok(Arc::new(Session {
+            wiring: Mutex::new(Some(wiring)),
             events,
-            owned_bridge,
-            sink,
-            commands,
-            runtime,
-            options.store_path,
-        ));
-        Err(SessionError::StoreUnavailable {
-            message: "opening a session over a store on disk is not wired yet".to_string(),
-        })
+            _bridge: owned_bridge,
+            #[cfg(feature = "testing")]
+            _scratch: None,
+        }))
     }
 
     /// Whether this session still holds its store.
