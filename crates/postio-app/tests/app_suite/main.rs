@@ -25,6 +25,7 @@ mod search_index;
 mod search_results;
 mod search_wiring;
 mod send_wiring;
+mod settings_accounts_wiring;
 mod signature_default_wiring;
 mod startup_repair;
 mod thread_cursor_preview;
@@ -113,6 +114,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "send_wiring::ctrl_return_queues_the_draft_for_sending",
         send_wiring::ctrl_return_queues_the_draft_for_sending as fn(),
+    ),
+    (
+        "settings_accounts_wiring::account_rows_persist_enable_and_mark_removal",
+        settings_accounts_wiring::account_rows_persist_enable_and_mark_removal as fn(),
     ),
     (
         "signature_default_wiring::compose_signs_with_the_selected_mailbox_or_account_default",
