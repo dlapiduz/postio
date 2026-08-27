@@ -114,6 +114,12 @@ mod imp {
         /// expensive widget in the window, and a session that never opens a
         /// message should never pay for one.
         pub reader: OnceCell<crate::reader::Reader>,
+        /// The conversation pane, built into the reading pane on first use.
+        ///
+        /// Beside the reader rather than replacing it: a cursor preview shows
+        /// one message and an *opened* conversation shows all of them (ADR
+        /// 0015 Q4), so the pane holds whichever the moment calls for.
+        pub conversation: OnceCell<crate::conversation::ConversationView>,
         /// Where the reader resolves `cid:` parts from.
         ///
         /// A slot rather than a constructor argument, so the reader can be
@@ -342,7 +348,16 @@ impl Window {
                 // spawning the runtime work and handing back a channel
                 // receive.
                 match future.await {
-                    Ok(page) => window.thread().fill(id, page.rows, page.total),
+                    Ok(page) => {
+                        window.thread().fill(id, page.rows, page.total);
+                        // And the pane, which was opened a moment ago from
+                        // what the list model held — this folder's part of
+                        // the conversation. The rest of it arriving is the
+                        // whole point of this read, and a pane left showing
+                        // the subset would be the bug #44 fixed, one surface
+                        // over.
+                        window.refill_conversation();
+                    }
                     // The column keeps what the list gave it, which is a
                     // subset rather than nothing, and the header goes on
                     // saying `n of m`. Worth a line, not a banner.
@@ -397,6 +412,23 @@ impl Window {
         // giving the list the keyboard back on the way out scrolls the cursor
         // row into view, and "into view" is not the pixel offset the user
         // left. Measured at two rows of drift on a 200-message list.
+        // The reading pane becomes the conversation (ADR 0015 Q4). The
+        // column beside it is now an *index* into this rather than a second
+        // copy of it, so both are filled from the same rows and the pane's
+        // own policy decides where focus opens.
+        let pane = self.conversation();
+        pane.open(view.rows());
+        pane.widget().set_visible(true);
+        if let Some(reader) = self.imp().reader.get() {
+            reader.widget().set_visible(false);
+        }
+        // The column follows the pane rather than the other way round on
+        // open: the pane knows which message is the first unread, and the
+        // index has to point at whatever the content opened on.
+        if let Some(focused) = pane.focused() {
+            view.focus_message(focused);
+        }
+
         view.focus_rows();
         self.set_context(Context::Thread);
     }
@@ -409,6 +441,18 @@ impl Window {
         let thread = self.thread();
         thread.set_visible(false);
         thread.close();
+        // Hand the reading pane back to the single-message reader. The
+        // conversation keeps its widgets rather than tearing them down: the
+        // next drill-in refills it, and rebuilding a stack of readers for a
+        // round trip would make the cheap direction the expensive one.
+        if let Some(pane) = self.imp().conversation.get() {
+            pane.widget().set_visible(false);
+        }
+        if let Some(reader) = self.imp().reader.get()
+            && self.imp().reading.get()
+        {
+            reader.widget().set_visible(true);
+        }
         if let Some(pane) = self.imp().list_pane.get() {
             pane.set_visible(true);
         }
@@ -516,10 +560,18 @@ impl Window {
     /// to own that swap, and it cannot be either of them: a reader that hid
     /// itself when a composer appeared would have to know composers exist.
     /// The window is what holds both.
-    pub fn reader(&self) -> crate::reader::Reader {
-        if let Some(reader) = self.imp().reader.get() {
-            return reader.clone();
-        }
+    /// A hardened reader wired to this window's blob source and allow list.
+    ///
+    /// The reading pane's own reader is one of these; the conversation pane
+    /// asks for one per expanded message (ADR 0015 Q4). Built here rather
+    /// than by the caller because the blob source and the allow-list path are
+    /// the window's, and a second construction site is how two readers end up
+    /// hardened differently.
+    ///
+    /// **Not cheap.** Each one is a `WebKitWebView`. Whoever calls this is
+    /// responsible for calling it as few times as the design allows — see
+    /// `conversation::EAGER_EXPANSION_CAP`.
+    pub fn new_reader(&self) -> crate::reader::Reader {
         // Read through the slot on every request rather than captured, so a
         // source wired after the reader was built still resolves parts.
         let source = {
@@ -530,14 +582,103 @@ impl Window {
             }
         };
         let source = std::rc::Rc::new(source);
-        let reader = match self.imp().allowlist_path.borrow().clone() {
+        match self.imp().allowlist_path.borrow().clone() {
             Some(path) => crate::reader::Reader::with_allowlist(
                 source,
                 crate::reader::RemoteImageAllowList::load_from(&path),
                 path,
             ),
             None => crate::reader::Reader::new(source),
+        }
+    }
+
+    /// Put the column's current rows into the conversation pane, keeping the
+    /// current message where it is.
+    ///
+    /// Called when the rest of a conversation arrives from the store. Focus
+    /// is restored rather than recomputed: the opening policy is for
+    /// *opening*, and re-running it a moment later would move the reader out
+    /// from under somebody who had already pressed `k` — the same reason
+    /// [`crate::thread::ThreadView::fill`] keeps its cursor.
+    pub fn refill_conversation(&self) {
+        let Some(pane) = self.imp().conversation.get() else {
+            return;
         };
+        if !self.thread_open() {
+            return;
+        }
+        let focused = pane.focused();
+        pane.open(self.thread().rows());
+        if let Some(focused) = focused
+            && pane.rows().iter().any(|row| row.id == focused)
+        {
+            pane.focus_message(focused);
+        }
+    }
+
+    /// The conversation pane, built on first use.
+    ///
+    /// Mounted into the same box as the reader and hidden until a
+    /// conversation is opened. Both live there because they answer different
+    /// moments: moving the list cursor previews one message, and opening a
+    /// thread row shows the whole conversation with the drill-in column
+    /// indexing it.
+    pub fn conversation(&self) -> crate::conversation::ConversationView {
+        if let Some(pane) = self.imp().conversation.get() {
+            return pane.clone();
+        }
+        let pane = crate::conversation::ConversationView::new();
+        let widget = pane.widget();
+        widget.set_vexpand(true);
+        widget.set_hexpand(true);
+        widget.set_visible(false);
+        self.shell().reader().append(&widget);
+
+        // One current message, two surfaces showing it: the column is an
+        // index into this pane, so moving either has to move the other.
+        //
+        // Guarded, because each direction drives the other and an unguarded
+        // pair rings: the column's cursor announces, the pane focuses, the
+        // pane announces, the column moves, and so on. The flag is held for
+        // the duration of the call rather than compared by value, because the
+        // two surfaces agreeing on the message is exactly the state this is
+        // in the middle of establishing.
+        let echoing = std::rc::Rc::new(std::cell::Cell::new(false));
+        pane.connect_focus_changed({
+            let window = self.clone();
+            let echoing = std::rc::Rc::clone(&echoing);
+            move |message| {
+                if echoing.replace(true) {
+                    return;
+                }
+                window.thread().focus_message(message);
+                echoing.set(false);
+            }
+        });
+        self.thread().connect_activated({
+            let window = self.clone();
+            let echoing = std::rc::Rc::clone(&echoing);
+            move |message| {
+                if !window.thread_open() {
+                    return;
+                }
+                if echoing.replace(true) {
+                    return;
+                }
+                window.conversation().focus_message(message);
+                echoing.set(false);
+            }
+        });
+
+        let _ = self.imp().conversation.set(pane.clone());
+        pane
+    }
+
+    pub fn reader(&self) -> crate::reader::Reader {
+        if let Some(reader) = self.imp().reader.get() {
+            return reader.clone();
+        }
+        let reader = self.new_reader();
         let widget = reader.widget();
         widget.set_vexpand(true);
         widget.set_hexpand(true);

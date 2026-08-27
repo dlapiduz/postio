@@ -253,6 +253,13 @@ mod imp {
         pub(super) on_reply: RefCell<Vec<ReplyHandler>>,
         pub(super) on_forward: RefCell<Vec<MessageHandler>>,
         pub(super) on_focus: RefCell<Vec<MessageHandler>>,
+        pub(super) on_dwell: RefCell<Vec<MessageHandler>>,
+        /// The dwell timer in flight. Cancelled rather than replaced when
+        /// focus moves: a `glib` timeout that merely loses its handle still
+        /// fires, and one that fires late marks a message read that was
+        /// passed over rather than looked at.
+        pub(super) dwell: RefCell<Option<glib::SourceId>>,
+        pub(super) dwell_delay: Cell<std::time::Duration>,
     }
 
     /// One message in the stack: its header, and the body when it has one.
@@ -291,6 +298,9 @@ mod imp {
                 on_reply: RefCell::new(Vec::new()),
                 on_forward: RefCell::new(Vec::new()),
                 on_focus: RefCell::new(Vec::new()),
+                on_dwell: RefCell::new(Vec::new()),
+                dwell: RefCell::new(None),
+                dwell_delay: Cell::new(crate::list_view::DWELL_TO_READ),
             }
         }
     }
@@ -373,6 +383,7 @@ impl ConversationView {
         }
         imp.entries.borrow_mut().clear();
         imp.focused.set(None);
+        self.cancel_dwell();
 
         let focus = opening_focus(&messages);
         let expanded = match focus {
@@ -476,6 +487,7 @@ impl ConversationView {
             entry.header.set_selected(entry.message == message);
         }
         self.scroll_to(message);
+        self.start_dwell(message);
         for handler in self.imp().on_focus.borrow().iter() {
             handler(message);
         }
@@ -537,6 +549,49 @@ impl ConversationView {
     /// move its cursor to match.
     pub fn connect_focus_changed(&self, handler: impl Fn(MessageId) + 'static) {
         self.imp().on_focus.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called when a message has been focused long enough to have been read
+    /// (#71).
+    ///
+    /// The same rule the list uses, one surface over: focus is what reading
+    /// looks like here, and walking a conversation with the index passes over
+    /// messages without reading them exactly as scrolling a mailbox does.
+    /// Never fires for a conversation merely opened — the focused message has
+    /// to be rested on.
+    pub fn connect_dwelled(&self, handler: impl Fn(MessageId) + 'static) {
+        self.imp().on_dwell.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Shorten the dwell for a test that cannot wait a second.
+    pub fn set_dwell_delay(&self, delay: std::time::Duration) {
+        self.imp().dwell_delay.set(delay);
+    }
+
+    /// Stop any dwell in flight.
+    ///
+    /// Cancelled rather than dropped: a `glib` timeout whose handle goes away
+    /// still fires, and this one would mark a message read after the pane had
+    /// moved on from it.
+    pub fn cancel_dwell(&self) {
+        if let Some(source) = self.imp().dwell.borrow_mut().take() {
+            source.remove();
+        }
+    }
+
+    fn start_dwell(&self, message: MessageId) {
+        self.cancel_dwell();
+        let view = self.clone();
+        let source = glib::timeout_add_local_once(self.imp().dwell_delay.get(), move || {
+            view.imp().dwell.borrow_mut().take();
+            // Named explicitly rather than read back off the focus: focus may
+            // have moved between the timer firing and this running, and the
+            // message that was read is the one the clock was started for.
+            for handler in view.imp().on_dwell.borrow().iter() {
+                handler(message);
+            }
+        });
+        *self.imp().dwell.borrow_mut() = Some(source);
     }
 
     /// Press a message's reply button without a pointer.
