@@ -219,6 +219,11 @@ jobs:
         # unusable on macOS -- you could not claim, so you could do nothing. #559.
         run: python3 scripts/tests/test-scripts-bsd-portable.py
 
+      - name: Prove issue-claim.sh can claim from a second queue
+        # macOS issues carry `ready-mac` and not `ready`, so an ordinary Linux
+        # claim skips them by construction rather than by convention. #552.
+        run: python3 scripts/tests/test-issue-claim-ready-label.py
+
       - name: Prove the stale sweep spares any claim whose worktree exists
         # The orphaned-lock branch used to trust the in-progress label alone,
         # which is how live claims got swept. #328.

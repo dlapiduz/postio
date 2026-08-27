@@ -2886,6 +2886,19 @@ enforces this, and names the three scripts that are Linux-only *by nature*
 the XDG hicolor layout) so that exemption is a decision on the record rather
 than a script that happened to fail.
 
+**A second claim queue is a label, not a convention (2026-08-27, #552).** The
+macOS frontend initiative (#15) is the first work an ordinary Linux session
+must not pick up — most of it cannot even be built there. Its issues carry
+`ready-mac` and deliberately **not** `ready`, so a plain `issue-claim.sh` skips
+them without knowing they exist; `--ready-label ready-mac` (or
+`POSTIO_READY_LABEL`) asks for that queue instead. Two labels rather than one
+label plus a rule, because **sessions run on several machines and the claim
+locks under `$POSTIO_CLAIMS` are per-machine** — they are a lock between
+sessions on one box, not between boxes. Across machines the only guards are the
+label, the assignee, and the remote-branch check in `issue-claim.sh`. A
+convention ("don't take the macOS ones") is enforced by whoever read CLAUDE.md
+most recently; a label the queue query never returns is enforced by the query.
+
 **sccache is wired in through `.cargo/config.toml`**
 (`build.rustc-wrapper = "scripts/rustc-wrapper.sh"`), not exported per shell.
 The wrapper execs plain rustc when sccache is missing, so it cannot cause the
