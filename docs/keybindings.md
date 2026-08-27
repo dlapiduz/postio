@@ -79,6 +79,7 @@ command from inside a text field.
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |
 | `ctrl+comma` | Settings | Everywhere |  | `settings` |
+| `ctrl+shift+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, thread, reader |  | `edit_config` |
 | `ctrl+b` | Toggle sidebar | List, thread, reader |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, thread, reader, search |  | `focus_sidebar` |

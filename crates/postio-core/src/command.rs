@@ -141,6 +141,8 @@ command_ids! {
     CheatSheet => "cheat_sheet",
     /// Show the settings panel.
     Settings => "settings",
+    /// Add another account to this installation.
+    AddAccount => "add_account",
     /// Open `config.toml` in the user's editor.
     EditConfig => "edit_config",
     /// Show or hide the sidebar.
@@ -482,6 +484,12 @@ pub enum Command {
     CheatSheet,
     /// Show the settings panel.
     Settings,
+    /// Add another account to this installation.
+    ///
+    /// The entry point ADR 0012 Q1 asked for: a registered command rather
+    /// than a button, so the palette and the cheat sheet carry it without
+    /// either of them learning that accounts exist.
+    AddAccount,
     /// Open `config.toml` in the user's editor.
     EditConfig,
     /// Show or hide the sidebar.
@@ -596,6 +604,7 @@ impl Command {
             Command::CommandPalette => CommandId::CommandPalette,
             Command::CheatSheet => CommandId::CheatSheet,
             Command::Settings => CommandId::Settings,
+            Command::AddAccount => CommandId::AddAccount,
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
@@ -682,6 +691,7 @@ impl Command {
             CommandId::CommandPalette => Command::CommandPalette,
             CommandId::CheatSheet => Command::CheatSheet,
             CommandId::Settings => Command::Settings,
+            CommandId::AddAccount => Command::AddAccount,
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,

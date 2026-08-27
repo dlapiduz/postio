@@ -652,6 +652,24 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::AddAccount,
+        title: "Add account",
+        // Not a letter: this is a rare, deliberate act, and every unmodified
+        // key in the message surfaces is spoken for by something done dozens
+        // of times a session. `n` for "new" is the idiom, and `Ctrl+Shift+N`
+        // is where the desktop already puts "a new one of the thing this
+        // application is about".
+        default_binding: "ctrl+shift+n",
+        alternate_bindings: &[],
+        // The same reach `Settings` has, for the reason ADR 0012 Q1 gives:
+        // adding an account is a setting, and the folder list is where the
+        // account will eventually appear.
+        contexts: ContextSet::ANY,
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::EditConfig,
         title: "Edit configuration",
         default_binding: "ctrl+e",
