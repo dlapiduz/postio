@@ -61,6 +61,19 @@ pub enum UiEvent {
         /// The newly delivered messages.
         messages: Vec<i64>,
     },
+    /// A page of list rows arrived and its rows can now be drawn.
+    ///
+    /// Boundary-local: `postio-core` has no such event and should not gain
+    /// one. Paging is how *this* frontend reads a list, not something the
+    /// engine does — the GTK frontend drives the same `ListWindow` with no
+    /// event at all, because its model and its widget are in one process.
+    /// Putting it in the core's vocabulary would be a frontend's concern
+    /// leaking into everyone's, which is a thing shared layers accumulate and
+    /// do not shed.
+    PageReady {
+        /// The page whose rows are now resident.
+        page: u32,
+    },
     /// Something happened that this boundary does not model yet.
     ///
     /// Deliberately not a silent drop. The core's event vocabulary is larger

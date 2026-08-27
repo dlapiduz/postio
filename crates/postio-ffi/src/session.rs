@@ -72,6 +72,8 @@ pub struct SessionOptions {
     secrets: Option<Arc<dyn postio_imap::secret::SecretStore>>,
     #[cfg(feature = "testing")]
     in_memory: bool,
+    #[cfg(feature = "testing")]
+    seeded: Option<postio_storage::Database>,
 }
 
 impl SessionOptions {
@@ -83,6 +85,8 @@ impl SessionOptions {
             secrets: None,
             #[cfg(feature = "testing")]
             in_memory: false,
+            #[cfg(feature = "testing")]
+            seeded: None,
         }
     }
 
@@ -115,6 +119,19 @@ impl SessionOptions {
         }
     }
 
+    /// An in-memory session over a database the caller already seeded.
+    ///
+    /// A list test needs rows in the store *before* the session opens it, and
+    /// there is no way to reach in afterwards -- the wiring is private, which
+    /// is the point of it.
+    #[cfg(feature = "testing")]
+    pub fn in_memory_with(database: postio_storage::Database) -> Self {
+        Self {
+            seeded: Some(database),
+            ..Self::in_memory()
+        }
+    }
+
     /// An in-memory session on a runtime and command bus the caller owns.
     ///
     /// `postio-app` builds its own [`Bridge`] and hands the parts to
@@ -139,6 +156,29 @@ impl SessionOptions {
 #[derive(uniffi::Object)]
 pub struct Session {
     wiring: Mutex<Option<Wiring>>,
+    /// The list, windowed. Behind its own lock rather than inside `wiring`'s
+    /// so that a row lookup -- which happens on every table redraw -- does not
+    /// contend with whatever else is holding the session.
+    list: Arc<Mutex<postio_ui::list::ListWindow<crate::RowFfi>>>,
+    /// What the window is currently showing, so a page fetch knows what to
+    /// ask the store for.
+    scope: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// Page reads still in flight, and how many have been issued in total.
+    ///
+    /// The first is what `settle_for_test` waits on. The second is how a test
+    /// can assert that three misses inside one page did not become three
+    /// reads -- deduplication that `ListWindow` does, and that this must not
+    /// undo by asking again behind its back.
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+    /// Events this boundary raises itself, merged into the drain alongside
+    /// the engine's. `PageReady` lives here rather than in `postio-core`
+    /// because paging is how this frontend reads a list, not something the
+    /// engine does — see `UiEvent::PageReady`.
+    local: (
+        async_channel::Sender<UiEvent>,
+        async_channel::Receiver<UiEvent>,
+    ),
     events: EventStream,
     /// Kept alive for as long as the session is: dropping the `Bridge` stops
     /// the runtime the engine is polling on. `None` when the caller supplied
@@ -184,6 +224,29 @@ impl Session {
         self.shutdown();
     }
 
+    /// Show `scope`, and answer the generation the window is now on.
+    #[uniffi::method(name = "openScope")]
+    pub fn open_scope_ffi(&self, scope: crate::ScopeFfi) -> u64 {
+        self.open_scope(scope)
+    }
+
+    /// How many rows the current scope has — a table's `numberOfRows`.
+    #[uniffi::method(name = "rowCount")]
+    pub fn row_count_ffi(&self) -> u32 {
+        self.row_count()
+    }
+
+    /// The row at `position`, or `None` while its page is on its way.
+    ///
+    /// Synchronous and does no I/O, because `tableView(_:viewFor:row:)` is
+    /// synchronous and runs on the main thread for every visible row on every
+    /// redraw. A `None` means draw a placeholder; `UiEvent.pageReady` says
+    /// when to ask again.
+    #[uniffi::method(name = "rowAt")]
+    pub fn row_at_ffi(&self, position: u32) -> Option<crate::RowFfi> {
+        self.row_at(position)
+    }
+
     /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
@@ -227,11 +290,14 @@ impl Session {
 
         #[cfg(feature = "testing")]
         if options.in_memory {
-            let database = postio_storage::Database::open_in_memory().map_err(|error| {
-                SessionError::StoreUnavailable {
-                    message: error.to_string(),
-                }
-            })?;
+            let database = match options.seeded {
+                Some(database) => database,
+                None => postio_storage::Database::open_in_memory().map_err(|error| {
+                    SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    }
+                })?,
+            };
             let scratch = tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
                 message: error.to_string(),
             })?;
@@ -249,6 +315,11 @@ impl Session {
             let wiring = Wiring::new(database, blobs, runtime, sink, commands);
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
+                list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
+                scope: Mutex::new(None),
+                in_flight: Arc::default(),
+                reads: Arc::default(),
+                local: async_channel::unbounded(),
                 events,
                 _bridge: owned_bridge,
                 _scratch: Some(scratch),
@@ -278,11 +349,137 @@ impl Session {
         let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
+            list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
+            scope: Mutex::new(None),
+            in_flight: Arc::default(),
+            reads: Arc::default(),
+            local: async_channel::unbounded(),
             events,
             _bridge: owned_bridge,
             #[cfg(feature = "testing")]
             _scratch: None,
         }))
+    }
+
+    /// Show `scope`, and answer the generation the window is now on.
+    ///
+    /// Blocks on a `COUNT` against the local store — a few milliseconds of
+    /// SQLite, never the network. It has to be synchronous because
+    /// `numberOfRows` is: a table asks how tall it is before it draws
+    /// anything, and there is no version of that question which can await.
+    pub fn open_scope(&self, scope: crate::ScopeFfi) -> u64 {
+        let listed: postio_runtime::store::ListScope = scope.into();
+        let Some((store, runtime)) = self.reader() else {
+            return 0;
+        };
+        let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
+        *self.scope.lock().expect("scope lock") = Some(listed);
+        self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// How many rows the current scope has.
+    pub fn row_count(&self) -> u32 {
+        self.list.lock().expect("list lock").total()
+    }
+
+    /// The row at `position`, or `None` while its page is on its way.
+    ///
+    /// **Synchronous, and does no I/O.** This is what
+    /// `tableView(_:viewFor:row:)` calls, on the main thread, for every
+    /// visible row on every redraw — so a miss draws a placeholder and asks
+    /// behind the caller's back rather than waiting. `ListWindow` decides
+    /// which pages to ask for, including the read-ahead at a page boundary
+    /// and the deduplication against what is already in flight; nothing here
+    /// second-guesses it.
+    pub fn row_at(&self, position: u32) -> Option<crate::RowFfi> {
+        let wanted = {
+            let mut list = self.list.lock().expect("list lock");
+            match list.row_at(position)? {
+                postio_ui::list::Lookup::Resident(row) => return Some(row.clone()),
+                postio_ui::list::Lookup::Missing { request } => request,
+            }
+        };
+        let generation = self.list.lock().expect("list lock").generation();
+        for page in wanted {
+            self.fetch(generation, page);
+        }
+        None
+    }
+
+    /// Read one page into the window, behind the caller.
+    fn fetch(&self, generation: u64, page: u32) {
+        let Some((store, runtime)) = self.reader() else {
+            return;
+        };
+        let Some(scope) = *self.scope.lock().expect("scope lock") else {
+            return;
+        };
+        let local = self.local.0.clone();
+        let list = self.list.clone();
+        let in_flight = self.in_flight.clone();
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+
+        in_flight.fetch_add(1, ordering);
+        self.reads.fetch_add(1, ordering);
+        runtime.spawn(async move {
+            let request = postio_runtime::store::PageRequest {
+                scope,
+                offset: page * postio_ui::list::PAGE_SIZE,
+                limit: postio_ui::list::PAGE_SIZE,
+            };
+            if let Ok(fetched) = store.list_page(request).await {
+                let rows = crate::list::rows_of(fetched);
+                let delivered = list
+                    .lock()
+                    .expect("list lock")
+                    .deliver(generation, page, rows);
+                // A page for a scope the user has already left is dropped
+                // rather than drawn, and saying nothing about it is the point:
+                // an event here would tell the frontend to reload rows that
+                // belong to a folder it is no longer showing.
+                if !delivered.stale {
+                    let _ = local.try_send(UiEvent::PageReady { page });
+                }
+            }
+            in_flight.fetch_sub(1, ordering);
+        });
+    }
+
+    /// The store and the runtime, while the session is open.
+    fn reader(
+        &self,
+    ) -> Option<(
+        Arc<dyn postio_runtime::store::MailStore>,
+        tokio::runtime::Handle,
+    )> {
+        let guard = self.wiring.lock().expect("wiring lock");
+        let wiring = guard.as_ref()?;
+        Some((wiring.store.clone(), wiring.runtime.clone()))
+    }
+
+    /// Wait until no page read is in flight.
+    ///
+    /// Test-only. A production frontend never waits for this — it repaints
+    /// when `PageReady` arrives, which is the whole design.
+    #[cfg(feature = "testing")]
+    pub fn settle_for_test(&self) {
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while self.in_flight.load(ordering) > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// How many rows the window is holding. Test-only.
+    #[cfg(feature = "testing")]
+    pub fn resident_rows_for_test(&self) -> usize {
+        self.list.lock().expect("list lock").resident_rows()
+    }
+
+    /// How many page reads have been issued. Test-only.
+    #[cfg(feature = "testing")]
+    pub fn page_reads_for_test(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Every command the registry knows, in cheat-sheet order.
@@ -327,7 +524,13 @@ impl Session {
     /// the same shape as `glib::spawn_future_local` on the GTK side, with no
     /// callback, no continuation and no manual cancellation in between.
     pub async fn next_event(&self) -> Option<UiEvent> {
-        self.events.next().await.map(UiEvent::from)
+        // Whichever speaks first. The engine's stream ends when the session
+        // shuts down, and that is what must end the frontend's loop -- so a
+        // closed engine stream wins even if the local one is merely idle.
+        tokio::select! {
+            engine = self.events.next() => engine.map(UiEvent::from),
+            local = self.local.1.recv() => local.ok(),
+        }
     }
 
     /// [`next_event`](Self::next_event), for callers that are not async.
