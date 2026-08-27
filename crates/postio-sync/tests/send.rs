@@ -211,6 +211,74 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
 }
 
 #[tokio::test]
+async fn an_xoauth2_account_sends_with_xoauth2_not_a_password_login() {
+    // #533: the account's stored mechanism was dropped on the way into the
+    // SMTP settings, so every send spoke AUTH PLAIN however the account
+    // was stored. The script here answers *only* XOAUTH2 — a send that
+    // still says PLAIN has nothing to match and fails, which is exactly
+    // the regression this guards.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (mut account, _sent) = account_with_sent(&connection);
+    account.auth = postio_model::account::AuthMethod::XOAuth2;
+    postio_storage::repository::AccountRepository::new(&connection)
+        .update(&mut account)
+        .expect("store the mechanism");
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let tokens = a_password_source(&account).await;
+    let script = SmtpScript::new("220 mail.example.com ESMTP ready")
+        .on(
+            "EHLO",
+            "250-mail.example.com
+250 AUTH XOAUTH2",
+        )
+        .on("AUTH XOAUTH2", "235 authenticated")
+        .on("MAIL FROM", "250 ok")
+        .on("RCPT TO", "250 ok")
+        .on("DATA", "354 go ahead")
+        .on("QUIT", "221 bye");
+    let connector = ScriptedConnector::new(script);
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    assert_eq!(report.applied, 1, "{report:?}");
+    let commands = connector.log().commands();
+    assert!(
+        commands.iter().any(|line| line.starts_with("AUTH XOAUTH2")),
+        "the stored mechanism reached the wire: {commands:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_permanent_rejection_fails_without_filing_anything() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
