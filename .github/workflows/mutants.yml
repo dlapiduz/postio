@@ -45,6 +45,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # cargo-mutants gives each parallel job its own scratch copy of the
+      # source tree and builds a fresh target/ inside it -- with no --jobs
+      # cap it defaults to one per core, and the standard runner's ~14GB of
+      # free disk does not hold that many. The first real dispatch (#510)
+      # died with "Disk quota exceeded" testing the very first mutant, right
+      # after an unmutated baseline build alone had already used most of it.
+      # Preinstalled SDKs this job never touches are the easy 20-30GB back.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          df -h /
+
       # None of the four crates need GTK; see the `coverage` job in ci.yml
       # for the same reasoning about this dependency list.
       - name: Install system dependencies
@@ -82,4 +95,6 @@ jobs:
         run: cargo install cargo-mutants --locked --version 27.1.0
 
       - name: Mutation-test the pure crates
-        run: scripts/mutants.sh
+        run: |
+          df -h /
+          scripts/mutants.sh
