@@ -36,9 +36,11 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod event;
+mod registry;
 mod session;
 
 pub use event::UiEvent;
+pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
 pub use session::{Session, SessionError, SessionOptions};
 
 uniffi::setup_scaffolding!();
