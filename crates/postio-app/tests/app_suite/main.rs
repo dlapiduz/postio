@@ -26,6 +26,7 @@ mod search_results;
 mod search_wiring;
 mod send_wiring;
 mod settings_accounts_wiring;
+mod settings_credential_wiring;
 mod signature_default_wiring;
 mod startup_repair;
 mod thread_cursor_preview;
@@ -118,6 +119,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_accounts_wiring::account_rows_persist_enable_and_mark_removal",
         settings_accounts_wiring::account_rows_persist_enable_and_mark_removal as fn(),
+    ),
+    (
+        "settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window",
+        settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window
+            as fn(),
     ),
     (
         "signature_default_wiring::compose_signs_with_the_selected_mailbox_or_account_default",
