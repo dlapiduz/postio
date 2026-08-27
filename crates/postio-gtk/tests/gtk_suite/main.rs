@@ -53,6 +53,7 @@ mod gtk_parts;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
 mod gtk_reading_pane;
+mod gtk_result_order;
 mod gtk_row;
 mod gtk_saved_searches_live;
 mod gtk_search_live;
@@ -212,6 +213,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one",
         gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one as fn(),
+    ),
+    (
+        "gtk_result_order::the_sort_control_tells_the_truth_over_results",
+        gtk_result_order::the_sort_control_tells_the_truth_over_results as fn(),
     ),
     (
         "gtk_search_live::the_readout_answers_the_query_on_screen_and_no_other",

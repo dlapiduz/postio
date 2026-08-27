@@ -85,12 +85,55 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     // produces them and the cursor that walks them.
     let held: Held = Rc::new(std::cell::RefCell::new(None));
 
+    // Which order the result set is in (#499). Owned here, beside the scope,
+    // because the same run reads both: the executor is asked for ranked or
+    // date order per request, and the list header reports whichever the
+    // rows are actually in.
+    let order: Order = Rc::new(std::cell::Cell::new(postio_search::ResultOrder::default()));
+
     install_preview(&view, wiring);
-    install_run(&view, &finder, account.id, wiring, held.clone());
-    install_results(window, feeds, &view, held, wiring);
+    install_run(
+        &view,
+        &finder,
+        account.id,
+        wiring,
+        held.clone(),
+        order.clone(),
+    );
+    install_results(window, feeds, &view, held, wiring, order.clone());
+    install_order_toggle(window, &finder, feeds, order);
     load_contacts(&finder, account.id, wiring);
 
     Some(view)
+}
+
+/// The order the current result set is in. See [`install`].
+type Order = Rc<std::cell::Cell<postio_search::ResultOrder>>;
+
+/// Answer [`CommandId::ToggleResultOrder`] — `o` over results, or a click on
+/// the list header's sort control.
+///
+/// Toggles, relabels, and asks the same query again in the new order. Only
+/// while the list is showing results: over a mailbox there is no other order
+/// to offer, and the control is inert.
+fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: Order) {
+    window.connect_command({
+        let window = window.clone();
+        let finder = finder.clone();
+        let feeds = feeds.clone();
+        move |id| {
+            if id != postio_core::CommandId::ToggleResultOrder || !feeds.messages.showing_results()
+            {
+                return;
+            }
+            let next = order.get().toggled();
+            order.set(next);
+            window.list().set_result_order(Some(next));
+            if let Some(live) = finder.live() {
+                live.rerun();
+            }
+        }
+    });
 }
 
 /// Read the store on the runtime and answer over a channel.
@@ -121,7 +164,14 @@ where
 type Answer<T> = async_channel::Receiver<Option<T>>;
 
 /// Run a search when the box says a query is due.
-fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring, held: Held) {
+fn install_run(
+    view: &View,
+    finder: &Finder,
+    account: AccountId,
+    wiring: &Wiring,
+    held: Held,
+    order: Order,
+) {
     let Some(live) = finder.live() else {
         // The readout is built by `Finder::attach`, which the window does
         // before this runs. If it is ever missing, search silently does
@@ -144,10 +194,13 @@ fn install_run(view: &View, finder: &Finder, account: AccountId, wiring: &Wiring
             // is free to keep typing while it does.
             let query = parsed.clone();
             let scope = view.scope();
+            // Read on this side of the thread hop: the cell lives with the
+            // GTK loop, and the value — `Copy` — travels with the work.
+            let order = order.get();
             let hits = ask(&database, &runtime, {
                 let query = query.clone();
                 let blobs = blobs.clone();
-                move |connection| run(connection, &blobs, account, &query, scope)
+                move |connection| run(connection, &blobs, account, &query, scope, order)
             });
 
             glib::spawn_future_local({
@@ -226,6 +279,7 @@ fn run(
     account: AccountId,
     query: &ParsedQuery,
     scope: Scope,
+    order: postio_search::ResultOrder,
 ) -> Option<SearchResults> {
     let mut results = search(
         connection,
@@ -241,6 +295,7 @@ fn run(
             query,
             scope,
             limit: HIT_LIMIT,
+            order,
         },
         chrono::Utc::now(),
     )
@@ -318,6 +373,7 @@ fn facets(
                     query: &query,
                     scope,
                     limit: HIT_LIMIT,
+                    order: postio_search::ResultOrder::Relevance,
                 },
             )
             .map_err(|error| tracing::warn!(%error, "the facet counts did not run"))
@@ -447,7 +503,14 @@ fn announce(events: &postio_core::bridge::EventSink, query: &ParsedQuery, result
 /// * the column header counts results rather than naming a folder,
 /// * the cursor moving through them moves the preview,
 /// * `Esc` puts the mailbox back, where it was.
-fn install_results(window: &Window, feeds: &Feeds, view: &View, held: Held, wiring: &Wiring) {
+fn install_results(
+    window: &Window,
+    feeds: &Feeds,
+    view: &View,
+    held: Held,
+    wiring: &Wiring,
+    order: Order,
+) {
     let list = window.list();
     let finder = window.finder();
 
@@ -461,6 +524,7 @@ fn install_results(window: &Window, feeds: &Feeds, view: &View, held: Held, wiri
     feeds.messages.connect_results({
         let list = list.clone();
         let restore = restore.clone();
+        let order = order.clone();
         move |count| {
             // Only the first result set of a search remembers. Retyping
             // without leaving replaces the hits, and recording *those* as the
@@ -475,6 +539,9 @@ fn install_results(window: &Window, feeds: &Feeds, view: &View, held: Held, wiri
             // Canvas 2b: the column says what it is showing. "14 results",
             // not the folder it has stopped listing.
             list.set_mailbox(&results_label(count), 0);
+            // And the order those results are in (#499): ranked results
+            // labelled `Newest ▾` read as a broken sort.
+            list.set_result_order(Some(order.get()));
         }
     });
 
@@ -512,10 +579,17 @@ fn install_results(window: &Window, feeds: &Feeds, view: &View, held: Held, wiri
     finder.connect_dismissed({
         let list = list.clone();
         let feeds = feeds.clone();
+        let order = order.clone();
         move || {
             if !feeds.messages.close_results() {
                 return;
             }
+            // The next search starts ranked, whatever this one was switched
+            // to: `Relevance` is the default because it is the answer the
+            // ranking exists to give, and a sticky `Newest` would quietly
+            // turn search into a date filter for ever after.
+            order.set(postio_search::ResultOrder::default());
+            list.set_result_order(None);
             let Some((name, unread, offset)) = restore.replace(None) else {
                 return;
             };
@@ -665,7 +739,14 @@ mod tests {
     ) -> SearchResults {
         let connection = database.connection().expect("checkout");
         let query = postio_search::parse(text, chrono::Utc::now().date_naive());
-        run(&connection, blobs, account, &query, Scope::AllMail).expect("a search")
+        run(
+            &connection,
+            blobs,
+            account,
+            &query,
+            Scope::AllMail,
+            postio_search::ResultOrder::Relevance,
+        ).expect("a search")
     }
 
     #[test]

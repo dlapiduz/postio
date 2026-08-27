@@ -45,6 +45,7 @@ fn find(connection: &rusqlite::Connection, account: postio_model::AccountId, tex
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     search(connection, &request, Utc::now())
         .expect("search")
