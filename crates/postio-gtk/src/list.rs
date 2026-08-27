@@ -19,6 +19,18 @@
 //! database, a display or a runtime: a fake source records what was asked for
 //! and the test decides when to answer.
 //!
+//! # The paging and generation bookkeeping lives in `postio-ui` (ADR 0019 Q5a)
+//!
+//! [`postio_ui::list::ListWindow`] owns the resident pages, the LRU eviction
+//! and the generation counter — the half of this a second frontend must not
+//! re-derive. What stays here is exactly what GTK's own contract demands:
+//! `MessageRow`'s `GObject` identity, `items_changed` emission (including
+//! what an insertion at the top means to a scroll anchor), and the
+//! `reading`/[`hold`](MessageList::hold) re-entrancy guard below —
+//! `GListModel::item()` must not be mutated mid-call, which is a GTK rule
+//! with no `NSTableView` equivalent, so `ListWindow` must never be reached
+//! while it is set.
+//!
 //! # What it costs
 //!
 //! * [`CACHE_PAGES`] pages resident, evicted least-recently-used. Scrolling
@@ -29,7 +41,6 @@
 //!   speed does not stutter on a page boundary.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
@@ -38,19 +49,13 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::address::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
+use postio_ui::list::{ListRow, ListWindow, Lookup};
 
 /// Rows per page.
-///
-/// Big enough that a screenful never spans more than two pages at any sensible
-/// density, small enough that a page is a few kilobytes on the wire from
-/// SQLite.
-pub const PAGE_SIZE: u32 = 50;
+pub use postio_ui::list::PAGE_SIZE;
 
 /// Pages kept in memory. Everything past this is evicted least-recently-used.
-///
-/// Eight pages is around 400 rows: roughly a screen either side of the
-/// viewport at the airiest density, plus slack for a fast flick.
-pub const CACHE_PAGES: usize = 8;
+pub use postio_ui::list::CACHE_PAGES;
 
 /// What the message list shows for one message.
 ///
@@ -190,19 +195,35 @@ impl MessageRow {
     }
 }
 
+impl ListRow for MessageRow {
+    fn id(&self) -> Option<MessageId> {
+        // Not recursion: an inherent method always wins method resolution
+        // over a trait method for a concrete receiver, and `Self::id` here
+        // has a concrete `MessageRow`. `postio_ui::list::ListWindow<T>`
+        // reaches this arm through the trait bound instead, which is the
+        // only place it is actually called.
+        self.id()
+    }
+
+    /// Update the existing `GObject` in place and hand that back, so a
+    /// redelivered row does not invalidate anything holding onto it — the
+    /// behaviour the default (take the incoming value) is wrong for, and
+    /// exactly the thing a second frontend must not have to re-derive.
+    fn reconcile(existing: &Self, incoming: Self) -> Self {
+        if let Some(row) = incoming.row() {
+            existing.set_row(row);
+        }
+        existing.clone()
+    }
+}
+
 mod imp {
     use super::*;
 
     #[derive(Default)]
     pub struct MessageList {
         pub source: RefCell<Option<Rc<dyn PageSource>>>,
-        pub total: Cell<u32>,
-        /// Loaded pages, by page index.
-        pub pages: RefCell<HashMap<u32, Vec<MessageRow>>>,
-        /// Page indices, least recently used first.
-        pub recent: RefCell<VecDeque<u32>>,
-        /// Pages already asked for and not yet delivered.
-        pub pending: RefCell<HashSet<u32>>,
+        pub window: RefCell<ListWindow<MessageRow>>,
         /// Whether the model is part-way through answering `item()`.
         ///
         /// See [`super::MessageList::hold`]: anything that would emit
@@ -226,7 +247,7 @@ mod imp {
         }
 
         fn n_items(&self) -> u32 {
-            self.total.get()
+            self.window.borrow().total()
         }
 
         fn item(&self, position: u32) -> Option<glib::Object> {
@@ -288,72 +309,94 @@ impl MessageList {
         glib::idle_add_local_once(move || action(&list));
     }
 
+    /// The generation currently in force.
+    ///
+    /// Stamp this on a request when it is made — [`crate::feed`] does, on
+    /// every [`PageSource::request`] — and pass it back to
+    /// [`deliver_for`](Self::deliver_for) or
+    /// [`deliver_page`](Self::deliver_page) when the answer arrives. A reply
+    /// carrying an older generation is dropped rather than applied: the
+    /// scope changed while it was in flight, and answering the question
+    /// nobody is asking any more would fill the new scope with the old
+    /// one's mail.
+    pub fn generation(&self) -> u64 {
+        self.imp().window.borrow().generation()
+    }
+
     /// Point the list at a new query: a different folder, or a search.
     ///
-    /// Everything cached is dropped — it answered a different question.
+    /// Everything cached is dropped — it answered a different question — and
+    /// the generation moves on, so any reply already in flight for the
+    /// previous one is now stale.
     pub fn set_source(&self, source: Rc<dyn PageSource>) {
         if self.reading() {
             self.hold(move |list| list.set_source(source));
             return;
         }
-        let imp = self.imp();
-        let removed = imp.total.get();
+        let removed = self.imp().window.borrow().total();
         let total = source.total();
 
-        *imp.source.borrow_mut() = Some(source);
-        imp.pages.borrow_mut().clear();
-        imp.recent.borrow_mut().clear();
-        imp.pending.borrow_mut().clear();
-        imp.total.set(total);
+        *self.imp().source.borrow_mut() = Some(source);
+        self.imp().window.borrow_mut().reset(total);
 
         self.items_changed(0, removed, total);
     }
 
-    /// Hand the model a page it asked for.
+    /// Hand the model a page it asked for, assuming it answers the scope
+    /// currently in view.
     ///
-    /// Rows already resident for the same message keep their `GObject`, so a
-    /// redelivered page does not invalidate anything holding onto them.
+    /// For a caller with no generation to compare — a test double, or
+    /// [`PageSource::request`] answering synchronously — this always
+    /// applies. A caller that captured the generation at request time and
+    /// needs a stale answer dropped instead wants
+    /// [`deliver_for`](Self::deliver_for).
+    ///
+    /// Rows already resident for the same message keep their `GObject`
+    /// ([`ListRow::reconcile`]), so a redelivered page does not invalidate
+    /// anything holding onto them.
     pub fn deliver(&self, page: u32, rows: Vec<Row>) {
+        let generation = self.generation();
+        self.deliver_for(generation, page, rows);
+    }
+
+    /// The same as [`deliver`](Self::deliver), but `generation` is checked
+    /// against the one currently in force first.
+    pub fn deliver_for(&self, generation: u64, page: u32, rows: Vec<Row>) {
         if self.reading() {
-            self.hold(move |list| list.deliver(page, rows));
+            self.hold(move |list| list.deliver_for(generation, page, rows));
             return;
         }
-        let imp = self.imp();
-        imp.pending.borrow_mut().remove(&page);
-
-        let existing: HashMap<MessageId, MessageRow> = imp
-            .pages
-            .borrow()
-            .get(&page)
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(|row| Some((row.id()?, row.clone())))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let count = rows.len() as u32;
-        let items: Vec<MessageRow> = rows
-            .into_iter()
-            .map(|row| match existing.get(&row.id) {
-                Some(item) => {
-                    item.set_row(row);
-                    item.clone()
-                }
-                None => MessageRow::new(row),
-            })
-            .collect();
-
-        imp.pages.borrow_mut().insert(page, items);
-        self.touch(page);
-        self.evict();
-
-        // The positions did not move; what they answer with did.
-        let start = page * PAGE_SIZE;
-        let span = count.min(imp.total.get().saturating_sub(start));
-        if span > 0 {
-            self.items_changed(start, span, span);
+        let items: Vec<MessageRow> = rows.into_iter().map(MessageRow::new).collect();
+        let delivered = self
+            .imp()
+            .window
+            .borrow_mut()
+            .deliver(generation, page, items);
+        if let Some(range) = delivered.changed {
+            let span = range.end - range.start;
+            self.items_changed(range.start, span, span);
         }
+    }
+
+    /// A page of a *mailbox* arrived: a fresh `total` alongside this page's
+    /// `rows`, generation-checked as one decision.
+    ///
+    /// What [`deliver_for`](Self::deliver_for) is for a result set's page,
+    /// which carries no total of its own — a mailbox's answer always does,
+    /// and the total is applied first, the same order `set_total` and
+    /// `deliver` used to run in, so a page delivered before the list knows
+    /// how long it is would not be dropped by the very count it just
+    /// supplied.
+    pub fn deliver_page(&self, generation: u64, total: u32, page: u32, rows: Vec<Row>) {
+        if self.reading() {
+            self.hold(move |list| list.deliver_page(generation, total, page, rows));
+            return;
+        }
+        if generation != self.generation() {
+            return;
+        }
+        self.set_total(total);
+        self.deliver_for(generation, page, rows);
     }
 
     /// Correct the row count without touching what is cached.
@@ -367,18 +410,14 @@ impl MessageList {
             self.hold(move |list| list.set_total(total));
             return;
         }
-        let imp = self.imp();
-        let previous = imp.total.get();
-        if previous == total {
-            return;
-        }
-        imp.total.set(total);
-
-        if total > previous {
-            self.items_changed(previous, 0, total - previous);
-        } else {
-            self.drop_pages_from(total);
-            self.items_changed(total, previous - total, 0);
+        // Not `if let Some(..) = ...borrow_mut()...` — a temporary borrowed
+        // directly in an `if let` condition lives for the whole statement,
+        // so it would still be held when `items_changed` below re-enters
+        // `item()` synchronously (a listening `GtkListView` does). Binding it
+        // first ends that statement, and the borrow, before the signal fires.
+        let change = self.imp().window.borrow_mut().set_total(total);
+        if let Some((position, removed, added)) = change {
+            self.items_changed(position, removed, added);
         }
     }
 
@@ -396,15 +435,12 @@ impl MessageList {
             self.hold(move |list| list.inserted_at_top(count));
             return;
         }
-        if count == 0 {
-            return;
+        // See the note in `set_total`: bind before branching, so the borrow
+        // is gone before `items_changed` can re-enter `item()`.
+        let inserted = self.imp().window.borrow_mut().inserted_at_top(count);
+        if inserted {
+            self.items_changed(0, 0, count);
         }
-        let imp = self.imp();
-        imp.pages.borrow_mut().clear();
-        imp.recent.borrow_mut().clear();
-        imp.pending.borrow_mut().clear();
-        imp.total.set(imp.total.get() + count);
-        self.items_changed(0, 0, count);
     }
 
     /// A message changed in place: read, flagged, answered.
@@ -425,40 +461,32 @@ impl MessageList {
             // that goes through `crate::feed` asks.
             return false;
         }
-        let imp = self.imp();
-        let found = imp.pages.borrow().iter().find_map(|(page, items)| {
-            let index = items.iter().position(|item| item.id() == Some(row.id))?;
-            Some((*page, index, items[index].clone()))
-        });
-
-        let Some((page, index, item)) = found else {
+        let incoming = MessageRow::new(row);
+        let Some(position) = self.imp().window.borrow_mut().update(incoming) else {
             return false;
         };
-        item.set_row(row);
-        let position = page * PAGE_SIZE + index as u32;
         self.items_changed(position, 1, 1);
         true
     }
 
-    /// Drop everything cached and ask again, keeping the row count.
+    /// Drop everything cached and ask again, keeping the row count and the
+    /// generation.
     ///
-    /// The blunt instrument, for when the order itself changed.
+    /// The blunt instrument, for when the order itself changed but the
+    /// question being answered has not — a request already in flight from
+    /// before this call is still answering it, so it is not stale.
     pub fn invalidate(&self) {
         if self.reading() {
             self.hold(|list| list.invalidate());
             return;
         }
-        let imp = self.imp();
-        imp.pages.borrow_mut().clear();
-        imp.recent.borrow_mut().clear();
-        imp.pending.borrow_mut().clear();
-        let total = imp.total.get();
+        let total = self.imp().window.borrow_mut().invalidate();
         self.items_changed(0, total, total);
     }
 
     /// How many rows are resident. The number the memory budget is about.
     pub fn resident_rows(&self) -> usize {
-        self.imp().pages.borrow().values().map(Vec::len).sum()
+        self.imp().window.borrow().resident_rows()
     }
 
     /// Which resident page holds `message`, if any.
@@ -467,8 +495,16 @@ impl MessageList {
     /// somewhere off screen needs nothing done, and one that is on screen
     /// costs a refetch of its page rather than of the folder.
     pub fn page_of(&self, message: MessageId) -> Option<u32> {
-        self.position_of(message)
-            .map(|position| position / PAGE_SIZE)
+        self.imp().window.borrow().page_of(message)
+    }
+
+    /// Every resident page holding any of `messages`, deduplicated.
+    ///
+    /// The bulk form of [`page_of`](Self::page_of), for a burst of changes
+    /// that land together, so the caller issues one request per affected
+    /// page rather than one per message.
+    pub fn pages_holding(&self, messages: &[MessageId]) -> Vec<u32> {
+        self.imp().window.borrow().pages_holding(messages)
     }
 
     /// Where `message` sits, among the pages currently resident.
@@ -480,116 +516,52 @@ impl MessageList {
     /// and has to treat them the same: ask for the page, and try again once
     /// it answers.
     pub fn position_of(&self, message: MessageId) -> Option<u32> {
-        self.imp().pages.borrow().iter().find_map(|(page, rows)| {
-            rows.iter()
-                .position(|row| row.id() == Some(message))
-                .map(|index| page * PAGE_SIZE + index as u32)
-        })
+        self.imp().window.borrow().position_of(message)
     }
 
     /// Which pages are resident, lowest first. For tests and diagnostics.
     pub fn resident_pages(&self) -> Vec<u32> {
-        let mut pages: Vec<u32> = self.imp().pages.borrow().keys().copied().collect();
-        pages.sort_unstable();
-        pages
+        self.imp().window.borrow().resident_pages()
     }
 
     /// The message at `position`, but only if its page is already here.
     ///
-    /// [`row_at`](Self::row_at) fetches what it does not have, which is right
-    /// for drawing — a row on screen has to become real — and wrong for
+    /// [`row_at`](Self::row_at) fetches what it does not have, which is
+    /// right for drawing — a row on screen has to become real — and wrong for
     /// answering "what is in this range". A Shift-click across ten thousand
     /// rows must not ask the store for ten thousand rows: the ones the user
     /// scrolled through are resident and get selected, and the ones they
     /// jumped over were never on screen. Selecting those is what `Ctrl+A`
     /// is for, and it does it with a predicate rather than a list.
     pub fn peek(&self, position: u32) -> Option<MessageId> {
-        let imp = self.imp();
-        if position >= imp.total.get() {
-            return None;
-        }
-        imp.pages
-            .borrow()
-            .get(&(position / PAGE_SIZE))
-            .and_then(|rows| rows.get((position % PAGE_SIZE) as usize))
-            .and_then(MessageRow::id)
+        self.imp().window.borrow().peek(position)
     }
 
     /// The row at `position`, fetching its page if it is not resident.
     fn row_at(&self, position: u32) -> Option<MessageRow> {
-        let imp = self.imp();
-        if position >= imp.total.get() {
-            return None;
+        let mut window = self.imp().window.borrow_mut();
+        let lookup = window.row_at(position)?;
+        match lookup {
+            Lookup::Resident(row) => Some(row.clone()),
+            Lookup::Missing { request } => {
+                drop(window);
+                for page in request {
+                    self.request(page);
+                }
+                Some(MessageRow::placeholder())
+            }
         }
-
-        let page = position / PAGE_SIZE;
-        let index = (position % PAGE_SIZE) as usize;
-
-        let cached = imp
-            .pages
-            .borrow()
-            .get(&page)
-            .and_then(|rows| rows.get(index))
-            .cloned();
-        if let Some(row) = cached {
-            self.touch(page);
-            return Some(row);
-        }
-
-        // Not here: ask for it, and for the pages either side, so scrolling at
-        // speed does not stall on a page boundary.
-        self.request(page);
-        if page > 0 {
-            self.request(page - 1);
-        }
-        self.request(page + 1);
-
-        Some(MessageRow::placeholder())
     }
 
-    /// Ask the source for `page`, unless it is already cached or on its way.
+    /// Ask the source for `page`.
+    ///
+    /// Called only for a page [`ListWindow`] has already confirmed needs a
+    /// fresh request — deduplication against what is cached or already
+    /// pending happens there, not here.
     fn request(&self, page: u32) {
-        let imp = self.imp();
-        if page * PAGE_SIZE >= imp.total.get() {
-            return;
-        }
-        if imp.pages.borrow().contains_key(&page) || !imp.pending.borrow_mut().insert(page) {
-            return;
-        }
-        let source = imp.source.borrow().clone();
+        let source = self.imp().source.borrow().clone();
         if let Some(source) = source {
             source.request(page);
         }
-    }
-
-    /// Mark `page` as the most recently used.
-    fn touch(&self, page: u32) {
-        let mut recent = self.imp().recent.borrow_mut();
-        recent.retain(|p| *p != page);
-        recent.push_back(page);
-    }
-
-    /// Drop the least recently used pages down to [`CACHE_PAGES`].
-    ///
-    /// No `items_changed` for what goes: an evicted page is by definition the
-    /// one nobody has looked at in longest, so nothing is bound to it. If the
-    /// view does come back, it gets a placeholder and a fresh request.
-    fn evict(&self) {
-        let imp = self.imp();
-        while imp.recent.borrow().len() > CACHE_PAGES {
-            let Some(oldest) = imp.recent.borrow_mut().pop_front() else {
-                break;
-            };
-            imp.pages.borrow_mut().remove(&oldest);
-        }
-    }
-
-    /// Forget every cached page that lies wholly past `position`.
-    fn drop_pages_from(&self, position: u32) {
-        let imp = self.imp();
-        let first_stale = position.div_ceil(PAGE_SIZE);
-        imp.pages.borrow_mut().retain(|page, _| *page < first_stale);
-        imp.recent.borrow_mut().retain(|page| *page < first_stale);
-        imp.pending.borrow_mut().retain(|page| *page < first_stale);
     }
 }
