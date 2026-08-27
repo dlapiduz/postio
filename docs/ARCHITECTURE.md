@@ -304,9 +304,22 @@ the graph of every crate depending on `postio-core` the moment anything turned
 it on — the view layer included. `postio-core` therefore has **no optional
 dependencies at all.**
 
-The macOS frontend is deferred indefinitely ([#15](https://github.com/dlapiduz/postio/issues/15)). The invariant
-stays regardless: it costs nothing to maintain, and it is what makes the option
-survive.
+**The macOS frontend is no longer deferred** ([#15](https://github.com/dlapiduz/postio/issues/15),
+[ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend over the
+same engine, through a UniFFI boundary in `postio-ffi`, with the toolkit-free
+presentation logic extracted into `postio-ui`.
+
+The invariant is what made that possible, and it was not a theory: measured on
+2026-08-27, **thirteen of the fifteen crates build and test on macOS with no
+changes at all**. `cargo check --workspace --all-targets --exclude postio-gtk
+--exclude postio-app` exits 0 there; the whole-workspace run fails only on
+`glib-sys` wanting `glib-2.0` from `pkg-config`. The boundary this section
+describes turns out to be exactly where the portable half ends.
+
+`scripts/issue-land.sh` enforces the same line at landing time: a changed crate
+the host cannot build is refused rather than merged unverified, probing
+`pkg-config` rather than `uname` so a Linux box without the `-dev` packages is
+caught identically ([#555](https://github.com/dlapiduz/postio/issues/555)).
 
 ### 10. Design tokens are generated, never retyped
 
