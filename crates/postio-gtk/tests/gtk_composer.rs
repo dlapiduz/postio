@@ -91,6 +91,13 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
 
     let reading = gtk::Label::new(Some("the message being read"));
     shell.reader().append(&reading);
+    // Registered with the pane's arbiter as the reader surface (#502): the
+    // pane has one owner now, and a stand-in that just sat in the box would
+    // be invisible to it — hidden when the composer claims, and never
+    // restored, because restoring is computed from who is active rather
+    // than replayed from what was visible.
+    shell.register_reader_occupant(postio_gtk::shell::ReaderOccupant::Reader, reading.upcast_ref());
+    shell.claim_reading();
 
     window.present();
     settle();

@@ -65,8 +65,50 @@ pub enum Pane {
     Reader,
 }
 
+/// Who has the reading pane.
+///
+/// Three surfaces live in the pane [`Shell::reader`] hands out — the reader,
+/// the search preview and the composer — and #502 is what happens when each
+/// toggles its own visibility from its own snapshot: a message drawn twice
+/// (reader above, a preview that never left below), and a cleared preview
+/// hanging under an inbox message after search was dismissed. The pane is a
+/// mode surface, so it gets what every mode here gets: one owner, and a
+/// current occupant computed from what is active rather than replayed from
+/// what somebody remembered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReaderOccupant {
+    /// Nothing to show; the pane is its empty self.
+    #[default]
+    Empty,
+    /// The hardened reading view, on an open message.
+    Reader,
+    /// The search preview — canvas 2b's right-hand pane.
+    SearchPreview,
+    /// The composer, which takes the pane over (docs/PRODUCT.md).
+    Composer,
+}
+
+/// The occupant the active surfaces call for, by rank.
+///
+/// The composer outranks everything: a half-written draft on a hidden widget
+/// is the worst state the pane has. Search outranks plain reading while it is
+/// up, because the pane is the search's answer column. Pure, so the whole
+/// priority is testable without a window.
+pub fn fallback(composing: bool, searching: bool, reading: bool) -> ReaderOccupant {
+    if composing {
+        ReaderOccupant::Composer
+    } else if searching {
+        ReaderOccupant::SearchPreview
+    } else if reading {
+        ReaderOccupant::Reader
+    } else {
+        ReaderOccupant::Empty
+    }
+}
+
 mod imp {
     use std::cell::Cell;
+    use std::cell::RefCell;
 
     use super::*;
 
@@ -90,6 +132,16 @@ mod imp {
         /// the window brought the sidebar back.
         #[property(get, set = Self::set_sidebar_visible, name = "sidebar-visible")]
         pub sidebar_visible: Cell<bool>,
+        /// The reading pane's occupants, registered as each is built. Weak,
+        /// because the composer can leave for a detached window and the
+        /// arbiter must not keep a widget alive that its owner let go.
+        pub occupants: RefCell<Vec<(ReaderOccupant, glib::WeakRef<gtk::Widget>)>>,
+        /// Who has the reading pane right now.
+        pub occupant: Cell<ReaderOccupant>,
+        /// The activity flags `fallback` is computed from.
+        pub composing: Cell<bool>,
+        pub searching: Cell<bool>,
+        pub reading: Cell<bool>,
     }
 
     impl Default for Shell {
@@ -117,6 +169,11 @@ mod imp {
                 mode: Cell::new(Mode::default()),
                 sidebar_visible: Cell::new(true),
                 focused: Cell::new(Pane::default()),
+                occupants: RefCell::new(Vec::new()),
+                occupant: Cell::new(ReaderOccupant::default()),
+                composing: Cell::new(false),
+                searching: Cell::new(false),
+                reading: Cell::new(false),
             }
         }
     }
@@ -226,6 +283,130 @@ impl Shell {
         self.imp().reader.clone()
     }
 
+    // -- One owner for the reading pane (#502) ------------------------------
+
+    /// Registers `widget` as the reading pane's `occupant` surface.
+    ///
+    /// Called once by each surface as it mounts itself into [`reader`]. The
+    /// arbiter hides it now and shows it only while it is the current
+    /// occupant; the surface must never toggle its own pane visibility
+    /// again — three surfaces doing exactly that, each from its own
+    /// snapshot, is the bug this exists to end.
+    ///
+    /// [`reader`]: Self::reader
+    pub fn register_reader_occupant(&self, occupant: ReaderOccupant, widget: &gtk::Widget) {
+        let weak = glib::WeakRef::new();
+        weak.set(Some(widget));
+        let mut occupants = self.imp().occupants.borrow_mut();
+        occupants.retain(|(existing, _)| *existing != occupant);
+        occupants.push((occupant, weak));
+        drop(occupants);
+        widget.set_visible(self.imp().occupant.get() == occupant);
+    }
+
+    /// Who has the reading pane right now.
+    pub fn reader_occupant(&self) -> ReaderOccupant {
+        self.imp().occupant.get()
+    }
+
+    /// The pane is (or is no longer) open on a message.
+    ///
+    /// A *flag*, not a claim: this may be re-stated by anything syncing the
+    /// window's state — the composer closing re-syncs it, for one — and a
+    /// re-statement must not steal the pane from the search preview. Only
+    /// [`claim_reading`] shows the reader; what this does is keep the flag
+    /// current, and settle the pane when the message goes away.
+    ///
+    /// While a higher-ranked surface holds the pane the flag still updates —
+    /// what shows when that surface leaves is computed from the flags at
+    /// that moment, never replayed from a snapshot.
+    ///
+    /// [`claim_reading`]: Self::claim_reading
+    pub fn set_reading(&self, reading: bool) {
+        self.imp().reading.set(reading);
+        if self.imp().composing.get() {
+            return;
+        }
+        if !reading && self.imp().occupant.get() == ReaderOccupant::Reader {
+            self.settle_reader_pane();
+        }
+    }
+
+    /// A message was just opened: the reader takes the pane.
+    ///
+    /// The deliberate gesture, distinct from the flag: `Enter` on a search
+    /// result opens it in the real reader over the preview, and that is this
+    /// call. The composer still outranks it — a half-written draft is not
+    /// lost to a cursor movement.
+    pub fn claim_reading(&self) {
+        self.imp().reading.set(true);
+        if !self.imp().composing.get() {
+            self.show_occupant(ReaderOccupant::Reader);
+        }
+    }
+
+    /// Search took (or left) the pane's column.
+    pub fn set_searching(&self, searching: bool) {
+        self.imp().searching.set(searching);
+        if self.imp().composing.get() {
+            return;
+        }
+        if searching {
+            self.show_occupant(ReaderOccupant::SearchPreview);
+        } else if self.imp().occupant.get() == ReaderOccupant::SearchPreview {
+            self.settle_reader_pane();
+        }
+    }
+
+    /// The focus moved through the search results.
+    ///
+    /// Browsing means previewing: if `Enter` had put the real reader up, the
+    /// next arrow puts the preview back. A no-op outside search or while the
+    /// composer holds the pane.
+    pub fn preview_focused(&self) {
+        if self.imp().searching.get() && !self.imp().composing.get() {
+            self.show_occupant(ReaderOccupant::SearchPreview);
+        }
+    }
+
+    /// The composer took or released the pane. It outranks everything: see
+    /// [`fallback`].
+    pub fn set_composing(&self, composing: bool) {
+        self.imp().composing.set(composing);
+        if composing {
+            self.show_occupant(ReaderOccupant::Composer);
+        } else {
+            self.settle_reader_pane();
+        }
+    }
+
+    /// Shows what the flags call for — after the current occupant left.
+    fn settle_reader_pane(&self) {
+        let imp = self.imp();
+        self.show_occupant(fallback(
+            imp.composing.get(),
+            imp.searching.get(),
+            imp.reading.get(),
+        ));
+    }
+
+    /// Makes `occupant` the one visible surface in the pane.
+    ///
+    /// Only widgets currently *in* the pane are touched: the composer can be
+    /// away in a detached window, and hiding it there — because it is not
+    /// the pane's occupant — would blank the window it took the draft to.
+    fn show_occupant(&self, occupant: ReaderOccupant) {
+        self.imp().occupant.set(occupant);
+        let pane: gtk::Widget = self.imp().reader.clone().upcast();
+        for (registered, widget) in self.imp().occupants.borrow().iter() {
+            if let Some(widget) = widget.upgrade()
+                && widget.parent().as_ref() == Some(&pane)
+            {
+                widget.set_visible(*registered == occupant);
+            }
+        }
+    }
+
     /// How many panes are currently on screen.
     pub fn mode(&self) -> Mode {
         self.imp().mode.get()
@@ -319,5 +500,25 @@ impl Shell {
             .set_visible(!one_pane || imp.focused.get() == Pane::List);
         imp.reader
             .set_visible(!one_pane || imp.focused.get() == Pane::Reader);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole priority, in one place: the composer outranks search,
+    /// search outranks reading, and nothing active is an empty pane. #502's
+    /// two screenshots are both rows of this table — the states existed
+    /// simultaneously because three owners each answered a different row.
+    #[test]
+    fn the_fallback_ranks_composer_over_search_over_reading() {
+        use ReaderOccupant::*;
+        assert_eq!(fallback(true, true, true), Composer);
+        assert_eq!(fallback(true, false, false), Composer);
+        assert_eq!(fallback(false, true, true), SearchPreview);
+        assert_eq!(fallback(false, true, false), SearchPreview);
+        assert_eq!(fallback(false, false, true), Reader);
+        assert_eq!(fallback(false, false, false), Empty);
     }
 }
