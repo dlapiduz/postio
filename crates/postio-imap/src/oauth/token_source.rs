@@ -41,6 +41,14 @@ fn refresh_token_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-refresh", account.account()))
 }
 
+/// Where an account's own OAuth client secret lives, when its provider
+/// issued one — Google's "Desktop app" clients do, and require it at the
+/// token endpoint even with PKCE. Same derived-key discipline as the
+/// refresh token: a distinct secret under a distinct key.
+fn client_secret_key(account: &AccountKey) -> AccountKey {
+    AccountKey::new(format!("{}#oauth-client-secret", account.account()))
+}
+
 struct CachedAccessToken {
     token: Password,
     /// `None` means "the server did not say", treated as never stale on
@@ -68,6 +76,10 @@ pub struct OwnClientTokenSource {
     token_url: Url,
     client_id: String,
     client_secret: Option<String>,
+    /// Look the client secret up in the keyring per account instead of
+    /// carrying it: the shape the engine rebuilds at every launch, where
+    /// nothing may hold a secret in a struct that lives for the process.
+    stored_client_secret: bool,
     cache: Mutex<HashMap<AccountKey, CachedAccessToken>>,
     /// One refresh per account at a time, its result shared.
     ///
@@ -102,9 +114,35 @@ impl OwnClientTokenSource {
             token_url,
             client_id: client_id.into(),
             client_secret,
+            stored_client_secret: false,
             cache: Mutex::new(HashMap::new()),
             refreshing: SingleFlight::default(),
         }
+    }
+
+    /// The engine's constructor (#534): the client id and endpoint come
+    /// from the account row, and the client secret — when the provider
+    /// issued one at sign-in — is read from the keyring per refresh,
+    /// under its own derived key.
+    pub fn with_stored_secret(
+        store: Arc<dyn SecretStore>,
+        token_url: Url,
+        client_id: impl Into<String>,
+    ) -> Self {
+        let mut source = Self::new(store, token_url, client_id, None);
+        source.stored_client_secret = true;
+        source
+    }
+
+    /// Stores the client secret the sign-in flow was given, so
+    /// [`with_stored_secret`](Self::with_stored_secret) finds it at every
+    /// later launch.
+    pub async fn store_client_secret(
+        &self,
+        account: &AccountKey,
+        secret: &Password,
+    ) -> Result<(), SecretError> {
+        self.store.store(&client_secret_key(account), secret).await
     }
 
     /// The cached access token for `account`, if there is one and it is not
@@ -151,12 +189,26 @@ impl OwnClientTokenSource {
         // a user-visible wait with a Cancel button, so this request runs to
         // completion or to `REQUEST_IO_TIMEOUT`'s own bound rather than a
         // caller-supplied one.
+        // The static secret when construction carried one; the keyring's
+        // when the engine asked for the stored shape; a missing keyring
+        // entry is simply "this client has no secret", which is the
+        // ordinary public-client case.
+        let stored_secret = if self.stored_client_secret {
+            self.store.retrieve(&client_secret_key(account)).await.ok()
+        } else {
+            None
+        };
+        let client_secret = stored_secret
+            .as_ref()
+            .map(|secret| secret.expose())
+            .or(self.client_secret.as_deref());
+
         let cancel = CancelToken::new();
         let response = exchange::refresh_token(
             &self.token_url,
             RefreshExchange {
                 client_id: &self.client_id,
-                client_secret: self.client_secret.as_deref(),
+                client_secret,
                 refresh_token: refresh_token.expose(),
             },
             &cancel,

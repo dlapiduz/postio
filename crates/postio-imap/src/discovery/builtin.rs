@@ -150,6 +150,21 @@ impl Preset {
             note: self.note().map(str::to_owned),
             password_help_url: self.row.password_help_url.clone(),
             display_name: Some(self.row.display_name.clone()),
+            // The sign-in offer, only when the row *prefers* oauth2: a row
+            // listing it second is a fallback for the user to reach through
+            // the client-id path, not the door the wizard opens first.
+            oauth: self
+                .row
+                .auth
+                .first()
+                .filter(|method| method.as_str() == "oauth2")
+                .and(self.row.oauth.as_ref())
+                .map(|oauth| crate::discovery::settings::OAuthOffer {
+                    issuer: oauth.issuer.clone(),
+                    authorize: oauth.authorize.clone(),
+                    token: oauth.token.clone(),
+                    scopes: oauth.scopes.clone(),
+                }),
         }
     }
 }
