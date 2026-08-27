@@ -68,6 +68,12 @@ TRACKING: dict[str, str] = {
     "return-receipt-to": "read receipt (legacy Return-Receipt-To)",
     "list-unsubscribe-post": "List-Unsubscribe One-Click",
     'command::new("xdg-open")': "opens the user's system browser (OAuth consent, ADR 0006)",
+    # The GTK launchers reach the same place by API instead of by spawn:
+    # UriLauncher hands a URL to the system browser, FileLauncher hands a
+    # file to the desktop's opener. Both leave the machine's control the
+    # moment they run (#550).
+    "urilauncher::new": "opens the user's system browser (GTK UriLauncher)",
+    "filelauncher::new": "opens a file with an external application (GTK FileLauncher)",
 }
 
 # The marker that says a human decided how the user asks for this.
