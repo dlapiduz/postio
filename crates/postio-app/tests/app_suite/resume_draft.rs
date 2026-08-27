@@ -137,7 +137,12 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     // Clicked, not `Sidebar::select`: that one is documented as selecting
     // "without reporting it back as a user action", so the feed would never
     // hear and the list would go on showing the inbox.
-    click_folder(&window, &postio_gtk::sidebar::display_name(&drafts_folder));
+    click_folder(
+        &window,
+        // Among only itself: the seed has one folder per role, so the
+        // Drafts folder is trivially its role's primary (#501).
+        &postio_gtk::sidebar::display_name(&drafts_folder, std::slice::from_ref(&drafts_folder)),
+    );
     let list = window.list();
     let expected = {
         let connection = database.connection().expect("a connection");
