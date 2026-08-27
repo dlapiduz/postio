@@ -359,6 +359,39 @@ jobs:
           fi
           echo "ok: no workflow opts into the live-server tests."
 
+  docs:
+    name: Docs site build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The pin decides; see the note in the `fmt` job.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache the mdbook binary
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/mdbook
+          key: ${{ runner.os }}-mdbook-0.5.4
+
+      # Keep this version pin in step with pages.yml's -- they must build the
+      # same book the same way, or a PR could pass here and still fail on
+      # deploy.
+      - name: Install mdbook
+        run: cargo install mdbook --locked --version 0.5.4
+
+      # This is what ADR 0011 Q6 calls "catch a broken link or a missing
+      # SUMMARY.md entry in review": mdbook fails the build on either, and
+      # this job needs no GTK, no SQLite, no compile of the Rust workspace --
+      # just the checked-in Markdown, including the generated references
+      # (docs/keybindings.md, docs/config.md) that the `boundaries` job's
+      # crate tests already keep honest. This job does not re-run those
+      # tests; it only proves the book built from their *output* still
+      # renders.
+      - name: mdbook build
+        run: mdbook build docs/book
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
