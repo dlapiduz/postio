@@ -126,6 +126,12 @@ local_id!(
     DraftId
 );
 local_id!(
+    /// Identifies a cross-account move saga (#188, ADR 0005 Q9) — the
+    /// three-phase copy/confirm/remove that stands in for the transaction
+    /// two per-account queues cannot share.
+    CrossAccountMoveId
+);
+local_id!(
     /// Identifies a row in the local-first mutation queue.
     ///
     /// Ordering *is* meaningful for this one, and only this one: the queue

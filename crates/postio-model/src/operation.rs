@@ -25,7 +25,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::flag::FlagSet;
 use crate::ids::{
-    AccountId, BlobId, DraftId, MailboxId, MessageId, OperationId, ThreadId, Uid, UidValidity,
+    AccountId, BlobId, CrossAccountMoveId, DraftId, MailboxId, MessageId, OperationId, ThreadId,
+    Uid, UidValidity,
 };
 
 /// What an operation acts on.
@@ -257,6 +258,25 @@ pub enum Operation {
         /// The generation `uid` was observed under.
         uid_validity: UidValidity,
     },
+    /// Phases 1–2 of a cross-account move (#188, ADR 0005 Q9): append the
+    /// message to the target account's mailbox and confirm it arrived.
+    ///
+    /// Runs on the **target** account's queue. Everything it needs — the
+    /// source blob, the target mailbox, the phase — lives on the saga row,
+    /// which is the state the two queues share instead of a transaction.
+    CrossAccountCopy {
+        /// The saga this operation advances.
+        saga: CrossAccountMoveId,
+    },
+    /// Phase 3 of a cross-account move: `\Deleted` + expunge on the source.
+    ///
+    /// Runs on the **source** account's queue, and the drainer refuses it
+    /// until the saga row says the target copy is confirmed — the ordering
+    /// that makes the only possible failure a duplicate, never a loss.
+    CrossAccountRemove {
+        /// The saga this operation completes.
+        saga: CrossAccountMoveId,
+    },
 }
 
 impl Operation {
@@ -272,6 +292,8 @@ impl Operation {
             Self::Send { .. } => "send",
             Self::SaveDraft { .. } => "save_draft",
             Self::DiscardDraft { .. } => "discard_draft",
+            Self::CrossAccountCopy { .. } => "cross_account_copy",
+            Self::CrossAccountRemove { .. } => "cross_account_remove",
         }
     }
 
@@ -292,6 +314,10 @@ impl Operation {
     ///   itself, and the next save carries it to the server like any other
     ///   edit. [`Operation::DiscardDraft`] destroys the server's only copy,
     ///   the same way [`Operation::Expunge`] does.
+    /// * The cross-account phases are steps of a saga, not actions: the undo
+    ///   of a cross-account *move* is the inverse saga (ADR 0005 Q9), driven
+    ///   from the saga table where the confirmed target UID lives — never a
+    ///   per-operation inverse, which could delete before anything copied.
     ///
     /// Everything else round-trips: applying an operation and then its inverse
     /// leaves the mailbox as it was.
@@ -315,7 +341,9 @@ impl Operation {
             | Self::Append { .. }
             | Self::Send { .. }
             | Self::SaveDraft { .. }
-            | Self::DiscardDraft { .. } => None,
+            | Self::DiscardDraft { .. }
+            | Self::CrossAccountCopy { .. }
+            | Self::CrossAccountRemove { .. } => None,
         }
     }
 
@@ -335,7 +363,11 @@ impl Operation {
             | Self::Append { mailbox, .. }
             | Self::SaveDraft { mailbox }
             | Self::DiscardDraft { mailbox, .. } => Some(*mailbox),
-            Self::SetFlags { .. } | Self::ClearFlags { .. } | Self::Send { .. } => None,
+            Self::SetFlags { .. }
+            | Self::ClearFlags { .. }
+            | Self::Send { .. }
+            | Self::CrossAccountCopy { .. }
+            | Self::CrossAccountRemove { .. } => None,
         }
     }
 }
@@ -384,6 +416,12 @@ mod tests {
                 uid: Uid::new(77),
                 uid_validity: UidValidity::new(12),
             },
+            Operation::CrossAccountCopy {
+                saga: CrossAccountMoveId::new(3),
+            },
+            Operation::CrossAccountRemove {
+                saga: CrossAccountMoveId::new(3),
+            },
         ]
     }
 
@@ -402,7 +440,11 @@ mod tests {
                 | Operation::Append { .. }
                 | Operation::Send { .. }
                 | Operation::SaveDraft { .. }
-                | Operation::DiscardDraft { .. } => false,
+                | Operation::DiscardDraft { .. }
+                // Saga phases: the undo is the inverse *saga*, never a
+                // per-operation inverse — see `inverse`'s own docs.
+                | Operation::CrossAccountCopy { .. }
+                | Operation::CrossAccountRemove { .. } => false,
             };
             assert_eq!(
                 operation.is_reversible(),

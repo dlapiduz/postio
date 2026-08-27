@@ -30,6 +30,7 @@
 mod accounts;
 mod contact_groups;
 mod contacts;
+mod cross_account;
 mod drafts;
 mod egress;
 mod mailboxes;
@@ -43,6 +44,9 @@ mod threads;
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
 pub use contacts::ContactRepository;
+pub use cross_account::{
+    CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
+};
 pub use drafts::DraftRepository;
 pub use egress::EgressLogRepository;
 pub use mailboxes::MailboxRepository;

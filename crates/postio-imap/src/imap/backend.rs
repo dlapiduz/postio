@@ -206,6 +206,14 @@ impl MailBackend for ImapBackend {
         append(&self.pool, mailbox, message, self.priority).await
     }
 
+    async fn find_by_message_id(
+        &self,
+        mailbox: &str,
+        message_id: &str,
+    ) -> BackendResult<Option<postio_model::Uid>> {
+        super::mutate::find_by_message_id(&self.pool, mailbox, message_id, self.priority).await
+    }
+
     async fn idle(
         &self,
         mailbox: &str,

@@ -40,6 +40,19 @@ pub enum Error {
         entity: &'static str,
     },
 
+    /// A state transition the domain forbids was asked for.
+    ///
+    /// First (and so far only) user: the cross-account move saga (#188),
+    /// whose phase walk is forward-only precisely because a backward or
+    /// skipping walk is how mail gets lost.
+    #[error("{what}: {reason}")]
+    ForbiddenTransition {
+        /// What was being moved.
+        what: &'static str,
+        /// Why this transition is not allowed.
+        reason: String,
+    },
+
     /// A write named a row that is not there.
     #[error("no {entity} with id {id}")]
     NotFound {
