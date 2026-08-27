@@ -109,6 +109,7 @@ fn message(id: i64) -> Row {
         draft: false,
         has_attachments: false,
         thread_count: 200,
+        participants: Vec::new(),
     }
 }
 

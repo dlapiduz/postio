@@ -107,8 +107,13 @@ pub struct MessageSummary {
 /// one deliberately is not — see the fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadSummary {
-    /// The conversation's id. The row's identity.
-    pub id: ThreadId,
+    /// The conversation this row stands for.
+    ///
+    /// `None` for a message belonging to no thread. Threading runs on
+    /// everything sync files and can still fail, and a list that hides mail
+    /// because a derived column is null is worse than one that shows it
+    /// ungrouped — so an unthreaded message is a conversation of one.
+    pub id: Option<ThreadId>,
     /// The newest message of the conversation **in this folder**.
     ///
     /// What the row is drawn from and what opening the row reads, so every
@@ -155,6 +160,31 @@ pub struct ThreadPage {
     pub total: u32,
     /// The rows themselves, most recently active first.
     pub rows: Vec<ThreadSummary>,
+}
+
+/// A page of the list, drawn however its scope lists itself.
+///
+/// The frontend asks for "the next page of this scope" and draws what comes
+/// back. Which of the two windows answers is the **store's** decision, not the
+/// caller's, because it depends on what the folder is — and a frontend that
+/// had to know would be a second place for ADR 0015's folders-thread /
+/// views-list line to be got wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListPage {
+    /// The scope lists messages: a query view, or a folder of drafts.
+    Messages(MessagePage),
+    /// The scope lists conversations: an ordinary folder.
+    Threads(ThreadPage),
+}
+
+impl ListPage {
+    /// How many rows the scope matches, as of this read.
+    pub fn total(&self) -> u32 {
+        match self {
+            ListPage::Messages(page) => page.total,
+            ListPage::Threads(page) => page.total,
+        }
+    }
 }
 
 /// One page of a mailbox, and how long the list is.
@@ -224,6 +254,17 @@ pub trait MailStore: Send + Sync {
     /// One page of the message list, with the count that page was read
     /// against.
     fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage>;
+
+    /// One page of the list, however this scope lists itself.
+    ///
+    /// What the frontend calls. [`MailStore::message_page`] and
+    /// [`MailStore::thread_page`] are the two windows underneath it, and are
+    /// worth asking for directly only when the caller genuinely means one of
+    /// them.
+    fn list_page(&self, request: PageRequest) -> Read<'_, ListPage>;
+
+    /// How many rows the list would show, however this scope lists itself.
+    fn list_count(&self, scope: ListScope) -> Read<'_, u32>;
 
     /// One page of the *threaded* list, with the count it was read against.
     ///

@@ -1118,6 +1118,55 @@ parts panel (postio-v62): the save worked for parts already downloaded and
 failed only for the ones that had to be fetched, which is the half nobody
 tests by hand.
 
+**The threaded list windows over messages, not over `threads` (#306, #307).**
+ADR 0015 Q1 describes the folder list as "a window over `threads`... joined to
+its newest message in the current folder". It is not, and the difference is
+load-bearing rather than stylistic. The folder window is over **messages**,
+keeping the row that is newest in its own thread within the folder:
+
+```sql
+FROM messages rep
+WHERE rep.mailbox_id = ?1 AND rep.deleted_locally = 0
+  AND NOT EXISTS (SELECT 1 FROM messages newer
+                   WHERE newer.mailbox_id = ?1 AND newer.deleted_locally = 0
+                     AND newer.thread_id IS NOT NULL
+                     AND newer.thread_id = rep.thread_id
+                     AND (newer.received_at, newer.id) > (rep.received_at, rep.id))
+ORDER BY rep.received_at DESC, rep.id DESC
+```
+
+Two reasons, and the first is the one that matters:
+
+- **A window over `threads` hides mail.** `messages.thread_id` is nullable and
+  nothing guarantees it is set — `postio-sync`'s send path threads with
+  `let _ = ...thread(&message)` and discards the failure. Every such message
+  is simply *absent* from a list built over `threads`: no error, no empty
+  state, mail in the store and not on screen. Under this shape an unthreaded
+  message is a conversation of one and cannot disappear. `ThreadListRow::id`
+  is `Option<ThreadId>` for exactly this.
+- **It is flat by construction rather than by measurement.** The window walks
+  `idx_messages_list (mailbox_id, received_at DESC, id DESC)` — the same index
+  the message list uses — so "page k of threads costs what page k of messages
+  costs" stops being a claim to benchmark and becomes the same query plan.
+  Everything the conversation contributes (total size, unread here, flagged
+  here) is a correlated subquery per row of the page, seeking
+  `idx_messages_thread_mailbox` from migration 0012.
+
+Every property the ADR actually decided is preserved: the collapse is
+store-side, one row per conversation, flat paging, aggregates scoped to the
+folder while the count stays the whole conversation. What changed is the table
+the window walks. It also measures slightly faster (`store_reads`: 897us at
+1k, 1.07ms at 100k, 1.09ms ten pages down).
+
+**The account-scoped list still windows over `threads`**, because there is no
+folder to be newest within and the ADR's shape is right there.
+
+**Drafts does not thread**, which ADR 0015 did not have to say because it was
+writing about reading mail. A draft is a document you are writing; two drafts
+answering the same conversation would collapse into one row with no way to
+open the other. `SqliteStore::lists_conversations` is the one place that is
+decided, so the frontend never holds a second opinion about it.
+
 **The tracker count is a size heuristic, and it under-counts on purpose
 (#174).** `postio_body::sanitize` splits what it strips into ordinary remote
 images and likely trackers. The rule the maintainer settled (2026-08-25) is

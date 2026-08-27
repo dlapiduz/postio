@@ -12,7 +12,15 @@ use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
-fn store(messages: usize, per_thread: usize) -> (SqliteStore, AccountId, MailboxId, test_support::TempDatabase) {
+fn store(
+    messages: usize,
+    per_thread: usize,
+) -> (
+    SqliteStore,
+    AccountId,
+    MailboxId,
+    test_support::TempDatabase,
+) {
     let database = test_support::temp();
     let report = seed_large(&database, 7, messages);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -50,8 +58,7 @@ async fn a_folder_answers_conversations_rather_than_messages() {
             "a conversation the folder shows holds at least the message it is drawn from"
         );
         assert_eq!(
-            row.representative.thread,
-            Some(row.id),
+            row.representative.thread, row.id,
             "the row is drawn from a message of its own conversation"
         );
     }
@@ -101,13 +108,15 @@ async fn paging_conversations_never_repeats_or_skips_a_row() {
     // than as an error.
     let (store, _account, inbox, _database) = store(400, 4);
 
-    let mut seen = Vec::new();
+    let mut seen: Vec<postio_model::ids::MessageId> = Vec::new();
     for page in 0..5 {
         let window = store
             .thread_page(request(ListScope::Mailbox(inbox), page * 20, 20))
             .await
             .expect("a page of conversations");
-        seen.extend(window.rows.iter().map(|row| row.id));
+        // By representative, because an unthreaded message is a row with no
+        // thread id and two of them must still be two rows.
+        seen.extend(window.rows.iter().map(|row| row.representative.id));
     }
 
     let mut unique = seen.clone();
