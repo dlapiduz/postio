@@ -596,3 +596,37 @@ fn two_accounts_never_see_each_others_signatures() {
     assert_eq!(loaded.signatures.len(), 1);
     assert_eq!(loaded.signatures[0].text, "Lena");
 }
+
+
+#[test]
+fn oauth_composition_data_round_trips_and_stays_optional() {
+    // #534: what the engine needs at every launch to rebuild an OAuth
+    // account's token source. Optional twice over — password accounts and
+    // broker-fed OAuth accounts both carry none.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let mut account = test_support::account(&connection);
+    assert_eq!(account.oauth, None, "a password account carries no client");
+
+    account.auth = postio_model::account::AuthMethod::XOAuth2;
+    account.oauth = Some(postio_model::account::OAuthConfig {
+        client_id: "postio-desktop.apps.example".to_string(),
+        token_url: "https://auth.example.com/token".to_string(),
+        authorize_url: "https://auth.example.com/authorize".to_string(),
+        scopes: "https://mail.example.com/".to_string(),
+    });
+    AccountRepository::new(&connection)
+        .update(&mut account)
+        .expect("update");
+
+    let read = AccountRepository::new(&connection)
+        .get(account.id)
+        .expect("read")
+        .expect("the account");
+    assert_eq!(read.auth, postio_model::account::AuthMethod::XOAuth2);
+    assert_eq!(
+        read.oauth.expect("the client survived").token_url,
+        "https://auth.example.com/token",
+        "startup rebuilds the token source from this, offline included"
+    );
+}
