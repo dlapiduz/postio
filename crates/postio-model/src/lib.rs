@@ -47,6 +47,7 @@ pub mod attachment;
 pub mod contact;
 pub mod contact_group;
 pub mod draft;
+pub mod egress;
 pub mod flag;
 pub mod headers;
 pub mod ids;
