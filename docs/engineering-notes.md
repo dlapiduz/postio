@@ -861,6 +861,47 @@ thin. `engine::sync_wave` is the one place that does this and is written to
 that rule (#32): it pops its mailboxes and takes all of its connections in a
 plain `for` loop, and only then builds the `FuturesUnordered`.
 
+**Who wins between a queued local flag and the server's copy, and until when**
+(#317). Until the operation carrying it settles, the **local flag wins**; after
+that the server is authoritative again.
+
+`MessageRepository::upsert_batch` writes the fetched message wholesale, flags
+included. A `CHANGEDSINCE` pass that runs before the drainer has pushed a flag
+therefore wrote the server's still-stale copy back over it: the dwell marked a
+message read, the row went bold again a moment later, and the queued operation
+eventually set a `\Seen` whose effect nobody could see. Reported as "reading a
+message does not mark it read", which is not what was happening.
+
+The fix is a **merge, not a skip**, and that distinction is the point.
+`shadowed_by_pending_operation` answers the undrained *move* by dropping the
+message from the batch — as far as the user is concerned it is not in that
+mailbox, so nothing the server says about it there is news. A flag cannot be
+handled that way: the row is still there, and the subject, the size and what
+parts it has are all worth taking. So `unacknowledged_flag_changes` replays
+just the queued `set_flags`/`clear_flags` over the flags the server reported,
+in the order the user made them, and everything else lands unchanged. A flag
+somebody set on their phone still arrives while a *different* flag of yours is
+mid-flight.
+
+The bound matters as much as the rule: only `pending` and `in_flight`
+operations protect anything. Once one is `done` the server can mark that
+message unread again, which is what has to happen when it is read and then
+marked unread somewhere else. A protection that outlived the operation would
+make the flag permanent.
+
+Two traps if this is ever revisited:
+
+* **A test here goes vacuous very easily.** The server must have a *reason* to
+  report the message, or an incremental pass fetches nothing and there is no
+  overwrite to survive. The first version of `resync.rs`'s test passed against
+  the unfixed code for exactly that reason. Make another client change a
+  *different* flag: that bumps `MODSEQ`, the message comes back carrying its
+  whole flag set, and that set is missing the one in flight.
+* **This is the same family as #289 and #368** — local-first intent lost across
+  a gap that each half handles correctly on its own terms. When adding a new
+  operation type, ask what an unacknowledged one of them should do to a resync
+  that has not heard about it.
+
 **`busy_timeout` is a retry loop, not a queue — interactive writes need a
 permit** (#425). SQLite takes one writer at a time even under WAL, and
 `PRAGMA busy_timeout` settles a collision by making the loser sleep and try
