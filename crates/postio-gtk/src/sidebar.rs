@@ -294,9 +294,14 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     let mut ordinary: Vec<Mailbox> = Vec::new();
 
     for mailbox in mailboxes.iter().filter(|m| m.selectable) {
+        // One row per role (#501): an account that has passed through more
+        // than one client holds two folders per role, and a special section
+        // that renamed both to the role drew `Sent, Sent, Archive, Archive`.
+        // Only the primary — the mailbox actions route to — gets the role
+        // treatment; its twin is an ordinary folder under its server name.
         match role_order(mailbox.role) {
-            Some(_) => special.push(mailbox.clone()),
-            None => ordinary.push(mailbox.clone()),
+            Some(_) if primary_within(mailbox, mailboxes) => special.push(mailbox.clone()),
+            _ => ordinary.push(mailbox.clone()),
         }
     }
 
@@ -347,7 +352,7 @@ const MAX_DEPTH: u8 = 4;
 pub fn folder_rows(mailboxes: &[Mailbox], collapsed: &HashSet<MailboxId>) -> Vec<FolderRow> {
     let ordinary: Vec<&Mailbox> = mailboxes
         .iter()
-        .filter(|m| role_order(m.role).is_none())
+        .filter(|m| role_order(m.role).is_none() || !primary_within(m, mailboxes))
         .collect();
     let present: HashSet<MailboxId> = ordinary.iter().map(|m| m.id).collect();
 
@@ -1464,7 +1469,10 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
         return;
     };
 
-    name.set_text(&display_name(mailbox));
+    // The empty slice reads as "no rival": every mailbox `sections` puts in
+    // the special section is a primary by construction, so the role name is
+    // always the right answer here.
+    name.set_text(&display_name(mailbox, &[]));
     match count_for(mailbox) {
         Some(value) => {
             count.set_text(&value.to_string());
@@ -1477,12 +1485,17 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
     // readers get that from the column it sits in; a screen reader given
     // "Inbox, 12" is given a bare number, and the same digit means unread in
     // one folder and total in another — see `count_for`.
-    row.update_property(&[gtk::accessible::Property::Label(&announce(mailbox))]);
+    row.update_property(&[gtk::accessible::Property::Label(&announce(
+        &display_name(mailbox, &[]),
+        mailbox,
+    ))]);
 }
 
-/// What a screen reader says for a folder row.
-fn announce(mailbox: &Mailbox) -> String {
-    let name = display_name(mailbox);
+/// What a screen reader says for a folder row, given the name it is drawn
+/// under — the role name in the special section, the server's own name in
+/// the tree (#501).
+fn announce(name: &str, mailbox: &Mailbox) -> String {
+    let name = name.to_string();
     let Some(count) = count_for(mailbox) else {
         return name;
     };
@@ -1503,7 +1516,14 @@ fn announce(mailbox: &Mailbox) -> String {
 /// Public because the list pane's header names the same folder, and two
 /// places calling one mailbox by two names is exactly the vocabulary drift
 /// this function exists to prevent.
-pub fn display_name(mailbox: &Mailbox) -> String {
+pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
+    if !primary_within(mailbox, among) {
+        // The role's *twin* (#501): a second folder the server reports with
+        // the same role. It renders as an ordinary folder, and an ordinary
+        // folder is called what the server calls it — the role name belongs
+        // to exactly one row, or the sidebar reads `Sent, Sent`.
+        return mailbox.name.clone();
+    }
     match mailbox.role {
         MailboxRole::Inbox => "Inbox".to_string(),
         MailboxRole::Flagged => "Flagged".to_string(),
@@ -1514,6 +1534,30 @@ pub fn display_name(mailbox: &Mailbox) -> String {
         MailboxRole::Trash => "Trash".to_string(),
         MailboxRole::Regular => mailbox.name.clone(),
     }
+}
+
+/// Whether `mailbox` is the folder its role actually routes to, among its
+/// account's mailboxes.
+///
+/// The same answer `MailboxRepository::by_role` gives — first by path — so
+/// the folder the sidebar crowns with the role name is the folder `a`
+/// archives into and `d` deletes into. Two rules diverging here is how a
+/// sidebar says `Archive` over one folder while the key files into another.
+///
+/// A role-less mailbox is trivially primary: there is nothing to be the
+/// twin of.
+pub fn primary_within(mailbox: &Mailbox, among: &[Mailbox]) -> bool {
+    if role_order(mailbox.role).is_none() {
+        return true;
+    }
+    // Identity by path, not id: paths are unique within an account and are
+    // what `by_role` orders by, while ids are storage rowids a fixture never
+    // sets.
+    !among.iter().any(|other| {
+        other.account_id == mailbox.account_id
+            && other.role == mailbox.role
+            && other.path < mailbox.path
+    })
 }
 
 /// Pixels of indent per nesting level (#324). Not a design token — this
@@ -1642,7 +1686,11 @@ fn update_tree_row(row: &gtk::ListBoxRow, data: &FolderRow, sidebar: &Sidebar) {
         "Collapse"
     })]);
 
-    name.set_text(&display_name(&data.mailbox));
+    // The server's own name, always: every role primary lives in the
+    // special section, so a role-bearing mailbox down here is a twin
+    // (#501), and calling it by its role would draw the second `Archive`
+    // this section exists to avoid.
+    name.set_text(&data.mailbox.name);
     match count_for(&data.mailbox) {
         Some(value) => {
             count.set_text(&value.to_string());
@@ -1651,7 +1699,10 @@ fn update_tree_row(row: &gtk::ListBoxRow, data: &FolderRow, sidebar: &Sidebar) {
         None => count.set_visible(false),
     }
 
-    row.update_property(&[gtk::accessible::Property::Label(&announce(&data.mailbox))]);
+    row.update_property(&[gtk::accessible::Property::Label(&announce(
+        &data.mailbox.name,
+        &data.mailbox,
+    ))]);
 }
 
 fn find_row(list: &gtk::ListBox, id: MailboxId) -> Option<gtk::ListBoxRow> {
@@ -1845,7 +1896,10 @@ mod tests {
         ];
 
         let (special, ordinary) = sections(&mailboxes);
-        let names: Vec<String> = special.iter().map(display_name).collect();
+        let names: Vec<String> = special
+            .iter()
+            .map(|m| display_name(m, &mailboxes))
+            .collect();
         assert_eq!(
             names,
             ["Inbox", "Flagged", "Drafts", "Sent", "Archive"],
@@ -1857,6 +1911,86 @@ mod tests {
             names,
             ["lkml", "wayland-devel"],
             "ordinary folders sort by path"
+        );
+    }
+
+    #[test]
+    fn one_row_per_role_and_the_rest_keep_their_server_names() {
+        // #501: an account that has passed through more than one client
+        // really does hold two folders per role — `Sent` and `Sent
+        // Messages`, `Archive` and `Archives`, `Deleted Messages` and
+        // `Trash` — and renaming every role-bearing folder to its role drew
+        // `Sent, Sent, Archive, Archive, Trash, Trash`: six rows, three
+        // names, no way to tell which is which.
+        //
+        // The rule: the special section holds exactly one row per role —
+        // the same mailbox `MailboxRepository::by_role` routes actions to,
+        // first by path — and every other role-bearing folder is an
+        // ordinary folder under its own server name, children intact.
+        let mailboxes = vec![
+            mailbox("INBOX", MailboxRole::Inbox, counts(40, 40, 0)),
+            mailbox("Archive", MailboxRole::Archive, counts(0, 0, 0)),
+            mailbox("Archives", MailboxRole::Archive, counts(1200, 0, 0)),
+            mailbox("Sent", MailboxRole::Sent, counts(9, 0, 0)),
+            mailbox("Sent Messages", MailboxRole::Sent, counts(400, 0, 0)),
+            mailbox("Deleted Messages", MailboxRole::Trash, counts(3, 0, 0)),
+            mailbox("Trash", MailboxRole::Trash, counts(7, 0, 0)),
+        ];
+
+        let (special, ordinary) = sections(&mailboxes);
+        let names: Vec<String> = special
+            .iter()
+            .map(|m| display_name(m, &mailboxes))
+            .collect();
+        assert_eq!(
+            names,
+            ["Inbox", "Sent", "Archive", "Trash"],
+            "one row per role: the mailbox actions route to, and no twin"
+        );
+        assert_eq!(
+            special
+                .iter()
+                .map(|m| m.path.as_str())
+                .collect::<Vec<_>>(),
+            ["INBOX", "Sent", "Archive", "Deleted Messages"],
+            "the primary is by_role's own answer: first by path"
+        );
+
+        let names: Vec<String> = ordinary
+            .iter()
+            .map(|m| display_name(m, &mailboxes))
+            .collect();
+        assert_eq!(
+            names,
+            ["Archives", "Sent Messages", "Trash"],
+            "the twins are ordinary folders under their server names"
+        );
+    }
+
+    #[test]
+    fn a_child_of_a_twin_special_folder_nests_under_it() {
+        // The other half of #501: `2024`, `2025`, `2026` filed under
+        // `Archives` rendered as roots in FOLDERS, disowned by the Archive
+        // row two inches above them, because the tree only ever considered
+        // role-less mailboxes.
+        let mut archives = mailbox("Archives", MailboxRole::Archive, counts(0, 0, 0));
+        archives.id = MailboxId::new(2);
+        let mut y2024 = mailbox("Archives/2024", MailboxRole::Regular, counts(0, 0, 0));
+        y2024.id = MailboxId::new(3);
+        y2024.parent_id = Some(archives.id);
+        let mut archive = mailbox("Archive", MailboxRole::Archive, counts(0, 0, 0));
+        archive.id = MailboxId::new(1);
+        let mailboxes = vec![archive, archives, y2024];
+
+        let rows = folder_rows(&mailboxes, &HashSet::new());
+        let described: Vec<(String, u8)> = rows
+            .iter()
+            .map(|row| (row.mailbox.name.clone(), row.depth))
+            .collect();
+        assert_eq!(
+            described,
+            [("Archives".to_string(), 0), ("2024".to_string(), 1)],
+            "the twin is in the tree and its children nest under it"
         );
     }
 
