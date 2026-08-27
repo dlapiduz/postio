@@ -38,9 +38,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use postio_model::{EmailAddress, Flag, FlagSet, ModSeq, RfcMessageId, Uid, UidValidity};
+use postio_model::{EmailAddress, Flag, FlagSet, ModSeq, RemoteId, RfcMessageId, Uid, UidValidity};
 use tokio::sync::Notify;
 
+use super::identity;
 use crate::cancel::CancelToken;
 
 use super::{
@@ -948,7 +949,7 @@ impl MailBackend for MockBackend {
     async fn fetch_part(
         &self,
         mailbox: &str,
-        uid: Uid,
+        id: &RemoteId,
         part: &BodyPart,
         sink: &mut dyn BodySink,
         cancel: &CancelToken,
@@ -962,6 +963,7 @@ impl MailBackend for MockBackend {
             let state = self.state();
             let index = self.locate(&state, mailbox, "FETCH BODY")?;
             let folder = &state.mailboxes[index];
+            let uid = identity::wire_uid(mailbox, folder.uid_validity, id)?;
             let message = folder
                 .find(uid.get())
                 .ok_or_else(|| BackendError::NoSuchMessage {
@@ -982,7 +984,7 @@ impl MailBackend for MockBackend {
         sink.finish().await?;
 
         Ok(FetchedBody {
-            uid,
+            remote_id: id.clone(),
             part: part.clone(),
             bytes_written: written,
         })
@@ -991,7 +993,7 @@ impl MailBackend for MockBackend {
     async fn store_flags(
         &self,
         mailbox: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         change: &FlagChange,
     ) -> BackendResult<Vec<FlagUpdate>> {
         self.enter("STORE").await?;
@@ -1000,6 +1002,8 @@ impl MailBackend for MockBackend {
             let mut state = self.state();
             let index = self.locate(&state, mailbox, "STORE")?;
             let condstore = state.condstore();
+            let validity = state.mailboxes[index].uid_validity;
+            let uids = identity::wire_set(mailbox, validity, ids)?;
             let mod_seq = state.mailboxes[index].bump_mod_seq();
 
             let mut updates = Vec::new();
@@ -1015,7 +1019,7 @@ impl MailBackend for MockBackend {
                     flags: message.flags.clone(),
                 });
                 updates.push(FlagUpdate {
-                    uid: Uid::new(message.uid),
+                    remote_id: identity::remote_id(validity, Uid::new(message.uid)),
                     flags: message.flags.clone(),
                     mod_seq: condstore.then(|| ModSeq::new(mod_seq)),
                 });
@@ -1033,11 +1037,11 @@ impl MailBackend for MockBackend {
     async fn move_messages(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
     ) -> BackendResult<Vec<UidMapping>> {
         self.enter("MOVE").await?;
-        let mapping = self.transfer(from, uids, to, true, "MOVE")?;
+        let mapping = self.transfer(from, ids, to, true, "MOVE")?;
         self.notify.notify_waiters();
         Ok(mapping)
     }
@@ -1045,28 +1049,40 @@ impl MailBackend for MockBackend {
     async fn copy_messages(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
     ) -> BackendResult<Vec<UidMapping>> {
         self.enter("COPY").await?;
-        let mapping = self.transfer(from, uids, to, false, "COPY")?;
+        let mapping = self.transfer(from, ids, to, false, "COPY")?;
         self.notify.notify_waiters();
         Ok(mapping)
     }
 
-    async fn expunge(&self, mailbox: &str, uids: Option<&UidSet>) -> BackendResult<Vec<Uid>> {
+    async fn expunge(
+        &self,
+        mailbox: &str,
+        ids: Option<&[RemoteId]>,
+    ) -> BackendResult<Vec<RemoteId>> {
         self.enter("EXPUNGE").await?;
 
         let expunged = {
             let mut state = self.state();
             let index = self.locate(&state, mailbox, "EXPUNGE")?;
             let folder = &mut state.mailboxes[index];
+            let validity = folder.uid_validity;
+            let targeted = ids
+                .map(|ids| identity::wire_set(mailbox, validity, ids))
+                .transpose()?;
 
             let expunged: Vec<Uid> = folder
                 .messages
                 .iter()
                 .filter(|message| message.flags.is_deleted())
-                .filter(|message| uids.is_none_or(|set| set.contains(Uid::new(message.uid))))
+                .filter(|message| {
+                    targeted
+                        .as_ref()
+                        .is_none_or(|set| set.contains(Uid::new(message.uid)))
+                })
                 .map(|message| Uid::new(message.uid))
                 .collect();
 
@@ -1080,6 +1096,9 @@ impl MailBackend for MockBackend {
                 self.announce(&mut state, index, event);
             }
             expunged
+                .into_iter()
+                .map(|uid| identity::remote_id(validity, uid))
+                .collect::<Vec<_>>()
         };
 
         self.notify.notify_waiters();
@@ -1090,7 +1109,7 @@ impl MailBackend for MockBackend {
         &self,
         mailbox: &str,
         message_id: &str,
-    ) -> BackendResult<Option<postio_model::Uid>> {
+    ) -> BackendResult<Option<RemoteId>> {
         self.enter("SEARCH").await?;
         let state = self.state();
         let index = self.locate(&state, mailbox, "SEARCH")?;
@@ -1107,7 +1126,7 @@ impl MailBackend for MockBackend {
                     .as_ref()
                     .is_some_and(|id| id.as_str() == message_id)
             })
-            .map(|message| postio_model::Uid::new(message.uid)))
+            .map(|message| identity::remote_id(folder.uid_validity, Uid::new(message.uid))))
     }
 
     async fn append(
@@ -1193,7 +1212,7 @@ impl MockBackend {
     fn transfer(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
         remove_source: bool,
         context: &str,
@@ -1202,6 +1221,7 @@ impl MockBackend {
         let source = self.locate(&state, from, context)?;
         let destination = self.locate(&state, to, context)?;
         let uid_plus = state.uid_plus();
+        let uids = identity::wire_set(from, state.mailboxes[source].uid_validity, ids)?;
 
         let moving: Vec<MessageState> = state.mailboxes[source]
             .messages

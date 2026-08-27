@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::flag::FlagSet;
 use crate::ids::{
     AccountId, BlobId, CrossAccountMoveId, DraftId, MailboxId, MessageId, OperationId, ThreadId,
-    Uid, UidValidity,
+    RemoteId, Uid, UidValidity,
 };
 
 /// What an operation acts on.
@@ -247,16 +247,16 @@ pub enum Operation {
     /// This one *does* name its message, because by the time it drains the
     /// local draft row is gone — discarding a draft is local-first like
     /// everything else, so the row disappears at once and the server catches
-    /// up later. The [`UidValidity`] travels with the [`Uid`] because a `Uid`
-    /// alone is not an identity: under a new generation it names a different
-    /// message, and deleting that would be deleting the user's mail.
+    /// up later. The identity is the backend's own [`RemoteId`] (#543): for
+    /// IMAP it packs the generation, so a copy uploaded under a renumbered
+    /// mailbox can never be confused with whatever message holds that
+    /// number now. (Queued rows from before #543 are rewritten by
+    /// migration 0024.)
     DiscardDraft {
         /// The account's Drafts mailbox.
         mailbox: MailboxId,
         /// The server copy to remove.
-        uid: Uid,
-        /// The generation `uid` was observed under.
-        uid_validity: UidValidity,
+        remote_id: RemoteId,
     },
     /// Phases 1–2 of a cross-account move (#188, ADR 0005 Q9): append the
     /// message to the target account's mailbox and confirm it arrived.
@@ -413,8 +413,7 @@ mod tests {
             },
             Operation::DiscardDraft {
                 mailbox: MailboxId::new(5),
-                uid: Uid::new(77),
-                uid_validity: UidValidity::new(12),
+                remote_id: RemoteId::new("12:77"),
             },
             Operation::CrossAccountCopy {
                 saga: CrossAccountMoveId::new(3),
@@ -638,8 +637,7 @@ mod tests {
             },
             Operation::DiscardDraft {
                 mailbox: MailboxId::new(5),
-                uid: Uid::new(77),
-                uid_validity: UidValidity::new(12),
+                remote_id: RemoteId::new("12:77"),
             },
         ] {
             assert_eq!(
@@ -652,24 +650,20 @@ mod tests {
     }
 
     #[test]
-    fn discarding_a_draft_names_the_generation_its_uid_belongs_to() {
+    fn discarding_a_draft_names_its_server_copy_by_identity() {
         // The whole reason this operation carries its own identity rather than
         // reading it back from a draft row: by the time it drains, that row is
-        // gone. A `Uid` without its `UidValidity` would name whatever message
-        // holds that number under the *next* generation.
+        // gone. The id is the backend's own spelling, so a renumbered mailbox
+        // makes it stale rather than silently naming somebody else's message.
         let discard = Operation::DiscardDraft {
             mailbox: MailboxId::new(5),
-            uid: Uid::new(77),
-            uid_validity: UidValidity::new(12),
+            remote_id: RemoteId::new("12:77"),
         };
         let encoded = serde_json::to_value(&discard).expect("encode");
 
-        assert_eq!(encoded.get("uid").and_then(|uid| uid.as_u64()), Some(77));
         assert_eq!(
-            encoded
-                .get("uid_validity")
-                .and_then(|validity| validity.as_u64()),
-            Some(12)
+            encoded.get("remote_id").and_then(|id| id.as_str()),
+            Some("12:77")
         );
     }
 }

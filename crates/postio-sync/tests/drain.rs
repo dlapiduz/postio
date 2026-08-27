@@ -68,6 +68,7 @@ fn local(connection: &Connection) -> Local {
     let mut message = Message::new(account.id, inbox, at(8));
     message.server.uid = Some(Uid::new(1));
     message.server.uid_validity = Some(UidValidity::new(1_707_000_000));
+    message.server.remote_id = Some(postio_model::RemoteId::new("1707000000:1"));
     let message = MessageRepository::new(connection)
         .create(&mut message)
         .expect("create the message");
@@ -321,7 +322,7 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
     // Another client archived it while we were offline. Our queue still holds
     // a flag change against the inbox.
     backend
-        .move_messages(INBOX, &UidSet::single(Uid::new(1)), ARCHIVE)
+        .move_messages(INBOX, &[postio_model::RemoteId::new("1707000000:1")], ARCHIVE)
         .await
         .expect("the other client's move");
 
@@ -371,7 +372,7 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
 
     // The server moved it to the archive already; we queued the same move.
     backend
-        .move_messages(INBOX, &UidSet::single(Uid::new(1)), ARCHIVE)
+        .move_messages(INBOX, &[postio_model::RemoteId::new("1707000000:1")], ARCHIVE)
         .await
         .expect("the other client's move");
 

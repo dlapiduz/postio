@@ -80,6 +80,7 @@ fn request(mailbox: &Mailbox, id: MessageId, uid: u32, size: u64) -> BodyRequest
         mailbox: mailbox.id,
         path: mailbox.path.clone(),
         uid: Uid::new(uid),
+        remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:{uid}")),
         size,
         received_at: at(uid as i64),
         want: Want::Text,

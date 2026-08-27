@@ -201,6 +201,8 @@ pub struct BodyRequest {
     pub path: String,
     /// The server's identifier for the message.
     pub uid: Uid,
+    /// The backend's own identity — what the fetch is addressed by (#543).
+    pub remote_id: postio_model::RemoteId,
     /// `RFC822.SIZE`, as the header fetch reported it — what the cap is
     /// measured against.
     pub size: u64,
@@ -267,6 +269,7 @@ impl From<BackfillCandidate> for BodyRequest {
             mailbox: candidate.mailbox_id,
             path: candidate.mailbox_path,
             uid: candidate.uid,
+            remote_id: candidate.remote_id,
             size: candidate.size,
             received_at: candidate.received_at,
             // The text axis is the default; the payload axis opts in.
@@ -1041,7 +1044,7 @@ pub async fn fetch_body(
     // the path where the buffer would have been worst.
     let mut sink = BlobSink::new(blobs)?;
     backend
-        .fetch_body(&request.path, request.uid, &mut sink, cancel)
+        .fetch_body(&request.path, &request.remote_id, &mut sink, cancel)
         .await?;
     let Some(blob) = sink.finished_blob() else {
         // The sink contract: without `finish` the bytes are a fragment, and a
@@ -1189,7 +1192,7 @@ async fn fetch_text_parts(
         backend
             .fetch_part(
                 &request.path,
-                request.uid,
+                &request.remote_id,
                 &BodyPart::Section(section),
                 &mut sink,
                 cancel,
@@ -1331,7 +1334,7 @@ async fn fetch_payloads(
         backend
             .fetch_part(
                 &request.path,
-                request.uid,
+                &request.remote_id,
                 &BodyPart::Section(part_id.clone()),
                 &mut sink,
                 cancel,
@@ -1415,6 +1418,7 @@ mod tests {
 
     fn request(uid: u32, size: u64) -> BodyRequest {
         BodyRequest {
+            remote_id: postio_model::RemoteId::new(format!("1:{uid}")),
             message: MessageId::new(uid as i64),
             mailbox: MailboxId::new(1),
             path: "INBOX".to_owned(),
@@ -1508,6 +1512,7 @@ mod tests {
     ) -> postio_model::Message {
         let mut message = postio_model::Message::new(account, mailbox, at(seconds));
         message.server.uid = Some(Uid::new(uid));
+        message.server.remote_id = Some(postio_model::RemoteId::new(format!("1:{uid}")));
         message.sync.body_state = BodyState::HeadersOnly;
         message
     }

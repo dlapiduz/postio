@@ -18,6 +18,11 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// The identity the scripted generation (UIDVALIDITY 100) gives `uid`.
+fn rid(uid: u32) -> postio_model::RemoteId {
+    postio_model::RemoteId::new(format!("100:{uid}"))
+}
+
 use postio_imap::backend::{BodyPart, CountingSink};
 use postio_imap::cancel::CancelToken;
 use postio_imap::imap::{
@@ -116,7 +121,7 @@ async fn fetch_whole_message_of(len: u32) -> usize {
     let result = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::Whole,
         &mut sink,
         Priority::Interactive,
