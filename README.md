@@ -49,6 +49,24 @@ act on.
 
 ## Building and running
 
+### Supported systems
+
+Postio is Linux only, GTK4/libadwaita, Wayland first and X11 where it
+happens to work (see [`docs/PRODUCT.md`](docs/PRODUCT.md) §2). What that
+means in practice:
+
+- **Verified**: Fedora 40+ under Wayland, against the exact library versions
+  the code is written for — gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52. CI
+  additionally builds and tests on Ubuntu 26.04.
+- **Expected to work, not verified**: other distributions that ship the same
+  library floors (the Ubuntu 26.04 line below is one such case), other
+  Wayland compositors, and X11 sessions generally.
+- Older GTK4/libadwaita (anything before Ubuntu 26.04's 4.20/1.7, for
+  example) will fail to build, not misbehave at runtime — `cargo` reports the
+  missing symbol at compile time.
+
+### Quickstart
+
 System dependencies — Fedora 40+:
 
 ```bash
@@ -84,7 +102,8 @@ scripts/install-local.sh --uninstall   # removes exactly what it installed
 ```
 
 Prefer a sandboxed build? The Flatpak manifest in [`flatpak/`](flatpak/)
-builds against the GNOME 50 runtime:
+builds against the GNOME 50 runtime and is Flathub-submission-ready, but
+Postio isn't on Flathub yet — for now, build it yourself:
 
 ```bash
 python3 flatpak/flatpak-cargo-generator.py Cargo.lock -o flatpak/cargo-sources.json
@@ -92,6 +111,10 @@ flatpak-builder --user --install --force-clean flatpak/build-dir flatpak/dev.pos
 ```
 
 One-time SDK setup and the details are in [`flatpak/README.md`](flatpak/README.md).
+Once a Flathub listing exists this will collapse to a single `flatpak
+install flathub dev.postio.Postio`; the listing's own description is kept in
+[`dev.postio.Postio.metainfo.xml`](crates/postio-gtk/data/dev.postio.Postio.metainfo.xml)
+rather than written twice.
 
 First run opens onto a one-screen setup: type your email address and the
 autoconfig probe fills in the server settings (a preset table, Thunderbird
@@ -104,6 +127,32 @@ Then drive it from the keyboard: `j`/`k` to move, `Enter` to open, `e` reply,
 for the command palette, `?` for the full cheat sheet. Every binding is
 rebindable; the generated reference is
 [`docs/keybindings.md`](docs/keybindings.md).
+
+### Troubleshooting
+
+**`cargo build` fails looking for a library** (`pkg-config` errors naming
+`gtk4`, `libadwaita-1`, `webkitgtk-6.0`, `sqlite3`, or `libsecret-1`): a
+system dependency from the Fedora or Ubuntu list above is missing or too
+old. Reinstall that line — `pkg-config --modversion gtk4` (etc.) shows what
+you actually have against the floors in
+[`docs/PRODUCT.md`](docs/PRODUCT.md) §2.
+
+**The window fails to open, or opens with no decorations / broken
+rendering**: Postio is a GTK4/libadwaita app and only Wayland is verified —
+X11 sessions are expected to work but aren't part of the tested path. If
+you're on X11 and hit a rendering issue, running under a Wayland session
+(or, as a fallback, forcing the X11 backend with `GDK_BACKEND=x11 cargo run
+-p postio-app`) is the first thing to try before filing an issue.
+
+**Onboarding can't save the account, or every launch reopens onboarding**:
+Postio stores credentials in the OS keyring over the Secret Service D-Bus
+API (`org.freedesktop.secrets`), never in `config.toml`. That needs a
+running keyring daemon — GNOME Keyring or KWallet's Secret Service
+integration are the common ones. Minimal desktop environments and window
+managers often don't start one by default; on Fedora,
+`sudo dnf install gnome-keyring` and ensure your session starts it
+(GNOME/KDE sessions do this automatically). A locked keyring blocks the
+same way — unlock it and retry.
 
 ## It must feel instant
 
