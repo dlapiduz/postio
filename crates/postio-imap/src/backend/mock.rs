@@ -1086,6 +1086,30 @@ impl MailBackend for MockBackend {
         Ok(expunged)
     }
 
+    async fn find_by_message_id(
+        &self,
+        mailbox: &str,
+        message_id: &str,
+    ) -> BackendResult<Option<postio_model::Uid>> {
+        self.enter("SEARCH").await?;
+        let state = self.state();
+        let index = self.locate(&state, mailbox, "SEARCH")?;
+        let folder = &state.mailboxes[index];
+        // Newest match wins, as the trait says: any copy proves arrival.
+        Ok(folder
+            .messages
+            .iter()
+            .rev()
+            .find(|message| {
+                message
+                    .envelope
+                    .message_id
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == message_id)
+            })
+            .map(|message| postio_model::Uid::new(message.uid)))
+    }
+
     async fn append(
         &self,
         mailbox: &str,

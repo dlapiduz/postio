@@ -682,7 +682,9 @@ SELECT body_html_blob_id FROM messages    WHERE body_html_blob_id IS NOT NULL
 UNION
 SELECT headers_blob_id   FROM messages    WHERE headers_blob_id   IS NOT NULL
 UNION
-SELECT blob_id           FROM attachments WHERE blob_id           IS NOT NULL";
+SELECT blob_id           FROM attachments WHERE blob_id           IS NOT NULL
+UNION
+SELECT raw_blob_id       FROM cross_account_moves WHERE raw_blob_id IS NOT NULL";
 
     let mut statement = connection.prepare(SQL)?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
