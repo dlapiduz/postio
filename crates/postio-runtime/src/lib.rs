@@ -40,7 +40,8 @@ pub mod network;
 pub mod store;
 
 pub use engine::{
-    DrainSummary, Engine, EngineError, EngineParts, Link, NetworkSource, NetworkState, SyncSummary,
+    Clock, DrainSummary, Engine, EngineError, EngineParts, Link, NetworkSource, NetworkState,
+    SyncSummary, SystemClock,
 };
 // The two policies `EngineParts` is built with. Re-exported rather than left
 // to be reached for through `postio-sync`, because the composition root that

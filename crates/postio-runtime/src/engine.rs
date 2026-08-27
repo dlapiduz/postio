@@ -203,6 +203,11 @@ pub struct EngineParts {
     /// could not be driven by a test. Empty is the ordinary case and costs
     /// nothing — see [`RoleOverrides`].
     pub mailbox_roles: RoleOverrides,
+    /// Where a sync pass reads "now" from for repaint coalescing.
+    ///
+    /// [`SystemClock`] for every engine outside a test; see [`Clock`] for
+    /// why this is carried rather than read directly.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// Who tells the engine about the network.
@@ -1139,6 +1144,34 @@ fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
 /// as a flicker.
 const REPAINT_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Where a sync pass reads "now" from when deciding whether to coalesce a
+/// repaint.
+///
+/// [`Repaint::batch_committed`] already takes its clock as a parameter — the
+/// throttle itself has always been tested by stepping through explicit
+/// instants, never by sleeping. But the one call site, [`Committed::batch`],
+/// read the system clock directly, so the number of events a real sync pass
+/// produced depended on how much wall-clock time actually separated batches
+/// committing — which a busy machine can stretch past [`REPAINT_INTERVAL`]
+/// for a batch that would otherwise have coalesced (#507). Injecting the
+/// clock here carries that same "time is a parameter, not a read" discipline
+/// one level up, so a test can make the event count a function of the
+/// batches synced rather than of how fast the machine ran them.
+pub trait Clock: Send + Sync {
+    /// The current instant, as far as a sync pass is concerned.
+    fn now(&self) -> Instant;
+}
+
+/// The real clock. Every sync outside a test uses this.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 /// Tells the list a mailbox has moved, at most every [`REPAINT_INTERVAL`].
 ///
 /// The *first* batch is announced immediately and every later one is
@@ -1227,7 +1260,7 @@ struct Committed<'a> {
 impl Committed<'_> {
     /// A batch reached the database.
     fn batch(&mut self, progress: Progress) {
-        self.repaint.batch_committed(Instant::now());
+        self.repaint.batch_committed(self.parts.clock.now());
         let reported = self.status.borrow_mut().on_progress(progress, Utc::now());
         if let Some(status) = reported {
             // Counts and an outcome, which is all a log may carry about mail.
@@ -2309,6 +2342,7 @@ mod tests {
             watch: WatchPolicy::default(),
             network: NetworkSource::Ignored,
             mailbox_roles: Default::default(),
+            clock: Arc::new(SystemClock),
         };
         (parts, events)
     }
