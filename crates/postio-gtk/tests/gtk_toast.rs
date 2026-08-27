@@ -25,6 +25,7 @@
 //! a display belongs in `tests/`, one test to a file, not in a
 //! `#[cfg(test)] mod tests`.
 
+use gtk::glib::object::ObjectExt;
 use postio_gtk::toast::Toast;
 
 /// Returns false when there is no display to talk to — CI, mostly.
@@ -67,4 +68,23 @@ fn the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo
     let current = toast.showing().unwrap();
     assert_eq!(current.button_label(), None);
     assert_eq!(current.action_name(), None);
+
+    // ── show_removable's button calls back directly, not through win.undo
+    // (#464): account removal is not a `postio_core::Command`, so there is
+    // no global action for its button to name -- see that method's own doc.
+    let toast = Toast::new();
+    let called = std::rc::Rc::new(std::cell::Cell::new(false));
+    toast.show_removable("Account removed", {
+        let called = called.clone();
+        move || called.set(true)
+    });
+    let current = toast.showing().unwrap();
+    assert_eq!(current.button_label().as_deref(), Some("Undo"));
+    assert_eq!(
+        current.action_name(),
+        None,
+        "a removable toast's button must not also carry win.undo"
+    );
+    current.emit_by_name::<()>("button-clicked", &[]);
+    assert!(called.get(), "the toast's own button did not call back");
 }
