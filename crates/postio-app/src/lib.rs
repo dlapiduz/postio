@@ -37,6 +37,7 @@ pub mod reading;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
+pub mod sidebar_backfill;
 
 // The toolkit-free half of the composition root lives in `postio-session`, so
 // that a frontend which is not GTK can link it (ADR 0010). Re-exported here
@@ -397,6 +398,10 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 
     // The settings panel's account rows: enable/disable, remove-with-undo.
     settings_accounts::install(window, wiring);
+
+    // A folder's own context menu: skip/resume background backfill (ADR
+    // 0016, #350).
+    sidebar_backfill::install(window, wiring);
 
     // *Add account*, from the palette or its binding. Here rather than in
     // `open_account` because it is a surface over the shell, and the shell

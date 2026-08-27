@@ -30,6 +30,7 @@ mod send_later_wiring;
 mod send_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
+mod sidebar_backfill_wiring;
 mod signature_default_wiring;
 mod startup_repair;
 mod thread_cursor_preview;
@@ -143,6 +144,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window",
         settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window
+            as fn(),
+    ),
+    (
+        "sidebar_backfill_wiring::the_menu_persists_and_the_sidebar_reflects_it_without_a_sync",
+        sidebar_backfill_wiring::the_menu_persists_and_the_sidebar_reflects_it_without_a_sync
             as fn(),
     ),
     (
