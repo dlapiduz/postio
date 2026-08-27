@@ -115,6 +115,7 @@ fn run(
         query: &parsed,
         scope,
         limit: 50,
+        order: postio_search::ResultOrder::Relevance,
     };
     search(&world.connection, &request, at(12))
         .expect("search")

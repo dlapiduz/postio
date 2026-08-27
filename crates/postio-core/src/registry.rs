@@ -316,6 +316,19 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: None,
     },
+    CommandSpec {
+        id: CommandId::ToggleResultOrder,
+        // The same title and key as the thread's own toggle, deliberately:
+        // "the order of what I am looking at" is one idea, and `o` means it
+        // in both places (#499).
+        title: "Toggle result order",
+        default_binding: "o",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Search]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
     // -- Message actions -------------------------------------------------
     CommandSpec {
         id: CommandId::Reply,

@@ -83,6 +83,8 @@ command_ids! {
     ToggleThreadUnread => "toggle_thread_unread",
     /// Reverse which end of the open thread comes first.
     ToggleThreadOrder => "toggle_thread_order",
+    /// Switch a search's results between ranked and date order.
+    ToggleResultOrder => "toggle_result_order",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -332,6 +334,8 @@ pub enum Command {
     ToggleThreadUnread,
     /// Reverse the open thread's message order.
     ToggleThreadOrder,
+    /// Switch a search's results between ranked and date order (#499).
+    ToggleResultOrder,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -592,6 +596,7 @@ impl Command {
             Command::Thread { .. } => CommandId::Thread,
             Command::ToggleThreadUnread => CommandId::ToggleThreadUnread,
             Command::ToggleThreadOrder => CommandId::ToggleThreadOrder,
+            Command::ToggleResultOrder => CommandId::ToggleResultOrder,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -665,6 +670,7 @@ impl Command {
             CommandId::Thread => Command::Thread { thread: None },
             CommandId::ToggleThreadUnread => Command::ToggleThreadUnread,
             CommandId::ToggleThreadOrder => Command::ToggleThreadOrder,
+            CommandId::ToggleResultOrder => Command::ToggleResultOrder,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },

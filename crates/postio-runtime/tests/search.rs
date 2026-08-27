@@ -39,6 +39,7 @@ fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, Utc::now()).expect("search");
 

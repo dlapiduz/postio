@@ -13,6 +13,42 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use postio_model::{EmailAddress, MailboxId, MessageId, ThreadId};
 
+/// Which order a result set comes back in.
+///
+/// `Relevance` is the executor's ranked default — `bm25` folded with recency
+/// and sender affinity. `Newest` is plain date order, the same order every
+/// mailbox is in: what the list column's sort control switches to when the
+/// ranking is not what the reader wants (#499). It lives here rather than in
+/// `postio-index` because the frontend draws the control and must never link
+/// SQLite.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ResultOrder {
+    /// Ranked: the best answer first.
+    #[default]
+    Relevance,
+    /// Date order, newest first — a mailbox's own order.
+    Newest,
+}
+
+impl ResultOrder {
+    /// The other one; what the sort control's toggle does.
+    #[must_use]
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Relevance => Self::Newest,
+            Self::Newest => Self::Relevance,
+        }
+    }
+
+    /// The control's label for this order.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Relevance => "Relevance",
+            Self::Newest => "Newest",
+        }
+    }
+}
+
 /// One ranked, snippeted result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {

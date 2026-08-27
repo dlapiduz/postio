@@ -67,6 +67,7 @@ fn a_composed_operator_and_free_text_query_narrows_correctly() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -120,6 +121,7 @@ fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -147,6 +149,7 @@ fn negated_only_free_text_excludes_without_a_positive_match_expression() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -178,6 +181,7 @@ fn total_hits_counts_every_match_regardless_of_the_page_limit() {
         query: &query,
         scope: Scope::AllMail,
         limit: 2,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -211,6 +215,7 @@ fn total_hits_stops_counting_at_the_cap() {
         query: &query,
         scope: Scope::AllMail,
         limit: 5,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -234,6 +239,7 @@ fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -275,6 +281,7 @@ fn search_never_crosses_accounts() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -318,6 +325,7 @@ fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -361,6 +369,7 @@ fn filename_and_has_attachment_operators_filter_correctly() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let results = search(&connection, &request, at(12)).expect("search");
 
@@ -419,6 +428,7 @@ fn a_scope_narrows_the_search_without_touching_the_query() {
             query: &query,
             scope,
             limit: 10,
+            order: postio_search::ResultOrder::Relevance,
         };
         search(&connection, &request, at(12))
             .expect("search")
@@ -450,6 +460,7 @@ fn the_scope_column_counts_what_switching_would_find() {
         query: &query,
         scope: Scope::Inbox,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let facets = postio_index::executor::facets(&connection, &request).expect("facets");
 
@@ -486,6 +497,7 @@ fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let facets = postio_index::executor::facets(&connection, &request).expect("facets");
 
@@ -522,6 +534,7 @@ fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let facets = postio_index::executor::facets(&connection, &request).expect("facets");
 
@@ -540,6 +553,7 @@ fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
         query: &refined,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let narrowed = search(&connection, &request, at(12)).expect("search");
     assert_eq!(narrowed.total_hits, folder.hits);
@@ -570,6 +584,7 @@ fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let facets = postio_index::executor::facets(&connection, &request).expect("facets");
 
@@ -589,6 +604,7 @@ fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
         query: &refined,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let narrowed = search(&connection, &request, at(12)).expect("search");
     assert_eq!(
@@ -612,6 +628,7 @@ fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     let facets = postio_index::executor::facets(&connection, &request).expect("facets");
 
@@ -648,6 +665,7 @@ fn found(
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
+        order: postio_search::ResultOrder::Relevance,
     };
     search(connection, &request, at(12))
         .expect("search")
@@ -846,4 +864,96 @@ fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
 
     assert_eq!(found(&connection, account.id, "second"), vec![changed.id]);
     assert!(found(&connection, account.id, "first").is_empty());
+}
+
+#[test]
+fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
+    // #499: the list column says `Newest ▾` and has to be able to mean it.
+    // Relevance is the default and stays ranked; asking for `Newest` must
+    // come back in plain date order even when bm25 would put an older,
+    // denser match first.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    // Enough non-matching mail that "report" is worth something: bm25's
+    // IDF term goes to zero when every document in the corpus matches, and
+    // a two-message corpus would leave the ranking to recency alone.
+    for i in 0..20 {
+        message(
+            &connection,
+            &account,
+            mailbox,
+            "carol",
+            &format!("Entirely unrelated subject {i}"),
+            at(7),
+        );
+    }
+
+    // Older, but saturated with the term: the far better bm25 match.
+    let dense = message(
+        &connection,
+        &account,
+        mailbox,
+        "ada",
+        "report report report report report",
+        at(6),
+    );
+    // Newer, and a glancing match.
+    let recent = message(
+        &connection,
+        &account,
+        mailbox,
+        "bob",
+        "One report among other things entirely",
+        at(11),
+    );
+
+    let query = parse("report", at(12).date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        at(12),
+    )
+    .expect("search");
+    assert_eq!(
+        ranked.hits[0].message_id,
+        dense.id,
+        "relevance still ranks: the dense match outweighs five hours of recency \
+         (scores: {:?})",
+        ranked
+            .hits
+            .iter()
+            .map(|hit| (hit.message_id, hit.score))
+            .collect::<Vec<_>>()
+    );
+
+    let newest = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Newest,
+        },
+        at(12),
+    )
+    .expect("search");
+    assert_eq!(
+        newest
+            .hits
+            .iter()
+            .map(|hit| hit.message_id)
+            .collect::<Vec<_>>(),
+        vec![recent.id, dense.id],
+        "Newest means date order, exactly as a mailbox is ordered"
+    );
 }

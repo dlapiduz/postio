@@ -99,6 +99,9 @@ mod imp {
         pub(super) title: gtk::Label,
         pub(super) meta: gtk::Label,
         pub(super) sort: gtk::Label,
+        /// The order the result set on screen is in, or `None` over a
+        /// mailbox — which is always, truthfully, `Newest ▾` (#499).
+        pub(super) result_order: Cell<Option<postio_search::ResultOrder>>,
         /// "12 selected", and the bar of verbs beside it.
         pub(super) count: gtk::Label,
         pub(super) bulk: gtk::Box,
@@ -177,6 +180,7 @@ mod imp {
                 title: gtk::Label::new(None),
                 meta: gtk::Label::new(None),
                 sort: gtk::Label::new(Some("Newest ▾")),
+                result_order: Cell::new(None),
                 count: gtk::Label::new(None),
                 bulk: gtk::Box::new(gtk::Orientation::Horizontal, 6),
                 view: gtk::ListView::new(Some(cursor.clone()), None::<gtk::ListItemFactory>),
@@ -368,6 +372,25 @@ impl MessageListView {
             n => format!("{n} unread"),
         });
         imp.meta.set_visible(unread > 0);
+    }
+
+    /// Say which order the result set on screen is in, or `None` when the
+    /// list went back to being a mailbox.
+    ///
+    /// #499: the header said `Newest ▾` over *ranked* results, which read as
+    /// "the results are mixed up" — the ranking working as designed,
+    /// labelled as a broken sort. The control now reports the order the
+    /// rows are actually in, and over a result set it is live: a click (or
+    /// `o`) dispatches [`CommandId::ToggleResultOrder`] for whoever runs
+    /// the search to answer.
+    pub fn set_result_order(&self, order: Option<postio_search::ResultOrder>) {
+        let imp = self.imp();
+        imp.result_order.set(order);
+        let label = match order {
+            Some(order) => order.label(),
+            None => "Newest",
+        };
+        imp.sort.set_text(&format!("{label} ▾"));
     }
 
     /// Where the list is scrolled to, in pixels.
@@ -890,6 +913,21 @@ impl MessageListView {
         imp.title.add_css_class("postio-list-title");
         imp.meta.add_css_class("postio-list-meta");
         imp.sort.add_css_class("postio-list-meta");
+        imp.sort.add_css_class("postio-list-sort");
+        // Over a result set the control toggles the order; over a mailbox
+        // there is no other order to offer and the click means nothing. The
+        // same command `o` reaches, so the mouse and the key cannot drift.
+        let toggle = gtk::GestureClick::new();
+        toggle.connect_released(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_, _, _, _| {
+                if pane.imp().result_order.get().is_some() {
+                    pane.run(CommandId::ToggleResultOrder);
+                }
+            }
+        ));
+        imp.sort.add_controller(toggle);
 
         imp.count.add_css_class("postio-list-meta");
         imp.count.add_css_class("postio-list-count");

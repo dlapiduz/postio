@@ -50,6 +50,7 @@ command from inside a text field.
 | `t` | Show thread | List, reader |  | `thread` |
 | `n` | Unread only | Thread |  | `toggle_thread_unread` |
 | `o` | Toggle order | Thread |  | `toggle_thread_order` |
+| `o` | Toggle result order | Search |  | `toggle_result_order` |
 | `e` | Reply | List, thread, reader, composer |  | `reply` |
 | `E` | Reply to all | List, thread, reader, composer |  | `reply_all` |
 | `f` | Forward | List, thread, reader, composer |  | `forward` |

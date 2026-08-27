@@ -241,6 +241,7 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
             query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
             scope: view_scope,
             limit: 200,
+            order: postio_search::ResultOrder::Relevance,
         },
         chrono::Utc::now(),
     )
@@ -297,6 +298,48 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         rows.get(1).copied(),
         "the preview followed the cursor onto a message that is not the row \
          the cursor is on"
+    );
+
+    // ── 4b. `o` re-asks the same query in date order (#499) ─────────────
+    //
+    // Through the command, exactly as the key and the header's sort control
+    // dispatch it — not by calling the search again, which would prove the
+    // executor and skip the wiring under test.
+    let dated: Vec<MessageId> = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account),
+            query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
+            scope: view_scope,
+            limit: 200,
+            order: postio_search::ResultOrder::Newest,
+        },
+        chrono::Utc::now(),
+    )
+    .expect("the index answers in date order")
+    .hits
+    .iter()
+    .map(|hit| hit.message_id)
+    .collect();
+
+    window.act(postio_core::Command::ToggleResultOrder);
+    let reordered = settle_until(|| {
+        let rows = listed(&list, hits);
+        !rows.is_empty() && rows == dated[..rows.len()]
+    });
+    assert!(
+        reordered,
+        "`o` over the results did not re-run the search in date order —          `CommandId::ToggleResultOrder` is answered in `search.rs::         install_order_toggle`, and the run reads the order it holds"
+    );
+
+    window.act(postio_core::Command::ToggleResultOrder);
+    let ranked_again = settle_until(|| {
+        let rows = listed(&list, hits);
+        !rows.is_empty() && rows == expected[..rows.len()]
+    });
+    assert!(
+        ranked_again,
+        "a second `o` did not come back to the ranked order"
     );
 
     // ── 5. `Esc` puts the mailbox back, where it was ────────────────────

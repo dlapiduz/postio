@@ -171,6 +171,7 @@ fn run(query: &str, limit: u32) -> Duration {
         query: &parsed,
         scope: Scope::AllMail,
         limit,
+        order: postio_search::ResultOrder::Relevance,
     };
 
     let start = Instant::now();
@@ -191,6 +192,7 @@ fn run_facets(query: &str) -> Duration {
         query: &parsed,
         scope: Scope::AllMail,
         limit: 50,
+        order: postio_search::ResultOrder::Relevance,
     };
 
     let start = Instant::now();
@@ -318,6 +320,7 @@ fn run_multi_account(query: &str, account: AccountScope) -> Duration {
         query: &parsed,
         scope: Scope::AllMail,
         limit: 50,
+        order: postio_search::ResultOrder::Relevance,
     };
 
     let start = Instant::now();
