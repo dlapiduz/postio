@@ -1098,8 +1098,7 @@ mod tests {
         // is computed from the accent, so retuning the design system moves
         // all eight.
         let accent = "#4f6fb0";
-        let hues =
-            account_palette(accent, "var(--postio-color-accent)").expect("a palette");
+        let hues = account_palette(accent, "var(--postio-color-accent)").expect("a palette");
 
         assert_eq!(hues.len(), ACCOUNT_HUES);
         assert_eq!(
