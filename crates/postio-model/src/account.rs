@@ -211,6 +211,15 @@ pub struct Account {
     pub default_signature_id: Option<SignatureId>,
     /// When the account was added.
     pub created_at: DateTime<Utc>,
+    /// Marked for removal, but not yet reaped (#464).
+    ///
+    /// Setting this is what "Remove" in the settings panel does: instant,
+    /// and reversible from the undo toast. The actual `DELETE ... CASCADE`
+    /// only runs once, at the next startup, before any engine is created
+    /// (`AccountRepository::reap_pending_deletions`), so a crash before the
+    /// toast expires is harmless — nothing has actually been deleted yet.
+    #[serde(default)]
+    pub pending_deletion: bool,
 }
 
 impl Account {
@@ -239,6 +248,7 @@ impl Account {
             signatures: Vec::new(),
             default_signature_id: None,
             created_at: Utc::now(),
+            pending_deletion: false,
         }
     }
 

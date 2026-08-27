@@ -42,6 +42,7 @@ fn sample_account() -> Account {
         signatures: Vec::new(),
         default_signature_id: Some(SignatureId::new(4)),
         created_at: at(1_000),
+        pending_deletion: false,
     }
 }
 

@@ -71,7 +71,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 13] = [
+static MIGRATIONS: [Migration; 14] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -136,6 +136,11 @@ static MIGRATIONS: [Migration; 13] = [
         version: 13,
         name: "unified_recency",
         sql: include_str!("0013_unified_recency.sql"),
+    },
+    Migration {
+        version: 14,
+        name: "pending_account_deletion",
+        sql: include_str!("0014_pending_account_deletion.sql"),
     },
 ];
 
