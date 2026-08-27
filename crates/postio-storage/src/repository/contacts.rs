@@ -24,7 +24,7 @@ pub struct ContactRepository<'a> {
     connection: &'a Connection,
 }
 
-const CONTACT_COLUMNS: &str =
+pub(super) const CONTACT_COLUMNS: &str =
     "id, account_id, name, address, address_name, times_seen, last_seen_at, source, suppressed";
 
 impl<'a> ContactRepository<'a> {
@@ -377,7 +377,7 @@ fn first_free(account_id: Option<AccountId>) -> usize {
     }
 }
 
-fn read_contact(row: &Row<'_>) -> rusqlite::Result<Contact> {
+pub(super) fn read_contact(row: &Row<'_>) -> rusqlite::Result<Contact> {
     let source: String = row.get(7)?;
     Ok(Contact {
         id: ContactId::new(row.get(0)?),

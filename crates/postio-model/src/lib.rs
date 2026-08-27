@@ -45,6 +45,7 @@ pub mod account;
 pub mod address;
 pub mod attachment;
 pub mod contact;
+pub mod contact_group;
 pub mod draft;
 pub mod flag;
 pub mod headers;
@@ -71,12 +72,14 @@ pub use account::{
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
 pub use contact::{Contact, ContactSource};
+pub use contact_group::ContactGroup;
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};
 pub use ids::{
-    AccountId, AttachmentId, BlobId, ContactId, DraftId, IdentityId, LabelId, MailboxId, MessageId,
-    ModSeq, OperationId, RfcMessageId, SignatureId, ThreadId, Uid, UidValidity,
+    AccountId, AttachmentId, BlobId, ContactGroupId, ContactId, DraftId, IdentityId, LabelId,
+    MailboxId, MessageId, ModSeq, OperationId, RfcMessageId, SignatureId, ThreadId, Uid,
+    UidValidity,
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleOverrides};

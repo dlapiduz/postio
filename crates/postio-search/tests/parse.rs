@@ -151,6 +151,34 @@ fn account_composes_with_other_operators_and_with_negation() {
 }
 
 #[test]
+fn group_operator() {
+    // Like account:, this stays text: postio-search never resolves a group
+    // name to its members -- that needs the store, and postio-index is
+    // where `group:family` becomes an address set (ADR 0007 Q3).
+    assert_eq!(
+        filters("group:family"),
+        vec![Filter::Group("family".into())]
+    );
+    assert_eq!(
+        filters(r#"group:"Book club""#),
+        vec![Filter::Group("Book club".into())]
+    );
+}
+
+#[test]
+fn group_composes_with_other_operators_and_with_negation() {
+    assert_eq!(
+        filters("group:family is:unread"),
+        vec![Filter::Group("family".into()), Filter::Is(State::Unread)]
+    );
+
+    let parsed = q("-group:family");
+    let clause = parsed.filters().next().unwrap();
+    assert!(clause.negated, "`-group:` means everyone outside the group");
+    assert_eq!(clause.filter, Filter::Group("family".into()));
+}
+
+#[test]
 fn larger_operator_with_size_suffixes() {
     assert_eq!(filters("larger:1M"), vec![Filter::Larger(1024 * 1024)]);
     assert_eq!(filters("larger:1m"), vec![Filter::Larger(1024 * 1024)]);

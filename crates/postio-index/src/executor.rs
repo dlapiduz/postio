@@ -945,6 +945,24 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                 Value::Text(value.clone()),
             ],
         ),
+        // ADR 0007 Q3: "from or to any member", resolved against `recipients`
+        // by exact address rather than full text -- a group names people by
+        // address, not by whatever words happen to appear near their name.
+        // An unresolvable group name is an empty member set and therefore
+        // matches nothing, the same "never everything" rule `Account` and
+        // `In` follow just above.
+        Filter::Group(value) => (
+            "m.id IN (SELECT r.message_id FROM recipients r \
+             JOIN addresses a ON a.id = r.address_id \
+             WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
+               AND a.address_normalized IN ( \
+                 SELECT c.address_normalized FROM contact_group_members gm \
+                 JOIN contacts c ON c.id = gm.contact_id \
+                 JOIN contact_groups g ON g.id = gm.group_id \
+                 WHERE lower(g.name) = lower(?)))"
+                .to_string(),
+            vec![Value::Text(value.clone())],
+        ),
         Filter::Filename(value) => fts_column_condition("filenames", value),
         // `list:` names a mailing list by its `List-Id` (#9): the bracketed
         // identifier `postio-model::mime::list_id_from_text` extracts and
