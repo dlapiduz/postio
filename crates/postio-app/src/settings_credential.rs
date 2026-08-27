@@ -65,6 +65,15 @@ pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
         .build();
 
     let cancellation = ProbeCancellation::default();
+    // Walking away from the dialog stops whatever the probe was asking, the
+    // same way it does in `crate::add_account` -- ADR 0012 Q3, which is
+    // about any onboarding host that can be *left* rather than about the
+    // add-account one in particular. Every way out lands here: `Esc`, the
+    // close button, and the parent window going away under it (#57).
+    dialog.connect_closed({
+        let cancellation = cancellation.clone();
+        move |_| cancellation.stop()
+    });
     let transport: Arc<dyn DiscoveryTransport> = Arc::new(PimalayaTransport::new());
 
     screen.connect_probe({

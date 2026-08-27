@@ -223,6 +223,49 @@ pub fn start_all(
     Ok(engines)
 }
 
+/// Start the engine for an account joining an application that is already
+/// running (#64, ADR 0012 Q2).
+///
+/// The same work [`start_all`] does per account, with the one thing that
+/// genuinely differs when an account arrives on its own: the budget is
+/// asked about *the set this account is joining*, not about a set being
+/// started from nothing. `accounts` is how many enabled accounts there will
+/// be once this one is among them — which is what the caller has just
+/// written to the store, and what the pool will have to serve.
+///
+/// Refuses rather than starting an engine the pool cannot carry, for
+/// [`start_all`]'s own reason: an account whose engine never started is an
+/// account whose mail silently stops arriving, and the caller is on a
+/// surface where it can say so.
+///
+/// `Ok(None)` is the same "no usable transport" answer [`start`] gives, and
+/// costs that account its sync and nothing else.
+#[allow(clippy::too_many_arguments)]
+pub fn start_joining(
+    account: &Account,
+    accounts: usize,
+    database: &Database,
+    blobs: BlobStore,
+    events: EventSink,
+    secrets: Arc<dyn SecretStore>,
+    mailbox_roles: postio_model::RoleOverrides,
+    backfill: postio_runtime::BackfillPolicy,
+) -> Result<Option<Engine>, StartupRefusal> {
+    let budget = engine_budget(database.pool().max_connections());
+    if accounts > budget {
+        return Err(StartupRefusal::TooManyAccounts { accounts, budget });
+    }
+    Ok(start(
+        account,
+        database,
+        blobs,
+        events,
+        secrets,
+        mailbox_roles,
+        backfill,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
