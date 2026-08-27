@@ -862,6 +862,27 @@ pub enum Startup {
     Onboard(Option<Box<postio_model::Account>>),
 }
 
+/// Deletes every account "Remove" (in the settings panel, #464) has marked
+/// but not yet actually removed, cascading to its mail.
+///
+/// Called once, at the top of [`startup_route`], before anything decides
+/// which account to open or starts an engine for one — the boundary ADR
+/// 0005 Q6a chose specifically so a crash before the undo toast expires
+/// leaves the row exactly as marked, not half deleted. Failing to read or
+/// write is logged and otherwise ignored: a reap that cannot run this
+/// launch gets another chance next launch, and the account stays out of
+/// `list_enabled` either way.
+fn reap_pending_accounts(database: &Database) {
+    let Ok(connection) = database.connection() else {
+        return;
+    };
+    if let Err(error) =
+        postio_storage::repository::AccountRepository::new(&connection).reap_pending_deletions()
+    {
+        tracing::error!(%error, "could not reap an account marked for removal");
+    }
+}
+
 /// Decide which of the two startup does.
 ///
 /// Async because reading the keyring is: `KeyringSecretStore` reaches the
@@ -876,6 +897,7 @@ pub async fn startup_route(
     database: &Database,
     secrets: &dyn postio_imap::secret::SecretStore,
 ) -> Startup {
+    reap_pending_accounts(database);
     let Some(account) = first_account(database) else {
         return Startup::Onboard(None);
     };
@@ -982,6 +1004,40 @@ mod tests {
             startup_route(&database, &secrets).await,
             Startup::Onboard(Some(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_pending_deletion_account_is_reaped_before_startup_decides_anything() {
+        // #464: "Remove" in the settings panel only marks the row, so
+        // something has to actually delete it -- once, at the next launch,
+        // before an engine could otherwise start against it.
+        let (database, _key) = provisioned();
+        let connection = database.connection().expect("a connection");
+        let id = postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .expect("list")[0]
+            .id;
+        postio_storage::repository::AccountRepository::new(&connection)
+            .mark_pending_deletion(id)
+            .expect("mark");
+        drop(connection);
+
+        assert!(
+            matches!(
+                startup_route(&database, &MemorySecretStore::new()).await,
+                Startup::Onboard(None)
+            ),
+            "a pending-deletion account is not there to open or to prefill from"
+        );
+
+        let connection = database.connection().expect("a connection");
+        assert!(
+            postio_storage::repository::AccountRepository::new(&connection)
+                .get(id)
+                .expect("get")
+                .is_none(),
+            "startup_route must actually reap it, not merely skip past it"
+        );
     }
 
     #[tokio::test]
