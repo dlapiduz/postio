@@ -214,6 +214,11 @@ jobs:
         # worktree it protected puts two sessions in one tree. #328.
         run: python3 scripts/tests/test-issue-claim-no-adoption.py
 
+      - name: Prove issue-land.sh refuses a crate the host cannot build
+        # A host without gtk4 runs no gate at all over postio-gtk, and the
+        # branch merged anyway. CI is paused, so nothing else would notice. #555.
+        run: python3 scripts/tests/test-issue-land-unbuildable.py
+
       - name: Prove the workflow scripts run on BSD userland too
         # GNU-only `sed \+` and `date -d` made the whole issue workflow
         # unusable on macOS -- you could not claim, so you could do nothing. #559.
