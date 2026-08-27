@@ -63,6 +63,7 @@
 
 pub mod app;
 pub mod autoscroll;
+pub mod conversation;
 pub mod cheatsheet;
 pub mod composer;
 pub mod config;
