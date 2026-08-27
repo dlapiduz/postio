@@ -650,3 +650,131 @@ fn searching_an_empty_prefix_returns_the_most_familiar_correspondents() {
     assert_eq!(matches.len(), 1, "the limit is respected");
     assert_eq!(matches[0].address.address, "quinn@example.net");
 }
+
+// ---------------------------------------------------------------------------
+// ADR 0007 Q6: bands, then score within a band -- never across
+// ---------------------------------------------------------------------------
+
+/// A `user`-sourced contact with zero sightings still ranks above a `mail`
+/// sighting seen hundreds of times: `times_seen = 400` for a mailing-list
+/// robot is not evidence anyone wants to write to it.
+#[test]
+fn a_user_contact_with_no_sightings_outranks_a_frequent_mail_sighting() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    seen(
+        &contacts,
+        account.id,
+        "Announce Robot",
+        "announce@example.net",
+        400,
+        0,
+    );
+    contacts
+        .create(
+            Some(account.id),
+            &address(Some("Ada Norwood"), "ada@example.com"),
+            None,
+        )
+        .expect("create");
+
+    let matches = contacts.search(Some(account.id), "a", 10).expect("search");
+    let addresses: Vec<&str> = matches
+        .iter()
+        .map(|contact| contact.address.address.as_str())
+        .collect();
+    assert_eq!(
+        addresses,
+        ["ada@example.com", "announce@example.net"],
+        "a deliberately-created contact with no sightings still leads a \
+         robot mailed 400 times"
+    );
+}
+
+/// Promoting a `mail` sighting to `user` (ADR 0007 Q1) moves it into the
+/// upper band immediately, the same as creating one directly.
+#[test]
+fn promoting_a_mail_sighting_moves_it_into_the_upper_band() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    seen(
+        &contacts,
+        account.id,
+        "Announce Robot",
+        "announce@example.net",
+        400,
+        0,
+    );
+    let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0);
+    contacts.set_name(id, Some("Ada Norwood")).expect("rename");
+
+    let matches = contacts.search(Some(account.id), "a", 10).expect("search");
+    assert_eq!(
+        matches[0].address.address, "ada@example.com",
+        "promotion moves the band, not just the name"
+    );
+}
+
+/// Within the upper band, match quality still applies -- it just never
+/// reaches across into the mail band to do it.
+#[test]
+fn within_the_upper_band_the_existing_ranking_still_applies() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    contacts
+        .create(
+            Some(account.id),
+            &address(Some("Ada One"), "ada.one@example.com"),
+            None,
+        )
+        .expect("create");
+    contacts
+        .create(
+            Some(account.id),
+            &address(Some("Ada Two"), "ada.two@example.com"),
+            None,
+        )
+        .expect("create");
+    // last_seen_at is NULL for both -- created, never sighted -- so id order
+    // (creation order) is what is left to break the tie, matching every
+    // other ORDER BY tie-break in this query.
+    let matches = contacts
+        .search(Some(account.id), "ada", 10)
+        .expect("search");
+    assert_eq!(
+        matches
+            .iter()
+            .map(|c| c.address.address.as_str())
+            .collect::<Vec<_>>(),
+        ["ada.one@example.com", "ada.two@example.com"]
+    );
+}
+
+/// A suppressed contact appears in neither band, `user`-sourced or not --
+/// though in practice only `mail` ever gets suppressed (ADR 0007 Q2).
+#[test]
+fn a_suppressed_contact_is_absent_from_both_bands() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0);
+    contacts.delete(id).expect("suppress the mail contact");
+
+    assert!(
+        contacts
+            .search(Some(account.id), "ada", 10)
+            .expect("search")
+            .is_empty()
+    );
+}
