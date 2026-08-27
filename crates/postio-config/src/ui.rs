@@ -39,6 +39,7 @@ pub enum Theme {
 /// theme = "system"          # system | light | dark
 /// show_hover_actions = true # mouse parity: reveal row actions on hover
 /// thread_drill = true       # `t` turns the list column into the thread
+/// show_key_hints = true     # the focused row's own keyboard hints
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiConfig {
@@ -54,6 +55,11 @@ pub struct UiConfig {
     /// Let `t` drill the list column into the focused thread.
     #[serde(default = "crate::yes")]
     pub thread_drill: bool,
+    /// Show the focused row's key hints (`e reply`, `a archive`, `t thread`).
+    /// Off leaves every binding in force -- this only stops the row from
+    /// naming them, for someone who already knows the keyboard (#422).
+    #[serde(default = "crate::yes")]
+    pub show_key_hints: bool,
     /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
@@ -66,6 +72,7 @@ impl Default for UiConfig {
             theme: Theme::default(),
             show_hover_actions: true,
             thread_drill: true,
+            show_key_hints: true,
             extra: Extras::new(),
         }
     }

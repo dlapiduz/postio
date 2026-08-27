@@ -62,6 +62,14 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Let `t` drill the list column into the focused thread.",
     },
+    Entry {
+        path: "ui.show_key_hints",
+        kind: "boolean",
+        default: "true",
+        description: "Show the focused row's key hints (`e reply`, `a archive`, `t thread`). \
+                       Off leaves every binding in force -- this only stops the row from \
+                       naming them.",
+    },
     // ── [sync] ────────────────────────────────────────────────────────
     Entry {
         path: "sync.idle",

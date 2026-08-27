@@ -148,6 +148,8 @@ mod imp {
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
+        /// `[ui].show_key_hints`, handed to every row as it binds.
+        pub(super) show_hints: Rc<Cell<bool>>,
         /// The live keymap, handed to every row as it binds so the focused
         /// row's key hints read the bindings actually in force.
         pub(super) keymap: Rc<RefCell<Keymap>>,
@@ -193,6 +195,7 @@ mod imp {
                 dwell_delay: Cell::new(DWELL_TO_READ),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
+                show_hints: Rc::new(Cell::new(true)),
                 keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
                 mailbox: RefCell::new(String::new()),
                 unread: std::cell::Cell::new(0),
@@ -315,6 +318,17 @@ impl MessageListView {
             return;
         }
         self.each_row(|row| row.set_show_actions(show));
+    }
+
+    /// Whether the focused row may reveal its key hints at all.
+    ///
+    /// `[ui].show_key_hints`. Applied to the rows on screen now and to
+    /// every row that binds after.
+    pub fn set_show_hints(&self, show: bool) {
+        if self.imp().show_hints.replace(show) == show {
+            return;
+        }
+        self.each_row(|row| row.set_show_key_hints(show));
     }
 
     /// The bindings the focused row's key hints read.
@@ -949,6 +963,7 @@ impl MessageListView {
         // outlives any borrow of it, and a bind should cost a `Cell` read
         // rather than an upgrade through a weak reference.
         let offers = imp.show_actions.clone();
+        let hints = imp.show_hints.clone();
         let keymap = imp.keymap.clone();
         factory.connect_bind(move |_, item| {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -959,6 +974,7 @@ impl MessageListView {
             };
             view.set_density(bound.get());
             view.set_show_actions(offers.get());
+            view.set_show_key_hints(hints.get());
             view.set_keymap(&keymap.borrow());
             view.set_first(item.position() == 0);
             view.set_index(item.position());
