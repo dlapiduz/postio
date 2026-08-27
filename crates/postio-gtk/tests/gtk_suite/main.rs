@@ -50,6 +50,7 @@ mod gtk_list_recycling;
 mod gtk_list_reload;
 mod gtk_move_picker;
 mod gtk_parts;
+mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
 mod gtk_reading_pane;
 mod gtk_row;
@@ -214,6 +215,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_search_panel::the_scope_column_narrows_a_search_without_retyping_it",
         gtk_search_panel::the_scope_column_narrows_a_search_without_retyping_it as fn(),
+    ),
+    (
+        "gtk_reader_pane_owner::the_reading_pane_has_one_visible_occupant_at_a_time",
+        gtk_reader_pane_owner::the_reading_pane_has_one_visible_occupant_at_a_time as fn(),
     ),
     (
         "gtk_search_preview::the_preview_follows_the_focus_and_answers_the_query_on_screen",

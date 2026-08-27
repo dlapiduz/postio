@@ -682,10 +682,12 @@ impl Window {
         let widget = reader.widget();
         widget.set_vexpand(true);
         widget.set_hexpand(true);
-        // Nothing to read yet. The pane shows its empty state until a message
-        // arrives, rather than an empty white rectangle pretending to be one.
-        widget.set_visible(false);
         self.shell().reader().append(&widget);
+        // The pane's arbiter owns whether this widget shows (#502): hidden
+        // now — nothing to read yet — and visible exactly while the reader
+        // is the pane's occupant. Nothing else may touch its visibility.
+        self.shell()
+            .register_reader_occupant(crate::shell::ReaderOccupant::Reader, &widget);
 
         // The parts panel's held-back count follows every render, not just
         // the first: the banner's "show once" and "always allow" change how
@@ -765,6 +767,10 @@ impl Window {
         let reader = self.reader();
         reader.render(body, sender);
         self.imp().reading.set(true);
+        // A claim, not a sync: opening a message is the gesture that takes
+        // the pane — over the search preview when `Enter` opens a result —
+        // where `sync_reading_pane` only keeps the arbiter's flag current.
+        self.shell().claim_reading();
         self.sync_reading_pane();
     }
 
@@ -780,6 +786,7 @@ impl Window {
     pub fn show_absent(&self, state: crate::reader::Absent) {
         self.reader().show_absent(state);
         self.imp().reading.set(true);
+        self.shell().claim_reading();
         self.sync_reading_pane();
     }
 
@@ -814,8 +821,15 @@ impl Window {
     /// and a reply drawn on top of the message being replied to is the bug
     /// this exists to prevent.
     fn sync_reading_pane(&self) {
-        if let Some(reader) = self.imp().reader.get() {
-            reader.widget().set_visible(self.reading());
+        // Through the pane's one owner (#502), never `set_visible` directly:
+        // whether the reader actually shows depends on who else is active —
+        // the composer, the search preview — and the arbiter is what knows.
+        // The *raw* flag, not `reading()`: that accessor reports false while
+        // the composer is up, and syncing its masked answer into the arbiter
+        // erased the fact that a message was open — which is exactly the
+        // fact the arbiter needs to restore it when the composer leaves.
+        if self.imp().reader.get().is_some() {
+            self.shell().set_reading(self.imp().reading.get());
         }
         // The dwell timer (#71) measures "this message was in front of a
         // person for long enough to have been read". The composer taking the

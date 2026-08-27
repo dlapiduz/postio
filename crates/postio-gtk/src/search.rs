@@ -1290,10 +1290,12 @@ struct ViewInner {
     panel: Panel,
     preview: Preview,
     sidebar: gtk::Box,
-    reader: gtk::Box,
-    /// The pane children the search surface displaced, each with the
-    /// `visible` it had before, so leaving search puts back exactly what was
-    /// there.
+    /// The reading pane's arbiter. The preview never touches its own
+    /// visibility (#502): it registers as an occupant and the shell decides.
+    shell: crate::shell::Shell,
+    /// The sidebar children the panel displaced, each with the `visible` it
+    /// had before, so leaving search puts back exactly what was there. Only
+    /// the sidebar: the reading pane has one owner now, the shell.
     displaced: RefCell<Vec<(gtk::Widget, bool)>>,
     /// The terms the query is currently asking about, for the highlighting.
     terms: RefCell<Vec<String>>,
@@ -1313,16 +1315,18 @@ impl View {
 
         let preview = Preview::new();
         preview.set_vexpand(true);
-        preview.set_visible(false);
-        let reader = shell.reader();
-        reader.append(&preview);
+        shell.reader().append(&preview);
+        shell.register_reader_occupant(
+            crate::shell::ReaderOccupant::SearchPreview,
+            preview.upcast_ref(),
+        );
 
         let view = View {
             inner: Rc::new(ViewInner {
                 panel,
                 preview,
                 sidebar,
-                reader,
+                shell: shell.clone(),
                 displaced: RefCell::new(Vec::new()),
                 terms: RefCell::new(Vec::new()),
                 active: Cell::new(false),
@@ -1420,10 +1424,14 @@ impl View {
     /// actually asked rather than trailing it.
     pub fn set_focused(&self, hit: Option<&SearchHit>) {
         match hit {
-            Some(hit) => self
-                .inner
-                .preview
-                .show(hit, &self.inner.terms.borrow().clone()),
+            Some(hit) => {
+                self.inner
+                    .preview
+                    .show(hit, &self.inner.terms.borrow().clone());
+                // Browsing means previewing: if `Enter` had handed the pane
+                // to the real reader, moving the focus takes it back.
+                self.inner.shell.preview_focused();
+            }
             None => self.inner.preview.clear(),
         }
     }
@@ -1456,9 +1464,13 @@ impl View {
         }
 
         if searching {
-            // Whatever the panes were showing steps aside rather than being
-            // unparented: the folder list keeps its selection, its scroll
-            // position and its subscriptions, so `Esc` costs nothing.
+            // The folder list steps aside rather than being unparented: it
+            // keeps its selection, its scroll position and its
+            // subscriptions, so `Esc` costs nothing. Only the sidebar is
+            // snapshotted — the reading pane's occupants answer to the
+            // shell's arbiter (#502), which needs no snapshot because what
+            // shows after search leaves is computed from what is then
+            // active.
             let mut displaced = inner.displaced.borrow_mut();
             displaced.clear();
             displace(
@@ -1466,17 +1478,12 @@ impl View {
                 &inner.panel.clone().upcast(),
                 &mut displaced,
             );
-            displace(
-                &inner.reader,
-                &inner.preview.clone().upcast(),
-                &mut displaced,
-            );
             inner.panel.set_visible(true);
-            inner.preview.set_visible(true);
+            inner.shell.set_searching(true);
         } else {
             inner.panel.set_visible(false);
-            inner.preview.set_visible(false);
             inner.preview.clear();
+            inner.shell.set_searching(false);
             for (widget, visible) in inner.displaced.borrow_mut().drain(..) {
                 widget.set_visible(visible);
             }
