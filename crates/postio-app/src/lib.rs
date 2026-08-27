@@ -26,6 +26,7 @@
 //! the window — which happens on `activate`, after the frontend has built its
 //! own.
 
+pub mod add_account;
 pub mod commands;
 pub mod compose;
 pub mod export;
@@ -397,6 +398,13 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // The settings panel's account rows: enable/disable, remove-with-undo.
     settings_accounts::install(window, wiring);
 
+    // *Add account*, from the palette or its binding. Here rather than in
+    // `open_account` because it is a surface over the shell, and the shell
+    // is what this function builds -- an application with no account to feed
+    // is already on the first-run screen, where adding a second one is not a
+    // question anybody can ask.
+    add_account::install(window, wiring);
+
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
@@ -543,17 +551,77 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
     };
 
     for (account, sync) in engines {
-        // Leaked for the same reason the feeds are: it lives as long as the
-        // process, and dropping it at exit would stop the engine a moment
-        // before the process ends anyway.
-        let sync: &'static _ = Box::leak(Box::new(sync));
-        // `Refresh` is the one command that needs it, and it is pressed long
-        // after the bus was built. The first engine fills the slot; the
-        // others are reached through their own account's work.
-        wiring.engine.fill(sync.clone());
-        seed_the_backfill(account, sync, wiring);
-        fetch_what_is_opened(window, sync, wiring.runtime.clone());
+        adopt_engine(window, wiring, account, sync);
     }
+}
+
+/// Bring `account` into an application that is already running (#64).
+///
+/// The other caller of [`adopt_engine`], and the whole of ADR 0012 Q2: an
+/// account created by the add-account dialogue must reach the same state as
+/// one that was in the store before the window existed, without a restart.
+/// What differs between the two is only what a caller can see here —
+/// [`start_syncing`] asks the connection budget about a set of accounts
+/// being started from nothing, and this asks it about a set being joined —
+/// so the refusal comes back rather than going to the log: the surface that
+/// asked for this is on screen and can say so.
+///
+/// Not a feed and not a sidebar entry yet. Both are still keyed to one
+/// account (`feed_the_window`'s `first_account`, `Sidebar::set_account`),
+/// and giving a second account somewhere to appear is #1's own work — this
+/// is the entry point that stops that being the only thing missing.
+pub fn attach_account(
+    window: &Window,
+    wiring: &Wiring,
+    account: &postio_model::Account,
+) -> Result<(), engine::StartupRefusal> {
+    // Counted after the write, so the joining account is in it: the pool has
+    // to serve every enabled account, not every account that had an engine
+    // when the window opened.
+    let accounts = enabled_accounts(&wiring.database).len();
+    let started = engine::start_joining(
+        account,
+        accounts,
+        &wiring.database,
+        wiring.blobs.clone(),
+        wiring.events.clone(),
+        wiring.secrets.clone(),
+        wiring.mailbox_roles.clone(),
+        wiring.backfill,
+    )?;
+    if let Some(sync) = started {
+        adopt_engine(window, wiring, account.id, sync);
+    }
+    // The surfaces that list accounts, now that there is one more. Nothing
+    // else reads the account table while the window is up; when something
+    // does, this is where it joins.
+    settings_accounts::refresh(window, &wiring.database);
+    Ok(())
+}
+
+/// Hand one started engine to the window: the backfill it seeds, the body
+/// fetch an opened row asks for, and the slot `Refresh` reads.
+///
+/// One function for both the startup pass and an account that joined later,
+/// so "the application started with this account" and "the application
+/// gained it" cannot drift apart in what an engine is wired to (ADR 0012
+/// Q2).
+fn adopt_engine(
+    window: &Window,
+    wiring: &Wiring,
+    account: postio_model::AccountId,
+    sync: postio_runtime::Engine,
+) {
+    // Leaked for the same reason the feeds are: it lives as long as the
+    // process, and dropping it at exit would stop the engine a moment
+    // before the process ends anyway.
+    let sync: &'static _ = Box::leak(Box::new(sync));
+    // `Refresh` is the one command that needs it, and it is pressed long
+    // after the bus was built. The first engine fills the slot; the
+    // others are reached through their own account's work.
+    wiring.engine.fill(sync.clone());
+    seed_the_backfill(account, sync, wiring);
+    fetch_what_is_opened(window, sync, wiring.runtime.clone());
 }
 
 /// Every account that participates in sync.

@@ -7,6 +7,8 @@
 //! The `e2e*` binaries stay out on purpose: they run under the headless
 //! runner's watchdog by *name* (#272), in isolation.
 
+mod add_account_wiring;
+mod attach_account;
 mod bulk_keystroke;
 mod compose_detach;
 mod cursor_preview;
@@ -35,6 +37,18 @@ mod window_drain;
 mod wiring;
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "add_account_wiring::the_add_account_key_opens_a_blank_form_over_the_running_window",
+        add_account_wiring::the_add_account_key_opens_a_blank_form_over_the_running_window as fn(),
+    ),
+    (
+        "add_account_wiring::closing_the_dialog_stops_the_probe_it_started",
+        add_account_wiring::closing_the_dialog_stops_the_probe_it_started as fn(),
+    ),
+    (
+        "attach_account::an_account_added_to_a_running_application_syncs_without_a_restart",
+        attach_account::an_account_added_to_a_running_application_syncs_without_a_restart as fn(),
+    ),
     (
         "bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read",
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
