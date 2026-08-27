@@ -123,4 +123,23 @@ pub struct AccountSettings {
     pub password_help_url: Option<String>,
     /// The provider's own display name, when it published one.
     pub display_name: Option<String>,
+    /// The provider's OAuth offer, when its preset row prefers `oauth2`
+    /// (#534): what the sign-in flow needs to run. Only preset-sourced
+    /// discoveries carry one — autoconfig and SRV say nothing about OAuth.
+    pub oauth: Option<OAuthOffer>,
+}
+
+/// What a preset row's `[provider.<id>.oauth]` table offers the sign-in
+/// flow (#534, ADR 0006 Q4 as amended by #152): endpoints directly, or an
+/// issuer to resolve them from, plus the scopes to request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthOffer {
+    /// The RFC 8414 issuer to resolve endpoints from, when named.
+    pub issuer: Option<String>,
+    /// The authorization endpoint, when the row carries it directly.
+    pub authorize: Option<String>,
+    /// The token endpoint, when the row carries it directly.
+    pub token: Option<String>,
+    /// The scopes the sign-in requests.
+    pub scopes: Vec<String>,
 }

@@ -19,11 +19,11 @@
 # neither is a validation error caught here rather than at sign-in
 # (ADR 0006 Q4, as amended by #152).
 #
-# None of today's rows uses OAuth: v1 speaks no OAuth flow yet (#192), and a
-# provider that has turned password authentication off for good does not
-# belong here until it does -- a prefilled form that cannot possibly
-# authenticate is worse than an empty one, because the user blames the
-# password they typed.
+# A row listing "oauth2" first prefers the browser sign-in (#534): the
+# wizard offers it, with the row's other `auth` entries as the fallback.
+# `sources` says how a token may be obtained (ADR 0006 Q1) -- "own-client"
+# and "broker" need nothing from Postio; "builtin" appears only when a
+# verified Postio client exists for the provider (#195, none yet).
 
 [provider.icloud]
 display_name = "iCloud"
@@ -49,7 +49,18 @@ smtp_port = 465
 smtp_security = "tls"
 requires_app_password = true
 password_help_url = "https://myaccount.google.com/apppasswords"
-auth = ["app-password"]
+auth = ["oauth2", "app-password"]
+
+[provider.gmail.oauth]
+# RFC 8414/OpenID metadata resolves the endpoints from the issuer, so a
+# rotated endpoint keeps working without a Postio release (ADR 0006 Q4 as
+# amended by #152).
+issuer = "https://accounts.google.com"
+# Full mail scope: what IMAP/SMTP XOAUTH2 requires. Restricted scope --
+# usable with the user's own client or a broker today; Postio's own
+# verified client is #195's CASA process.
+scopes = ["https://mail.google.com/"]
+sources = ["own-client", "broker"]
 
 [provider.fastmail]
 display_name = "Fastmail"
