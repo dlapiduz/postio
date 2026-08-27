@@ -137,7 +137,10 @@ fn the_composer_detaches_into_its_own_window_and_comes_back() {
     let reading = gtk::Label::new(Some("the message being read"));
     shell.reader().append(&reading);
     // Registered as the pane's reader surface — see gtk_composer.rs (#502).
-    shell.register_reader_occupant(postio_gtk::shell::ReaderOccupant::Reader, reading.upcast_ref());
+    shell.register_reader_occupant(
+        postio_gtk::shell::ReaderOccupant::Reader,
+        reading.upcast_ref(),
+    );
     shell.claim_reading();
 
     window.present();

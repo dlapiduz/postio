@@ -112,7 +112,9 @@ pub fn the_reading_pane_has_one_visible_occupant_at_a_time() {
 
     // -- the composer outranks everything, and leaving it restores ---------
 
-    window.composer().open(Draft::new(postio_model::ids::AccountId::new(1)));
+    window
+        .composer()
+        .open(Draft::new(postio_model::ids::AccountId::new(1)));
     pump();
     assert!(window.composer().is_visible());
     assert!(!window.reader().widget().is_visible());
@@ -148,7 +150,9 @@ pub fn the_reading_pane_has_one_visible_occupant_at_a_time() {
         "back in search, the preview has the pane again (occupant: {:?})",
         window.shell().reader_occupant()
     );
-    window.composer().open(Draft::new(postio_model::ids::AccountId::new(1)));
+    window
+        .composer()
+        .open(Draft::new(postio_model::ids::AccountId::new(1)));
     pump();
     assert!(window.composer().is_visible());
     assert!(!preview.is_visible());
