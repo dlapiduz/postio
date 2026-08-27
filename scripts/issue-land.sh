@@ -106,6 +106,57 @@ echo "crates: ${CRATES:-none}"
 echo "target: ${CARGO_TARGET_DIR:-$TREE/target (this worktree)}"
 echo
 
+# What this host cannot build, and what that means for the gates below.
+#
+# The gate chain runs over the crates this branch changed. On a host missing
+# their system libraries that is not a weaker gate, it is no gate at all, and
+# the work lands anyway. A macOS session cannot build `postio-gtk` or
+# `postio-app`: gtk4 and libadwaita have arm64 bottles but webkitgtk has none,
+# and the reader and composer are both WebKit views. CI is paused, so the
+# periodic reconcile pass is the only thing that would notice -- days later,
+# on a repository where several agents work at once on different machines.
+#
+# Keyed on what the host can actually build, not on `uname`: a Linux box
+# without the -dev packages is in exactly the same position, and would
+# otherwise pass a check that named an operating system. #555.
+MISSING_LIBS=""
+for lib in gtk4 libadwaita-1 webkitgtk-6.0; do
+    pkg-config --exists "$lib" 2>/dev/null || MISSING_LIBS="${MISSING_LIBS:+$MISSING_LIBS }$lib"
+done
+UNBUILDABLE=""
+[ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-gtk postio-app"
+
+BLOCKED=""
+for crate in $CRATES; do
+    case " $UNBUILDABLE " in
+        *" $crate "*) BLOCKED="${BLOCKED:+$BLOCKED }$crate" ;;
+    esac
+done
+if [ -n "$BLOCKED" ]; then
+    echo "This host cannot build: $BLOCKED" >&2
+    echo "  missing system libraries: $MISSING_LIBS" >&2
+    echo >&2
+    echo "Nothing was committed and nothing was pushed. A gate that cannot run" >&2
+    echo "has to say so: a crate the host cannot build is not a crate that" >&2
+    echo "passed. Land this from a host that has them." >&2
+    exit 2
+fi
+
+# A crate the unbuildable ones depend on still lands -- refusing would leave a
+# macOS session unable to do any work at all -- but the gap goes on the PR
+# rather than into somebody's memory. `postio-app` depends on every other
+# workspace crate, directly or transitively, so when it is unbuildable any
+# changed crate is unproven against the frontend.
+VERIFY_LABEL=""
+VERIFY_NOTE=""
+if [ -n "$UNBUILDABLE" ] && [ -n "$CRATES" ]; then
+    VERIFY_LABEL="needs-linux-verify"
+    VERIFY_NOTE="Gates ran on a host that cannot build ${UNBUILDABLE// /, } (missing: $MISSING_LIBS), so this is unverified against the GTK frontend."
+    echo "note: this host cannot build $UNBUILDABLE, so the changed crates were"
+    echo "      never compiled against them. The PR will carry $VERIFY_LABEL."
+    echo
+fi
+
 # rust-toolchain.toml pins the compiler, and RUSTUP_TOOLCHAIN in the
 # environment beats it -- this workstation's mise config sets it, so a
 # session builds, lints and tests on the wrong compiler while every gate here
@@ -284,6 +335,9 @@ else
 $(git log "origin/$BASE..HEAD" --format='- %s')
 
 Closes #$ISSUE
+${VERIFY_NOTE:+
+> [!WARNING]
+> $VERIFY_NOTE}
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 BODY
@@ -291,6 +345,20 @@ BODY
 fi
 URL=$(gh pr view --json url -q .url)
 echo "$URL"
+
+# After `pr view` rather than as a `pr create --label`, so it applies to a PR
+# that already existed too. Loud on failure: the entire point of the label is
+# that the unverified gap is on the record, so silently not applying it is the
+# one outcome worse than not trying.
+if [ -n "$VERIFY_LABEL" ]; then
+    if gh pr edit --add-label "$VERIFY_LABEL" >/dev/null 2>&1; then
+        echo "labelled $VERIFY_LABEL"
+    else
+        echo "WARNING: could not apply $VERIFY_LABEL to $URL." >&2
+        echo "         Create the label, or add it by hand -- this PR was not" >&2
+        echo "         verified against $UNBUILDABLE." >&2
+    fi
+fi
 
 # What this branch is actually landing, recorded before the merge: `--rebase`
 # gives every commit a new hash, so "did it land" cannot be asked by ancestry

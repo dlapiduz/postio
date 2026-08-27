@@ -2899,6 +2899,31 @@ label, the assignee, and the remote-branch check in `issue-claim.sh`. A
 convention ("don't take the macOS ones") is enforced by whoever read CLAUDE.md
 most recently; a label the queue query never returns is enforced by the query.
 
+**A gate that cannot run has to say so (2026-08-27, #555).** `issue-land.sh`
+runs clippy and the tests over the crates a branch changed. On a host missing
+their system libraries that is not a weaker gate — it is *no* gate, and the
+branch merges anyway. This is live rather than hypothetical: a macOS session
+cannot build `postio-gtk` or `postio-app`, because gtk4 and libadwaita have
+arm64 bottles but **webkitgtk has none**, and the reader and the composer are
+both WebKit views. So the land script now asks the host what it can build:
+
+- a changed crate the host cannot build is a **hard stop**, before anything is
+  committed or pushed;
+- a changed crate the unbuildable ones *depend on* still lands — refusing would
+  leave such a session unable to do any work at all — but the PR gets
+  `needs-linux-verify` and a warning in its body. `postio-app` depends on every
+  other workspace crate directly or transitively, so when it is unbuildable,
+  *any* changed crate is unproven against the frontend.
+
+The probe is `pkg-config`, not `uname`: a Linux box without the `-dev` packages
+is in exactly the same position, and a check keyed on the operating system
+would wave it through. **The rule, which is the display rule aimed at the other
+axis:** the existing one says a skip nobody can distinguish from a pass is not a
+test; this one says **a crate the host never compiled is not a crate that
+passed.** The symmetric `needs-macos-verify` direction is wired when `macos/`
+exists — the label is created, the code path is not, because untested code that
+guards something is worse than no guard.
+
 **sccache is wired in through `.cargo/config.toml`**
 (`build.rustc-wrapper = "scripts/rustc-wrapper.sh"`), not exported per shell.
 The wrapper execs plain rustc when sccache is missing, so it cannot cause the
