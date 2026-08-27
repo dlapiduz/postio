@@ -590,6 +590,64 @@ fn a_backed_off_operation_is_skipped_until_its_time() {
     assert_eq!(deferred.last_error.as_deref(), Some("connection reset"));
 }
 
+/// A scheduled send (or anything else with a deliberate "not before" time)
+/// uses the same skip-until-due gate a backed-off retry does, but must not
+/// look like one: no attempt has been made yet, and nothing has failed.
+#[test]
+fn a_scheduled_operation_is_skipped_until_its_send_time() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let fixture = fixture(&connection);
+    let message = insert_message(&connection, fixture.inbox);
+    let queue = OperationQueueRepository::new(&connection);
+
+    let immediate = queue
+        .enqueue(
+            fixture.account.id,
+            OperationTarget::Message(message),
+            &Operation::SetFlags {
+                flags: flags("\\Seen"),
+            },
+            at(9),
+        )
+        .expect("enqueue");
+    let scheduled = queue
+        .enqueue_not_before(
+            fixture.account.id,
+            OperationTarget::Message(message),
+            &Operation::ClearFlags {
+                flags: flags("\\Flagged"),
+            },
+            at(9),
+            at(15),
+        )
+        .expect("enqueue_not_before");
+
+    let too_early = queue.pending(fixture.account.id, at(12)).expect("pending");
+    assert_eq!(
+        too_early.iter().map(|queued| queued.id).collect::<Vec<_>>(),
+        vec![immediate.id],
+        "the scheduled row is not due yet"
+    );
+
+    let due = queue.pending(fixture.account.id, at(15)).expect("pending");
+    assert_eq!(
+        due.iter().map(|queued| queued.id).collect::<Vec<_>>(),
+        vec![immediate.id, scheduled.id],
+        "and once its time arrives it drains in its enqueue-order place"
+    );
+
+    let row = queue.get(scheduled.id).expect("get").expect("the row");
+    assert_eq!(
+        row.next_attempt_at,
+        Some(at(15)),
+        "the not-before time is stored verbatim, restart-safe in the row itself"
+    );
+    assert_eq!(row.attempts, 0, "no attempt has been made yet");
+    assert_eq!(row.last_error, None, "nothing has failed");
+    assert_eq!(row.state, OperationState::Pending);
+}
+
 #[test]
 fn an_operation_left_in_flight_by_a_crash_is_retried_rather_than_dropped() {
     let database = test_support::memory();

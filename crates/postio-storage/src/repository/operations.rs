@@ -135,6 +135,39 @@ impl<'a> OperationQueueRepository<'a> {
         operation: &Operation,
         at: DateTime<Utc>,
     ) -> Result<QueuedOperation> {
+        self.enqueue_inner(account_id, target, operation, at, None)
+    }
+
+    /// Appends an operation the drainer must not touch before `not_before` —
+    /// a scheduled send, or anything else the user asked to happen later.
+    ///
+    /// Reuses the same gate [`defer`](Self::defer) puts a backed-off retry
+    /// behind ([`pending`](Self::pending) skips any row whose
+    /// `next_attempt_at` is still in the future), which is what makes this
+    /// restart-safe for free: the row is read from SQLite on every drain
+    /// pass, not timed from an in-memory clock that a restart would lose.
+    /// Unlike a deferred row this one has made no attempt and failed
+    /// nothing, so `attempts` stays `0` and `last_error` stays `None` — a
+    /// scheduled send must not read like a retry in a bug report.
+    pub fn enqueue_not_before(
+        &self,
+        account_id: AccountId,
+        target: OperationTarget,
+        operation: &Operation,
+        at: DateTime<Utc>,
+        not_before: DateTime<Utc>,
+    ) -> Result<QueuedOperation> {
+        self.enqueue_inner(account_id, target, operation, at, Some(not_before))
+    }
+
+    fn enqueue_inner(
+        &self,
+        account_id: AccountId,
+        target: OperationTarget,
+        operation: &Operation,
+        at: DateTime<Utc>,
+        next_attempt_at: Option<DateTime<Utc>>,
+    ) -> Result<QueuedOperation> {
         let account_id = require_persisted(account_id.get(), "account")?;
         let scope = super::Scope::open(self.connection)?;
 
@@ -161,9 +194,9 @@ impl<'a> OperationQueueRepository<'a> {
         scope.execute(
             "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
                                           mailbox_id, payload, inverse, state, attempts,
-                                          created_at, updated_at, source_uid,
+                                          next_attempt_at, created_at, updated_at, source_uid,
                                           source_uid_validity)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9, ?10, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?10, ?11, ?12)",
             params![
                 account_id,
                 operation.op_type(),
@@ -173,6 +206,7 @@ impl<'a> OperationQueueRepository<'a> {
                 payload,
                 encoded_inverse,
                 OperationState::Pending.as_str(),
+                next_attempt_at.map(to_millis),
                 to_millis(at),
                 source_uid,
                 source_uid_validity,
@@ -193,7 +227,7 @@ impl<'a> OperationQueueRepository<'a> {
             state: OperationState::Pending,
             attempts: 0,
             last_error: None,
-            next_attempt_at: None,
+            next_attempt_at,
             created_at: at,
             updated_at: at,
             source_uid: source_uid.map(Uid::new),
