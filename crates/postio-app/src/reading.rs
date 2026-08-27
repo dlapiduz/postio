@@ -377,6 +377,11 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         let parts = Rc::clone(&parts);
         move |message| {
             let reader = window.new_reader();
+            // The reader's own sender/recipients/subject/date strip stays
+            // hidden here: the entry above it already carries that line, and
+            // an empty strip is a hundred pixels of nothing between every
+            // header and its body down the whole stack.
+            reader.header().widget().set_visible(false);
             let widget = reader.widget();
             widget.set_hexpand(true);
             // Hidden until it has something to draw, so an expanded message
@@ -531,15 +536,15 @@ impl Fill {
                 else {
                     return;
                 };
-                if let Some(envelope) = &envelope {
-                    reader.set_message_header(
-                        &envelope.from,
-                        &envelope.to,
-                        &envelope.cc,
-                        envelope.subject.as_deref(),
-                        envelope.date,
-                    );
-                }
+                // Deliberately *not* `set_message_header`. In the single
+                // pane the reader draws the sender/recipients/subject/date
+                // strip because nothing else does; in the conversation the
+                // entry already carries that line above the body, and a
+                // second one would say the same thing twice per message down
+                // the whole stack. `envelope` is still read because it is the
+                // same query either way — dropping it here would fork the
+                // load path for one field.
+                let _ = &envelope;
                 match body {
                     crate::compose::Body::Ready(body) => {
                         let root = root_type(content_type.as_deref(), &body, &parts);

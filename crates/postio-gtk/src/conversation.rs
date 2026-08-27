@@ -198,11 +198,7 @@ mod tests {
     fn a_read_message_after_the_focus_stays_collapsed() {
         // Only the focus is expanded unconditionally; past it, unread is what
         // earns a web view.
-        let messages = [
-            message(1, false),
-            message(2, true),
-            message(3, false),
-        ];
+        let messages = [message(1, false), message(2, true), message(3, false)];
         let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
         assert_eq!(expanded, vec![true, false, true]);
     }
@@ -392,7 +388,10 @@ impl ConversationView {
         };
 
         for (index, row) in messages.iter().enumerate() {
-            let entry = self.build_entry(row, index as u32);
+            // Numbered from one, matching the column exactly: the two are
+            // the same conversation and a reader comparing them must not have
+            // to add one in their head.
+            let entry = self.build_entry(row, index as u32 + 1);
             imp.stack.append(&entry.container());
             imp.entries.borrow_mut().push(entry);
             if expanded.get(index).copied().unwrap_or(false) {
@@ -478,7 +477,13 @@ impl ConversationView {
     /// collapsed header would be a dead end — you went there to read it — so
     /// jumping expands.
     pub fn focus_message(&self, message: MessageId) {
-        if !self.imp().entries.borrow().iter().any(|e| e.message == message) {
+        if !self
+            .imp()
+            .entries
+            .borrow()
+            .iter()
+            .any(|e| e.message == message)
+        {
             return;
         }
         self.expand(message);
@@ -655,8 +660,11 @@ impl ConversationView {
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.add_css_class("conversation-entry");
         container.append(&header);
-        container.append(&actions);
         container.append(&body);
+        // Under the message, not under its header. Above the body they read
+        // as belonging to whatever comes next -- which for a stack of
+        // messages is somebody else's mail.
+        container.append(&actions);
 
         // A click anywhere on the header makes that message current, which is
         // the mouse's half of what the column's cursor does.
