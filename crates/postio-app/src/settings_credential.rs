@@ -74,7 +74,8 @@ pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
         let cancellation = cancellation.clone();
         move |_| cancellation.stop()
     });
-    let transport: Arc<dyn DiscoveryTransport> = Arc::new(PimalayaTransport::new());
+    let transport: Arc<dyn DiscoveryTransport> =
+        Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone()));
 
     screen.connect_probe({
         let screen = screen.clone();

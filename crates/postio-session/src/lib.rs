@@ -41,6 +41,7 @@
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
+pub mod egress;
 pub mod engine;
 pub mod logging;
 pub mod paths;
@@ -256,6 +257,12 @@ pub struct Wiring {
     pub commands: postio_core::bridge::CommandSender,
     /// Where the engine goes once it is running, so `Refresh` can find it.
     pub engine: refresh::EngineSlot,
+    /// Where every outbound connection is recorded (#151).
+    ///
+    /// Built with the wiring so there is exactly one writer thread per
+    /// process, however many accounts sync and however many discovery
+    /// probes run. Connectors are handed sinks derived from this.
+    pub egress: Arc<egress::EgressRecorder>,
     /// Where account passwords live.
     ///
     /// A part rather than something the modules that need it construct, for
@@ -299,6 +306,7 @@ impl Wiring {
     ) -> Self {
         Wiring {
             store: Arc::new(SqliteStore::new(&database)),
+            egress: egress::EgressRecorder::start(database.clone()),
             database,
             blobs,
             runtime,
