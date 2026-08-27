@@ -166,6 +166,12 @@ pub fn run() -> glib::ExitCode {
         .map_err(|error| error.to_string())
         .and_then(|key| open_with(&key, &context));
     let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
+    // Whether `open_or_onboard` has already run for this window (#514): a
+    // second `activate` -- a second launch of a single-instance app just
+    // raises the window -- must not open a second set of engines and feeds
+    // over the first. See `open_or_onboard`'s own doc comment for why it is
+    // the one that checks and sets this, not `present` here.
+    let fed: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
     let refused = match first {
         Ok(ready) => {
             *opened.borrow_mut() = Some(ready);
@@ -189,6 +195,7 @@ pub fn run() -> glib::ExitCode {
     application.connect_activate({
         let opened = Rc::clone(&opened);
         let context = Rc::clone(&context);
+        let fed = Rc::clone(&fed);
         move |application| {
             let Some(window) = application.active_window().and_downcast::<Window>() else {
                 return;
@@ -197,7 +204,7 @@ pub fn run() -> glib::ExitCode {
             // a second `activate` (a second launch raising the window) just
             // replaces it with itself.
             notifications::install_action(application, &window);
-            present(&window, &opened, &context, refused.clone());
+            present(&window, &opened, &context, refused.clone(), &fed);
         }
     });
 
@@ -223,6 +230,25 @@ pub fn run() -> glib::ExitCode {
 /// context, the crossing `feed.rs` describes. The window is already up by
 /// then, which is the point: a blocking keyring read would trade
 /// `postio-67`'s wrong guess for a startup that stalls on a locked keyring.
+///
+/// # `fed` makes a second `activate` a no-op
+///
+/// A single-instance `gtk::Application` delivers a second `activate` to the
+/// primary process when a second launch just means "raise the window" —
+/// and `run()`'s handler called this every time, unconditionally. Nothing
+/// downstream of it was idempotent: a second `start_syncing` would run a
+/// second set of engines against the store `open_account` already opened,
+/// and a second `search::install` puts two handlers on the same
+/// `connect_run` — see [`Wired`]'s own doc comment for what that one cost.
+///
+/// `fed.replace(true)` both reads and sets in the one call a single-threaded
+/// main loop needs to close the race a plain check-then-set would leave:
+/// this must not merely record that wiring *finished*, because the keyring
+/// lookup below is asynchronous, and a second `activate` arriving while the
+/// first is still waiting on it must not start a second lookup and a second
+/// eventual [`open_account`]/[`onboarding::install`] of its own. Marking it
+/// the instant this is entered — win or lose the race that already cannot
+/// happen on one thread, either way there is exactly one way in.
 #[allow(clippy::too_many_arguments)]
 pub fn open_or_onboard(
     window: &Window,
@@ -231,7 +257,11 @@ pub fn open_or_onboard(
     wired: Vec<postio_core::CommandId>,
     events: Rc<std::cell::RefCell<Option<EventStream>>>,
     notifier: notifications::Notifier,
+    fed: Rc<std::cell::Cell<bool>>,
 ) {
+    if fed.replace(true) {
+        return;
+    }
     let (sender, receiver) = async_channel::bounded(1);
     {
         let database = wiring.database.clone();
@@ -823,6 +853,7 @@ fn present(
     opened: &Rc<std::cell::RefCell<Option<Opened>>>,
     context: &Rc<Installation>,
     refused: Option<String>,
+    fed: &Rc<std::cell::Cell<bool>>,
 ) {
     // Borrowed, checked, and dropped before anything else runs: the retry
     // closure installed below writes this same cell, and a borrow left open
@@ -844,6 +875,7 @@ fn present(
             ready.wired.clone(),
             Rc::clone(&ready.events),
             notifier,
+            Rc::clone(fed),
         );
         return;
     }
@@ -865,6 +897,7 @@ fn present(
         let window = window.clone();
         let opened = Rc::clone(opened);
         let context = Rc::clone(context);
+        let fed = Rc::clone(fed);
         move || {
             screen.set_busy(true);
             // On a thread, not on this one. Reading the keyring is a D-Bus
@@ -886,6 +919,7 @@ fn present(
                 let window = window.clone();
                 let opened = Rc::clone(&opened);
                 let context = Rc::clone(&context);
+                let fed = Rc::clone(&fed);
                 async move {
                     let read = match receiver.recv().await {
                         Ok(read) => read,
@@ -901,7 +935,7 @@ fn present(
                         Ok(ready) => {
                             tracing::info!("the store opened on a retry");
                             *opened.borrow_mut() = Some(ready);
-                            present(&window, &opened, &context, None);
+                            present(&window, &opened, &context, None, &fed);
                         }
                         Err(reason) => {
                             tracing::warn!(reason, "the store still did not open");

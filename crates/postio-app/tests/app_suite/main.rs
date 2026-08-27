@@ -26,6 +26,7 @@ mod resume_draft;
 mod search_index;
 mod search_results;
 mod search_wiring;
+mod second_activate_wiring;
 mod send_later_wiring;
 mod send_wiring;
 mod settings_accounts_wiring;
@@ -128,6 +129,10 @@ const CASES: &[(&str, fn())] = &[
         "search_wiring::typing_in_the_box_searches_the_store_and_fills_every_search_surface",
         search_wiring::typing_in_the_box_searches_the_store_and_fills_every_search_surface
             as fn(),
+    ),
+    (
+        "second_activate_wiring::a_second_activate_does_not_double_wire_the_window",
+        second_activate_wiring::a_second_activate_does_not_double_wire_the_window as fn(),
     ),
     (
         "send_later_wiring::choosing_a_time_schedules_the_draft_for_sending",
