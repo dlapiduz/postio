@@ -128,6 +128,7 @@ const OAUTH2: &str = "oauth2";
 /// The backend tokens Postio ships (ADR 0018 Q5).
 const BACKEND_IMAP: &str = "imap";
 const BACKEND_JMAP: &str = "jmap";
+const BACKEND_GMAIL: &str = "gmail";
 
 /// What can go wrong turning `providers.toml` text into rows.
 #[derive(Debug)]
@@ -209,7 +210,7 @@ pub fn parse(text: &str) -> Result<Parsed, ProvidersError> {
 /// than discovered the first time someone tries to sign in with it.
 fn validate(id: &str, row: &ProviderRow) -> Result<(), ProvidersError> {
     for backend in &row.backend {
-        if backend != BACKEND_IMAP && backend != BACKEND_JMAP {
+        if backend != BACKEND_IMAP && backend != BACKEND_JMAP && backend != BACKEND_GMAIL {
             return Err(ProvidersError::Invalid(format!(
                 "provider `{id}` names a backend Postio does not ship: `{backend}`"
             )));
@@ -585,6 +586,35 @@ mod backend_tests {
         assert_eq!(
             row.jmap.as_ref().expect("the jmap table").session_url,
             "https://api.example.com/jmap/session/"
+        );
+    }
+}
+
+#[cfg(test)]
+mod gmail_backend_tests {
+    use super::*;
+
+    #[test]
+    fn the_gmail_token_is_a_backend_postio_ships() {
+        let parsed = parse(
+            r#"
+            [provider.rest]
+            display_name = "Rest"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+            backend = ["imap", "gmail"]
+            "#,
+        )
+        .expect("gmail is a shipped backend token (#546)");
+        assert_eq!(
+            parsed.rows["rest"].backend,
+            vec!["imap".to_owned(), "gmail".to_owned()]
         );
     }
 }

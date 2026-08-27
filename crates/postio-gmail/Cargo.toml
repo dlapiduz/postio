@@ -1,0 +1,32 @@
+[package]
+name = "postio-gmail"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Gmail REST MailBackend adapter over Pimalaya's io-gmail (ADR 0018)"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# The Gmail REST v1 protocol crate — coroutines plus the std blocking
+# client. No TLS features: connections open on this workspace's own
+# cancellable pimalaya-stream, like the JMAP adapter beside it.
+io-gmail = { version = "0.3", default-features = false, features = ["client"] }
+pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
+
+# The MailBackend seam and nothing else.
+postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
+postio-model = { version = "0.1.0", path = "../postio-model" }
+
+secrecy = { version = "0.10", default-features = false }
+thiserror = "2"
+tokio = { version = "1.53.1", features = ["rt", "sync", "time"] }
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

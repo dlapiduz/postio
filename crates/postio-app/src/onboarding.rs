@@ -154,7 +154,11 @@ pub fn install(
                         session_url: session_url.clone(),
                     })
                 }
-                postio_model::account::Backend::Imap => None,
+                // A Gmail-REST repair re-proves through OAuth like any
+                // other Gmail account; there is no JMAP offer to park.
+                postio_model::account::Backend::Imap | postio_model::account::Backend::Gmail => {
+                    None
+                }
             },
         )));
 

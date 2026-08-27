@@ -179,6 +179,7 @@ const OURS: &[&str] = &[
     "postio_gtk",
     "postio_imap",
     "postio_jmap",
+    "postio_gmail",
     "postio_index",
     "postio_model",
     "postio_runtime",
