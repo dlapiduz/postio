@@ -215,6 +215,16 @@ pub struct Message {
     pub flags: FlagSet,
     /// Labels applied to this message.
     pub labels: Vec<LabelId>,
+    /// Hidden from ordinary lists until this instant, then self-restoring.
+    ///
+    /// Local only, the same as [`LocalSyncState::deleted_locally`] — no wire
+    /// format carries it, no sync pass ever sets it, and nothing but
+    /// [`crate::ids::MessageId`]-scoped snooze/unsnooze writes it. Living
+    /// here rather than in [`LocalSyncState`] because it is a user
+    /// preference like [`Message::flags`], not sync bookkeeping: a snoozed
+    /// message is not out of step with the server, it is a message the
+    /// server agrees on that the user has asked to see later.
+    pub snoozed_until: Option<DateTime<Utc>>,
     /// Size in bytes as reported by the server.
     pub size: u64,
     /// Full header block, preserved for display and for later reparsing.
@@ -259,6 +269,7 @@ impl Message {
             html_part_headers: None,
             flags: FlagSet::new(),
             labels: Vec::new(),
+            snoozed_until: None,
             size: 0,
             headers: Headers::new(),
             server: ServerIdentifiers::default(),
