@@ -25,6 +25,11 @@ const NO_SUBJECT: &str = "(no subject)";
 /// does.
 pub struct MessageHeader {
     root: gtk::Box,
+    /// Subject and the sender/date row, grouped so they can be hidden
+    /// together — the conversation pane's entry header already carries all
+    /// three (#487), and only the recipients below belong to this widget
+    /// there.
+    identity: gtk::Box,
     subject: gtk::Label,
     sender: gtk::Label,
     date: gtk::Label,
@@ -42,11 +47,14 @@ impl MessageHeader {
         root.add_css_class("postio-message-header");
         root.set_accessible_role(gtk::AccessibleRole::Group);
 
+        let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        root.append(&identity);
+
         let subject = gtk::Label::new(None);
         subject.set_xalign(0.0);
         subject.set_ellipsize(pango::EllipsizeMode::End);
         subject.add_css_class("postio-message-header-subject");
-        root.append(&subject);
+        identity.append(&subject);
 
         let top_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let sender = gtk::Label::new(None);
@@ -59,7 +67,7 @@ impl MessageHeader {
         let date = gtk::Label::new(None);
         date.add_css_class("postio-message-header-date");
         top_row.append(&date);
-        root.append(&top_row);
+        identity.append(&top_row);
 
         // `to` and the `Cc` disclosure share a row: the common one-recipient
         // case costs exactly the one line, and `Cc` costs nothing at all
@@ -99,6 +107,7 @@ impl MessageHeader {
 
         Self {
             root,
+            identity,
             subject,
             sender,
             date,
@@ -113,6 +122,21 @@ impl MessageHeader {
     /// container.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
+    }
+
+    /// Shows or hides subject, sender and date, leaving recipients alone.
+    ///
+    /// The conversation pane (#487) draws all three of those on the entry
+    /// header above this widget — showing them again here would be the
+    /// duplication #308 removed. Recipients have nowhere else to go, so
+    /// hiding "identity" is not the same as hiding the header.
+    pub fn set_identity_visible(&self, visible: bool) {
+        self.identity.set_visible(visible);
+    }
+
+    /// Whether subject, sender and date are currently on screen.
+    pub fn identity_visible(&self) -> bool {
+        self.identity.is_visible()
     }
 
     /// Fills in every field from a message's envelope.
