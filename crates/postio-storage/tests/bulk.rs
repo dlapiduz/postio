@@ -122,6 +122,116 @@ fn the_rows_taken_back_out_of_the_selection_stay_put() {
     }
 }
 
+/// A conversation of `count` messages in `mailbox`, newest last.
+///
+/// Returns the thread's id and its message ids. `fill` above leaves
+/// `thread_id` NULL, which is the *other* case the predicate has to keep
+/// working for -- see the `IS NULL` arm in `MessageSet::predicate`.
+fn fill_thread(
+    connection: &Connection,
+    account: &Account,
+    mailbox: MailboxId,
+    count: usize,
+) -> (i64, Vec<MessageId>) {
+    connection
+        .execute(
+            "INSERT INTO threads (account_id, subject) VALUES (?1, 'A conversation')",
+            [account.id.get()],
+        )
+        .expect("insert a thread");
+    let thread = connection.last_insert_rowid();
+    let messages = (0..count)
+        .map(|index| {
+            connection
+                .execute(
+                    "INSERT INTO messages (account_id, mailbox_id, received_at, thread_id)
+                     SELECT account_id, id, ?2, ?3 FROM mailboxes WHERE id = ?1",
+                    [mailbox.get(), index as i64, thread],
+                )
+                .expect("insert a message");
+            MessageId::new(connection.last_insert_rowid())
+        })
+        .collect();
+    (thread, messages)
+}
+
+#[test]
+fn deselecting_a_thread_row_excepts_the_whole_conversation() {
+    // ADR 0015 Q3, #468. A folder shows one row per conversation, so the row
+    // taken back out of a `Ctrl+A` *is* a conversation -- and its id is that
+    // conversation's newest message, because that is what makes the row
+    // openable. Excepting only the id would archive all of the conversation
+    // but its newest message, which is the worst of both readings: the user
+    // said "not this one" and got most of it anyway.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+
+    let (_, kept) = fill_thread(&connection, &world.account, world.inbox, 4);
+    let (_, swept) = fill_thread(&connection, &world.account, world.inbox, 3);
+    // The row the list draws for a conversation is its newest message.
+    let representative = *kept.last().expect("a conversation has messages");
+
+    let moved = MessageRepository::new(&connection)
+        .move_set(
+            &MessageSet::InMailbox {
+                mailbox: world.inbox,
+                except: vec![representative],
+            },
+            world.archive,
+        )
+        .expect("a bulk move");
+
+    assert_eq!(
+        moved,
+        swept.len(),
+        "the other conversation is what was left to move"
+    );
+    for message in &kept {
+        assert_eq!(
+            mailbox_of(&connection, *message),
+            world.inbox,
+            "a message of the deselected conversation was archived anyway: \
+             the exception named the row, and the row is the conversation"
+        );
+    }
+    for message in &swept {
+        assert_eq!(
+            mailbox_of(&connection, *message),
+            world.archive,
+            "excepting one conversation must not spare another"
+        );
+    }
+}
+
+#[test]
+fn an_unthreaded_message_is_still_excepted_by_its_own_id() {
+    // The `IS NULL` arm. A message with no thread can only be excepted by id,
+    // and `NOT IN` against a set containing NULL is NULL -- so without the
+    // guard every unthreaded message would drop out of the set and a bulk
+    // archive over a folder of them would move nothing at all.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let world = world(&connection);
+    let messages = fill(&connection, world.inbox, 5);
+
+    let moved = MessageRepository::new(&connection)
+        .move_set(
+            &MessageSet::InMailbox {
+                mailbox: world.inbox,
+                except: vec![messages[2]],
+            },
+            world.archive,
+        )
+        .expect("a bulk move");
+
+    assert_eq!(
+        moved, 4,
+        "the other four are unthreaded and still in the set"
+    );
+    assert_eq!(mailbox_of(&connection, messages[2]), world.inbox);
+}
+
 #[test]
 fn a_row_hidden_pending_a_remote_delete_is_not_part_of_everything() {
     // The set means "what the list is showing", and the list filters these
