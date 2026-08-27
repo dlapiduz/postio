@@ -24,9 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, Attachment, BlobId, BodyState, Disposition, EmailAddress, Flag, FlagSet, LabelId,
-    LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange, RfcMessageId,
-    RemoteId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
+    AccountId, Attachment, BlobId, BodyState, Disposition, EmailAddress, Flag, FlagSet, Generation,
+    LabelId, LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange, RemoteId,
+    RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
 };
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -702,9 +702,7 @@ impl<'a> MessageRepository<'a> {
         let mine = own_draft_copies(&transaction)?;
         let before = batch.len();
         batch.retain(|message| match &message.server.remote_id {
-            Some(remote_id) => {
-                !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
-            }
+            Some(remote_id) => !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned())),
             // Nowhere to have landed, so nothing to be a second copy of.
             None => true,
         });
@@ -729,9 +727,12 @@ impl<'a> MessageRepository<'a> {
 
         for message in batch.iter_mut() {
             let existing = match (message.server.uid, message.server.uid_validity) {
-                (Some(uid), Some(validity)) => {
-                    find_by_uid(&transaction, message.mailbox_id, validity, uid)?
-                }
+                (Some(uid), Some(validity)) => find_by_generation_uid(
+                    &transaction,
+                    message.mailbox_id,
+                    Generation::new(validity.get()),
+                    uid,
+                )?,
                 _ => None,
             };
 
@@ -1172,10 +1173,10 @@ impl<'a> MessageRepository<'a> {
     pub fn by_uid(
         &self,
         mailbox_id: MailboxId,
-        uid_validity: UidValidity,
+        generation: Generation,
         uid: Uid,
     ) -> Result<Option<Message>> {
-        match find_by_uid(self.connection, mailbox_id, uid_validity, uid)? {
+        match find_by_generation_uid(self.connection, mailbox_id, generation, uid)? {
             Some(id) => self.get(id),
             None => Ok(None),
         }
@@ -1184,14 +1185,14 @@ impl<'a> MessageRepository<'a> {
     /// Every UID known locally for a mailbox under `uid_validity`, ascending.
     ///
     /// What a resync diffs the server's UID list against.
-    pub fn uids_in(&self, mailbox_id: MailboxId, uid_validity: UidValidity) -> Result<Vec<Uid>> {
+    pub fn uids_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<Vec<Uid>> {
         let mut statement = self.connection.prepare(
             "SELECT uid FROM messages
               WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid IS NOT NULL
               ORDER BY uid",
         )?;
         let rows = statement.query_map(
-            params![mailbox_id.get(), i64::from(uid_validity.get())],
+            params![mailbox_id.get(), i64::from(generation.get())],
             |row| Ok(Uid::new(row.get::<_, i64>(0)? as u32)),
         )?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1709,7 +1710,13 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
                 .map(|validity| i64::from(validity.get())),
         ),
         maybe_integer(message.server.mod_seq.map(|seq| seq.get() as i64)),
-        maybe_text(message.server.remote_id.as_ref().map(|id| id.as_str().to_owned())),
+        maybe_text(
+            message
+                .server
+                .remote_id
+                .as_ref()
+                .map(|id| id.as_str().to_owned()),
+        ),
         text(message.sync.body_state.as_str()),
         boolean(message.sync.flags_dirty),
         boolean(message.sync.has_pending_operations),
@@ -1810,10 +1817,12 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
     Ok(())
 }
 
-fn find_by_uid(
+/// The engine-facing lookup: the caller tracks an opaque [`Generation`],
+/// which for IMAP is numerically the stored `uid_validity` (#543).
+fn find_by_generation_uid(
     connection: &Connection,
     mailbox_id: MailboxId,
-    uid_validity: UidValidity,
+    generation: Generation,
     uid: Uid,
 ) -> Result<Option<MessageId>> {
     let mut statement = connection.prepare(
@@ -1822,7 +1831,7 @@ fn find_by_uid(
     )?;
     let mut rows = statement.query(params![
         mailbox_id.get(),
-        i64::from(uid_validity.get()),
+        i64::from(generation.get()),
         i64::from(uid.get()),
     ])?;
     Ok(match rows.next()? {
@@ -2107,9 +2116,7 @@ fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, Stri
 /// local half of the move nulls the row's `uid`/`uid_validity` in the same
 /// transaction that enqueues (#289): by the time a resync runs, this row is
 /// the only thing that still remembers where the server has it.
-fn shadowed_by_pending_operation(
-    connection: &Connection,
-) -> Result<BTreeSet<(MailboxId, String)>> {
+fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
     let mut statement = connection.prepare(
         "SELECT mailbox_id, source_remote_id
            FROM operation_queue

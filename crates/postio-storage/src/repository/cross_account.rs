@@ -176,9 +176,7 @@ impl<'a> CrossAccountMoveRepository<'a> {
                         raw_blob_id: row.get(7)?,
                         rfc_message_id: row.get(8)?,
                         phase: MovePhase::parse(&phase).unwrap_or(MovePhase::Aborted),
-                        confirmed_remote_id: row
-                            .get::<_, Option<String>>(10)?
-                            .map(RemoteId::new),
+                        confirmed_remote_id: row.get::<_, Option<String>>(10)?.map(RemoteId::new),
                     })
                 },
             )

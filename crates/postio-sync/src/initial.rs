@@ -214,7 +214,7 @@ pub(crate) async fn enumerate(
     let selected = backend.select(&mailbox.path, SelectMode::ReadWrite).await?;
 
     let mut server_status =
-        MailboxStatus::new(selected.uid_validity).with_uid_next(selected.uid_next);
+        MailboxStatus::new(selected.generation).with_uid_next(selected.uid_next);
     if let Some(mod_seq) = selected.highest_mod_seq {
         server_status = server_status.with_highest_mod_seq(mod_seq);
     }
@@ -234,7 +234,7 @@ pub(crate) async fn enumerate(
     }
 
     let known: BTreeSet<u32> = MessageRepository::new(connection)
-        .uids_in(mailbox.id, selected.uid_validity)?
+        .uids_in(mailbox.id, selected.generation)?
         .into_iter()
         .map(Uid::get)
         .collect();

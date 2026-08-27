@@ -987,7 +987,7 @@ async fn status_reports_a_mailbox_without_selecting_it() {
     let status = status(&pool, "INBOX", Priority::Background).await.unwrap();
 
     assert_eq!(status.exists, 3);
-    assert_eq!(status.uid_validity, UidValidity::new(4_242));
+    assert_eq!(status.generation, postio_model::Generation::new(4_242));
     assert_eq!(status.uid_next, Uid::new(4));
     assert_eq!(status.highest_mod_seq, Some(ModSeq::new(900)));
     assert_eq!(
@@ -1007,7 +1007,7 @@ async fn selecting_reports_the_mailbox_and_whether_it_can_be_written() {
         .await
         .unwrap();
     assert_eq!(writable.exists, 3);
-    assert_eq!(writable.uid_validity, UidValidity::new(4_242));
+    assert_eq!(writable.generation, postio_model::Generation::new(4_242));
     assert!(!writable.read_only);
     assert!(
         writable.permanent_flags.is_seen(),

@@ -371,7 +371,7 @@ impl MailboxState {
     fn status(&self, condstore: bool, read_only: bool) -> MailboxStatus {
         MailboxStatus {
             path: self.summary.path.clone(),
-            uid_validity: self.uid_validity,
+            generation: postio_model::Generation::new(self.uid_validity.get()),
             uid_next: Uid::new(self.uid_next),
             exists: self.messages.len() as u32,
             unseen: Some(

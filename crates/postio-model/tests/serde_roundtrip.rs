@@ -86,7 +86,7 @@ fn sample_mailbox() -> Mailbox {
             flagged: 1,
             snoozed: 0,
         },
-        uid_validity: Some(UidValidity::new(12)),
+        generation: Some(Generation::new(12)),
         uid_next: Some(Uid::new(900)),
         highest_mod_seq: Some(ModSeq::new(4_000)),
         last_synced_at: Some(at(2_000)),

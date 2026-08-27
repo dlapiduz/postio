@@ -5,7 +5,7 @@
 //! whole sync engine is developed against (see
 //! `crates/postio-imap/src/backend/mock.rs`).
 
-use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
+use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_imap::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
 use postio_storage::PooledConnection;
@@ -66,7 +66,7 @@ async fn bootstrap(connection: &PooledConnection, backend: &MockBackend, mailbox
 
 fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
     MessageRepository::new(connection)
-        .uids_in(mailbox.id, UidValidity::new(VALIDITY))
+        .uids_in(mailbox.id, postio_model::Generation::new(VALIDITY))
         .expect("uids_in")
         .into_iter()
         .map(Uid::get)
@@ -146,7 +146,11 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
 
     let messages = MessageRepository::new(&connection);
     let seen = messages
-        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(2))
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(2),
+        )
         .expect("look up message 2")
         .expect("message 2 still stored");
     assert!(
@@ -323,7 +327,7 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
 
     match outcome {
         Outcome::Full { reason, report } => {
-            assert_eq!(reason, postio_model::FullResyncReason::UidValidityChanged);
+            assert_eq!(reason, postio_model::FullResyncReason::GenerationChanged);
             assert_eq!(report.inserted, 2);
         }
         other => panic!("expected a full resync, got {other:?}"),
@@ -332,13 +336,21 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
     let messages = MessageRepository::new(&connection);
     assert!(
         messages
-            .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(1))
+            .by_uid(
+                inbox.id,
+                postio_model::Generation::new(VALIDITY),
+                Uid::new(1)
+            )
             .expect("look up under the old generation")
             .is_none(),
         "rows under the stale UIDVALIDITY must be gone"
     );
     let rebuilt = messages
-        .by_uid(inbox.id, new_validity, Uid::new(1))
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(new_validity.get()),
+            Uid::new(1),
+        )
         .expect("look up under the new generation")
         .expect("rebuilt under the new generation");
     assert_eq!(rebuilt.server.uid_validity, Some(new_validity));
@@ -346,7 +358,10 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
     let state = SyncStateRepository::new(&connection)
         .require(inbox.id)
         .expect("sync state");
-    assert_eq!(state.uid_validity, Some(new_validity));
+    assert_eq!(
+        state.generation,
+        Some(postio_model::Generation::new(new_validity.get()))
+    );
     assert!(state.has_synced());
 }
 
@@ -408,7 +423,11 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
     bootstrap(&connection, &backend, &inbox).await;
 
     let message = MessageRepository::new(&connection)
-        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(1))
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(1),
+        )
         .expect("read")
         .expect("the first message");
     assert!(
