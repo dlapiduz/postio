@@ -111,7 +111,7 @@ use io_pim_discovery::autoconfig::config::{
 };
 
 pub use self::builtin::{Preset, preset_for_domain, presets};
-pub use self::settings::{AccountSettings, Encryption, ServerSettings, SettingsSource};
+pub use self::settings::{AccountSettings, Encryption, OAuthOffer, ServerSettings, SettingsSource};
 pub use self::transport::{
     AutoconfigEndpoint, DISCOVERY_IO_TIMEOUT, DiscoveryAutoconfig, DiscoverySrvReport,
     DiscoverySrvService, DiscoveryTransport, PimalayaTransport, TransportError,
@@ -524,6 +524,8 @@ fn settings_from_autoconfig(
         note: None,
         password_help_url: None,
         display_name: provider.display_name.clone(),
+        // Autoconfig, SRV and guesses say nothing about OAuth (#534).
+        oauth: None,
     })
 }
 
@@ -619,6 +621,8 @@ fn settings_from_srv(address: &Address, report: &DiscoverySrvReport) -> Option<A
         note: None,
         password_help_url: None,
         display_name: None,
+        // Autoconfig, SRV and guesses say nothing about OAuth (#534).
+        oauth: None,
     })
 }
 
@@ -639,6 +643,8 @@ fn guess(address: &Address) -> Option<AccountSettings> {
         ),
         password_help_url: None,
         display_name: None,
+        // Autoconfig, SRV and guesses say nothing about OAuth (#534).
+        oauth: None,
     })
 }
 
