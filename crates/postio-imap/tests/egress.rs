@@ -35,9 +35,7 @@ async fn every_connection_reaches_the_sink_success_and_failure_alike() {
         .with_egress(sink.clone());
 
     let settings = server.settings();
-    let connected = connector
-        .connect_tcp(&settings.host, settings.port)
-        .await;
+    let connected = connector.connect_tcp(&settings.host, settings.port).await;
     assert!(connected.is_ok(), "the loopback server accepts");
 
     // A port nothing listens on: the failure the log must also carry.

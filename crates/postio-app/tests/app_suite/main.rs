@@ -16,6 +16,7 @@ mod cursor_preview;
 mod drag_out_portal;
 mod drag_out_wiring;
 mod dwell_wiring;
+mod egress_wiring;
 mod keystroke;
 mod parts_open_wiring;
 mod reading;
@@ -126,6 +127,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_index::opening_the_window_indexes_local_bodies_without_being_asked",
         search_index::opening_the_window_indexes_local_bodies_without_being_asked as fn(),
+    ),
+    (
+        "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",
+        egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable as fn(),
     ),
     (
         "search_results::a_query_puts_the_matching_messages_in_the_list",

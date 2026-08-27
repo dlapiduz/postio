@@ -63,7 +63,12 @@ pub fn install(window: &Window, wiring: &Wiring) {
                 // Built per opening, not once: a transport is cheap, and one
                 // shared between dialogues would outlive the cancellation
                 // that is supposed to end its work.
-                open(&window, &wiring, Arc::new(PimalayaTransport::new()));
+                open(
+                    &window,
+                    &wiring,
+                    // Discovery probes are outbound connections too (#151).
+                    Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
+                );
             }
         }
     });

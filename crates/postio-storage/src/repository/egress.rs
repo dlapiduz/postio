@@ -51,8 +51,7 @@ impl<'a> EgressLogRepository<'a> {
             let outcome: String = row.get(5)?;
             Ok(EgressEvent {
                 at: chrono::DateTime::from_timestamp_millis(at).unwrap_or_default(),
-                subsystem: EgressSubsystem::parse(&subsystem)
-                    .unwrap_or(EgressSubsystem::Discovery),
+                subsystem: EgressSubsystem::parse(&subsystem).unwrap_or(EgressSubsystem::Discovery),
                 account: account.map(AccountId::new),
                 host: row.get(3)?,
                 port: row.get(4)?,

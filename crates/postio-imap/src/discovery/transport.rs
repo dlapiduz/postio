@@ -453,8 +453,7 @@ impl DiscoveryTransport for PimalayaTransport {
                 let egress = egress.clone();
                 move |url: &url::Url| {
                     let stream = connect_tcp(url, &cancel);
-                    if let (Some(host), Some(port)) =
-                        (url.host_str(), url.port_or_known_default())
+                    if let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default())
                     {
                         report_egress(&egress, host, port, stream.is_ok());
                     }
@@ -500,8 +499,7 @@ impl DiscoveryTransport for PimalayaTransport {
                 let cancel = cancel.clone();
                 move |url: &url::Url| {
                     let stream = connect_tcp(url, &cancel);
-                    if let (Some(host), Some(port)) =
-                        (url.host_str(), url.port_or_known_default())
+                    if let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default())
                     {
                         report_egress(&egress, host, port, stream.is_ok());
                     }
