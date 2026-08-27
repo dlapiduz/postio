@@ -137,6 +137,13 @@ one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 - Providers are data, not code: server settings live in the preset table,
   never as named constants or special-cased branches. Postio is not built
   for any one provider and the code must not say otherwise.
+- **Pimalaya first** (maintainer, 2026-08-27): when a protocol or format
+  need appears, check the Pimalaya family before writing wire code —
+  Postio already stands on io-imap/io-smtp/io-http/io-sasl/io-oauth/
+  io-pim-discovery/pimalaya-stream, and their release cadence means a
+  survey more than a few weeks old is stale (#537 is what missing one
+  cost). Replacing existing hand-rolled code with a Pimalaya crate is
+  explicitly welcome.
 
 ## Privacy is a feature, and fixtures are public
 
