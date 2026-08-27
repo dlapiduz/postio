@@ -89,6 +89,7 @@ command from inside a text field.
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |
 | `k` or `Up` | Previous folder | Folder list |  | `prev_folder` |
 | `space` | Expand or collapse folder | Folder list |  | `toggle_folder` |
+| `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |
 | `j` or `Down` | Next part | Parts panel |  | `next_part` |

@@ -777,6 +777,25 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::NextScope,
+        title: "Next scope",
+        // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
+        // the same gesture aimed at an account rather than a row or a folder.
+        default_binding: "g a",
+        alternate_bindings: &[],
+        // Reachable from the surfaces a scope actually changes -- the folder
+        // list it re-roots and the message list it re-fills. Not from the
+        // composer or the reader, where the mail on screen is already chosen.
+        contexts: ctx(&[Context::Sidebar, Context::List]),
+        destructive: false,
+        // Which accounts are in view is view state, like which folders are
+        // expanded. Nothing durable for undo to reach.
+        recovery: Recovery::None,
+        // Deliberately not `SingleAccount`: this is the command that *leaves*
+        // a single-account scope, so requiring one would switch itself off.
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::Refresh,
         title: "Refresh",
         default_binding: "F5",
