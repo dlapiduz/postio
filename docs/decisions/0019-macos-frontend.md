@@ -140,6 +140,15 @@ ADR 0014 needs: `SecretError::Locked` must reach the surface that asks the user
 to unlock, not onboarding. A C ABI flattens that to an int and a string, and
 the routing decision degrades to matching on message text.
 
+**And it costs the workspace no `unsafe`.** The plan expected UniFFI's
+generated scaffolding to force `postio-ffi` into `check-lint-floor.py`'s
+exception list at `deny`, the way `postio-gtk`, `postio-app` and `postio-imap`
+sit there. Tested on uniffi 0.29.5 rather than assumed: the crate compiles with
+`uniffi::setup_scaffolding!()` and `#[uniffi::export]` under the workspace's
+`unsafe_code = "forbid"`, and `forbid` is genuinely in force — a hand-written
+`unsafe` block in the same crate is rejected. **No exception is needed, and the
+invariant is not narrowed.**
+
 `postio-ffi` is **private to the macOS app and promises no stability.** Ghostty
 says the same of `include/ghostty.h` in its own header, and their genuinely
 public library turned out to be a separate artifact. A frontend seam that

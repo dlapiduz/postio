@@ -214,6 +214,12 @@ jobs:
         # worktree it protected puts two sessions in one tree. #328.
         run: python3 scripts/tests/test-issue-claim-no-adoption.py
 
+      - name: Prove the macOS boundary's Swift bindings still generate
+        # postio-ffi is the seam the Swift app talks to. It carries no
+        # macOS-specific code precisely so this runs on Linux: the expensive
+        # platform's shim is proven on the cheap one. ADR 0019, #571.
+        run: python3 scripts/tests/test-ffi-bindgen.py
+
       - name: Prove issue-land.sh refuses a crate the host cannot build
         # A host without gtk4 runs no gate at all over postio-gtk, and the
         # branch merged anyway. CI is paused, so nothing else would notice. #555.

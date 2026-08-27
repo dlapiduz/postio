@@ -51,8 +51,15 @@ allow = [
     # `dtoa-short`, both pulled in by the HTML sanitizer's stack. MPL-2.0
     # obliges publishing changes *to those files*; Postio does not modify them,
     # and linking is explicitly permitted. Allowed deliberately rather than by
-    # omission -- if a third MPL crate appears, this comment is the record of
-    # what was decided and why.
+    # omission.
+    #
+    # 2026-08-27, ADR 0019: eight more arrived at once -- `uniffi` with its
+    # `uniffi_bindgen`, `uniffi_core`, `uniffi_macros`, `uniffi_meta`,
+    # `uniffi_udl`, `uniffi_pipeline` and `uniffi_internal_macros`
+    # companions, which are the boundary the macOS frontend talks to. Same
+    # reading as the sanitizer's stack: Postio does not modify those files,
+    # and linking is explicitly permitted. Recorded here rather than
+    # absorbed silently, which is what the sentence above asked for.
     "MPL-2.0",
     # The Mozilla CA certificate bundle (`webpki-root-certs`). A data licence,
     # not a code one.
