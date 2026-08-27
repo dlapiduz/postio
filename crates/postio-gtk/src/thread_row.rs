@@ -275,6 +275,15 @@ impl ThreadRowView {
     }
 
     /// Whether the cursor is on this row.
+    /// Whether this row is drawn as the selected one.
+    ///
+    /// The drawn state, not a caller's intention: the conversation pane
+    /// (#308) needs to answer "can the user see which message is current",
+    /// and "we called `set_selected`" is a different claim.
+    pub fn is_selected(&self) -> bool {
+        self.imp().selected.get()
+    }
+
     pub fn set_selected(&self, selected: bool) {
         if self.imp().selected.replace(selected) != selected {
             self.imp().laid.replace(None);
