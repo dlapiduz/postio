@@ -89,7 +89,7 @@ pub fn start(
 
     let backend: Arc<dyn MailBackend> = Arc::new(ImapBackend::over(Arc::new(
         ConnectionPool::with_token_source(
-            settings(&account.incoming),
+            settings(&account.incoming, account.auth),
             key,
             tokens.clone(),
             connector,
@@ -126,13 +126,22 @@ pub fn start(
 /// Field for field. The two types exist separately because `postio-model`
 /// describes an account and `postio-imap` describes a connection, and neither
 /// should have to change when the other does.
-fn settings(server: &postio_model::account::ServerConfig) -> ConnectionSettings {
-    ConnectionSettings::new(
+fn settings(
+    server: &postio_model::account::ServerConfig,
+    auth: postio_model::account::AuthMethod,
+) -> ConnectionSettings {
+    let mut settings = ConnectionSettings::new(
         server.host.clone(),
         server.port,
         server.security,
         server.username.clone(),
-    )
+    );
+    // The stored mechanism, carried through — dropping it here is #533:
+    // every account authenticated as Password however it was stored, and
+    // the OAUTHBEARER/XOAUTH2 paths #193 wired in were reachable from
+    // tests only.
+    settings.auth = auth;
+    settings
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +291,26 @@ pub fn start_joining(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_connection_settings_carry_the_accounts_auth_method() {
+        // #533: this mapping dropped `auth` on the floor, so an account
+        // stored as XOAUTH2 authenticated with LOGIN — the mechanisms #193
+        // wired into the sessions were reachable from tests only.
+        let server = postio_model::account::ServerConfig {
+            host: "imap.example.com".to_owned(),
+            port: 993,
+            username: "ada@example.com".to_owned(),
+            ..Default::default()
+        };
+
+        let settings = settings(&server, postio_model::account::AuthMethod::XOAuth2);
+        assert_eq!(
+            settings.auth,
+            postio_model::account::AuthMethod::XOAuth2,
+            "the account's auth method must reach the session, or the              stored mechanism is decoration"
+        );
+    }
 
     #[test]
     fn a_pool_keeps_one_connection_back_for_the_frontend() {
