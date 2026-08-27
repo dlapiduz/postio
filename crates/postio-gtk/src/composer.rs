@@ -69,7 +69,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{gdk, glib};
+use chrono::{DateTime, Datelike, Duration, Local, Utc};
+use gtk::{gdk, gio, glib};
 use postio_body::Placement;
 use postio_core::{CommandId, Context};
 use postio_model::address::{current_entry, format_list, parse_list};
@@ -307,6 +308,14 @@ const DETACHED_SIZE: (i32, i32) = (620, 560);
 /// What to call with the draft when the user sends or saves.
 type DraftHandler = Box<dyn Fn(&Draft)>;
 
+/// What to call with the draft when the user schedules it to send later.
+///
+/// Carries the chosen time because, unlike an ordinary send, there is no
+/// other way for the handler to learn it — the picker is entirely inside the
+/// composer and nothing downstream can ask it again once the draft is handed
+/// off and the fields are cleared.
+type SendLaterHandler = Box<dyn Fn(&Draft, DateTime<Utc>)>;
+
 /// What to call with the draft when the user asks it to be saved.
 ///
 /// `&mut`, unlike [`DraftHandler`]: the storage-backed handler assigns a
@@ -477,6 +486,12 @@ mod imp {
         /// fill in, not a state the caret can be in or out of.
         pub link_button: gtk::Button,
         pub send: gtk::Button,
+        /// Opens the [`CommandId::ScheduleSend`] picker beside `send`. Its
+        /// popover content is rebuilt fresh from [`schedule_presets`] every
+        /// time it opens — see `set_create_popup_func` in `build_actions` —
+        /// because the presets are relative to whatever moment the picker
+        /// opens, not to when the composer itself was built.
+        pub schedule_send: gtk::MenuButton,
         pub save: gtk::Button,
         pub warning: gtk::Label,
         /// Issue #116: "this reply quotes a link to a domain other than the
@@ -494,6 +509,7 @@ mod imp {
         pub draft: RefCell<Draft>,
         pub identities: RefCell<Vec<Identity>>,
         pub sent: RefCell<Vec<DraftHandler>>,
+        pub sent_later: RefCell<Vec<SendLaterHandler>>,
         pub saved: RefCell<Vec<SaveHandler>>,
         pub changed: RefCell<Vec<DraftHandler>>,
         pub closed: RefCell<Vec<ClosedHandler>>,
@@ -576,6 +592,7 @@ mod imp {
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
                 send: gtk::Button::new(),
+                schedule_send: gtk::MenuButton::new(),
                 save: gtk::Button::new(),
                 warning: gtk::Label::new(None),
                 tracking_notice: gtk::Label::new(None),
@@ -584,6 +601,7 @@ mod imp {
                 draft: RefCell::new(Draft::new(AccountId::UNASSIGNED)),
                 identities: RefCell::new(Vec::new()),
                 sent: RefCell::new(Vec::new()),
+                sent_later: RefCell::new(Vec::new()),
                 saved: RefCell::new(Vec::new()),
                 changed: RefCell::new(Vec::new()),
                 closed: RefCell::new(Vec::new()),
@@ -1172,6 +1190,34 @@ impl Composer {
         self.shut(Closing::Drop);
     }
 
+    /// Hands the draft to the send-later handlers with `when`, and closes.
+    /// What choosing a time from the [`CommandId::ScheduleSend`] picker does.
+    ///
+    /// The same sendability checks [`send`](Self::send) makes, for the same
+    /// reasons: an unaddressed or already-queued draft must not be handed to
+    /// a handler here any more than to an immediate send.
+    pub fn send_later(&self, when: DateTime<Utc>) {
+        if self.imp().sent_later.borrow().is_empty() {
+            self.set_status(NO_SEND_PATH);
+            return;
+        }
+        let draft = self.draft();
+        if !draft.is_sendable() {
+            self.set_status(if draft.has_recipients() {
+                ALREADY_QUEUED
+            } else {
+                NO_RECIPIENTS
+            });
+            return;
+        }
+        for handler in self.imp().sent_later.borrow().iter() {
+            handler(&draft, when);
+        }
+        let account = draft.account_id;
+        self.fill(Draft::new(account));
+        self.shut(Closing::Drop);
+    }
+
     /// Hands the draft to the save handlers. What `ctrl+s` does.
     ///
     /// A handler may assign the draft an id (its first persisted save); that
@@ -1190,6 +1236,12 @@ impl Composer {
     /// Called with the draft when the user sends it.
     pub fn connect_send(&self, handler: impl Fn(&Draft) + 'static) {
         self.imp().sent.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called with the draft and the chosen time when the user schedules it
+    /// to send later.
+    pub fn connect_send_later(&self, handler: impl Fn(&Draft, DateTime<Utc>) + 'static) {
+        self.imp().sent_later.borrow_mut().push(Box::new(handler));
     }
 
     /// Called with the draft when the user asks for it to be saved.
@@ -1539,6 +1591,7 @@ impl Composer {
         match id {
             CommandId::Compose => self.open_new_draft(),
             CommandId::Send if self.is_open() => self.send(),
+            CommandId::ScheduleSend if self.is_open() => self.imp().schedule_send.popup(),
             CommandId::SaveDraft if self.is_open() => self.save(),
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
             CommandId::AttachFile if self.is_open() => self.open_file_chooser(),
@@ -2535,6 +2588,46 @@ impl Composer {
             move |_| composer.send()
         ));
 
+        imp.schedule_send
+            .set_child(Some(&labelled("Schedule…", "C-⇧-Ret")));
+        imp.schedule_send.add_css_class("flat");
+        imp.schedule_send.add_css_class("postio-ghost");
+        imp.schedule_send
+            .update_property(&[gtk::accessible::Property::Label("Schedule send")]);
+        // Rebuilt every time the picker opens rather than once here: the
+        // presets are relative to whatever moment it opens, and a composer
+        // can sit unsent for a while before anyone reaches for this.
+        imp.schedule_send.set_create_popup_func(|button| {
+            let menu = gio::Menu::new();
+            for (label, when) in schedule_presets(Local::now()) {
+                let item = gio::MenuItem::new(Some(label), None);
+                item.set_action_and_target_value(
+                    Some("compose-schedule.choose"),
+                    Some(&when.with_timezone(&Utc).timestamp_millis().to_variant()),
+                );
+                menu.append_item(&item);
+            }
+            button.set_popover(Some(&gtk::PopoverMenu::from_model(Some(&menu))));
+        });
+
+        let schedule_actions = gio::SimpleActionGroup::new();
+        let choose = gio::SimpleAction::new("choose", Some(glib::VariantTy::INT64));
+        choose.connect_activate(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_, parameter| {
+                let Some(millis) = parameter.and_then(|value| value.get::<i64>()) else {
+                    return;
+                };
+                if let Some(when) = DateTime::<Utc>::from_timestamp_millis(millis) {
+                    composer.send_later(when);
+                }
+            }
+        ));
+        schedule_actions.add_action(&choose);
+        imp.schedule_send
+            .insert_action_group("compose-schedule", Some(&schedule_actions));
+
         imp.save.set_child(Some(&labelled("Save draft", "C-s")));
         imp.save.add_css_class("flat");
         imp.save.add_css_class("postio-ghost");
@@ -2552,6 +2645,7 @@ impl Composer {
         escape.set_xalign(1.0);
 
         row.append(&imp.send);
+        row.append(&imp.schedule_send);
         row.append(&imp.save);
         row.append(&escape);
         row
@@ -2605,6 +2699,14 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_detach_button(&self) -> gtk::Button {
         self.imp().detach.clone()
+    }
+
+    /// The "Schedule send…" button, so a test can assert the keyboard's way
+    /// into the picker (`CommandId::ScheduleSend`) is the same one the
+    /// pointer has.
+    #[doc(hidden)]
+    pub fn test_schedule_send_button(&self) -> gtk::MenuButton {
+        self.imp().schedule_send.clone()
     }
 
     /// Types `text` into the body, the way a keystroke reaches the buffer.
@@ -2872,6 +2974,57 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{bytes:.0} B")
     }
+}
+
+/// A preset must land at least this far ahead of `now` to be offered as
+/// "today" rather than rolling to tomorrow — a picker opened one minute
+/// before 6pm must not offer "this evening" for an instant already gone.
+const MIN_SCHEDULE_LEAD: Duration = Duration::minutes(5);
+
+/// `day` at the given wall-clock hour and minute, in `day`'s own local zone.
+///
+/// A DST transition can make a wall-clock time ambiguous or nonexistent;
+/// falling back to `day` itself rather than panicking keeps a schedule-send
+/// picker from crashing the composer on the two days a year this can happen,
+/// at the cost of an odd-looking preset on exactly those days.
+fn at_local_time(day: DateTime<Local>, hour: u32, minute: u32) -> DateTime<Local> {
+    day.date_naive()
+        .and_hms_opt(hour, minute, 0)
+        .and_then(|naive| naive.and_local_timezone(Local).single())
+        .unwrap_or(day)
+}
+
+/// The fixed times [`CommandId::ScheduleSend`]'s picker offers, computed
+/// against `now` — recomputed every time the picker opens rather than once,
+/// since "in 1 hour" a picker opened yesterday is not "in 1 hour" today.
+///
+/// "This evening" rolls to tomorrow once 6pm today is behind `now`.
+/// "Monday morning" always means a Monday strictly after today: opening the
+/// picker on a Monday offers next week's, not the one already underway.
+fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
+    let in_one_hour = now + Duration::hours(1);
+
+    let mut evening = at_local_time(now, 18, 0);
+    if evening < now + MIN_SCHEDULE_LEAD {
+        evening = at_local_time(now + Duration::days(1), 18, 0);
+    }
+
+    let tomorrow_morning = at_local_time(now + Duration::days(1), 8, 0);
+
+    let days_from_monday = now.weekday().num_days_from_monday() as i64;
+    let days_until_monday = if days_from_monday == 0 {
+        7
+    } else {
+        7 - days_from_monday
+    };
+    let monday_morning = at_local_time(now + Duration::days(days_until_monday), 8, 0);
+
+    [
+        ("In 1 hour", in_one_hour),
+        ("This evening", evening),
+        ("Tomorrow morning", tomorrow_morning),
+        ("Monday morning", monday_morning),
+    ]
 }
 
 /// A button label with the key that reaches it, as the header bar does it.
@@ -3178,6 +3331,7 @@ fn document_of(body: &MessageBody) -> postio_body::Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use postio_model::EmailAddress;
 
     fn draft() -> Draft {
@@ -3491,5 +3645,82 @@ mod tests {
         let mut source = html_only_source_with_a_tracking_link();
         source.body.html = None;
         assert!(quoted_tracking_domains(&source).is_empty());
+    }
+
+    // -- Schedule send presets ---------------------------------------------
+
+    fn local_at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Local> {
+        Local
+            .with_ymd_and_hms(year, month, day, hour, minute, 0)
+            .single()
+            .expect("an unambiguous local time")
+    }
+
+    fn preset(presets: &[(&'static str, DateTime<Local>); 4], label: &str) -> DateTime<Local> {
+        presets
+            .iter()
+            .find(|(name, _)| *name == label)
+            .unwrap_or_else(|| panic!("no `{label}` preset"))
+            .1
+    }
+
+    #[test]
+    fn an_ordinary_morning_offers_the_same_evening_and_tomorrow() {
+        // 2024-01-01 is a Monday.
+        let now = local_at(2024, 1, 1, 9, 0);
+        let presets = schedule_presets(now);
+
+        assert_eq!(preset(&presets, "In 1 hour"), local_at(2024, 1, 1, 10, 0));
+        assert_eq!(
+            preset(&presets, "This evening"),
+            local_at(2024, 1, 1, 18, 0),
+            "6pm is still ahead of a 9am picker"
+        );
+        assert_eq!(
+            preset(&presets, "Tomorrow morning"),
+            local_at(2024, 1, 2, 8, 0)
+        );
+        assert_eq!(
+            preset(&presets, "Monday morning"),
+            local_at(2024, 1, 8, 8, 0),
+            "today is already Monday, so the preset means next week's"
+        );
+    }
+
+    #[test]
+    fn this_evening_rolls_to_tomorrow_once_this_evening_has_passed() {
+        let now = local_at(2024, 1, 1, 19, 0);
+        let presets = schedule_presets(now);
+
+        assert_eq!(
+            preset(&presets, "This evening"),
+            local_at(2024, 1, 2, 18, 0),
+            "6pm today is behind a 7pm picker"
+        );
+    }
+
+    #[test]
+    fn monday_morning_is_the_nearest_monday_still_ahead() {
+        // 2024-01-03 is a Wednesday.
+        let now = local_at(2024, 1, 3, 8, 0);
+        let presets = schedule_presets(now);
+
+        assert_eq!(
+            preset(&presets, "Monday morning"),
+            local_at(2024, 1, 8, 8, 0)
+        );
+    }
+
+    #[test]
+    fn every_preset_is_ahead_of_now() {
+        for now in [
+            local_at(2024, 1, 1, 0, 5),
+            local_at(2024, 1, 1, 17, 59),
+            local_at(2024, 1, 1, 23, 55),
+        ] {
+            for (label, when) in schedule_presets(now) {
+                assert!(when > now, "{label} is not ahead of {now}: {when}");
+            }
+        }
     }
 }
