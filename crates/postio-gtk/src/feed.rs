@@ -40,7 +40,6 @@
 //! about until it is opened.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -181,9 +180,6 @@ struct Inner {
     source: Rc<dyn MessageSource>,
     /// What the list is showing: one folder, or a role-scoped query.
     scope: Cell<Option<FeedScope>>,
-    /// Bumped by every [`Feed::open`]. A reply from an older generation is
-    /// answering a question nobody is asking any more.
-    generation: Cell<u64>,
     total: Cell<u32>,
     /// How long the *mailbox* was, last time one was read.
     ///
@@ -235,7 +231,10 @@ impl Inner {
         let Some(scope) = self.scope.get() else {
             return;
         };
-        let generation = self.generation.get();
+        let Some(list) = self.list.upgrade() else {
+            return;
+        };
+        let generation = list.generation();
         let future = self.source.fetch(PageRequest {
             scope,
             page,
@@ -270,7 +269,10 @@ impl Inner {
         // does not have would make the source answer for messages nobody
         // matched.
         let end = ids.len().min(start + PAGE_SIZE as usize);
-        let generation = self.generation.get();
+        let Some(list) = self.list.upgrade() else {
+            return;
+        };
+        let generation = list.generation();
         let future = source.rows(ids[start..end].to_vec());
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: `MessageSource::rows` is a trait method, and the trait's
@@ -290,32 +292,32 @@ impl Inner {
     /// No count to set, unlike [`deliver`](Self::deliver): the result set's
     /// length was known the moment the ids arrived.
     fn deliver_hits(&self, generation: u64, page: u32, rows: Vec<Row>) {
-        if generation != self.generation.get() {
-            return;
-        }
         let Some(list) = self.list.upgrade() else {
             return;
         };
-        list.deliver(page, rows);
+        list.deliver_for(generation, page, rows);
     }
 
     fn deliver(&self, generation: u64, page: u32, answer: Page) {
-        if generation != self.generation.get() {
-            return;
-        }
         let Some(list) = self.list.upgrade() else {
             return;
         };
-        // The count first: `deliver` clamps the page against it, so rows
-        // delivered before the list knows how long it is would be dropped.
-        self.total.set(answer.total);
-        self.mailbox_total.set(answer.total);
-        list.set_total(answer.total);
-        list.deliver(page, answer.rows);
+        // Feed's own bookkeeping is generation-checked here, same as before:
+        // `list.deliver_page` below checks again for the list's own state, but
+        // a stale reply must not overwrite what `total`/`mailbox_total` will
+        // hand back the next time this scope is reopened.
+        if generation == list.generation() {
+            self.total.set(answer.total);
+            self.mailbox_total.set(answer.total);
+        }
+        list.deliver_page(generation, answer.total, page, answer.rows);
     }
 
     fn fail(&self, generation: u64, message: String) {
-        if generation != self.generation.get() {
+        let Some(list) = self.list.upgrade() else {
+            return;
+        };
+        if generation != list.generation() {
             return;
         }
         for handler in self.errors.borrow().iter() {
@@ -350,7 +352,6 @@ impl Feed {
             list: list.downgrade(),
             source,
             scope: Cell::new(None),
-            generation: Cell::new(0),
             total: Cell::new(0),
             mailbox_total: Cell::new(0),
             results: RefCell::new(None),
@@ -368,7 +369,6 @@ impl Feed {
     /// wait, the query is the bug.
     pub fn open(&self, scope: FeedScope) {
         let inner = &self.0;
-        inner.generation.set(inner.generation.get() + 1);
         inner.scope.set(Some(scope));
         inner.total.set(0);
         inner.mailbox_total.set(0);
@@ -435,7 +435,6 @@ impl Feed {
         if inner.hits.borrow().is_none() {
             return;
         }
-        inner.generation.set(inner.generation.get() + 1);
         let total = messages.len() as u32;
         *inner.results.borrow_mut() = Some(Rc::new(messages));
         inner.total.set(total);
@@ -463,7 +462,6 @@ impl Feed {
         if inner.results.borrow().is_none() {
             return false;
         }
-        inner.generation.set(inner.generation.get() + 1);
         *inner.results.borrow_mut() = None;
         inner.total.set(inner.mailbox_total.get());
         if let Some(list) = inner.list.upgrade() {
@@ -502,11 +500,7 @@ impl Feed {
             // `MessageList::deliver` replaces the data inside the existing
             // `GObject`, so nothing above rediscovers anything.
             Event::MessagesChanged { messages, .. } => {
-                let pages: BTreeSet<u32> = messages
-                    .iter()
-                    .filter_map(|message| list.page_of(*message))
-                    .collect();
-                for page in pages {
+                for page in list.pages_holding(messages) {
                     inner.clone().request(page);
                 }
             }

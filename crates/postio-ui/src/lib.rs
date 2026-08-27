@@ -12,6 +12,7 @@
 //! and `check-crate-boundaries.py` enforces it, dev-dependencies included.
 
 pub mod keymap;
+pub mod list;
 pub mod reader;
 pub mod selection;
 pub mod tokens;
