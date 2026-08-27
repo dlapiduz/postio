@@ -328,6 +328,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // still has to open the message under the cursor. Showing the same
     // message twice is harmless, so the overlap costs a store read and
     // nothing else.
+    let showing_for_conversation = showing.clone();
     let parts = Rc::new(Fill {
         database,
         blobs,
@@ -351,28 +352,97 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         move |row| parts.fill(&window, row)
     ));
 
-    // The thread column's own cursor, the same wiring one surface over
-    // (#436). `ThreadView::connect_activated` already fires on cursor
-    // movement, not only true activation -- `select_index` calls its
-    // `announce` unconditionally -- so the column itself was never the bug;
-    // nothing in the composition root was listening. `rows()` is the
-    // column's own idea of what is on screen, which is what the id it
-    // announces is drawn from.
-    window.thread().connect_activated(glib::clone!(
+    // The thread column's cursor is *not* wired to this filler.
+    //
+    // #436 wired it here, and was right to: the column drove the reading
+    // pane, which showed one message. ADR 0015 Q4 changed what the column is
+    // for. It is now an index into the conversation pane, so its cursor
+    // scrolls that pane rather than replacing the reader's contents --
+    // wired in `Window::conversation`, where both surfaces are in scope.
+    //
+    // Leaving the old wiring in place would not look broken, which is why it
+    // is worth a paragraph: the single reader is hidden while a conversation
+    // is open, so this would have gone on reading a body from the store on
+    // every `j` and rendering it where nobody could see it.
+
+    // The conversation pane (ADR 0015 Q4, #308).
+    //
+    // Its readers are built here rather than by the widget because only the
+    // window has the blob source and the allow-list path, and only this
+    // module knows how a body is loaded. The pane decides *how many* to ask
+    // for; this decides what one contains.
+    window.conversation().set_reader_factory({
+        #[allow(clippy::redundant_clone)]
+        let window = window.clone();
+        let parts = Rc::clone(&parts);
+        move |message| {
+            let reader = window.new_reader();
+            let widget = reader.widget();
+            widget.set_hexpand(true);
+            // Hidden until it has something to draw, so an expanded message
+            // whose body is still being read is a header rather than a white
+            // rectangle pretending to be a message.
+            widget.set_visible(false);
+            parts.fill_reader(&reader, message);
+            widget
+        }
+    });
+
+    // `e`, `E` and `f` reply to whatever is current, and inside a
+    // conversation that is the focused message. Writing it into the same
+    // `showing` cell the single-message pane writes means the reply source
+    // has one answer rather than two that can disagree -- which is what #325
+    // was, and what `compose::install_reply_source` documents at length.
+    window.conversation().connect_focus_changed({
+        let showing = showing_for_conversation;
+        move |message| showing.set(Some(message))
+    });
+
+    // The per-message verbs (ADR 0015 Q4). Reply, reply-all and forward are
+    // the only ones drawn on a message; everything else in this pane acts on
+    // the conversation.
+    //
+    // Focus first, then dispatch. The composer resolves what it is answering
+    // through `connect_reply_source`, which reads `showing` -- so making the
+    // clicked message current *is* how the reply gets aimed at it, and it
+    // aims the keyboard's `e` at the same message in the same movement.
+    // Naming the message in the command as well costs nothing and keeps the
+    // invocation honest about what was asked for.
+    window.conversation().connect_reply(glib::clone!(
         #[weak]
         window,
-        #[strong]
-        parts,
-        move |message| {
-            let row = window
-                .thread()
-                .rows()
-                .into_iter()
-                .find(|row| row.id == message);
-            if let Some(row) = row {
-                parts.fill(&window, row);
-            }
+        move |message, all| {
+            window.conversation().focus_message(message);
+            window.act(if all {
+                postio_core::Command::ReplyAll {
+                    message: Some(message),
+                }
+            } else {
+                postio_core::Command::Reply {
+                    message: Some(message),
+                }
+            });
         }
+    ));
+    window.conversation().connect_forward(glib::clone!(
+        #[weak]
+        window,
+        move |message| {
+            window.conversation().focus_message(message);
+            window.act(postio_core::Command::Forward {
+                message: Some(message),
+            });
+        }
+    ));
+
+    // Resting on a message in the conversation reads it, on the same rule as
+    // resting on a row in the list (#71). Opening a conversation does not
+    // read it: the timer starts when focus lands and is cancelled when it
+    // moves, so walking the index passes over messages without marking them.
+    window.conversation().connect_dwelled(glib::clone!(
+        #[weak]
+        window,
+        move |message| window.act(postio_core::Command::MarkReadOnDwell { message })
     ));
 
     // Reconnecting (or losing the connection) has to repaint a pane that is
@@ -415,6 +485,82 @@ struct Fill {
 }
 
 impl Fill {
+    /// Render one message into a reader of its own, for the conversation
+    /// pane (ADR 0015 Q4, #308).
+    ///
+    /// The same read as [`Fill::fill`] — the same body loader, the same
+    /// `root_type`, so the two cannot drift on what a message is — rendered
+    /// into a given [`Reader`] instead of into the window's one.
+    ///
+    /// # Why the late-arrival guard is different
+    ///
+    /// [`Fill::fill`] guards on `showing`, because the pane shows one message
+    /// and a held-down `j` means the answer that comes back is often for a
+    /// message nobody is looking at any more. A conversation entry shows one
+    /// *fixed* message for as long as it exists, so there is nothing to race:
+    /// the reader handed in either still exists, in which case the answer is
+    /// still its answer, or it has been dropped and rendering into it is
+    /// harmless. Reusing `showing` here would be worse than useless — it
+    /// would discard every message in the stack except the focused one.
+    fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
+        let offline = self.offline.get();
+        let answer = crate::search::ask(&self.database, &self.runtime, {
+            let blobs = self.blobs.clone();
+            move |connection| {
+                let body =
+                    crate::compose::load_body_or_reason(connection, &blobs, message, offline);
+                let fetched = MessageRepository::new(connection)
+                    .get(message)
+                    .ok()
+                    .flatten();
+                let (content_type, parts) = fetched
+                    .as_ref()
+                    .map(|message| (message.content_type.clone(), message.attachments.clone()))
+                    .unwrap_or_default();
+                let sender = fetched
+                    .as_ref()
+                    .and_then(|message| message.from.first().map(|from| from.address.clone()));
+                let envelope = fetched.map(Envelope::from);
+                Some((body, content_type, parts, envelope, sender))
+            }
+        });
+        glib::spawn_future_local({
+            let reader = reader.clone();
+            async move {
+                let Ok(Some((body, content_type, parts, envelope, sender))) = answer.recv().await
+                else {
+                    return;
+                };
+                if let Some(envelope) = &envelope {
+                    reader.set_message_header(
+                        &envelope.from,
+                        &envelope.to,
+                        &envelope.cc,
+                        envelope.subject.as_deref(),
+                        envelope.date,
+                    );
+                }
+                match body {
+                    crate::compose::Body::Ready(body) => {
+                        let root = root_type(content_type.as_deref(), &body, &parts);
+                        reader.set_attachments(&root, &parts);
+                        reader.render(&body, sender.as_deref());
+                    }
+                    crate::compose::Body::Absent(reason) => {
+                        let root = root_type(
+                            content_type.as_deref(),
+                            &postio_model::MessageBody::default(),
+                            &parts,
+                        );
+                        reader.set_attachments(&root, &parts);
+                        reader.show_absent(reason);
+                    }
+                }
+                reader.widget().set_visible(true);
+            }
+        });
+    }
+
     /// Put `row`'s message in the pane, or say why it cannot be.
     fn fill(&self, window: &Window, row: postio_gtk::list::Row) {
         let message = row.id;
