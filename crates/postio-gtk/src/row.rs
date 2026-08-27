@@ -154,13 +154,23 @@ pub fn accessible_label(row: &Row) -> String {
     if row.draft {
         parts.push("Draft".to_string());
     }
-    parts.push(format!(
-        "from {}",
-        row.from
-            .as_ref()
-            .map(|from| from.display().to_string())
-            .unwrap_or_else(|| "unknown sender".to_string())
-    ));
+    // A thread row is a conversation, and a screen reader has to hear that
+    // before it hears a name — otherwise "from Ada, 6 in thread" reads as a
+    // message from Ada that happens to have replies.
+    if row.is_thread() {
+        parts.push(format!(
+            "conversation with {}",
+            participants_line(&row.participants)
+        ));
+    } else {
+        parts.push(format!(
+            "from {}",
+            row.from
+                .as_ref()
+                .map(|from| from.display().to_string())
+                .unwrap_or_else(|| "unknown sender".to_string())
+        ));
+    }
     parts.push(
         row.subject
             .clone()
@@ -1466,13 +1476,97 @@ impl MessageRowView {
     }
 }
 
-/// What the sender column shows: the display name, or the address when
-/// there is no name to show instead.
+/// What the sender column shows.
+///
+/// On a message row that is the sender. On a thread row it is the people in
+/// the conversation, because that is what the row stands for (ADR 0015 Q2) —
+/// naming only the newest sender would make a six-person thread look like a
+/// message from whoever happened to reply last.
 fn initials_source(row: &Row) -> String {
+    if row.is_thread() {
+        let line = participants_line(&row.participants);
+        if !line.is_empty() {
+            return line;
+        }
+    }
     row.from
         .as_ref()
         .map(|from| from.display().to_string())
         .unwrap_or_else(|| "unknown sender".to_string())
+}
+
+/// How many names fit before the line starts eliding.
+const NAMES_SHOWN: usize = 3;
+
+/// The people in a conversation, short and newest-biased.
+///
+/// Short names, because the column is one line beside a subject and a
+/// snippet: a conversation between four people spelled out in full would push
+/// everything else off the row. First name where there is a display name, the
+/// address's local part where there is not — the same information a person
+/// uses to recognise a thread at a glance.
+///
+/// **Newest-biased when it elides.** Participants arrive in first-seen order,
+/// so the interesting end is the far one: who started the conversation still
+/// identifies it, and who spoke most recently is what changed since you last
+/// looked. Both survive; the middle is what goes.
+fn participants_line(participants: &[EmailAddress]) -> String {
+    let short = |address: &EmailAddress| -> String {
+        let display = address.display().to_string();
+        // A display name is "Ada Norwood"; an address falls back to its local
+        // part, which is what a sender without a name has to identify them.
+        let name = display
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_matches(|c: char| c == '"' || c == '\'')
+            .to_string();
+        if name.contains('@') {
+            return name.split('@').next().unwrap_or(&name).to_string();
+        }
+        if name.is_empty() { display } else { name }
+    };
+
+    // Distinct first, on the full name: one person writing five times is one
+    // name, and two different people can share a first name.
+    let mut distinct: Vec<&EmailAddress> = Vec::new();
+    for address in participants {
+        if !distinct
+            .iter()
+            .any(|seen| seen.display() == address.display())
+        {
+            distinct.push(address);
+        }
+    }
+
+    // One participant is not a crowd, and shortening it loses information for
+    // nothing: "Site Office" becomes "Site" and an address with no display
+    // name becomes half of itself. A conversation with one voice reads
+    // exactly like the message row it replaced, which is what the canvas
+    // draws.
+    if distinct.len() == 1 {
+        return distinct[0].display().to_string();
+    }
+
+    let mut names: Vec<String> = Vec::new();
+    for address in distinct {
+        let name = short(address);
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    match names.len() {
+        0 => String::new(),
+        n if n <= NAMES_SHOWN => names.join(", "),
+        _ => {
+            let last = names.len();
+            format!(
+                "{} .. {}",
+                names[0],
+                names[last - (NAMES_SHOWN - 1)..].join(", ")
+            )
+        }
+    }
 }
 
 /// The one number `lay_out` hands back; the layouts stay cached.
@@ -1485,6 +1579,113 @@ mod tests {
     use super::*;
     use chrono::{Local, TimeZone, Utc};
     use postio_model::ids::MessageId;
+
+    // -- the participants line (ADR 0015 Q2, #307) ------------------------
+
+    fn people(names: &[(&str, &str)]) -> Vec<EmailAddress> {
+        names
+            .iter()
+            .map(|(name, address)| EmailAddress::new(Some(*name), *address))
+            .collect()
+    }
+
+    #[test]
+    fn one_participant_keeps_their_whole_name() {
+        // A conversation with one voice has to read exactly like the message
+        // row it replaced — every row in a folder is a thread row now, so
+        // shortening here would shorten the ordinary case. "Site Office"
+        // must not become "Site".
+        assert_eq!(
+            participants_line(&people(&[("Ada Norwood", "ada@example.com")])),
+            "Ada Norwood"
+        );
+        assert_eq!(
+            participants_line(&people(&[("Site Office", "site@example.com")])),
+            "Site Office"
+        );
+    }
+
+    #[test]
+    fn a_short_conversation_names_everyone_in_it() {
+        assert_eq!(
+            participants_line(&people(&[
+                ("Ada Norwood", "ada@example.com"),
+                ("Quinn Abara", "quinn@example.net"),
+                ("Tove Bergstrom", "tove@example.com"),
+            ])),
+            "Ada, Quinn, Tove"
+        );
+    }
+
+    #[test]
+    fn a_long_conversation_keeps_both_ends_and_drops_the_middle() {
+        // Newest-biased: whoever started it still identifies the
+        // conversation, and whoever spoke last is what changed since you
+        // looked. The middle is what nobody scans for.
+        assert_eq!(
+            participants_line(&people(&[
+                ("Ada Norwood", "ada@example.com"),
+                ("Quinn Abara", "quinn@example.net"),
+                ("Jonas Vek", "jonas@example.org"),
+                ("Tove Bergstrom", "tove@example.com"),
+                ("Priya Raman", "priya@example.org"),
+            ])),
+            "Ada .. Tove, Priya"
+        );
+    }
+
+    #[test]
+    fn one_person_writing_repeatedly_is_named_once() {
+        assert_eq!(
+            participants_line(&people(&[
+                ("Ada Norwood", "ada@example.com"),
+                ("Ada Norwood", "ada@example.com"),
+                ("Quinn Abara", "quinn@example.net"),
+            ])),
+            "Ada, Quinn"
+        );
+    }
+
+    #[test]
+    fn one_person_writing_repeatedly_and_alone_is_not_a_crowd() {
+        // Deduplication happens before the "is this one voice" test, or a
+        // thread where one person replied to themselves would read as two.
+        assert_eq!(
+            participants_line(&people(&[
+                ("Site Office", "site@example.com"),
+                ("Site Office", "site@example.com"),
+            ])),
+            "Site Office"
+        );
+    }
+
+    #[test]
+    fn a_lone_sender_with_no_display_name_keeps_their_whole_address() {
+        assert_eq!(
+            participants_line(&[EmailAddress::new(None::<&str>, "ada.norwood@example.com")]),
+            "ada.norwood@example.com"
+        );
+    }
+
+    #[test]
+    fn a_crowd_with_no_display_names_is_named_by_local_parts() {
+        // Several addresses do not fit; their local parts do, and are what
+        // distinguishes them.
+        assert_eq!(
+            participants_line(&[
+                EmailAddress::new(None::<&str>, "ada@example.com"),
+                EmailAddress::new(None::<&str>, "quinn@example.net"),
+            ]),
+            "ada, quinn"
+        );
+    }
+
+    #[test]
+    fn no_participants_is_empty_rather_than_a_placeholder() {
+        // A message row has none, and `initials_source` falls back to the
+        // sender rather than drawing something that looks like a thread.
+        assert_eq!(participants_line(&[]), "");
+    }
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
@@ -1587,6 +1788,7 @@ mod tests {
             draft: false,
             has_attachments: false,
             thread_count: 1,
+            participants: Vec::new(),
         };
         assert_eq!(
             hints_for_row(&keymap, Some(&row)),
@@ -1660,6 +1862,7 @@ mod tests {
             draft: false,
             has_attachments: true,
             thread_count: 14,
+            participants: Vec::new(),
         };
         let label = accessible_label(&row);
         assert!(label.contains("Unread"), "{label}");
@@ -1695,6 +1898,7 @@ mod tests {
             draft: false,
             has_attachments: false,
             thread_count: 1,
+            participants: Vec::new(),
         };
 
         let none = accessible_label(&base);
@@ -1736,6 +1940,7 @@ mod tests {
             draft: false,
             has_attachments: false,
             thread_count: 1,
+            participants: Vec::new(),
         };
         assert!(!accessible_label(&row).is_empty());
     }

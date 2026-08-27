@@ -28,7 +28,7 @@
 
 use postio_core::bridge::{CommandSender, EventSink, EventStream, event_channel};
 use postio_core::state::{Selection, SharedState, ViewScope};
-use postio_core::{Command, CommandId, Event};
+use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
 use postio_model::MessageId;
@@ -78,6 +78,46 @@ pub fn mirror(
         }
         events
     });
+}
+
+/// A verb on a thread row acts on the conversation (ADR 0015 Q3).
+///
+/// A folder shows one row per thread, and "the row" is what a key means: `a`
+/// archives the conversation, not the one message the row happens to be drawn
+/// from. Acting on "the row" and acting on "one message of six" cannot both
+/// be what `a` means, and the row is what the user is looking at.
+///
+/// Three conditions, all of them narrowing:
+///
+/// * The verb must still be **aimed at the selection**. A hover action or a
+///   drop names its own rows and app state is explicitly told to take those
+///   at their word; re-aiming one would be second-guessing the user's point.
+/// * Nothing may be **explicitly selected**. With rows marked, the selection
+///   is the target and this is not the gesture being made. (Multi-selecting
+///   thread rows is its own predicate — the ADR's "selection excepts thread
+///   ids and the store expands members" — and is not this.)
+/// * The cursor row must **be** a thread row. In a query view it is not, and
+///   the verb goes on meaning what it always meant.
+fn aim_at_the_conversation(
+    list: &postio_gtk::list_view::MessageListView,
+    command: Command,
+) -> Command {
+    if !matches!(command.target(), Some(MessageTarget::Selection)) {
+        return command;
+    }
+    if !matches!(list.selection().selection(), Selection::These(rows) if rows.is_empty()) {
+        return command;
+    }
+    let Some(row) = list.cursor_row() else {
+        return command;
+    };
+    if !row.is_thread() {
+        return command;
+    }
+    let Some(thread) = row.thread else {
+        return command;
+    };
+    command.with_target(MessageTarget::Thread(thread))
 }
 
 /// The app-state scope a feed scope stands for.
@@ -131,6 +171,7 @@ pub fn install(
                 return;
             }
             let list = window.list();
+            let command = aim_at_the_conversation(&list, command);
             mirror(
                 &state,
                 &quiet,
@@ -286,6 +327,40 @@ mod tests {
                 MessageId::new(9)
             ]))
         );
+    }
+
+    // -- aiming a verb at a conversation (ADR 0015 Q3, #307) -------------
+    //
+    // `aim_at_the_conversation` needs a real list widget, so the behaviour
+    // over a wired application is covered by
+    // `tests/app_suite/thread_keystroke.rs`. What is unit-testable here is
+    // the narrowing: which commands it may rewrite at all.
+
+    #[test]
+    fn only_a_verb_still_aimed_at_the_selection_can_be_re_aimed() {
+        // A hover action or a drop names its own rows, and app state takes
+        // those at their word on purpose. Re-aiming one at the cursor's
+        // conversation would act on mail the user did not point at.
+        let named = Command::Archive {
+            target: MessageTarget::Messages(vec![MessageId::new(42)]),
+        };
+        assert!(
+            !matches!(named.target(), Some(MessageTarget::Selection)),
+            "a named target is the guard `aim_at_the_conversation` checks first"
+        );
+
+        let from_a_key = Command::Archive {
+            target: MessageTarget::Selection,
+        };
+        assert!(matches!(
+            from_a_key.target(),
+            Some(MessageTarget::Selection)
+        ));
+    }
+
+    #[test]
+    fn a_verb_that_does_not_act_on_messages_has_nothing_to_re_aim() {
+        assert!(Command::Undo.target().is_none());
     }
 
     #[test]

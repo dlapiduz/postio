@@ -63,10 +63,24 @@ impl MailStore for Fake {
         Box::pin(async move { Ok(total) })
     }
 
-    // This fake is about the message window; the thread window has its own
-    // coverage in `thread_store.rs`.
+    // This fake is about the message window, so it lists messages: the
+    // thread window has its own coverage in `thread_store.rs`.
+    fn list_page(&self, request: PageRequest) -> Read<'_, postio_runtime::store::ListPage> {
+        let page = self.message_page(request);
+        Box::pin(async move { page.await.map(postio_runtime::store::ListPage::Messages) })
+    }
+
+    fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
+        self.message_count(scope)
+    }
+
     fn thread_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ThreadPage> {
-        Box::pin(async { Ok(postio_runtime::store::ThreadPage { total: 0, rows: Vec::new() }) })
+        Box::pin(async {
+            Ok(postio_runtime::store::ThreadPage {
+                total: 0,
+                rows: Vec::new(),
+            })
+        })
     }
 
     fn thread_count(&self, _: ListScope) -> Read<'_, u32> {
@@ -165,6 +179,12 @@ async fn a_read_that_fails_carries_a_sentence_rather_than_a_sql_error() {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn message_count(&self, _: ListScope) -> Read<'_, u32> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
+        fn list_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ListPage> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
+        fn list_count(&self, _: ListScope) -> Read<'_, u32> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn thread_page(&self, _: PageRequest) -> Read<'_, postio_runtime::store::ThreadPage> {

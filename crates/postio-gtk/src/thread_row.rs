@@ -508,6 +508,7 @@ mod tests {
             draft: false,
             has_attachments: false,
             thread_count: 3,
+            participants: Vec::new(),
         }
     }
 

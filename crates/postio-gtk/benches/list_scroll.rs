@@ -76,6 +76,7 @@ fn message(id: i64) -> Row {
         draft: false,
         has_attachments: id % 4 == 0,
         thread_count: (id % 9) as u32 + 1,
+        participants: Vec::new(),
     }
 }
 
