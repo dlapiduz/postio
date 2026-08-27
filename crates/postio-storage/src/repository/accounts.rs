@@ -23,7 +23,8 @@ pub struct AccountRepository<'a> {
 const ACCOUNT_COLUMNS: &str = "\
 id, display_name, address, address_name, incoming_host, incoming_port, incoming_security,
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
-auth_method, enabled, created_at, default_signature_id, pending_deletion";
+auth_method, enabled, created_at, default_signature_id, pending_deletion,
+oauth_client_id, oauth_token_url, oauth_authorize_url, oauth_scopes";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -44,8 +45,10 @@ impl<'a> AccountRepository<'a> {
                                    incoming_port, incoming_security, incoming_username,
                                    outgoing_host, outgoing_port, outgoing_security,
                                    outgoing_username, auth_method, enabled, created_at,
-                                   default_signature_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                                   default_signature_id, oauth_client_id, oauth_token_url,
+                                   oauth_authorize_url, oauth_scopes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     ?16, ?17, ?18, ?19)",
             params![
                 account.display_name,
                 account.address.address,
@@ -62,6 +65,10 @@ impl<'a> AccountRepository<'a> {
                 account.enabled,
                 to_millis(account.created_at),
                 optional_signature_id(account.default_signature_id),
+                account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
+                account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
+                account.oauth.as_ref().map(|oauth| oauth.authorize_url.as_str()),
+                account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
             ],
         )?;
 
@@ -104,7 +111,9 @@ impl<'a> AccountRepository<'a> {
                     incoming_host = ?5, incoming_port = ?6, incoming_security = ?7,
                     incoming_username = ?8, outgoing_host = ?9, outgoing_port = ?10,
                     outgoing_security = ?11, outgoing_username = ?12, auth_method = ?13,
-                    enabled = ?14, created_at = ?15, default_signature_id = ?16
+                    enabled = ?14, created_at = ?15, default_signature_id = ?16,
+                    oauth_client_id = ?17, oauth_token_url = ?18,
+                    oauth_authorize_url = ?19, oauth_scopes = ?20
               WHERE id = ?1",
             params![
                 id,
@@ -123,6 +132,10 @@ impl<'a> AccountRepository<'a> {
                 account.enabled,
                 to_millis(account.created_at),
                 optional_signature_id(account.default_signature_id),
+                account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
+                account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
+                account.oauth.as_ref().map(|oauth| oauth.authorize_url.as_str()),
+                account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
             ],
         )?;
         if changed == 0 {
@@ -554,6 +567,18 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
         default_signature_id: row.get::<_, Option<i64>>(15)?.map(SignatureId::new),
         created_at: from_millis(row.get(14)?),
         pending_deletion: row.get(16)?,
+        oauth: match (
+            row.get::<_, Option<String>>(17)?,
+            row.get::<_, Option<String>>(18)?,
+        ) {
+            (Some(client_id), Some(token_url)) => Some(postio_model::account::OAuthConfig {
+                client_id,
+                token_url,
+                authorize_url: row.get::<_, Option<String>>(19)?.unwrap_or_default(),
+                scopes: row.get::<_, Option<String>>(20)?.unwrap_or_default(),
+            }),
+            _ => None,
+        },
     })
 }
 
