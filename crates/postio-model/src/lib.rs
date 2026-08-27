@@ -70,7 +70,7 @@ pub use account::{
 };
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
-pub use contact::Contact;
+pub use contact::{Contact, ContactSource};
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};

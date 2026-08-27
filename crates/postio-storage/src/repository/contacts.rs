@@ -11,9 +11,9 @@
 //! the *user* sets overrides it and is never overwritten by a later sighting.
 
 use chrono::{DateTime, Utc};
-use postio_model::{AccountId, Contact, ContactId, EmailAddress, Message};
+use postio_model::{AccountId, Contact, ContactId, ContactSource, EmailAddress, Message};
 use rusqlite::types::Value;
-use rusqlite::{Connection, Row, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
 use super::{from_millis, to_millis};
 use crate::error::{Error, Result};
@@ -24,8 +24,8 @@ pub struct ContactRepository<'a> {
     connection: &'a Connection,
 }
 
-const CONTACT_COLUMNS: &str = "\
-id, account_id, name, address, address_name, times_seen, last_seen_at";
+const CONTACT_COLUMNS: &str =
+    "id, account_id, name, address, address_name, times_seen, last_seen_at, source, suppressed";
 
 impl<'a> ContactRepository<'a> {
     /// Borrows a connection.
@@ -142,6 +142,10 @@ impl<'a> ContactRepository<'a> {
     /// The match is a prefix on the address, on the local part, and on any word
     /// of the display name: people type the name they remember, and they type
     /// surnames as often as first names.
+    ///
+    /// A suppressed contact (ADR 0007 Q2) never matches: it is a deleted
+    /// `mail` contact whose row survives only to stop the next sighting from
+    /// resurrecting it, so autocomplete must treat it as gone.
     pub fn search(
         &self,
         account_id: Option<AccountId>,
@@ -153,7 +157,7 @@ impl<'a> ContactRepository<'a> {
         let limit_index = text + 1;
         let mut statement = self.connection.prepare(&format!(
             "SELECT {CONTACT_COLUMNS} FROM contacts
-              WHERE {} AND (
+              WHERE {} AND suppressed = 0 AND (
                     ?{text} = ''
                  OR address_normalized LIKE ?{text} || '%'
                  OR lower(coalesce(name, '')) LIKE ?{text} || '%'
@@ -173,10 +177,74 @@ impl<'a> ContactRepository<'a> {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Creates a contact directly, with no sighting required.
+    ///
+    /// If a `mail`-sourced row already exists for this address, this is the
+    /// promotion ADR 0007 Q1 describes: the same row becomes `source =
+    /// 'user'` (and unsuppressed, if it had been deleted) rather than a
+    /// second row for the same address. `times_seen`/`last_seen_at` are left
+    /// alone either way — creating or promoting a contact is not a sighting.
+    pub fn create(
+        &self,
+        account_id: Option<AccountId>,
+        address: &EmailAddress,
+        name: Option<&str>,
+    ) -> Result<ContactId> {
+        let normalized = address.normalized();
+        let mut arguments = account_argument(account_id);
+        arguments.push(Value::Text(normalized.clone()));
+        let existing: Option<i64> = self
+            .connection
+            .query_row(
+                &format!(
+                    "SELECT id FROM contacts WHERE {} AND address_normalized = ?{}",
+                    account_filter(account_id),
+                    first_free(account_id)
+                ),
+                params_from_iter(arguments),
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match existing {
+            Some(id) => {
+                self.connection.execute(
+                    "UPDATE contacts
+                        SET source = 'user', suppressed = 0,
+                            name = coalesce(?2, name)
+                      WHERE id = ?1",
+                    params![id, name],
+                )?;
+                Ok(ContactId::new(id))
+            }
+            None => {
+                self.connection.execute(
+                    "INSERT INTO contacts (account_id, name, address, address_name,
+                                           address_normalized, source)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'user')",
+                    params![
+                        account_id.map(AccountId::get),
+                        name,
+                        address.address,
+                        address.name,
+                        normalized,
+                    ],
+                )?;
+                Ok(ContactId::new(self.connection.last_insert_rowid()))
+            }
+        }
+    }
+
     /// Sets, or clears, the name the user chose for a contact.
+    ///
+    /// A deliberate edit is the promotion ADR 0007 Q1 describes: a `mail`
+    /// row the user touches becomes `source = 'user'` on the same row.
     pub fn set_name(&self, id: ContactId, name: Option<&str>) -> Result<()> {
         let changed = self.connection.execute(
-            "UPDATE contacts SET name = ?2 WHERE id = ?1",
+            "UPDATE contacts
+                SET name = ?2,
+                    source = CASE WHEN source = 'mail' THEN 'user' ELSE source END
+              WHERE id = ?1",
             params![id.get(), name],
         )?;
         if changed == 0 {
@@ -188,12 +256,40 @@ impl<'a> ContactRepository<'a> {
         Ok(())
     }
 
-    /// Deletes a contact, returning whether there was one.
+    /// Deletes a contact, returning whether there was one to act on.
+    ///
+    /// ADR 0007 Q2: a `mail`-sourced contact is never really gone — the next
+    /// sync pass that sees a message from that address would otherwise
+    /// resurrect it, `times_seen` reset to 1, looking brand new. So deleting
+    /// one only **suppresses** it: the row survives, sightings keep counting,
+    /// but it drops out of autocomplete, the `@` finder and any contact list.
+    /// A `user`-sourced contact has no sighting to resurrect it from, so
+    /// deleting one removes the row for real.
     pub fn delete(&self, id: ContactId) -> Result<bool> {
-        let deleted = self
+        let source: Option<String> = self
             .connection
-            .execute("DELETE FROM contacts WHERE id = ?1", [id.get()])?;
-        Ok(deleted > 0)
+            .query_row(
+                "SELECT source FROM contacts WHERE id = ?1",
+                [id.get()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match source.as_deref() {
+            None => Ok(false),
+            Some("user") => {
+                let deleted = self
+                    .connection
+                    .execute("DELETE FROM contacts WHERE id = ?1", [id.get()])?;
+                Ok(deleted > 0)
+            }
+            Some(_) => {
+                let changed = self.connection.execute(
+                    "UPDATE contacts SET suppressed = 1 WHERE id = ?1",
+                    [id.get()],
+                )?;
+                Ok(changed > 0)
+            }
+        }
     }
 }
 
@@ -282,6 +378,7 @@ fn first_free(account_id: Option<AccountId>) -> usize {
 }
 
 fn read_contact(row: &Row<'_>) -> rusqlite::Result<Contact> {
+    let source: String = row.get(7)?;
     Ok(Contact {
         id: ContactId::new(row.get(0)?),
         account_id: row.get::<_, Option<i64>>(1)?.map(AccountId::new),
@@ -289,5 +386,9 @@ fn read_contact(row: &Row<'_>) -> rusqlite::Result<Contact> {
         address: EmailAddress::new(row.get::<_, Option<String>>(4)?, row.get::<_, String>(3)?),
         times_seen: row.get(5)?,
         last_seen_at: row.get::<_, Option<i64>>(6)?.map(from_millis),
+        source: ContactSource::from_name(&source).unwrap_or_else(|| {
+            unreachable!("the `source` CHECK constraint admits no other value: {source}")
+        }),
+        suppressed: row.get::<_, i64>(8)? != 0,
     })
 }
