@@ -39,6 +39,25 @@ fn cached(connection: &Connection, mailbox: MailboxId) -> (u32, u32, u32) {
     (counts.total, counts.unread, counts.flagged)
 }
 
+/// The same three columns, read directly rather than through
+/// [`MailboxRepository::counts`].
+///
+/// Only for a schema built from a migration prefix that predates
+/// `snoozed_count` (#493, migration 0021): the repository's own query
+/// selects that column unconditionally, which is correct for every real
+/// database (migrations always run to head before anything queries it) and
+/// wrong for a fixture that deliberately freezes an old schema to prove a
+/// later migration repairs it.
+fn cached_before_snooze_existed(connection: &Connection, mailbox: MailboxId) -> (u32, u32, u32) {
+    connection
+        .query_row(
+            "SELECT total_count, unread_count, flagged_count FROM mailboxes WHERE id = ?1",
+            [mailbox.get()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read the cached counts")
+}
+
 /// A message with only what the counts care about.
 fn a_message(account: &Account, mailbox: MailboxId, uid: u32, flags: &[Flag]) -> Message {
     let at = Utc
@@ -265,7 +284,7 @@ fn a_store_written_without_the_counts_repairs_itself_on_open() {
     }
     let inbox = MailboxId::new(1);
     assert_eq!(
-        cached(&connection, inbox),
+        cached_before_snooze_existed(&connection, inbox),
         (0, 0, 0),
         "the state the bug leaves behind"
     );

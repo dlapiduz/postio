@@ -48,6 +48,8 @@ pub enum ListScope {
     Account(AccountId),
     /// The sidebar's "Flagged" view.
     Flagged(AccountId),
+    /// The sidebar's "Snoozed" view.
+    Snoozed(AccountId),
     /// One conversation, wherever its messages are filed.
     ///
     /// The drill-in used to build the thread from the rows the message list

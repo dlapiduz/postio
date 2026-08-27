@@ -59,6 +59,10 @@ pub enum UndoKind {
     MarkUnread,
     /// A label was attached to messages.
     Label,
+    /// Messages were snoozed.
+    Snooze,
+    /// Messages were unsnoozed.
+    Unsnooze,
 }
 
 impl UndoKind {
@@ -74,6 +78,8 @@ impl UndoKind {
             UndoKind::MarkRead => format!("Marked {count} {messages} as read"),
             UndoKind::MarkUnread => format!("Marked {count} {messages} as unread"),
             UndoKind::Label => format!("Labelled {count} {messages}"),
+            UndoKind::Snooze => format!("Snoozed {count} {messages}"),
+            UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
         }
     }
 }

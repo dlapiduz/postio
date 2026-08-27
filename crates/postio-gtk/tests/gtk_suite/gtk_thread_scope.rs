@@ -75,6 +75,7 @@ impl MailboxSource for Split {
                 total: IN_THIS_FOLDER as u32,
                 unread: 0,
                 flagged: 0,
+                snoozed: 0,
             };
             mailbox
         };

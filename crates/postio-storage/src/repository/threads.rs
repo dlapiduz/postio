@@ -243,8 +243,7 @@ first_at, last_at";
 /// as `{alias}.{MEMBER}` or bare `{MEMBER}`, so the snooze half is written
 /// without an alias of its own — `snoozed_until` names no other table in
 /// any query here, so it resolves the same way regardless.
-const MEMBER: &str =
-    "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+const MEMBER: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
 
 impl<'a> ThreadRepository<'a> {
     /// Borrows a connection.

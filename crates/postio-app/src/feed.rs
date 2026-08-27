@@ -78,6 +78,7 @@ impl MessageSource for Sources {
             scope: match request.scope {
                 FeedScope::Mailbox(id) => ListScope::Mailbox(id),
                 FeedScope::Flagged(account) => ListScope::Flagged(account),
+                FeedScope::Snoozed(account) => ListScope::Snoozed(account),
                 FeedScope::Thread(id) => ListScope::Thread(id),
             },
             offset: request.offset,
@@ -174,6 +175,7 @@ fn scope_name(scope: FeedScope) -> String {
     match scope {
         FeedScope::Mailbox(id) => format!("mailbox {}", id.get()),
         FeedScope::Flagged(account) => format!("flagged in account {}", account.get()),
+        FeedScope::Snoozed(account) => format!("snoozed in account {}", account.get()),
         FeedScope::Thread(id) => format!("thread {}", id.get()),
     }
 }

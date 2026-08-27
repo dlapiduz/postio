@@ -53,6 +53,7 @@ impl Store {
                 total,
                 unread: 0,
                 flagged,
+                snoozed: 0,
             };
             mailbox
         };
@@ -83,7 +84,7 @@ impl MessageSource for Store {
             FeedScope::Mailbox(_) => 0,
             // This store is about which scope the sidebar asked for; a
             // drill-in is `gtk_thread_scope.rs`.
-            FeedScope::Thread(_) => 0,
+            FeedScope::Snoozed(_) | FeedScope::Thread(_) => 0,
         };
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
@@ -132,12 +133,12 @@ pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     let _ = &feeds;
     // The folder read crosses to the source and back, so wait for the row to
     // exist rather than for a number of frames.
-    pump_until(|| labels(&window).len() == 4);
+    pump_until(|| labels(&window).len() == 5);
 
     // ── it is in the sidebar, where the canvas puts it ───────────────────
     assert_eq!(
         labels(&window),
-        ["Inbox", "Flagged", "Drafts", "Archive"],
+        ["Inbox", "Flagged", "Snoozed", "Drafts", "Archive"],
         "canvas 1b: Flagged sits under Inbox, above the rest"
     );
     assert!(

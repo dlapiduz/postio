@@ -27,6 +27,7 @@ impl From<ListScope> for StorageScope {
             ListScope::Mailbox(id) => StorageScope::Mailbox(id),
             ListScope::Account(id) => StorageScope::Account(id),
             ListScope::Flagged(id) => StorageScope::Flagged(id),
+            ListScope::Snoozed(id) => StorageScope::Snoozed(id),
             ListScope::Thread(id) => StorageScope::Thread(id),
         }
     }
@@ -406,9 +407,9 @@ fn thread_query(
             Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
         }
         ListScope::Account(account) => Ok(ThreadListQuery::account(account).limit(limit)),
-        ListScope::Flagged(_) | ListScope::Thread(_) => Err(StoreError::new(
-            "That view lists messages rather than conversations",
-        )),
+        ListScope::Flagged(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => Err(
+            StoreError::new("That view lists messages rather than conversations"),
+        ),
     }
 }
 

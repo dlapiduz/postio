@@ -1559,6 +1559,8 @@ fn is_message_action(id: CommandId) -> bool {
             | Command::Move { .. }
             | Command::Flag { .. }
             | Command::MarkUnread { .. }
+            | Command::Snooze { .. }
+            | Command::Unsnooze { .. }
             | Command::AddLabel { .. }
             | Command::Reply { .. }
             | Command::ReplyAll { .. }

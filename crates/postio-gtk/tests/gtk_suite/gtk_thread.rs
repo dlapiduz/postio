@@ -268,6 +268,7 @@ impl MailboxSource for Mailbox200 {
             total: THREAD_SIZE as u32,
             unread: 40,
             flagged: 0,
+            snoozed: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }

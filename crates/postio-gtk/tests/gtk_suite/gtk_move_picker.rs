@@ -142,6 +142,7 @@ fn folders() -> Vec<Mailbox> {
             total: 100,
             unread: 0,
             flagged: 0,
+            snoozed: 0,
         };
         mailbox
     };
