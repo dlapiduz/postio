@@ -67,7 +67,10 @@ impl<'a> AccountRepository<'a> {
                 optional_signature_id(account.default_signature_id),
                 account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
                 account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
-                account.oauth.as_ref().map(|oauth| oauth.authorize_url.as_str()),
+                account
+                    .oauth
+                    .as_ref()
+                    .map(|oauth| oauth.authorize_url.as_str()),
                 account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
             ],
         )?;
@@ -134,7 +137,10 @@ impl<'a> AccountRepository<'a> {
                 optional_signature_id(account.default_signature_id),
                 account.oauth.as_ref().map(|oauth| oauth.client_id.as_str()),
                 account.oauth.as_ref().map(|oauth| oauth.token_url.as_str()),
-                account.oauth.as_ref().map(|oauth| oauth.authorize_url.as_str()),
+                account
+                    .oauth
+                    .as_ref()
+                    .map(|oauth| oauth.authorize_url.as_str()),
                 account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
             ],
         )?;

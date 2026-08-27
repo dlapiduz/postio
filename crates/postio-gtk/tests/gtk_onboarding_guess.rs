@@ -28,12 +28,12 @@ fn a_guess_fills_the_manual_form_and_opens_it() {
         imap: Server {
             host: "imap.example.com".to_owned(),
             port: 993,
-            tls: true,
+            security: Default::default(),
         },
         smtp: Server {
             host: "smtp.example.com".to_owned(),
             port: 465,
-            tls: true,
+            security: Default::default(),
         },
         login: "lena@example.com".to_owned(),
         source: "a common-name guess".to_owned(),
