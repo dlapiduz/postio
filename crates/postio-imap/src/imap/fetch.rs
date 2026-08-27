@@ -277,6 +277,7 @@ fn build_fetched_message(
     })?;
 
     Ok(FetchedMessage {
+        remote_id: crate::backend::identity::remote_id(uid_validity, uid),
         uid,
         uid_validity,
         mod_seq,
