@@ -686,6 +686,41 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* Which account a message arrived in (#185).
+ *
+ * Only ever drawn in the reading pane -- never on a list row, so the row's
+ * 3px left edge keeps meaning `selected` and nothing else. Mono, dim and
+ * small: it is metadata, and it sits above the subject because "whose is
+ * this?" is the question a mixed list leaves you holding.
+ *
+ * The swatch is a second signal, never the only one -- the account's name is
+ * beside it, so this reads the same to anyone who cannot tell the hues apart. */
+.postio-message-header-account {
+  margin-bottom: var(--postio-space-1);
+}
+
+.postio-message-header-account-name {
+  font-family: var(--postio-font-mono);
+  font-size: 0.85rem;
+  color: var(--postio-dim);
+}
+
+.postio-account-swatch {
+  min-width: 3px;
+  min-height: 12px;
+  border-radius: var(--postio-radius-sm);
+  background: var(--postio-account-0);
+}
+
+.postio-account-swatch.postio-account-0 { background: var(--postio-account-0); }
+.postio-account-swatch.postio-account-1 { background: var(--postio-account-1); }
+.postio-account-swatch.postio-account-2 { background: var(--postio-account-2); }
+.postio-account-swatch.postio-account-3 { background: var(--postio-account-3); }
+.postio-account-swatch.postio-account-4 { background: var(--postio-account-4); }
+.postio-account-swatch.postio-account-5 { background: var(--postio-account-5); }
+.postio-account-swatch.postio-account-6 { background: var(--postio-account-6); }
+.postio-account-swatch.postio-account-7 { background: var(--postio-account-7); }
+
 .postio-message-header-subject {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
