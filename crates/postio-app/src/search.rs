@@ -746,7 +746,8 @@ mod tests {
             &query,
             Scope::AllMail,
             postio_search::ResultOrder::Relevance,
-        ).expect("a search")
+        )
+        .expect("a search")
     }
 
     #[test]
