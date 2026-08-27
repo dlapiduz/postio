@@ -1,0 +1,11 @@
+-- Marks an account for removal without deleting it yet (#464, ADR 0005 Q6/Q6a).
+--
+-- "Remove" in the settings panel needs a real Recovery::Undo, not a
+-- confirmation dialog -- the registry rejects a destructive command with
+-- Recovery::None at registration, and Q6 chose Undo deliberately. Undo needs
+-- something to undo, so removal cannot be the immediate `DELETE ... CASCADE`
+-- `AccountRepository::delete` already does: that runs once, and it runs at
+-- the next startup, before any engine is created, over every row still
+-- marked here -- never live, so a crash before the undo toast expires is
+-- harmless rather than a race against a cascade already in flight.
+ALTER TABLE accounts ADD COLUMN pending_deletion INTEGER NOT NULL DEFAULT 0;
