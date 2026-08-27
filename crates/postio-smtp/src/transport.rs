@@ -170,6 +170,10 @@ fn install_crypto_provider() {
 pub struct RustlsConnector {
     connector: TlsConnector,
     timeout: Duration,
+    /// Where every connection attempt is reported (#151), or nowhere: a
+    /// connector a test builds without a sink still connects, it just
+    /// proves nothing.
+    egress: Option<Arc<dyn postio_model::egress::EgressSink>>,
 }
 
 impl fmt::Debug for RustlsConnector {
@@ -192,6 +196,7 @@ impl RustlsConnector {
         Ok(Self {
             connector: TlsConnector::from(Arc::new(config)),
             timeout: DEFAULT_CONNECT_TIMEOUT,
+            egress: None,
         })
     }
 
@@ -201,9 +206,16 @@ impl RustlsConnector {
         self
     }
 
+    /// Report every connection attempt to `sink` — the egress log's seam
+    /// (#151). Success and failure alike, same as the IMAP transport.
+    pub fn with_egress(mut self, sink: Arc<dyn postio_model::egress::EgressSink>) -> Self {
+        self.egress = Some(sink);
+        self
+    }
+
     async fn tcp(&self, host: &str, port: u16) -> Result<TcpStream, TransportError> {
         let attempt = tokio::time::timeout(self.timeout, TcpStream::connect((host, port)));
-        match attempt.await {
+        let outcome = match attempt.await {
             Ok(Ok(stream)) => Ok(stream),
             Ok(Err(error)) => Err(TransportError::Connect {
                 host: host.to_owned(),
@@ -215,7 +227,24 @@ impl RustlsConnector {
                 port,
                 reason: format!("no answer within {}s", self.timeout.as_secs()),
             }),
+        };
+        // At the TCP stage, before any handshake — "a connection was opened
+        // to this host" is the privacy-relevant fact.
+        if let Some(egress) = &self.egress {
+            egress.record(postio_model::egress::EgressEvent {
+                at: chrono::Utc::now(),
+                subsystem: postio_model::egress::EgressSubsystem::Smtp,
+                account: None,
+                host: host.to_owned(),
+                port,
+                outcome: if outcome.is_ok() {
+                    postio_model::egress::EgressOutcome::Connected
+                } else {
+                    postio_model::egress::EgressOutcome::Failed
+                },
+            });
         }
+        outcome
     }
 
     async fn handshake(

@@ -71,7 +71,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 17] = [
+static MIGRATIONS: [Migration; 18] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -156,6 +156,11 @@ static MIGRATIONS: [Migration; 17] = [
         version: 17,
         name: "backfill_exclusion",
         sql: include_str!("0017_backfill_exclusion.sql"),
+    },
+    Migration {
+        version: 18,
+        name: "egress_log",
+        sql: include_str!("0018_egress_log.sql"),
     },
 ];
 
