@@ -32,6 +32,7 @@ fn canvas_row() -> Row {
         draft: false,
         has_attachments: true,
         thread_count: 14,
+        participants: Vec::new(),
     }
 }
 
@@ -171,6 +172,7 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     // naming a key that does that is teaching the wrong keyboard.
     row.set_row(Some(Row {
         thread_count: 1,
+        participants: Vec::new(),
         ..canvas_row()
     }));
     pump();

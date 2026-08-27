@@ -17,8 +17,8 @@ use postio_storage::repository::{
 use postio_storage::{Database, Pool};
 
 use crate::store::{
-    ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError, ThreadPage,
-    ThreadSummary,
+    ListPage, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
+    ThreadPage, ThreadSummary,
 };
 
 impl From<ListScope> for StorageScope {
@@ -180,6 +180,44 @@ impl SqliteStore {
             Ok(MessagePage { total, rows })
         })
         .await
+    }
+
+    /// Whether `scope` lists conversations, which only the store can answer.
+    ///
+    /// Folders thread and query views list messages (ADR 0015) — with one
+    /// exception the ADR did not have to name because it was writing about
+    /// reading mail: **Drafts does not thread.** A draft is a document you
+    /// are writing, not a conversation you are triaging, and two drafts
+    /// answering the same thread would collapse into one row with no way to
+    /// open the other. Sent does thread, because a sent message really is
+    /// part of the conversation it belongs to.
+    async fn lists_conversations(&self, scope: ListScope) -> Result<bool, StoreError> {
+        let ListScope::Mailbox(mailbox) = scope else {
+            return Ok(matches!(scope, ListScope::Account(_)));
+        };
+        self.read(move |connection| {
+            let folder = MailboxRepository::new(connection)
+                .get(mailbox)?
+                .ok_or_else(|| StoreError::new("That folder is no longer here"))?;
+            Ok(folder.role != postio_model::mailbox::MailboxRole::Drafts)
+        })
+        .await
+    }
+
+    async fn read_list_page(&self, request: PageRequest) -> Result<ListPage, StoreError> {
+        if self.lists_conversations(request.scope).await? {
+            self.read_thread_page(request).await.map(ListPage::Threads)
+        } else {
+            self.read_page(request).await.map(ListPage::Messages)
+        }
+    }
+
+    async fn read_list_count(&self, scope: ListScope) -> Result<u32, StoreError> {
+        if self.lists_conversations(scope).await? {
+            self.read_thread_count(scope).await
+        } else {
+            self.read_count(scope).await
+        }
     }
 
     /// One page of the threaded list.
@@ -443,6 +481,14 @@ impl MailStore for SqliteStore {
 
     fn message_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_count(scope))
+    }
+
+    fn list_page(&self, request: PageRequest) -> Read<'_, ListPage> {
+        Box::pin(self.read_list_page(request))
+    }
+
+    fn list_count(&self, scope: ListScope) -> Read<'_, u32> {
+        Box::pin(self.read_list_count(scope))
     }
 
     fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage> {

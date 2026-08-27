@@ -33,6 +33,7 @@ use rusqlite::{Connection, Row, params, params_from_iter};
 use super::messages::{LIST_COLUMNS, MessageListRow, placeholders, read_list_row};
 use super::{from_millis, require_persisted, to_millis};
 use crate::error::{Error, Result};
+use crate::repository::MessageRepository;
 
 /// How many threads a page holds when the caller does not say.
 pub const DEFAULT_THREAD_PAGE_SIZE: u32 = 50;
@@ -50,10 +51,16 @@ pub enum ThreadOrder {
 /// A position in the thread list: the sort key of the last row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadCursor {
-    /// The row's `last_at`.
+    /// The row's recency: the sort key of the list this cursor resumes.
     pub last_at: DateTime<Utc>,
-    /// The row's id, which makes the order total.
-    pub id: ThreadId,
+    /// The tiebreaker that makes the order total.
+    ///
+    /// Which id depends on what the list is ordered over — the thread's in an
+    /// account-scoped list, the representative message's in a folder-scoped
+    /// one. It is only ever compared against the same column it came from, so
+    /// it is carried as the integer it is rather than pretending to be one
+    /// kind of id in both.
+    pub id: i64,
 }
 
 /// One window of the thread list.
@@ -114,8 +121,15 @@ impl ThreadListQuery {
 /// One row of the threaded message list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadListRow {
-    /// Local id.
-    pub id: ThreadId,
+    /// The conversation this row stands for.
+    ///
+    /// `None` for a message that belongs to no thread. Threading runs on
+    /// every message sync files, but it can fail — `postio-sync`'s send path
+    /// ignores the result outright — and **a list that hides mail because a
+    /// derived column is null is worse than a list that shows it ungrouped**.
+    /// So an unthreaded message is a conversation of one rather than a row
+    /// that does not exist.
+    pub id: Option<ThreadId>,
     /// Normalized subject of the conversation's root message.
     pub subject: Option<String>,
     /// Everyone who has written in the thread, in first-seen order.
@@ -144,6 +158,13 @@ pub struct ThreadListRow {
     ///
     /// `None` only for a thread whose messages have all been hidden.
     pub latest: Option<MessageListRow>,
+    /// The tiebreaker this row sorts by, for [`ThreadListRow::cursor`].
+    ///
+    /// The thread's id in an account-scoped list, the representative
+    /// message's in a folder-scoped one — the two windows are ordered over
+    /// different columns, and a cursor is only ever compared against the one
+    /// it came from.
+    pub sort_id: i64,
 }
 
 impl ThreadListRow {
@@ -151,7 +172,7 @@ impl ThreadListRow {
     pub fn cursor(&self) -> ThreadCursor {
         ThreadCursor {
             last_at: self.last_at,
-            id: self.id,
+            id: self.sort_id,
         }
     }
 
@@ -385,34 +406,74 @@ impl<'a> ThreadRepository<'a> {
         }
         if let Some(cursor) = query.after {
             arguments.push(to_millis(cursor.last_at));
-            arguments.push(cursor.id.get());
+            arguments.push(cursor.id);
         }
+        let scoped = query.mailbox.is_some();
         let rows = statement.query_map(params_from_iter(arguments), |row| {
-            Ok(ThreadListRow {
-                id: ThreadId::new(row.get(0)?),
-                subject: row.get(2)?,
-                participants: Vec::new(),
-                message_count: row.get(3)?,
-                unread_count: row.get(4)?,
-                has_attachments: row.get(5)?,
-                is_flagged: row.get(6)?,
-                first_at: from_millis(row.get(7)?),
-                last_at: from_millis(row.get(8)?),
-                latest: None,
-            })
+            let thread = row.get::<_, i64>(0)?;
+            Ok((
+                ThreadListRow {
+                    // Zero is the folder window's spelling of "no thread": an
+                    // id column cannot be null and still be compared, so the
+                    // query coalesces and this un-coalesces.
+                    id: (thread != 0).then(|| ThreadId::new(thread)),
+                    subject: row.get(2)?,
+                    participants: Vec::new(),
+                    message_count: row.get(3)?,
+                    unread_count: row.get(4)?,
+                    has_attachments: row.get(5)?,
+                    is_flagged: row.get(6)?,
+                    first_at: from_millis(row.get(7)?),
+                    last_at: from_millis(row.get(8)?),
+                    latest: None,
+                    sort_id: if scoped { row.get(9)? } else { thread },
+                },
+                // The representative's id, which the folder window already
+                // knows and the account window has to look up.
+                scoped.then(|| MessageId::new(row.get::<_, i64>(9).unwrap_or_default())),
+            ))
         })?;
-        let mut page: Vec<ThreadListRow> = rows.collect::<Result<_, _>>()?;
+        let mut page: Vec<(ThreadListRow, Option<MessageId>)> = rows.collect::<Result<_, _>>()?;
         drop(statement);
 
         // Two more statements for the whole page, rather than two per row.
-        let ids: Vec<ThreadId> = page.iter().map(|row| row.id).collect();
+        let ids: Vec<ThreadId> = page.iter().filter_map(|(row, _)| row.id).collect();
         let mut participants = self.participants_for(&ids)?;
-        let mut latest = self.latest_messages_for(&ids, query.mailbox)?;
-        for row in &mut page {
-            row.participants = participants.remove(&row.id).unwrap_or_default();
-            row.latest = latest.remove(&row.id);
+        if scoped {
+            // The window already named the representative of every row, so
+            // this is one read by id rather than a window function over the
+            // conversations.
+            let wanted: Vec<MessageId> = page.iter().filter_map(|(_, id)| *id).collect();
+            let mut latest: HashMap<MessageId, MessageListRow> =
+                MessageRepository::new(self.connection)
+                    .rows_for(&wanted)?
+                    .into_iter()
+                    .map(|row| (row.id, row))
+                    .collect();
+            for (row, representative) in &mut page {
+                if let Some(id) = row.id {
+                    row.participants = participants.remove(&id).unwrap_or_default();
+                }
+                row.latest = representative.and_then(|id| latest.remove(&id));
+                // A conversation of one has one participant: whoever wrote
+                // it. Without this an unthreaded message would draw a blank
+                // sender line.
+                if row.participants.is_empty()
+                    && let Some(from) = row.latest.as_ref().and_then(|row| row.from.clone())
+                {
+                    row.participants = vec![from];
+                }
+            }
+        } else {
+            let mut latest = self.latest_messages_for(&ids, None)?;
+            for (row, _) in &mut page {
+                if let Some(id) = row.id {
+                    row.participants = participants.remove(&id).unwrap_or_default();
+                    row.latest = latest.remove(&id);
+                }
+            }
         }
-        Ok(page)
+        Ok(page.into_iter().map(|(row, _)| row).collect())
     }
 
     /// The SQL a thread page runs, for `EXPLAIN QUERY PLAN`.
@@ -452,28 +513,36 @@ impl<'a> ThreadRepository<'a> {
         };
 
         let cursor = if query.after.is_some() {
-            " AND (threads.last_at, threads.id) < (?3, ?4)"
+            " AND (rep.received_at, rep.id) < (?3, ?4)"
         } else {
             ""
         };
-        // The folder's slice of one conversation. Spelled once and reused, so
-        // the three subqueries below cannot drift apart on what counts as a
+        // The folder's slice of this row's conversation. Spelled once and
+        // reused, so the aggregates cannot drift apart on what counts as a
         // member here.
         let slice = format!(
             "FROM messages m
-              WHERE m.thread_id = threads.id AND m.mailbox_id = ?2 AND m.{MEMBER}"
+              WHERE m.thread_id = rep.thread_id AND m.mailbox_id = ?2 AND m.{MEMBER}"
         );
         format!(
-            "SELECT threads.id, threads.account_id, threads.subject,
-                    threads.message_count,
-                    (SELECT count(*) {slice} AND m.seen = 0),
-                    threads.has_attachments,
-                    coalesce((SELECT max(m.flagged) {slice}), 0),
-                    threads.first_at, threads.last_at
-               FROM threads
-              WHERE threads.account_id = ?1
-                AND EXISTS (SELECT 1 {slice}){cursor}
-              ORDER BY threads.last_at DESC, threads.id DESC LIMIT {}",
+            "SELECT coalesce(rep.thread_id, 0), ?1, rep.subject,
+                    coalesce((SELECT t.message_count FROM threads t
+                               WHERE t.id = rep.thread_id), 1),
+                    coalesce((SELECT count(*) {slice} AND m.seen = 0),
+                             CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
+                    coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
+                    coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
+                    rep.received_at, rep.received_at, rep.id
+               FROM messages rep
+              WHERE rep.mailbox_id = ?2 AND rep.{MEMBER}
+                AND NOT EXISTS (
+                        SELECT 1 FROM messages newer
+                         WHERE newer.mailbox_id = ?2 AND newer.{MEMBER}
+                           AND newer.thread_id IS NOT NULL
+                           AND newer.thread_id = rep.thread_id
+                           AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
+                    ){cursor}
+              ORDER BY rep.received_at DESC, rep.id DESC LIMIT {}",
             query.limit
         )
     }
@@ -509,15 +578,23 @@ impl<'a> ThreadRepository<'a> {
                 [query.account_id.get()],
                 |row| row.get(0),
             )?,
+            // The same predicate the window uses, so the number and the rows
+            // cannot disagree about what a row is: one per conversation the
+            // folder holds, plus one per message it holds that belongs to no
+            // conversation.
             Some(mailbox) => self.connection.query_row(
                 &format!(
-                    "SELECT count(*) FROM threads
-                      WHERE threads.account_id = ?1
-                        AND EXISTS (SELECT 1 FROM messages m
-                                     WHERE m.thread_id = threads.id
-                                       AND m.mailbox_id = ?2 AND m.{MEMBER})"
+                    "SELECT count(*) FROM messages rep
+                      WHERE rep.mailbox_id = ?1 AND rep.{MEMBER}
+                        AND NOT EXISTS (
+                                SELECT 1 FROM messages newer
+                                 WHERE newer.mailbox_id = ?1 AND newer.{MEMBER}
+                                   AND newer.thread_id IS NOT NULL
+                                   AND newer.thread_id = rep.thread_id
+                                   AND (newer.received_at, newer.id)
+                                       > (rep.received_at, rep.id))"
                 ),
-                [query.account_id.get(), mailbox.get()],
+                [mailbox.get()],
                 |row| row.get(0),
             )?,
         };
