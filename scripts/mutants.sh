@@ -58,7 +58,18 @@ trap 'rm -rf "$OUTPUT_DIR"' EXIT
 
 # --no-shuffle: a stable order makes two runs of the same tree comparable,
 # which matters once this is diffed against a baseline rather than just read.
-env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle \
+#
+# --jobs 2: cargo-mutants gives each parallel job its own scratch copy of the
+# tree and a fresh target/ inside it, and with no cap it defaults to one job
+# per core. On the CI runner this runs on, that meant every worker's copy
+# building at once the moment the baseline finished -- a burst big enough to
+# hit "Disk quota exceeded" even after freeing 20-30GB of preinstalled SDKs
+# first (#510). Two keeps that burst to a size the runner's disk survives
+# while still finishing inside the workflow's 360-minute budget -- each
+# mutant after the first is a fast incremental rebuild of one crate, not
+# another full dependency build, so halving the parallelism roughly doubles
+# the wall time rather than the ~1965-mutant total.
+env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle --jobs 2 \
     --output "$OUTPUT_DIR" || true
 
 SURVIVED="$OUTPUT_DIR/mutants.out/missed.txt"
