@@ -473,6 +473,11 @@ impl BodyStructure {
 /// locally.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FetchedMessage {
+    /// The backend's own identity for this message (#543, #544): what the
+    /// row stores as `remote_id`. Filled by the adapter that fetched it —
+    /// the IMAP adapter packs its generation-and-uid pair, a JMAP adapter
+    /// carries its native `Email` id.
+    pub remote_id: postio_model::RemoteId,
     /// The server's UID for this message.
     pub uid: Uid,
     /// The UID generation it was observed under. A `uid` without this is
@@ -506,7 +511,7 @@ impl FetchedMessage {
         message.server.uid = Some(self.uid);
         message.server.uid_validity = Some(self.uid_validity);
         message.server.mod_seq = self.mod_seq;
-        message.server.remote_id = Some(super::identity::remote_id(self.uid_validity, self.uid));
+        message.server.remote_id = Some(self.remote_id);
 
         if let Some(envelope) = self.envelope {
             message.date = envelope.date;
@@ -670,7 +675,7 @@ pub struct FlagUpdate {
 /// Only knowable when the server speaks UIDPLUS; without it the destination
 /// UID has to be found by searching, which is why
 /// [`Capability::UidPlus`](super::Capability::UidPlus) is worth gating on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UidMapping {
     /// The UID in the source mailbox.
     pub source: Uid,
@@ -678,14 +683,17 @@ pub struct UidMapping {
     pub destination: Uid,
     /// The destination mailbox's UID generation.
     pub uid_validity: UidValidity,
+    /// The backend's own identity for the destination copy (#544): the IMAP
+    /// adapter packs its pair, a JMAP adapter carries the created id.
+    pub destination_remote_id: postio_model::RemoteId,
 }
 
 impl UidMapping {
     /// The backend-neutral identity of the message where it landed (#543):
     /// what a row that came into being through an append or move stores as
-    /// its `remote_id`, spelled by the adapter, never by the caller.
+    /// its `remote_id`, filled by the adapter, never spelled by the caller.
     pub fn destination_remote_id(&self) -> postio_model::RemoteId {
-        super::identity::remote_id(self.uid_validity, self.destination)
+        self.destination_remote_id.clone()
     }
 }
 

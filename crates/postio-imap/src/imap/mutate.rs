@@ -235,6 +235,10 @@ pub async fn append(
             source: Uid::new(uid),
             destination: Uid::new(uid),
             uid_validity: UidValidity::new(uid_validity),
+            destination_remote_id: identity::remote_id(
+                UidValidity::new(uid_validity),
+                Uid::new(uid),
+            ),
         }))
     })
     .await
@@ -344,6 +348,10 @@ fn mapping_from(copied: ImapCopyUid) -> Vec<UidMapping> {
             source: Uid::new(source),
             destination: Uid::new(destination),
             uid_validity: UidValidity::new(uid_validity),
+            destination_remote_id: identity::remote_id(
+                UidValidity::new(uid_validity),
+                Uid::new(destination),
+            ),
         })
         .collect()
 }
