@@ -119,6 +119,17 @@ def main() -> int:
              "no checksum guard, so a version-skewed generator would produce "
              "Swift that fails at runtime instead of at build time")
 
+        # The reason this boundary is UniFFI and not a hand-written C ABI:
+        # the drain has to arrive in Swift as `async`, so the frontend can
+        # write `while let e = await session.nextEvent()` on the main actor.
+        # A synchronous signature here would mean a callback, a continuation
+        # and manual cancellation on the far side -- the machinery that
+        # produces "the UI froze". ADR 0019 Q3.
+        case("the event drain crosses as Swift async",
+             "func nextEvent() async" in text,
+             "nextEvent() is not async in the generated Swift; the drain would "
+             "have to be hand-wrapped on the Swift side")
+
         # The module map is what makes `import` work from Swift at all.
         case("the module map names a module Swift can import",
              "module postio_ffiFFI" in modulemap.read_text(encoding="utf-8"),
