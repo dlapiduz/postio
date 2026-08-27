@@ -16,17 +16,26 @@
 #   scripts/issue-claim.sh --label area:compose
 #   scripts/issue-claim.sh --dry-run          # show what it would take
 #   scripts/issue-claim.sh --base feature/x   # cut from an initiative branch
+#   scripts/issue-claim.sh --ready-label ready-mac   # a different queue
 set -euo pipefail
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
+# Which label marks an issue as claimable. `ready` for ordinary work; the
+# macOS frontend initiative (#15) uses `ready-mac`, so that an ordinary Linux
+# session skips its issues for free rather than by remembering to. Sessions run
+# on several machines and the claim locks below are per-machine, so the label is
+# the only thing keeping two hosts off the same work. #552.
+READY_LABEL="${POSTIO_READY_LABEL:-ready}"
+
 WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"
 while [ $# -gt 0 ]; do
     case "$1" in
         --milestone) MILESTONE="$2"; shift 2 ;;
         --label)     LABEL="$2";     shift 2 ;;
+        --ready-label) READY_LABEL="$2"; shift 2 ;;
         --base)      BASE="$2";      shift 2 ;;
         --dry-run)   DRY=1;          shift ;;
         [0-9]*)      WANT="$1";      shift ;;
@@ -47,7 +56,7 @@ fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
 
-# Candidates: open, labelled `ready`, unclaimed, and not blocked by anything
+# Candidates: open, labelled `$READY_LABEL`, unclaimed, and not blocked by anything
 # still open. `epic`, `icebox`, `needs-architecture` and `needs-maintainer`
 # are never agent work -- an epic is a container, an icebox item is deferred,
 # needs-architecture means the architect (an agent, via /ux-architect) has to
@@ -57,10 +66,11 @@ args=(issue list --state open --limit 200
 [ -n "$MILESTONE" ] && args+=(--milestone "$MILESTONE")
 [ -n "$LABEL" ]     && args+=(--label "$LABEL")
 
-CANDIDATES=$(gh "${args[@]}" | WANT="$WANT" python3 -c '
+CANDIDATES=$(gh "${args[@]}" | WANT="$WANT" READY_LABEL="$READY_LABEL" python3 -c '
 import json, os, re, sys
 
 want = os.environ.get("WANT") or ""
+ready = os.environ.get("READY_LABEL") or "ready"
 rows = []
 skipped = []
 SKIP = {"epic", "icebox", "needs-architecture", "needs-maintainer", "in-progress", "blocked"}
@@ -73,8 +83,8 @@ for i in json.load(sys.stdin):
         continue
     pri = next((n for n in names if re.fullmatch(r"p[0-9]", n)), "p9")
     num = i["number"]
-    if "ready" not in names or names & SKIP:
-        why = ", ".join(sorted(names & SKIP)) or "not labelled ready"
+    if ready not in names or names & SKIP:
+        why = ", ".join(sorted(names & SKIP)) or ("not labelled " + ready)
         skipped.append((pri, "#%s (%s) skipped: %s" % (num, pri, why)))
         continue
     if i["assignees"]:
@@ -114,7 +124,7 @@ if [ -z "$CANDIDATES" ]; then
     if [ -n "$WANT" ]; then
         echo "issue #$WANT is not open, or does not exist." >&2
     else
-        echo "No ready, unblocked, unclaimed issues${MILESTONE:+ in milestone $MILESTONE}."
+        echo "No \`$READY_LABEL\`, unblocked, unclaimed issues${MILESTONE:+ in milestone $MILESTONE}."
         echo "Stop here and say so -- do not go looking for work elsewhere."
     fi
     exit 1
