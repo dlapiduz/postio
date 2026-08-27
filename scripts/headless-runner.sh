@@ -23,6 +23,17 @@
 # program to look at it, and gets the real display. #315.
 set -uo pipefail
 
+# "The runner ran." Exported before anything can bail out, and on every path
+# including the fail-open ones, because the question this answers is not "did a
+# compositor start" but "did cargo route this binary through here at all".
+#
+# Those are different failures and they want different answers (#551). A
+# contributor with no mutter should get the skips; a target `.cargo/config.toml`
+# forgot to name should get a hard failure. Without a marker the two are
+# indistinguishable from inside the test binary, which is how the aarch64 gap
+# stayed green. `gtk_display_required.rs` is the reader.
+export POSTIO_TEST_RUNNER=headless-runner
+
 exec_target() { exec "$@"; }
 
 [ "${POSTIO_HEADLESS:-1}" = "0" ] && exec_target "$@"
