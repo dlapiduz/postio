@@ -1,6 +1,7 @@
 # ADR 0015 — One row per thread, and the conversation pane
 
-- **Status:** Accepted — **GO** (2026-08-25)
+- **Status:** Accepted — **GO** (2026-08-25), **Q1 implementation and Q4
+  revised 2026-08-26**
 - **Date:** 2026-08-25
 - **Issue:** [#134](https://github.com/dlapiduz/postio/issues/134), decided by
   the maintainer: a single row per thread in the list, and the reading pane
@@ -16,7 +17,28 @@
   representative message — never a view-side grouping. A thread row carries
   the thread's newest activity and its aggregate state; every message verb
   on a thread row acts on the thread. The conversation pane shows all
-  messages with read ones collapsed, unread and newest expanded.
+  messages with read ones collapsed, and the first unread in focus.
+
+> **Revised, and what changed.** Building Q1 and Q2 (#306, #307) turned up one
+> thing the ADR got wrong, and building Q4 (#308) needed answers it had not
+> given. Both are recorded below rather than quietly diverged from.
+>
+> 1. **Q1's window is over messages, not over `threads`.** As written it hides
+>    mail — `messages.thread_id` is nullable and nothing guarantees it is set.
+>    The decision the ADR was actually making (store-side collapse, flat
+>    paging, one row per conversation) is unchanged. Now §Q1a.
+> 2. **Q4 described a surface that could not coexist with the drill-in.** The
+>    reading pane becoming a stack *and* `t` still opening a thread column
+>    meant the same conversation listed twice, side by side. The column
+>    survives with a different job: it is an **index**, not a second copy.
+>    Now §Q4.
+> 3. **Focus opens on the first unread, not on the newest.** Q4 said the newest
+>    message expands. Opening a conversation should put you where you stopped
+>    reading. Now §Q4.
+> 4. **`a` never means one message.** Q4 left open that `a` "may later grow a
+>    per-message meaning" in the reader. It does not: reply, reply-all and
+>    forward are per message, and every other verb is the conversation's.
+>    Now §Q4.
 
 ---
 
@@ -61,6 +83,52 @@ invariant. Instead the list becomes a window over **threads**:
 - Paging stays flat: page k of threads costs what page k of messages
   cost, by the same argument, over the same kind of index.
 
+## Q1a — The window is over messages (revised 2026-08-26)
+
+Q1 says the list "becomes a window over **threads**". Implementing it that way
+(#306) is wrong in a way that loses mail, so the shipped window is over
+**messages**: the row kept is the one that is newest in its own thread within
+the folder.
+
+```sql
+FROM messages rep
+WHERE rep.mailbox_id = ?1 AND rep.deleted_locally = 0
+  AND NOT EXISTS (SELECT 1 FROM messages newer
+                   WHERE newer.mailbox_id = ?1 AND newer.deleted_locally = 0
+                     AND newer.thread_id IS NOT NULL
+                     AND newer.thread_id = rep.thread_id
+                     AND (newer.received_at, newer.id) > (rep.received_at, rep.id))
+ORDER BY rep.received_at DESC, rep.id DESC
+```
+
+**Why.** `messages.thread_id` is nullable, and nothing guarantees it is set —
+`postio-sync`'s send path threads with a discarded result. A window built over
+`threads` makes every unthreaded message *absent*: no error, no empty state,
+mail in the store and not on screen. Under this shape an unthreaded message is
+a conversation of one and cannot disappear, which is why
+`ThreadListRow::id` is an `Option<ThreadId>`.
+
+It is also flat **by construction** rather than by measurement: the window
+walks `idx_messages_list (mailbox_id, received_at DESC, id DESC)`, the same
+index the message list uses, so "page k of threads costs what page k of
+messages costs" is the same query plan rather than a claim to benchmark.
+Everything the conversation contributes — total size, unread here, flagged
+here — is a correlated subquery per row of the page over
+`idx_messages_thread_mailbox` (migration 0012). Measured: 897µs at 1k, 1.07ms
+at 100k, 1.09ms ten pages down.
+
+Every property Q1 decided survives. What changed is the table walked, so the
+falsifiability lever below is spent: nothing needs denormalising.
+
+**The account-scoped list still windows over `threads`**, because there is no
+folder to be newest within.
+
+**Drafts does not thread.** Q1 did not have to say so because it was writing
+about reading mail. A draft is a document you are writing; two drafts
+answering one conversation would collapse into a single row with no way to
+reach the other. `SqliteStore::lists_conversations` is the only place this is
+decided, so no frontend holds a second opinion.
+
 ## Q2 — What a collapsed row shows
 
 Gmail's answers, adopted deliberately rather than re-derived:
@@ -102,23 +170,79 @@ means.
 - Undo takes the whole unit back, which the `UndoStack` already handles
   — an archive of a six-message thread is one entry carrying its inverse.
 
-## Q4 — The conversation pane
+## Q4 — The conversation pane, and what the column is for (revised 2026-08-26)
 
-Opening a thread row shows **the whole conversation, across folders** —
-which is what #44 already made the drill-in read; this ADR gives it the
-Gmail shape rather than a new scope:
+Opening a thread row shows **the whole conversation, across folders** — which
+is what #44 already made the drill-in read; this ADR gives it the Gmail shape
+rather than a new scope.
 
-- All messages, oldest first, **read messages collapsed** to a one-line
-  header (sender, snippet, date), **unread messages and the newest
-  message expanded**. Expanding a collapsed message is a click or the
-  cursor plus `Enter`; `t` keeps toggling the drill-in as a whole.
-- Each expanded message is the existing reader surface — the hardened
-  WebKit view, the parts panel, the remote-image banner all apply per
-  message, unchanged. The conversation pane is a stack of the reader
-  Postio already has, not a new renderer.
-- Reading a collapsed-by-default conversation marks messages read on the
-  same dwell rules as today (#71's semantics), per message as they are
-  expanded or scrolled through — never "opened the thread, all six read".
+The first version of this section could not be built as written. It made the
+reading pane a stack of messages *and* kept `t` opening the thread column,
+which is the same conversation listed twice, side by side. Resolved by giving
+the two surfaces different jobs:
+
+> **The column is an index. The pane is the conversation.**
+
+- **The drill-in column** stays exactly where it is, one compact line per
+  message, and stops driving what the reading pane *shows*. Its job is to
+  **jump to a point in the conversation**: moving its cursor scrolls the pane
+  to that message and expands it if it was collapsed. A table of contents,
+  not a second copy. This repoints #436's wiring rather than deleting it —
+  the column's cursor still drives the pane, it just scrolls it instead of
+  replacing its contents.
+- **The reading pane** holds every message of the conversation, oldest first,
+  **read messages collapsed** to a one-line header (sender, snippet, date).
+  Each expanded message is the existing reader surface — the hardened WebKit
+  view, the parts panel, the remote-image banner — unchanged. A stack of the
+  reader Postio already has, not a new renderer.
+
+### Focus
+
+There is **one current message**, shown in both surfaces: the column's cursor
+and the pane's focused message are the same state. Moving either moves both.
+
+- Opening a conversation focuses **the first unread message**, expanded and
+  scrolled to. Not the newest: a conversation you open is one you are part
+  way through, and landing at the end means scrolling back past what you have
+  already read. When everything has been read there is no first unread, and
+  focus lands on the **newest**, expanded.
+- Focus is **drawn, not implied**. It uses the vocabulary PLATE 1b already
+  established for the list — accent edge, full-strength ink — rather than
+  dimming the messages around it. This is the one surface in the application
+  where prose is actually read, and dimmed body text is a contrast and
+  text-scaling problem before it is a focus treatment. Collapse already does
+  the de-emphasising: a read message is one line. If two adjacent expanded
+  messages still read flat, the answer is a background lift on the focused
+  one, never dimming the other.
+
+### The verbs
+
+**Reply, reply-all and forward are per message.** They are drawn on each
+message and act on the message they are drawn on, because answering the wrong
+message of a conversation is a real and common mistake.
+
+**Every other verb is the conversation's**, in the pane exactly as in the
+list: `a` archives the thread, `d` trashes it, `s` flags it, `U` marks it
+unread — wherever the cursor happens to be. One key, one meaning, in both
+places. This replaces the earlier note that `a` "may later grow a per-message
+meaning" in the reader: it does not.
+
+### Cost, which is what decides the shape
+
+Every expanded message is a `WebKitWebView`. "Unread and newest expanded" over
+a thirty-message conversation nobody has read is thirty of them, which holds
+neither the interaction budget nor the memory.
+
+So readers are **instantiated lazily as messages scroll into view**, and eager
+expansion is **capped** — the focused message and a small number after it —
+with the rest collapsed and one keystroke or click from opening. The budget
+may be stretched for a genuine outlier; the design does not bend around one.
+
+### Reading
+
+Read marking stays per message on #71's dwell rules, driven by **focus**
+rather than by raw scroll position: the focused message is the one being read,
+and dwelling on it marks it. Never "opened the thread, all six read".
 
 ## Q5 — What this deliberately does not decide
 
@@ -139,6 +263,16 @@ is denormalising the row's aggregates onto `threads` (maintained where
 counts are already maintained), not view-side collapsing — the windowed
 invariant is not on the table.
 
+**Settled 2026-08-26 (#306):** the bet held, by a wide margin and without the
+fallback — 1.07ms at 100k against a 16ms budget, flat with depth. See §Q1a for
+the shape that produced it.
+
+The open bet is now Q4's: that a stack of lazily-instantiated `WebKitWebView`s
+stays inside the interaction budget for an ordinary conversation. If it does
+not, the fallback is a **single** reader that re-renders as focus moves —
+which is what the pane does today — with the collapse/expand list around it,
+rather than giving up the conversation view.
+
 ---
 
 ## Consequences
@@ -147,7 +281,8 @@ invariant is not on the table.
   the repository keeps both, because query views still page messages.
 - `postio-gtk`'s list feeds thread rows in folder scopes; the row widget
   gains participants/aggregate content; the reading pane becomes a
-  message stack with collapse state.
+  message stack with collapse state, and the drill-in column becomes its
+  index rather than a second copy of it.
 - `postio-core`: list-context target resolution maps thread rows onto the
   existing verbs; no registry changes.
 - Implementation lands as three sequenced issues under E7 — the store
