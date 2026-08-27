@@ -784,8 +784,8 @@ fn waking_due_snoozes_never_touches_another_accounts_rows() {
     let now = Utc::now();
     // Truncated to millisecond precision: that is what the column stores,
     // and the round trip below has to match it exactly.
-    let due = DateTime::from_timestamp_millis((now - Duration::from_secs(1)).timestamp_millis())
-        .unwrap();
+    let due =
+        DateTime::from_timestamp_millis((now - Duration::from_secs(1)).timestamp_millis()).unwrap();
     messages.snooze(&[id_a], due).expect("snooze a");
     messages.snooze(&[id_b], due).expect("snooze b");
 

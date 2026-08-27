@@ -1342,6 +1342,7 @@ mod tests {
             total: 100,
             unread,
             flagged: 0,
+            snoozed: 0,
         };
         mailbox
     }

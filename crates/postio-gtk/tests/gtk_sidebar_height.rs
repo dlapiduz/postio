@@ -65,6 +65,7 @@ fn a_sidebar_full_of_folders_still_fits_in_the_window() {
             total: 400,
             unread: index as u32,
             flagged: 0,
+            snoozed: 0,
         };
         folders.push(folder);
     }
@@ -124,6 +125,7 @@ fn canvas_mailboxes() -> Vec<Mailbox> {
             total: 900,
             unread: 12,
             flagged: 0,
+            snoozed: 0,
         };
         mailbox
     })

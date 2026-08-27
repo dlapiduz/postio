@@ -69,6 +69,7 @@ impl MailboxSource for Filling {
             total: self.total.get(),
             unread: self.total.get(),
             flagged: 0,
+            snoozed: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }

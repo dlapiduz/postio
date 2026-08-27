@@ -56,6 +56,7 @@ impl MailboxSource for Store {
                 total: 40,
                 unread: 0,
                 flagged: 0,
+                snoozed: 0,
             };
             mailbox
         };
@@ -77,7 +78,9 @@ impl MessageSource for Store {
     fn fetch(&self, request: PageRequest) -> PageFuture {
         let mailbox = match request.scope {
             FeedScope::Mailbox(id) => id,
-            FeedScope::Flagged(_) | FeedScope::Thread(_) => MailboxId::new(0),
+            FeedScope::Flagged(_) | FeedScope::Snoozed(_) | FeedScope::Thread(_) => {
+                MailboxId::new(0)
+            }
         };
         let total = 40;
         Box::pin(async move {

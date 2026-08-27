@@ -259,6 +259,7 @@ pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
         // A draft you have not finished is not "unread".
         MailboxRole::Drafts => counts.total,
         MailboxRole::Flagged => counts.flagged,
+        MailboxRole::Snoozed => counts.snoozed,
         // Nothing arrives in these unread, so a count would only ever be
         // "how much have you kept", which is not a thing to nag about.
         MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
@@ -270,16 +271,19 @@ pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
 ///
 /// The canvas' order — Inbox, Flagged, Drafts, Sent, Archive — with the two
-/// folders it does not happen to draw after them.
+/// folders it does not happen to draw after them. Snoozed joins right after
+/// Flagged: the same client-only, no-`SPECIAL-USE` shape, and the same kind
+/// of "things you will come back to soon" list.
 fn role_order(role: MailboxRole) -> Option<u8> {
     match role {
         MailboxRole::Inbox => Some(0),
         MailboxRole::Flagged => Some(1),
-        MailboxRole::Drafts => Some(2),
-        MailboxRole::Sent => Some(3),
-        MailboxRole::Archive => Some(4),
-        MailboxRole::Junk => Some(5),
-        MailboxRole::Trash => Some(6),
+        MailboxRole::Snoozed => Some(2),
+        MailboxRole::Drafts => Some(3),
+        MailboxRole::Sent => Some(4),
+        MailboxRole::Archive => Some(5),
+        MailboxRole::Junk => Some(6),
+        MailboxRole::Trash => Some(7),
         MailboxRole::Regular => None,
     }
 }
@@ -1502,6 +1506,7 @@ fn announce(name: &str, mailbox: &Mailbox) -> String {
     match mailbox.role {
         MailboxRole::Drafts => format!("{name}, {count} drafts"),
         MailboxRole::Flagged => format!("{name}, {count} flagged"),
+        MailboxRole::Snoozed => format!("{name}, {count} snoozed"),
         _ => format!("{name}, {count} unread"),
     }
 }
@@ -1527,6 +1532,7 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     match mailbox.role {
         MailboxRole::Inbox => "Inbox".to_string(),
         MailboxRole::Flagged => "Flagged".to_string(),
+        MailboxRole::Snoozed => "Snoozed".to_string(),
         MailboxRole::Drafts => "Drafts".to_string(),
         MailboxRole::Sent => "Sent".to_string(),
         MailboxRole::Archive => "Archive".to_string(),
@@ -1835,6 +1841,7 @@ mod tests {
             total,
             unread,
             flagged,
+            snoozed: 0,
         }
     }
 
