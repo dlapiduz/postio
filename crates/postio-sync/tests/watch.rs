@@ -176,7 +176,7 @@ async fn mail_that_arrives_while_idling_reaches_the_local_store() {
 
     assert_eq!(
         MessageRepository::new(&local.connection)
-            .uids_in(local.inbox.id, UidValidity::new(VALIDITY))
+            .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
             .expect("uids")
             .len(),
         3,
@@ -300,7 +300,7 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
     .expect("resync");
     assert_eq!(
         MessageRepository::new(&local.connection)
-            .uids_in(local.inbox.id, UidValidity::new(VALIDITY))
+            .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
             .expect("uids")
             .len(),
         2

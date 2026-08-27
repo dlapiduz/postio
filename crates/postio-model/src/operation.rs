@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::flag::FlagSet;
 use crate::ids::{
-    AccountId, BlobId, CrossAccountMoveId, DraftId, MailboxId, MessageId, OperationId, ThreadId,
-    RemoteId, Uid, UidValidity,
+    AccountId, BlobId, CrossAccountMoveId, DraftId, MailboxId, MessageId, OperationId, RemoteId,
+    ThreadId,
 };
 
 /// What an operation acts on.

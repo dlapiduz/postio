@@ -101,12 +101,12 @@ async fn headers(local: &Local, backend: &MockBackend) -> Vec<(MessageId, u32)> 
 
     let messages = MessageRepository::new(&local.connection);
     let mut rows: Vec<(MessageId, u32)> = messages
-        .uids_in(local.inbox.id, UidValidity::new(VALIDITY))
+        .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
         .expect("uids")
         .into_iter()
         .map(|uid| {
             let message = messages
-                .by_uid(local.inbox.id, UidValidity::new(VALIDITY), uid)
+                .by_uid(local.inbox.id, postio_model::Generation::new(VALIDITY), uid)
                 .expect("look up")
                 .expect("stored");
             (message.id, uid.get())

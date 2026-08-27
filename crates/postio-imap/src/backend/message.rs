@@ -184,8 +184,9 @@ pub enum SelectMode {
 pub struct MailboxStatus {
     /// The mailbox this describes.
     pub path: String,
-    /// Generation of the UID space. A change invalidates every cached UID.
-    pub uid_validity: UidValidity,
+    /// The mailbox's naming generation (#543): opaque above the seam, and a
+    /// change invalidates every identity this adapter has minted for it.
+    pub generation: postio_model::Generation,
     /// The UID the server will assign to the next message it stores.
     pub uid_next: Uid,
     /// How many messages the mailbox holds.

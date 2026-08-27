@@ -102,7 +102,7 @@ async fn bootstrap(connection: &PooledConnection, backend: &ImapBackend, mailbox
 
 fn known_uids(connection: &Connection, mailbox: &Mailbox, generation: u32) -> Vec<u32> {
     MessageRepository::new(connection)
-        .uids_in(mailbox.id, UidValidity::new(generation))
+        .uids_in(mailbox.id, postio_model::Generation::new(generation))
         .expect("uids_in")
         .into_iter()
         .map(Uid::get)
@@ -131,7 +131,11 @@ async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
     // The corpus reached the database through ENVELOPE and BODYSTRUCTURE on
     // the wire, not through a mock handing back what it was given.
     let stored = MessageRepository::new(&connection)
-        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(1))
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(1),
+        )
         .expect("look up")
         .expect("message 1");
     assert_eq!(stored.subject.as_deref(), Some("Tuesday walkthrough notes"));
@@ -140,7 +144,10 @@ async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
     let state = SyncStateRepository::new(&connection)
         .require(inbox.id)
         .expect("sync state");
-    assert_eq!(state.uid_validity, Some(UidValidity::new(VALIDITY)));
+    assert_eq!(
+        state.generation,
+        Some(postio_model::Generation::new(VALIDITY))
+    );
     assert!(state.has_synced());
 }
 
@@ -183,7 +190,11 @@ async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
         vec![1, 2, 3, arrival.get()]
     );
     let seen = MessageRepository::new(&connection)
-        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(2))
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(2),
+        )
         .expect("look up")
         .expect("message 2");
     assert!(seen.flags.is_seen());
@@ -214,7 +225,7 @@ async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
 
     match outcome {
         Outcome::Full { reason, report } => {
-            assert_eq!(reason, FullResyncReason::UidValidityChanged);
+            assert_eq!(reason, FullResyncReason::GenerationChanged);
             assert_eq!(report.inserted, 3);
         }
         other => panic!("expected a full resync, got {other:?}"),
@@ -229,8 +240,8 @@ async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
         SyncStateRepository::new(&connection)
             .require(inbox.id)
             .expect("sync state")
-            .uid_validity,
-        Some(UidValidity::new(9_001))
+            .generation,
+        Some(postio_model::Generation::new(9_001))
     );
 }
 
@@ -267,7 +278,11 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
     // And the change the incremental pull could not be trusted with is in
     // the database anyway, because the full pass does not use CHANGEDSINCE.
     let seen = MessageRepository::new(&connection)
-        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(2))
+        .by_uid(
+            inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(2),
+        )
         .expect("look up")
         .expect("message 2");
     assert!(seen.flags.is_seen());
@@ -895,7 +910,7 @@ fn is_transient(error: &postio_sync::SyncError) -> bool {
 /// The local row for a message the sync just stored.
 fn message_at(connection: &Connection, mailbox: &Mailbox, uid: Uid) -> MessageId {
     MessageRepository::new(connection)
-        .by_uid(mailbox.id, UidValidity::new(VALIDITY), uid)
+        .by_uid(mailbox.id, postio_model::Generation::new(VALIDITY), uid)
         .expect("look up")
         .expect("a synced message")
         .id

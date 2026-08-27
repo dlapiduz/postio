@@ -5,7 +5,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::Connection;
 
 use postio_model::FullResyncReason;
-use postio_model::{MailboxId, MailboxStatus, ModSeq, ResyncPlan, SyncState, Uid, UidValidity};
+use postio_model::{Generation, MailboxId, MailboxStatus, ModSeq, ResyncPlan, SyncState, Uid};
 use postio_storage::repository::SyncStateRepository;
 use postio_storage::test_support;
 
@@ -47,7 +47,7 @@ fn sync_state_round_trips_through_the_database() {
     let states = SyncStateRepository::new(&connection);
 
     let mut state = SyncState::never_synced(inbox, account.id);
-    state.uid_validity = Some(UidValidity::new(1_707_000_000));
+    state.generation = Some(Generation::new(1_707_000_000));
     state.uid_next = Some(Uid::new(4_412));
     state.highest_mod_seq = Some(ModSeq::new(90_210));
     state.complete_full_sync(at(9));
@@ -105,7 +105,7 @@ fn an_accounts_state_reads_in_one_query() {
     let states = SyncStateRepository::new(&connection);
 
     states
-        .observe(inbox.id, &MailboxStatus::new(UidValidity::new(7)), at(9))
+        .observe(inbox.id, &MailboxStatus::new(Generation::new(7)), at(9))
         .expect("observe");
 
     let all = states.list_for_account(account.id).expect("list");
@@ -115,7 +115,7 @@ fn an_accounts_state_reads_in_one_query() {
         .iter()
         .find(|state| state.mailbox_id == inbox.id)
         .expect("the inbox");
-    assert_eq!(inbox_state.uid_validity, Some(UidValidity::new(7)));
+    assert_eq!(inbox_state.generation, Some(Generation::new(7)));
     let archive_state = all
         .iter()
         .find(|state| state.mailbox_id == archive.id)
@@ -134,7 +134,7 @@ fn observing_persists_what_the_server_reported() {
     let (_, inbox) = test_support::account_with_inbox(&connection);
     let states = SyncStateRepository::new(&connection);
 
-    let status = MailboxStatus::new(UidValidity::new(1_707_000_000))
+    let status = MailboxStatus::new(Generation::new(1_707_000_000))
         .with_uid_next(Uid::new(4_412))
         .with_highest_mod_seq(ModSeq::new(90_210));
     let returned = states.observe(inbox, &status, at(9)).expect("observe");
@@ -152,7 +152,7 @@ fn a_uid_validity_change_clears_the_stored_counters() {
     let (_, inbox) = test_support::account_with_inbox(&connection);
     let states = SyncStateRepository::new(&connection);
 
-    let first = MailboxStatus::new(UidValidity::new(1_707_000_000))
+    let first = MailboxStatus::new(Generation::new(1_707_000_000))
         .with_uid_next(Uid::new(4_412))
         .with_highest_mod_seq(ModSeq::new(90_210));
     states.observe(inbox, &first, at(9)).expect("observe");
@@ -161,7 +161,7 @@ fn a_uid_validity_change_clears_the_stored_counters() {
     let renumbered = states
         .observe(
             inbox,
-            &MailboxStatus::new(UidValidity::new(1_800_000_000)),
+            &MailboxStatus::new(Generation::new(1_800_000_000)),
             at(10),
         )
         .expect("observe");
@@ -183,7 +183,7 @@ fn the_plan_is_read_from_the_stored_state() {
     let (_, inbox) = test_support::account_with_inbox(&connection);
     let states = SyncStateRepository::new(&connection);
 
-    let status = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(100));
+    let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(100));
 
     assert_eq!(
         states.plan(inbox, &status).expect("plan"),
@@ -198,7 +198,7 @@ fn the_plan_is_read_from_the_stored_state() {
         ResyncPlan::UpToDate
     );
 
-    let moved_on = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(140));
+    let moved_on = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(140));
     assert_eq!(
         states.plan(inbox, &moved_on).expect("plan"),
         ResyncPlan::Incremental {
@@ -214,10 +214,7 @@ fn planning_for_a_mailbox_that_is_gone_is_not_found() {
     let states = SyncStateRepository::new(&connection);
 
     assert!(matches!(
-        states.plan(
-            MailboxId::new(404),
-            &MailboxStatus::new(UidValidity::new(7))
-        ),
+        states.plan(MailboxId::new(404), &MailboxStatus::new(Generation::new(7))),
         Err(postio_storage::Error::NotFound {
             entity: "mailbox",
             id: 404
@@ -232,7 +229,7 @@ fn resetting_takes_a_mailbox_back_to_never_synced() {
     let (account, inbox) = test_support::account_with_inbox(&connection);
     let states = SyncStateRepository::new(&connection);
 
-    let status = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(100));
+    let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(100));
     states.observe(inbox, &status, at(9)).expect("observe");
     states.complete_full_sync(inbox, at(9)).expect("complete");
 
@@ -255,7 +252,7 @@ fn state_and_the_messages_it_describes_commit_together() {
     let transaction = connection.transaction().expect("begin");
     insert_message(&transaction, inbox, 4_410);
     insert_message(&transaction, inbox, 4_411);
-    let status = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(90_210));
+    let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(90_210));
     SyncStateRepository::new(&transaction)
         .observe(inbox, &status, at(9))
         .expect("observe");
@@ -283,7 +280,7 @@ fn a_crash_mid_sync_leaves_resumable_state_rather_than_a_lie() {
     // counters, then died before it could commit.
     let transaction = connection.transaction().expect("begin");
     insert_message(&transaction, inbox, 4_410);
-    let status = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(90_210));
+    let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(90_210));
     SyncStateRepository::new(&transaction)
         .observe(inbox, &status, at(9))
         .expect("observe");
@@ -316,7 +313,7 @@ fn state_never_advances_past_a_half_written_batch() {
     // First batch commits.
     let first = connection.transaction().expect("begin");
     insert_message(&first, inbox, 4_410);
-    let status = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(100));
+    let status = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(100));
     SyncStateRepository::new(&first)
         .observe(inbox, &status, at(9))
         .expect("observe");
@@ -328,7 +325,7 @@ fn state_never_advances_past_a_half_written_batch() {
     // Second batch dies partway.
     let second = connection.transaction().expect("begin");
     insert_message(&second, inbox, 4_411);
-    let moved_on = MailboxStatus::new(UidValidity::new(7)).with_highest_mod_seq(ModSeq::new(140));
+    let moved_on = MailboxStatus::new(Generation::new(7)).with_highest_mod_seq(ModSeq::new(140));
     SyncStateRepository::new(&second)
         .observe(inbox, &moved_on, at(10))
         .expect("observe");
@@ -357,7 +354,7 @@ fn deleting_a_mailbox_takes_its_state_with_it() {
     let (account, inbox) = test_support::account_with_inbox(&connection);
     let states = SyncStateRepository::new(&connection);
     states
-        .observe(inbox, &MailboxStatus::new(UidValidity::new(7)), at(9))
+        .observe(inbox, &MailboxStatus::new(Generation::new(7)), at(9))
         .expect("observe");
 
     connection
