@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use postio_model::{AccountId, Contact, ContactId, EmailAddress, Message};
+use postio_model::{AccountId, Contact, ContactId, ContactSource, EmailAddress, Message};
 use postio_storage::repository::ContactRepository;
 use postio_storage::test_support;
 
@@ -420,7 +420,7 @@ fn a_user_set_name_overrides_what_the_headers_carried() {
 }
 
 #[test]
-fn a_contact_can_be_looked_up_and_deleted() {
+fn a_contact_can_be_looked_up_by_address() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
     let account = test_support::account(&connection);
@@ -435,9 +435,204 @@ fn a_contact_can_be_looked_up_and_deleted() {
             .map(|contact: Contact| contact.id),
         Some(id)
     );
+}
+
+#[test]
+fn deleting_a_missing_contact_is_false_not_an_error() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let contacts = ContactRepository::new(&connection);
+
+    assert!(!contacts.delete(ContactId::new(9999)).expect("delete"));
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0007 Q1/Q2: provenance, creation without a sighting, and deletion that
+// stays deleted
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_freshly_seen_contact_has_a_mail_source() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0);
+
+    let stored = contacts.get(id).expect("get").expect("the contact");
+    assert_eq!(stored.source, ContactSource::Mail);
+    assert!(!stored.suppressed);
+}
+
+#[test]
+fn a_contact_can_be_created_directly_with_no_sighting() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let id = contacts
+        .create(
+            Some(account.id),
+            &address(None, "grace@example.com"),
+            Some("Grace Hopper"),
+        )
+        .expect("create");
+
+    let stored = contacts.get(id).expect("get").expect("the contact");
+    assert_eq!(stored.source, ContactSource::User);
+    assert_eq!(stored.name.as_deref(), Some("Grace Hopper"));
+    assert_eq!(stored.times_seen, 0, "creating is not a sighting");
+    assert_eq!(stored.last_seen_at, None);
+}
+
+/// ADR 0007 Q1's own example: a user types an address seen 40 times and
+/// gives it a proper name. With one table that is an `UPDATE`, not a second
+/// row claiming the same address.
+#[test]
+fn creating_a_contact_that_was_already_a_mail_sighting_promotes_the_same_row() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let sighted = seen(
+        &contacts,
+        account.id,
+        "Katherine",
+        "katherine@example.com",
+        40,
+        0,
+    );
+
+    let created = contacts
+        .create(
+            Some(account.id),
+            &address(None, "katherine@example.com"),
+            Some("Katherine Johnson"),
+        )
+        .expect("create");
+
+    assert_eq!(created, sighted, "one row, not a duplicate");
+    let stored = contacts.get(sighted).expect("get").expect("the contact");
+    assert_eq!(stored.source, ContactSource::User);
+    assert_eq!(stored.name.as_deref(), Some("Katherine Johnson"));
+    assert_eq!(
+        stored.times_seen, 40,
+        "promoting a contact is not a sighting, and does not reset one either"
+    );
+    assert_eq!(
+        contacts.list(Some(account.id)).expect("list").len(),
+        1,
+        "no second row for the same address"
+    );
+}
+
+#[test]
+fn setting_a_name_on_a_mail_sourced_contact_promotes_it_to_user() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0);
+    assert_eq!(
+        contacts.get(id).expect("get").expect("contact").source,
+        ContactSource::Mail
+    );
+
+    contacts.set_name(id, Some("Ada Norwood")).expect("rename");
+
+    assert_eq!(
+        contacts.get(id).expect("get").expect("contact").source,
+        ContactSource::User,
+        "a deliberate edit is the promotion ADR 0007 Q1 describes"
+    );
+}
+
+#[test]
+fn deleting_a_mail_sourced_contact_suppresses_it_rather_than_removing_the_row() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let id = seen(&contacts, account.id, "Ada", "ada@example.com", 1, 0);
+
     assert!(contacts.delete(id).expect("delete"));
-    assert!(!contacts.delete(id).expect("delete again"));
+
+    let stored = contacts
+        .get(id)
+        .expect("get")
+        .expect("the row survives -- it is suppressed, not gone");
+    assert!(stored.suppressed);
+    assert_eq!(
+        stored.source,
+        ContactSource::Mail,
+        "suppression does not change provenance"
+    );
+    assert!(
+        contacts.list(Some(account.id)).expect("list").is_empty(),
+        "a suppressed contact drops out of the contact list"
+    );
+}
+
+#[test]
+fn deleting_a_user_sourced_contact_removes_the_row_for_real() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let id = contacts
+        .create(Some(account.id), &address(None, "grace@example.com"), None)
+        .expect("create");
+
+    assert!(contacts.delete(id).expect("delete"));
     assert!(contacts.get(id).expect("get").is_none());
+    assert!(!contacts.delete(id).expect("delete again"));
+}
+
+/// The test ADR 0007 says fails today: record a message, delete the
+/// contact, record another message from the same address, and autocomplete
+/// must not offer it. Before #473 this recreated the contact with
+/// `times_seen` reset to 1, looking brand new.
+#[test]
+fn a_deleted_mail_contact_does_not_come_back_on_the_next_sighting() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let contacts = ContactRepository::new(&connection);
+
+    let mut first = Message::new(account.id, inbox, at(0));
+    first.from = vec![address(Some("Ada"), "ada@example.com")];
+    contacts.record_message(&first).expect("record");
+
+    let id = contacts
+        .by_address(Some(account.id), "ada@example.com")
+        .expect("lookup")
+        .expect("the contact")
+        .id;
+    contacts.delete(id).expect("delete");
+
+    let mut second = Message::new(account.id, inbox, at(1));
+    second.from = vec![address(Some("Ada"), "ada@example.com")];
+    contacts.record_message(&second).expect("record again");
+
+    assert!(
+        contacts
+            .search(Some(account.id), "ada", 10)
+            .expect("search")
+            .is_empty(),
+        "a deleted mail contact must not come back from a later sighting"
+    );
+    let stored = contacts.get(id).expect("get").expect("the row survives");
+    assert_eq!(
+        stored.times_seen, 2,
+        "sightings keep counting even while suppressed"
+    );
+    assert!(stored.suppressed, "and it must still be suppressed");
 }
 
 #[test]

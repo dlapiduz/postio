@@ -173,6 +173,8 @@ fn sample_contact() -> Contact {
         address: EmailAddress::new(Some("Alice"), "alice@example.com"),
         times_seen: 12,
         last_seen_at: Some(at(3_000)),
+        source: postio_model::ContactSource::User,
+        suppressed: false,
     }
 }
 
