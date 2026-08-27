@@ -88,15 +88,19 @@ pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) 
         "DELETE FROM message_bodies_fts WHERE rowid = ?1",
         [message_id],
     )?;
-    if let Some(text) = body.filter(|text| !text.is_empty()) {
-        connection.execute(
-            "INSERT INTO message_bodies_fts (rowid, body) VALUES (?1, ?2)",
-            rusqlite::params![message_id, text],
-        )?;
-    }
-    // Clearing is therefore the delete on its own. An empty document would be
-    // a row that matches nothing and costs an index entry, which is worse
-    // than no row at all.
+    // A message with no text still gets a row — empty, so it can never
+    // match — because the row is also the record that this message *was*
+    // indexed. [`messages_missing_body_text`] asks `NOT EXISTS` of this
+    // table, and when "tried, nothing there" left no row behind, every
+    // attachment-only message stayed a candidate for ever: with one batch of
+    // them in a store, `postio_session::index_local_bodies` re-selected the
+    // same batch in a tight loop, burning a core and streaming write
+    // transactions for as long as the app ran (#500). One rowid entry per
+    // textless message is the cheapest possible spelling of "done".
+    connection.execute(
+        "INSERT INTO message_bodies_fts (rowid, body) VALUES (?1, ?2)",
+        rusqlite::params![message_id, body.unwrap_or("")],
+    )?;
 
     Ok(())
 }

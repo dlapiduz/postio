@@ -101,12 +101,12 @@ fn clearing_a_body_removes_it_from_the_index() {
     index_body(&connection, id, None).expect("clear");
 
     assert!(body_hits(&connection, "something").is_empty());
-    assert_eq!(
-        rows_in(&connection, "message_bodies_fts"),
-        0,
-        "an empty body is no row, not a row of nothing — the whole point is \
-         that this table holds only what there is to match"
-    );
+    // One row, matching nothing. This used to assert zero rows — "an empty
+    // body is no row" — and that reading is what #500's infinite loop was
+    // made of: with no row, the maintenance pass cannot tell "tried, empty"
+    // from "never tried" and asks about the message on every pass for ever.
+    // The row *is* the record that indexing happened.
+    assert_eq!(rows_in(&connection, "message_bodies_fts"), 1);
 }
 
 #[test]
@@ -202,5 +202,36 @@ fn a_message_whose_body_is_still_on_the_server_is_not_a_candidate() {
         messages_missing_body_text(&connection, 10)
             .expect("candidates")
             .is_empty()
+    );
+}
+
+#[test]
+fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
+    // The infinite loop of #500. An attachment-only message — a DMARC
+    // report, a calendar invite, an image with no words — has a local body
+    // and no indexable text. Indexing it must still *record that it was
+    // tried*: if it writes nothing, `messages_missing_body_text` returns the
+    // same message on every pass, and a store with more than one batch of
+    // them turns the catch-up loop into a core-burning spin that never ends —
+    // observed live, 35 minutes of CPU against a 912-body backlog.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    ensure_schema(&connection).expect("schema");
+    let id = a_message(&connection, "Report attached");
+
+    assert_eq!(
+        messages_missing_body_text(&connection, 10).expect("candidates"),
+        vec![id],
+        "local body, never indexed: exactly the work"
+    );
+
+    index_body(&connection, id, None).expect("index nothing");
+
+    assert!(
+        messages_missing_body_text(&connection, 10)
+            .expect("candidates")
+            .is_empty(),
+        "tried and found empty is not the same state as never tried, \
+         or the maintenance pass asks about this message for ever"
     );
 }
