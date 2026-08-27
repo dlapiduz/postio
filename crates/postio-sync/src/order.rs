@@ -34,6 +34,12 @@ pub fn sync_priority(role: MailboxRole) -> u8 {
         MailboxRole::Junk => 5,
         MailboxRole::Trash => 6,
         MailboxRole::Regular => 7,
+        // Never a real mailbox's role: no `SPECIAL-USE` attribute names it,
+        // so discovery can never assign it and this arm can never actually
+        // run. Ranked with `Regular` rather than matched some other way, so
+        // an exhaustive match stays exhaustive without inventing meaning
+        // this queue does not need.
+        MailboxRole::Snoozed => 7,
     }
 }
 

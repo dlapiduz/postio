@@ -181,6 +181,7 @@ fn show_folders(window: &Window) {
             total: 400,
             unread,
             flagged: 0,
+            snoozed: 0,
         };
         mailbox
     };

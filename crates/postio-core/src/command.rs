@@ -103,6 +103,10 @@ command_ids! {
     Flag => "flag",
     /// Toggle the unread state of the selection.
     MarkUnread => "mark_unread",
+    /// Hide the selection from every ordinary list for a while.
+    Snooze => "snooze",
+    /// Cancel a snooze immediately.
+    Unsnooze => "unsnooze",
     /// Attach a label to the selection.
     AddLabel => "add_label",
     /// Focus the search field.
@@ -396,6 +400,21 @@ pub enum Command {
         /// The state to set; `None` toggles.
         unread: Option<bool>,
     },
+    /// Hide the selection from every ordinary list for a while.
+    ///
+    /// No duration here: unlike [`Command::Move`]'s destination, "for how
+    /// long" is a UI decision the handler makes, not one this registry-level
+    /// shape carries — the same reason [`Command::ScheduleSend`] opens a
+    /// picker rather than embedding a time.
+    Snooze {
+        /// What to snooze.
+        target: MessageTarget,
+    },
+    /// Cancel a snooze immediately.
+    Unsnooze {
+        /// What to unsnooze.
+        target: MessageTarget,
+    },
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
     ///
@@ -556,6 +575,8 @@ impl Command {
             | Command::Move { target, .. }
             | Command::Flag { target, .. }
             | Command::MarkUnread { target, .. }
+            | Command::Snooze { target }
+            | Command::Unsnooze { target }
             | Command::AddLabel { target, .. } => Some(target),
             _ => None,
         }
@@ -581,6 +602,8 @@ impl Command {
             Command::Move { to, .. } => Command::Move { target, to },
             Command::Flag { flagged, .. } => Command::Flag { target, flagged },
             Command::MarkUnread { unread, .. } => Command::MarkUnread { target, unread },
+            Command::Snooze { .. } => Command::Snooze { target },
+            Command::Unsnooze { .. } => Command::Unsnooze { target },
             Command::AddLabel { label, .. } => Command::AddLabel { target, label },
             other => other,
         }
@@ -615,6 +638,8 @@ impl Command {
             // The same verb, invoked by the app rather than by the user — see
             // `MarkReadOnDwell`'s own docs.
             Command::MarkUnread { .. } | Command::MarkReadOnDwell { .. } => CommandId::MarkUnread,
+            Command::Snooze { .. } => CommandId::Snooze,
+            Command::Unsnooze { .. } => CommandId::Unsnooze,
             Command::AddLabel { .. } => CommandId::AddLabel,
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
@@ -699,6 +724,12 @@ impl Command {
             CommandId::MarkUnread => Command::MarkUnread {
                 target: MessageTarget::Selection,
                 unread: None,
+            },
+            CommandId::Snooze => Command::Snooze {
+                target: MessageTarget::Selection,
+            },
+            CommandId::Unsnooze => Command::Unsnooze {
+                target: MessageTarget::Selection,
             },
             CommandId::AddLabel => Command::AddLabel {
                 target: MessageTarget::Selection,

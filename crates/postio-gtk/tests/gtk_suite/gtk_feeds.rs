@@ -54,6 +54,7 @@ impl Store {
                 total,
                 unread,
                 flagged: 0,
+                snoozed: 0,
             };
             // A folder that has synced, so the status line has an age to show.
             //
@@ -94,7 +95,9 @@ impl MessageSource for Store {
         // for.
         let mailbox = match request.scope {
             FeedScope::Mailbox(id) => id,
-            FeedScope::Flagged(_) | FeedScope::Thread(_) => MailboxId::new(0),
+            FeedScope::Flagged(_) | FeedScope::Snoozed(_) | FeedScope::Thread(_) => {
+                MailboxId::new(0)
+            }
         };
         // Each mailbox holds a different amount of mail, so "the list shows
         // the folder you picked" is checkable by counting.
@@ -169,6 +172,9 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
             // because this account has no flagged mail, the same way Archive
             // shows none with nothing unread. See `gtk_flagged.rs`.
             ("Flagged".to_string(), None),
+            // Snoozed is the same shape: a query over `snoozed_until`, no
+            // count because nothing here is snoozed either.
+            ("Snoozed".to_string(), None),
             ("Drafts".to_string(), Some("2".to_string())),
             ("Archive".to_string(), None),
         ]

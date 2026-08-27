@@ -430,6 +430,28 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::Snooze,
+        title: "Snooze",
+        // `b`, matching the mnemonic every other snooze-shaped mail client
+        // already trained a person on.
+        default_binding: "b",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::Unsnooze,
+        title: "Unsnooze",
+        default_binding: "B",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::AddLabel,
         title: "Add label…",
         default_binding: "L",

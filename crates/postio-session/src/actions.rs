@@ -34,7 +34,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use postio_core::bridge::EventSink;
 use postio_core::dispatch::{CommandError, DispatcherBuilder};
 use postio_core::state::{Resolved, SharedState, ViewScope};
@@ -62,8 +62,20 @@ const WIRED: &[CommandId] = &[
     CommandId::Move,
     CommandId::Flag,
     CommandId::MarkUnread,
+    CommandId::Snooze,
+    CommandId::Unsnooze,
     CommandId::Undo,
 ];
+
+/// How long [`Command::Snooze`] hides a message for, with no duration picker
+/// yet to ask for anything else.
+///
+/// #493's own scope note: a picker mirroring `ScheduleMenu`
+/// (`crates/postio-gtk/src/composer.rs`) is natural follow-up work once a
+/// single sensible default has proven the rest of the feature out — the same
+/// sequencing #6 already used to split scheduled send from snooze in the
+/// first place.
+const DEFAULT_SNOOZE: Duration = Duration::hours(3);
 
 /// Whether a verb is being performed or replayed backwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +263,8 @@ impl Actions {
             Command::MarkUnread { target, unread } => {
                 vec![self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?]
             }
+            Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE)?],
+            Command::Unsnooze { target } => vec![self.unsnooze(target)?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkReadOnDwell { message } => vec![self.set_flag(
@@ -682,6 +696,100 @@ impl Actions {
             reloaded: Vec::new(),
             changed: Vec::new(),
             removed: by_source.into_iter().collect(),
+        })
+    }
+
+    /// Hide the targeted messages from every ordinary list until `until`.
+    ///
+    /// Row-selection only, the same way `MessageTarget::Selection` bottoms
+    /// out for most verbs: a whole-mailbox snooze would need a
+    /// `MessageSet::Snoozed`-shaped bulk predicate of its own, which nothing
+    /// asks for yet (`view_scope` in `postio-app` deliberately does not offer
+    /// `Ctrl+A` inside the Snoozed view either, for the same reason).
+    ///
+    /// Local only — no queue row, no server ever hears about a snooze — so
+    /// unlike [`Self::set_flag`] there is nothing to enqueue, just the write
+    /// and the repaint. `removed` rather than `changed`: the row does not
+    /// merely look different, it leaves the list its mailbox is showing,
+    /// which needs `Event::MessagesRemoved` rather than a per-row patch.
+    fn snooze(
+        &self,
+        target: &MessageTarget,
+        until: chrono::DateTime<Utc>,
+    ) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect()?;
+        let rows = match self.aim(&connection, target)? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk { .. } => {
+                return Err(CommandError::rejected("Select the messages to snooze"));
+            }
+        };
+        let account = rows[0].account_id;
+        let ids: Vec<MessageId> = rows.iter().map(|message| message.id).collect();
+        MessageRepository::new(&connection)
+            .snooze(&ids, until)
+            .map_err(store_failure)?;
+
+        let mut removed: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
+        for message in &rows {
+            removed
+                .entry(message.mailbox_id)
+                .or_default()
+                .push(message.id);
+        }
+        Ok(Applied {
+            account,
+            kind: UndoKind::Snooze,
+            count: ids.len(),
+            messages: ids.clone(),
+            removed: removed.into_iter().collect(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            inverse: vec![Command::Unsnooze {
+                target: MessageTarget::Messages(ids),
+            }],
+        })
+    }
+
+    /// Cancel a snooze immediately, rather than waiting for it to come due.
+    ///
+    /// `reloaded` rather than `arrived`: the rows reappear in whatever
+    /// mailbox they were already filed in — nothing moved — so this is a
+    /// wholesale repaint of each affected folder, potentially more than one
+    /// at once for a selection spanning several.
+    fn unsnooze(&self, target: &MessageTarget) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect()?;
+        let rows = match self.aim(&connection, target)? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk { .. } => {
+                return Err(CommandError::rejected("Select the messages to unsnooze"));
+            }
+        };
+        let account = rows[0].account_id;
+        let ids: Vec<MessageId> = rows.iter().map(|message| message.id).collect();
+        MessageRepository::new(&connection)
+            .unsnooze(&ids)
+            .map_err(store_failure)?;
+
+        let reloaded: Vec<MailboxId> = rows
+            .iter()
+            .map(|message| message.mailbox_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(Applied {
+            account,
+            kind: UndoKind::Unsnooze,
+            count: ids.len(),
+            messages: ids.clone(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded,
+            changed: Vec::new(),
+            inverse: vec![Command::Snooze {
+                target: MessageTarget::Messages(ids),
+            }],
         })
     }
 
@@ -1364,6 +1472,15 @@ mod tests {
                 .flags
         }
 
+        fn snoozed_until_of(&self, message: MessageId) -> Option<chrono::DateTime<Utc>> {
+            let connection = self.database.connection().expect("a connection");
+            MessageRepository::new(&connection)
+                .get(message)
+                .expect("a read")
+                .expect("the message is still there")
+                .snoozed_until
+        }
+
         /// The queue the sync engine will drain when there is a link again.
         fn queued(&self) -> Vec<(OperationTarget, Operation)> {
             let connection = self.database.connection().expect("a connection");
@@ -1713,6 +1830,110 @@ mod tests {
             completion(&world.drained()),
             Some(("Marked 1 message as unread", true))
         );
+    }
+
+    // ── Snooze (#493) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn snoozing_the_selection_hides_it_and_tells_the_list_it_left() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Snooze {
+                target: MessageTarget::Selection,
+            })
+            .expect("snooze");
+
+        assert!(
+            world
+                .snoozed_until_of(message)
+                .is_some_and(|at| at > Utc::now()),
+            "the row must carry a snooze somewhere in the future"
+        );
+        let events = world.drained();
+        assert!(events.contains(&Event::MessagesRemoved {
+            account: world.account.id,
+            mailbox: world.inbox,
+            messages: vec![message],
+        }));
+        assert_eq!(
+            completion(&events),
+            Some(("Snoozed 1 message", true)),
+            "an undoable action, the same as every other verb here"
+        );
+    }
+
+    #[test]
+    fn undoing_a_snooze_unsnoozes_exactly_what_it_snoozed() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+        world
+            .run(Command::Snooze {
+                target: MessageTarget::Selection,
+            })
+            .expect("snooze");
+        let _ = world.drained();
+
+        world.run(Command::Undo).expect("undo");
+
+        assert_eq!(
+            world.snoozed_until_of(message),
+            None,
+            "undo is `Unsnooze`, not a second snooze"
+        );
+    }
+
+    #[test]
+    fn unsnoozing_clears_it_and_reloads_its_mailbox_rather_than_naming_the_row() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+        world
+            .run(Command::Snooze {
+                target: MessageTarget::Selection,
+            })
+            .expect("snooze");
+        let _ = world.drained();
+
+        world
+            .run(Command::Unsnooze {
+                target: MessageTarget::Selection,
+            })
+            .expect("unsnooze");
+
+        assert_eq!(world.snoozed_until_of(message), None);
+        let events = world.drained();
+        assert!(events.contains(&Event::MessageListChanged {
+            account: world.account.id,
+            mailbox: world.inbox,
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::MessagesRemoved { .. })),
+            "nothing left a mailbox; it came back"
+        );
+    }
+
+    #[test]
+    fn snoozing_a_whole_mailbox_is_refused() {
+        // Not offered yet (`view_scope` never resolves `FeedScope::Snoozed`
+        // into something `Ctrl+A` can select against either) -- see
+        // `Actions::snooze`'s own doc comment for why.
+        let world = world();
+        world.message(world.inbox, &[]);
+        world.everything_in(world.inbox);
+
+        let error = world
+            .run(Command::Snooze {
+                target: MessageTarget::Selection,
+            })
+            .expect_err("a whole-mailbox snooze is not offered");
+
+        assert!(matches!(error, CommandError::Rejected(_)));
     }
 
     // ── Marking read because you looked at it (#71) ──────────────────────

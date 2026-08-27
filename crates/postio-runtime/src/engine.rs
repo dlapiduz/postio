@@ -554,6 +554,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                             .poll(parts.backend.as_ref(), Utc::now(), entropy())
                             .await;
                         announce_link(&parts, &mut state, moved);
+                        wake_due_snoozes(&parts, &pool);
                     }
                     // The machine's own opinion of the network. It only ever moves
                     // the link between waiting and offline — the attempt count is
@@ -717,6 +718,32 @@ fn has_queued_work(parts: &EngineParts, pool: &Pool) -> bool {
     OperationQueueRepository::new(&connection)
         .pending(parts.account, Utc::now())
         .is_ok_and(|due| !due.is_empty())
+}
+
+/// Clears every snooze in this account whose time has come, and tells the
+/// list about whichever mailboxes it woke a row in (#493).
+///
+/// Visibility itself is self-healing regardless of this ever running — every
+/// list query reads `snoozed_until` against wall-clock time fresh on every
+/// page — so this is purely about promptness: a message due while the app is
+/// open should turn into a visible row within one `POLL_INTERVAL`, not only
+/// the next time something else happens to write that row. Deliberately
+/// silent about failure, the same reason [`has_queued_work`] is: a connection
+/// this cannot check out is already being reported elsewhere, and a sweep
+/// skipped for one tick costs five seconds, not a wrong answer.
+fn wake_due_snoozes(parts: &EngineParts, pool: &Pool) {
+    let Ok(connection) = pool.get() else {
+        return;
+    };
+    let Ok(woken) = MessageRepository::new(&connection).wake_due(parts.account, Utc::now()) else {
+        return;
+    };
+    for mailbox in woken {
+        parts.events.emit(Event::MessageListChanged {
+            account: parts.account,
+            mailbox,
+        });
+    }
 }
 
 /// Whether the link has come up since this was last asked.

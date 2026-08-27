@@ -92,6 +92,8 @@ pub enum FeedScope {
     Mailbox(MailboxId),
     /// Everything flagged in an account, wherever it is filed.
     Flagged(AccountId),
+    /// Everything currently snoozed in an account, wherever it is filed.
+    Snoozed(AccountId),
     /// One conversation, wherever its messages are filed.
     ///
     /// The drill-in reads this rather than filtering the message list's own
@@ -109,7 +111,7 @@ impl FeedScope {
     pub fn mailbox(self) -> Option<MailboxId> {
         match self {
             FeedScope::Mailbox(id) => Some(id),
-            FeedScope::Flagged(_) | FeedScope::Thread(_) => None,
+            FeedScope::Flagged(_) | FeedScope::Snoozed(_) | FeedScope::Thread(_) => None,
         }
     }
 }
@@ -756,7 +758,9 @@ impl FolderInner {
         // saved search — joins the same way.
         if let Some(account) = self.account.get() {
             let flagged = mailboxes.iter().map(|folder| folder.counts.flagged).sum();
+            let snoozed = mailboxes.iter().map(|folder| folder.counts.snoozed).sum();
             mailboxes.push(flagged_folder(account, flagged));
+            mailboxes.push(snoozed_folder(account, snoozed));
         }
         self.sidebar.set_mailboxes(&mailboxes);
         *self.mailboxes.borrow_mut() = mailboxes;
@@ -807,6 +811,28 @@ fn flagged_folder(account: AccountId, flagged: u32) -> Mailbox {
         total: flagged,
         unread: 0,
         flagged,
+        snoozed: 0,
+    };
+    folder
+}
+
+/// The id the synthetic "Snoozed" row is keyed by — see [`FLAGGED_ROW`] for
+/// why a sentinel is safe and where it must not go. A second, distinct
+/// negative value: the two synthetic rows must never collide with each
+/// other any more than with a real folder.
+const SNOOZED_ROW: MailboxId = MailboxId::new(-2);
+
+/// The sidebar's "Snoozed" row — [`flagged_folder`]'s own shape, for the
+/// other view every ordinary scope hides its rows from.
+fn snoozed_folder(account: AccountId, snoozed: u32) -> Mailbox {
+    let mut folder = Mailbox::new(account, "", None);
+    folder.id = SNOOZED_ROW;
+    folder.role = postio_model::mailbox::MailboxRole::Snoozed;
+    folder.counts = postio_model::mailbox::MailboxCounts {
+        total: snoozed,
+        unread: 0,
+        flagged: 0,
+        snoozed,
     };
     folder
 }
@@ -872,6 +898,7 @@ impl Folders {
     pub fn scope_of(&self, id: MailboxId) -> FeedScope {
         match self.0.account.get() {
             Some(account) if id == FLAGGED_ROW => FeedScope::Flagged(account),
+            Some(account) if id == SNOOZED_ROW => FeedScope::Snoozed(account),
             _ => FeedScope::Mailbox(id),
         }
     }

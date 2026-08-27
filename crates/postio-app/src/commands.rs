@@ -192,11 +192,18 @@ fn threads_of(
 /// verb*, not a view a whole-view selection is relative to — `Ctrl+A` inside
 /// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
 /// gets acted on instead.
+///
+/// Also `None` for Snoozed (#493): unlike Flagged, nothing here needs
+/// `Ctrl+A` to select every snoozed message at once yet, so it is not worth
+/// a `MessageSet::Snoozed` predicate of its own until something does. A
+/// person can still snooze, unsnooze, open and read individual rows in that
+/// view — this only means a whole-view bulk gesture there is a rejection
+/// rather than a no-op that silently claims to have done something.
 fn view_scope(scope: postio_gtk::feed::FeedScope) -> Option<ViewScope> {
     match scope {
         postio_gtk::feed::FeedScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
         postio_gtk::feed::FeedScope::Flagged(account) => Some(ViewScope::Flagged(account)),
-        postio_gtk::feed::FeedScope::Thread(_) => None,
+        postio_gtk::feed::FeedScope::Snoozed(_) | postio_gtk::feed::FeedScope::Thread(_) => None,
     }
 }
 

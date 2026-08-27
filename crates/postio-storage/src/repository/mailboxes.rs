@@ -39,13 +39,11 @@ FROM mailboxes m LEFT JOIN sync_state s ON s.mailbox_id = m.id";
 /// this mirrors (migration 0021) — both are the cached-count half of the
 /// same two-tier arrangement the live list query (`where_clause`) is the
 /// other half of.
-const VISIBLE: &str =
-    "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
 
 /// What counts as snoozed for the sidebar's own badge: the inverse of the
 /// snooze half of [`VISIBLE`], still gated on `deleted_locally` the same way.
-const SNOOZED: &str =
-    "deleted_locally = 0 AND snoozed_until IS NOT NULL AND snoozed_until > (strftime('%s','now') * 1000)";
+const SNOOZED: &str = "deleted_locally = 0 AND snoozed_until IS NOT NULL AND snoozed_until > (strftime('%s','now') * 1000)";
 
 impl<'a> MailboxRepository<'a> {
     /// Borrows a connection.
