@@ -2038,3 +2038,27 @@ fn a_drained_flag_stops_being_protected() {
          server can never mark anything unread again"
     );
 }
+
+#[test]
+fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
+    // #544: a non-IMAP backend's uid is a synthetic enumeration hint and can
+    // shift between passes; the identity is what names the message. A fetch
+    // carrying a known remote_id under a different uid must update the row
+    // it names, never insert a second copy of the same message.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut batch = vec![a_message(inbox, account.id, 40)];
+    messages.upsert_batch(&mut batch).expect("first sync");
+    let id = batch[0].id;
+
+    let mut shifted = vec![a_message(inbox, account.id, 40)];
+    shifted[0].server.uid = Some(Uid::new(999));
+    let report = messages.upsert_batch(&mut shifted).expect("second pass");
+
+    assert_eq!(report.updated, 1, "{report:?}");
+    assert_eq!(report.inserted, 0, "{report:?}");
+    assert_eq!(shifted[0].id, id, "the identity resolved to the same row");
+}
