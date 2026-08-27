@@ -323,6 +323,14 @@ fn head_schema_has_every_table_the_spec_requires() {
             "docs/PRODUCT.md §6 requires a `{required}` table; have {tables:?}"
         );
     }
+
+    // ADR 0007 Q3: groups, beyond §6's list the same way `contacts` itself is.
+    for required in ["contact_groups", "contact_group_members"] {
+        assert!(
+            tables.iter().any(|name| name == required),
+            "ADR 0007 Q3 requires a `{required}` table; have {tables:?}"
+        );
+    }
 }
 
 #[test]
@@ -333,6 +341,121 @@ fn head_schema_tracks_its_own_version() {
             .iter()
             .any(|name| name == "schema_migrations")
     );
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0007 Q1/Q3: contact provenance, suppression, and groups
+// ---------------------------------------------------------------------------
+
+/// A database migrated up to but not including the contact-groups migration
+/// (#472) -- the schema an existing store looks like right before upgrading.
+fn migrated_before_contact_groups() -> Connection {
+    let mut connection = empty();
+    let before = migrations::all()
+        .iter()
+        .position(|migration| migration.name == "contact_groups")
+        .expect("the contact_groups migration is registered");
+    migrations::migrate_with(&mut connection, &migrations::all()[..before])
+        .expect("migrate to just before #472");
+    connection
+}
+
+fn insert_bare_contact(connection: &Connection, address: &str) -> i64 {
+    connection
+        .execute(
+            "INSERT INTO contacts (account_id, address, address_normalized)
+             VALUES (NULL, ?1, ?1)",
+            [address],
+        )
+        .expect("insert a pre-migration contact");
+    connection.last_insert_rowid()
+}
+
+#[test]
+fn every_existing_contact_backfills_a_mail_source() {
+    let mut connection = migrated_before_contact_groups();
+    insert_bare_contact(&connection, "ada@example.com");
+
+    migrate(&mut connection).expect("migrate to head");
+
+    let source: String = connection
+        .query_row(
+            "SELECT source FROM contacts WHERE address = 'ada@example.com'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read the backfilled source");
+    assert_eq!(
+        source, "mail",
+        "a row that predates the column is a sighting, not a user edit"
+    );
+}
+
+#[test]
+fn a_migrated_contact_defaults_to_unsuppressed_with_no_vcard_fields() {
+    let mut connection = migrated_before_contact_groups();
+    insert_bare_contact(&connection, "grace@example.com");
+    migrate(&mut connection).expect("migrate to head");
+
+    let (suppressed, uid, vcard_extra): (i64, Option<String>, Option<String>) = connection
+        .query_row(
+            "SELECT suppressed, uid, vcard_extra FROM contacts WHERE address = 'grace@example.com'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read the new columns");
+    assert_eq!(suppressed, 0);
+    assert_eq!(uid, None);
+    assert_eq!(vcard_extra, None);
+}
+
+#[test]
+fn a_contact_source_outside_the_three_provenances_is_rejected() {
+    let connection = migrated();
+    insert_bare_contact(&connection, "katherine@example.com");
+
+    let error = connection
+        .execute(
+            "UPDATE contacts SET source = 'scraped' WHERE address = 'katherine@example.com'",
+            [],
+        )
+        .expect_err("only mail, user or import are real provenances");
+    assert!(
+        error.to_string().contains("CHECK"),
+        "expected a CHECK constraint violation, got: {error}"
+    );
+}
+
+#[test]
+fn deleting_a_contact_cascades_its_group_membership() {
+    let connection = migrated();
+    let contact_id = insert_bare_contact(&connection, "ursula@example.com");
+    connection
+        .execute(
+            "INSERT INTO contact_groups (account_id, name, created_at) VALUES (NULL, 'Book club', 0)",
+            [],
+        )
+        .expect("insert a group");
+    let group_id = connection.last_insert_rowid();
+    connection
+        .execute(
+            "INSERT INTO contact_group_members (group_id, contact_id) VALUES (?1, ?2)",
+            [group_id, contact_id],
+        )
+        .expect("insert membership");
+
+    connection
+        .execute("DELETE FROM contacts WHERE id = ?1", [contact_id])
+        .expect("delete the contact");
+
+    let count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM contact_group_members WHERE contact_id = ?1",
+            [contact_id],
+            |row| row.get(0),
+        )
+        .expect("count memberships");
+    assert_eq!(count, 0, "membership must not outlive the contact it names");
 }
 
 #[test]
