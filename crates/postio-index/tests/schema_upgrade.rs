@@ -158,7 +158,10 @@ fn a_metadata_upgrade_never_drops_the_body_index() {
     // Force a metadata rebuild the way the next added column will: by
     // regressing the recorded version, not by touching any table.
     connection
-        .execute("UPDATE search_schema SET version = version - 1 WHERE half = 'metadata'", [])
+        .execute(
+            "UPDATE search_schema SET version = version - 1 WHERE half = 'metadata'",
+            [],
+        )
         .expect("the version regresses");
 
     ensure_schema(&connection).expect("the rebuild applies");
