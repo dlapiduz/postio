@@ -142,6 +142,16 @@
   --scrollbar-outline-color: var(--postio-color-bg);
   --accent-bg-color: var(--postio-color-accent);
   --accent-fg-color: var(--postio-color-bg);
+
+  /* Per-account identity — a fixed ordered palette, rotated from the accent */
+  --postio-account-0: var(--postio-color-accent);
+  --postio-account-1: #674fb0;
+  --postio-account-2: #af4fb0;
+  --postio-account-3: #b04f68;
+  --postio-account-4: #b07f4f;
+  --postio-account-5: #98b04f;
+  --postio-account-6: #50b04f;
+  --postio-account-7: #4fb097;
 }
 
 /* ── Roles — dark ────────────────────────────────────────────────────
@@ -226,6 +236,16 @@
   --scrollbar-outline-color: var(--postio-color-neutral-900);
   --accent-bg-color: var(--postio-color-accent-400);
   --accent-fg-color: var(--postio-color-neutral-900);
+
+  /* Per-account identity — rotated from the dark scheme's own accent step */
+  --postio-account-0: var(--postio-color-accent-400);
+  --postio-account-1: #a794e3;
+  --postio-account-2: #e394e3;
+  --postio-account-3: #e394a8;
+  --postio-account-4: #e3bb94;
+  --postio-account-5: #d0e394;
+  --postio-account-6: #95e394;
+  --postio-account-7: #94e3cf;
 }
 
 /* ── Roles — high contrast ───────────────────────────────────────────
