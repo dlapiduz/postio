@@ -184,6 +184,12 @@ impl Session {
         self.shutdown();
     }
 
+    /// Every command the registry knows, in cheat-sheet order.
+    #[uniffi::method(name = "commands")]
+    pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
+        self.commands()
+    }
+
     /// Whether this session still holds its store.
     #[uniffi::method(name = "isOpen")]
     pub fn is_open_ffi(&self) -> bool {
@@ -277,6 +283,17 @@ impl Session {
             #[cfg(feature = "testing")]
             _scratch: None,
         }))
+    }
+
+    /// Every command the registry knows, in cheat-sheet order.
+    ///
+    /// The frontend asks once and builds its palette, cheat sheet, menu bar
+    /// and key hints from the answer — the same derivation the GTK side makes.
+    /// That is what keeps `PRODUCT.md` §8 true on both platforms: *a command
+    /// that is not in the registry does not exist*, and equally, one that is
+    /// in it needs no second list to be discoverable.
+    pub fn commands(&self) -> Vec<crate::CommandSpecFfi> {
+        crate::registry::commands()
     }
 
     /// Whether this session still holds its store.
