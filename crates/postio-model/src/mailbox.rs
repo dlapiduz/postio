@@ -280,10 +280,22 @@ pub struct Mailbox {
     pub subscribed: bool,
     /// A signature that overrides the account's own default when composing
     /// from this folder (#394) — see [`signature_default::resolve`]. Local
-    /// preference, never server state: unlike every field below this one,
+    /// preference, never server state: unlike every field below these two,
     /// nothing in a sync pass ever sets or reads it.
     #[serde(default)]
     pub signature_id: Option<SignatureId>,
+    /// Excludes this folder from the background backfill lane — both axes
+    /// ADR 0017 split it into, headers/text and attachment payloads (ADR
+    /// 0016, #350). The same local-preference shape as `signature_id`
+    /// immediately above: `postio-sync::discover::reconcile` clones the
+    /// existing row and copies across only what the server's `LIST` said, so
+    /// this survives a resync exactly the way `signature_id` does. Turning
+    /// it on does not delete or expire anything already pulled, and does not
+    /// stop an interactive, on-open fetch — the same distinction
+    /// `postio-sync`'s `BackfillPolicy::background` draws for its
+    /// account-wide knob; this is that knob, narrowed to one folder.
+    #[serde(default)]
+    pub backfill_excluded: bool,
     /// Cached counts.
     pub counts: MailboxCounts,
     /// Generation of the mailbox's UID space; a change invalidates every UID.
@@ -316,6 +328,7 @@ impl Mailbox {
             selectable: true,
             subscribed: true,
             signature_id: None,
+            backfill_excluded: false,
             counts: MailboxCounts::default(),
             uid_validity: None,
             uid_next: None,

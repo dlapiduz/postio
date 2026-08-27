@@ -261,6 +261,64 @@ fn updating_a_mailbox_changes_its_row_and_its_sync_state() {
 }
 
 #[test]
+fn a_folder_can_opt_out_of_background_backfill_and_back_in() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account_id = seeded_account(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+
+    let mut mailbox = Mailbox::new(account_id, "Announce", Some('/'));
+    let id = mailboxes.create(&mut mailbox).expect("create");
+    assert!(
+        !mailboxes.backfill_excluded(id).expect("read"),
+        "every selectable folder backfills by default (ADR 0016)"
+    );
+
+    assert!(
+        mailboxes
+            .set_backfill_excluded(id, true)
+            .expect("set excluded")
+    );
+    assert!(mailboxes.backfill_excluded(id).expect("read"));
+    assert!(
+        mailboxes
+            .get(id)
+            .expect("get")
+            .expect("the mailbox")
+            .backfill_excluded,
+        "the full row agrees with the narrow read"
+    );
+
+    assert!(
+        mailboxes
+            .set_backfill_excluded(id, false)
+            .expect("set included")
+    );
+    assert!(
+        !mailboxes.backfill_excluded(id).expect("read"),
+        "reversible"
+    );
+}
+
+#[test]
+fn a_mailbox_that_is_not_there_is_not_excluded() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let mailboxes = MailboxRepository::new(&connection);
+
+    assert!(
+        !mailboxes
+            .backfill_excluded(MailboxId::new(9999))
+            .expect("read")
+    );
+    assert!(
+        !mailboxes
+            .set_backfill_excluded(MailboxId::new(9999), true)
+            .expect("set")
+    );
+}
+
+#[test]
 fn deleting_a_mailbox_takes_its_messages_and_its_sync_state() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
