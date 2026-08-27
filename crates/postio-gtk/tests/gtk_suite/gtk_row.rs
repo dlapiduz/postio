@@ -193,6 +193,26 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
         "back on a threaded row, the hint returns"
     );
 
+    // ── `[ui].show_key_hints = false` mutes every row, focused or not ────
+    // Every binding keeps working; this only stops the row from naming one.
+    row.grab_focus();
+    pump();
+    assert!(row.shows_hints(), "focused, and hints are on by default");
+    row.set_show_key_hints(false);
+    pump();
+    assert!(
+        !row.shows_hints(),
+        "the setting overrides focus, not just the default"
+    );
+    let muted = row.measured_height(404);
+    row.set_show_key_hints(true);
+    pump();
+    assert!(row.shows_hints(), "turning it back on restores the hints");
+    assert!(
+        row.measured_height(404) > muted,
+        "the hints take their space back once shown again"
+    );
+
     // ── selected and focused are different states ────────────────────────
     // Focus is where the keyboard is; selection is what an action will hit.
     // A row that drew them the same way would make bulk actions feel

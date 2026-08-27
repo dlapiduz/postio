@@ -38,6 +38,10 @@ fn ui_defaults_match_the_design_canvas() {
     assert_eq!(ui.theme, Theme::System);
     assert!(ui.show_hover_actions, "mouse parity is a requirement");
     assert!(ui.thread_drill);
+    assert!(
+        ui.show_key_hints,
+        "the app teaches its own keyboard by default (#422)"
+    );
 }
 
 #[test]
@@ -60,6 +64,7 @@ fn parses_every_ui_value() {
         theme = "dark"
         show_hover_actions = false
         thread_drill = false
+        show_key_hints = false
         "#,
     )
     .unwrap();
@@ -67,6 +72,17 @@ fn parses_every_ui_value() {
     assert_eq!(cfg.ui.theme, Theme::Dark);
     assert!(!cfg.ui.show_hover_actions);
     assert!(!cfg.ui.thread_drill);
+    assert!(!cfg.ui.show_key_hints);
+}
+
+#[test]
+fn a_partial_ui_section_still_defaults_key_hints_on() {
+    let cfg = Config::from_toml_str("[ui]\nshow_key_hints = false\n").unwrap();
+    assert!(!cfg.ui.show_key_hints);
+    assert!(
+        cfg.ui.show_hover_actions,
+        "an unrelated field keeps its own default"
+    );
 }
 
 #[test]
