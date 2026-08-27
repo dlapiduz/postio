@@ -1695,3 +1695,181 @@ fn a_message_still_reads_back_the_addresses_it_was_given() {
     assert_eq!(stored.from, message.from, "verbatim spelling and name kept");
     assert_eq!(stored.to, message.to, "and header order preserved");
 }
+
+// ---------------------------------------------------------------------------
+// A queued flag survives the resync that has not seen it yet (#317)
+// ---------------------------------------------------------------------------
+//
+// The move case above drops the whole message from the batch, because the
+// message is not in that mailbox any more as far as the user is concerned. A
+// flag cannot be handled that way: the row *is* still there, and everything
+// else the server says about it — subject, size, what parts it has — is news
+// worth taking. Only the flags the queue is still holding intent about have to
+// survive.
+
+/// The shared fixture, but unread — which is the state a message the cursor
+/// has not rested on is in, and the one these tests are about.
+fn an_unread_message(
+    mailbox: MailboxId,
+    account: postio_model::AccountId,
+    seconds: i64,
+) -> Message {
+    let mut message = a_message(mailbox, account, seconds);
+    message.flags.remove(&postio_model::Flag::Seen);
+    message
+}
+
+/// Marks `message` read locally and queues the flag, in the order the dwell
+/// does it: the local write first, then the operation that will carry it.
+fn read_locally_and_enqueue(
+    connection: &Connection,
+    account: postio_model::AccountId,
+    message: MessageId,
+) {
+    use postio_storage::repository::OperationQueueRepository;
+    let mut flags = postio_model::FlagSet::new();
+    flags.insert(postio_model::Flag::Seen);
+    MessageRepository::new(connection)
+        .set_flags(message, &flags, FlagSource::Local)
+        .expect("the local write");
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account,
+            postio_model::OperationTarget::Message(message),
+            &postio_model::Operation::SetFlags { flags },
+            at(0),
+        )
+        .expect("enqueue");
+}
+
+fn is_seen(connection: &Connection, message: MessageId) -> bool {
+    MessageRepository::new(connection)
+        .get(message)
+        .expect("read")
+        .expect("the message")
+        .flags
+        .contains(&postio_model::Flag::Seen)
+}
+
+#[test]
+fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    // A message the server has, unread, synced normally.
+    let mut batch = vec![an_unread_message(inbox, account.id, 40)];
+    messages.upsert_batch(&mut batch).expect("first sync");
+    let message = batch[0].id;
+    let (uid, validity) = (
+        batch[0].server.uid.expect("uid"),
+        batch[0].server.uid_validity.expect("validity"),
+    );
+    assert!(!is_seen(&connection, message), "it starts unread");
+
+    // The cursor rests on it: read locally, and queued for the server.
+    read_locally_and_enqueue(&connection, account.id, message);
+    assert!(is_seen(&connection, message), "the dwell wrote it");
+
+    // A CHANGEDSINCE pass runs before the drainer gets there. The server has
+    // not been told yet, so it hands back exactly what it still believes.
+    let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
+    resynced[0].server.uid = Some(uid);
+    resynced[0].server.uid_validity = Some(validity);
+    messages.upsert_batch(&mut resynced).expect("resync upsert");
+
+    assert!(
+        is_seen(&connection, message),
+        "the message went bold again: a resync wrote the server's stale flags \
+         over a local read the server has not heard about yet, so the dwell is \
+         silently undone and the queued operation ends up setting a \\Seen \
+         nobody can see (#317)"
+    );
+}
+
+#[test]
+fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
+    // The other half, and the reason this cannot be solved by skipping the
+    // message the way an undrained move is. A flag the user never touched is
+    // the server's to report -- somebody flagged it on their phone -- and it
+    // has to arrive even while a *different* flag is mid-flight.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut batch = vec![an_unread_message(inbox, account.id, 40)];
+    messages.upsert_batch(&mut batch).expect("first sync");
+    let message = batch[0].id;
+    let (uid, validity) = (
+        batch[0].server.uid.expect("uid"),
+        batch[0].server.uid_validity.expect("validity"),
+    );
+
+    read_locally_and_enqueue(&connection, account.id, message);
+
+    // The server reports it flagged -- and still unseen, because it has not
+    // heard about the read yet.
+    let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
+    resynced[0].server.uid = Some(uid);
+    resynced[0].server.uid_validity = Some(validity);
+    resynced[0].flags.insert(postio_model::Flag::Flagged);
+    messages.upsert_batch(&mut resynced).expect("resync upsert");
+
+    let stored = messages.get(message).expect("read").expect("the message");
+    assert!(
+        stored.flags.contains(&postio_model::Flag::Flagged),
+        "a flag set elsewhere never arrived: preserving local intent must not \
+         mean refusing the server's news about everything else"
+    );
+    assert!(
+        stored.flags.contains(&postio_model::Flag::Seen),
+        "and the undrained read is still there"
+    );
+}
+
+#[test]
+fn a_drained_flag_stops_being_protected() {
+    // The bound on the rule: local intent wins only until the operation that
+    // carries it has settled. After that the server is authoritative again,
+    // and a message someone marked unread on their phone must be able to come
+    // back unread here.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut batch = vec![an_unread_message(inbox, account.id, 40)];
+    messages.upsert_batch(&mut batch).expect("first sync");
+    let message = batch[0].id;
+    let (uid, validity) = (
+        batch[0].server.uid.expect("uid"),
+        batch[0].server.uid_validity.expect("validity"),
+    );
+
+    read_locally_and_enqueue(&connection, account.id, message);
+
+    // The drainer pushes it and marks the row done.
+    {
+        use postio_storage::repository::OperationQueueRepository;
+        let queue = OperationQueueRepository::new(&connection);
+        let pending = queue.pending(account.id, at(1)).expect("pending");
+        for row in pending {
+            queue.mark_done(row.id, at(2)).expect("settle");
+        }
+    }
+
+    // Now the server says unseen -- which now means somebody read it and
+    // marked it unread again elsewhere, not that our write is in flight.
+    let mut resynced = vec![an_unread_message(inbox, account.id, 40)];
+    resynced[0].server.uid = Some(uid);
+    resynced[0].server.uid_validity = Some(validity);
+    messages.upsert_batch(&mut resynced).expect("resync upsert");
+
+    assert!(
+        !is_seen(&connection, message),
+        "a settled operation goes on protecting the flag it carried, so the \
+         server can never mark anything unread again"
+    );
+}

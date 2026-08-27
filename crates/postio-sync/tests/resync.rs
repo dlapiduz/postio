@@ -359,3 +359,90 @@ async fn a_transient_backend_failure_during_resync_is_not_treated_as_a_resync_re
         .expect_err("a dropped connection must surface as an error, not UpToDate");
     assert!(matches!(error, postio_sync::SyncError::Backend(_)));
 }
+
+/// The dwell's two halves, in the order it does them: the local write, then
+/// the operation that will carry it to the server.
+fn read_locally_and_enqueue(
+    connection: &Connection,
+    account: AccountId,
+    message: postio_model::MessageId,
+) {
+    use postio_storage::repository::{FlagSource, OperationQueueRepository};
+    let mut flags = FlagSet::new();
+    flags.insert(Flag::Seen);
+    MessageRepository::new(connection)
+        .set_flags(message, &flags, FlagSource::Local)
+        .expect("the local write");
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account,
+            postio_model::OperationTarget::Message(message),
+            &postio_model::Operation::SetFlags { flags },
+            chrono::Utc::now(),
+        )
+        .expect("enqueue");
+}
+
+#[tokio::test]
+async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it() {
+    // #317, end to end through the real resync rather than through
+    // `upsert_batch` directly. The report was "reading a message does not mark
+    // it read": it does, and then a pass arriving before the drainer writes
+    // the server's still-unseen copy back over it.
+    //
+    // The server has to have a *reason* to report the message, or an
+    // incremental pass fetches nothing and there is no overwrite to survive --
+    // which is how the first version of this test passed against the bug. So
+    // somebody flags it elsewhere: that bumps `MODSEQ`, the message comes back
+    // in the `CHANGEDSINCE` batch carrying its whole flag set, and that set
+    // does not contain the `\Seen` the server has not been told about.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = local(&connection);
+    let backend = server_with_messages(3).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let message = MessageRepository::new(&connection)
+        .by_uid(inbox.id, UidValidity::new(VALIDITY), Uid::new(1))
+        .expect("read")
+        .expect("the first message");
+    assert!(
+        !message.flags.contains(&Flag::Seen),
+        "the fixture arrives unread, or this test is about nothing"
+    );
+
+    // The cursor rests on it: read locally, queued for the server.
+    read_locally_and_enqueue(&connection, account, message.id);
+
+    // Meanwhile, on another client, it gets flagged.
+    let mut flagged = FlagSet::new();
+    flagged.insert(Flag::Flagged);
+    backend
+        .store_flags(
+            INBOX,
+            &UidSet::from_iter([Uid::new(1)]),
+            &postio_imap::backend::FlagChange::Add(flagged),
+        )
+        .await
+        .expect("the other client's STORE");
+
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    let after = MessageRepository::new(&connection)
+        .get(message.id)
+        .expect("read")
+        .expect("the message");
+    assert!(
+        after.flags.contains(&Flag::Flagged),
+        "the other client's flag never arrived, so this test is not watching \
+         the pass it thinks it is"
+    );
+    assert!(
+        after.flags.contains(&Flag::Seen),
+        "the resync took the read back off: the row goes bold again, and the \
+         queued operation will set a \\Seen on the server whose effect nobody \
+         here can see (#317)"
+    );
+}
