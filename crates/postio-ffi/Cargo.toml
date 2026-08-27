@@ -25,6 +25,7 @@ testing = ["dep:tempfile", "postio-storage/test-support"]
 
 [dependencies]
 postio-core.workspace = true
+postio-imap.workspace = true
 postio-model.workspace = true
 postio-session.workspace = true
 postio-storage.workspace = true
@@ -38,6 +39,10 @@ uniffi = { version = "0.29", features = ["cli"] }
 # The crate's own testing feature, the way postio-storage does it: a test
 # needs the in-memory constructor, and making it a default would ship it.
 postio-ffi = { path = ".", features = ["testing"] }
+# A `SecretStore` double that refuses, so the locked-keyring path is tested
+# without going near the developer's own login keyring.
+async-trait = "0.1.92"
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

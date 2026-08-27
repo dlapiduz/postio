@@ -369,6 +369,24 @@ impl Wiring {
 pub fn open_store(
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Database, BlobStore), String> {
+    open_store_at(paths::store_path(), store_key)
+}
+
+/// [`open_store`], over a store at a path the caller chooses.
+///
+/// The default is [`paths::store_path`] and every shipping caller wants it;
+/// this exists for the ones that cannot use a process-wide answer. A test
+/// needs a store per test rather than per machine, and the macOS boundary
+/// (ADR 0019) has to be able to open one before `paths` knows what
+/// `~/Library/Application Support` means for this project — a decision that
+/// is still open, and which this deliberately does not pre-empt.
+///
+/// Same contract as [`open_store`] in every other respect, including that
+/// `Err` carries a sentence meant for a person.
+pub fn open_store_at(
+    path: impl Into<std::path::PathBuf>,
+    store_key: &postio_storage::key::StoreKey,
+) -> Result<(Database, BlobStore), String> {
     // Taken and not yet used, deliberately and for one slice only. ADR 0014
     // lands as three sequenced pieces: this one mints and reads the key
     // (#299), #300 issues `PRAGMA key` with its database subkey, and #301
@@ -378,7 +396,7 @@ pub fn open_store(
     // is proven by the time it starts mattering, rather than bolted on
     // afterwards by whoever is holding #300.
     let _store_key = store_key;
-    let path = paths::store_path();
+    let path = path.into();
     let database = match Database::open(&path) {
         Ok(database) => database,
         Err(error) => {
