@@ -11,5 +11,6 @@
 //! Nothing toolkit-shaped may enter — no GTK, no WebKit, no SQL —
 //! and `check-crate-boundaries.py` enforces it, dev-dependencies included.
 
+pub mod keymap;
 pub mod reader;
 pub mod selection;

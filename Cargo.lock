@@ -2866,9 +2866,11 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "postio-body",
+ "postio-config",
  "postio-core",
  "postio-model",
  "postio-search",
+ "thiserror",
 ]
 
 [[package]]
