@@ -201,6 +201,36 @@ scalar_id!(
     u64
 );
 
+/// The server's own name for a message, whatever the protocol (#543,
+/// ADR 0018 Q2).
+///
+/// Opaque above the backend seam: a JMAP `Email` id or a Gmail message id
+/// is a server-wide string with no structure worth knowing. The IMAP
+/// adapter packs its generation-and-uid pair into one and derives its wire
+/// `Uid` back out; nothing outside that adapter reads structure into a
+/// `RemoteId`, and nothing outside a backend adapter constructs one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RemoteId(String);
+
+impl RemoteId {
+    /// Wraps a server-assigned message identity.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// The identity, as the text a database column or wire call carries.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RemoteId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// The key of a blob in the content-addressed blob store.
 ///
 /// Opaque to the domain model: it is produced and resolved by the storage layer.

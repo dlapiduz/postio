@@ -122,7 +122,7 @@ fn a_full_message(account_id: i64, mailbox_id: i64) -> Message {
     message.server.uid = Some(4242.into());
     message.server.uid_validity = Some(9.into());
     message.server.mod_seq = Some(777.into());
-    message.server.remote_id = Some("remote-4242".to_owned());
+    message.server.remote_id = Some(postio_model::RemoteId::new("remote-4242"));
     message.sync.body_state = BodyState::Full;
     message.sync.flags_dirty = true;
     message.sync.has_pending_operations = true;
@@ -186,7 +186,7 @@ fn insert_message(connection: &Connection, message: &Message) -> i64 {
                 message.server.uid.map(|uid| uid.get()),
                 message.server.uid_validity.map(|value| value.get()),
                 message.server.mod_seq.map(|value| value.get() as i64),
-                message.server.remote_id,
+                message.server.remote_id.as_ref().map(|id| id.as_str().to_owned()),
                 match message.sync.body_state {
                     BodyState::NotFetched => "not_fetched",
                     BodyState::HeadersOnly => "headers_only",
@@ -327,7 +327,10 @@ fn a_fully_populated_message_round_trips_through_the_schema() {
     assert_eq!(stored.size as u64, message.size);
     assert_eq!(stored.preview, message.preview);
     assert_eq!(stored.body_state, "full");
-    assert_eq!(stored.remote_id, message.server.remote_id);
+    assert_eq!(
+        stored.remote_id.map(postio_model::RemoteId::new),
+        message.server.remote_id
+    );
     assert_eq!(stored.raw_blob_id.as_deref(), Some("blake3:deadbeef"));
 
     // Flags survive as a canonical, `\Recent`-free set.
