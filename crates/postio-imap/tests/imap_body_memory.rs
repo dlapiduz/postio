@@ -30,7 +30,7 @@ use postio_imap::imap::{
     ScriptedConnector, fetch_part,
 };
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_model::{TransportSecurity, Uid};
+use postio_model::TransportSecurity;
 
 // ---------------------------------------------------------------------------
 // A peak-tracking global allocator

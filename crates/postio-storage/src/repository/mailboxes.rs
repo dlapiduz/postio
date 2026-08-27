@@ -1,8 +1,7 @@
 //! Mailboxes: the folder tree, its special-use roles, and the sidebar's counts.
 
 use postio_model::{
-    AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, SignatureId, Uid,
-    UidValidity,
+    AccountId, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, SignatureId, Uid,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -394,7 +393,7 @@ fn write_sync_state(
         params![
             id.get(),
             account_id,
-            mailbox.uid_validity.map(|value| i64::from(value.get())),
+            mailbox.generation.map(|value| i64::from(value.get())),
             mailbox.uid_next.map(|value| i64::from(value.get())),
             mailbox.highest_mod_seq.map(|value| value.get() as i64),
         ],
@@ -428,9 +427,9 @@ fn read_mailbox(row: &Row<'_>) -> rusqlite::Result<Mailbox> {
             flagged: row.get(11)?,
             snoozed: row.get(18)?,
         },
-        uid_validity: row
+        generation: row
             .get::<_, Option<i64>>(13)?
-            .map(|value| UidValidity::new(value as u32)),
+            .map(|value| Generation::new(value as u32)),
         uid_next: row
             .get::<_, Option<i64>>(14)?
             .map(|value| Uid::new(value as u32)),

@@ -6,9 +6,7 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
-use postio_model::{
-    Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget, Uid, UidValidity,
-};
+use postio_model::{Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
     AccountRepository, DraftRepository, MailboxRepository, OperationQueueRepository,
@@ -254,22 +252,20 @@ async fn a_draft_discarded_before_it_was_ever_uploaded_asks_the_server_for_nothi
 
 #[tokio::test]
 async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
-    // The hazard the operation carries its `UidValidity` for: under a new
-    // generation, UID 1 is somebody else's message.
+    // The hazard the operation carries its identity for: under a new
+    // generation, the old number is somebody else's message. Since #543 the
+    // check lives behind the seam — the adapter refuses the stale id — and
+    // the drainer reads that refusal as obsolete, never as a retry.
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
-    let backend = a_server("Drafts").await;
-
-    let mut folder = MailboxRepository::new(&connection)
-        .get(drafts_mailbox)
-        .expect("get")
-        .expect("the drafts mailbox");
-    folder.uid_validity = Some(UidValidity::new(2));
-    MailboxRepository::new(&connection)
-        .update(&folder)
-        .expect("record the new generation");
+    // The server has renumbered: its Drafts generation is 2, and the queued
+    // discard below still names an id from generation 1.
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Drafts").uid_validity(postio_model::UidValidity::new(2)))
+        .build();
+    backend.connect().await.expect("connect");
 
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)

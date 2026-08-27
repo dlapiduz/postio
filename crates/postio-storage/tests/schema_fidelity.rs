@@ -186,7 +186,11 @@ fn insert_message(connection: &Connection, message: &Message) -> i64 {
                 message.server.uid.map(|uid| uid.get()),
                 message.server.uid_validity.map(|value| value.get()),
                 message.server.mod_seq.map(|value| value.get() as i64),
-                message.server.remote_id.as_ref().map(|id| id.as_str().to_owned()),
+                message
+                    .server
+                    .remote_id
+                    .as_ref()
+                    .map(|id| id.as_str().to_owned()),
                 match message.sync.body_state {
                     BodyState::NotFetched => "not_fetched",
                     BodyState::HeadersOnly => "headers_only",

@@ -54,7 +54,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use postio_imap::backend::{Capabilities, Capability, MailboxEvent, MailboxStatus};
 use postio_imap::cancel::CancelToken;
-use postio_model::{MailboxId, ModSeq, Uid, UidValidity};
+use postio_model::{MailboxId, ModSeq, Uid};
 
 // ---------------------------------------------------------------------------
 // Policy
@@ -193,7 +193,7 @@ impl Wake {
 /// [`MailboxStatus`] cannot silently change what counts as a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Signature {
-    uid_validity: UidValidity,
+    generation: postio_model::Generation,
     uid_next: Uid,
     exists: u32,
     unseen: Option<u32>,
@@ -203,7 +203,7 @@ struct Signature {
 impl Signature {
     fn of(status: &MailboxStatus) -> Self {
         Self {
-            uid_validity: status.uid_validity,
+            generation: status.generation,
             uid_next: status.uid_next,
             exists: status.exists,
             unseen: status.unseen,

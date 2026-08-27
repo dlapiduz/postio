@@ -29,28 +29,6 @@ pub fn wire(remote_id: &RemoteId) -> Option<(UidValidity, Uid)> {
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_pair_round_trips_through_the_opaque_id() {
-        let id = remote_id(UidValidity::new(4_242), Uid::new(12));
-        assert_eq!(id.as_str(), "4242:12");
-        assert_eq!(
-            wire(&id),
-            Some((UidValidity::new(4_242), Uid::new(12)))
-        );
-    }
-
-    #[test]
-    fn an_id_from_another_backend_is_none_not_a_guess() {
-        for foreign in ["gm-1234", "", ":", "7:", ":42", "a:b", "7:42:9"] {
-            assert_eq!(wire(&RemoteId::new(foreign)), None, "{foreign:?}");
-        }
-    }
-}
-
 /// Unpacks a batch of ids into the wire set, refusing any that are not of
 /// this mailbox's live generation.
 ///
@@ -88,5 +66,24 @@ pub(crate) fn wire_uid(
         None => Err(crate::backend::BackendError::Protocol {
             reason: format!("remote id {id:?} is not this adapter's spelling"),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pair_round_trips_through_the_opaque_id() {
+        let id = remote_id(UidValidity::new(4_242), Uid::new(12));
+        assert_eq!(id.as_str(), "4242:12");
+        assert_eq!(wire(&id), Some((UidValidity::new(4_242), Uid::new(12))));
+    }
+
+    #[test]
+    fn an_id_from_another_backend_is_none_not_a_guess() {
+        for foreign in ["gm-1234", "", ":", "7:", ":42", "a:b", "7:42:9"] {
+            assert_eq!(wire(&RemoteId::new(foreign)), None, "{foreign:?}");
+        }
     }
 }

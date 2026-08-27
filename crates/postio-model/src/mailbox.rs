@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AccountId, MailboxId, ModSeq, SignatureId, Uid, UidValidity};
+use crate::ids::{AccountId, Generation, MailboxId, ModSeq, SignatureId, Uid};
 
 /// What a mailbox is *for*, independent of what the server calls it.
 ///
@@ -306,7 +306,7 @@ pub struct Mailbox {
     /// Cached counts.
     pub counts: MailboxCounts,
     /// Generation of the mailbox's UID space; a change invalidates every UID.
-    pub uid_validity: Option<UidValidity>,
+    pub generation: Option<Generation>,
     /// The UID the server will assign next.
     pub uid_next: Option<Uid>,
     /// Highest modification sequence seen, for incremental resync.
@@ -337,7 +337,7 @@ impl Mailbox {
             signature_id: None,
             backfill_excluded: false,
             counts: MailboxCounts::default(),
-            uid_validity: None,
+            generation: None,
             uid_next: None,
             highest_mod_seq: None,
             last_synced_at: None,
@@ -348,8 +348,8 @@ impl Mailbox {
     ///
     /// A `UIDVALIDITY` change means the server reused or renumbered the UID
     /// space and the mailbox must be resynchronized from scratch.
-    pub fn uid_validity_changed(&self, observed: UidValidity) -> bool {
-        matches!(self.uid_validity, Some(known) if known != observed)
+    pub fn generation_changed(&self, observed: Generation) -> bool {
+        matches!(self.generation, Some(known) if known != observed)
     }
 }
 

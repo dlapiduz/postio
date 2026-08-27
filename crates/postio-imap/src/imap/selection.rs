@@ -335,7 +335,7 @@ pub async fn select(
 
         Ok(MailboxStatus {
             path: path.clone(),
-            uid_validity: state.uid_validity,
+            generation: postio_model::Generation::new(state.uid_validity.get()),
             uid_next: state.uid_next.unwrap_or_else(|| Uid::new(1)),
             exists: state.exists,
             unseen: None,
@@ -350,7 +350,7 @@ pub async fn select(
         // Counts and generation numbers, which is what a resync argues about.
         tracing::debug!(
             exists = status.exists,
-            uid_validity = status.uid_validity.get(),
+            generation = status.generation.get(),
             uid_next = status.uid_next.get(),
             read_only = status.read_only,
             "selected"
@@ -393,7 +393,7 @@ pub async fn status(
 
         let mut status = MailboxStatus {
             path: path.clone(),
-            uid_validity: UidValidity::new(1),
+            generation: postio_model::Generation::new(1),
             uid_next: Uid::new(1),
             exists: 0,
             unseen: None,
@@ -411,7 +411,7 @@ pub async fn status(
                 StatusDataItem::Messages(count) => status.exists = count,
                 StatusDataItem::UidNext(next) => status.uid_next = Uid::new(next.get()),
                 StatusDataItem::UidValidity(value) => {
-                    status.uid_validity = UidValidity::new(value.get());
+                    status.generation = postio_model::Generation::new(value.get());
                 }
                 StatusDataItem::Unseen(count) => status.unseen = Some(count),
                 StatusDataItem::HighestModSeq(value) => {

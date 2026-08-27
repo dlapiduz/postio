@@ -194,6 +194,17 @@ scalar_id!(
     u32
 );
 scalar_id!(
+    /// A mailbox's naming generation, as the engine tracks it (#543).
+    ///
+    /// Opaque above the backend seam: the only operations that mean anything
+    /// are equality — "has the server renumbered since I looked?" — and
+    /// persistence. For IMAP it carries the `UIDVALIDITY` counter; a backend
+    /// whose ids never invalidate reports none at all. Nothing above an
+    /// adapter derives, compares magnitudes, or does arithmetic on one.
+    Generation,
+    u32
+);
+scalar_id!(
     /// A monotonically increasing per-mailbox modification sequence.
     ///
     /// Used for incremental resynchronization; larger means newer.

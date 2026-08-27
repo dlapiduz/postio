@@ -3,7 +3,7 @@
 use postio_imap::backend::BodyPart;
 use postio_imap::backend::{BodySink, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_imap::cancel::CancelToken;
-use postio_model::{Uid, UidValidity};
+use postio_model::UidValidity;
 use postio_storage::BlobStore;
 use postio_sync::blob_sink::BlobSink;
 
