@@ -3,7 +3,8 @@
 - **Status:** Accepted — **GO** (2026-08-24), **substantially revised 2026-08-24**,
   **Q5 answered from measurement 2026-08-26**
   ([#435](https://github.com/dlapiduz/postio/issues/435)), **Q5b decided
-  2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186))
+  2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186)),
+  **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464))
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -409,6 +410,67 @@ inbox they landed in.
   deleting the keyring entry is a separate, confirmed step. A remove that
   silently destroyed a keyring item shared with another tool would be
   unrecoverable in a way nothing else here is.
+
+### Q6a — Editing an existing account, and updating its credential (#464)
+
+**Decided 2026-08-27.** Q6 settled disable and removal; it did not say how
+any of the three reach a surface, or how a stored credential is updated once
+onboarding has already written one. Two questions, one answer each.
+
+**Ordinary fields (host, port, security, display name) are out of scope
+here, and `config.toml` is not where they would go if they were not.**
+The issue describes `postio-config`'s `[accounts.<id>]` schema
+(`config/src/accounts.rs`) as a real, if unguided, editing path for these
+today. It is not: `postio-app` reads and writes an
+account's connection settings exclusively through
+`postio_model::Account`/`AccountRepository` in SQLite, written once by
+`onboarding::persist` and never again. `ConfigChanged::accounts` is
+computed by `postio-config::change` but nothing downstream reads it — the
+schema exists and round-trips in that crate's own tests, but the settings
+panel's raw-text edits to `[accounts.<id>]` currently reach nothing a
+running account looks at. Editing that section today looks like it works
+(it saves, it re-parses, no error) and silently does not.
+
+That gap predates #464 and is bigger than it: making `config.toml` a real
+edit path for ordinary fields means either a reconciler that writes
+`AccountConfig` changes into the SQLite row (a second writer to reconcile
+against sync, and a place a stale keyring reference or an id mismatch has
+to be handled) or retiring the TOML schema outright — a decision this ADR
+does not make. **#464 ships none of that.** Its three acceptance criteria
+never asked for host/port/security editing, and this amendment does not
+expand them to it. Filed separately as
+[#470](https://github.com/dlapiduz/postio/issues/470).
+
+**What the raw editor cannot do gets exactly three small, targeted
+affordances in the settings panel, next to each account's config — not a
+new screen:**
+
+- **Enable/disable** — a toggle writing `accounts.enabled`, per Q6.
+- **Remove** — a `destructive: true` registry command per Q6, confirmed with
+  the undo Q6 already specifies, reaping the keyring entry only once the
+  account row's own removal is no longer undoable.
+- **Update credential** — the one truly new piece. **Reuses
+  `Status::Reauthenticate`, which already exists and is already tested**
+  (`postio-app/src/onboarding.rs`, `crates/postio-app/tests/app_suite/
+  startup_repair.rs`) — today reachable only automatically, when
+  `startup_route` finds a row the keyring will not give up a password for.
+  This adds a manual entry point: a registered command
+  (`account.update-credential`, alongside `account.add`'s eventual command
+  from [ADR 0012](0012-add-account-and-orientation.md) Q1) opens the same
+  `Onboarding` widget the same way Q1 there already decided any second
+  onboarding surface should be hosted — **an `AdwDialog` over the shell,
+  not a window-content replacement** — seeded with
+  `Status::Reauthenticate(configured(account))` instead of the empty
+  first-run state. The form, its probe timing and its seam stay exactly as
+  built; only what starts it and where it appears are new.
+
+**Why this does not collide with #64.** #64's hard problem is a *second
+engine* joining a running application without a restart — genuinely new
+composition-root work. Reauthenticating an account already running needs no
+new engine: same account, same connection, only the credential changes. The
+dialog host these two share is ADR 0012 Q1's decision, already made and
+already the right shape for both; building it once for the narrower case
+here does not decide anything #64 still has to.
 
 ---
 
