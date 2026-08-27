@@ -51,6 +51,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
+use postio_model::{Account, AccountId};
 
 /// How long to let typing settle before writing the buffer back to disk.
 ///
@@ -73,6 +74,30 @@ pub const BODY_HEIGHT: i32 = 330;
 /// region that disagrees with its content about what it holds is worse than
 /// one that repeats it.
 const FILE_NAME: &str = "config.toml";
+
+/// How tall the accounts list grows before it scrolls (#464).
+const ACCOUNTS_MAX_HEIGHT: i32 = 160;
+
+/// What an account row's context menu asked for (#464, ADR 0005 Q6a).
+///
+/// Not a `CommandId`: both need a specific account as their payload with no
+/// keystroke-derived default, and there is no `Context::Settings` for the
+/// keymap to reach them in — see the ADR. `SavedSearchAction` (#292) is the
+/// same shape for the same reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountAction {
+    /// Open the reauthenticate screen for this account.
+    UpdateCredential,
+    /// Mark the account for removal.
+    Remove,
+}
+
+/// What to call when an account row's context menu picks an action.
+type AccountActionHandler = Box<dyn Fn(AccountId, AccountAction)>;
+
+/// What to call when an account row's enabled switch is flipped by hand —
+/// never fired for the initial state [`SettingsPanel::set_accounts`] sets.
+type AccountEnabledHandler = Box<dyn Fn(AccountId, bool)>;
 
 // ---------------------------------------------------------------------------
 // Sections — pure, no GTK
@@ -219,6 +244,23 @@ fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Account row data (#464)
+// ---------------------------------------------------------------------------
+
+/// The account id `SettingsPanel::account_row` stamped onto `row`, or
+/// [`AccountId::UNASSIGNED`] if this is not an account row at all.
+fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
+    // glib cannot know the type a key was stored under; this file can — see
+    // `account_row`'s own comment.
+    #[allow(unsafe_code)]
+    unsafe {
+        row.data::<i64>("postio-account-id")
+            .map(|p| AccountId::new(*p.as_ref()))
+            .unwrap_or(AccountId::UNASSIGNED)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The widget
 // ---------------------------------------------------------------------------
 
@@ -252,6 +294,20 @@ mod imp {
         /// render where `[keys]` is actually edited rather than only in a log
         /// line nobody watches interactively.
         pub keymap_problems: RefCell<Vec<String>>,
+        /// One row per account, enable switch and context menu (#464).
+        pub accounts_list: gtk::ListBox,
+        /// Hidden entirely when there are no accounts to show a row for.
+        pub accounts_scroller: gtk::ScrolledWindow,
+        /// The accounts the rows above were built from — kept so a right
+        /// click can find which id and which context-menu items (first/last
+        /// have nothing to say) belong to the row it landed on.
+        pub accounts: RefCell<Vec<Account>>,
+        /// The account row context menu currently open, if one is — tracked
+        /// so a second right click closes the first, the same reason
+        /// `Sidebar` tracks `saved_search_menu`.
+        pub account_menu: RefCell<Option<gtk::PopoverMenu>>,
+        pub account_action: RefCell<Vec<AccountActionHandler>>,
+        pub account_enabled_changed: RefCell<Vec<AccountEnabledHandler>>,
     }
 
     impl Default for SettingsPanel {
@@ -270,6 +326,12 @@ mod imp {
                 dismissed: RefCell::new(Vec::new()),
                 last_good: RefCell::new(None),
                 keymap_problems: RefCell::new(Vec::new()),
+                accounts_list: gtk::ListBox::new(),
+                accounts_scroller: gtk::ScrolledWindow::new(),
+                accounts: RefCell::new(Vec::new()),
+                account_menu: RefCell::new(None),
+                account_action: RefCell::new(Vec::new()),
+                account_enabled_changed: RefCell::new(Vec::new()),
             }
         }
     }
@@ -468,6 +530,181 @@ impl SettingsPanel {
         self.refresh_validity();
     }
 
+    /// Shows one row per account, each with its enabled switch (#464).
+    ///
+    /// Hidden entirely when `accounts` is empty: a section with nothing in
+    /// it is clutter the composer's signature picker already taught this
+    /// codebase not to add.
+    pub fn set_accounts(&self, accounts: Vec<Account>) {
+        let imp = self.imp();
+        while let Some(row) = imp.accounts_list.row_at_index(0) {
+            imp.accounts_list.remove(&row);
+        }
+        for account in &accounts {
+            imp.accounts_list.append(&self.account_row(account));
+        }
+        imp.accounts_scroller.set_visible(!accounts.is_empty());
+        *imp.accounts.borrow_mut() = accounts;
+    }
+
+    /// One account's row: name and address, an enabled switch at the end.
+    fn account_row(&self, account: &Account) -> gtk::ListBoxRow {
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-account-row");
+        row.set_selectable(false);
+        // glib cannot know the type a key was stored under; this file can —
+        // the same technique `Sidebar`'s rows use for their own ids (#292).
+        #[allow(unsafe_code)]
+        unsafe {
+            row.set_data("postio-account-id", account.id.get());
+        }
+
+        let label = gtk::Label::new(Some(&format!(
+            "{} ({})",
+            account.display_name, account.address.address
+        )));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let enabled = gtk::Switch::new();
+        enabled.set_active(account.enabled);
+        enabled.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{} enabled",
+            account.display_name
+        ))]);
+        let account_id = account.id;
+        enabled.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |switch| {
+                for callback in panel.imp().account_enabled_changed.borrow().iter() {
+                    callback(account_id, switch.is_active());
+                }
+            }
+        ));
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&label);
+        box_.append(&enabled);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{}, {}",
+            account.display_name, account.address.address
+        ))]);
+        row
+    }
+
+    /// Called when an account row's context menu picks
+    /// [`AccountAction::UpdateCredential`] or [`AccountAction::Remove`].
+    pub fn connect_account_action(&self, handler: impl Fn(AccountId, AccountAction) + 'static) {
+        self.imp()
+            .account_action
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called when a row's enabled switch is flipped by hand — never for the
+    /// initial state [`SettingsPanel::set_accounts`] itself sets.
+    pub fn connect_account_enabled_changed(&self, handler: impl Fn(AccountId, bool) + 'static) {
+        self.imp()
+            .account_enabled_changed
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Opens an account row's context menu exactly as a right-click would,
+    /// registering its actions on `self` — the same shape
+    /// `Sidebar::test_open_saved_search_menu` uses, and for the same reason
+    /// (GTK4 gives a test no way to simulate the click itself; see #424,
+    /// #437). A test drives the result with
+    /// `WidgetExt::activate_action("account.<verb>", None)`.
+    #[doc(hidden)]
+    pub fn test_open_account_menu(&self, x: f64, y: f64) {
+        self.open_account_menu(x, y);
+    }
+
+    /// Closes the account row context menu, if one is open — see
+    /// `Sidebar::test_close_saved_search_menu` for why a test must call this
+    /// before tearing down the window.
+    #[doc(hidden)]
+    pub fn test_close_account_menu(&self) {
+        if let Some(popover) = self.imp().account_menu.take() {
+            popover.popdown();
+        }
+    }
+
+    /// Open an account row's context menu at `(x, y)`, if there is a row
+    /// there to open one for. See [`AccountAction`]'s own doc for why this
+    /// is a fixed, hand-built menu rather than one the command registry
+    /// generates.
+    fn open_account_menu(&self, x: f64, y: f64) {
+        let imp = self.imp();
+        if let Some(previous) = imp.account_menu.take() {
+            previous.popdown();
+        }
+        let Some(row) = imp.accounts_list.row_at_y(y as i32) else {
+            return;
+        };
+        let id = row_account_id(&row);
+        if !id.is_assigned() {
+            return;
+        }
+
+        let menu = gtk::gio::Menu::new();
+        menu.append(Some("Update credential"), Some("account.update-credential"));
+        menu.append(Some("Remove"), Some("account.remove"));
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&imp.accounts_list);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        let actions = gtk::gio::SimpleActionGroup::new();
+        for (name, action) in [
+            ("update-credential", AccountAction::UpdateCredential),
+            ("remove", AccountAction::Remove),
+        ] {
+            let simple = gtk::gio::SimpleAction::new(name, None);
+            simple.connect_activate(glib::clone!(
+                #[weak(rename_to = panel)]
+                self,
+                move |_, _| {
+                    for callback in panel.imp().account_action.borrow().iter() {
+                        callback(id, action);
+                    }
+                }
+            ));
+            actions.add_action(&simple);
+        }
+        // On `self`, not `imp.accounts_list`: matches `Sidebar`'s own reason
+        // — the popover's items resolve the action by walking up from
+        // wherever they are clicked, and inserting the group here is what
+        // lets `test_open_account_menu` drive it through the public type.
+        self.insert_action_group("account", Some(&actions));
+
+        popover.connect_closed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[weak]
+            popover,
+            move |_| {
+                popover.unparent();
+                let current = panel.imp().account_menu.borrow().clone();
+                if current.as_ref() == Some(&popover) {
+                    panel.imp().account_menu.take();
+                }
+            }
+        ));
+        *imp.account_menu.borrow_mut() = Some(popover.clone());
+        popover.popup();
+    }
+
     /// Records `text` as the last configuration known to load without error,
     /// without touching the buffer.
     ///
@@ -578,6 +815,36 @@ impl SettingsPanel {
         header.append(&spacer);
         header.append(&imp.tag);
 
+        // ── accounts: one row each, an enable switch, a context menu ─────
+        imp.accounts_list
+            .add_css_class("postio-settings-accounts-list");
+        imp.accounts_list
+            .set_selection_mode(gtk::SelectionMode::None);
+        imp.accounts_list
+            .update_property(&[gtk::accessible::Property::Label("Accounts")]);
+
+        let accounts_menu = gtk::GestureClick::new();
+        accounts_menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+        accounts_menu.set_propagation_phase(gtk::PropagationPhase::Capture);
+        accounts_menu.connect_pressed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, _, x, y| {
+                panel.open_account_menu(x, y);
+            }
+        ));
+        imp.accounts_list.add_controller(accounts_menu);
+
+        imp.accounts_scroller.set_child(Some(&imp.accounts_list));
+        imp.accounts_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.accounts_scroller
+            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
+        imp.accounts_scroller.set_propagate_natural_height(true);
+        imp.accounts_scroller
+            .add_css_class("postio-settings-accounts");
+        imp.accounts_scroller.set_visible(false);
+
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
         imp.nav.set_selection_mode(gtk::SelectionMode::Single);
@@ -656,6 +923,7 @@ impl SettingsPanel {
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&header);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        column.append(&imp.accounts_scroller);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);
