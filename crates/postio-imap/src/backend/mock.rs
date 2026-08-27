@@ -1249,10 +1249,7 @@ impl MockBackend {
                 source: Uid::new(message.uid),
                 destination: Uid::new(uid),
                 uid_validity: folder.uid_validity,
-                destination_remote_id: identity::remote_id(
-                    folder.uid_validity,
-                    Uid::new(uid),
-                ),
+                destination_remote_id: identity::remote_id(folder.uid_validity, Uid::new(uid)),
             });
         }
 
