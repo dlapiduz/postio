@@ -513,6 +513,20 @@ fn main() -> glib::ExitCode {
     if flag("demo") {
         populate(&window);
     }
+    // The accounts strip (#185), which needs two accounts to exist at all.
+    // Driven directly like every other surface here: the point of a shot is
+    // to make something lookable, and seeding a second account through the
+    // store would be seeding a whole second mailbox to draw four rows.
+    if flag("accounts") {
+        window.sidebar().set_accounts(
+            &[
+                (AccountId::new(1), "Work".to_owned()),
+                (AccountId::new(2), "Home".to_owned()),
+            ],
+            postio_model::AccountScope::Account(AccountId::new(1)),
+            false,
+        );
+    }
     // The screen a store that will not open puts up instead of the mail
     // (#404). Rendered from the same words `SecretError::Locked` writes, so
     // what this shows is what a person with a locked keyring sees.
