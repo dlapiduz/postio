@@ -87,6 +87,7 @@ const REQUIRED_RAMPS: &[&str] = &[
 /// IBM Plex Mono. Kept here so it travels with the other font tokens.
 const FONT_MONO: &str = "\"IBM Plex Mono\", monospace";
 
+/// Something the parser or generator could not make sense of.
 #[derive(Debug)]
 pub struct TokenError(pub String);
 
@@ -177,6 +178,7 @@ impl Tokens {
         self.order.iter().map(String::as_str)
     }
 
+    /// The value of a token by name, if the source defined it.
     pub fn get(&self, name: &str) -> Option<&str> {
         self.values.get(name).map(String::as_str)
     }

@@ -3,18 +3,21 @@
 //! Two jobs, in this order:
 //!
 //! 1. Read the Industry design system's `:root` token block and generate
-//!    `data/tokens.css`. The generated file is checked in so that a build
-//!    outside the repository (or without the `Design/` tree) still works, and a
-//!    test — `tokens_are_regenerated_from_the_design_system` — fails if the
-//!    checked-in copy has drifted from the source.
+//!    `data/tokens.css`, through `postio_ui::tokens` — a build-dependency
+//!    now (#569) rather than `#[path = "src/tokens.rs"]`, so the parser and
+//!    emitter this crate uses at build time are the same crate a second
+//!    frontend links at run time, not two copies kept in step by
+//!    convention. The generated file is checked in so that a build outside
+//!    the repository (or without the `Design/` tree) still works, and
+//!    `postio-ui`'s own drift tests fail if the checked-in copy has
+//!    drifted from the source.
 //! 2. Compile `data/postio.gresource.xml` into the GResource bundle that
 //!    carries the stylesheet and the vendored OFL fonts, so the app resolves
 //!    both without a system font installation and without touching the network.
 
 use std::path::{Path, PathBuf};
 
-#[path = "src/tokens.rs"]
-mod tokens;
+use postio_ui::tokens;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
