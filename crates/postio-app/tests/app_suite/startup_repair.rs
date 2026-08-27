@@ -122,6 +122,7 @@ pub fn an_account_with_no_credential_lands_on_the_repair_screen() {
         Vec::new(),
         std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
         notifier,
+        std::rc::Rc::new(std::cell::Cell::new(false)),
     );
 
     let arrived = settle_until(|| screen(&window).is_some());
