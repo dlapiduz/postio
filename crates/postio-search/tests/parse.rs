@@ -115,6 +115,42 @@ fn list_operator() {
 }
 
 #[test]
+fn account_operator() {
+    // The value stays text here. This crate never resolves it to an id — that
+    // needs the store, and keeping the parse pure is what lets a saved search
+    // survive in `[filters]` as the string the user typed (ADR 0005 Q5, #186).
+    assert_eq!(
+        filters("account:work"),
+        vec![Filter::Account("work".into())]
+    );
+    assert_eq!(
+        filters(r#"account:"Work Mail""#),
+        vec![Filter::Account("Work Mail".into())]
+    );
+    // An address is a perfectly good way to name an account, and the one a
+    // person is most likely to remember.
+    assert_eq!(
+        filters("account:ada@example.com"),
+        vec![Filter::Account("ada@example.com".into())]
+    );
+}
+
+#[test]
+fn account_composes_with_other_operators_and_with_negation() {
+    // The whole point of the orthogonal shape #186 chose: "this account, and
+    // unread" is one query rather than two mutually exclusive scopes.
+    assert_eq!(
+        filters("account:work is:unread"),
+        vec![Filter::Account("work".into()), Filter::Is(State::Unread),]
+    );
+
+    let parsed = q("-account:work");
+    let clause = parsed.filters().next().unwrap();
+    assert!(clause.negated, "`-account:` means every other account");
+    assert_eq!(clause.filter, Filter::Account("work".into()));
+}
+
+#[test]
 fn larger_operator_with_size_suffixes() {
     assert_eq!(filters("larger:1M"), vec![Filter::Larger(1024 * 1024)]);
     assert_eq!(filters("larger:1m"), vec![Filter::Larger(1024 * 1024)]);

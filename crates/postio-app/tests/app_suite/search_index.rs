@@ -18,6 +18,7 @@ use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::window::Window;
 use postio_index::{SearchRequest, search};
+use postio_model::AccountScope;
 use postio_model::ids::MessageId;
 use postio_model::{AccountId, BodyState};
 use postio_search::facets::Scope;
@@ -44,7 +45,7 @@ pub fn a_store_the_application_opened_can_be_searched() {
     let hits = search(
         &connection,
         &SearchRequest {
-            account_id: report.account.id,
+            account: AccountScope::Account(report.account.id),
             query: &query,
             scope: Scope::AllMail,
             limit: 50,
@@ -100,7 +101,7 @@ fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> 
     search(
         &connection,
         &SearchRequest {
-            account_id: account,
+            account: AccountScope::Account(account),
             query: &parsed,
             scope: Scope::AllMail,
             limit: 50,

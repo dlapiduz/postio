@@ -12,6 +12,7 @@
 
 use chrono::Utc;
 use postio_index::{SearchRequest, index, search};
+use postio_model::AccountScope;
 use postio_model::{EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
@@ -34,7 +35,7 @@ fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
 
     let query = parse("quarterly", Utc::now().date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,

@@ -65,7 +65,9 @@ pub mod test_corpus;
 pub mod thread;
 pub mod threading;
 
-pub use account::{Account, AuthMethod, Identity, ServerConfig, Signature, TransportSecurity};
+pub use account::{
+    Account, AccountScope, AuthMethod, Identity, ServerConfig, Signature, TransportSecurity,
+};
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
 pub use contact::Contact;

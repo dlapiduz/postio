@@ -263,50 +263,18 @@ struct Frame {
     focus: Option<MessageId>,
 }
 
-/// What the mail on screen belongs to.
+/// How many accounts a view is about: one, or all of them.
 ///
-/// ADR 0005 Q4. `Option<AccountId>` carried two meanings at once — "no
-/// account is configured" and "no account has been chosen" — and the second
-/// stopped being a real state the moment more than one account could be
-/// open at a time. This is the replacement, and it is deliberately not an
-/// `Option`: there is always a scope.
+/// The type itself lives in [`postio_model::AccountScope`] and is re-exported
+/// here under the name #182 gave it. It moved down to `postio-model` in #186,
+/// when search needed the same value and `postio-index` could not depend on
+/// this crate: `AppState.scope` and `SearchRequest.account` are meant to be
+/// the same answer to the same question, and two enums that must agree about
+/// what "unified" means is exactly how they stop being.
 ///
-/// The asymmetry is the point. [`Scope::Account`] names real mailboxes on a
-/// real server, so it can be a *destination*; [`Scope::Unified`] is a view
-/// assembled across every enabled account and can never be one. Commands
-/// that need somewhere to put a message are unavailable in it — see
-/// [`Requirement`](crate::registry::Requirement).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum Scope {
-    /// One account's own mailboxes.
-    Account(AccountId),
-    /// Every enabled account at once. A view, never a destination.
-    ///
-    /// The default, and it is not a placeholder: unified over zero accounts
-    /// is empty, which is exactly what a fresh install has to show. The old
-    /// `None` had to mean that *and* "an account exists but none is chosen";
-    /// this means only the first.
-    #[default]
-    Unified,
-}
-
-impl Scope {
-    /// The account this scope names, or `None` for [`Scope::Unified`].
-    ///
-    /// The one place the old `Option<AccountId>` survives, and it now means
-    /// exactly one thing: "this view is not about a single account."
-    pub fn account(self) -> Option<AccountId> {
-        match self {
-            Scope::Account(id) => Some(id),
-            Scope::Unified => None,
-        }
-    }
-
-    /// Whether this scope can be the destination of a move.
-    pub fn is_single_account(self) -> bool {
-        matches!(self, Scope::Account(_))
-    }
-}
+/// Commands that need somewhere to put a message are unavailable in
+/// [`Scope::Unified`] — see [`Requirement`](crate::registry::Requirement).
+pub use postio_model::AccountScope as Scope;
 
 /// The application's view of itself.
 ///

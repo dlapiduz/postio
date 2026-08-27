@@ -25,7 +25,7 @@
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use postio_model::{AccountId, EmailAddress, MailboxId, MessageId, ThreadId};
+use postio_model::{AccountScope, EmailAddress, MailboxId, MessageId, ThreadId};
 use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
 
@@ -65,8 +65,14 @@ const SENDER_WEIGHT: f64 = 1.0;
 /// A search over one account's mail.
 #[derive(Debug, Clone, Copy)]
 pub struct SearchRequest<'a> {
-    /// The account to search within. Search never crosses accounts.
-    pub account_id: AccountId,
+    /// Which accounts to search: one, or all of them.
+    ///
+    /// Was a bare `AccountId` — search never crossed accounts — until #186.
+    /// Orthogonal to [`scope`](Self::scope), which is the *role* tri-tab, so
+    /// that "this account's inbox" and "every account's inbox" are both
+    /// askable. Folding the two into one enum would have made them mutually
+    /// exclusive; see ADR 0005 Q5.
+    pub account: AccountScope,
     /// The already-parsed query. See [`postio_search::parse`].
     pub query: &'a ParsedQuery,
     /// Which slice of the account to look in.
@@ -370,6 +376,14 @@ impl Candidate {
 struct Plan {
     conditions: Vec<String>,
     params: Vec<Value>,
+    /// Which accounts the request was about.
+    ///
+    /// Carried rather than recovered from `params`, which `hydrate` used to
+    /// do by reading `params[0]` on the promise that the account id was
+    /// always bound first. Under `AccountScope::Unified` there is no account
+    /// parameter at all, so that promise became a panic (#186) — and it was
+    /// only ever true by the order two `push`es happened to be written in.
+    account: AccountScope,
     /// Whether a positive free-text `MATCH` is part of `conditions`, in which
     /// case `messages_fts` must be joined so `bm25()`/`snippet()` can read it.
     has_match: bool,
@@ -389,11 +403,17 @@ struct Plan {
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
-        let mut conditions = vec![
-            "m.account_id = ?".to_string(),
-            "m.deleted_locally = 0".to_string(),
-        ];
-        let mut params = vec![Value::Integer(request.account_id.get())];
+        // `AccountScope::Unified` names no account, so the predicate is
+        // absent rather than widened -- which is why migration 0012 exists:
+        // without `idx_messages_recency` the recency path has no index that
+        // can supply its ordering once this conjunct is gone (ADR 0005 Q5a).
+        let mut conditions = vec!["m.deleted_locally = 0".to_string()];
+        let mut params: Vec<Value> = Vec::new();
+        if let Some(id) = request.account.account() {
+            conditions.push("m.account_id = ?".to_string());
+            params.push(Value::Integer(id.get()));
+        }
+        let account = request.account;
         let mut has_match = false;
         let mut match_param = None;
 
@@ -439,7 +459,7 @@ impl Plan {
             has_match = true;
         }
 
-        if let Some((sql, mut values)) = scope_condition(request.scope, request.account_id) {
+        if let Some((sql, mut values)) = scope_condition(request.scope, request.account) {
             conditions.push(sql);
             params.append(&mut values);
         }
@@ -458,6 +478,7 @@ impl Plan {
         Self {
             conditions,
             params,
+            account,
             has_match,
             match_param,
         }
@@ -791,6 +812,16 @@ impl Plan {
             .collect::<Vec<_>>()
             .join(", ");
 
+        // Sender affinity is per account, or shared when `account_id IS
+        // NULL`. Scoped to one account, only that account's sightings count;
+        // unified, every account's do — which is the right answer rather than
+        // a shortcut, since the question "how often do I hear from this
+        // person" is about the person and not about which inbox they landed
+        // in.
+        let affinity = match self.account.account() {
+            Some(_) => "AND (c.account_id = ? OR c.account_id IS NULL)",
+            None => "",
+        };
         let sql = format!(
             "SELECT
                  m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
@@ -805,16 +836,17 @@ impl Plan {
                                                     JOIN addresses a ON a.id = r.address_id
                                                    WHERE r.message_id = m.id AND r.kind = 'from'
                                                    ORDER BY r.position LIMIT 1)
-                      AND (c.account_id = ? OR c.account_id IS NULL)) AS sender_times_seen,
+                      {affinity}) AS sender_times_seen,
                  0 AS unused
              FROM messages m WHERE m.id IN ({placeholders})",
         );
 
-        // The contacts subquery's account id, then one per id in the `IN`
-        // list. The contacts lookup shares the request's account id, always
-        // `self.params[0]` — see `Plan::build`.
+        // Then one parameter per id in the `IN` list, after the affinity
+        // subquery's own if it has one.
         let mut params = Vec::with_capacity(ids.len() + 1);
-        params.push(self.params[0].clone());
+        if let Some(id) = self.account.account() {
+            params.push(Value::Integer(id.get()));
+        }
         params.extend(ids.iter().map(|id| Value::Integer(*id)));
 
         let mut statement = connection.prepare(&sql)?;
@@ -863,16 +895,26 @@ impl Plan {
 /// Scoped by mailbox *role* rather than by id, because the scope has to mean
 /// the same thing on every account and before any folder has been chosen. See
 /// [`Scope::Lists`] for why "lists" is a role test and not a `List-Id` one.
-fn scope_condition(scope: Scope, account_id: AccountId) -> Option<(String, Vec<Value>)> {
+fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<Value>)> {
     let role = match scope {
         Scope::AllMail => return None,
         Scope::Inbox => "role = 'inbox'",
         Scope::Lists => "role = 'regular'",
     };
-    Some((
-        format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE account_id = ? AND {role})"),
-        vec![Value::Integer(account_id.get())],
-    ))
+    // The role half is byte-for-byte the same in both scopes. Unified drops
+    // the account conjunct and nothing else, which is what makes "every
+    // account's inbox" a predicate removal rather than a redefinition of what
+    // "Inbox" means (#186, ADR 0005 Q5a).
+    Some(match account.account() {
+        Some(id) => (
+            format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE account_id = ? AND {role})"),
+            vec![Value::Integer(id.get())],
+        ),
+        None => (
+            format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE {role})"),
+            Vec::new(),
+        ),
+    })
 }
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
@@ -882,6 +924,17 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
         Filter::From(value) => fts_column_condition("sender", value),
         Filter::To(value) => fts_column_condition("recipients", value),
         Filter::Subject(value) => fts_column_condition("subject", value),
+        // Resolved in SQL rather than in Rust, exactly as `in:` is below: the
+        // name the user typed is matched against the account's display name
+        // and its address. A name that resolves to nothing yields an empty
+        // `IN` set and so matches nothing -- never everything, which is what
+        // dropping an unresolvable predicate would silently mean.
+        Filter::Account(value) => (
+            "m.account_id IN (SELECT id FROM accounts \
+             WHERE lower(display_name) = lower(?) OR lower(address) = lower(?))"
+                .to_string(),
+            vec![Value::Text(value.clone()), Value::Text(value.clone())],
+        ),
         Filter::In(value) => (
             "m.mailbox_id IN (SELECT id FROM mailboxes \
              WHERE lower(name) = lower(?) OR lower(path) = lower(?) OR role = lower(?))"
