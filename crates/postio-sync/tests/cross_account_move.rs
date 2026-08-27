@@ -59,6 +59,7 @@ fn world(raw: &[u8], with_message_id: bool) -> World {
     let mut message = Message::new(source.id, source_inbox, at(8));
     message.server.uid = Some(Uid::new(1));
     message.server.uid_validity = Some(UidValidity::new(1));
+    message.server.remote_id = Some(postio_model::RemoteId::new("1:1"));
     if with_message_id {
         message.rfc_message_id = Some(RfcMessageId::new("<engine@example.com>"));
     }

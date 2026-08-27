@@ -36,8 +36,15 @@ const EXTENSION_RICH: [&str; 8] = [
     "X-VENDOR-PUSH",
 ];
 
-fn uids(values: impl IntoIterator<Item = u32>) -> UidSet {
-    values.into_iter().map(Uid::new).collect()
+fn uids(values: impl IntoIterator<Item = u32>) -> Vec<postio_model::RemoteId> {
+    // `server()` pins INBOX's generation to 4242, so these are the ids its
+    // adapter minted.
+    values.into_iter().map(rid).collect()
+}
+
+/// The identity `server()`'s INBOX generation gives `uid`.
+fn rid(uid: u32) -> postio_model::RemoteId {
+    postio_model::RemoteId::new(format!("4242:{uid}"))
 }
 
 /// A backend shaped like the account this project targets.
@@ -69,7 +76,7 @@ async fn connected() -> MockBackend {
 
 #[test]
 fn a_uid_set_coalesces_and_orders_what_it_is_given() {
-    let set = uids([3, 1, 2, 7, 2]);
+    let set: UidSet = [3, 1, 2, 7, 2].into_iter().map(Uid::new).collect();
 
     assert_eq!(set.to_sequence_set(), "1:3,7");
     assert_eq!(set.len(), Some(4));
@@ -80,7 +87,7 @@ fn a_uid_set_coalesces_and_orders_what_it_is_given() {
 #[test]
 fn a_uid_set_ignores_uid_zero() {
     // IMAP UIDs start at 1; a zero is a bug upstream, not a message.
-    let set = uids([0, 1, 2]);
+    let set: UidSet = [0, 1, 2].into_iter().map(Uid::new).collect();
 
     assert_eq!(set.to_sequence_set(), "1:2");
     assert!(!set.contains(Uid::new(0)));
@@ -434,7 +441,12 @@ async fn fetching_headers_returns_only_the_uids_that_were_asked_for() {
     let cancel = CancelToken::new();
 
     let fetched = backend
-        .fetch_headers("INBOX", &uids([1, 3, 99]), None, &cancel)
+        .fetch_headers(
+            "INBOX",
+            &[1, 3, 99].into_iter().map(Uid::new).collect::<UidSet>(),
+            None,
+            &cancel,
+        )
         .await
         .unwrap();
 
@@ -489,7 +501,7 @@ async fn fetching_a_body_streams_into_the_sink_rather_than_returning_bytes() {
     let mut sink = VecSink::new();
 
     let fetched = backend
-        .fetch_body("INBOX", Uid::new(1), &mut sink, &cancel)
+        .fetch_body("INBOX", &rid(1), &mut sink, &cancel)
         .await
         .unwrap();
 
@@ -510,7 +522,7 @@ async fn a_large_body_arrives_in_chunks_so_nothing_buffers_it_whole() {
     let cancel = CancelToken::new();
     let mut sink = VecSink::new();
     backend
-        .fetch_body("INBOX", Uid::new(1), &mut sink, &cancel)
+        .fetch_body("INBOX", &postio_model::RemoteId::new("1:1"), &mut sink, &cancel)
         .await
         .unwrap();
 
@@ -528,7 +540,7 @@ async fn fetching_an_absent_uid_is_a_clean_error() {
     let mut sink = VecSink::new();
 
     let error = backend
-        .fetch_body("INBOX", Uid::new(404), &mut sink, &cancel)
+        .fetch_body("INBOX", &rid(404), &mut sink, &cancel)
         .await
         .unwrap_err();
 
@@ -544,13 +556,13 @@ async fn a_part_fetch_asks_for_a_section_not_the_whole_message() {
     let mut headers = VecSink::new();
 
     backend
-        .fetch_part("INBOX", Uid::new(1), &BodyPart::Whole, &mut whole, &cancel)
+        .fetch_part("INBOX", &rid(1), &BodyPart::Whole, &mut whole, &cancel)
         .await
         .unwrap();
     backend
         .fetch_part(
             "INBOX",
-            Uid::new(1),
+            &rid(1),
             &BodyPart::Headers,
             &mut headers,
             &cancel,
@@ -686,7 +698,7 @@ async fn expunge_removes_only_messages_marked_deleted() {
 
     let expunged = backend.expunge("INBOX", None).await.unwrap();
 
-    assert_eq!(expunged, [Uid::new(2)]);
+    assert_eq!(expunged, [rid(2)]);
     assert_eq!(backend.status("INBOX").await.unwrap().exists, 2);
 }
 
@@ -1221,7 +1233,7 @@ async fn a_seeded_part_is_what_a_sectioned_fetch_returns() {
     backend
         .fetch_part(
             "INBOX",
-            Uid::new(1),
+            &postio_model::RemoteId::new("1:1"),
             &BodyPart::Section("1.1".to_owned()),
             &mut sink,
             &CancelToken::new(),
@@ -1249,7 +1261,7 @@ async fn a_sectioned_fetch_for_a_part_nobody_seeded_is_rejected_not_empty() {
     let result = backend
         .fetch_part(
             "INBOX",
-            Uid::new(1),
+            &postio_model::RemoteId::new("1:1"),
             &BodyPart::Section("1.1".to_owned()),
             &mut sink,
             &CancelToken::new(),
@@ -1303,5 +1315,54 @@ fn a_fetched_message_carries_the_backend_neutral_identity() {
         Some(postio_model::RemoteId::new("4242:12")),
         "the identity the migration backfilled and the one the adapter \
          writes must be the same spelling"
+    );
+}
+
+#[tokio::test]
+async fn a_remote_id_from_a_dead_generation_is_refused_not_reinterpreted() {
+    // #543: a stale identity gets the same answer a renumber discovered at
+    // SELECT gets -- resync -- never a uid quietly reused against the new
+    // generation, which would address somebody else's message.
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX")
+                .uid_validity(UidValidity::new(2))
+                .message(MockMessage::new(&b"Subject: hi\r\n\r\nx"[..])),
+        )
+        .build();
+    backend.connect().await.expect("connect");
+
+    let stale = postio_model::RemoteId::new("1:1");
+    let error = backend
+        .store_flags("INBOX", &[stale], &FlagChange::Add(FlagSet::from_iter([Flag::Seen])))
+        .await
+        .expect_err("a dead generation's id must not store anything");
+
+    assert!(
+        matches!(error, BackendError::UidValidityChanged { .. }),
+        "the caller's recovery is a resync, so the error must say so: {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_foreign_remote_id_is_a_caller_bug_not_a_resync() {
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let foreign = postio_model::RemoteId::new("gmail-msg-8f3a");
+    let error = backend
+        .store_flags(
+            "INBOX",
+            &[foreign],
+            &FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+        )
+        .await
+        .expect_err("an id this adapter never minted addresses nothing");
+
+    assert!(
+        !error.requires_full_resync(),
+        "a resync cannot repair a caller handing the wrong backend's id: {error:?}"
     );
 }

@@ -582,7 +582,7 @@ impl BodyPart {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FetchedBody {
     /// The message the bytes came from.
-    pub uid: Uid,
+    pub remote_id: postio_model::RemoteId,
     /// The part that was asked for.
     pub part: BodyPart,
     /// How many bytes reached the sink.
@@ -657,7 +657,7 @@ impl FlagChange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlagUpdate {
     /// The message that changed.
-    pub uid: Uid,
+    pub remote_id: postio_model::RemoteId,
     /// Its flags now, as the server reports them.
     pub flags: FlagSet,
     /// The modification sequence the change landed at, under CONDSTORE.

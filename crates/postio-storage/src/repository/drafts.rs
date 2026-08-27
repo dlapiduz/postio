@@ -24,6 +24,20 @@ use postio_model::{
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
+/// Where an appended draft landed, as [`DraftRepository::set_server_copy`]
+/// records it: the backend-neutral identity the engine addresses (#543),
+/// plus the wire pair the uid-range pull machinery still enumerates by
+/// (ADR 0018 Q3 keeps that IMAP-shaped until the native delta seam).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerCopyLocation {
+    /// The backend's own identity for the copy.
+    pub remote_id: RemoteId,
+    /// The wire uid it landed at.
+    pub uid: Uid,
+    /// The generation `uid` was observed under.
+    pub uid_validity: UidValidity,
+}
+
 use super::{OperationQueueRepository, QueuedOperation};
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
@@ -278,7 +292,7 @@ impl<'a> DraftRepository<'a> {
         };
 
         let queued = match server_copy(&draft) {
-            Some((uid, uid_validity)) => {
+            Some(remote_id) => {
                 match super::MailboxRepository::new(&scope)
                     .by_role(draft.account_id, MailboxRole::Drafts)?
                 {
@@ -287,8 +301,7 @@ impl<'a> DraftRepository<'a> {
                         OperationTarget::Draft(id),
                         &Operation::DiscardDraft {
                             mailbox: mailbox.id,
-                            uid,
-                            uid_validity,
+                            remote_id,
                         },
                         at,
                     )?),
@@ -372,23 +385,21 @@ impl<'a> DraftRepository<'a> {
 
     /// Records where the draft's server copy landed, or that it has none.
     ///
+    /// See [`ServerCopyLocation`] for what "where" means since #543.
+    ///
     /// Narrower than [`save`](Self::save) on purpose: this runs when a queued
     /// [`Operation::SaveDraft`] drains, which is minutes after the text it
     /// uploaded was typed and quite possibly while the user is still typing.
     /// Writing the whole row back from what the drainer read would undo
     /// whatever they have added since.
-    pub fn set_server_copy(
-        &self,
-        id: DraftId,
-        uid: Option<Uid>,
-        uid_validity: Option<UidValidity>,
-    ) -> Result<()> {
+    pub fn set_server_copy(&self, id: DraftId, copy: Option<&ServerCopyLocation>) -> Result<()> {
         let changed = self.connection.execute(
-            "UPDATE drafts SET uid = ?2, uid_validity = ?3 WHERE id = ?1",
+            "UPDATE drafts SET remote_id = ?2, uid = ?3, uid_validity = ?4 WHERE id = ?1",
             params![
                 id.get(),
-                uid.map(|uid| i64::from(uid.get())),
-                uid_validity.map(|validity| i64::from(validity.get())),
+                copy.map(|copy| copy.remote_id.as_str().to_owned()),
+                copy.map(|copy| i64::from(copy.uid.get())),
+                copy.map(|copy| i64::from(copy.uid_validity.get())),
             ],
         )?;
         if changed == 0 {
@@ -408,19 +419,19 @@ impl<'a> DraftRepository<'a> {
         // one, and every later pass would find this row and keep it current
         // for ever. See #51.
         //
-        // Scoped to the account's Drafts mailbox because UIDs are per-mailbox:
-        // the message that happens to be number 7 in the inbox is mail.
+        // Scoped to the account's Drafts mailbox because identities are
+        // per-mailbox for IMAP: the message that happens to hold the same
+        // number in the inbox is mail.
         scope.execute(
             "DELETE FROM messages
-               WHERE uid = ?2 AND uid_validity = ?3
+               WHERE remote_id = ?2
                  AND id IS NOT (SELECT message_id FROM drafts WHERE id = ?1)
                  AND mailbox_id IN (SELECT mailboxes.id FROM mailboxes
                                       JOIN drafts ON drafts.account_id = mailboxes.account_id
                                      WHERE drafts.id = ?1 AND mailboxes.role = 'drafts')",
             params![
                 id.get(),
-                uid.map(|uid| i64::from(uid.get())),
-                uid_validity.map(|validity| i64::from(validity.get())),
+                copy.map(|copy| copy.remote_id.as_str().to_owned())
             ],
         )?;
         // The row the folder is already showing becomes the row that names the
@@ -429,13 +440,14 @@ impl<'a> DraftRepository<'a> {
         // to point at.
         scope.execute(
             "UPDATE messages
-                SET uid = ?2, uid_validity = ?3
+                SET remote_id = ?2, uid = ?3, uid_validity = ?4
               WHERE id IN (SELECT message_id FROM drafts
                             WHERE id = ?1 AND message_id IS NOT NULL)",
             params![
                 id.get(),
-                uid.map(|uid| i64::from(uid.get())),
-                uid_validity.map(|validity| i64::from(validity.get())),
+                copy.map(|copy| copy.remote_id.as_str().to_owned()),
+                copy.map(|copy| i64::from(copy.uid.get())),
+                copy.map(|copy| i64::from(copy.uid_validity.get())),
             ],
         )?;
         scope.commit()?;
@@ -554,8 +566,8 @@ impl<'a> DraftRepository<'a> {
 /// generation it was observed under, and both arrive together from the append
 /// that created the copy. Half of the pair means the row predates that append
 /// or was written by hand, and acting on it would be guessing.
-fn server_copy(draft: &Draft) -> Option<(Uid, UidValidity)> {
-    Some((draft.server.uid?, draft.server.uid_validity?))
+fn server_copy(draft: &Draft) -> Option<RemoteId> {
+    draft.server.remote_id.clone()
 }
 
 /// Keeps the draft's row in the Drafts folder in step with the draft.

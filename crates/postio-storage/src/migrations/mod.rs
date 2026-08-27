@@ -71,7 +71,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 23] = [
+static MIGRATIONS: [Migration; 24] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -186,6 +186,11 @@ static MIGRATIONS: [Migration; 23] = [
         version: 23,
         name: "message_remote_identity",
         sql: include_str!("0023_message_remote_identity.sql"),
+    },
+    Migration {
+        version: 24,
+        name: "queue_remote_identity",
+        sql: include_str!("0024_queue_remote_identity.sql"),
     },
 ];
 

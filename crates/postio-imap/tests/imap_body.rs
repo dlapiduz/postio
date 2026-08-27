@@ -39,6 +39,11 @@ async fn pool_over(connector: ScriptedConnector) -> ConnectionPool {
     )
 }
 
+/// The identity the scripted generation (UIDVALIDITY 100) gives `uid`.
+fn rid(uid: u32) -> postio_model::RemoteId {
+    postio_model::RemoteId::new(format!("100:{uid}"))
+}
+
 fn select_reply() -> &'static str {
     "* 5 EXISTS\n* 0 RECENT\n* OK [UIDVALIDITY 100] UIDs valid\n{tag} OK SELECT completed"
 }
@@ -79,7 +84,7 @@ async fn a_large_attachment_streams_in_bounded_windows_not_one_buffer() {
     let result = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::section("2"),
         &mut sink,
         Priority::Interactive,
@@ -88,7 +93,7 @@ async fn a_large_attachment_streams_in_bounded_windows_not_one_buffer() {
     .await
     .unwrap();
 
-    assert_eq!(result.uid, Uid::new(101));
+    assert_eq!(result.remote_id, rid(101));
     assert_eq!(result.bytes_written, (WINDOW * 2 + 500) as u64);
     assert_eq!(sink.len(), WINDOW * 2 + 500);
     assert_eq!(
@@ -115,7 +120,7 @@ async fn a_part_smaller_than_one_window_finishes_in_one_round_trip() {
     fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::Whole,
         &mut sink,
         Priority::Interactive,
@@ -160,7 +165,7 @@ async fn a_whole_message_larger_than_one_window_still_costs_one_round_trip() {
     let result = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::Whole,
         &mut sink,
         Priority::Interactive,
@@ -197,7 +202,7 @@ async fn headers_and_text_ask_for_their_own_named_sections() {
     fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::Headers,
         &mut sink,
         Priority::Interactive,
@@ -228,7 +233,7 @@ async fn a_message_absent_from_the_response_is_no_such_message() {
     let error = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(404),
+        &rid(404),
         &BodyPart::Whole,
         &mut sink,
         Priority::Interactive,
@@ -255,7 +260,7 @@ async fn a_cancelled_token_stops_before_any_round_trip() {
     let error = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::Whole,
         &mut sink,
         Priority::Interactive,
@@ -280,7 +285,7 @@ async fn a_malformed_section_number_never_reaches_the_wire() {
     let error = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(101),
+        &rid(101),
         &BodyPart::section("2.x"),
         &mut sink,
         Priority::Interactive,
@@ -369,7 +374,7 @@ async fn live_server_streams_a_real_body() {
     let fetched = fetch_part(
         &pool,
         "INBOX",
-        message.uid,
+        &postio_imap::backend::identity::remote_id(message.uid_validity, message.uid),
         &BodyPart::Whole,
         &mut sink,
         Priority::Interactive,

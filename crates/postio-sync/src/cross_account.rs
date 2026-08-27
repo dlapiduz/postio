@@ -76,7 +76,7 @@ pub(crate) async fn copy(
     if let Some(rfc) = saga.rfc_message_id.as_deref() {
         match backend.find_by_message_id(&target_path, rfc).await {
             Ok(Some(uid)) => {
-                return match sagas.confirm(saga_id, Some(uid)) {
+                return match sagas.confirm(saga_id, Some(&uid)) {
                     Ok(()) => Outcome::Applied,
                     Err(error) => failed(format!("could not record the confirmation: {error}")),
                 };
@@ -132,7 +132,7 @@ pub(crate) async fn copy(
     // Phase 2: the proof. APPENDUID is one; the Message-ID search is the
     // fallback; neither is a guess.
     if let Some(mapping) = mapping {
-        return match sagas.confirm(saga_id, Some(mapping.destination)) {
+        return match sagas.confirm(saga_id, Some(&mapping.destination_remote_id())) {
             Ok(()) => Outcome::Applied,
             Err(error) => failed(format!("could not record the confirmation: {error}")),
         };
@@ -140,7 +140,7 @@ pub(crate) async fn copy(
     if let Some(rfc) = saga.rfc_message_id.as_deref()
         && let Ok(Some(uid)) = backend.find_by_message_id(&target_path, rfc).await
     {
-        return match sagas.confirm(saga_id, Some(uid)) {
+        return match sagas.confirm(saga_id, Some(&uid)) {
             Ok(()) => Outcome::Applied,
             Err(error) => failed(format!("could not record the confirmation: {error}")),
         };
@@ -196,12 +196,12 @@ pub(crate) async fn remove(
         .and_then(|mailbox| MailboxRepository::new(connection).get(mailbox).ok())
         .flatten()
         .map(|mailbox| mailbox.path);
-    let uid = saga
+    let remote_id = saga
         .source_message
         .and_then(|message| MessageRepository::new(connection).get(message).ok())
         .flatten()
-        .and_then(|message| message.server.uid);
-    let (Some(path), Some(uid)) = (path, uid) else {
+        .and_then(|message| message.server.remote_id);
+    let (Some(path), Some(remote_id)) = (path, remote_id) else {
         // The source copy is already gone — another client removed it, or a
         // resync did. The move is complete either way.
         return match sagas.transition(saga_id, MovePhase::Done) {
@@ -210,11 +210,11 @@ pub(crate) async fn remove(
         };
     };
 
-    let uids = postio_imap::backend::UidSet::single(uid);
+    let ids = [remote_id];
     if let Err(error) = backend
         .store_flags(
             &path,
-            &uids,
+            &ids,
             &postio_imap::backend::FlagChange::Add(deleted_flag()),
         )
         .await
@@ -224,7 +224,7 @@ pub(crate) async fn remove(
             after: None,
         };
     }
-    if let Err(error) = backend.expunge(&path, Some(&uids)).await {
+    if let Err(error) = backend.expunge(&path, Some(&ids)).await {
         return Outcome::Retry {
             reason: format!("could not expunge the source copy: {error}"),
             after: None,

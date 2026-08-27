@@ -882,7 +882,7 @@ fn give_the_inbox_uids(database: &postio_storage::Database, mailbox: postio_mode
     let connection = database.connection().expect("a connection");
     connection
         .execute(
-            "UPDATE messages SET uid = id WHERE mailbox_id = ?1",
+            "UPDATE messages SET uid = id, remote_id = '1:' || id WHERE mailbox_id = ?1",
             [mailbox.get()],
         )
         .expect("the fixture writes");

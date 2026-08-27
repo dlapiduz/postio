@@ -37,11 +37,11 @@ use io_imap::types::datetime::DateTime as WireDateTime;
 use io_imap::types::fetch::MessageDataItem;
 use io_imap::types::flag::{Flag as WireFlag, StoreType};
 use io_imap::types::sequence::SequenceSet;
-use postio_model::{Flag, FlagSet, ModSeq, Uid, UidValidity};
+use postio_model::{Flag, FlagSet, ModSeq, RemoteId, Uid, UidValidity};
 
 use crate::backend::{
     AppendMessage, BackendError, BackendResult, Capability, FlagChange, FlagUpdate, UidMapping,
-    UidSet,
+    UidSet, identity,
 };
 
 use super::fetch::flag_from_wire;
@@ -56,11 +56,11 @@ use super::{ConnectionPool, Dispatch, ExpungeStrategy, ImapSession, MoveStrategy
 pub async fn store_flags(
     pool: &ConnectionPool,
     mailbox: &str,
-    uids: &UidSet,
+    ids: &[RemoteId],
     change: &FlagChange,
     priority: Priority,
 ) -> BackendResult<Vec<FlagUpdate>> {
-    if uids.is_empty() {
+    if ids.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -68,8 +68,9 @@ pub async fn store_flags(
     let change = change.clone();
 
     pool.execute(priority, async |session| {
-        session.ensure_selected(&mailbox, false).await?;
-        store(session, uids, &change).await
+        let live = session.ensure_selected(&mailbox, false).await?;
+        let uids = identity::wire_set(&mailbox, live, ids)?;
+        store(session, live, &uids, &change).await
     })
     .await
 }
@@ -83,11 +84,11 @@ pub async fn store_flags(
 pub async fn move_messages(
     pool: &ConnectionPool,
     from: &str,
-    uids: &UidSet,
+    ids: &[RemoteId],
     to: &str,
     priority: Priority,
 ) -> BackendResult<Vec<UidMapping>> {
-    if uids.is_empty() {
+    if ids.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -96,7 +97,8 @@ pub async fn move_messages(
 
     pool.execute(priority, async |session| {
         let strategy = Dispatch::new(session.capabilities().clone()).move_strategy();
-        session.ensure_selected(&from, false).await?;
+        let live = session.ensure_selected(&from, false).await?;
+        let uids = &identity::wire_set(&from, live, ids)?;
 
         match strategy {
             MoveStrategy::Move => {
@@ -111,6 +113,7 @@ pub async fn move_messages(
                 let mapping = copy(session, uids, &to).await?;
                 store(
                     session,
+                    live,
                     uids,
                     &FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
                 )
@@ -131,11 +134,11 @@ pub async fn move_messages(
 pub async fn copy_messages(
     pool: &ConnectionPool,
     from: &str,
-    uids: &UidSet,
+    ids: &[RemoteId],
     to: &str,
     priority: Priority,
 ) -> BackendResult<Vec<UidMapping>> {
-    if uids.is_empty() {
+    if ids.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -143,8 +146,9 @@ pub async fn copy_messages(
     let to = to.to_owned();
 
     pool.execute(priority, async |session| {
-        session.ensure_selected(&from, false).await?;
-        copy(session, uids, &to).await
+        let live = session.ensure_selected(&from, false).await?;
+        let uids = identity::wire_set(&from, live, ids)?;
+        copy(session, &uids, &to).await
     })
     .await
 }
@@ -161,11 +165,11 @@ pub async fn copy_messages(
 pub async fn expunge(
     pool: &ConnectionPool,
     mailbox: &str,
-    uids: Option<&UidSet>,
+    ids: Option<&[RemoteId]>,
     priority: Priority,
-) -> BackendResult<Vec<Uid>> {
+) -> BackendResult<Vec<RemoteId>> {
     let mailbox = mailbox.to_owned();
-    let targeted = uids.cloned();
+    let targeted = ids.map(<[RemoteId]>::to_vec);
 
     pool.execute(priority, async |session| {
         let strategy =
@@ -174,7 +178,11 @@ pub async fn expunge(
             return Ok(Vec::new());
         }
 
-        session.ensure_selected(&mailbox, false).await?;
+        let live = session.ensure_selected(&mailbox, false).await?;
+        let targeted = targeted
+            .as_deref()
+            .map(|ids| identity::wire_set(&mailbox, live, ids))
+            .transpose()?;
 
         match strategy {
             ExpungeStrategy::UidExpunge => {
@@ -248,7 +256,7 @@ pub async fn find_by_message_id(
     mailbox: &str,
     message_id: &str,
     priority: Priority,
-) -> BackendResult<Option<postio_model::Uid>> {
+) -> BackendResult<Option<postio_model::RemoteId>> {
     use io_imap::rfc3501::search::ImapMessageSearchOptions;
     use io_imap::types::core::{AString, Vec1};
     use io_imap::types::search::SearchKey;
@@ -257,7 +265,7 @@ pub async fn find_by_message_id(
     let message_id = message_id.to_owned();
 
     pool.execute(priority, async |session| {
-        session.ensure_selected(&mailbox, false).await?;
+        let live = session.ensure_selected(&mailbox, false).await?;
         let header =
             AString::try_from("Message-ID".to_owned()).map_err(|error| BackendError::Protocol {
                 reason: format!("Message-ID is not an IMAP astring: {error}"),
@@ -274,7 +282,7 @@ pub async fn find_by_message_id(
         Ok(found
             .into_iter()
             .max()
-            .map(|uid| postio_model::Uid::new(uid.get())))
+            .map(|uid| identity::remote_id(live, postio_model::Uid::new(uid.get()))))
     })
     .await
 }
@@ -282,6 +290,7 @@ pub async fn find_by_message_id(
 /// `UID STORE` against the already-selected mailbox.
 async fn store(
     session: &mut ImapSession,
+    live: UidValidity,
     uids: &UidSet,
     change: &FlagChange,
 ) -> BackendResult<Vec<FlagUpdate>> {
@@ -299,7 +308,7 @@ async fn store(
 
     Ok(echoes
         .into_values()
-        .filter_map(|items| update_from(items.into_iter().collect(), condstore))
+        .filter_map(|items| update_from(live, items.into_iter().collect(), condstore))
         .collect())
 }
 
@@ -344,7 +353,11 @@ fn mapping_from(copied: ImapCopyUid) -> Vec<UidMapping> {
 /// An echo without a UID is dropped: RFC 4315 requires `UID STORE` to include
 /// one, and an update that cannot name its message is not one worth handing
 /// to a caller that will apply it to something.
-fn update_from(items: Vec<MessageDataItem<'static>>, condstore: bool) -> Option<FlagUpdate> {
+fn update_from(
+    live: UidValidity,
+    items: Vec<MessageDataItem<'static>>,
+    condstore: bool,
+) -> Option<FlagUpdate> {
     let mut uid = None;
     let mut flags = FlagSet::new();
     let mut mod_seq = None;
@@ -361,7 +374,7 @@ fn update_from(items: Vec<MessageDataItem<'static>>, condstore: bool) -> Option<
     }
 
     Some(FlagUpdate {
-        uid: uid?,
+        remote_id: identity::remote_id(live, uid?),
         flags,
         mod_seq: condstore.then_some(mod_seq).flatten(),
     })
@@ -410,7 +423,7 @@ mod tests {
     use super::*;
 
     fn item(items: Vec<MessageDataItem<'static>>) -> Option<FlagUpdate> {
-        update_from(items, true)
+        update_from(UidValidity::new(1), items, true)
     }
 
     fn seq(value: u32) -> NonZeroU32 {
@@ -436,7 +449,7 @@ mod tests {
         ])
         .expect("a named update");
 
-        assert_eq!(update.uid, Uid::new(7));
+        assert_eq!(update.remote_id, RemoteId::new("1:7"));
         assert!(update.flags.is_seen());
         assert_eq!(update.mod_seq, Some(ModSeq::new(901)));
     }
@@ -444,6 +457,7 @@ mod tests {
     #[test]
     fn a_server_without_condstore_reports_no_modification_sequence() {
         let update = update_from(
+            UidValidity::new(1),
             vec![
                 MessageDataItem::Uid(seq(7)),
                 MessageDataItem::Flags(vec![FlagFetch::Flag(WireFlag::Seen)]),
