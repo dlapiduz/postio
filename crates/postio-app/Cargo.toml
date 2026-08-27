@@ -24,6 +24,7 @@ postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
 postio-imap.workspace = true
+postio-jmap.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
 # The database half. Nothing else depends on it but this crate, so nothing is

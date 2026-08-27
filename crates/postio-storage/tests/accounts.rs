@@ -629,3 +629,37 @@ fn oauth_composition_data_round_trips_and_stays_optional() {
         "startup rebuilds the token source from this, offline included"
     );
 }
+
+#[test]
+fn the_backend_choice_round_trips_and_defaults_to_imap() {
+    // ADR 0018 Q5: the backend is chosen at add-account time from the
+    // preset row's preference and stored on the account; engine::start
+    // reads it back every launch. Imap for every account that predates
+    // the column.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let mut account = test_support::account(&connection);
+    assert_eq!(
+        account.backend,
+        postio_model::account::Backend::Imap,
+        "the default is the backend every existing account uses"
+    );
+
+    account.backend = postio_model::account::Backend::Jmap {
+        session_url: "https://api.example.com/jmap/session/".to_string(),
+    };
+    AccountRepository::new(&connection)
+        .update(&mut account)
+        .expect("update");
+
+    let read = AccountRepository::new(&connection)
+        .get(account.id)
+        .expect("read")
+        .expect("the account");
+    assert_eq!(
+        read.backend,
+        postio_model::account::Backend::Jmap {
+            session_url: "https://api.example.com/jmap/session/".to_string(),
+        }
+    );
+}

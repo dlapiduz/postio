@@ -62,6 +62,29 @@ pub struct ProviderRow {
     pub auth: Vec<String>,
     #[serde(default)]
     pub oauth: Option<OAuthRow>,
+    /// Preference order among the protocols this provider is reached over
+    /// (ADR 0018 Q5). `"imap"` and `"jmap"` are the two backends Postio
+    /// ships; providers are data, so a new backend is a new token here,
+    /// never a named constant in code.
+    #[serde(default = "default_backend")]
+    pub backend: Vec<String>,
+    #[serde(default)]
+    pub jmap: Option<JmapRow>,
+}
+
+/// Every row that predates #545, and most rows after it.
+fn default_backend() -> Vec<String> {
+    vec![BACKEND_IMAP.to_owned()]
+}
+
+/// `[provider.<id>.jmap]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JmapRow {
+    /// The RFC 8620 session resource URL the adapter resolves everything
+    /// else from.
+    #[allow(dead_code)]
+    pub session_url: String,
 }
 
 /// `[provider.<id>.oauth]`.
@@ -101,6 +124,10 @@ pub struct OAuthRow {
 /// The `auth` token that requires an `[oauth]` table naming where its
 /// endpoints come from.
 const OAUTH2: &str = "oauth2";
+
+/// The backend tokens Postio ships (ADR 0018 Q5).
+const BACKEND_IMAP: &str = "imap";
+const BACKEND_JMAP: &str = "jmap";
 
 /// What can go wrong turning `providers.toml` text into rows.
 #[derive(Debug)]
@@ -181,6 +208,25 @@ pub fn parse(text: &str) -> Result<Parsed, ProvidersError> {
 /// must say where its endpoints come from, checked at load time rather
 /// than discovered the first time someone tries to sign in with it.
 fn validate(id: &str, row: &ProviderRow) -> Result<(), ProvidersError> {
+    for backend in &row.backend {
+        if backend != BACKEND_IMAP && backend != BACKEND_JMAP {
+            return Err(ProvidersError::Invalid(format!(
+                "provider `{id}` names a backend Postio does not ship: `{backend}`"
+            )));
+        }
+    }
+    if row.backend.is_empty() {
+        return Err(ProvidersError::Invalid(format!(
+            "provider `{id}` has an empty `backend` list; omit the key for the default"
+        )));
+    }
+    if row.backend.iter().any(|backend| backend == BACKEND_JMAP) && row.jmap.is_none() {
+        return Err(ProvidersError::Invalid(format!(
+            "provider `{id}` advertises `jmap` but has no [jmap] table naming its \
+             session_url"
+        )));
+    }
+
     if !row.auth.iter().any(|method| method == OAUTH2) {
         return Ok(());
     }
@@ -233,6 +279,8 @@ mod tests {
             password_help_url: None,
             auth: auth.iter().map(|s| s.to_string()).collect(),
             oauth: None,
+            backend: default_backend(),
+            jmap: None,
         }
     }
 
@@ -442,5 +490,101 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, ProvidersError::Toml(_)), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    fn a_row_without_a_backend_list_defaults_to_imap() {
+        let parsed = parse(
+            r#"
+            [provider.plain]
+            display_name = "Plain"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+            "#,
+        )
+        .expect("a backend-less row is every row that existed before #545");
+        assert_eq!(parsed.rows["plain"].backend, vec!["imap".to_owned()]);
+    }
+
+    #[test]
+    fn a_row_advertising_jmap_must_name_its_session_url() {
+        let error = parse(
+            r#"
+            [provider.half]
+            display_name = "Half"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+            backend = ["jmap", "imap"]
+            "#,
+        )
+        .expect_err("jmap with nowhere to dial is a row nobody can use");
+        assert!(error.to_string().contains("session_url"), "{error}");
+    }
+
+    #[test]
+    fn a_backend_postio_does_not_ship_is_refused_at_load_time() {
+        let error = parse(
+            r#"
+            [provider.exotic]
+            display_name = "Exotic"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+            backend = ["nntp"]
+            "#,
+        )
+        .expect_err("an unknown backend name is a typo to catch now, not at add time");
+        assert!(error.to_string().contains("nntp"), "{error}");
+    }
+
+    #[test]
+    fn a_jmap_row_carries_its_session_url_through() {
+        let parsed = parse(
+            r#"
+            [provider.native]
+            display_name = "Native"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+            backend = ["jmap", "imap"]
+
+            [provider.native.jmap]
+            session_url = "https://api.example.com/jmap/session/"
+            "#,
+        )
+        .expect("a complete jmap row parses");
+        let row = &parsed.rows["native"];
+        assert_eq!(row.backend, vec!["jmap".to_owned(), "imap".to_owned()]);
+        assert_eq!(
+            row.jmap.as_ref().expect("the jmap table").session_url,
+            "https://api.example.com/jmap/session/"
+        );
     }
 }

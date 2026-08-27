@@ -87,15 +87,7 @@ pub fn start(
     // account has, and nothing downstream asks again.
     let tokens = token_source(account, &secrets);
 
-    let backend: Arc<dyn MailBackend> = Arc::new(ImapBackend::over(Arc::new(
-        ConnectionPool::with_token_source(
-            settings(&account.incoming, account.auth),
-            key,
-            tokens.clone(),
-            connector,
-            PoolConfig::default(),
-        ),
-    )));
+    let backend = backend_for(account, key, tokens.clone(), connector);
 
     match Engine::spawn(EngineParts {
         account: account.id,
@@ -119,6 +111,44 @@ pub fn start(
             None
         }
     }
+}
+
+/// The adapter the account's stored backend choice names (#545, ADR 0018
+/// Q5): the one place a protocol is picked, so nothing downstream asks
+/// again. A `jmap` row whose stored session URL no longer parses falls
+/// back to the IMAP adapter with an error in the log — the incoming
+/// server is stored either way, and a degraded sync beats none.
+fn backend_for(
+    account: &Account,
+    key: AccountKey,
+    tokens: Arc<dyn postio_imap::auth::TokenSource>,
+    connector: Arc<RustlsConnector>,
+) -> Arc<dyn MailBackend> {
+    if let postio_model::account::Backend::Jmap { session_url } = &account.backend {
+        match session_url.parse() {
+            Ok(url) => {
+                return Arc::new(postio_jmap::JmapBackend::with_token_source(
+                    url, key, tokens,
+                ));
+            }
+            Err(error) => {
+                tracing::error!(
+                    account = account.id.get(),
+                    %error,
+                    "the stored JMAP session URL does not parse; falling back to IMAP"
+                );
+            }
+        }
+    }
+    Arc::new(ImapBackend::over(Arc::new(
+        ConnectionPool::with_token_source(
+            settings(&account.incoming, account.auth),
+            key,
+            tokens,
+            connector,
+            PoolConfig::default(),
+        ),
+    )))
 }
 
 /// The account's IMAP server, as the connection pool wants it.
@@ -328,6 +358,47 @@ pub fn start_joining(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_backend_follows_the_accounts_stored_choice() {
+        // #545, ADR 0018 Q5: the adapter is the account's data, chosen at
+        // add time from the preset row's preference. One code path above
+        // the seam — this match is the whole of it.
+        let secrets: Arc<dyn postio_imap::secret::SecretStore> =
+            Arc::new(postio_imap::secret::MemorySecretStore::new());
+        let mut account = postio_model::Account::new(
+            "Ada",
+            postio_model::EmailAddress::new(None::<String>, "ada@example.com"),
+        );
+        let key = AccountKey::new(account.address.address.clone());
+        let tokens = token_source(&account, &secrets);
+        let connector = Arc::new(RustlsConnector::new().expect("a connector"));
+
+        let chosen = backend_for(&account, key.clone(), tokens.clone(), connector.clone());
+        assert!(
+            format!("{chosen:?}").contains("ImapBackend"),
+            "the default is the adapter every existing account uses: {chosen:?}"
+        );
+
+        account.backend = postio_model::account::Backend::Jmap {
+            session_url: "https://api.example.com/jmap/session/".to_string(),
+        };
+        let chosen = backend_for(&account, key.clone(), tokens.clone(), connector.clone());
+        assert!(
+            format!("{chosen:?}").contains("JmapBackend"),
+            "a stored jmap choice gets the JMAP adapter: {chosen:?}"
+        );
+
+        account.backend = postio_model::account::Backend::Jmap {
+            session_url: "not a url at all".to_string(),
+        };
+        let chosen = backend_for(&account, key, tokens, connector);
+        assert!(
+            format!("{chosen:?}").contains("ImapBackend"),
+            "a jmap row whose URL no longer parses falls back to the IMAP \
+             adapter rather than an account that can never sync: {chosen:?}"
+        );
+    }
 
     #[test]
     fn the_token_source_follows_the_accounts_oauth_shape() {

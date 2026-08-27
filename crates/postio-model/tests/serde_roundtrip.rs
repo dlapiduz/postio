@@ -47,6 +47,7 @@ fn sample_account() -> Account {
         identities: vec![sample_identity()],
         signatures: Vec::new(),
         default_signature_id: Some(SignatureId::new(4)),
+        backend: postio_model::account::Backend::Imap,
         created_at: at(1_000),
         pending_deletion: false,
     }
