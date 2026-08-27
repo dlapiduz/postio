@@ -27,7 +27,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::OnceLock;
 
 use adw::prelude::*;
 use gtk::glib;
@@ -39,19 +38,16 @@ use super::allowlist::RemoteImageAllowList;
 use super::banner::RemoteImageBanner;
 use super::message_header::MessageHeader;
 use super::scheme::{self, BlobSource};
-use crate::resources;
 use postio_body::quote;
 use postio_body::sanitize::{self, RemoteImages};
-
-/// The security origin every rendered message loads under.
-///
-/// A fixed, non-`http(s)` scheme so a message's content is never same-origin
-/// with any real site — nothing it contains gets that site's cookies, and
-/// nothing on that site sees this page as one of its own frames. Nothing is
-/// ever registered to handle this scheme, so a relative reference a sender
-/// left in place resolves to a fetch that fails closed rather than one that
-/// quietly reaches a host.
-pub const DOCUMENT_BASE_URI: &str = "postio-reader:///";
+// The document itself — CSP, wrapper, fonts, markers, absent states — is
+// postio-ui's (#567, ADR 0019 Q6): one implementation for every frontend,
+// re-exported here so existing paths keep resolving. What remains in this
+// file is webkit6 glue.
+pub use postio_ui::reader::document::{
+    Absent, DOCUMENT_BASE_URI, SCROLL_MARKERS, absent_html, content_security_policy,
+    scroll_markers, wrap_document,
+};
 
 /// The message currently on screen, kept so the banner's two actions can ask
 /// for a re-render without the caller doing it for them.
@@ -128,90 +124,6 @@ pub struct Reader {
 
 /// What [`Reader::connect_parts_requested`] holds.
 type PartsRequestedHandler = Box<dyn Fn()>;
-
-/// Why the reading pane has no body to draw.
-///
-/// Issue #70, Cause A: all four of these used to render as a blank pane, so
-/// a mailbox mid-backfill was indistinguishable from a broken application.
-/// They are separate because the right response differs — three are worth
-/// waiting for and one is finished, and only two are worth retrying.
-///
-/// This is the reader's half of the "partial" state every Postio surface
-/// owes: headers synced, body not yet, which is the *ordinary* condition of
-/// a mailbox that has just been added rather than a fault.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Absent {
-    /// Headers are synced and the backfill has not reached the body yet.
-    ///
-    /// The overwhelmingly common one, and not an error: `request_body`
-    /// queues a fetch and returns, so every message is in this state until
-    /// the queue drains.
-    Partial,
-    /// Not downloaded, and nothing is downloading — the engine is offline.
-    Offline,
-    /// A body was recorded but its bytes are not in the blob store.
-    ///
-    /// Rare, and a real fault: the database and the blob directory disagree.
-    Missing,
-    /// Downloaded, and the message genuinely has no text or HTML part.
-    Empty,
-    /// `\Draft`, but written by another client: there is no local composer
-    /// buffer behind the row, so there is nothing here to resume editing.
-    ///
-    /// Not a retryable wait like [`Absent::Partial`] or [`Absent::Offline`] --
-    /// downloading its body would only ever produce something to read, never
-    /// something to edit, so promising a retry would be a promise the reader
-    /// cannot keep. See #175.
-    ForeignDraft,
-}
-
-/// What the pane says for each [`Absent`], as the document's body.
-///
-/// A free function returning a string so the words and the key are testable
-/// without a display — the assertions that matter here are "these four do
-/// not say the same thing" and "the retryable ones name the retry key",
-/// neither of which needs WebKit to have painted anything.
-fn absent_html(state: Absent) -> String {
-    // `R` is the registry's alternate binding for `Refresh`, and already the
-    // canvas' retry key for the list's empty and error plates. One retry key
-    // for the whole application, not one per surface.
-    const RETRY: &str = "Press <kbd>R</kbd> to check for new mail now.";
-    let (heading, detail) = match state {
-        Absent::Partial => (
-            "Downloading this message",
-            "Its headers are here; the body has not arrived yet. It will              appear as soon as it does."
-                .to_owned(),
-        ),
-        Absent::Offline => (
-            "Not downloaded yet",
-            format!(
-                "Postio is offline, so this message's body is not on this                  machine. It will arrive when the connection returns. {RETRY}"
-            ),
-        ),
-        Absent::Missing => (
-            "This message's body is missing",
-            format!(
-                "The message is in the local store but its body is not, so                  there is nothing here to show. {RETRY}"
-            ),
-        ),
-        Absent::Empty => (
-            "This message has no body",
-            "Nothing arrived with it but the headers — that is the whole              message, not a fault."
-                .to_owned(),
-        ),
-        Absent::ForeignDraft => (
-            "Written on another device",
-            "This draft was started in another mail client. Postio can              show it here but cannot edit it."
-                .to_owned(),
-        ),
-    };
-    format!(
-        "<div class=\"postio-absent\">\
-         <p class=\"postio-absent-heading\">{heading}</p>\
-         <p class=\"postio-absent-detail\">{detail}</p>\
-         </div>"
-    )
-}
 
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
@@ -685,60 +597,6 @@ fn contain_body(content: &str) -> String {
     format!(r#"<div class="postio-body">{content}</div>"#)
 }
 
-/// How many invisible scroll markers [`scroll_markers`] lays down.
-///
-/// Bounds how far `page_down` can walk a message, not how long a message can
-/// be: past the last marker further presses are a no-op, same as reaching
-/// the end of any scrollable view. 60 markers at [`SCROLL_MARKER_STEP_VH`]
-/// apart is generous enough that reaching it means an extraordinarily long
-/// message, not an ordinary one.
-const SCROLL_MARKERS: u32 = 60;
-
-/// How far apart the markers sit, in viewport heights.
-///
-/// Short of 100 so consecutive pages keep a sliver of what was on screen —
-/// paging with nothing carried over from the last screen is disorienting,
-/// the same reason a paged reader or terminal pager rarely pages by exactly
-/// one screen either.
-const SCROLL_MARKER_STEP_VH: u32 = 90;
-
-/// Invisible anchors spaced down the document, `#pos-0`, `#pos-1`, … —
-/// `Reader::page_down` and `page_up` jump between them.
-///
-/// This exists because there is no other way to move the reading pane's
-/// scroll position without JavaScript. `WebKitWebView` implements no
-/// `GtkScrollable` interface and exposes no scroll-by-amount call of its own
-/// (confirmed against the installed WebKitGTK's own introspection data, not
-/// assumed) — and JavaScript is off in this `WebView` on purpose, so
-/// `evaluate_javascript` is not an option either, confirmed the same way:
-/// it returns "Cannot execute JavaScript in this document" here. A same-
-/// document fragment navigation is the one scroll primitive the platform
-/// still gives a host application with both of those closed: it is what
-/// every browser already implements `#anchor` links with, needs no script,
-/// and `handle_decide_policy` only intercepts a *user's* click
-/// (`NavigationType::LinkClicked`) — an app-issued `load_uri` is `Other` and
-/// passes straight through, the same as `load_html` already does.
-///
-/// Placed at `top: Nvh`, not a pixel offset: `vh` is resolved against
-/// whatever the real viewport height is when WebKit lays the document out,
-/// so the markers land a consistent fraction of a screen apart on any
-/// window size without this code ever learning what that size is. Confirmed
-/// these contribute nothing to the document's scrollable height even when
-/// they land far past the real content -- `scrollHeight` measured identical
-/// with and without 50 such markers spanning 4500vh over one short
-/// paragraph -- so a short message cannot grow a phantom scrollbar from
-/// markers it never reaches.
-fn scroll_markers() -> String {
-    let mut markers = String::with_capacity(SCROLL_MARKERS as usize * 48);
-    for position in 0..SCROLL_MARKERS {
-        let top = position * SCROLL_MARKER_STEP_VH;
-        markers.push_str(&format!(
-            r#"<a id="pos-{position}" style="position:absolute;top:{top}vh;left:0;width:0;height:0;"></a>"#
-        ));
-    }
-    markers
-}
-
 /// Every scripting-adjacent `WebKitSettings` flag, turned off.
 ///
 /// JavaScript is the headline, but each of these is a surface JavaScript
@@ -814,117 +672,6 @@ fn handle_decide_policy(
     });
     decision.ignore();
     true
-}
-
-/// Wrap sanitized body markup in the document `load_html` is handed: Postio's
-/// own stylesheet, and a `Content-Security-Policy` that closes off anything
-/// the sanitizer missed.
-///
-/// The stylesheet is literal CSS, not the GTK `--postio-*` variables `tokens
-/// .css` defines — a `WebView`'s CSS engine has no notion of the GTK style
-/// context those live on. `data/reader-tokens.css` is generated from the
-/// same design tokens as a literal `--r-*` palette (#296); `data/reader.css`
-/// is structure only, referencing those variables.
-fn wrap_document(content: &str, remote: RemoteImages) -> String {
-    let css = reader_css();
-    let csp = content_security_policy(remote);
-    format!(
-        "<!DOCTYPE html>\n<html><head>\n\
-         <meta charset=\"utf-8\">\n\
-         <meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\">\n\
-         <style>{css}</style>\n\
-         </head><body>{content}</body></html>"
-    )
-}
-
-fn reader_css() -> String {
-    let mut css = embedded_font_faces().to_owned();
-    for resource in [resources::READER_TOKENS_CSS, resources::READER_CSS] {
-        if let Ok(bytes) = resources::read(resource)
-            && let Ok(text) = String::from_utf8(bytes.to_vec())
-        {
-            css.push_str(&text);
-        }
-    }
-    css
-}
-
-/// `@font-face` rules embedding the vendored faces as `data:` URIs.
-///
-/// A `WebView`'s rendering happens in WebKit's own web process, which never
-/// sees the `PangoFontMap` [`crate::fonts::install`] populates in this one —
-/// referencing the family name by itself would fall back to whatever
-/// generic sans the sandbox happens to have. Embedding the bytes is what
-/// makes "rendered text inherits Postio typography" true regardless of what
-/// the web process can see.
-///
-/// Computed once: the font bytes are static for the process' life, and
-/// base64-encoding four faces on every render would be wasted work.
-fn embedded_font_faces() -> &'static str {
-    static FACES: OnceLock<String> = OnceLock::new();
-    FACES.get_or_init(build_font_faces)
-}
-
-fn build_font_faces() -> String {
-    const FACES: &[(&str, &str, u16, &str)] = &[
-        ("barlow/Barlow-Regular.ttf", "Barlow", 400, "normal"),
-        ("barlow/Barlow-Medium.ttf", "Barlow", 500, "normal"),
-        ("barlow/Barlow-Bold.ttf", "Barlow", 700, "normal"),
-        ("barlow/Barlow-Italic.ttf", "Barlow", 400, "italic"),
-        (
-            "barlow-condensed/BarlowCondensed-Regular.ttf",
-            "Barlow Condensed",
-            400,
-            "normal",
-        ),
-        (
-            "barlow-condensed/BarlowCondensed-SemiBold.ttf",
-            "Barlow Condensed",
-            600,
-            "normal",
-        ),
-        (
-            "ibm-plex-mono/IBMPlexMono-Regular.ttf",
-            "IBM Plex Mono",
-            400,
-            "normal",
-        ),
-        (
-            "ibm-plex-mono/IBMPlexMono-Medium.ttf",
-            "IBM Plex Mono",
-            500,
-            "normal",
-        ),
-    ];
-
-    let mut out = String::new();
-    for (path, family, weight, style) in FACES {
-        let Ok(bytes) = resources::read(&format!("{}/{path}", resources::FONTS)) else {
-            continue;
-        };
-        let base64 = glib::base64_encode(&bytes);
-        out.push_str(&format!(
-            "@font-face{{font-family:'{family}';font-weight:{weight};\
-             font-style:{style};src:url(data:font/ttf;base64,{base64}) format('truetype');}}\n"
-        ));
-    }
-    out
-}
-
-/// What the sanitizer already enforces at the DOM level, restated as policy
-/// WebKit itself refuses to violate — so a sanitizer bug degrades to broken
-/// markup, not a live request.
-fn content_security_policy(remote: RemoteImages) -> String {
-    let cid = sanitize::CID_SCHEME;
-    let img_src = match remote {
-        RemoteImages::Blocked => format!("{cid}: data:"),
-        RemoteImages::Allowed => format!("{cid}: data: http: https:"),
-    };
-    format!(
-        "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
-         img-src {img_src}; font-src data:; base-uri 'none'; form-action 'none'; \
-         frame-src 'none'; connect-src 'none'"
-    )
 }
 
 #[cfg(test)]
