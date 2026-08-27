@@ -38,13 +38,14 @@ use std::rc::Rc;
 use chrono::Utc;
 use gtk::gio;
 use gtk::prelude::*;
-use postio_gtk::composer::{Closing, Composer};
+use postio_gtk::composer::{Closing, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_model::ids::{AccountId, MessageId};
 use postio_model::signature_default;
 use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress, MessageBody};
 use postio_storage::repository::{
-    AccountRepository, ContactRepository, DraftRepository, MailboxRepository, MessageRepository,
+    AccountRepository, ContactGroupRepository, ContactRepository, DraftRepository,
+    MailboxRepository, MessageRepository,
 };
 use postio_storage::{BlobStore, Database};
 
@@ -449,7 +450,9 @@ fn recover(
     composer.open(draft);
 }
 
-/// Recipient completion, ranked by [`ContactRepository::search`].
+/// Recipient completion: contact groups whose name matches `prefix`, then
+/// contacts ranked by [`ContactRepository::search`] — groups first, since a
+/// group is a deliberate choice the user is more likely typing towards.
 fn install_recipient_suggestions(composer: &Composer, database: Database, account: AccountId) {
     composer.connect_recipient_suggestions(move |prefix| {
         let connection = match database.connection() {
@@ -459,13 +462,46 @@ fn install_recipient_suggestions(composer: &Composer, database: Database, accoun
                 return Vec::new();
             }
         };
-        match ContactRepository::new(&connection).search(Some(account), prefix, SUGGESTION_LIMIT) {
-            Ok(contacts) => contacts.iter().map(resolved_address).collect(),
-            Err(error) => {
-                tracing::warn!(%error, "could not search contacts");
-                Vec::new()
+
+        let mut candidates: Vec<RecipientCandidate> = Vec::new();
+        let groups = ContactGroupRepository::new(&connection);
+        match groups.list(Some(account)) {
+            Ok(list) => {
+                let prefix_lower = prefix.to_lowercase();
+                for group in list {
+                    if !group.name.to_lowercase().starts_with(&prefix_lower) {
+                        continue;
+                    }
+                    match groups.members(group.id) {
+                        // A group with no members yet expands to nothing, so
+                        // offering it would be a suggestion that does nothing
+                        // when accepted.
+                        Ok(members) if !members.is_empty() => {
+                            candidates.push(RecipientCandidate::Group {
+                                name: group.name,
+                                members: members.iter().map(resolved_address).collect(),
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) => tracing::warn!(%error, "could not read group members"),
+                    }
+                }
             }
+            Err(error) => tracing::warn!(%error, "could not search contact groups"),
         }
+
+        match ContactRepository::new(&connection).search(Some(account), prefix, SUGGESTION_LIMIT) {
+            Ok(contacts) => candidates.extend(
+                contacts
+                    .iter()
+                    .map(resolved_address)
+                    .map(RecipientCandidate::Contact),
+            ),
+            Err(error) => tracing::warn!(%error, "could not search contacts"),
+        }
+
+        candidates.truncate(SUGGESTION_LIMIT as usize);
+        candidates
     });
 }
 

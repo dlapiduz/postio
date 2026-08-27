@@ -332,11 +332,34 @@ type ClosedHandler = Box<dyn Fn(Closing)>;
 /// What to call when the composer takes over the reading pane.
 type OpenedHandler = Box<dyn Fn()>;
 
+/// One row of recipient completion: a single address, or a named group that
+/// expands to every one of its members the moment it is accepted.
+///
+/// ADR 0007 Q3: there is no group address to insert instead — a draft's
+/// recipients have to be what the user can see, which is what keeps `Bcc`
+/// honest and stops a draft's recipients from silently changing if someone
+/// edits the group's membership after it was picked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecipientCandidate {
+    /// One address, exactly as accepting it always worked.
+    Contact(EmailAddress),
+    /// A named group. `members` is the membership at the moment this
+    /// candidate was offered — accepting it inserts all of them as
+    /// individual addresses, never a group reference.
+    Group {
+        /// Display name, for the completion row.
+        name: String,
+        /// Every member's address, in the order they are inserted.
+        members: Vec<EmailAddress>,
+    },
+}
+
 /// Answers "what does `prefix` complete to" for recipient completion —
-/// contacts and previous correspondents, ranked by frequency and recency, are
-/// [`Composer::connect_recipient_suggestions`]'s job to supply; the composer
-/// only shows what it is given, in the order it is given.
-type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<EmailAddress>>;
+/// contacts, previous correspondents and contact groups, ranked by frequency
+/// and recency, are [`Composer::connect_recipient_suggestions`]'s job to
+/// supply; the composer only shows what it is given, in the order it is
+/// given.
+type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<RecipientCandidate>>;
 
 /// Answers "what message is `e`/`E`/`f` about" — the composer has no notion
 /// of a reading pane or a selection of its own. `None` means there is nothing
@@ -1291,13 +1314,14 @@ impl Composer {
         *self.imp().signature_default.borrow_mut() = Some(Box::new(provider));
     }
 
-    /// Registers what completes a recipient prefix — contacts and previous
-    /// correspondents, ranked and searched however the caller sees fit. The
-    /// composer only shows what comes back, in that order, and never touches
-    /// the network itself: purely local completion is the whole point.
+    /// Registers what completes a recipient prefix — contacts, previous
+    /// correspondents and contact groups, ranked and searched however the
+    /// caller sees fit. The composer only shows what comes back, in that
+    /// order, and never touches the network itself: purely local completion
+    /// is the whole point.
     pub fn connect_recipient_suggestions(
         &self,
-        provider: impl Fn(&str) -> Vec<EmailAddress> + 'static,
+        provider: impl Fn(&str) -> Vec<RecipientCandidate> + 'static,
     ) {
         *self.imp().recipient_suggestions.borrow_mut() = Some(Box::new(provider));
     }
@@ -3102,8 +3126,8 @@ pub(crate) struct Completion {
     popover: gtk::Popover,
     list: gtk::ListBox,
     /// What `list`'s rows currently show, in the same order, so accepting a
-    /// selected row can look up the address it stands for.
-    candidates: RefCell<Vec<EmailAddress>>,
+    /// selected row can look up what it stands for.
+    candidates: RefCell<Vec<RecipientCandidate>>,
 }
 
 impl Completion {
@@ -3211,12 +3235,12 @@ impl Completion {
         self.populate(candidates);
     }
 
-    fn populate(&self, candidates: Vec<EmailAddress>) {
+    fn populate(&self, candidates: Vec<RecipientCandidate>) {
         while let Some(row) = self.list.row_at_index(0) {
             self.list.remove(&row);
         }
-        for address in &candidates {
-            let label = gtk::Label::new(Some(&address.to_string()));
+        for candidate in &candidates {
+            let label = gtk::Label::new(Some(&candidate_label(candidate)));
             label.set_xalign(0.0);
             self.list.append(&label);
         }
@@ -3291,18 +3315,42 @@ impl Completion {
     /// click that committed something other than what was under the pointer
     /// would be the worst possible way for them ever to disagree.
     fn accept_row(&self, entry: &gtk::Entry, row: &gtk::ListBoxRow) -> bool {
-        let Some(address) = self.candidates.borrow().get(row.index() as usize).cloned() else {
+        let Some(candidate) = self.candidates.borrow().get(row.index() as usize).cloned() else {
             return false;
+        };
+
+        // A contact inserts one address; a group inserts every member as its
+        // own address, comma by comma, exactly as if they had been typed
+        // individually -- there is no group reference to insert instead
+        // (ADR 0007 Q3).
+        let inserted: String = match &candidate {
+            RecipientCandidate::Contact(address) => format!("{address}, "),
+            RecipientCandidate::Group { members, .. } => members
+                .iter()
+                .map(|address| format!("{address}, "))
+                .collect(),
         };
 
         let text = entry.text();
         let (start, _) = current_entry(&text);
         let mut replaced = text.to_string();
-        replaced.replace_range(start.., &format!("{address}, "));
+        replaced.replace_range(start.., &inserted);
         entry.set_text(&replaced);
         entry.set_position(-1);
         self.popover.popdown();
         true
+    }
+}
+
+/// The completion row's label: an address for a contact, or the name and
+/// size for a group -- distinguishable from a contact at a glance, since
+/// accepting one inserts several addresses rather than one.
+fn candidate_label(candidate: &RecipientCandidate) -> String {
+    match candidate {
+        RecipientCandidate::Contact(address) => address.to_string(),
+        RecipientCandidate::Group { name, members } => {
+            format!("{name} ({} people)", members.len())
+        }
     }
 }
 

@@ -118,6 +118,10 @@ local_id!(
     LabelId
 );
 local_id!(
+    /// Identifies a [`ContactGroup`](crate::ContactGroup).
+    ContactGroupId
+);
+local_id!(
     /// Identifies a [`Draft`](crate::Draft).
     DraftId
 );
