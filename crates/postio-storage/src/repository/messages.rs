@@ -20,7 +20,7 @@
 //! [`MessageRepository::page_at`] does exist, for a scrolling `GListModel` that
 //! genuinely needs random access by row number, and it carries the caveat.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use postio_model::{
@@ -438,6 +438,13 @@ pub struct UpsertReport {
     pub inserted: usize,
     /// Messages that already had a row under the same server identity.
     pub updated: usize,
+    /// Messages whose flags the queue was still holding intent about, so the
+    /// server's copy was merged rather than written wholesale (#317).
+    ///
+    /// Reported rather than silent for the same reason `shadowed_by_pending`
+    /// is: a number that moves is how "the resync undid my read" gets
+    /// diagnosed next time without a debugger.
+    pub flags_preserved: usize,
     /// Messages this store already holds as a draft of its own, and therefore
     /// did not store a second time. See [`MessageRepository::upsert_batch`].
     pub own_drafts: usize,
@@ -694,6 +701,9 @@ impl<'a> MessageRepository<'a> {
         });
         report.shadowed_by_pending = before - batch.len();
 
+        // Read once for the batch, like the two snapshots above.
+        let unacknowledged = unacknowledged_flag_changes(&transaction)?;
+
         for message in batch.iter_mut() {
             let existing = match (message.server.uid, message.server.uid_validity) {
                 (Some(uid), Some(validity)) => {
@@ -705,6 +715,16 @@ impl<'a> MessageRepository<'a> {
             match existing {
                 Some(id) => {
                     message.id = id;
+                    // The server's flags, plus whatever the queue is still
+                    // holding on this message's behalf (#317). Without this a
+                    // `CHANGEDSINCE` pass that runs before the drainer writes
+                    // the server's stale copy over a local read, the row goes
+                    // bold again, and the operation eventually sets a `\Seen`
+                    // whose effect nobody ever sees.
+                    if let Some(changes) = unacknowledged.get(&id) {
+                        message.flags = with_unacknowledged(&message.flags, changes);
+                        report.flags_preserved += 1;
+                    }
                     write_update(&transaction, message)?;
                     report.updated += 1;
                 }
@@ -1993,6 +2013,83 @@ fn shadowed_by_pending_operation(
     })?;
     rows.collect::<rusqlite::Result<BTreeSet<_>>>()
         .map_err(Into::into)
+}
+
+/// The flag changes the queue is still holding for each message, in the order
+/// the user made them.
+///
+/// # Why this is a merge rather than a skip (#317)
+///
+/// [`shadowed_by_pending_operation`] answers the move case by dropping the
+/// message from the batch: as far as the user is concerned it is not in that
+/// mailbox any more, so nothing the server says about it there is news. A flag
+/// cannot be handled that way. The row *is* still there, and the subject, the
+/// size and what parts it has are all worth taking — only the flags the queue
+/// is holding intent about have to survive the write.
+///
+/// Keyed by local message id rather than by server coordinates, because a flag
+/// operation names its target directly and the row is still where it was.
+fn unacknowledged_flag_changes(
+    connection: &Connection,
+) -> Result<BTreeMap<MessageId, Vec<(bool, FlagSet)>>> {
+    let mut statement = connection.prepare(
+        "SELECT target_id, op_type, payload
+           FROM operation_queue
+          WHERE state IN ('pending', 'in_flight')
+            AND op_type IN ('set_flags', 'clear_flags')
+            AND target_kind = 'message'
+          ORDER BY id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+
+    let mut changes: BTreeMap<MessageId, Vec<(bool, FlagSet)>> = BTreeMap::new();
+    for row in rows {
+        let (target, op_type, payload) = row?;
+        let operation: postio_model::Operation =
+            serde_json::from_str(&payload).map_err(|source| Error::CorruptPayload {
+                column: "operation_queue.payload",
+                source,
+            })?;
+        let entry = match (&operation, op_type.as_str()) {
+            (postio_model::Operation::SetFlags { flags }, _) => (true, flags.clone()),
+            (postio_model::Operation::ClearFlags { flags }, _) => (false, flags.clone()),
+            // The `op_type` filter above should make this unreachable; a row
+            // whose type and payload disagree is corrupt rather than
+            // interesting, and dropping it leaves the server authoritative,
+            // which is the safe direction.
+            _ => continue,
+        };
+        changes
+            .entry(MessageId::new(target))
+            .or_default()
+            .push(entry);
+    }
+    Ok(changes)
+}
+
+/// Replays `changes` over the flags the server just reported.
+///
+/// The server's copy is the base — it carries everything the user did *not*
+/// touch, including a flag set from another client — and the queue's
+/// unacknowledged intent goes on top, in the order it was made.
+fn with_unacknowledged(server: &FlagSet, changes: &[(bool, FlagSet)]) -> FlagSet {
+    let mut flags = server.clone();
+    for (set, changed) in changes {
+        for flag in changed.iter() {
+            if *set {
+                flags.insert(flag.clone());
+            } else {
+                flags.remove(flag);
+            }
+        }
+    }
+    flags
 }
 
 fn flag_text(flags: &FlagSet) -> String {
