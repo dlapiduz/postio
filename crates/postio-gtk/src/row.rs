@@ -548,6 +548,10 @@ mod imp {
         /// Whether the row offers its actions under the pointer at all —
         /// `[ui].show_hover_actions`.
         pub(super) actions: Cell<bool>,
+        /// Whether the focused row may reveal its key hints at all —
+        /// `[ui].show_key_hints`. Every binding stays in force either way;
+        /// this only stops the row from naming them (#422).
+        pub(super) hints_enabled: Cell<bool>,
         pub(super) hovered: Cell<bool>,
         /// Whether the keyboard is on this row.
         ///
@@ -586,6 +590,7 @@ mod imp {
                 cursor: Cell::new(false),
                 index: Cell::new(0),
                 actions: Cell::new(true),
+                hints_enabled: Cell::new(true),
                 hovered: Cell::new(false),
                 focused: Cell::new(false),
                 probe: gtk::Label::new(None),
@@ -949,6 +954,17 @@ impl MessageRowView {
         }
     }
 
+    /// Whether the row may reveal key hints at all.
+    ///
+    /// `[ui].show_key_hints`. Off means no row ever shows one, focused or
+    /// not — every binding still works, this only stops the row from
+    /// naming it, for someone who already knows the keyboard (#422).
+    pub fn set_show_key_hints(&self, show: bool) {
+        if self.imp().hints_enabled.replace(show) != show {
+            self.queue_draw();
+        }
+    }
+
     /// Whether the key hints are showing — the focused row, and only it.
     ///
     /// `is_focus` rather than `has_focus`: the question is which row the
@@ -956,7 +972,9 @@ impl MessageRowView {
     /// background. A row that forgot its hints on alt-tab would be teaching
     /// the keyboard only while you were not using it.
     pub fn shows_hints(&self) -> bool {
-        self.imp().focused.get() && self.imp().row.borrow().is_some()
+        self.imp().hints_enabled.get()
+            && self.imp().focused.get()
+            && self.imp().row.borrow().is_some()
     }
 
     /// Work out whether the keyboard is on this row, and remember it.
