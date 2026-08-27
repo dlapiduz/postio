@@ -1420,18 +1420,7 @@ impl MessageListView {
             self.move_cursor_to(position);
         }
 
-        let menu = gio::Menu::new();
-        for spec in postio_core::registry::all() {
-            if !spec.contexts.contains(postio_core::Context::List) || !is_message_action(spec.id) {
-                continue;
-            }
-            let item = gio::MenuItem::new(Some(spec.title), None);
-            item.set_action_and_target_value(
-                Some("listrow.command"),
-                Some(&spec.id.as_str().to_variant()),
-            );
-            menu.append_item(&item);
-        }
+        let menu = context_menu_model(&self.imp().keymap.borrow());
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
         popover.set_parent(&self.imp().view);
@@ -1568,6 +1557,34 @@ fn is_message_action(id: CommandId) -> bool {
             | Command::OpenMessage { .. }
             | Command::ArchiveThread { .. }
     )
+}
+
+/// The row context menu, generated from the command registry.
+///
+/// Filtered to what applies to a message in the list, with each item carrying
+/// the key that does the same thing as its `accel` attribute -- the same
+/// resolved table the cheat sheet and the palette are built from, so a verb
+/// cannot appear in one surface and not another, and the key a menu draws is
+/// the key that actually works, `[keys]` overrides included.
+pub fn context_menu_model(commands: &Keymap) -> gio::Menu {
+    let (table, _) = crate::keymap::Keymap::from_commands(commands);
+    let menu = gio::Menu::new();
+    for spec in postio_core::registry::all() {
+        if !spec.contexts.contains(postio_core::Context::List) || !is_message_action(spec.id) {
+            continue;
+        }
+        let item = gio::MenuItem::new(Some(spec.title), None);
+        item.set_action_and_target_value(
+            Some("listrow.command"),
+            Some(&spec.id.as_str().to_variant()),
+        );
+        if let Some(accelerator) = crate::keymap::accelerator_for_command(&table, spec.id.as_str())
+        {
+            item.set_attribute_value("accel", Some(&accelerator.to_variant()));
+        }
+        menu.append_item(&item);
+    }
+    menu
 }
 
 /// What a press on a row means.
