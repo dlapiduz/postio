@@ -310,6 +310,7 @@ pub fn open_or_onboard(
                         postio_imap::discovery::PimalayaTransport::new()
                             .with_egress(wiring.egress.clone()),
                     ),
+                    std::sync::Arc::new(postio_imap::oauth::browser::SystemBrowserOpener),
                 ),
             }
         }

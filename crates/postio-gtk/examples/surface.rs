@@ -236,12 +236,12 @@ fn show_onboarding(window: &Window, manual: bool, failed: bool) {
         imap: Server {
             host: "imap.mail.me.com".to_owned(),
             port: 993,
-            tls: true,
+            security: Default::default(),
         },
         smtp: Server {
             host: "smtp.mail.me.com".to_owned(),
             port: 465,
-            tls: true,
+            security: Default::default(),
         },
         login: "lena@example.com".to_owned(),
         requires_app_password: true,
@@ -251,6 +251,7 @@ fn show_onboarding(window: &Window, manual: bool, failed: bool) {
                 .to_owned(),
         ),
         help_url: Some("https://appleid.apple.com/account/manage".to_owned()),
+        oauth_sign_in: false,
         source: "Postio's provider list".to_owned(),
     }));
     if failed {

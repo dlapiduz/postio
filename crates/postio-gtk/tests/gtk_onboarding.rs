@@ -30,12 +30,12 @@ fn a_repair_arrives_with_the_address_and_the_servers_already_filled_in() {
         imap: Server {
             host: "imap.example.com".to_owned(),
             port: 993,
-            tls: true,
+            security: Default::default(),
         },
         smtp: Server {
             host: "smtp.example.com".to_owned(),
             port: 465,
-            tls: true,
+            security: Default::default(),
         },
         login: "lena@example.net".to_owned(),
         source: "saved with this account".to_owned(),

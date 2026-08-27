@@ -34,6 +34,7 @@ use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
+use postio_model::TransportSecurity;
 
 /// One server, as the screen shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -42,14 +43,20 @@ pub struct Server {
     pub host: String,
     /// Port.
     pub port: u16,
-    /// Whether the connection is TLS from the first byte.
-    pub tls: bool,
+    /// Connection security. Carried losslessly from discovery (#534):
+    /// flattening this to a bool once turned a provider's own
+    /// plaintext-on-loopback answer into a TLS dial.
+    pub security: TransportSecurity,
 }
 
 impl Server {
     /// `imap.fastmail.com:993 · TLS`, the way the canvas writes it.
     pub fn line(&self) -> String {
-        let security = if self.tls { "TLS" } else { "STARTTLS" };
+        let security = match self.security {
+            TransportSecurity::Tls => "TLS",
+            TransportSecurity::StartTls => "STARTTLS",
+            TransportSecurity::None => "unencrypted",
+        };
         format!("{}:{} · {security}", self.host, self.port)
     }
 }
@@ -72,6 +79,11 @@ pub struct Settings {
     pub help_url: Option<String>,
     /// Where the settings came from, for the card's heading.
     pub source: String,
+    /// Whether the provider prefers a browser sign-in (#534): the wizard
+    /// shows the OAuth client fields and `Sign in with your browser`
+    /// instead of the password entry. The app side holds the endpoints;
+    /// this widget only needs to know which door to draw.
+    pub oauth_sign_in: bool,
 }
 
 /// Everything the composition root needs to create the account.
@@ -79,10 +91,28 @@ pub struct Settings {
 pub struct Submission {
     /// The address mail arrives at.
     pub address: String,
-    /// The password, on its way to the keyring and nowhere else.
+    /// The password, on its way to the keyring and nowhere else. Empty on
+    /// an OAuth submission.
     pub password: String,
     /// The servers to use.
     pub settings: Settings,
+    /// The OAuth client the user supplied, when the provider's door is the
+    /// browser sign-in (#534). `Some` routes the submission through the
+    /// authorization flow instead of a password test.
+    pub oauth_client: Option<OAuthClientSubmission>,
+}
+
+/// The user's own OAuth client (ADR 0006 Q1, `own-client`): what the
+/// sign-in flow presents to the provider. Postio ships no client of its
+/// own until #195 clears review, so these come from the user's provider
+/// console.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OAuthClientSubmission {
+    /// The client id, public by definition on a native app.
+    pub client_id: String,
+    /// The client secret, when the provider issued one — on its way to the
+    /// keyring and nowhere else.
+    pub client_secret: Option<String>,
 }
 
 /// Where the screen is in the one step it has.
@@ -103,6 +133,10 @@ pub enum Status {
     },
     /// Testing the credentials against the real server.
     Connecting,
+    /// The consent screen is open in the user's browser; Postio is waiting
+    /// for the redirect. Cancellable — the screen shows its own Cancel and
+    /// `Esc` means the same thing.
+    WaitingForBrowser,
     /// It did not work, and this says why in words the user can act on.
     Failed(String),
     /// The account is configured; its password is not.
@@ -124,7 +158,10 @@ pub enum Status {
 impl Status {
     /// Whether the screen is waiting on something and should not be touched.
     pub fn is_busy(&self) -> bool {
-        matches!(self, Status::Probing | Status::Connecting)
+        matches!(
+            self,
+            Status::Probing | Status::Connecting | Status::WaitingForBrowser
+        )
     }
 
     /// The sentence under the form, when this state owes the user one.
@@ -137,6 +174,10 @@ impl Status {
             Status::Reauthenticate(_) => Some(
                 "Postio has no password for this account. Sign in again and it \
                  will go back into the keyring.",
+            ),
+            Status::WaitingForBrowser => Some(
+                "Finish signing in in your browser. Postio is waiting for the \
+                 redirect — cancel any time.",
             ),
             _ => None,
         }
@@ -159,6 +200,16 @@ mod imp {
     pub struct Onboarding {
         pub(super) address: gtk::Entry,
         pub(super) password: gtk::PasswordEntry,
+        /// The password field's whole row, so the OAuth mode can swap it out.
+        pub(super) password_row: std::cell::OnceCell<gtk::Box>,
+        /// The user's own OAuth client (#534): id, and the secret when the
+        /// provider issued one.
+        pub(super) oauth_client_id: gtk::Entry,
+        pub(super) oauth_client_secret: gtk::PasswordEntry,
+        pub(super) oauth_rows: std::cell::OnceCell<gtk::Box>,
+        /// Cancels a sign-in waiting on the browser.
+        pub(super) cancel_sign_in: gtk::Button,
+        pub(super) on_cancel_sign_in: RefCell<Vec<Box<dyn Fn()>>>,
         /// The found-settings card and the three lines in it.
         pub(super) card: gtk::Box,
         pub(super) card_heading: gtk::Label,
@@ -294,12 +345,20 @@ impl Onboarding {
             imap: Server {
                 host: imp.imap_host.text().trim().to_owned(),
                 port: port(&imp.imap_port, 993),
-                tls: true,
+                // The manual form has no security selector; what the probe
+                // found carries through, and hand-entered servers get TLS.
+                security: found
+                    .as_ref()
+                    .map(|settings| settings.imap.security)
+                    .unwrap_or_default(),
             },
             smtp: Server {
                 host: imp.smtp_host.text().trim().to_owned(),
                 port: port(&imp.smtp_port, 465),
-                tls: true,
+                security: found
+                    .as_ref()
+                    .map(|settings| settings.smtp.security)
+                    .unwrap_or_default(),
             },
             login: match imp.login.text().trim() {
                 "" => self.address(),
@@ -312,6 +371,9 @@ impl Onboarding {
             help_url: found
                 .as_ref()
                 .and_then(|settings| settings.help_url.clone()),
+            oauth_sign_in: found
+                .as_ref()
+                .is_some_and(|settings| settings.oauth_sign_in),
             source: found
                 .map(|settings| settings.source)
                 .unwrap_or_else(|| "entered by hand".to_owned()),
@@ -372,6 +434,33 @@ impl Onboarding {
         }
     }
 
+    /// Whether the screen is asking for a browser sign-in rather than a
+    /// password — decided by the settings on show (#534).
+    fn oauth_mode(&self) -> bool {
+        self.imp()
+            .shown
+            .borrow()
+            .as_ref()
+            .is_some_and(|settings| settings.oauth_sign_in)
+    }
+
+    /// What a click on Cancel — or `Esc` — does while the browser wait is
+    /// up. The app side holds the flow's cancel token and answers through
+    /// [`Onboarding::connect_cancel_sign_in`].
+    pub fn cancel_sign_in(&self) {
+        for handler in self.imp().on_cancel_sign_in.borrow().iter() {
+            handler();
+        }
+    }
+
+    /// Called when the user cancels a sign-in waiting on the browser.
+    pub fn connect_cancel_sign_in(&self, handler: impl Fn() + 'static) {
+        self.imp()
+            .on_cancel_sign_in
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
     /// Submit, if there is anything to submit.
     ///
     /// Public for the same reason [`Onboarding::probe`] is.
@@ -379,10 +468,18 @@ impl Onboarding {
         if !self.can_submit() {
             return;
         }
+        let oauth_client = self.oauth_mode().then(|| {
+            let secret = self.imp().oauth_client_secret.text().to_string();
+            OAuthClientSubmission {
+                client_id: self.imp().oauth_client_id.text().trim().to_string(),
+                client_secret: (!secret.is_empty()).then_some(secret),
+            }
+        });
         let submission = Submission {
             address: self.address(),
             password: self.password(),
             settings: self.settings(),
+            oauth_client,
         };
         for handler in self.imp().on_submit.borrow().iter() {
             handler(&submission);
@@ -392,11 +489,22 @@ impl Onboarding {
     /// Whether `Connect` would do anything.
     pub fn can_submit(&self) -> bool {
         let settings = self.settings();
+        let credential = if self.oauth_mode() {
+            !self.imp().oauth_client_id.text().trim().is_empty()
+        } else {
+            !self.password().is_empty()
+        };
         looks_like_an_address(&self.address())
-            && !self.password().is_empty()
+            && credential
             && !settings.imap.host.is_empty()
             && !settings.smtp.host.is_empty()
             && !self.status().is_busy()
+    }
+
+    /// Fills the OAuth client fields, for a test driving the screen.
+    pub fn test_set_oauth_client(&self, client_id: &str, secret: &str) {
+        self.imp().oauth_client_id.set_text(client_id);
+        self.imp().oauth_client_secret.set_text(secret);
     }
 
     /// Sets the password field directly, without a key event.
@@ -498,6 +606,11 @@ impl Onboarding {
                 },
                 "dialog-password-symbolic",
             ),
+            Status::WaitingForBrowser => (
+                true,
+                "Waiting for your browser…".to_owned(),
+                "content-loading-symbolic",
+            ),
             Status::Saved => (true, "Account added".to_owned(), "object-select-symbolic"),
         };
         imp.card.set_visible(card);
@@ -516,9 +629,25 @@ impl Onboarding {
                 .set_text(&format!("IMAP   {}", settings.imap.line()));
             imp.smtp_line
                 .set_text(&format!("SMTP   {}", settings.smtp.line()));
-            imp.auth_line
-                .set_text("Auth   plain · secret in the system keyring");
+            imp.auth_line.set_text(if settings.oauth_sign_in {
+                "Auth   OAuth 2 · tokens in the system keyring"
+            } else {
+                "Auth   plain · secret in the system keyring"
+            });
         }
+
+        // Which credential door is open: the browser sign-in swaps the
+        // password row for the OAuth client fields, and the primary button
+        // says what it will actually do (#534).
+        let oauth = self.oauth_mode();
+        if let Some(row) = imp.password_row.get() {
+            row.set_visible(!oauth);
+        }
+        if let Some(rows) = imp.oauth_rows.get() {
+            rows.set_visible(oauth);
+        }
+        imp.cancel_sign_in
+            .set_visible(matches!(status, Status::WaitingForBrowser));
 
         // The provider's own sentence, and where to act on it. iCloud's is
         // the reason this exists: an Apple ID password simply will not work,
@@ -545,12 +674,12 @@ impl Onboarding {
         imp.address.set_sensitive(!busy);
         imp.password.set_sensitive(!busy);
         imp.connect.set_sensitive(self.can_submit());
-        imp.connect_label
-            .set_text(if matches!(status, Status::Connecting) {
-                "Connecting…"
-            } else {
-                "Connect"
-            });
+        imp.connect_label.set_text(match (&status, oauth) {
+            (Status::Connecting, _) => "Connecting…",
+            (Status::WaitingForBrowser, _) => "Waiting…",
+            (_, true) => "Sign in with your browser",
+            (_, false) => "Connect",
+        });
 
         imp.status_line.set_visible(status.message().is_some());
         if let Some(message) = status.message() {
@@ -616,6 +745,57 @@ impl Onboarding {
             self,
             move |_| screen.render()
         ));
+
+        imp.oauth_client_id
+            .set_placeholder_text(Some("something.apps.example.com"));
+        imp.oauth_client_id.set_hexpand(true);
+        imp.oauth_client_id.connect_changed(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.render()
+        ));
+        imp.oauth_client_id.connect_activate(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.submit()
+        ));
+        imp.oauth_client_secret.set_show_peek_icon(true);
+        imp.oauth_client_secret.set_hexpand(true);
+        imp.oauth_client_secret.connect_activate(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.submit()
+        ));
+
+        imp.cancel_sign_in.set_label("Cancel sign-in");
+        imp.cancel_sign_in.set_visible(false);
+        imp.cancel_sign_in.connect_clicked(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.cancel_sign_in()
+        ));
+
+        // `Esc` while the browser wait is up means what the button means.
+        // A widget-local controller rather than a registry command: this
+        // screen exists before any account does, outside the keymap's
+        // contexts, and the binding is not rebindable on purpose.
+        let escape = gtk::EventControllerKey::new();
+        escape.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, _| {
+                if key == gtk::gdk::Key::Escape
+                    && matches!(screen.status(), Status::WaitingForBrowser)
+                {
+                    screen.cancel_sign_in();
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            }
+        ));
+        self.add_controller(escape);
 
         // -- the found-settings card ---------------------------------------
 
@@ -732,6 +912,7 @@ impl Onboarding {
 
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         buttons.append(&imp.connect);
+        buttons.append(&imp.cancel_sign_in);
         buttons.append(&imp.edit);
         buttons.append(&hint);
 
@@ -747,7 +928,26 @@ impl Onboarding {
         let body = gtk::Box::new(gtk::Orientation::Vertical, 16);
         body.add_css_class("postio-onboarding-body");
         body.append(&field("Email address", &imp.address));
-        body.append(&field("Password", &imp.password));
+        let password_row = field("Password", &imp.password);
+        body.append(&password_row);
+        let _ = imp.password_row.set(password_row);
+        let oauth_rows = gtk::Box::new(gtk::Orientation::Vertical, 9);
+        oauth_rows.append(&field("OAuth client ID", &imp.oauth_client_id));
+        oauth_rows.append(&field(
+            "Client secret (only if your provider issued one)",
+            &imp.oauth_client_secret,
+        ));
+        let oauth_note = gtk::Label::new(Some(
+            "From your own developer console at the provider — Postio ships \
+             no built-in client yet, so the sign-in runs as yours.",
+        ));
+        oauth_note.add_css_class("postio-onboarding-note");
+        oauth_note.set_xalign(0.0);
+        oauth_note.set_wrap(true);
+        oauth_rows.append(&oauth_note);
+        oauth_rows.set_visible(false);
+        body.append(&oauth_rows);
+        let _ = imp.oauth_rows.set(oauth_rows);
         body.append(&imp.card);
         body.append(&imp.manual);
         body.append(&imp.status_line);
@@ -855,16 +1055,23 @@ mod tests {
         let tls = Server {
             host: "imap.fastmail.com".to_owned(),
             port: 993,
-            tls: true,
+            security: TransportSecurity::Tls,
         };
         assert_eq!(tls.line(), "imap.fastmail.com:993 · TLS");
 
         let starttls = Server {
             host: "mail.example.com".to_owned(),
             port: 143,
-            tls: false,
+            security: TransportSecurity::StartTls,
         };
         assert_eq!(starttls.line(), "mail.example.com:143 · STARTTLS");
+
+        let plain = Server {
+            host: "127.0.0.1".to_owned(),
+            port: 10143,
+            security: TransportSecurity::None,
+        };
+        assert_eq!(plain.line(), "127.0.0.1:10143 · unencrypted");
     }
 
     #[test]
