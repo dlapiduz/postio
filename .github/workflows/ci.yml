@@ -342,6 +342,12 @@ jobs:
         # would not have caught the fault it was written for is worth nothing.
         run: python3 scripts/tests/test-check-runtime-crossings.py
 
+      - name: Prove install-local.sh forces a stale icon cache to rebuild
+        # gtk-update-icon-cache -qt only skips demanding an index.theme; it
+        # does not rebuild a cache that is already there, which is why the
+        # app grid kept the default icon after a fresh install. #427.
+        run: python3 scripts/tests/test-install-local-icon.py
+
       - name: Assert CI never runs the network-touching tests
         run: |
           # Live-server tests are #[ignore]d and must stay out of CI. The
