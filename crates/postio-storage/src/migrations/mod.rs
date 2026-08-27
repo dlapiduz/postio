@@ -71,7 +71,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 21] = [
+static MIGRATIONS: [Migration; 22] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -176,6 +176,11 @@ static MIGRATIONS: [Migration; 21] = [
         version: 21,
         name: "message_snooze",
         sql: include_str!("0021_message_snooze.sql"),
+    },
+    Migration {
+        version: 22,
+        name: "account_oauth",
+        sql: include_str!("0022_account_oauth.sql"),
     },
 ];
 
