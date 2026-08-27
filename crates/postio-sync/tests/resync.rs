@@ -470,3 +470,82 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
          here can see (#317)"
     );
 }
+
+#[tokio::test]
+async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
+    // #564: a backend that reports no mod-seq (the JMAP and Gmail adapters,
+    // and any IMAP server without CONDSTORE) plans Full(NoModSeq) on every
+    // pass. The generation held, so nothing about the cached rows is wrong —
+    // the pass must refresh them in place, never wipe first: a wipe every
+    // watch tick refetches the world and loses local rows whose flags have
+    // not drained.
+    let mut mailbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for n in 1..=3u32 {
+        mailbox = mailbox.message(MockMessage::new(note(n)));
+    }
+    // No CONDSTORE among the capabilities: statuses carry no mod-seq.
+    let backend = MockBackend::builder()
+        .capabilities(["IMAP4rev1"])
+        .mailbox(mailbox)
+        .build();
+    backend.connect().await.expect("connect");
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let before: Vec<i64> = {
+        let messages = MessageRepository::new(&connection);
+        messages
+            .uids_in(inbox.id, postio_model::Generation::new(VALIDITY))
+            .expect("uids")
+            .iter()
+            .map(|uid| {
+                messages
+                    .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), *uid)
+                    .expect("read")
+                    .expect("the row")
+                    .id
+                    .get()
+            })
+            .collect()
+    };
+    assert_eq!(before.len(), 3, "the fixture synced");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Full {
+                reason: postio_model::FullResyncReason::NoModSeq,
+                ..
+            }
+        ),
+        "the fixture is about the modseq-less plan: {outcome:?}"
+    );
+
+    let after: Vec<i64> = {
+        let messages = MessageRepository::new(&connection);
+        messages
+            .uids_in(inbox.id, postio_model::Generation::new(VALIDITY))
+            .expect("uids")
+            .iter()
+            .map(|uid| {
+                messages
+                    .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), *uid)
+                    .expect("read")
+                    .expect("the row")
+                    .id
+                    .get()
+            })
+            .collect()
+    };
+    assert_eq!(
+        after, before,
+        "the same local rows, not freshly inserted replacements: the \
+         generation held, so nothing was wiped"
+    );
+}
