@@ -1,30 +1,35 @@
 name: Pages
 
-# Deploys site/ (the hand-written landing page, #24) to GitHub Pages.
+# Deploys the docs site to GitHub Pages: site/ (the hand-written landing
+# page, #24) at `/`, and the mdBook reference (docs/book/, #25) at `/docs/`.
 #
 # Deliberately its own workflow rather than a job in ci.yml, for the same
 # reason release.yml is separate (docs/decisions/0011-docs-site.md Q6): it
 # says nothing about whether the Rust workspace builds, and it should not
-# sit in the critical path of a PR that never touched site/.
+# sit in the critical path of a PR that never touched either surface.
 #
-# One deployment, two surfaces, per ADR 0011: `/` is this landing page,
-# `/docs/` is the mdBook output #25 will add. Until #25 lands there is only
-# the landing page to build, so this job uploads site/ as-is -- it has no
-# build step by design (#24's own acceptance criterion) -- rather than
-# compiling anything. When #25 ships, this job grows an mdbook build step
-# whose output is copied into a docs/ subdirectory of the same artifact;
-# nothing about the trigger or the deploy step changes.
+# One deployment, two surfaces, per ADR 0011 Q1/Q6. mdBook compiles nothing
+# of the Rust workspace -- it renders checked-in Markdown, including the
+# generated references (docs/keybindings.md, docs/config.md) unchanged --
+# and this job does not regenerate them: if either had drifted from its
+# source of truth, `ci.yml`'s own mdbook-build job already failed on the PR
+# that made it stale (Q6). This deploy job trusts the tree it was pushed.
 #
-# This is a cheap job -- no cargo, no GTK, an upload and a deploy -- unlike
-# the reason ci.yml and bench.yml are paused (see CLAUDE.md's "CI is
-# paused"): those compile the whole workspace and ran the private repo out
-# of its free Actions minutes. Pushing to main with a site/ change is rare
-# enough, and this job light enough, that it stays on `push` rather than
-# joining them as workflow_dispatch-only.
+# Still cheap relative to ci.yml/bench.yml (see CLAUDE.md's "CI is paused"):
+# no GTK, no WebKit, no workspace compile -- one small `cargo install` of
+# mdbook itself (cached), an mdbook build, and a Pages upload/deploy. Pushing
+# to main with a docs change is common enough, and this job light enough,
+# that it stays on `push` rather than joining the paused workflows as
+# workflow_dispatch-only.
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths:
+      - "site/**"
+      - "docs/book/**"
+      - "docs/keybindings.md"
+      - "docs/config.md"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -47,13 +52,44 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # The pin decides; see ci.yml's `fmt` job for why nothing here calls
+      # `rustup default`.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache the mdbook binary
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/mdbook
+          key: ${{ runner.os }}-mdbook-0.5.4
+
+      # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
+      # floating latest, so a new mdbook release cannot change the deployed
+      # site's rendering out from under a commit that touched nothing.
+      - name: Install mdbook
+        run: cargo install mdbook --locked --version 0.5.4
+
+      - name: Build the book
+        run: mdbook build docs/book
+
+      # upload-pages-artifact takes one directory tree, so the two surfaces
+      # are assembled into one staging directory first: the landing page at
+      # its root, the book underneath docs/ -- exactly the shape ADR 0011 Q1
+      # describes for the served site.
+      - name: Assemble the Pages artifact
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/
+          mkdir -p _site/docs
+          cp -r docs/book/book/. _site/docs/
+
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: site
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment

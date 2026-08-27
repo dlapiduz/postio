@@ -1,0 +1,30 @@
+# mdBook config for the Postio docs site (docs/book/ -> deployed to /docs/).
+#
+# Sources referenced here are generated files that live one level up
+# (docs/keybindings.md, docs/config.md) and are included by their pages
+# rather than copied — see ADR 0011 Q2. This file has no build step of its
+# own to run: `mdbook build` reads the checked-in Markdown as-is, per Q6.
+
+[book]
+title = "Postio"
+description = "Postio: a local-first, keyboard-first email client. Reference docs."
+authors = ["The Postio project"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/dlapiduz/postio"
+git-repository-icon = "fab-github"
+additional-css = ["theme/custom.css"]
+# No Google Fonts, no CDN, no third-party origin (ADR 0011 Q5) -- mdBook's
+# own bundled fonts and search index are already self-contained; the only
+# addition here is Postio's own self-hosted type, layered on top.
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true

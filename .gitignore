@@ -23,3 +23,7 @@
 # Python bytecode, including the agent hooks .
 __pycache__/
 *.pyc
+
+# mdBook's build output (docs/book/ is the source; pages.yml builds this on
+# deploy, and nothing reads a checked-in copy). ADR 0011.
+/docs/book/book/
