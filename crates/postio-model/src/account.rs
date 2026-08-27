@@ -97,6 +97,27 @@ pub struct ServerConfig {
     pub username: String,
 }
 
+/// The OAuth composition data an account signed in with (#534).
+///
+/// What the engine needs, every launch and offline too, to rebuild the
+/// account's own-client token source: the resolved token endpoint and the
+/// client id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthConfig {
+    /// The OAuth client id the sign-in used.
+    pub client_id: String,
+    /// The token endpoint, resolved at sign-in (from the preset row or
+    /// RFC 8414 metadata) and persisted so startup needs no network.
+    pub token_url: String,
+    /// The authorization endpoint, persisted for the same reason: a
+    /// re-authentication after a revoked grant runs the browser flow
+    /// again, offline-resolvable.
+    pub authorize_url: String,
+    /// The scopes the sign-in requested, space-joined as RFC 6749 §3.3
+    /// carries them.
+    pub scopes: String,
+}
+
 /// A signature appended to outgoing mail.
 ///
 /// Owned by the account and named, rather than being a property of one
@@ -190,6 +211,14 @@ pub struct Account {
     pub outgoing: ServerConfig,
     /// How to authenticate.
     pub auth: AuthMethod,
+    /// The OAuth client this account signed in with, when it did (#534).
+    ///
+    /// `None` on password accounts — and on OAuth accounts fed by an
+    /// external broker, which carry an OAuth `auth` method and no client
+    /// of their own. Never a secret: the client id is public by definition
+    /// on a native app, and the endpoint is a URL; the client secret and
+    /// the refresh token live in the keyring under derived keys.
+    pub oauth: Option<OAuthConfig>,
     /// Whether the account participates in sync.
     pub enabled: bool,
     /// Addresses this account can send from.
@@ -243,6 +272,7 @@ impl Account {
                 username,
             },
             auth: AuthMethod::Password,
+            oauth: None,
             enabled: true,
             identities: Vec::new(),
             signatures: Vec::new(),

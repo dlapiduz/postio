@@ -37,6 +37,12 @@ fn sample_account() -> Account {
             username: "ada@example.com".into(),
         },
         auth: AuthMethod::AppPassword,
+        oauth: Some(OAuthConfig {
+            client_id: "client-1".into(),
+            token_url: "https://login.example.com/token".into(),
+            authorize_url: "https://login.example.com/authorize".into(),
+            scopes: "mail.everything".into(),
+        }),
         enabled: true,
         identities: vec![sample_identity()],
         signatures: Vec::new(),
