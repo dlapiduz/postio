@@ -221,13 +221,13 @@ impl MessageHeader {
             self.account_row.set_visible(false);
             return;
         };
-        for index in 0..crate::tokens::ACCOUNT_HUES {
+        for index in 0..postio_ui::tokens::ACCOUNT_HUES {
             self.account_swatch
                 .remove_css_class(&format!("postio-account-{index}"));
         }
         self.account_swatch.add_css_class(&format!(
             "postio-account-{}",
-            hue % crate::tokens::ACCOUNT_HUES
+            hue % postio_ui::tokens::ACCOUNT_HUES
         ));
         self.account_name.set_label(name);
         self.account_row.set_visible(true);
