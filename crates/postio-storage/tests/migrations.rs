@@ -864,3 +864,102 @@ fn the_operation_queue_preserves_enqueue_order_and_carries_an_inverse() {
         .expect("collect");
     assert_eq!(order, ["set_flag", "move", "delete"]);
 }
+
+// ---------------------------------------------------------------------------
+// Remote identity (#543, ADR 0018 Q2)
+// ---------------------------------------------------------------------------
+
+/// A database migrated up to but not including the remote-identity backfill
+/// (#543) -- the schema an existing store looks like right before upgrading.
+fn migrated_before_remote_identity() -> Connection {
+    let mut connection = empty();
+    let before = migrations::all()
+        .iter()
+        .position(|migration| migration.name == "message_remote_identity")
+        .expect("the message_remote_identity migration is registered");
+    migrations::migrate_with(&mut connection, &migrations::all()[..before])
+        .expect("migrate to just before #543");
+    connection
+}
+
+fn insert_bare_message(
+    connection: &Connection,
+    account_id: i64,
+    mailbox_id: i64,
+    uid: Option<i64>,
+    uid_validity: Option<i64>,
+) -> i64 {
+    connection
+        .execute(
+            "INSERT INTO messages (account_id, mailbox_id, received_at, uid, uid_validity)
+             VALUES (?1, ?2, 0, ?3, ?4)",
+            rusqlite::params![account_id, mailbox_id, uid, uid_validity],
+        )
+        .expect("insert a pre-migration message");
+    connection.last_insert_rowid()
+}
+
+#[test]
+fn an_imap_row_backfills_its_remote_id_from_its_generation_and_uid() {
+    let mut connection = migrated_before_remote_identity();
+    let account = insert_account(&connection, "ada@example.com");
+    let mailbox = insert_mailbox(&connection, account, "INBOX");
+    let synced = insert_bare_message(&connection, account, mailbox, Some(42), Some(7));
+
+    migrate(&mut connection).expect("migrate to head");
+
+    let remote_id: Option<String> = connection
+        .query_row(
+            "SELECT remote_id FROM messages WHERE id = ?1",
+            [synced],
+            |row| row.get(0),
+        )
+        .expect("read the backfilled identity");
+    assert_eq!(
+        remote_id.as_deref(),
+        Some("7:42"),
+        "an IMAP row's backend-neutral identity is its generation and uid"
+    );
+}
+
+#[test]
+fn a_row_the_server_never_named_backfills_no_remote_id() {
+    let mut connection = migrated_before_remote_identity();
+    let account = insert_account(&connection, "ada@example.com");
+    let mailbox = insert_mailbox(&connection, account, "INBOX");
+    // A locally composed message, and one seen before UIDVALIDITY was
+    // recorded: neither has the pair an identity is made of.
+    let local = insert_bare_message(&connection, account, mailbox, None, None);
+    let half = insert_bare_message(&connection, account, mailbox, Some(9), None);
+
+    migrate(&mut connection).expect("migrate to head");
+
+    for id in [local, half] {
+        let remote_id: Option<String> = connection
+            .query_row(
+                "SELECT remote_id FROM messages WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("read the row");
+        assert_eq!(
+            remote_id, None,
+            "an invented identity is worse than none (row {id})"
+        );
+    }
+}
+
+#[test]
+fn looking_up_a_message_by_remote_id_uses_an_index() {
+    let connection = migrated();
+    let plan = query_plan(
+        &connection,
+        "SELECT id FROM messages WHERE mailbox_id = 1 AND remote_id = '7:42'",
+    );
+    // Any mailbox-scoped index satisfies `uses_index`; the lookup this slice
+    // adds is by identity, so the plan must name the remote_id index itself.
+    assert!(
+        uses_index(&plan) && plan.contains("remote_id"),
+        "plan was:\n{plan}"
+    );
+}

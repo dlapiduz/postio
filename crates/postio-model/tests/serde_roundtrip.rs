@@ -142,7 +142,7 @@ fn sample_message() -> Message {
         uid: Some(Uid::new(881)),
         uid_validity: Some(UidValidity::new(12)),
         mod_seq: Some(ModSeq::new(3_999)),
-        remote_id: Some("gm-1234".into()),
+        remote_id: Some(RemoteId::new("gm-1234")),
     };
     message.sync = LocalSyncState {
         body_state: BodyState::Full,

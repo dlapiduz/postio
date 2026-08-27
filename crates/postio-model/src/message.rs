@@ -8,8 +8,8 @@ use crate::attachment::Attachment;
 use crate::flag::FlagSet;
 use crate::headers::Headers;
 use crate::ids::{
-    AccountId, BlobId, LabelId, MailboxId, MessageId, ModSeq, RfcMessageId, ThreadId, Uid,
-    UidValidity,
+    AccountId, BlobId, LabelId, MailboxId, MessageId, ModSeq, RemoteId, RfcMessageId, ThreadId,
+    Uid, UidValidity,
 };
 use crate::subject::normalize_subject;
 
@@ -90,8 +90,10 @@ pub struct ServerIdentifiers {
     pub uid_validity: Option<UidValidity>,
     /// Modification sequence at which this message was last seen changed.
     pub mod_seq: Option<ModSeq>,
-    /// An opaque protocol-specific id, for backends that have one.
-    pub remote_id: Option<String>,
+    /// The backend-neutral identity (#543, ADR 0018 Q2): the server's own
+    /// name for this message. IMAP adapters derive it from the generation
+    /// and uid; other protocols carry their native id.
+    pub remote_id: Option<RemoteId>,
 }
 
 impl ServerIdentifiers {
