@@ -250,6 +250,7 @@ const BACKEND_SOURCES: &[(&str, &str)] = &[
         include_str!("../src/backend/capability.rs"),
     ),
     ("error.rs", include_str!("../src/backend/error.rs")),
+    ("identity.rs", include_str!("../src/backend/identity.rs")),
     ("message.rs", include_str!("../src/backend/message.rs")),
     ("mock.rs", include_str!("../src/backend/mock.rs")),
     ("mod.rs", include_str!("../src/backend/mod.rs")),
@@ -1276,5 +1277,31 @@ fn an_attachment_carries_what_will_explain_its_payload_later() {
         attachment.part_headers.as_deref(),
         Some("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n"),
         "enough to decode the section without a second round trip for [2.MIME]"
+    );
+}
+
+#[test]
+fn a_fetched_message_carries_the_backend_neutral_identity() {
+    // #543, ADR 0018 Q2: the row identity the engine addresses from now on
+    // is `remote_id`; the generation-and-uid pair is how this adapter, and
+    // only this adapter, spells one.
+    let fetched = FetchedMessage {
+        uid: Uid::new(12),
+        uid_validity: UidValidity::new(4_242),
+        mod_seq: None,
+        flags: FlagSet::default(),
+        internal_date: Utc.with_ymd_and_hms(2026, 8, 20, 9, 31, 0).unwrap(),
+        size: 1,
+        envelope: None,
+        structure: None,
+    };
+
+    let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
+
+    assert_eq!(
+        message.server.remote_id,
+        Some(postio_model::RemoteId::new("4242:12")),
+        "the identity the migration backfilled and the one the adapter \
+         writes must be the same spelling"
     );
 }

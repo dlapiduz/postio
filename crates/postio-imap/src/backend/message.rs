@@ -505,6 +505,7 @@ impl FetchedMessage {
         message.server.uid = Some(self.uid);
         message.server.uid_validity = Some(self.uid_validity);
         message.server.mod_seq = self.mod_seq;
+        message.server.remote_id = Some(super::identity::remote_id(self.uid_validity, self.uid));
 
         if let Some(envelope) = self.envelope {
             message.date = envelope.date;
@@ -676,6 +677,15 @@ pub struct UidMapping {
     pub destination: Uid,
     /// The destination mailbox's UID generation.
     pub uid_validity: UidValidity,
+}
+
+impl UidMapping {
+    /// The backend-neutral identity of the message where it landed (#543):
+    /// what a row that came into being through an append or move stores as
+    /// its `remote_id`, spelled by the adapter, never by the caller.
+    pub fn destination_remote_id(&self) -> postio_model::RemoteId {
+        super::identity::remote_id(self.uid_validity, self.destination)
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -330,6 +330,7 @@ async fn file_sent_copy(
     if let Some(mapping) = mapping {
         message.server.uid = Some(mapping.destination);
         message.server.uid_validity = Some(mapping.uid_validity);
+        message.server.remote_id = Some(mapping.destination_remote_id());
     }
 
     let messages = MessageRepository::new(connection);
