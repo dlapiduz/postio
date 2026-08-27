@@ -446,9 +446,10 @@ affordances in the settings panel, next to each account's config — not a
 new screen:**
 
 - **Enable/disable** — a toggle writing `accounts.enabled`, per Q6.
-- **Remove** — a `destructive: true` registry command per Q6, confirmed with
-  the undo Q6 already specifies, reaping the keyring entry only once the
-  account row's own removal is no longer undoable.
+- **Remove** — a `destructive: true` registry command per Q6, with the undo
+  Q6 already specifies. The keyring entry is untouched either way, exactly
+  as Q6 says: deleting it is a separate, still-unbuilt, confirmed step of
+  its own, not something this removal does on the account's behalf.
 - **Update credential** — the one truly new piece. **Reuses
   `Status::Reauthenticate`, which already exists and is already tested**
   (`postio-app/src/onboarding.rs`, `crates/postio-app/tests/app_suite/
