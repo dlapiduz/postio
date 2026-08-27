@@ -71,12 +71,17 @@ deliberately absent from v1. §12, §23.
 **v1 is Linux only**: GTK4 and libadwaita, Wayland first, X11 where it happens
 to work. Verified against gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52.
 
-macOS and Windows frontends over the same Rust engine remain possible, and
-that possibility is the reason for two CI-enforced boundaries rather than an
-aspiration in a document: `postio-core` must not depend on GTK, and
+macOS and Windows frontends over the same Rust engine were always possible,
+and that possibility is the reason for two CI-enforced boundaries rather than
+an aspiration in a document: `postio-core` must not depend on GTK, and
 `postio-gtk` must not depend on SQLite or the protocol crates
-(`ARCHITECTURE.md` §9). Neither frontend is scheduled. The invariant costs
-nothing to keep and is what makes the option survive.
+(`ARCHITECTURE.md` §9).
+
+**A native macOS frontend is now scheduled** — Swift over the same engine,
+[ADR 0019](decisions/0019-macos-frontend.md), tracked in its own milestone and
+not part of v1. The invariant it was kept for turned out to be load-bearing and
+not merely tidy: thirteen of the fifteen crates build and test on macOS with no
+changes at all. Windows remains unscheduled.
 
 ---
 
