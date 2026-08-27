@@ -49,6 +49,7 @@ pub fn a_store_the_application_opened_can_be_searched() {
             query: &query,
             scope: Scope::AllMail,
             limit: 50,
+            order: postio_search::ResultOrder::Relevance,
         },
         Utc::now(),
     )
@@ -105,6 +106,7 @@ fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> 
             query: &parsed,
             scope: Scope::AllMail,
             limit: 50,
+            order: postio_search::ResultOrder::Relevance,
         },
         Utc::now(),
     )

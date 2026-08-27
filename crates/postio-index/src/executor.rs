@@ -83,6 +83,13 @@ pub struct SearchRequest<'a> {
     pub scope: Scope,
     /// How many hits to return, at most.
     pub limit: u32,
+    /// Ranked, or in plain date order (#499).
+    ///
+    /// `Newest` takes the recency-ordered fetch unconditionally — the same
+    /// path a too-broad-to-rank query already takes — and skips the re-rank,
+    /// so the answer is exactly a mailbox's own order rather than "mostly
+    /// recency, nudged by affinity".
+    pub order: postio_search::ResultOrder,
 }
 
 /// Runs a search and returns a ranked page of results.
@@ -111,7 +118,9 @@ pub fn search(
     // answers in the requested order with no sort at all. Recency is a
     // reasonable fallback ranking (see `rank_score`'s own recency term) and
     // ordinary queries, which match far fewer messages, are unaffected.
-    let rank_by_relevance = plan.has_match && total_hits <= RANK_BY_RELEVANCE_LIMIT;
+    let rank_by_relevance = request.order == postio_search::ResultOrder::Relevance
+        && plan.has_match
+        && total_hits <= RANK_BY_RELEVANCE_LIMIT;
     // The wider pool only pays for itself when ranking by relevance: it is
     // there so a message that scores a little worse on `bm25` but a lot
     // better on recency/affinity can still surface from further down the SQL
@@ -132,15 +141,24 @@ pub fn search(
     };
     let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance)?;
 
-    for candidate in &mut candidates {
-        candidate.score = rank_score(
-            candidate.bm25,
-            candidate.received_at,
-            now,
-            candidate.sender_times_seen,
-        );
+    match request.order {
+        postio_search::ResultOrder::Relevance => {
+            for candidate in &mut candidates {
+                candidate.score = rank_score(
+                    candidate.bm25,
+                    candidate.received_at,
+                    now,
+                    candidate.sender_times_seen,
+                );
+            }
+            candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
+        }
+        // Asked for date order, given date order: the fetch already came
+        // back `received_at DESC`, and running the ranker over it — even
+        // with the scores zeroed — would let sender affinity quietly
+        // reorder what the control promises is a plain sort.
+        postio_search::ResultOrder::Newest => {}
     }
-    candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
     candidates.truncate(request.limit as usize);
 
     let hits: Vec<_> = candidates.into_iter().map(Candidate::into_hit).collect();

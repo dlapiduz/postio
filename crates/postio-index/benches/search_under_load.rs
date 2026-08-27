@@ -194,6 +194,7 @@ fn one_search(query: &str) -> Duration {
         query: &parsed,
         scope: Scope::AllMail,
         limit: 50,
+        order: postio_search::ResultOrder::Relevance,
     };
     let start = Instant::now();
     let results = search(&connection, &request, now()).expect("search");

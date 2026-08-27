@@ -91,6 +91,7 @@ fn run(connection: &Connection, query: &str) -> Vec<postio_model::MessageId> {
         query: &parsed,
         scope: Scope::AllMail,
         limit: 50,
+        order: postio_search::ResultOrder::Relevance,
     };
     search(connection, &request, at(12))
         .expect("search")
