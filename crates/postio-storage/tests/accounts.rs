@@ -376,6 +376,148 @@ fn deleting_an_account_takes_everything_that_hangs_off_it() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Enable, disable, and pending deletion (#464, ADR 0005 Q6a)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_enabled_flips_only_that_column() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    account.display_name = "before".to_owned();
+    let id = accounts.create(&mut account).expect("create");
+    assert!(accounts.get(id).unwrap().unwrap().enabled);
+
+    assert!(accounts.set_enabled(id, false).expect("disable"));
+    let stored = accounts.get(id).expect("get").expect("still there");
+    assert!(!stored.enabled);
+    assert_eq!(
+        stored.display_name, "before",
+        "set_enabled must not touch anything else about the row"
+    );
+
+    assert!(accounts.set_enabled(id, true).expect("re-enable"));
+    assert!(accounts.get(id).unwrap().unwrap().enabled);
+}
+
+#[test]
+fn set_enabled_on_a_missing_account_is_false_not_an_error() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    assert!(!accounts.set_enabled(AccountId::new(404), false).unwrap());
+}
+
+#[test]
+fn marking_for_deletion_is_reversible_until_it_is_reaped() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+    assert!(!accounts.get(id).unwrap().unwrap().pending_deletion);
+
+    assert!(accounts.mark_pending_deletion(id).expect("mark"));
+    assert!(
+        accounts.get(id).unwrap().unwrap().pending_deletion,
+        "marked, but not yet actually deleted"
+    );
+
+    assert!(accounts.restore(id).expect("restore"));
+    assert!(
+        !accounts.get(id).unwrap().unwrap().pending_deletion,
+        "undo clears the mark, and the account is untouched"
+    );
+}
+
+#[test]
+fn a_marked_account_is_excluded_from_the_enabled_list_even_before_it_is_reaped() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut kept = an_account();
+    accounts.create(&mut kept).expect("create");
+    let mut leaving = Account::new(
+        "Fastmail",
+        EmailAddress::new(None::<String>, "b@example.com"),
+    );
+    let leaving_id = accounts.create(&mut leaving).expect("create");
+    accounts.mark_pending_deletion(leaving_id).expect("mark");
+
+    let enabled = accounts.list_enabled().expect("list enabled");
+    assert_eq!(
+        enabled.len(),
+        1,
+        "no engine should start against an account on its way out: {enabled:?}"
+    );
+    assert_eq!(enabled[0].id, kept.id);
+}
+
+#[test]
+fn reaping_deletes_every_marked_account_and_leaves_the_rest() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut kept = an_account();
+    accounts.create(&mut kept).expect("create");
+    let mut leaving = Account::new(
+        "Fastmail",
+        EmailAddress::new(None::<String>, "b@example.com"),
+    );
+    let leaving_id = accounts.create(&mut leaving).expect("create");
+    accounts.mark_pending_deletion(leaving_id).expect("mark");
+
+    let reaped = accounts.reap_pending_deletions().expect("reap");
+    assert_eq!(reaped, vec![leaving_id]);
+
+    assert!(accounts.get(leaving_id).expect("get").is_none());
+    assert!(accounts.get(kept.id).expect("get").is_some());
+}
+
+#[test]
+fn reaping_cascades_exactly_like_an_ordinary_delete() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+    connection
+        .execute(
+            "INSERT INTO mailboxes (id, account_id, name, path) VALUES (1, 1, 'INBOX', 'INBOX')",
+            [],
+        )
+        .expect("seed a mailbox");
+    accounts.mark_pending_deletion(id).expect("mark");
+
+    accounts.reap_pending_deletions().expect("reap");
+
+    let remaining: i64 = connection
+        .query_row("SELECT count(*) FROM mailboxes", [], |row| row.get(0))
+        .expect("count");
+    assert_eq!(remaining, 0, "reaping did not cascade");
+}
+
+#[test]
+fn reaping_with_nothing_marked_deletes_nothing() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    accounts.create(&mut account).expect("create");
+
+    assert_eq!(accounts.reap_pending_deletions().expect("reap"), vec![]);
+    assert!(accounts.get(account.id).expect("get").is_some());
+}
+
 #[test]
 fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
     // #12: a signature is the account's, named, and chosen per message — not

@@ -23,7 +23,7 @@ pub struct AccountRepository<'a> {
 const ACCOUNT_COLUMNS: &str = "\
 id, display_name, address, address_name, incoming_host, incoming_port, incoming_security,
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
-auth_method, enabled, created_at, default_signature_id";
+auth_method, enabled, created_at, default_signature_id, pending_deletion";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -187,8 +187,13 @@ impl<'a> AccountRepository<'a> {
     }
 
     /// Every account that participates in sync.
+    ///
+    /// Excludes anything marked for removal even before
+    /// [`AccountRepository::reap_pending_deletions`] has actually run --
+    /// belt and braces, since the reap is meant to run first regardless, but
+    /// an engine should never start against a row on its way out.
     pub fn list_enabled(&self) -> Result<Vec<Account>> {
-        self.list_where("WHERE enabled = 1")
+        self.list_where("WHERE enabled = 1 AND pending_deletion = 0")
     }
 
     fn list_where(&self, filter: &str) -> Result<Vec<Account>> {
@@ -219,6 +224,68 @@ impl<'a> AccountRepository<'a> {
             .connection
             .execute("DELETE FROM accounts WHERE id = ?1", [id.get()])?;
         Ok(deleted > 0)
+    }
+
+    /// Flips whether the account participates in sync (#464, ADR 0005 Q6).
+    ///
+    /// A single-column write rather than [`AccountRepository::update`]: the
+    /// caller here is a settings-panel toggle, not code holding a full,
+    /// freshly-loaded `Account` with its identity list intact, and routing
+    /// through `update` would risk silently rewriting identities from a
+    /// stale copy.
+    pub fn set_enabled(&self, id: AccountId, enabled: bool) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
+            params![id.get(), enabled],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Marks the account for removal without deleting anything yet (#464,
+    /// ADR 0005 Q6a).
+    ///
+    /// Reversible with [`AccountRepository::restore`] until
+    /// [`AccountRepository::reap_pending_deletions`] actually runs, which is
+    /// what gives the undo toast something to undo.
+    pub fn mark_pending_deletion(&self, id: AccountId) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE accounts SET pending_deletion = 1 WHERE id = ?1",
+            [id.get()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Undoes [`AccountRepository::mark_pending_deletion`].
+    pub fn restore(&self, id: AccountId) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE accounts SET pending_deletion = 0 WHERE id = ?1",
+            [id.get()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Permanently deletes every account still marked pending, cascading to
+    /// everything that hangs off it (#464, ADR 0005 Q6a).
+    ///
+    /// Called once, at the next startup, before any engine is created — never
+    /// live, so a session that crashes before an undo toast expires leaves
+    /// the row exactly as `mark_pending_deletion` left it, not half deleted.
+    /// Returns which accounts were actually reaped.
+    pub fn reap_pending_deletions(&self) -> Result<Vec<AccountId>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM accounts WHERE pending_deletion = 1")?;
+        let ids: Vec<AccountId> = statement
+            .query_map([], |row| row.get::<_, i64>(0))?
+            .map(|id| id.map(AccountId::new))
+            .collect::<rusqlite::Result<_>>()?;
+        drop(statement);
+
+        for id in &ids {
+            self.connection
+                .execute("DELETE FROM accounts WHERE id = ?1", [id.get()])?;
+        }
+        Ok(ids)
     }
 }
 
@@ -486,6 +553,7 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
         signatures: Vec::new(),
         default_signature_id: row.get::<_, Option<i64>>(15)?.map(SignatureId::new),
         created_at: from_millis(row.get(14)?),
+        pending_deletion: row.get(16)?,
     })
 }
 
