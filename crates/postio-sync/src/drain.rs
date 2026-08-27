@@ -331,7 +331,7 @@ impl<'a> Drainer<'a> {
                     .as_deref()
                     .expect("a move always resolves a destination");
                 self.backend
-                    .move_messages(&context.path, &context.uids, destination)
+                    .move_messages(&context.path, &context.ids, destination)
                     .await
                     .map(|mapping| {
                         // Without UIDPLUS an empty mapping is the ordinary
@@ -404,7 +404,7 @@ impl<'a> Drainer<'a> {
     ) -> std::result::Result<bool, BackendError> {
         let updates = self
             .backend
-            .store_flags(&context.path, &context.uids, &change)
+            .store_flags(&context.path, &context.ids, &change)
             .await?;
         Ok(updates.is_empty())
     }
@@ -418,7 +418,7 @@ impl<'a> Drainer<'a> {
                         operation: step.operation.clone(),
                         path: String::new(),
                         destination: None,
-                        uids: UidSet::new(),
+                        ids: Vec::new(),
                         mailbox: MailboxId::UNASSIGNED,
                         send: Some(job),
                         draft: None,
@@ -445,7 +445,7 @@ impl<'a> Drainer<'a> {
                 operation: step.operation.clone(),
                 path: String::new(),
                 destination: None,
-                uids: UidSet::new(),
+                ids: Vec::new(),
                 mailbox: MailboxId::UNASSIGNED,
                 send: None,
                 draft: None,
@@ -458,7 +458,7 @@ impl<'a> Drainer<'a> {
                 operation: step.operation.clone(),
                 path: String::new(),
                 destination: None,
-                uids: UidSet::new(),
+                ids: Vec::new(),
                 mailbox: MailboxId::UNASSIGNED,
                 send: None,
                 draft: None,
@@ -493,7 +493,7 @@ impl<'a> Drainer<'a> {
             | Operation::CrossAccountRemove { .. } => unreachable!("handled above"),
         };
 
-        let uids = match step.target {
+        let ids = match step.target {
             OperationTarget::Message(_) => {
                 let Some(message) = message.as_ref() else {
                     return Ok(Resolved::Obsolete {
@@ -512,12 +512,12 @@ impl<'a> Drainer<'a> {
                     Operation::Move { .. } | Operation::Delete { .. } => {
                         OperationQueueRepository::new(connection)
                             .get(step.head())?
-                            .and_then(|row| row.source_uid)
+                            .and_then(|row| row.source_remote_id)
                     }
                     _ => None,
                 };
-                match snapshot.or(message.server.uid) {
-                    Some(uid) => UidSet::single(uid),
+                match snapshot.or(message.server.remote_id.clone()) {
+                    Some(remote_id) => vec![remote_id],
                     None => {
                         return Ok(Resolved::Obsolete {
                             reason: "the message has never been uploaded, so the server has \
@@ -528,8 +528,8 @@ impl<'a> Drainer<'a> {
                     }
                 }
             }
-            // A mailbox-wide operation names no UIDs.
-            _ => UidSet::new(),
+            // A mailbox-wide operation names no messages.
+            _ => Vec::new(),
         };
 
         let mailboxes = MailboxRepository::new(connection);
@@ -556,7 +556,7 @@ impl<'a> Drainer<'a> {
             operation: step.operation.clone(),
             path: source.path,
             destination,
-            uids,
+            ids,
             mailbox,
             send: None,
             draft: None,
@@ -574,21 +574,9 @@ impl<'a> Drainer<'a> {
             (Operation::SaveDraft { mailbox }, OperationTarget::Draft(draft)) => {
                 crate::drafts::resolve_save(connection, self.blobs, draft, *mailbox)?
             }
-            (
-                Operation::DiscardDraft {
-                    mailbox,
-                    uid,
-                    uid_validity,
-                },
-                _,
-            ) => crate::drafts::resolve_discard(
-                connection,
-                *mailbox,
-                crate::drafts::ServerCopy {
-                    uid: *uid,
-                    uid_validity: *uid_validity,
-                },
-            )?,
+            (Operation::DiscardDraft { mailbox, remote_id }, _) => {
+                crate::drafts::resolve_discard(connection, *mailbox, remote_id.clone())?
+            }
             // A draft operation whose target is not a draft is a row written
             // by hand or by a newer Postio; it names nothing this build can
             // act on.
@@ -603,7 +591,7 @@ impl<'a> Drainer<'a> {
                 operation: step.operation.clone(),
                 path: String::new(),
                 destination: None,
-                uids: UidSet::new(),
+                ids: Vec::new(),
                 mailbox: MailboxId::UNASSIGNED,
                 send: None,
                 draft: Some(job),
@@ -707,7 +695,7 @@ struct Context {
     operation: Operation,
     path: String,
     destination: Option<String>,
-    uids: UidSet,
+    ids: Vec<postio_model::RemoteId>,
     mailbox: MailboxId,
     /// Resolved only for [`Operation::Send`]: everything local storage could
     /// answer, so [`Drainer::send`] has nothing left to look up. Boxed: it is

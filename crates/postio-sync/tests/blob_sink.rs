@@ -70,7 +70,12 @@ async fn a_fetch_through_the_sink_lands_in_the_blob_store() {
 
     let mut sink = BlobSink::new(&blobs).expect("a sink");
     backend
-        .fetch_body("INBOX", Uid::new(1), &mut sink, &CancelToken::new())
+        .fetch_body(
+            "INBOX",
+            &postio_model::RemoteId::new("1:1"),
+            &mut sink,
+            &CancelToken::new(),
+        )
         .await
         .expect("fetch");
 
@@ -146,7 +151,7 @@ async fn the_same_bytes_streamed_and_stored_at_once_are_one_blob() {
     backend
         .fetch_part(
             "INBOX",
-            Uid::new(1),
+            &postio_model::RemoteId::new("1:1"),
             &BodyPart::Whole,
             &mut sink,
             &CancelToken::new(),

@@ -50,3 +50,43 @@ mod tests {
         }
     }
 }
+
+/// Unpacks a batch of ids into the wire set, refusing any that are not of
+/// this mailbox's live generation.
+///
+/// The refusal is [`BackendError::UidValidityChanged`] — the same answer a
+/// renumber discovered at `SELECT` gives — because that is what a stale id
+/// *is*: a name from a generation the server has abandoned. The caller's
+/// recovery is identical: resync the mailbox, never retry the uid.
+pub(crate) fn wire_set(
+    mailbox: &str,
+    live: UidValidity,
+    ids: &[RemoteId],
+) -> crate::backend::BackendResult<crate::backend::UidSet> {
+    let mut set = crate::backend::UidSet::new();
+    for id in ids {
+        set.insert(wire_uid(mailbox, live, id)?);
+    }
+    Ok(set)
+}
+
+/// [`wire_set`], for the single id the body fetches address.
+pub(crate) fn wire_uid(
+    mailbox: &str,
+    live: UidValidity,
+    id: &RemoteId,
+) -> crate::backend::BackendResult<Uid> {
+    match wire(id) {
+        Some((validity, uid)) if validity == live => Ok(uid),
+        Some((validity, _)) => Err(crate::backend::BackendError::UidValidityChanged {
+            mailbox: mailbox.to_owned(),
+            known: validity,
+            observed: live,
+        }),
+        // An id this adapter never minted — another backend's, or corrupt.
+        // A caller bug, not a server condition; nothing to resync or retry.
+        None => Err(crate::backend::BackendError::Protocol {
+            reason: format!("remote id {id:?} is not this adapter's spelling"),
+        }),
+    }
+}

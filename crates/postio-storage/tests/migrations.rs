@@ -963,3 +963,87 @@ fn looking_up_a_message_by_remote_id_uses_an_index() {
         "plan was:\n{plan}"
     );
 }
+
+/// A database migrated up to but not including 0024 -- what an existing
+/// store's queue looks like right before the identity flip reaches it.
+fn migrated_before_queue_identity() -> Connection {
+    let mut connection = empty();
+    let before = migrations::all()
+        .iter()
+        .position(|migration| migration.name == "queue_remote_identity")
+        .expect("the queue_remote_identity migration is registered");
+    migrations::migrate_with(&mut connection, &migrations::all()[..before])
+        .expect("migrate to just before 0024");
+    connection
+}
+
+#[test]
+fn a_queued_discard_is_rewritten_to_name_its_copy_by_identity() {
+    let mut connection = migrated_before_queue_identity();
+    let account = insert_account(&connection, "ada@example.com");
+    connection
+        .execute(
+            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id, payload,
+                                          state, created_at, updated_at)
+             VALUES (?1, 'discard_draft', 'draft', 9,
+                     '{\"op\":\"discard_draft\",\"mailbox\":5,\"uid\":77,\"uid_validity\":12}',
+                     'pending', 0, 0)",
+            [account],
+        )
+        .expect("a pre-#543 queued discard");
+
+    migrate(&mut connection).expect("migrate to head");
+
+    let payload: String = connection
+        .query_row("SELECT payload FROM operation_queue", [], |row| row.get(0))
+        .expect("the rewritten payload");
+    assert!(
+        payload.contains("\"remote_id\":\"12:77\"") && !payload.contains("uid_validity"),
+        "a queued discard must survive the upgrade: {payload}"
+    );
+}
+
+#[test]
+fn a_queued_move_snapshot_backfills_its_source_identity() {
+    let mut connection = migrated_before_queue_identity();
+    let account = insert_account(&connection, "ada@example.com");
+    connection
+        .execute(
+            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id, payload,
+                                          state, created_at, updated_at, source_uid,
+                                          source_uid_validity)
+             VALUES (?1, 'move', 'message', 3, '{\"op\":\"move\",\"to\":2}',
+                     'pending', 0, 0, 41, 7)",
+            [account],
+        )
+        .expect("a pre-#543 queued move");
+
+    migrate(&mut connection).expect("migrate to head");
+
+    let source: Option<String> = connection
+        .query_row("SELECT source_remote_id FROM operation_queue", [], |row| {
+            row.get(0)
+        })
+        .expect("the backfilled snapshot");
+    assert_eq!(source.as_deref(), Some("7:41"));
+}
+
+#[test]
+fn a_draft_server_copy_backfills_its_identity() {
+    let mut connection = migrated_before_queue_identity();
+    let account = insert_account(&connection, "ada@example.com");
+    connection
+        .execute(
+            "INSERT INTO drafts (account_id, uid, uid_validity, created_at, updated_at)
+             VALUES (?1, 77, 12, 0, 0)",
+            [account],
+        )
+        .expect("a pre-#543 draft with a located server copy");
+
+    migrate(&mut connection).expect("migrate to head");
+
+    let remote_id: Option<String> = connection
+        .query_row("SELECT remote_id FROM drafts", [], |row| row.get(0))
+        .expect("the backfilled identity");
+    assert_eq!(remote_id.as_deref(), Some("12:77"));
+}

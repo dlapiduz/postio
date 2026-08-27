@@ -125,7 +125,7 @@ async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
         .expect("get")
         .expect("the draft");
     assert!(
-        stored.server.uid.is_some() && stored.server.uid_validity.is_some(),
+        stored.server.remote_id.is_some(),
         "the row learns where its copy landed, which is what lets the next \
          save replace it rather than add to it"
     );
@@ -148,7 +148,7 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
         .expect("get")
         .expect("the draft")
         .server
-        .uid;
+        .remote_id;
 
     draft.body.text = Some("Half a thought, now most of one.".to_owned());
     drafts
@@ -168,7 +168,7 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
         .expect("get")
         .expect("the draft")
         .server
-        .uid;
+        .remote_id;
     assert_ne!(first, second, "and the row follows the copy that is there");
 }
 
@@ -281,8 +281,7 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
             OperationTarget::Draft(draft.id),
             &Operation::DiscardDraft {
                 mailbox: drafts_mailbox,
-                uid: Uid::new(1),
-                uid_validity: UidValidity::new(1),
+                remote_id: postio_model::RemoteId::new("1:1"),
             },
             at(9),
         )
@@ -347,13 +346,13 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
         .get(draft.id)
         .expect("get")
         .expect("the draft");
-    let uid = stored.server.uid.expect("the copy landed");
+    let remote_id = stored.server.remote_id.expect("the copy landed");
 
     let mut sink = postio_imap::backend::VecSink::new();
     backend
         .fetch_body(
             "Drafts",
-            uid,
+            &remote_id,
             &mut sink,
             &postio_imap::cancel::CancelToken::new(),
         )

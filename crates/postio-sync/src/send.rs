@@ -100,7 +100,7 @@ pub(crate) struct SendJob {
     /// resolved here because after the send the local row that knew about it
     /// is deleted, and a draft left behind in Drafts is the user's sent
     /// message showing up as still unfinished.
-    drafts_copy: Option<(MailboxId, String, crate::drafts::ServerCopy)>,
+    drafts_copy: Option<(MailboxId, String, postio_model::RemoteId)>,
 }
 
 /// What resolving a `Send` operation against local storage found.
@@ -368,7 +368,7 @@ async fn remove_drafts_copy(backend: &dyn MailBackend, resync: &mut BTreeSet<i64
         resync.insert(mailbox.get());
         return;
     };
-    match crate::drafts::remove(backend, &capabilities, path, *copy).await {
+    match crate::drafts::remove(backend, &capabilities, path, copy).await {
         // Removed, or somebody else got there first.
         Ok(crate::drafts::Removal::Removed | crate::drafts::Removal::Gone) => {}
         _ => {

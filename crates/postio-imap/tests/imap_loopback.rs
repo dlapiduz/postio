@@ -121,8 +121,15 @@ fn selects(server: &TestServer) -> usize {
         .count()
 }
 
-fn uids(values: impl IntoIterator<Item = u32>) -> UidSet {
-    values.into_iter().map(Uid::new).collect()
+fn uids(values: impl IntoIterator<Item = u32>) -> Vec<postio_model::RemoteId> {
+    // The server above pins its generation to 4242, so these are the ids
+    // its adapter mints.
+    values.into_iter().map(rid).collect()
+}
+
+/// The identity the pinned generation gives `uid`.
+fn rid(uid: u32) -> postio_model::RemoteId {
+    postio_model::RemoteId::new(format!("4242:{uid}"))
 }
 
 fn cancel() -> CancelToken {
@@ -209,7 +216,7 @@ async fn a_whole_body_streams_off_the_socket_byte_for_byte() {
     let fetched = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(2),
+        &rid(2),
         &BodyPart::Whole,
         &mut sink,
         Priority::Background,
@@ -233,7 +240,7 @@ async fn one_mime_section_is_fetched_without_the_rest_of_the_message() {
     fetch_part(
         &pool,
         "INBOX",
-        Uid::new(2),
+        &rid(2),
         &BodyPart::Section("1".to_owned()),
         &mut sink,
         Priority::Background,
@@ -398,7 +405,7 @@ async fn a_body_fetch_is_refused_across_a_uidvalidity_bump_too() {
     fetch_part(
         &pool,
         "INBOX",
-        Uid::new(1),
+        &rid(1),
         &BodyPart::Whole,
         &mut sink,
         Priority::Background,
@@ -413,7 +420,7 @@ async fn a_body_fetch_is_refused_across_a_uidvalidity_bump_too() {
     let error = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(1),
+        &rid(1),
         &BodyPart::Whole,
         &mut sink,
         Priority::Background,
@@ -604,7 +611,7 @@ async fn a_connection_dropped_mid_fetch_is_a_transient_error() {
     let error = fetch_part(
         &pool,
         "INBOX",
-        Uid::new(1),
+        &rid(1),
         &BodyPart::Whole,
         &mut sink,
         Priority::Background,
@@ -723,7 +730,7 @@ async fn a_slow_but_progressing_fetch_is_not_killed_by_the_deadline() {
     fetch_part(
         &pool,
         "INBOX",
-        Uid::new(2),
+        &rid(2),
         &BodyPart::Whole,
         &mut sink,
         Priority::Background,

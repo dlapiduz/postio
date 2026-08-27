@@ -53,7 +53,7 @@ pub const PARTIAL_FETCH_WINDOW: u32 = 128 * 1024;
 pub async fn fetch_part(
     pool: &ConnectionPool,
     mailbox: &str,
-    uid: Uid,
+    id: &postio_model::RemoteId,
     part: &BodyPart,
     sink: &mut dyn BodySink,
     priority: Priority,
@@ -68,7 +68,8 @@ pub async fn fetch_part(
 
     let bytes_written = pool
         .execute(priority, async |session| {
-            session.ensure_selected(&mailbox_owned, false).await?;
+            let live = session.ensure_selected(&mailbox_owned, false).await?;
+            let uid = crate::backend::identity::wire_uid(&mailbox_owned, live, id)?;
             if matches!(part, BodyPart::Whole) {
                 stream_whole(session, &mailbox_owned, uid, sink, cancel).await
             } else {
@@ -80,7 +81,7 @@ pub async fn fetch_part(
     sink.finish().await?;
 
     Ok(FetchedBody {
-        uid,
+        remote_id: id.clone(),
         part: part.clone(),
         bytes_written,
     })

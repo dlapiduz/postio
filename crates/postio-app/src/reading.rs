@@ -1278,7 +1278,9 @@ mod tests {
         let connection = database.connection().expect("a connection");
         connection
             .execute(
-                "UPDATE messages SET uid = id + 1000, uid_validity = 1 WHERE mailbox_id = ?1",
+                "UPDATE messages SET uid = id + 1000, uid_validity = 1,
+                        remote_id = '1:' || (id + 1000)
+                  WHERE mailbox_id = ?1",
                 [inbox.id.get()],
             )
             .expect("the fixture writes");
@@ -1294,7 +1296,7 @@ mod tests {
             .id;
         connection
             .execute(
-                "UPDATE messages SET uid = 1, uid_validity = 1 WHERE id = ?1",
+                "UPDATE messages SET uid = 1, uid_validity = 1, remote_id = '1:1' WHERE id = ?1",
                 [newest.get()],
             )
             .expect("the fixture writes");

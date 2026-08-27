@@ -95,7 +95,7 @@ async fn conforms(backend: &dyn MailBackend) {
     // --- bodies -------------------------------------------------------
     let mut sink = VecSink::new();
     let fetched = backend
-        .fetch_body("INBOX", Uid::new(1), &mut sink, &cancel)
+        .fetch_body("INBOX", &rid(1), &mut sink, &cancel)
         .await
         .expect("fetch body");
     let raw = postio_model::test_corpus::load("plain-text-simple")
@@ -108,13 +108,13 @@ async fn conforms(backend: &dyn MailBackend) {
     let updates = backend
         .store_flags(
             "INBOX",
-            &uid_set([1]),
+            &ids([1]),
             &FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
         .expect("store flags");
     assert_eq!(updates.len(), 1);
-    assert_eq!(updates[0].uid, Uid::new(1));
+    assert_eq!(updates[0].remote_id, rid(1));
     assert!(updates[0].flags.is_seen());
     let stamped = updates[0].mod_seq.expect("a CONDSTORE server stamps it");
     assert!(stamped > ModSeq::new(BASELINE));
@@ -134,7 +134,7 @@ async fn conforms(backend: &dyn MailBackend) {
 
     // --- moving -------------------------------------------------------
     let mapping = backend
-        .move_messages("INBOX", &uid_set([2]), "Archive")
+        .move_messages("INBOX", &ids([2]), "Archive")
         .await
         .expect("move");
     assert_eq!(mapping.len(), 1, "UIDPLUS says where it landed");
@@ -165,7 +165,7 @@ async fn conforms(backend: &dyn MailBackend) {
     backend
         .store_flags(
             "INBOX",
-            &uid_set([3]),
+            &ids([3]),
             &FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
         )
         .await
@@ -203,6 +203,16 @@ async fn conforms(backend: &dyn MailBackend) {
     assert!(stopped.is_empty());
 }
 
+fn ids(values: impl IntoIterator<Item = u32>) -> Vec<postio_model::RemoteId> {
+    values.into_iter().map(rid).collect()
+}
+
+/// The identity the pinned generation gives `uid`.
+fn rid(uid: u32) -> postio_model::RemoteId {
+    postio_model::RemoteId::new(format!("{GENERATION}:{uid}"))
+}
+
+#[allow(dead_code)]
 fn uid_set(values: impl IntoIterator<Item = u32>) -> UidSet {
     values.into_iter().map(Uid::new).collect()
 }

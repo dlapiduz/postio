@@ -342,8 +342,7 @@ mod tests {
             next_attempt_at: None,
             created_at: at,
             updated_at: at,
-            source_uid: None,
-            source_uid_validity: None,
+            source_remote_id: None,
         }
     }
 
@@ -677,8 +676,7 @@ mod tests {
         let drafts = MailboxId::new(4);
         let discard = Operation::DiscardDraft {
             mailbox: drafts,
-            uid: postio_model::Uid::new(9),
-            uid_validity: postio_model::UidValidity::new(1),
+            remote_id: postio_model::RemoteId::new("1:9"),
         };
         let batch = [
             row(1, draft(7), Operation::SaveDraft { mailbox: drafts }),
