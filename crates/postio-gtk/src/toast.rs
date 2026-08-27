@@ -87,6 +87,27 @@ impl Toast {
         self.push(toast);
     }
 
+    /// *Account removed — Undo.* Same shape as
+    /// [`Toast::show_action_completed`], but the button calls `on_undo`
+    /// directly rather than the global `win.undo` action.
+    ///
+    /// For something the undo *stack* has no opinion about at all: account
+    /// removal (#464) is a `gio::SimpleActionGroup` action on the settings
+    /// panel, not a [`postio_core::Command`], because it needs a specific
+    /// account as its payload with no keystroke-derived default and there
+    /// is no `Context::Settings` for the keymap to reach it in — see ADR
+    /// 0005 Q6a. Its undo is real (Q6 requires it), just local to this one
+    /// button rather than reachable from `u`.
+    pub fn show_removable(&self, description: &str, on_undo: impl Fn() + 'static) {
+        let toast = adw::Toast::builder()
+            .title(description)
+            .timeout(TOAST_TIMEOUT)
+            .button_label("Undo")
+            .build();
+        toast.connect_button_clicked(move |_| on_undo());
+        self.push(toast);
+    }
+
     /// *Archived 12 messages, undone.* What `u` (or the toast's own button)
     /// leaves behind: confirmation, not a second offer to undo the undo.
     pub fn show_undo_performed(&self, description: &str) {
