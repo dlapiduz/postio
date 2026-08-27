@@ -302,7 +302,15 @@ fn install_autosave(
         }
     });
 
-    recover(composer, &database, account, &last_id);
+    // Only after a crash. `DraftState::Editing` alone is not evidence of
+    // one — Esc parks a draft in exactly that state on purpose — and the
+    // difference is the whole of #491: a client that opens into a stale
+    // compose buffer instead of the inbox reads as broken. `begin_session`
+    // is what knows how the last session ended, and this is its one caller,
+    // before anything else consults the marker it flips.
+    if postio_session::begin_session(&database) {
+        recover(composer, &database, account, &last_id);
+    }
     last_id
 }
 
@@ -417,6 +425,11 @@ fn queue_send_at(
 /// Opens whatever draft `account` was still editing when Postio last
 /// stopped — the crash-recovery half of the bead, and the whole reason it
 /// matters: a draft is not durable until it comes back on its own.
+///
+/// Called only when [`postio_session::begin_session`] says the last session
+/// died uncleanly (#491). After a *clean* exit a mid-edit draft is parked,
+/// not lost: autosaved, a row in Drafts, resumable from there — and the
+/// next start belongs to the inbox.
 ///
 /// The most recently edited one, since the composer holds exactly one draft
 /// at a time (`postio-cj7`'s "one composition" invariant); a v1 with several
@@ -904,6 +917,103 @@ mod tests {
             load_body_or_reason(&connection, &blobs, id, false),
             Body::Absent(postio_gtk::reader::Absent::ForeignDraft)
         ));
+    }
+
+    #[test]
+    fn a_parked_draft_after_a_clean_exit_leaves_the_next_start_on_the_inbox() {
+        // #491, reported directly: "i reopened the app and it opened in a
+        // compose window from a draft. cold start should start with the
+        // inbox". `DraftState::Editing` is not evidence of a crash — Esc on
+        // a draft with content parks it in exactly that state on purpose —
+        // so recovery has to ask how the last session *ended*, not what the
+        // drafts table holds. The crash test below is this test's twin: the
+        // same two runs, with the clean shutdown removed.
+        let state_dir =
+            std::env::temp_dir().join(format!("postio-app-clean-exit-{}", std::process::id()));
+        std::fs::create_dir_all(&state_dir).unwrap();
+        // SAFETY: first statement of a single-threaded test.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", &state_dir)
+        };
+
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        postio_gtk::fonts::install().expect("the embedded fonts should install");
+        postio_gtk::style::install(&display);
+        postio_gtk::app::install_icons(&display);
+
+        let db_path = state_dir.join("postio.db");
+        let blobs_path = state_dir.join("blobs");
+        let account = seed_account(&Database::open(&db_path).unwrap());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        // ── Run one: type, park the draft with Esc, exit cleanly ─────────
+        {
+            let database = Database::open(&db_path).unwrap();
+            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let window = Window::default();
+            window.present();
+            settle();
+
+            install(
+                &window,
+                account,
+                database.clone(),
+                blobs,
+                runtime.handle().clone(),
+                crate::reading::Showing::default(),
+            );
+            let composer = window.composer();
+            composer.open(Draft::new(account));
+            settle();
+            composer.test_set_subject("Finish this on Thursday");
+            settle();
+            composer.save();
+            // Esc: a deliberate close that keeps the row Editing, "ready to
+            // recover it right back".
+            composer.close();
+            settle();
+            // The orderly exit path `run()` takes after `application.run()`
+            // returns.
+            postio_session::end_session(&database);
+        }
+
+        // ── Run two: the draft is parked, not in the way ─────────────────
+        {
+            let database = Database::open(&db_path).unwrap();
+            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let window = Window::default();
+            window.present();
+            settle();
+
+            install(
+                &window,
+                account,
+                database.clone(),
+                blobs,
+                runtime.handle().clone(),
+                crate::reading::Showing::default(),
+            );
+            settle();
+
+            assert!(
+                !window.composer().is_open(),
+                "a cleanly-exited session's parked draft must not take over                  the next start — the inbox is the first thing a mail client                  shows"
+            );
+            // Never lost: the row is still in Drafts, exactly as autosaved,
+            // reachable through the Drafts folder's own resume path.
+            let connection = database.connection().unwrap();
+            let parked = DraftRepository::new(&connection)
+                .list_for_account(account)
+                .expect("drafts read");
+            assert_eq!(parked.len(), 1);
+            assert_eq!(parked[0].subject, "Finish this on Thursday");
+            assert_eq!(parked[0].state, DraftState::Editing);
+        }
     }
 
     #[test]
