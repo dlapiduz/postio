@@ -446,7 +446,7 @@ fn the_thread_list_is_newest_first_and_pages_by_cursor() {
         "the most recently active conversation is at the top"
     );
 
-    let mut seen: Vec<ThreadId> = first.iter().map(|row| row.id).collect();
+    let mut seen: Vec<Option<ThreadId>> = first.iter().map(|row| row.id).collect();
     let mut cursor = first.last().expect("a row").cursor();
     loop {
         let page = threads
@@ -518,7 +518,7 @@ fn the_thread_list_plan_never_sorts() {
             if after {
                 query = query.after(postio_storage::repository::ThreadCursor {
                     last_at: at(0),
-                    id: ThreadId::new(10),
+                    id: 10,
                 });
             }
             let sql = threads.explain(&query);
@@ -540,21 +540,33 @@ fn the_thread_list_plan_never_sorts() {
                 "{label} / cursor={after}: the thread list must never sort:\n{plan}"
             );
             assert!(
-                plan.contains("idx_threads_account_last_at"),
-                "{label} / cursor={after}: expected the thread list index:\n{plan}"
-            );
-            assert!(
                 !plan.contains("SCAN threads") && !plan.contains("SCAN messages"),
                 "{label} / cursor={after}: the list must never scan a table:\n{plan}"
             );
-            // The folder's contribution is correlated subqueries, and each of
-            // them has to seek the index migration 0012 added rather than
-            // walking a whole conversation and filtering.
             if base.mailbox.is_some() {
+                // The folder window is ordered over the *representative
+                // message*, on the very index the message list uses — which
+                // is what makes "page k of threads costs what page k of
+                // messages costs" true by construction rather than by
+                // measurement.
+                assert!(
+                    plan.contains("idx_messages_list"),
+                    "{label} / cursor={after}: the folder window must walk \
+                     the message list index:\n{plan}"
+                );
+                // Everything the conversation contributes is a correlated
+                // subquery, and each has to seek the index migration 0012
+                // added rather than walk a whole thread and filter.
                 assert!(
                     plan.contains("idx_messages_thread_mailbox"),
                     "{label} / cursor={after}: the folder slice must seek its \
                      own index:\n{plan}"
+                );
+            } else {
+                assert!(
+                    plan.contains("idx_threads_account_last_at"),
+                    "{label} / cursor={after}: expected the thread list \
+                     index:\n{plan}"
                 );
             }
         }
@@ -656,10 +668,10 @@ fn a_folder_only_shows_conversations_it_holds_a_message_of() {
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
         .expect("a page of threads");
 
-    let ids: Vec<ThreadId> = page.iter().map(|row| row.id).collect();
+    let ids: Vec<Option<ThreadId>> = page.iter().map(|row| row.id).collect();
     assert_eq!(
         ids,
-        vec![here.id],
+        vec![Some(here.id)],
         "a conversation with nothing filed in this folder is not this \
          folder's row, even though it is newer"
     );
@@ -801,13 +813,13 @@ fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
         second[0].last_at <= first[1].last_at,
         "paging walks strictly backwards through the sort key"
     );
-    let seen: Vec<ThreadId> = first
+    let seen: Vec<Option<ThreadId>> = first
         .iter()
         .chain(second.iter())
         .map(|row| row.id)
         .collect();
     let mut unique = seen.clone();
-    unique.sort_by_key(|id| id.get());
+    unique.sort_by_key(|id| id.map(|id| id.get()).unwrap_or_default());
     unique.dedup();
     assert_eq!(unique.len(), seen.len(), "no row is paged twice");
 }
@@ -906,7 +918,13 @@ fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
     }
     for index in 0..3 {
         let thread = a_thread(&connection, account.id);
-        unread_in(&connection, account.id, archive, thread.id, 100 + index * 10);
+        unread_in(
+            &connection,
+            account.id,
+            archive,
+            thread.id,
+            100 + index * 10,
+        );
     }
 
     let repository = ThreadRepository::new(&connection);
@@ -933,19 +951,93 @@ fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
 
     let repository = ThreadRepository::new(&connection);
     let query = ThreadListQuery::in_mailbox(account.id, inbox).limit(2);
-    let all: Vec<ThreadId> = repository
+    let all: Vec<Option<ThreadId>> = repository
         .page(&ThreadListQuery::in_mailbox(account.id, inbox))
         .expect("every row")
         .iter()
         .map(|row| row.id)
         .collect();
 
-    let second: Vec<ThreadId> = repository
+    let second: Vec<Option<ThreadId>> = repository
         .page_at(&query, 2)
         .expect("an offset page")
         .iter()
         .map(|row| row.id)
         .collect();
 
-    assert_eq!(second, all[2..4], "an offset window is the same window, moved");
+    assert_eq!(
+        second,
+        all[2..4],
+        "an offset window is the same window, moved"
+    );
+}
+
+#[test]
+fn a_message_belonging_to_no_thread_is_still_a_row() {
+    // The list must never hide mail. Threading runs on everything sync files
+    // and can still fail — `postio-sync`'s send path discards the result with
+    // `let _ =` — and a window built only over `threads` makes every such
+    // message *invisible*: no error, no empty state, just mail that is in the
+    // store and not on screen.
+    //
+    // So the folder window is over the representative *message* rather than
+    // over `threads`, and a message with no thread is a conversation of one.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    let threaded = a_thread(&connection, account.id);
+    unread_in(&connection, account.id, inbox, threaded.id, 10);
+
+    // Straight into the table, exactly as a message that was never threaded
+    // would sit there.
+    let mut orphan = Message::new(account.id, inbox, at(20));
+    orphan.subject = Some("Never threaded".to_owned());
+    orphan.from = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
+    let orphan = MessageRepository::new(&connection)
+        .create(&mut orphan)
+        .expect("create an unthreaded message");
+
+    let page = ThreadRepository::new(&connection)
+        .page(&ThreadListQuery::in_mailbox(account.id, inbox))
+        .expect("a page");
+
+    assert_eq!(page.len(), 2, "the unthreaded message must still be a row");
+    let row = page
+        .iter()
+        .find(|row| {
+            row.latest
+                .as_ref()
+                .is_some_and(|latest| latest.id == orphan)
+        })
+        .expect("the unthreaded message is one of the rows");
+    assert_eq!(row.id, None, "it belongs to no conversation, and says so");
+    assert_eq!(row.message_count, 1, "a conversation of one");
+    assert_eq!(
+        row.participants.len(),
+        1,
+        "it still has a sender to draw, so the row is not blank"
+    );
+}
+
+#[test]
+fn two_unthreaded_messages_are_two_rows_rather_than_one() {
+    // The coalesce that lets a null thread id be compared must not make every
+    // unthreaded message look like a member of the same conversation.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+
+    for second in [10, 20, 30] {
+        let mut message = Message::new(account.id, inbox, at(second));
+        message.subject = Some(format!("Never threaded {second}"));
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .expect("create an unthreaded message");
+    }
+
+    let repository = ThreadRepository::new(&connection);
+    let query = ThreadListQuery::in_mailbox(account.id, inbox);
+    assert_eq!(repository.page(&query).expect("a page").len(), 3);
+    assert_eq!(repository.count_of(&query).expect("a count"), 3);
 }

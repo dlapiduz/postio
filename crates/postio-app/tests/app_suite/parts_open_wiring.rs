@@ -130,6 +130,14 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     while glib::MainContext::default().iteration(false) {}
 
     // ── open the message, exactly as a double click or `Enter` does ─────
+    // Wait for a row first. Activating position 0 of an empty model does
+    // nothing at all, and this read is asynchronous -- the test used to win
+    // that race by luck and stopped when the folder gained a second query to
+    // run (#307).
+    assert!(
+        settle_until(|| window.list().model().n_items() > 0),
+        "no rows reached the list, so there is nothing to activate"
+    );
     activate_first_row(&window);
     assert!(
         settle_until(|| window.reading()),

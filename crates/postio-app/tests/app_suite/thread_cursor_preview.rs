@@ -139,9 +139,14 @@ pub fn moving_the_thread_cursor_fills_the_reading_pane() {
 
     let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
     let list = window.list();
+    // One row, not two: a folder shows one row per conversation (ADR 0015),
+    // and the fixture's two messages are one conversation. What this test is
+    // about is downstream of that — the thread column's cursor — and the row
+    // still has to know it stands for two messages, which the next assertion
+    // checks.
     assert!(
-        settle_until(|| list.model().n_items() >= 2),
-        "the fixture's two messages never reached the list"
+        settle_until(|| list.model().n_items() >= 1),
+        "the fixture's conversation never reached the list"
     );
 
     // ── drill in ─────────────────────────────────────────────────────────

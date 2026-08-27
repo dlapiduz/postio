@@ -139,8 +139,12 @@ impl Sample {
         let mailboxes = runtime
             .block_on(store.mailboxes(account))
             .expect("the seeded folders");
+        // `list_page`, not `message_page`: a folder shows one row per
+        // conversation (ADR 0015) and the store is what decides that, so a
+        // render that asked for the message window would be a picture of a
+        // list the application does not draw.
         let page = runtime
-            .block_on(store.message_page(postio_runtime::store::PageRequest {
+            .block_on(store.list_page(postio_runtime::store::PageRequest {
                 scope: postio_runtime::store::ListScope::Mailbox(inbox),
                 offset: 0,
                 limit: DEMO_ROWS,
@@ -151,8 +155,38 @@ impl Sample {
             account,
             address: report.account.address.address.clone(),
             mailboxes,
-            rows: page.rows.into_iter().map(row).collect(),
+            rows: match page {
+                postio_runtime::store::ListPage::Threads(page) => {
+                    page.rows.into_iter().map(thread_row).collect()
+                }
+                postio_runtime::store::ListPage::Messages(page) => {
+                    page.rows.into_iter().map(row).collect()
+                }
+            },
         }
+    }
+}
+
+/// One conversation, as the list draws it.
+///
+/// The same conversion `postio-app`'s own `feed` module makes, repeated for
+/// the same reason [`row`] is.
+fn thread_row(summary: postio_runtime::store::ThreadSummary) -> postio_gtk::list::Row {
+    let seen = !summary.has_unread();
+    postio_gtk::list::Row {
+        id: summary.representative.id,
+        thread: summary.id,
+        from: summary.representative.from,
+        subject: summary.subject,
+        preview: summary.representative.preview,
+        received_at: summary.last_at,
+        seen,
+        flagged: summary.flagged,
+        answered: summary.representative.answered,
+        draft: summary.representative.draft,
+        has_attachments: summary.has_attachments,
+        thread_count: summary.message_count,
+        participants: summary.participants,
     }
 }
 
@@ -176,6 +210,7 @@ fn row(summary: postio_runtime::store::MessageSummary) -> postio_gtk::list::Row 
         draft: summary.draft,
         has_attachments: summary.has_attachments,
         thread_count: summary.thread_count,
+        participants: Vec::new(),
     }
 }
 

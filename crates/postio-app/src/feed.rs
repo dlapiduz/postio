@@ -28,7 +28,7 @@ use postio_gtk::feed::{
 };
 use postio_gtk::list::Row;
 use postio_model::ids::{AccountId, MessageId};
-use postio_runtime::store::{ListScope, MailStore, PageRequest as StoreRequest};
+use postio_runtime::store::{ListPage, ListScope, MailStore, PageRequest as StoreRequest};
 
 /// The frontend's two sources, over one store.
 pub struct Sources {
@@ -83,11 +83,26 @@ impl MessageSource for Sources {
             offset: request.offset,
             limit: request.limit,
         };
-        let answer =
-            self.ask(move |store| Box::pin(async move { store.message_page(wanted).await }));
+        // Which window answers is the store's decision, not this one's:
+        // folders thread, query views list messages, and Drafts is a folder
+        // that does not (ADR 0015, and `SqliteStore::lists_conversations`).
+        // Asking here would put that line in two places, and the list model,
+        // the row widget and the verbs all work from what comes back rather
+        // than from a mode any of them keeps.
+        let answer = self.ask(move |store| Box::pin(async move { store.list_page(wanted).await }));
         Box::pin(async move {
             match answer.recv().await {
                 Ok(Ok(page)) => {
+                    let page = match page {
+                        ListPage::Threads(page) => Page {
+                            total: page.total,
+                            rows: page.rows.into_iter().map(thread_row).collect(),
+                        },
+                        ListPage::Messages(page) => Page {
+                            total: page.total,
+                            rows: page.rows.into_iter().map(row).collect(),
+                        },
+                    };
                     // The list asking, and what it got. A list that draws
                     // nothing is either a model that never asked or a store
                     // that answered empty, and only this line tells them
@@ -98,12 +113,9 @@ impl MessageSource for Sources {
                         offset = request.offset,
                         rows = page.rows.len(),
                         total = page.total,
-                        "message page read"
+                        "list page read"
                     );
-                    Ok(Page {
-                        total: page.total,
-                        rows: page.rows.into_iter().map(row).collect(),
-                    })
+                    Ok(page)
                 }
                 Ok(Err(reason)) => Err(reason),
                 // The runtime went away mid-read. Rare, and still worth a
@@ -166,6 +178,38 @@ fn scope_name(scope: FeedScope) -> String {
     }
 }
 
+/// One conversation, as the list draws it.
+///
+/// The row *is* its representative message — the newest one in this folder —
+/// so every surface that already takes a message keeps working: the reading
+/// pane opens it, a drag exports it, a reply answers it. What the thread
+/// contributes is what the row says about itself.
+fn thread_row(summary: postio_runtime::store::ThreadSummary) -> Row {
+    let seen = !summary.has_unread();
+    Row {
+        // The representative's id, deliberately. `thread` is what makes this
+        // a conversation to the verbs; `id` is what makes it openable.
+        id: summary.representative.id,
+        thread: summary.id,
+        from: summary.representative.from,
+        // The conversation's subject, not the newest reply's: "Re: Re: Fwd:"
+        // is not what the row is about.
+        subject: summary.subject,
+        preview: summary.representative.preview,
+        // The conversation's recency, which is what the sort key is.
+        received_at: summary.last_at,
+        // Unread when anything in *this folder's* slice is unread. A thread
+        // whose only unread member is filed elsewhere reads as handled here.
+        seen,
+        flagged: summary.flagged,
+        answered: summary.representative.answered,
+        draft: summary.representative.draft,
+        has_attachments: summary.has_attachments,
+        thread_count: summary.message_count,
+        participants: summary.participants,
+    }
+}
+
 /// One row, as the list draws it.
 ///
 /// Field for field: the two types exist separately so that neither crate has
@@ -184,5 +228,6 @@ fn row(summary: postio_runtime::store::MessageSummary) -> Row {
         draft: summary.draft,
         has_attachments: summary.has_attachments,
         thread_count: summary.thread_count,
+        participants: Vec::new(),
     }
 }

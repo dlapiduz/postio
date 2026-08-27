@@ -84,6 +84,28 @@ pub struct Row {
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.
     pub thread_count: u32,
+    /// Everyone who has written in the conversation, in first-seen order.
+    ///
+    /// **Empty on a message row, and that is how the two are told apart.** A
+    /// folder shows one row per conversation (ADR 0015) and a query view
+    /// shows messages; a row with participants stands for a conversation, so
+    /// its sender line names the people in it rather than one sender, and the
+    /// verbs act on the whole thread.
+    ///
+    /// All of them, elided when drawn: which names survive the width is a
+    /// drawing decision, and the row is the only thing that knows how much
+    /// room there is.
+    pub participants: Vec<EmailAddress>,
+}
+
+impl Row {
+    /// Whether this row stands for a whole conversation rather than one
+    /// message.
+    ///
+    /// The one test, so nothing can disagree about what a thread row is.
+    pub fn is_thread(&self) -> bool {
+        !self.participants.is_empty()
+    }
 }
 
 /// Where the rows come from.

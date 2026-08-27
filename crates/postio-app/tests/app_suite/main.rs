@@ -27,6 +27,7 @@ mod search_wiring;
 mod send_wiring;
 mod startup_repair;
 mod thread_cursor_preview;
+mod thread_keystroke;
 mod window_drain;
 mod wiring;
 
@@ -120,6 +121,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane",
         thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane as fn(),
+    ),
+    (
+        "thread_keystroke::pressing_a_on_a_thread_row_archives_the_whole_conversation",
+        thread_keystroke::pressing_a_on_a_thread_row_archives_the_whole_conversation as fn(),
     ),
     (
         "window_drain::an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes",

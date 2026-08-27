@@ -61,6 +61,7 @@ fn row(id: i64, minute: i64) -> Row {
         draft: false,
         has_attachments: false,
         thread_count: WHOLE_THREAD,
+        participants: Vec::new(),
     }
 }
 

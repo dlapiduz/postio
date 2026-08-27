@@ -64,6 +64,7 @@ fn conversation() -> Vec<Row> {
         draft: false,
         has_attachments: false,
         thread_count: 6,
+        participants: Vec::new(),
     };
 
     vec![

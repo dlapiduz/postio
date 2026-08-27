@@ -121,6 +121,7 @@ impl MessageSource for Store {
                     draft: false,
                     has_attachments: false,
                     thread_count: 1,
+                    participants: Vec::new(),
                 })
                 .collect();
             Ok(Page { total, rows })

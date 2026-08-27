@@ -241,6 +241,7 @@ impl Mailbox200 {
                 draft: false,
                 has_attachments: false,
                 thread_count: THREAD_SIZE as u32,
+                participants: Vec::new(),
             })
             .rev()
             .collect();
