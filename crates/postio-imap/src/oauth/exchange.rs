@@ -6,14 +6,25 @@
 //! [`HttpClientStd`] drives the actual request/response cycle once a stream
 //! is open; it is already in the dependency graph underneath
 //! `io-pim-discovery`; nothing new arrives for it.
+//!
+//! The grant bodies and token responses are `io-oauth`'s RFC 6749 types
+//! (#537): the form encodings, the success/error schemas and their secrecy
+//! handling are maintained upstream, in the same I/O-free style as every
+//! other Pimalaya wire crate here. What stays this module's: the transport
+//! pump above (io-oauth's optional client wrapper consumes the HTTP status,
+//! and the shim below needs it), and the mapping into [`OAuthError`].
 
 use std::io::{Read, Write};
 use std::time::Duration;
 
 use io_http::client::{HttpClient, HttpClientStd};
 use io_http::rfc9110::request::HttpRequest;
+use io_oauth::rfc6749::access_token_request::Oauth20AccessTokenRequestParams;
+use io_oauth::rfc6749::issue_access_token::Oauth20AccessTokenSuccessParams;
+use io_oauth::rfc6749::refresh_access_token::Oauth20AccessTokenRefreshParams;
 use io_pim_discovery::rfc8414::DiscoveryOauthServerMetadata;
 use pimalaya_stream::stream::{Stream, TlsConnectOptions};
+use secrecy::ExposeSecret;
 use url::Url;
 
 use super::error::OAuthError;
@@ -125,22 +136,26 @@ pub async fn exchange_code(
     params: CodeExchange<'_>,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
-    // Scoped, and `.finish()` called before the `.await` below: url's
-    // `Serializer` carries a non-`Send` field (an optional encoding-override
-    // trait object), so a binding still in scope across an await would make
-    // this whole function's future non-`Send` — and every `TokenSource`
-    // impl is required to be `Send + Sync`.
+    // io-oauth's own RFC 6749 §4.1.3 body. Built to a `String` before the
+    // `.await` below: the params' serializer is not `Send`, and every
+    // `TokenSource` impl is required to be `Send + Sync`.
     let form_body = {
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("grant_type", "authorization_code")
-            .append_pair("client_id", params.client_id)
-            .append_pair("code", params.code)
-            .append_pair("code_verifier", params.code_verifier)
-            .append_pair("redirect_uri", params.redirect_uri);
-        if let Some(secret) = params.client_secret {
-            form.append_pair("client_secret", secret);
+        use std::str::FromStr;
+        let verifier =
+            io_oauth::rfc7636::pkce::Oauth20PkceCodeVerifier::from_str(params.code_verifier)
+                .map_err(|byte| {
+                    OAuthError::Parse(format!(
+                        "the PKCE verifier carries a byte RFC 7636 does not allow: 0x{byte:x}"
+                    ))
+                })?;
+        Oauth20AccessTokenRequestParams {
+            code: params.code.into(),
+            redirect_uri: Some(params.redirect_uri.into()),
+            client_id: params.client_id.into(),
+            client_secret: params.client_secret.map(|secret| secret.to_owned().into()),
+            pkce_code_verifier: Some(std::borrow::Cow::Owned(verifier)),
         }
-        form.finish()
+        .to_string()
     };
 
     token_request(token_url, form_body, cancel).await
@@ -159,15 +174,13 @@ pub async fn refresh_token(
     params: RefreshExchange<'_>,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
+    // io-oauth's RFC 6749 §6 body, same `String`-before-await rule as the
+    // code exchange.
     let form_body = {
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("grant_type", "refresh_token")
-            .append_pair("client_id", params.client_id)
-            .append_pair("refresh_token", params.refresh_token);
-        if let Some(secret) = params.client_secret {
-            form.append_pair("client_secret", secret);
-        }
-        form.finish()
+        let mut body =
+            Oauth20AccessTokenRefreshParams::new(params.client_id, params.refresh_token.to_owned());
+        body.client_secret = params.client_secret.map(|secret| secret.to_owned().into());
+        body.to_string()
     };
 
     token_request(token_url, form_body, cancel).await
@@ -200,30 +213,27 @@ async fn token_request(
     parse_token_response(&body)
 }
 
-#[derive(serde::Deserialize)]
-struct RawTokenResponse {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_in: Option<u64>,
-    #[serde(default = "default_token_type")]
-    token_type: String,
-    scope: Option<String>,
-}
-
-fn default_token_type() -> String {
-    "Bearer".to_string()
-}
-
-/// A token endpoint that answers 200 with `{"error": "..."}"` — allowed by
-/// RFC 6749 §5.2 to use other statuses, but at least one provider in the
-/// wild does this — so the error shape is checked before the success shape
-/// regardless of what the HTTP status said.
+/// The error shape, read with the provider's own strings intact.
+///
+/// io-oauth's `Oauth20AccessTokenErrorParams` reads the same shape, but its
+/// error code is a closed enum with an `Unknown` catch-all — a
+/// provider-specific code would reach the user as "unknown" instead of the
+/// string the provider actually sent, and that string is often the only
+/// clue in a support thread. Five lines of fidelity are worth keeping.
 #[derive(serde::Deserialize)]
 struct RawTokenError {
     error: String,
     error_description: Option<String>,
 }
 
+/// Reads a token endpoint's body: the error shape first, then io-oauth's
+/// RFC 6749 §5.1 success schema.
+///
+/// The error shape is checked **regardless of the HTTP status**: §5.2
+/// allows statuses other than 400, and at least one provider in the wild
+/// answers `200 OK` with `{"error": …}`. io-oauth's optional client trusts
+/// the status to pick the schema, which is exactly why the pump above
+/// stays ours.
 fn parse_token_response(body: &[u8]) -> Result<TokenResponse, OAuthError> {
     if let Ok(err) = serde_json::from_slice::<RawTokenError>(body) {
         let reason = err
@@ -236,13 +246,32 @@ fn parse_token_response(body: &[u8]) -> Result<TokenResponse, OAuthError> {
         });
     }
 
-    let raw: RawTokenResponse =
-        serde_json::from_slice(body).map_err(|err| OAuthError::Parse(err.to_string()))?;
+    // Liberal in what is accepted, deliberately: RFC 6749 §5.1 marks
+    // `token_type` REQUIRED and io-oauth enforces that; refresh responses
+    // in the wild omit it, and the old parser defaulted it to `Bearer`
+    // for exactly that reason. The default is restored here rather than
+    // lost to the swap — a candidate upstream change, noted on #537.
+    let normalized: Vec<u8>;
+    let body = match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(serde_json::Value::Object(mut map)) if !map.contains_key("token_type") => {
+            map.insert("token_type".to_owned(), "Bearer".into());
+            normalized =
+                serde_json::to_vec(&map).map_err(|err| OAuthError::Parse(err.to_string()))?;
+            normalized.as_slice()
+        }
+        _ => body,
+    };
+    let raw = Oauth20AccessTokenSuccessParams::try_from(body)
+        .map_err(|err| OAuthError::Parse(err.to_string()))?;
 
     Ok(TokenResponse {
-        access_token: Password::new(raw.access_token),
-        refresh_token: raw.refresh_token.map(Password::new),
-        expires_in: raw.expires_in.map(Duration::from_secs),
+        access_token: Password::new(raw.access_token.expose_secret().to_owned()),
+        refresh_token: raw
+            .refresh_token
+            .map(|token| Password::new(token.expose_secret().to_owned())),
+        expires_in: raw
+            .expires_in
+            .map(|seconds| Duration::from_secs(seconds as u64)),
         token_type: raw.token_type,
         scope: raw.scope,
     })

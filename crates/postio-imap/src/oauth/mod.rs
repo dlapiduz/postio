@@ -122,7 +122,7 @@ fn authorization_url(
         .append_pair("redirect_uri", redirect_uri.as_str())
         .append_pair("scope", &request.scopes.join(" "))
         .append_pair("state", state.as_str())
-        .append_pair("code_challenge", pkce.challenge())
+        .append_pair("code_challenge", &pkce.challenge())
         .append_pair("code_challenge_method", "S256");
     url
 }

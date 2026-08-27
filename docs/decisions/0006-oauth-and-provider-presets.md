@@ -139,6 +139,21 @@ other reasons rather than as its own change.
   #57 should be fixed before this is written rather than reproduced in a second
   place.
 
+> **Amended 2026-08-27 (#537).** The flow's RFC 6749/7636 wire core —
+> grant bodies, token response schemas, PKCE, the `state` value — is
+> `io-oauth` (Pimalaya) rather than hand-rolled, adopted at the
+> maintainer's direction once the crate (published in the same weeks this
+> ADR was first written, and missed by its survey) reached 0.3. Two
+> deliberate deviations stay in `exchange.rs`, each a candidate upstream
+> change: the HTTP pump remains this crate's cancellable
+> `pimalaya-stream` transport because io-oauth's optional client consumes
+> the HTTP status that the 200-with-error-body shim needs; and a missing
+> `token_type` still defaults to `Bearer`, which §5.1 forbids and real
+> refresh responses do anyway. The transmitted `state` is base64url over
+> io-oauth's entropy: RFC 6749 allows any VSCHAR in `state`, and a value
+> with `&` or spaces has to survive a browser redirect and a query parse
+> to be compared at all.
+
 **Privacy posture.** Every network request in this flow is one the user asked
 for by clicking *Sign in*, which is the test `ARCHITECTURE.md` §11 sets. The
 listener binds only on demand and only on loopback. The refresh token goes
