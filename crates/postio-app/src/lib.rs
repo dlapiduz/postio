@@ -35,6 +35,7 @@ pub mod onboarding;
 pub mod reading;
 pub mod search;
 pub mod settings_accounts;
+pub mod settings_credential;
 
 // The toolkit-free half of the composition root lives in `postio-session`, so
 // that a frontend which is not GTK can link it (ADR 0010). Re-exported here
@@ -394,7 +395,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     export::install(window, wiring);
 
     // The settings panel's account rows: enable/disable, remove-with-undo.
-    settings_accounts::install(window, &wiring.database);
+    settings_accounts::install(window, wiring);
 
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the

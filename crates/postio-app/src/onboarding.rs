@@ -186,7 +186,7 @@ pub fn install(
 /// submit closure both need it, and both are `'static` closures owned by the
 /// screen.
 #[derive(Clone, Default)]
-struct ProbeCancellation(Rc<RefCell<Option<CancelToken>>>);
+pub(crate) struct ProbeCancellation(Rc<RefCell<Option<CancelToken>>>);
 
 impl ProbeCancellation {
     /// Stops whatever probe is in flight and hands back a token for the new
@@ -198,7 +198,7 @@ impl ProbeCancellation {
     /// screen says*, which is not the same question as whether a socket is
     /// open. Two independent reasons to be correct is the right number for
     /// something whose failure is invisible.
-    fn restart(&self) -> CancelToken {
+    pub(crate) fn restart(&self) -> CancelToken {
         self.stop();
         let token = CancelToken::new();
         *self.0.borrow_mut() = Some(token.clone());
@@ -206,7 +206,7 @@ impl ProbeCancellation {
     }
 
     /// Stops whatever probe is in flight, if any. Idempotent.
-    fn stop(&self) {
+    pub(crate) fn stop(&self) {
         if let Some(token) = self.0.borrow_mut().take() {
             token.cancel();
         }
@@ -256,7 +256,7 @@ fn status_for(report: &DiscoveryReport) -> Status {
 /// The mapping had already been split out into [`status_for`] so *it* could be
 /// tested; everything around it, which is where the wiring lives, stayed
 /// uncovered (#282).
-fn probe(
+pub(crate) fn probe(
     screen: &Onboarding,
     runtime: &tokio::runtime::Handle,
     address: &str,
@@ -303,7 +303,7 @@ fn probe(
 ///
 /// `on_saved` runs once, only after the credential and the account row are
 /// both written -- never on a failed probe or a failed connection test.
-fn submit(
+pub(crate) fn submit(
     screen: &Onboarding,
     wiring: &Wiring,
     submission: Submission,
@@ -494,7 +494,7 @@ fn configure(account: &mut Account, submission: &Submission) {
 /// what it offers. `source` names where they came from because the card
 /// shows it, and "entered by hand" — what an empty form falls back to —
 /// would be a lie the second time round.
-fn configured(account: &Account) -> Settings {
+pub(crate) fn configured(account: &Account) -> Settings {
     let server = |config: &postio_model::account::ServerConfig| Server {
         host: config.host.clone(),
         port: config.port,

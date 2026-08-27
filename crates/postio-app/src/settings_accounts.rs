@@ -28,16 +28,19 @@ use postio_gtk::window::Window;
 use postio_storage::Database;
 use postio_storage::repository::AccountRepository;
 
-/// Wires `window`'s settings panel to `database`: the account list itself,
-/// the enable/disable switch, and remove-with-undo. Update-credential is
-/// [`crate::settings_credential::install`]'s job, not this module's.
-pub fn install(window: &Window, database: &Database) {
-    refresh(window, database);
+use crate::Wiring;
+
+/// Wires `window`'s settings panel to `wiring`: the account list itself,
+/// the enable/disable switch, remove-with-undo, and update-credential
+/// (opened through [`crate::settings_credential::install`], which needs the
+/// runtime and the secret store `wiring` carries alongside the database).
+pub fn install(window: &Window, wiring: &Wiring) {
+    refresh(window, &wiring.database);
 
     let panel = window.settings();
     panel.connect_account_enabled_changed({
         let window = window.clone();
-        let database = database.clone();
+        let database = wiring.database.clone();
         move |id, enabled| {
             if let Ok(connection) = database.connection()
                 && let Err(error) = AccountRepository::new(&connection).set_enabled(id, enabled)
@@ -50,12 +53,12 @@ pub fn install(window: &Window, database: &Database) {
 
     panel.connect_account_action({
         let window = window.clone();
-        let database = database.clone();
+        let wiring = wiring.clone();
         move |id, action| match action {
-            AccountAction::Remove => remove(&window, &database, id),
-            // Wired by `settings_credential::install`, once it exists —
-            // #464 lands the storage and the removal half first.
-            AccountAction::UpdateCredential => {}
+            AccountAction::Remove => remove(&window, &wiring.database, id),
+            AccountAction::UpdateCredential => {
+                crate::settings_credential::install(&window, &wiring, id)
+            }
         }
     });
 }
@@ -66,7 +69,12 @@ pub fn install(window: &Window, database: &Database) {
 /// is never more than a handful of rows, so rebuilding it fresh is simpler
 /// than reconciling a diff, the same trade [`crate::compose::install_identities`]
 /// makes for a much larger list.
-fn refresh(window: &Window, database: &Database) {
+///
+/// `pub(crate)`: [`crate::settings_credential::install`] calls this too, once
+/// a credential update closes, since a repaired account's own submission can
+/// turn `enabled` back on (`onboarding::configure`) and the row should say
+/// so without waiting for the next full refresh.
+pub(crate) fn refresh(window: &Window, database: &Database) {
     let Ok(connection) = database.connection() else {
         return;
     };
