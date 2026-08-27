@@ -1152,7 +1152,7 @@ mod tests {
 
     use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_model::MailboxRole;
-    use postio_runtime::engine::{EngineParts, NetworkSource};
+    use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
     use postio_storage::test_support::TempDatabase;
@@ -1309,6 +1309,7 @@ mod tests {
             watch: Default::default(),
             network: NetworkSource::default(),
             mailbox_roles: Default::default(),
+            clock: Arc::new(SystemClock),
         })
         .expect("an engine");
 

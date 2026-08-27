@@ -119,7 +119,7 @@ mod tests {
     use postio_core::state::AppState;
     use postio_imap::backend::{MockBackend, MockMailbox};
     use postio_model::MailboxRole;
-    use postio_runtime::engine::{EngineParts, NetworkSource};
+    use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::{BlobStore, test_support};
 
     use super::*;
@@ -203,6 +203,7 @@ mod tests {
                 watch: Default::default(),
                 network: NetworkSource::Ignored,
                 mailbox_roles: Default::default(),
+                clock: Arc::new(SystemClock),
             })
             .expect("the engine starts"),
         );

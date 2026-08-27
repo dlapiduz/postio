@@ -25,19 +25,63 @@
 //!
 //! So a pass of five batches must produce more than one event and far fewer
 //! than five. See `postio_runtime::engine::REPAINT_INTERVAL`.
+//!
+//! # The clock is fake (#507)
+//!
+//! That "far fewer than five" used to be measured against
+//! [`std::time::Instant::now`], so the number of events depended on how much
+//! real wall-clock time separated batches committing — fine on an idle
+//! machine, but a busy one can stretch that past `REPAINT_INTERVAL` for a
+//! batch that would otherwise have coalesced, which is exactly what made
+//! this test's own event count vary under load. [`FakeClock`] steps a fixed
+//! amount every call instead, so the count this test asserts on is a
+//! function of how many batches committed and nothing else.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
 use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
-use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
+use postio_runtime::engine::{Clock, Engine, EngineParts, NetworkSource};
 use postio_storage::{BlobStore, test_support};
 
 /// Enough to need several batches: `postio_sync::initial::DEFAULT_BATCH_SIZE`
 /// is 200, so this is five of them.
 const MESSAGES: u32 = 1_000;
+
+/// A clock that advances by a fixed `step` every call, regardless of how
+/// much real time actually passed.
+///
+/// Five batches make five calls (one per commit, from `Committed::batch`),
+/// so with a 200ms step and `REPAINT_INTERVAL` at 500ms the batches land at
+/// 0, 200, 400, 600 and 800ms: the first is announced at once, the second
+/// and third coalesce into it, and the fourth opens the next window — two
+/// events, every run, on any machine.
+struct FakeClock {
+    base: Instant,
+    step: Duration,
+    calls: AtomicU32,
+}
+
+impl FakeClock {
+    fn new(step: Duration) -> Self {
+        FakeClock {
+            base: Instant::now(),
+            step,
+            calls: AtomicU32::new(0),
+        }
+    }
+}
+
+impl Clock for FakeClock {
+    fn now(&self) -> Instant {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        self.base + self.step * call
+    }
+}
 
 fn server() -> MockBackend {
     let message = |n: u32| {
@@ -98,6 +142,7 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(FakeClock::new(Duration::from_millis(200))),
     })
     .expect("the engine starts");
 
@@ -119,8 +164,12 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
         "the list was told {told} time(s) — only at the end of the pass, so a \
          real first sync leaves it empty for as long as the sync takes"
     );
-    // Five batches. Anything approaching one event per batch is a reload per
-    // batch, which is what the coalescing exists to prevent.
+    // Five batches, a fixed 200ms apart on the fake clock: this is 2, on any
+    // machine (see `FakeClock`'s own doc comment). The range stays loose
+    // rather than tightening to `assert_eq!` so a change to
+    // `DEFAULT_BATCH_SIZE` fails here with a comprehensible number rather
+    // than a mysterious one -- but it no longer depends even a little on how
+    // fast this machine happened to run the pass.
     assert!(
         told <= 3,
         "the list was told {told} times for five batches; that is close enough \

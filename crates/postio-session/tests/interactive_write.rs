@@ -47,7 +47,7 @@ use postio_core::bridge::{EventStream, event_channel};
 use postio_core::state::{AppState, SharedState};
 use postio_core::{Command, MessageTarget};
 use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
-use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
+use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_session::actions::Actions;
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
@@ -133,6 +133,7 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
     (database, engine)
