@@ -47,7 +47,7 @@ use postio_imap::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
-use crate::onboarding::{ProbeCancellation, probe, submit};
+use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 
 /// Wire [`CommandId::AddAccount`] to the dialogue.
 ///
@@ -104,10 +104,12 @@ pub fn open(
         move |_| cancellation.stop()
     });
 
+    let jmap = JmapOfferSlot::default();
     screen.connect_probe({
         let screen = screen.clone();
         let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
+        let jmap = jmap.clone();
         move |address| {
             probe(
                 &screen,
@@ -115,6 +117,7 @@ pub fn open(
                 address,
                 &cancellation,
                 Arc::clone(&transport),
+                jmap.clone(),
             )
         }
     });
@@ -138,9 +141,13 @@ pub fn open(
             cancellation.stop();
             let address = submission.address.clone();
             let on_saved = on_saved.clone();
-            submit(&screen, &wiring, submission.clone(), move || {
-                on_saved(&address)
-            })
+            submit(
+                &screen,
+                &wiring,
+                submission.clone(),
+                jmap.borrow().clone(),
+                move || on_saved(&address),
+            )
         }
     });
 

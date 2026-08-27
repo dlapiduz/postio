@@ -145,6 +145,18 @@ pub fn install(
                 scopes: oauth.scopes.split_whitespace().map(str::to_owned).collect(),
             })
     })));
+    // A repair over a JMAP account proves over JMAP again.
+    let jmap: JmapOfferSlot =
+        Rc::new(RefCell::new(repairing.as_ref().and_then(
+            |account| match &account.backend {
+                postio_model::account::Backend::Jmap { session_url } => {
+                    Some(postio_imap::discovery::JmapOffer {
+                        session_url: session_url.clone(),
+                    })
+                }
+                postio_model::account::Backend::Imap => None,
+            },
+        )));
 
     // The browser wait's own cancel token, wired to the screen's Cancel
     // button and Esc. Separate from the probe's: cancelling a sign-in must
@@ -164,6 +176,7 @@ pub fn install(
         let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
         let offer = offer.clone();
+        let jmap = jmap.clone();
         move |address| {
             probe_with_offer(
                 &screen,
@@ -172,6 +185,7 @@ pub fn install(
                 &cancellation,
                 Arc::clone(&transport),
                 offer.clone(),
+                jmap.clone(),
             )
         }
     });
@@ -196,6 +210,7 @@ pub fn install(
             }
         };
         let offer = offer.clone();
+        let jmap = jmap.clone();
         let sign_in_cancel = sign_in_cancel.clone();
         let opener = opener.clone();
         move |submission| {
@@ -225,7 +240,13 @@ pub fn install(
                     on_saved.clone(),
                 );
             } else {
-                submit(&screen, &wiring, submission.clone(), on_saved.clone())
+                submit(
+                    &screen,
+                    &wiring,
+                    submission.clone(),
+                    jmap.borrow().clone(),
+                    on_saved.clone(),
+                )
             }
         }
     });
@@ -320,6 +341,7 @@ pub(crate) fn probe(
     address: &str,
     cancellation: &ProbeCancellation,
     transport: Arc<dyn DiscoveryTransport>,
+    jmap: JmapOfferSlot,
 ) {
     probe_with_offer(
         screen,
@@ -328,6 +350,7 @@ pub(crate) fn probe(
         cancellation,
         transport,
         OAuthOfferSlot::default(),
+        jmap,
     )
 }
 
@@ -336,6 +359,12 @@ pub(crate) fn probe(
 /// form fields cannot carry it — endpoints and scopes are protocol data
 /// the widget deliberately does not know.
 pub(crate) type OAuthOfferSlot = Rc<RefCell<Option<postio_imap::discovery::OAuthOffer>>>;
+
+/// The JMAP offer a preset row advertised (#545, ADR 0018 Q5) — parked at
+/// probe time for the same reason as [`OAuthOfferSlot`]: endpoints are
+/// protocol data the form fields deliberately do not carry. Present only
+/// when the row's preference order puts `jmap` first.
+pub(crate) type JmapOfferSlot = Rc<RefCell<Option<postio_imap::discovery::JmapOffer>>>;
 
 /// [`probe`], also parking the discovered OAuth offer in `offer` for the
 /// submit handler to sign in with.
@@ -346,6 +375,7 @@ pub(crate) fn probe_with_offer(
     cancellation: &ProbeCancellation,
     transport: Arc<dyn DiscoveryTransport>,
     offer: OAuthOfferSlot,
+    jmap: JmapOfferSlot,
 ) {
     screen.set_status(Status::Probing);
 
@@ -371,11 +401,17 @@ pub(crate) fn probe_with_offer(
                     *offer.borrow_mut() = report
                         .settings()
                         .and_then(|settings| settings.oauth.clone());
+                    *jmap.borrow_mut() = report.settings().and_then(|settings| {
+                        (settings.backends.first().map(String::as_str) == Some("jmap"))
+                            .then(|| settings.jmap.clone())
+                            .flatten()
+                    });
                     screen.set_status(status_for(&report));
                 }
                 Err(error) => {
                     tracing::info!(%error, "autoconfig found nothing");
                     *offer.borrow_mut() = None;
+                    *jmap.borrow_mut() = None;
                     screen.set_status(Status::Manual { suggestion: None });
                 }
             }
@@ -397,6 +433,7 @@ pub(crate) fn submit(
     screen: &Onboarding,
     wiring: &Wiring,
     submission: Submission,
+    jmap: Option<postio_imap::discovery::JmapOffer>,
     on_saved: impl Fn() + 'static,
 ) {
     screen.set_status(Status::Connecting);
@@ -407,10 +444,34 @@ pub(crate) fn submit(
     let password = Password::new(submission.password.clone());
     let (sender, receiver) = async_channel::bounded(1);
     wiring.runtime.spawn(async move {
+        // The proof tries backends in the row's preference order and the
+        // first that works is the one stored (#545): a credential that
+        // only speaks IMAP still lands on a provider advertising JMAP,
+        // and one that speaks JMAP gets the native protocol.
+        if let Some(offer) = &jmap
+            && let Ok(url) = offer.session_url.parse()
+        {
+            let proof = postio_jmap::JmapBackend::new(url, password.expose());
+            match postio_imap::backend::MailBackend::connect(&proof).await {
+                Ok(_) => {
+                    let backend = postio_model::account::Backend::Jmap {
+                        session_url: offer.session_url.clone(),
+                    };
+                    let _ = sender.send(Ok(backend)).await;
+                    return;
+                }
+                Err(error) => {
+                    tracing::info!(
+                        %error,
+                        "the JMAP proof failed; trying the next backend"
+                    );
+                }
+            }
+        }
         let answer = match RustlsConnector::new() {
             Ok(connector) => ImapSession::open(&settings, &password, &connector)
                 .await
-                .map(|_| ())
+                .map(|_| postio_model::account::Backend::Imap)
                 .map_err(|error| explain(&error)),
             Err(error) => Err(format!(
                 "Postio could not start a TLS connection on this machine: {error}"
@@ -427,10 +488,13 @@ pub(crate) fn submit(
                 Ok(answer) => answer,
                 Err(_) => Err("Postio's runtime stopped before the server answered.".to_owned()),
             };
-            if let Err(reason) = answer {
-                screen.set_status(Status::Failed(reason));
-                return;
-            }
+            let backend = match answer {
+                Ok(backend) => backend,
+                Err(reason) => {
+                    screen.set_status(Status::Failed(reason));
+                    return;
+                }
+            };
 
             // Only now, with the credentials known good. Writing either half
             // first would leave a broken account behind every failed attempt.
@@ -446,7 +510,7 @@ pub(crate) fn submit(
             let written = submission.clone();
             wiring.runtime.spawn(async move {
                 let _ = sender
-                    .send(persist(&database, secrets.as_ref(), &written).await)
+                    .send(persist(&database, secrets.as_ref(), &written, backend).await)
                     .await;
             });
             let stored = receiver.recv().await.unwrap_or_else(|_| {
@@ -706,7 +770,9 @@ fn save_oauth(
     endpoints: &postio_imap::oauth::Endpoints,
     scopes: &[String],
 ) -> Result<(), String> {
-    save(database, submission)?;
+    // A browser sign-in is an IMAP account today; the Gmail REST backend
+    // is #546, gated on its preset row flipping after #195.
+    save(database, submission, postio_model::account::Backend::Imap)?;
     let connection = database
         .connection()
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
@@ -759,6 +825,7 @@ async fn persist(
     database: &Database,
     secrets: &dyn SecretStore,
     submission: &Submission,
+    backend: postio_model::account::Backend,
 ) -> Result<(), String> {
     let key = AccountKey::new(submission.address.clone());
     let password = Password::new(submission.password.clone());
@@ -772,7 +839,7 @@ async fn persist(
         )
     })?;
 
-    if let Err(reason) = save(database, submission) {
+    if let Err(reason) = save(database, submission, backend) {
         if let Err(error) = secrets.delete(&key).await {
             // Safe to log: no `SecretError` carries a password.
             tracing::warn!(%error, "the rolled-back credential could not be removed");
@@ -796,7 +863,11 @@ async fn persist(
 /// same address. So an existing row is *updated* — and its identities are
 /// left exactly as they are, because [`AccountRepository::update`] makes the
 /// list it is handed authoritative and every saved draft points at one.
-fn save(database: &Database, submission: &Submission) -> Result<(), String> {
+fn save(
+    database: &Database,
+    submission: &Submission,
+    backend: postio_model::account::Backend,
+) -> Result<(), String> {
     let connection = database
         .connection()
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
@@ -815,6 +886,7 @@ fn save(database: &Database, submission: &Submission) -> Result<(), String> {
     match existing {
         Some(mut account) => {
             configure(&mut account, submission);
+            account.backend = backend;
             repository
                 .update(&mut account)
                 .map_err(|error| format!("Postio could not update the account: {error}"))
@@ -823,6 +895,7 @@ fn save(database: &Database, submission: &Submission) -> Result<(), String> {
             let email = EmailAddress::new(None::<String>, submission.address.clone());
             let mut account = Account::new(submission.address.clone(), email.clone());
             configure(&mut account, submission);
+            account.backend = backend;
             let mut identity = Identity::new(AccountId::UNASSIGNED, email);
             identity.is_default = true;
             account.identities = vec![identity];
@@ -1060,6 +1133,8 @@ mod tests {
             note: None,
             password_help_url: None,
             oauth: None,
+            jmap: None,
+            backends: vec!["imap".to_owned()],
         }
     }
 
@@ -1184,6 +1259,7 @@ mod tests {
             &database,
             &MemorySecretStore::locked(),
             &submission("imap.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await;
 
@@ -1203,6 +1279,7 @@ mod tests {
             &database,
             &secrets,
             &submission("imap.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await
         .expect("both writes should land");
@@ -1237,6 +1314,7 @@ mod tests {
             &database,
             &secrets,
             &submission("imap.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await;
 
@@ -1259,6 +1337,7 @@ mod tests {
             &database,
             &secrets,
             &submission("old.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await
         .expect("the first run should land");
@@ -1268,6 +1347,7 @@ mod tests {
             &database,
             &secrets,
             &submission("new.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await
         .expect("the repair should land");
@@ -1292,6 +1372,7 @@ mod tests {
             &database,
             &secrets,
             &submission("imap.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await
         .expect("the first run should land");
@@ -1306,6 +1387,7 @@ mod tests {
             &database,
             &secrets,
             &submission("imap.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
         )
         .await
         .expect("the repair should land");

@@ -24,7 +24,8 @@ const ACCOUNT_COLUMNS: &str = "\
 id, display_name, address, address_name, incoming_host, incoming_port, incoming_security,
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
 auth_method, enabled, created_at, default_signature_id, pending_deletion,
-oauth_client_id, oauth_token_url, oauth_authorize_url, oauth_scopes";
+oauth_client_id, oauth_token_url, oauth_authorize_url, oauth_scopes, backend,
+jmap_session_url";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -46,9 +47,10 @@ impl<'a> AccountRepository<'a> {
                                    outgoing_host, outgoing_port, outgoing_security,
                                    outgoing_username, auth_method, enabled, created_at,
                                    default_signature_id, oauth_client_id, oauth_token_url,
-                                   oauth_authorize_url, oauth_scopes)
+                                   oauth_authorize_url, oauth_scopes, backend,
+                                   jmap_session_url)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16, ?17, ?18, ?19)",
+                     ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 account.display_name,
                 account.address.address,
@@ -72,6 +74,12 @@ impl<'a> AccountRepository<'a> {
                     .as_ref()
                     .map(|oauth| oauth.authorize_url.as_str()),
                 account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
+                account.backend.kind(),
+                match &account.backend {
+                    postio_model::account::Backend::Jmap { session_url } =>
+                        Some(session_url.as_str()),
+                    postio_model::account::Backend::Imap => None,
+                },
             ],
         )?;
 
@@ -116,7 +124,8 @@ impl<'a> AccountRepository<'a> {
                     outgoing_security = ?11, outgoing_username = ?12, auth_method = ?13,
                     enabled = ?14, created_at = ?15, default_signature_id = ?16,
                     oauth_client_id = ?17, oauth_token_url = ?18,
-                    oauth_authorize_url = ?19, oauth_scopes = ?20
+                    oauth_authorize_url = ?19, oauth_scopes = ?20, backend = ?21,
+                    jmap_session_url = ?22
               WHERE id = ?1",
             params![
                 id,
@@ -142,6 +151,12 @@ impl<'a> AccountRepository<'a> {
                     .as_ref()
                     .map(|oauth| oauth.authorize_url.as_str()),
                 account.oauth.as_ref().map(|oauth| oauth.scopes.as_str()),
+                account.backend.kind(),
+                match &account.backend {
+                    postio_model::account::Backend::Jmap { session_url } =>
+                        Some(session_url.as_str()),
+                    postio_model::account::Backend::Imap => None,
+                },
             ],
         )?;
         if changed == 0 {
@@ -584,6 +599,16 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
                 scopes: row.get::<_, Option<String>>(20)?.unwrap_or_default(),
             }),
             _ => None,
+        },
+        backend: match (
+            row.get::<_, String>(21)?.as_str(),
+            row.get::<_, Option<String>>(22)?,
+        ) {
+            // A jmap row that lost its session URL cannot dial anything;
+            // falling back to IMAP keeps the account working rather than
+            // dead — the incoming server is stored either way.
+            ("jmap", Some(session_url)) => postio_model::account::Backend::Jmap { session_url },
+            _ => postio_model::account::Backend::Imap,
         },
     })
 }

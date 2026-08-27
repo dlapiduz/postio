@@ -97,6 +97,35 @@ pub struct ServerConfig {
     pub username: String,
 }
 
+/// Which protocol adapter reaches this account's server (ADR 0018 Q5).
+///
+/// Chosen at add-account time from the preset row's preference order —
+/// the connection proof tries each in turn and stores the first that
+/// worked — and read back by the engine every launch. `Imap` for every
+/// account that predates the column.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Backend {
+    /// The IMAP adapter, over the account's incoming server.
+    #[default]
+    Imap,
+    /// The JMAP adapter (#544).
+    Jmap {
+        /// The RFC 8620 session resource URL, resolved from the preset row
+        /// at add time and persisted so startup needs no discovery.
+        session_url: String,
+    },
+}
+
+impl Backend {
+    /// A stable lowercase identifier, for storage and diagnostics.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Imap => "imap",
+            Self::Jmap { .. } => "jmap",
+        }
+    }
+}
+
 /// The OAuth composition data an account signed in with (#534).
 ///
 /// What the engine needs, every launch and offline too, to rebuild the
@@ -219,6 +248,9 @@ pub struct Account {
     /// on a native app, and the endpoint is a URL; the client secret and
     /// the refresh token live in the keyring under derived keys.
     pub oauth: Option<OAuthConfig>,
+    /// Which protocol adapter reaches the server (ADR 0018 Q5).
+    #[serde(default)]
+    pub backend: Backend,
     /// Whether the account participates in sync.
     pub enabled: bool,
     /// Addresses this account can send from.
@@ -273,6 +305,7 @@ impl Account {
             },
             auth: AuthMethod::Password,
             oauth: None,
+            backend: Backend::default(),
             enabled: true,
             identities: Vec::new(),
             signatures: Vec::new(),
