@@ -21,6 +21,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
+//! cargo run -p postio-app --example shot -- /tmp/thread.png demo thread 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
 //! ```
 //!
@@ -624,6 +625,67 @@ fn main() -> glib::ExitCode {
         // not the cursor.
         list.next_row();
         settle(&window);
+    }
+
+    // The conversation pane (ADR 0015 Q4): a thread opened into the reading
+    // pane, with the drill-in column indexing it. Driven through
+    // `Window::show_thread`, the same call `t` makes, so the shot is the
+    // arrangement the application actually puts up rather than one staged
+    // for the picture.
+    if flag("thread") {
+        let list = window.list();
+        list.first_row();
+        // The demo's rows are conversations now, so the first one has a
+        // thread to drill into; its own rows stand in for the members.
+        let rows = list.model();
+        let mut members = Vec::new();
+        for index in 0..rows.n_items().min(6) {
+            if let Some(object) = rows.item(index)
+                && let Ok(item) = object.downcast::<postio_gtk::list::MessageRow>()
+                && let Some(row) = item.row()
+            {
+                members.push(row);
+            }
+        }
+        // A stand-in reader per expanded message, so the shot shows the
+        // stack's real spacing rather than a column of bare headers. The
+        // running application sets this from `reading::install`, which knows
+        // how to load a body; a shot has no bridge to load one through.
+        window.conversation().set_reader_factory({
+            let window = window.clone();
+            move |_message| {
+                let reader = window.new_reader();
+                reader.header().widget().set_visible(false);
+                reader.render(
+                    &postio_model::MessageBody {
+                        text: None,
+                        html: Some(
+                            "<p>A message of the conversation, for a shot \
+                             that wants one.</p>"
+                                .to_string(),
+                        ),
+                    },
+                    None,
+                );
+                let widget = reader.widget();
+                widget.set_hexpand(true);
+                widget.set_size_request(-1, 120);
+                widget
+            }
+        });
+        if let Some(first) = members.first().cloned() {
+            let thread = first.thread.unwrap_or(postio_model::ids::ThreadId::new(1));
+            let total = members.len() as u32;
+            window.show_thread(thread, first.subject.as_deref(), members, total);
+        }
+        // The stack's readers load on WebKit's own clock, which the
+        // frame-counting `settle` does not wait on.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let context = glib::MainContext::default();
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     // The reader stays empty by default -- `selected` above is the list's

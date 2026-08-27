@@ -34,11 +34,11 @@
 mod feed;
 mod feed_results;
 mod gtk_composer_autosave;
-mod gtk_conversation;
-mod gtk_conversation_index;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_recipient_select;
+mod gtk_conversation;
+mod gtk_conversation_index;
 mod gtk_display_required;
 mod gtk_feeds;
 mod gtk_finder;

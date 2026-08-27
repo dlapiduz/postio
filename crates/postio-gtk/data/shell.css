@@ -1528,3 +1528,35 @@ button.postio-compose-more {
   padding: 2px 8px;
   min-height: 24px;
 }
+
+/* The conversation pane (ADR 0015 Q4): a stack of messages, read ones
+   collapsed to the one-line header the drill-in column already draws.
+
+   Entries are separated by the same hairline the list uses between rows,
+   because they are the same kind of boundary — one message ending and the
+   next beginning. Focus is drawn by the header itself (it wears the row's
+   own selected treatment), so nothing here dims anything: this is the one
+   surface where prose is actually read. */
+.conversation-entry {
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* Reply, reply-all and forward, under the header of an expanded message.
+   Mono, because they sit with the key hints and the timestamps rather than
+   with the prose, and quiet until the message they belong to is the one
+   being read. */
+.conversation-actions {
+  padding: 0 var(--postio-space-3) var(--postio-space-2);
+}
+
+.conversation-actions button {
+  color: var(--postio-ink-secondary);
+  font-family: var(--postio-font-mono);
+  font-size: 0.85em;
+  min-height: 24px;
+  padding: 2px var(--postio-space-2);
+}
+
+.conversation-actions button:hover {
+  color: var(--postio-accent-text);
+}

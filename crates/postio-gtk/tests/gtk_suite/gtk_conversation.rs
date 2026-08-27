@@ -164,5 +164,47 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
         "the focused message is never left as a one-line header"
     );
 
+    // ── dwell reads the focused message, and only that one ─────────────
+    // #71's rule, one surface over. Opening a conversation must not mark
+    // anything read, and walking the index must not read what it passes over
+    // — the timer is cancelled when focus moves, and a `glib` timeout that
+    // merely loses its handle still fires.
+    let dwelled: Rc<RefCell<Vec<MessageId>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen_dwell = Rc::clone(&dwelled);
+    pane.connect_dwelled(move |message| seen_dwell.borrow_mut().push(message));
+    pane.set_dwell_delay(std::time::Duration::from_millis(30));
+
+    let unread: Vec<Row> = (20..24).map(|id| message(id, false)).collect();
+    pane.open(unread);
+    settle_for(std::time::Duration::from_millis(10));
+    assert!(
+        dwelled.borrow().is_empty(),
+        "opening a conversation read something: {:?}",
+        dwelled.borrow()
+    );
+
+    // Walk past two without resting on either.
+    pane.focus_message(MessageId::new(21));
+    pane.focus_message(MessageId::new(22));
+    // And rest on the third.
+    pane.focus_message(MessageId::new(23));
+    settle_for(std::time::Duration::from_millis(120));
+
+    assert_eq!(
+        dwelled.borrow().as_slice(),
+        &[MessageId::new(23)],
+        "dwell has to read the message that was rested on and nothing the \
+         cursor passed over on the way"
+    );
+
     window.close();
+}
+
+/// Pump the main loop for `how_long`, so a timer can fire.
+fn settle_for(how_long: std::time::Duration) {
+    let deadline = std::time::Instant::now() + how_long;
+    while std::time::Instant::now() < deadline {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
