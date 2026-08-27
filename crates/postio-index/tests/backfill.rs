@@ -14,6 +14,7 @@
 
 use chrono::Utc;
 use postio_index::{SearchRequest, index, search};
+use postio_model::AccountScope;
 use postio_model::{EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
@@ -40,7 +41,7 @@ fn existing_message(
 fn find(connection: &rusqlite::Connection, account: postio_model::AccountId, text: &str) -> usize {
     let query = parse(text, Utc::now().date_naive());
     let request = SearchRequest {
-        account_id: account,
+        account: AccountScope::Account(account),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,

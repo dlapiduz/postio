@@ -2,7 +2,8 @@
 
 - **Status:** Accepted — **GO** (2026-08-24), **substantially revised 2026-08-24**,
   **Q5 answered from measurement 2026-08-26**
-  ([#435](https://github.com/dlapiduz/postio/issues/435))
+  ([#435](https://github.com/dlapiduz/postio/issues/435)), **Q5b decided
+  2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186))
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -204,6 +205,8 @@ Two small additions:
 
 - The executor takes `Scope`, and `Scope::Account` adds the `account_id`
   predicate it already has an index for.
+  **Amended by Q5b (#186):** that sentence read two ways once it reached the
+  SQL, and the one it turned out to mean is *two* scopes rather than one.
 - The query language gains `account:` as a `Field`, so a saved search can pin
   itself to one account regardless of the scope it is run from. This is one row
   in `postio-search::Field` and one arm in the parser, and it keeps
@@ -294,7 +297,7 @@ That is a real cost and a small one, paid by every account to make a feature
 work for the accounts that use it — the same trade `idx_messages_account_list`
 itself already makes.
 
-#### What this settles for #186
+#### What this does and does not settle for #186
 
 #186 asks what a search scope *is*. This answers it from the storage end:
 **scopes stay predicates and compose as predicates.** A role scope keeps
@@ -308,6 +311,12 @@ Had the answer been `UNION ALL`, "unified" would have become a loop over
 accounts and every scope would have had to compose *inside* an iteration —
 a different and worse enum.
 
+**This paragraph originally said "settles", and that was too strong** — noted
+when #186 was picked up the next day. Both candidate shapes there produce
+queries with no account predicate, so the index is necessary for either and
+selects neither; what it removes is the *loop*, which was the only structural
+argument tying this decision to the enum's shape. The shape itself is Q5b.
+
 #### Two things this does not settle
 
 - **Facet counts run the query once per scope** (`executor.rs:201`), so the
@@ -319,7 +328,67 @@ a different and worse enum.
   *one* account, where unified and account-scoped are the same query, so it
   would stay green straight through this regression. A multi-account corpus is
   a prerequisite for #186's "search budget bench unchanged" criterion meaning
-  anything, and is tracked separately.
+  anything, and is tracked separately. **Done with Q5b** — the bench now
+  carries a four-account corpus and a `search_unified_common_word` shape
+  beside its account-scoped control (#452).
+
+### Q5b — Role scope and account scope are two fields, not one enum (#186)
+
+**Decided 2026-08-26**, on the maintainer's delegation, when #186 stalled on
+Q5's wording reading two ways: "the executor takes `Scope`" could mean the
+role scope gains an `Account` variant, or that a second scope joins it.
+
+**It is the second.** `SearchRequest` carries `scope: facets::Scope` — the
+tri-tab's `AllMail`/`Inbox`/`Lists` — *and* `account: AccountScope`. They
+compose; neither constrains the other.
+
+The deciding argument is expressiveness, not tidiness. One enum holds one
+value, so folding account into `facets::Scope` makes **"Inbox, this account
+only" inexpressible** — a query a person with two accounts obviously wants,
+given up to save a field. It would also leave an enum whose own `Scope::ALL`
+deliberately omits a variant, which is a trap for the search bar that iterates
+it positionally to draw the tri-tab.
+
+#### Where the type lives, and why not a second one
+
+The honest cost of two fields was a second, parallel enum: `postio-index`
+cannot depend on `postio-core`, where #182 put
+`state::Scope { Account(AccountId), Unified }`.
+
+It does not need to. `postio-core` and `postio-search` both already depend on
+`postio-model`, and `postio-index` depends on both — so the type lives in
+**`postio-model` as `AccountScope`**, and `postio_core::state::Scope`
+re-exports it. Nothing #182 wrote had to change, and there is one type rather
+than two that must agree about what "unified" means. That agreement is not
+hypothetical: `AppState.scope` and `SearchRequest.account` are supposed to be
+the same answer to the same question, so two enums drifting apart is the list
+and the search bar disagreeing about which accounts they are showing — the
+class of lie Q10 forbids of aggregate views.
+
+#### `account:` resolves in SQL, not in Rust
+
+`postio-search` gains `Field::Account` and `Filter::Account(String)` and stops
+there: the value stays the text the user typed, because resolving it needs the
+store and a saved search in `[filters]` has to keep meaning the same thing
+after an account is removed and re-added under a new id.
+
+The executor resolves it the way `in:` already resolves a mailbox — as a
+subquery, `m.account_id IN (SELECT id FROM accounts WHERE lower(display_name)
+= lower(?) OR lower(address) = lower(?))`. A name that matches nothing yields
+an empty `IN` set and so matches **nothing**, never everything: silently
+dropping an unresolvable predicate would turn `account:typo` into an unscoped
+search, which is Q10's lie again in a smaller costume.
+
+#### One bug this shook out
+
+`Plan::hydrate` recovered the account id as `self.params[0]`, on a comment
+promising it was always bound first. Under `AccountScope::Unified` nothing is
+bound there at all, and it panicked. The scope is now carried on `Plan`
+explicitly rather than recovered by position — and sender affinity, which is
+what that parameter fed, now counts sightings across every account when the
+search is unified, which is the right answer rather than a convenient one:
+"how often do I hear from this person" is about the person, not about which
+inbox they landed in.
 
 ---
 
@@ -730,7 +799,7 @@ one that is wrong.
 - `postio-search` gains one `Field`; `docs/keybindings.md` and the config
   reference regenerate themselves (`ARCHITECTURE.md` §2).
 - **A migration adding `idx_messages_recency ON messages (received_at DESC,
-  id DESC)`** (Q5a). 2.2 MiB per 120,000 messages, no measurable insert cost,
+  id DESC)`** (Q5a) — landed as migration 0012 with Q5b. 2.2 MiB per 120,000 messages, no measurable insert cost,
   and without it unified recency-ordered search is 20 seconds rather than 19
   milliseconds. It belongs in the same change that teaches the executor to
   drop the `account_id` predicate, or an earlier one — never a later one, and

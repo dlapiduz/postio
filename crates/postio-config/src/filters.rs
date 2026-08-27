@@ -408,4 +408,30 @@ mod tests {
             );
         }
     }
+    // -- Acceptance: `account:` survives the config file (#186) -------------
+
+    #[test]
+    fn an_account_scoped_query_round_trips_through_the_config_file() {
+        // ADR 0005 Q5 keeps `account:` in the *query language* rather than in
+        // a config field of its own, so a saved search pins itself to an
+        // account by carrying the text the user typed. That only works if the
+        // text survives the file unchanged -- a colon-bearing value is
+        // exactly the kind of thing a serializer quotes, re-quotes, or
+        // mangles.
+        //
+        // This crate never parses the query (it does not depend on
+        // `postio-search` and should not), so "unchanged" is the whole
+        // contract it can offer, and the whole contract the executor needs.
+        let mut config = Config::default();
+        let key = config.save_filter(r#"account:"Work Mail" is:unread"#);
+
+        let written = toml::to_string(&config).expect("serializes");
+        let read = Config::from_toml_str(&written).expect("parses back");
+
+        assert_eq!(
+            read.filters[&key].query, r#"account:"Work Mail" is:unread"#,
+            "the saved search came back changed, so it no longer names the \
+             account it was pinned to: {written}"
+        );
+    }
 }

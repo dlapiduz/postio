@@ -75,6 +75,12 @@ pub enum Field {
     Smaller,
     /// `list:` — `List-Id` mailing list.
     List,
+    /// `account:` — which account's mail, by name or address.
+    ///
+    /// Orthogonal to the tri-tab's role scope rather than a fourth value of
+    /// it (#186): "this account's inbox" and "every account's inbox" are both
+    /// things to be able to ask for, so account and role compose.
+    Account,
 }
 
 impl Field {
@@ -92,6 +98,7 @@ impl Field {
         Field::Larger,
         Field::Smaller,
         Field::List,
+        Field::Account,
     ];
 
     /// The canonical keyword, without the trailing colon.
@@ -109,6 +116,7 @@ impl Field {
             Field::Larger => "larger",
             Field::Smaller => "smaller",
             Field::List => "list",
+            Field::Account => "account",
         }
     }
 
@@ -128,6 +136,7 @@ impl Field {
             "larger" | "bigger" | "size" => Some(Field::Larger),
             "smaller" => Some(Field::Smaller),
             "list" => Some(Field::List),
+            "account" => Some(Field::Account),
             _ => None,
         }
     }
@@ -138,7 +147,13 @@ impl Field {
     pub fn takes_free_text(&self) -> bool {
         matches!(
             self,
-            Field::From | Field::To | Field::Subject | Field::In | Field::Filename | Field::List
+            Field::From
+                | Field::To
+                | Field::Subject
+                | Field::In
+                | Field::Filename
+                | Field::List
+                | Field::Account
         )
     }
 }
@@ -174,6 +189,14 @@ pub enum Filter {
     Filename(String),
     /// `list:lkml`
     List(String),
+    /// `account:work` — an account by name or address, unresolved.
+    ///
+    /// Deliberately still text. Resolving it to an `AccountId` needs the
+    /// store, which this crate does not have and must not grow: a saved
+    /// search in `[filters]` is the string the user typed, and it has to keep
+    /// meaning the same thing after an account is removed and re-added under
+    /// a new id.
+    Account(String),
     /// `has:attach`
     HasAttachment,
     /// `is:unread`, `is:read`, `is:flagged`
@@ -198,6 +221,7 @@ impl Filter {
             Filter::In(_) => Field::In,
             Filter::Filename(_) => Field::Filename,
             Filter::List(_) => Field::List,
+            Filter::Account(_) => Field::Account,
             Filter::HasAttachment => Field::Has,
             Filter::Is(_) => Field::Is,
             Filter::After(_) => Field::After,

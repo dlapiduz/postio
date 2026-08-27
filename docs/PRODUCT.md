@@ -182,7 +182,13 @@ subject:invoice -in:archive
 ```
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
-`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:`
+`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
+
+`account:` names an account by the name it shows in the sidebar or by its
+address, and composes with everything else — `account:work is:unread` is one
+query rather than a mode you switch into. It is what keeps a saved search
+pinned to one account however it is opened, and `-account:work` means every
+other one.
 
 **It is `is:flagged`, not `is:starred`** — the sidebar says Flagged, and the
 older spelling is accepted as an alias so that nobody's muscle memory or saved

@@ -7,6 +7,7 @@
 
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
+use postio_model::AccountScope;
 use postio_model::{Attachment, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
@@ -62,7 +63,7 @@ fn a_composed_operator_and_free_text_query_narrows_correctly() {
 
     let query = parse("report from:ada", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -115,7 +116,7 @@ fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
 
     let query = parse("list:harbour-dev", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -142,7 +143,7 @@ fn negated_only_free_text_excludes_without_a_positive_match_expression() {
 
     let query = parse("-watches", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -173,7 +174,7 @@ fn total_hits_counts_every_match_regardless_of_the_page_limit() {
 
     let query = parse("standup", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 2,
@@ -206,7 +207,7 @@ fn total_hits_stops_counting_at_the_cap() {
 
     let query = parse("bulk", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 5,
@@ -229,7 +230,7 @@ fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
 
     let query = parse("from:ada", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -270,7 +271,7 @@ fn search_never_crosses_accounts() {
 
     let query = parse("shared", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account_a.id,
+        account: AccountScope::Account(account_a.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -313,7 +314,7 @@ fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
 
     let query = parse("rebuild", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -356,7 +357,7 @@ fn filename_and_has_attachment_operators_filter_correctly() {
 
     let query = parse("has:attach filename:timings", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -414,7 +415,7 @@ fn a_scope_narrows_the_search_without_touching_the_query() {
     let query = parse("quarterly", at(12).date_naive());
     let counts = |scope| {
         let request = SearchRequest {
-            account_id: account.id,
+            account: AccountScope::Account(account.id),
             query: &query,
             scope,
             limit: 10,
@@ -445,7 +446,7 @@ fn the_scope_column_counts_what_switching_would_find() {
     // Measured from inside the Inbox scope: the other rows still have to say
     // what is behind them, or switching is a guess.
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::Inbox,
         limit: 10,
@@ -481,7 +482,7 @@ fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -517,7 +518,7 @@ fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -535,7 +536,7 @@ fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
     let refined = postio_search::facets::append(query.input(), &folder.token);
     let refined = parse(&refined, at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &refined,
         scope: Scope::AllMail,
         limit: 10,
@@ -565,7 +566,7 @@ fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -584,7 +585,7 @@ fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
         at(12).date_naive(),
     );
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &refined,
         scope: Scope::AllMail,
         limit: 10,
@@ -607,7 +608,7 @@ fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
 
     let query = parse("nothingmatchesthis", at(12).date_naive());
     let request = SearchRequest {
-        account_id: account.id,
+        account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
@@ -643,7 +644,7 @@ fn found(
 ) -> Vec<postio_model::MessageId> {
     let query = parse(text, at(12).date_naive());
     let request = SearchRequest {
-        account_id: account,
+        account: AccountScope::Account(account),
         query: &query,
         scope: Scope::AllMail,
         limit: 10,
