@@ -43,6 +43,7 @@
 
 use postio_model::MessageBody;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
 use crate::error::Result;
 
@@ -64,7 +65,102 @@ use crate::error::Result;
 /// except message *bodies*: those live in the blob store, no trigger and no
 /// `SELECT` can reach them, and [`index_body`] is how they arrive.
 pub fn ensure_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS search_schema (
+             half    TEXT PRIMARY KEY,
+             version INTEGER NOT NULL
+         );",
+    )?;
+
+    // `IF NOT EXISTS` adds new objects and cannot change an existing
+    // table's columns, which is how `list_id` broke every store created
+    // before it: the CREATE was a silent no-op over the old table while the
+    // new triggers referenced the column it never gained (#490). So the
+    // schema is versioned per half, and a mismatched half is dropped and
+    // rebuilt — the index is derived data, and the mail tables it derives
+    // from are exactly one `SCHEMA` run away.
+    if half_version(connection, "metadata")? != METADATA_SCHEMA_VERSION {
+        connection.execute_batch(DROP_METADATA)?;
+    }
+    if half_version(connection, "bodies")? != BODIES_SCHEMA_VERSION {
+        connection.execute_batch(
+            "DROP TABLE IF EXISTS message_bodies_fts;
+             DROP TRIGGER IF EXISTS trg_message_bodies_fts_ad;",
+        )?;
+    }
+
     connection.execute_batch(SCHEMA)?;
+
+    set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION)?;
+    set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION)?;
+    Ok(())
+}
+
+/// The metadata half's schema version: `search_documents`, `messages_fts`,
+/// and every trigger that feeds them.
+///
+/// **Bump this whenever any of those changes shape** — a new column, a
+/// changed trigger body, a tokenizer change. On mismatch the whole half is
+/// dropped and regenerated from `messages`/`recipients`/`attachments` by
+/// [`SCHEMA`]'s own backfill: one pass of SQL, no blob reads. Versions are
+/// compared for *equality*, so a downgrade rebuilds too rather than leaving
+/// a shape this build has never seen.
+///
+/// The history, so a bump has somewhere to point:
+/// 1 — the original shape (#327).
+/// 2 — `list_id` on `search_documents` and `messages_fts` (48a2f96).
+const METADATA_SCHEMA_VERSION: i64 = 2;
+
+/// The body half's version: `message_bodies_fts` alone.
+///
+/// **Kept separate deliberately.** Refilling the metadata half is cheap SQL;
+/// refilling this one means `index_local_bodies` re-reading every body blob
+/// on disk — minutes on a real archive, against a search that answers
+/// metadata-only until it finishes. A metadata bump must never cost that,
+/// so this only moves when `message_bodies_fts` itself changes shape. On
+/// mismatch the table is dropped; the catch-up pass finds every message
+/// missing from it and refills in the background, batched and yielding
+/// (#500).
+const BODIES_SCHEMA_VERSION: i64 = 1;
+
+/// Everything the metadata half is made of, for the rebuild path. Kept next
+/// to [`SCHEMA`], which recreates each of these: a trigger dropped here and
+/// not recreated there is a column that silently stops updating.
+const DROP_METADATA: &str = "DROP TRIGGER IF EXISTS trg_search_documents_messages_ai;
+DROP TRIGGER IF EXISTS trg_search_documents_messages_au;
+DROP TRIGGER IF EXISTS trg_search_documents_recipients_ai;
+DROP TRIGGER IF EXISTS trg_search_documents_recipients_ad;
+DROP TRIGGER IF EXISTS trg_search_documents_recipients_au;
+DROP TRIGGER IF EXISTS trg_search_documents_attachments_ai;
+DROP TRIGGER IF EXISTS trg_search_documents_attachments_ad;
+DROP TRIGGER IF EXISTS trg_search_documents_attachments_au;
+DROP TRIGGER IF EXISTS trg_messages_fts_ai;
+DROP TRIGGER IF EXISTS trg_messages_fts_ad;
+DROP TRIGGER IF EXISTS trg_messages_fts_au;
+DROP TABLE IF EXISTS messages_fts;
+DROP TABLE IF EXISTS search_documents;
+";
+
+/// The recorded version of one schema half, `0` when it has never been
+/// recorded — a fresh store, or any store from before versioning existed.
+/// Both rebuild, which for the fresh store is simply the first build.
+fn half_version(connection: &Connection, half: &str) -> Result<i64> {
+    let version = connection
+        .query_row(
+            "SELECT version FROM search_schema WHERE half = ?1",
+            [half],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(version.unwrap_or(0))
+}
+
+fn set_half_version(connection: &Connection, half: &str, version: i64) -> Result<()> {
+    connection.execute(
+        "INSERT INTO search_schema (half, version) VALUES (?1, ?2)
+         ON CONFLICT (half) DO UPDATE SET version = excluded.version",
+        rusqlite::params![half, version],
+    )?;
     Ok(())
 }
 
