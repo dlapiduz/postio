@@ -1,0 +1,85 @@
+name: Mutants
+
+# Mutation-tests the pure/logic crates nightly, beside the benches, and
+# never gates a PR -- it is slow by construction (a full rebuild and test
+# run per mutant; ~1900 mutants across these four crates), so blocking a PR
+# on it would be an hours-long check for a signal that changes rarely. See
+# #99 and scripts/mutants.sh's own comment.
+#
+# PAUSED 2026-08-25 (same reason as ci.yml and bench.yml): a daily run still
+# spends this private repo's limited free minutes every day, whether a
+# mutant regressed or not. workflow_dispatch-only until the repo is public.
+# Restore by uncommenting the schedule below.
+#
+# The very first dispatch of this job is expected to fail: there is no
+# docs/mutants-baseline.txt yet (scripts/mutants.sh says so plainly rather
+# than crashing). Run it once, read what survived, file an issue for any
+# genuinely missing test, then seed the baseline with
+# `MUTANTS_UPDATE_BASELINE=1 scripts/mutants.sh` and commit the result --
+# on this runner, not on a shared workstation, which is exactly the
+# distinction this workflow exists to draw. #99's own acceptance criteria
+# are what that first triage has to satisfy.
+on:
+  # schedule:
+  #   - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  mutants:
+    name: Mutation testing (pure crates)
+    runs-on: ubuntu-26.04
+    # Generous, not infinite: a hung mutant should not run out the clock on
+    # every job queued behind it, and cargo-mutants has its own per-mutant
+    # timeout for the ordinary "this one loops" case.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # None of the four crates need GTK; see the `coverage` job in ci.yml
+      # for the same reasoning about this dependency list.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            pkg-config \
+            libsqlite3-dev \
+            libsecret-1-dev \
+            libglib2.0-dev
+
+      # The pin decides; see the note in ci.yml's `fmt` job.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Identify the compiler
+        id: rust
+        run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and cargo-mutants
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-mutants
+          key: ${{ runner.os }}-cargo-mutants-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-mutants-${{ steps.rust.outputs.version }}-
+
+      # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
+      # floating latest.
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked --version 27.1.0
+
+      - name: Mutation-test the pure crates
+        run: scripts/mutants.sh

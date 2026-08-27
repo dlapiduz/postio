@@ -2236,6 +2236,61 @@ libFuzzer still reported "deadly signal" — do that again if the hook handling
 is ever touched, because the failure mode is a target that reports nothing
 forever.
 
+## Coverage and mutation testing
+
+Two tools from the #103 quality survey, both wrapped rather than run
+directly, both entirely local (no upload, no third party sees a number —
+this project's privacy posture applies to its own tooling, not just the
+product). Added by #98/#99.
+
+**Coverage.** `cargo-llvm-cov`, gated per crate against
+`scripts/coverage-floors.json`, never one workspace percentage:
+
+```bash
+scripts/coverage.sh                # every crate the floors file names
+scripts/coverage.sh postio-model   # just one
+```
+
+A floor is a ratchet, seeded at whatever a crate measured the day this
+landed — not an idealized target, the same reasoning `docs/keybindings.md`
+and `docs/config.md` use for their own generated baselines. Raising one is a
+deliberate, reviewed change; the file's own comment says why `postio-gtk`
+gets no floor at all rather than a low one. This job runs in `ci.yml` and
+does gate a PR — see the file's own comment for why coverage, unlike
+mutation testing below, is cheap enough to run on every push once CI is
+unpaused.
+
+**Mutation testing.** `cargo-mutants` over `postio-model`, `postio-search`,
+`postio-config` and `postio-sync` (not `postio-storage`, and not
+`postio-gtk` — widget code produces mostly timeouts under mutation):
+
+```bash
+scripts/mutants.sh                            # every crate above
+MUTANTS_UPDATE_BASELINE=1 scripts/mutants.sh  # reseed after triage
+```
+
+This is the automated form of CLAUDE.md's own instruction to verify your
+tests can fail, run against everything at once rather than one test at a
+time. It is also genuinely slow: **run it on
+`mutants.yml`'s own CI runner, never on a shared workstation.** The first
+attempt at a real baseline ran locally, found 1934 mutants across the four
+crates, and drove this box's load average past 14 within two minutes of the
+initial (unmutated) build alone — with other sessions' builds sharing the
+same eight cores at the time. Killed before it produced a single result.
+`cargo-mutants` copies the whole tree into its own `/tmp/cargo-mutants-*`
+scratch directory before it starts, so killing it costs nothing but the
+lost CPU-minutes; nothing in the working tree or its `target/` is at risk
+either way. `scripts/mutants.sh`'s own comment carries this warning forward.
+
+**No baseline is committed yet.** `docs/mutants-baseline.txt` does not
+exist: seeding it honestly means running the real thing to completion and
+reading what survived, which is exactly the run above that had to be
+killed. `scripts/mutants.sh` reports this plainly (survivor count and the
+`MUTANTS_UPDATE_BASELINE=1` command) rather than crashing on a missing
+file, so the first dispatch of `mutants.yml` is expected to fail — that
+failure *is* the first real run, on hardware built for exactly this,
+sharing nothing with a session's own workstation.
+
 ## Logging & privacy
 
 **`Zeroizing<String>` protects the password; the buffers around it are where

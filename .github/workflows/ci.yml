@@ -348,6 +348,17 @@ jobs:
         # app grid kept the default icon after a fresh install. #427.
         run: python3 scripts/tests/test-install-local-icon.py
 
+      - name: Prove coverage.sh's floor comparison fails in both directions
+        # Stubs cargo-llvm-cov so the floor-comparison arithmetic gets to be
+        # red-then-green without spending the minutes a real instrumented
+        # build costs. #98.
+        run: python3 scripts/tests/test-coverage-gate.py
+
+      - name: Prove mutants.sh's baseline diff fails in both directions
+        # Same reason, for the baseline-vs-survivors comparison a real run
+        # takes hours to exercise. #99.
+        run: python3 scripts/tests/test-mutants-gate.py
+
       - name: Assert CI never runs the network-touching tests
         run: |
           # Live-server tests are #[ignore]d and must stay out of CI. The
@@ -559,3 +570,69 @@ jobs:
                  target/*/deps/libpostio_*.d
           rm -rf target/*/.fingerprint/postio-*
           echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
+
+  coverage:
+    name: Coverage floors
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
+      # postio-search and postio-config are pure leaves, and postio-storage /
+      # postio-sync need SQLite and the keyring, not a display. Still ubuntu-26.04
+      # rather than ubuntu-latest, so the pinned toolchain's cache key and the
+      # rest of this workflow's runner-version assumptions stay one thing.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            pkg-config \
+            libsqlite3-dev \
+            libsecret-1-dev \
+            libglib2.0-dev
+
+      # The pin decides; see the note in the `fmt` job.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      # cargo-llvm-cov instruments with LLVM's own source-based coverage,
+      # which needs the toolchain's llvm-tools alongside it -- a component,
+      # not a second toolchain, so `check-toolchain-pinned.py`'s rule 2 does
+      # not apply (that rule is about a workflow selecting a *toolchain* of
+      # its own, not adding a component to the one rust-toolchain.toml pins).
+      - name: Install llvm-tools
+        run: rustup component add llvm-tools-preview
+
+      - name: Identify the compiler
+        id: rust
+        run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry, cargo-llvm-cov, and target dir
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-llvm-cov
+            target
+          key: ${{ runner.os }}-cargo-coverage-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-coverage-${{ steps.rust.outputs.version }}-
+
+      # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
+      # floating latest, so a coverage-tool release cannot change what
+      # "passing" means out from under a commit that touched nothing.
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked --version 0.9.0
+
+      # This is the PR-gating half of #98's "open question": coverage
+      # instrumentation roughly doubles test wall-clock, which is too much
+      # to add to every crate on every PR, but the five crates named in
+      # scripts/coverage-floors.json are cheap enough, and pure/logic enough,
+      # that a real regression here is worth blocking on rather than only
+      # noticing later. postio-gtk and the rest are deliberately not run
+      # here -- see that file's own comment for why a single global number
+      # would be actively misleading across crates this different.
+      - name: cargo llvm-cov (gated crates)
+        run: scripts/coverage.sh
