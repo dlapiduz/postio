@@ -152,6 +152,23 @@ install flathub dev.postio.Postio`; the listing's own description is kept in
 [`dev.postio.Postio.metainfo.xml`](crates/postio-gtk/data/dev.postio.Postio.metainfo.xml)
 rather than written twice.
 
+A tagged release also publishes a prebuilt `.flatpak` bundle on the
+[Releases page](https://github.com/dlapiduz/postio/releases), alongside a
+signed build-provenance attestation and a software bill of materials — a
+mail client holds your credentials and your mail, so a downloaded bundle
+should be checkable rather than merely trusted because it appeared on a
+release page. Verify one with the [GitHub
+CLI](https://cli.github.com):
+
+```bash
+gh attestation verify postio-VERSION-x86_64.flatpak --repo dlapiduz/postio
+```
+
+A successful verification confirms the bundle was built by this project's
+`release.yml` workflow, from the tagged commit, and has not been modified
+since. The SBOM (`postio-VERSION.spdx.json`, also attached to the release) is
+attested the same way and lists every dependency the build actually shipped.
+
 First run opens onto a one-screen setup: type your email address and the
 autoconfig probe fills in the server settings (a preset table, Thunderbird
 autoconfig, then DNS SRV — or manual entry). The password goes straight into
