@@ -172,29 +172,44 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
     let dwelled: Rc<RefCell<Vec<MessageId>>> = Rc::new(RefCell::new(Vec::new()));
     let seen_dwell = Rc::clone(&dwelled);
     pane.connect_dwelled(move |message| seen_dwell.borrow_mut().push(message));
-    pane.set_dwell_delay(std::time::Duration::from_millis(30));
+
+    // A dwell nobody could out-wait, so "has anything been read *yet*" is a
+    // question about the code rather than about how loaded the machine is.
+    // The first version of this asserted the same thing with a 30ms dwell and
+    // a 10ms settle, which passed alone and failed in the full suite: under
+    // load the settle outran the timer.
+    pane.set_dwell_delay(std::time::Duration::from_secs(30));
 
     let unread: Vec<Row> = (20..24).map(|id| message(id, false)).collect();
     pane.open(unread);
-    settle_for(std::time::Duration::from_millis(10));
+    settle_for(std::time::Duration::from_millis(50));
     assert!(
         dwelled.borrow().is_empty(),
-        "opening a conversation read something: {:?}",
+        "opening a conversation read something before anybody had rested on \
+         it: {:?}",
         dwelled.borrow()
     );
 
-    // Walk past two without resting on either.
+    // Opening *does* start the clock on the message it focused, and that is
+    // right: you pressed `t`, the message is expanded in front of you, and
+    // resting on it is reading it. What must never happen is the whole
+    // conversation going read because it was opened -- so exactly one
+    // message is readable at a time, and it is the focused one.
+    pane.set_dwell_delay(std::time::Duration::from_millis(30));
+
+    // Walk past two without resting on either, then rest on the third. Each
+    // move cancels the last one's timer; a `glib` timeout that merely lost
+    // its handle would still fire and read a message nobody looked at.
     pane.focus_message(MessageId::new(21));
     pane.focus_message(MessageId::new(22));
-    // And rest on the third.
     pane.focus_message(MessageId::new(23));
-    settle_for(std::time::Duration::from_millis(120));
+    settle_for(std::time::Duration::from_millis(200));
 
     assert_eq!(
         dwelled.borrow().as_slice(),
         &[MessageId::new(23)],
-        "dwell has to read the message that was rested on and nothing the \
-         cursor passed over on the way"
+        "dwell has to read the message that was rested on, and nothing the \
+         cursor passed over on the way to it"
     );
 
     window.close();
