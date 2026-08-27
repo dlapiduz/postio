@@ -128,6 +128,7 @@ fn row(id: MessageId, subject: String) -> Row {
         draft: false,
         has_attachments: false,
         thread_count: 1,
+        participants: Vec::new(),
     }
 }
 

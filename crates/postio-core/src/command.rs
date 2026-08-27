@@ -531,6 +531,25 @@ pub enum Command {
 }
 
 impl Command {
+    /// What this invocation is aimed at, when it acts on messages at all.
+    ///
+    /// The read half of [`Command::with_target`]. A caller that wants to
+    /// *re*-aim a verb — the list does, when the row under the cursor stands
+    /// for a conversation rather than a message (ADR 0015 Q3) — has to be
+    /// able to tell a verb already aimed somewhere specific from one still
+    /// pointing at the selection.
+    pub fn target(&self) -> Option<&MessageTarget> {
+        match self {
+            Command::Archive { target }
+            | Command::Delete { target }
+            | Command::Move { target, .. }
+            | Command::Flag { target, .. }
+            | Command::MarkUnread { target, .. }
+            | Command::AddLabel { target, .. } => Some(target),
+            _ => None,
+        }
+    }
+
     /// Point this invocation at `target`, if it acts on messages at all.
     ///
     /// The registry's default for every message action is
