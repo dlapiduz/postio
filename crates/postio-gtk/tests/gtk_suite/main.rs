@@ -57,6 +57,7 @@ mod gtk_search_panel;
 mod gtk_search_preview;
 mod gtk_selection;
 mod gtk_settings;
+mod gtk_settings_accounts;
 mod gtk_sidebar;
 mod gtk_sidebar_keys;
 mod gtk_sidebar_saved_searches;
@@ -219,6 +220,19 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings::a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log",
         gtk_settings::a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log as fn(),
+    ),
+    (
+        "gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none",
+        gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none as fn(),
+    ),
+    (
+        "gtk_settings_accounts::flipping_the_switch_reports_the_account_and_the_new_state",
+        gtk_settings_accounts::flipping_the_switch_reports_the_account_and_the_new_state as fn(),
+    ),
+    (
+        "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
+        gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
+            as fn(),
     ),
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
