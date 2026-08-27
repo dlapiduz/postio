@@ -91,29 +91,59 @@ fn retrieve_files(key: &str) -> Result<Vec<String>, glib::Error> {
     Ok(files)
 }
 
-/// Is there a document portal on this bus at all?
+/// Is there a document portal on this bus, and does it actually answer for
+/// `FileTransfer`?
 ///
 /// CI has no session bus and no portal, and a test that cannot run must say
 /// so rather than fail. This is the one thing that legitimately skips.
+///
+/// Owning the `Documents` name is not enough on its own: the round trip
+/// below goes through `org.freedesktop.portal.FileTransfer`, served by the
+/// same document-portal daemon at the same object path but a separate
+/// interface, and a backend that owns the name — or a sandbox without a
+/// working FUSE mount underneath it — can still fail every call on that
+/// interface. Left unchecked that surfaced as `RetrieveFiles`'s `-1`
+/// (default, tens-of-seconds) timeout expiring deep inside the test instead
+/// of a clean skip at the top. A bounded property read tells "not
+/// implemented, or too slow to answer" apart from "genuinely there" without
+/// borrowing the real call's much longer patience.
 fn portal_available() -> bool {
     let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
         return false;
     };
+    let has_owner = |name: &str| -> bool {
+        bus.call_sync(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "NameHasOwner",
+            Some(&(name,).to_variant()),
+            Some(glib::VariantTy::new("(b)").unwrap()),
+            gio::DBusCallFlags::NONE,
+            2_000,
+            gio::Cancellable::NONE,
+        )
+        .ok()
+        .and_then(|reply| reply.get::<(bool,)>())
+        .map(|(owned,)| owned)
+        .unwrap_or(false)
+    };
+    if !has_owner("org.freedesktop.portal.Documents") {
+        return false;
+    }
+
     bus.call_sync(
-        Some("org.freedesktop.DBus"),
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-        "NameHasOwner",
-        Some(&("org.freedesktop.portal.Documents",).to_variant()),
-        Some(glib::VariantTy::new("(b)").unwrap()),
+        Some("org.freedesktop.portal.Documents"),
+        "/org/freedesktop/portal/documents",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        Some(&("org.freedesktop.portal.FileTransfer", "version").to_variant()),
+        None,
         gio::DBusCallFlags::NONE,
         2_000,
         gio::Cancellable::NONE,
     )
-    .ok()
-    .and_then(|reply| reply.get::<(bool,)>())
-    .map(|(owned,)| owned)
-    .unwrap_or(false)
+    .is_ok()
 }
 
 pub fn a_dragged_message_survives_the_portal() {
@@ -132,8 +162,12 @@ pub fn a_dragged_message_survives_the_portal() {
     }
     if !portal_available() {
         eprintln!(
-            "skipping: no org.freedesktop.portal.Documents on this session bus. \
-             This test is the sandboxed drag path; it needs a desktop portal."
+            "skipping: no working org.freedesktop.portal.FileTransfer on this \
+             session bus (either the Documents portal is entirely absent, or \
+             it owns the name but does not answer for FileTransfer — a \
+             sandbox with no working FUSE mount underneath it looks like \
+             this). This test is the sandboxed drag path; it needs a real \
+             desktop portal."
         );
         return;
     }
