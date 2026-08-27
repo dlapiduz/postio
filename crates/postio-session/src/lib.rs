@@ -404,6 +404,49 @@ pub fn open_store(
     Ok((database, blobs))
 }
 
+/// The `settings` key that records whether a session is running.
+const SESSION_STATE_KEY: &str = "session_state";
+
+/// Record that a session started, and answer whether the last one crashed.
+///
+/// `true` means the previous session never reached [`end_session`] — the
+/// process died with the marker still saying `open` — and crash-shaped
+/// recovery (reopening a mid-edit draft, #491) is warranted. `false` is
+/// every other history: a clean exit, or a store this binary has never
+/// opened. The distinction exists because `DraftState::Editing` alone is
+/// not evidence of a crash — `Esc` on a draft with content parks it in
+/// exactly that state on purpose, and a mail client that opens into a
+/// stale compose buffer instead of the inbox reads as broken.
+///
+/// Call once per process, before anything consults the answer: the call
+/// itself flips the marker to `open`, so a second call in the same process
+/// would report its own session as a crash.
+pub fn begin_session(database: &Database) -> bool {
+    let Ok(connection) = database.connection() else {
+        return false;
+    };
+    let settings = postio_storage::repository::SettingsRepository::new(&connection);
+    let unclean = matches!(settings.get(SESSION_STATE_KEY), Ok(Some(state)) if state == "open");
+    if let Err(error) = settings.set(SESSION_STATE_KEY, "open") {
+        tracing::warn!(%error, "could not record the session start");
+    }
+    unclean
+}
+
+/// Record a clean shutdown — the other half of [`begin_session`].
+///
+/// Called on the orderly exit path. A process that dies without reaching
+/// this is precisely what the marker exists to notice.
+pub fn end_session(database: &Database) {
+    let Ok(connection) = database.connection() else {
+        return;
+    };
+    let settings = postio_storage::repository::SettingsRepository::new(&connection);
+    if let Err(error) = settings.set(SESSION_STATE_KEY, "closed") {
+        tracing::warn!(%error, "could not record the clean shutdown");
+    }
+}
+
 /// Create the full-text index if it is not there, on every start.
 ///
 /// The same contract `postio_storage::migrate` has, and for the same reason:

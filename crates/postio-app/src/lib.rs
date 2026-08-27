@@ -212,6 +212,9 @@ pub fn run() -> glib::ExitCode {
     // Taken rather than borrowed: `shutdown` consumes the bridge, and by here
     // the window is gone and nothing else is going to read this.
     if let Some(ready) = opened.borrow_mut().take() {
+        // The clean-shutdown marker (#491): a next start that finds it will
+        // leave a parked draft parked instead of recovering it as a crash.
+        postio_session::end_session(&ready.wiring.database);
         ready.bridge.shutdown();
     }
     code
