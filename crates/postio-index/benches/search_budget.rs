@@ -48,6 +48,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeZone, Utc};
 use criterion::{Criterion, criterion_group, criterion_main};
 use postio_index::{SearchRequest, search};
+use postio_model::AccountScope;
 use postio_model::{AccountId, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
@@ -166,7 +167,7 @@ fn run(query: &str, limit: u32) -> Duration {
     let connection = corpus.database.connection().expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
-        account_id: corpus.account_id,
+        account: AccountScope::Account(corpus.account_id),
         query: &parsed,
         scope: Scope::AllMail,
         limit,
@@ -186,7 +187,7 @@ fn run_facets(query: &str) -> Duration {
     let connection = corpus.database.connection().expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
-        account_id: corpus.account_id,
+        account: AccountScope::Account(corpus.account_id),
         query: &parsed,
         scope: Scope::AllMail,
         limit: 50,
@@ -231,6 +232,133 @@ fn bench_common_word_worst_case(c: &mut Criterion) {
     assert_budget("common-word worst case", run(COMMON_WORD, 50));
 }
 
+// ---------------------------------------------------------------------------
+// Unified search, which needs a corpus that has more than one account in it
+// ---------------------------------------------------------------------------
+//
+// The shapes above are all one account, and with one account a unified search
+// and an account-scoped one are the *same query over the same rows* — so they
+// could not distinguish the two however slow either got. That mattered the
+// moment `SearchRequest.account_id` became `AccountScope` (#186): the standing
+// budget gate would have stayed green through a twenty-second unified search
+// (#452, ADR 0005 Q5a).
+//
+// The corpus is separate rather than replacing the one above, and smaller per
+// account, so the single-account budgets keep measuring exactly what they
+// always measured and stay comparable to their recorded baselines.
+
+/// Accounts in the multi-account corpus, and messages in each.
+const ACCOUNTS: u64 = 4;
+const PER_ACCOUNT: u64 = 30_000;
+
+struct MultiAccount {
+    database: Database,
+    first: AccountId,
+}
+
+fn multi_account_corpus() -> &'static MultiAccount {
+    static CORPUS: OnceLock<MultiAccount> = OnceLock::new();
+    CORPUS.get_or_init(build_multi_account_corpus)
+}
+
+fn build_multi_account_corpus() -> MultiAccount {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+
+    let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    let mut rng = Xorshift64::new(0x51de_9876_5432_10ab);
+    let repository = MessageRepository::new(&connection);
+    let mut first = None;
+
+    connection.execute_batch("BEGIN").expect("start bulk load");
+    for a in 0..ACCOUNTS {
+        let (account, mailbox) = test_support::account_with_inbox(&connection);
+        first.get_or_insert(account.id);
+        for i in 0..PER_ACCOUNT {
+            // Interleaved in time across accounts, never concatenated: a
+            // unified recency ordering that can be satisfied from one
+            // account's index in one run is not the ordering this exists to
+            // measure.
+            let received_at = base + chrono::Duration::minutes((i * ACCOUNTS + a) as i64);
+            let mut message = Message::new(account.id, mailbox, received_at);
+            message.from = vec![EmailAddress::new(
+                Some(format!("Sender {}", rng.below(SENDER_COUNT))),
+                format!("sender{}@example.com", rng.below(SENDER_COUNT)),
+            )];
+            message.subject = Some(format!("Weekly update {i}"));
+            message.size = 1024 + rng.below(4096);
+            repository.create(&mut message).expect("create message");
+
+            let mut body = format!("{COMMON_WORD} the status as of message {i}");
+            if i % 100 == 0 {
+                body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
+            }
+            postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+                .expect("index body");
+        }
+    }
+    connection
+        .execute_batch("COMMIT")
+        .expect("commit bulk load");
+
+    drop(connection);
+    MultiAccount {
+        database,
+        first: first.expect("at least one account"),
+    }
+}
+
+fn run_multi_account(query: &str, account: AccountScope) -> Duration {
+    let corpus = multi_account_corpus();
+    let connection = corpus.database.connection().expect("checkout");
+    let parsed = parse(query, now().date_naive());
+    let request = SearchRequest {
+        account,
+        query: &parsed,
+        scope: Scope::AllMail,
+        limit: 50,
+    };
+
+    let start = Instant::now();
+    let results = search(&connection, &request, now()).expect("search");
+    let elapsed = start.elapsed();
+    assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
+    elapsed
+}
+
+/// The shape that actually needs `idx_messages_recency`.
+///
+/// A term in every message is past `RANK_BY_RELEVANCE_LIMIT`, so the executor
+/// orders by recency rather than by `bm25` and drives from `messages` — the
+/// one plan whose ordering comes from an index rather than from a sort. With
+/// no account named, `idx_messages_account_list` cannot supply it. Measured
+/// without migration 0012 this is ~20 s against a 100 ms budget.
+fn bench_unified_common_word(c: &mut Criterion) {
+    c.bench_function("search_unified_common_word", |b| {
+        b.iter(|| run_multi_account(COMMON_WORD, AccountScope::Unified))
+    });
+    assert_budget(
+        "unified, common-word worst case",
+        run_multi_account(COMMON_WORD, AccountScope::Unified),
+    );
+}
+
+/// The same corpus and the same string, scoped to one account: the control.
+///
+/// Its job is to fail *with* the unified case if the corpus itself is what
+/// got slower, so a regression can be told from a fixture that grew.
+fn bench_account_scoped_common_word(c: &mut Criterion) {
+    let scoped = AccountScope::Account(multi_account_corpus().first);
+    c.bench_function("search_account_scoped_common_word", |b| {
+        b.iter(|| run_multi_account(COMMON_WORD, scoped))
+    });
+    assert_budget(
+        "account-scoped, common-word worst case",
+        run_multi_account(COMMON_WORD, scoped),
+    );
+}
+
 /// The facet column on the worst case the corpus has.
 ///
 /// Four aggregate queries over a match set that is effectively the whole
@@ -250,6 +378,8 @@ criterion_group!(
     bench_operator_only,
     bench_composed,
     bench_common_word_worst_case,
-    bench_facets_worst_case
+    bench_facets_worst_case,
+    bench_unified_common_word,
+    bench_account_scoped_common_word
 );
 criterion_main!(benches);

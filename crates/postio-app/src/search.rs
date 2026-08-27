@@ -49,6 +49,7 @@ use postio_gtk::finder::Finder;
 use postio_gtk::search::{Outcome, View};
 use postio_gtk::window::Window;
 use postio_index::{SearchRequest, search};
+use postio_model::AccountScope;
 use postio_model::ids::AccountId;
 use postio_search::facets::{Facets, Scope};
 use postio_search::{ParsedQuery, SearchResults};
@@ -223,7 +224,14 @@ fn run(
     let mut results = search(
         connection,
         &SearchRequest {
-            account_id: account,
+            // `Account`, not `Unified`, and deliberately: the composition
+            // root still opens exactly one account (`first_account`), so
+            // searching every account and searching this one are the same
+            // set. #186 gave the executor the capability; #183 is what gives
+            // the application more than one account to point it at, and
+            // switching this to follow `AppState.scope` belongs there — where
+            // there is something to observe the difference.
+            account: AccountScope::Account(account),
             query,
             scope,
             limit: HIT_LIMIT,
@@ -299,7 +307,8 @@ fn facets(
             postio_index::executor::facets(
                 connection,
                 &SearchRequest {
-                    account_id: account,
+                    // See `run` for why this is not `Unified` yet.
+                    account: AccountScope::Account(account),
                     query: &query,
                     scope,
                     limit: HIT_LIMIT,

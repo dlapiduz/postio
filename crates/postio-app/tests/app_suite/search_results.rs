@@ -41,6 +41,7 @@ use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_index::{SearchRequest, search};
+use postio_model::AccountScope;
 use postio_model::MessageId;
 use postio_search::facets::Scope;
 use postio_session::{Wiring, ensure_search_index};
@@ -236,7 +237,7 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
     let expected: Vec<MessageId> = search(
         &connection,
         &SearchRequest {
-            account_id: account,
+            account: AccountScope::Account(account),
             query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
             scope: view_scope,
             limit: 200,

@@ -292,9 +292,82 @@ impl Account {
     }
 }
 
+/// How many accounts a view is about: one, or all of them.
+///
+/// Deliberately not an `Option<AccountId>`. There is always a scope, and the
+/// old `None` had to mean both "no account is chosen" and "every account at
+/// once" — see [`AccountScope::Unified`].
+///
+/// The asymmetry is the point. [`AccountScope::Account`] names real mailboxes
+/// on a real server, so it can be a *destination*; [`AccountScope::Unified`]
+/// is a view assembled across every enabled account and can never be one.
+///
+/// # Why this lives in `postio-model` (#186)
+///
+/// It began in `postio_core::state` (#182), which is the natural home for a
+/// thing the UI's state machine holds — and then search needed exactly the
+/// same value. `postio-index` cannot depend on `postio-core` and should not,
+/// so the choice was between defining a second, parallel enum of the same two
+/// variants and moving this one down to the crate both already share.
+///
+/// A duplicate would be small and would look harmless. It would also be two
+/// things that must agree about what "unified" means, in a codebase where
+/// `AppState.scope` and `SearchRequest.account` are supposed to be the *same*
+/// answer to the same question — so the list and the search bar could
+/// disagree about which accounts they are showing, which is precisely the
+/// class of bug ADR 0005 Q10 is about. One type cannot drift from itself.
+/// `postio_core::state::Scope` re-exports this, so nothing #182 wrote had to
+/// change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum AccountScope {
+    /// One account's own mailboxes.
+    Account(AccountId),
+    /// Every enabled account at once. A view, never a destination.
+    ///
+    /// The default, and it is not a placeholder: unified over zero accounts
+    /// is empty, which is exactly what a fresh install has to show.
+    #[default]
+    Unified,
+}
+
+impl AccountScope {
+    /// The account this scope names, or `None` for [`AccountScope::Unified`].
+    ///
+    /// The one place the old `Option<AccountId>` survives, and it now means
+    /// exactly one thing: "this view is not about a single account."
+    pub fn account(self) -> Option<AccountId> {
+        match self {
+            Self::Account(id) => Some(id),
+            Self::Unified => None,
+        }
+    }
+
+    /// Whether this scope can be the destination of a move.
+    pub fn is_single_account(self) -> bool {
+        matches!(self, Self::Account(_))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scope_names_an_account_only_when_it_is_about_one() {
+        let one = AccountScope::Account(AccountId::new(7));
+        assert_eq!(one.account(), Some(AccountId::new(7)));
+        assert!(one.is_single_account());
+
+        assert_eq!(AccountScope::Unified.account(), None);
+        assert!(!AccountScope::Unified.is_single_account());
+    }
+
+    #[test]
+    fn unified_is_the_default_scope() {
+        // Not a placeholder: unified over zero accounts is empty, which is
+        // what a fresh install has to show.
+        assert_eq!(AccountScope::default(), AccountScope::Unified);
+    }
 
     #[test]
     fn transport_security_round_trips_through_its_stored_identifier() {
