@@ -34,6 +34,7 @@ use gtk::glib;
 use postio_model::message::MessageBody;
 use webkit6::prelude::*;
 
+use super::actions::ReaderActions;
 use super::allowlist::RemoteImageAllowList;
 use super::banner::RemoteImageBanner;
 use super::message_header::MessageHeader;
@@ -98,6 +99,7 @@ pub struct Reader {
     view: webkit6::WebView,
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
+    actions: Rc<ReaderActions>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
@@ -253,23 +255,27 @@ impl Reader {
 
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
+        let actions = ReaderActions::new();
 
         let chips = crate::parts::Chips::new();
 
         // The header sits above the banner and does not scroll away with
         // the body (#319): it is a sibling in this native box, never markup
-        // inside the `WebView`'s document.
+        // inside the `WebView`'s document. The action bar (#498) sits last,
+        // under the attachment chips, matching the canvas' footer treatment.
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
         container.append(&banner.widget());
         container.append(&view);
         container.append(&chips.widget());
+        container.append(&actions.widget());
 
         let reader = Reader {
             container,
             view,
             header,
             banner,
+            actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
             absent: Rc::new(std::cell::Cell::new(None)),
@@ -418,6 +424,7 @@ impl Reader {
             body: body.clone(),
             sender: sender.map(str::to_owned),
         });
+        self.actions.set_visible(true);
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
         let remote = if allowed {
             RemoteImages::Allowed
@@ -478,6 +485,27 @@ impl Reader {
         }
     }
 
+    /// Gives the action bar's buttons the key each currently carries, so a
+    /// `[keys]` rebind reaches the pointer's way in the same moment it
+    /// reaches the keyboard's. See [`Window::apply_keymap`] for where this is
+    /// called from, alongside the finder, the cheat sheet and the parts
+    /// panel's own copies.
+    ///
+    /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
+    pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        self.actions.set_keymap(keymap);
+    }
+
+    /// Called with the invocation whenever a button in the action bar is
+    /// pressed — the same [`postio_core::Command`] the keyboard's binding for
+    /// the same verb would produce. See
+    /// [`crate::list_view::ListView::connect_command`] for the shared shape;
+    /// whoever mounts the reader hands this straight to the same
+    /// `Window::act` the list's row actions do.
+    pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
+        self.actions.connect_command(handler);
+    }
+
     /// Paint `terms` wherever they appear in the body.
     ///
     /// What canvas 2b means by "preview · match highlighted": the same
@@ -504,6 +532,11 @@ impl Reader {
     pub fn show_absent(&self, state: Absent) {
         *self.open.borrow_mut() = None;
         self.absent.set(Some(state));
+        // A message is still open here — headers arrived, only the body has
+        // not — so Reply, Forward and Archive stay reachable exactly as they
+        // are from the keyboard while the pane explains why there is no body
+        // yet. Only `clear()`'s "nothing selected at all" hides the bar.
+        self.actions.set_visible(true);
         self.banner.set_visible(false);
         self.view.load_html(
             &wrap_document(&absent_html(state), RemoteImages::Blocked),
@@ -532,6 +565,7 @@ impl Reader {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
         self.header.clear();
+        self.actions.set_visible(false);
         self.banner.set_visible(false);
         self.view.load_html(
             &wrap_document("", RemoteImages::Blocked),

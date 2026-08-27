@@ -706,6 +706,17 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
+/* ── The reading pane's action bar (#498) ────────────────────────────
+   Reply, Reply all, Forward and Archive, under the body and the
+   attachment chips — the pointer's way to the same four verbs the
+   keyboard already reaches. A native sibling in the reader's own box,
+   same as the header above the body. */
+.postio-reader-actions {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
 /* ── The list pane's named states (canvas 3d) ────────────────────────
    Inbox zero, offline and sync failure share one icon/title/detail/hints
    vocabulary, laid out one of two ways (`postio_gtk::list_state::Placement`):
