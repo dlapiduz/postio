@@ -442,26 +442,57 @@ expand them to it. Filed separately as
 [#470](https://github.com/dlapiduz/postio/issues/470).
 
 **What the raw editor cannot do gets exactly three small, targeted
-affordances in the settings panel, next to each account's config — not a
-new screen:**
+affordances in the settings panel, next to each account's row — not a new
+screen, and not `CommandId` registry entries.** The registry's commands are
+keyboard-first verbs meaningful from a bare keystroke, in a `Context` the
+keymap resolver can name — and there is no `Context::Settings` at all today,
+because the settings panel has never had anything context-worthy to reach:
+it is a raw `GtkTextView`, not a widget tree with rows. All three of these
+need a specific account as their payload with no sensible keystroke-derived
+default (unlike `Archive`'s "the current selection"), so forcing them
+through the registry would mean inventing a settings context and an
+account-picker for no discoverability most users will ever use one account
+to need.
 
-- **Enable/disable** — a toggle writing `accounts.enabled`, per Q6.
-- **Remove** — a `destructive: true` registry command per Q6, with the undo
-  Q6 already specifies. The keyring entry is untouched either way, exactly
-  as Q6 says: deleting it is a separate, still-unbuilt, confirmed step of
-  its own, not something this removal does on the account's behalf.
+**The precedent already in this codebase is `SavedSearchAction`** (#292):
+sidebar context-menu commands — rename, reorder, delete a saved search —
+live in a `gio::SimpleActionGroup` scoped to the widget, addressed by name
+(`savedsearch.rename`, `savedsearch.delete`), never registered as
+`CommandId`s. That gap was named rather than silently accepted: #455 tracks
+giving saved searches a keyboard path. The same shape applies here —
+`account.toggle-enabled(id)`, `account.remove(id)`,
+`account.update-credential(id)` as a `gio::SimpleActionGroup` on the
+settings panel, mouse- and Tab-reachable within it but not in the palette
+or cheat sheet — and the same follow-up discipline: filed as
+[#471](https://github.com/dlapiduz/postio/issues/471) rather than expanding
+this issue to design a settings keyboard context it does not need yet.
+
+- **Enable/disable** — the toggle writes `accounts.enabled`, per Q6.
+  `postio-session::engine` only reads it at startup
+  (`engine.rs:197`); there is no live engine attach/detach today (that is
+  #64/ADR 0012 Q2's problem, not this one's), so disabling takes effect on
+  the next launch. The panel says so.
+- **Remove** — per Q6's semantics and its undo, implemented as
+  `AccountRepository::mark_pending_deletion`/`restore`/
+  `reap_pending_deletions`: marking is instant and reversible from the
+  undo toast, the account leaves the sidebar and stops appearing in any
+  list immediately, and the actual `DELETE ... CASCADE` only runs once,
+  at the next startup, before any engine is created — which is also what
+  makes a crash before the toast expires harmless rather than a race
+  against a live cascade. The keyring entry is untouched either way,
+  exactly as Q6 says: deleting it is a separate, still-unbuilt, confirmed
+  step of its own, not something this removal does on the account's
+  behalf.
 - **Update credential** — the one truly new piece. **Reuses
   `Status::Reauthenticate`, which already exists and is already tested**
   (`postio-app/src/onboarding.rs`, `crates/postio-app/tests/app_suite/
   startup_repair.rs`) — today reachable only automatically, when
   `startup_route` finds a row the keyring will not give up a password for.
-  This adds a manual entry point: a registered command
-  (`account.update-credential`, alongside `account.add`'s eventual command
-  from [ADR 0012](0012-add-account-and-orientation.md) Q1) opens the same
-  `Onboarding` widget the same way Q1 there already decided any second
-  onboarding surface should be hosted — **an `AdwDialog` over the shell,
-  not a window-content replacement** — seeded with
-  `Status::Reauthenticate(configured(account))` instead of the empty
+  This adds a manual entry point that opens the same `Onboarding` widget
+  the way [ADR 0012](0012-add-account-and-orientation.md) Q1 already
+  decided any second onboarding surface should be hosted — **an
+  `AdwDialog` over the shell, not a window-content replacement** — seeded
+  with `Status::Reauthenticate(configured(account))` instead of the empty
   first-run state. The form, its probe timing and its seam stay exactly as
   built; only what starts it and where it appears are new.
 
