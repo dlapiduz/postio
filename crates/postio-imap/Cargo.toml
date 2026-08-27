@@ -61,6 +61,14 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # `io-http/client`, which is all `HttpClientStd` needs.
 io-http = { version = "0.5", default-features = false }
 io-imap = { version = "=0.6.0", default-features = false, features = ["client"], optional = true }
+# The OAuth 2.0 wire core (#537): RFC 6749 token request/response types
+# and encodings, RFC 7636 PKCE, the RFC 6749 §10.12 state value — the
+# maintained upstream for what `oauth/exchange.rs` and `oauth/pkce.rs`
+# hand-rolled first. `client` is only the random generators (rand); the
+# HTTP itself stays on this crate's own cancellable pimalaya-stream
+# transport, because io-oauth's optional client wrapper consumes the HTTP
+# status that the 200-with-error-body shim in `exchange.rs` needs.
+io-oauth = { version = "0.3", default-features = false, features = ["client"] }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
 io-sasl = { version = "=0.1.0", default-features = false, optional = true }
 log = { version = "0.4", features = ["std"], optional = true }
@@ -72,6 +80,7 @@ postio-model.workspace = true
 rand = "0.9"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
 rustls-platform-verifier = { version = "0.7", optional = true }
+secrecy = { version = "0.10", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 # `oauth::exchange`'s token responses, and RFC 8414 metadata's own parsing
 # (`io_pim_discovery::rfc8414`) -- already in the graph underneath it.

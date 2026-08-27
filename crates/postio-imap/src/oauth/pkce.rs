@@ -1,47 +1,56 @@
-//! PKCE (RFC 7636) and the `state` parameter (RFC 6749 §10.12).
+//! PKCE (RFC 7636) and the `state` parameter (RFC 6749 §10.12), on
+//! io-oauth's own types (#537).
 //!
 //! ADR 0006 Q3: **PKCE (S256) always**, including where a client secret
 //! exists — it is what makes intercepting a loopback redirect useless. And
 //! `state` is a fresh random value per attempt, checked by
 //! [`super::redirect`] so a callback that does not match is dropped before
 //! it ever reaches a token exchange.
+//!
+//! The generation and encoding used to be hand-rolled here; they are now
+//! `io-oauth`'s `rfc7636::pkce` and `rfc6749::state` — the same maintained
+//! wire core [`super::exchange`] uses for the token grants. These wrappers
+//! keep the two values as distinct Postio types, because the pair guard
+//! against different things: PKCE binds the code to the client that
+//! requested it, `state` binds the callback to the browser tab this attempt
+//! opened, and confusing the two in a signature is exactly the mistake a
+//! distinct type rules out.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rand::RngCore;
-use sha2::{Digest, Sha256};
+use io_oauth::rfc6749::state::Oauth20State;
+use io_oauth::rfc7636::pkce::{Oauth20PkceCodeChallenge, Oauth20PkceCodeVerifier};
 
-/// Bytes of randomness behind a verifier or `state` value.
+/// How many random VSCHAR characters feed a `state` value.
 ///
-/// 32 bytes base64url-encodes to 43 characters, inside RFC 7636's required
-/// 43–128 range for a code verifier with room to spare, and is the size
-/// `state` generators converge on elsewhere for the same reason: enough
-/// entropy that guessing one is not a threat model worth naming.
-const RANDOM_BYTES: usize = 32;
-
-/// A random base64url (no padding) string of [`RANDOM_BYTES`] bytes.
-fn random_token() -> String {
-    let mut bytes = [0u8; RANDOM_BYTES];
-    rand::rng().fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
+/// Base64url-encoded below, 32 stays comfortably past the entropy where
+/// guessing one is a threat model worth naming.
+const STATE_CHARS: u8 = 32;
 
 /// The PKCE code verifier and its S256 challenge, generated together so one
 /// can never be sent without the other.
 #[derive(Clone, Debug)]
 pub struct Pkce {
+    challenge: Oauth20PkceCodeChallenge,
+    /// The verifier's characters, cached as a string once: the token
+    /// exchange sends it as form text, and `io-oauth` keeps the bytes in a
+    /// `SecretBox` it only exposes by slice.
     verifier: String,
-    challenge: String,
 }
 
 impl Pkce {
     /// Generates a fresh verifier and its derived challenge.
     pub fn generate() -> Self {
-        let verifier = random_token();
-        let challenge = challenge_for(&verifier);
+        // 64 unreserved characters: inside RFC 7636's 43–128 with room to
+        // spare, same as the hand-rolled version's entropy.
+        let verifier = Oauth20PkceCodeVerifier::new(64);
+        let text = String::from_utf8_lossy(verifier.expose()).into_owned();
         Self {
-            verifier,
-            challenge,
+            challenge: Oauth20PkceCodeChallenge {
+                method: Default::default(), // S256 — io-oauth's own default
+                verifier,
+            },
+            verifier: text,
         }
     }
 
@@ -54,31 +63,29 @@ impl Pkce {
     /// `BASE64URL-ENCODE(SHA256(verifier))`, sent in the authorization
     /// request. Never a secret — it is derived, one-way, and public by
     /// design.
-    pub fn challenge(&self) -> &str {
-        &self.challenge
+    pub fn challenge(&self) -> String {
+        self.challenge.encode().into_owned()
     }
 }
 
-/// `BASE64URL-ENCODE(SHA256(ASCII(verifier)))`, per RFC 7636 §4.2.
-fn challenge_for(verifier: &str) -> String {
-    let digest = Sha256::digest(verifier.as_bytes());
-    URL_SAFE_NO_PAD.encode(digest)
-}
-
 /// A fresh `state` value for one authorization attempt.
-///
-/// A distinct type from the verifier/challenge pair, even though both are
-/// "a random token", because the two guard against different things: PKCE
-/// binds the code to the client that requested it, `state` binds the
-/// callback to the browser tab this attempt opened. Confusing the two in a
-/// signature is exactly the kind of mistake a distinct type rules out.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct State(String);
 
 impl State {
     /// A fresh random state.
+    ///
+    /// io-oauth's [`Oauth20State`] is the entropy source; the transmitted
+    /// value is its base64url encoding rather than its raw characters.
+    /// RFC 6749 allows any VSCHAR in `state` — spaces, `&`, `#` included —
+    /// and every one of those has to survive a browser redirect and a
+    /// query-string parse to be compared against. An unreserved-only value
+    /// removes that whole class of round-trip disagreement, which is not
+    /// hypothetical: the raw alphabet hung [`super::redirect`]'s own tests
+    /// on the first value that drew a `&`.
     pub fn generate() -> Self {
-        Self(random_token())
+        let state = Oauth20State::new(STATE_CHARS);
+        Self(URL_SAFE_NO_PAD.encode(state.expose()))
     }
 
     /// The value to send in the authorization request and compare the
@@ -119,11 +126,20 @@ mod tests {
 
     #[test]
     fn the_challenge_is_the_base64url_sha256_of_the_verifier() {
-        // RFC 7636 Appendix B's worked example.
-        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        let expected = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-
-        assert_eq!(challenge_for(verifier), expected);
+        // RFC 7636 Appendix B's worked example, held against io-oauth's
+        // encoding so a swapped dependency still computes the same bytes.
+        use std::str::FromStr;
+        let challenge = Oauth20PkceCodeChallenge {
+            method: Default::default(),
+            verifier: Oauth20PkceCodeVerifier::from_str(
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+            )
+            .expect("the RFC's own example verifier"),
+        };
+        assert_eq!(
+            challenge.encode(),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
     }
 
     #[test]
