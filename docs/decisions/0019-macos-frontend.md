@@ -1,6 +1,7 @@
 # ADR 0019 — A native macOS frontend over `postio-session`
 
-- **Status:** Accepted — maintainer-directed (2026-08-27)
+- **Status:** Accepted — maintainer-directed (2026-08-27), **Q5a added
+  2026-08-27** ([#570](https://github.com/dlapiduz/postio/issues/570))
 - **Date:** 2026-08-27
 - **Issue:** [#557](https://github.com/dlapiduz/postio/issues/557), under
   [#15](https://github.com/dlapiduz/postio/issues/15) and epic
@@ -185,7 +186,8 @@ A new **`postio-ui`** takes the toolkit-free logic currently inside
 `postio-gtk`: `selection.rs` (352 lines, no toolkit references at all),
 `tokens.rs` (965), `palette.rs` (461), `keymap.rs` (1,471, whose only real
 toolkit reference is one constructor), the list's paging and generation
-bookkeeping, and — most importantly — the reader's document assembly.
+bookkeeping (**where exactly, is Q5a**), and — most importantly — the reader's
+document assembly.
 
 Its boundary rule lands in `check-crate-boundaries.py` in the same commit that
 creates it, so *dependency* leakage is impossible from the first day. Ghostty's
@@ -200,6 +202,162 @@ pretend otherwise.
 **`postio-app` is not made cross-platform.** Nothing depends on it; it is the
 GTK binary, and it names `gtk4`, `libadwaita` and `postio-gtk` directly. It
 stays Linux-only, and `postio-ffi` sits on `postio-session` instead.
+
+## Q5a — Where does `ListWindow` end and the toolkit begin? (#570)
+
+Q5 says the list's paging and generation bookkeeping moves to `postio-ui`. It
+does not say where the seam is, and that is the whole difficulty: get it wrong
+and either the GTK list keeps the logic — so macOS re-derives it and the two
+drift — or too much moves and the `GListModel` fights an abstraction that does
+not fit it.
+
+**Decision: `ListWindow<T: ListRow>` owns the bookkeeping *and the resident
+rows*. The toolkit owns row identity, change notification, and re-entrancy.**
+
+### The line, stated so it can be applied again
+
+Three questions, in order. They are what settled every item below.
+
+1. **Would a second frontend have to re-derive it?** If yes it is shared,
+   however awkward the shape.
+2. **Does it exist because of a toolkit's contract?** If yes it stays, however
+   tempting it looks.
+3. **If the second frontend got it subtly wrong, would anything fail loudly?**
+   If no, it is shared even when questions 1 and 2 are close. Silent divergence
+   is the cost this whole extraction exists to avoid, and *"a mailbox is never
+   loaded into memory"* (`PRODUCT.md` §18) fails silently — as a machine that
+   swaps three months from now, on somebody's real mailbox.
+
+### What moves
+
+`postio_ui::list::ListWindow<T>`, a plain struct with no interior mutability:
+
+| | |
+|---|---|
+| `PAGE_SIZE`, `CACHE_PAGES` | the budget, in one place |
+| `total` | the row count |
+| `pages: HashMap<u32, Vec<T>>` | the resident rows |
+| `recent: VecDeque<u32>` | LRU order |
+| `pending: HashSet<u32>` | asked for, not yet delivered |
+| `generation: u64` | which open a reply belongs to |
+
+and the decisions over them: `row_at`, `deliver`, `set_total`,
+`inserted_at_top`, `page_of`, `pages_holding`, `reset`, `resident_rows`.
+
+Every method is a pure function of that state plus its argument, and returns
+**what changed** rather than performing it:
+
+```rust
+pub enum Lookup<'a, T> {
+    Resident(&'a T),
+    /// Not here. Draw a placeholder and issue these requests — the page
+    /// itself and, at a boundary, its neighbour.
+    Missing { request: Vec<u32> },
+}
+
+pub struct Delivered {
+    /// Dropped: a reply from a generation the user has already left.
+    pub stale: bool,
+    /// Positions the frontend must tell its view about.
+    pub changed: Option<Range<u32>>,
+    /// Evicted to stay inside `CACHE_PAGES`.
+    pub evicted: Vec<u32>,
+}
+```
+
+Returning a description rather than emitting is what keeps the crate
+toolkit-free without a callback: `items_changed` and `reloadData(forRowIndexes:)`
+are the same fact told to two different views.
+
+### What stays in `postio-gtk`
+
+- **`MessageRow` and its `GObject` identity.** A refcounted object with a
+  widget bound to it is not a value.
+- **`items_changed` emission**, including that `inserted_at_top` emits
+  `(0, 0, count)` so a selection model moves the selection down with its row
+  and the view keeps its scroll anchor. The *shift* is shared; what an
+  insertion means to a scroll position is GTK's.
+- **The `reading`/`hold` re-entrancy guard.** This is question 2's clearest
+  case: it exists because `GListModel::item()` must not mutate the model
+  mid-call, so anything that would emit `items_changed` during a read is
+  deferred a turn. `NSTableView` has no such rule, and moving it would export a
+  GTK constraint to a frontend that does not have it. **`ListWindow` must never
+  be called while the guard is set** — that ordering is `postio-gtk`'s to keep,
+  and it is the one place this extraction can go wrong without a test noticing.
+- `PageSource`/`MessageSource` wiring, `FeedScope`, and event routing.
+
+`FeedScope` deliberately does **not** move. `ListWindow` has no idea what a
+scope is; it has `reset()`, which bumps the generation and empties the cache,
+and the feed calls it when the scope changes. A model that knew about mailboxes
+and smart folders would be a second place deciding what the list shows.
+
+### The contested call: why the rows move too
+
+The tempting alternative is a `ListWindow` of **pure decisions** — it tracks
+which pages are resident and answers "request these, evict that", while each
+frontend keeps its own page storage. It is smaller and it keeps `GObject`s
+entirely inside GTK.
+
+Rejected, on question 3. It makes the acceptance criterion *"a 100k-row scope
+never materialises more than the resident bound"* a claim about **instructions
+issued**, not about **memory held** — and the second frontend can obey every
+instruction and still hold the mailbox, because the thing that bounds memory is
+whoever owns the map. It also duplicates eviction on both sides, where an
+off-by-one is invisible until it is a swapping machine.
+
+Owning the rows makes the bound structural: there is one map, one eviction, and
+the test asserts `resident_rows() <= CACHE_PAGES * PAGE_SIZE` against the thing
+that actually holds them.
+
+### Why generic, and what `ListRow` is for
+
+`deliver` today preserves `GObject` identity for a redelivered page, so a
+refetch after `MessagesChanged` does not invalidate anything holding a row —
+which is what keeps a count changing from taking the selection with it. That
+behaviour is exactly the kind that must not be re-derived, so it belongs in the
+shared model, and the shared model therefore cannot own plain values.
+
+```rust
+pub trait ListRow {
+    fn id(&self) -> Option<MessageId>;
+
+    /// A redelivered row for the same message. The default takes the new
+    /// value, which is right for a value type; `postio-gtk` overrides it to
+    /// update the existing `GObject` in place and hand that back, so anything
+    /// holding the row keeps holding it.
+    fn reconcile(existing: &Self, incoming: Self) -> Self { incoming }
+}
+```
+
+One type parameter buys: rows owned in one place, identity preserved where it
+matters, a default that is correct for Swift, and `postio-ui` with no toolkit
+dependency. `ListWindow<Row>` is what the unit tests instantiate, so they run
+on both hosts with no display and no `GObject`.
+
+### What the macOS side then gets
+
+ADR 0019 Q3 promises `row_count()`, `request_page()` and a synchronous
+`take_page()` that does no I/O. Those are `total`, `Lookup::Missing`'s requests
+and `Lookup::Resident` — the FFI is a thin naming of `ListWindow`, not a second
+implementation of it, and `UiEvent::PageReady` is `deliver`. The constraint
+that shaped this is that `NSTableView`'s row callback runs on the main thread in
+microseconds: **no method on `ListWindow` may be fallible, blocking, or async**,
+and none is.
+
+### Consequences
+
+- `postio-gtk`'s `MessageList` keeps its whole public API and becomes a thin
+  `GObject` over `ListWindow<MessageRow>`; every existing list and feed test
+  passes unchanged, which is the acceptance criterion that proves the seam is
+  in the right place.
+- `check-crate-boundaries.py` gains nothing: `postio-ui`'s existing rule
+  already forbids the toolkit, and a type parameter cannot smuggle one in.
+- The generation moves out of `Feed` and into `ListWindow`. `Feed` keeps the
+  scope and the sources, and stamps requests with the generation it is handed.
+- **The one ordering rule** — never call `ListWindow` from inside
+  `GListModel::item()` — is a comment and a debug assertion, not a type. If it
+  is ever violated the symptom is a re-entrant borrow panic rather than silent
+  corruption, which is the right way round.
 
 ## Q6 — How do the privacy invariants survive two frontends?
 
