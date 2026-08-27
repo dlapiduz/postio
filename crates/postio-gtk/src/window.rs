@@ -947,9 +947,11 @@ impl Window {
                 if let Some(mailbox) = folders.mailbox(id) {
                     // The same word the sidebar uses, from the same place:
                     // the folder the user clicked must not change its name
-                    // on the way to the header above the rows.
+                    // on the way to the header above the rows. Among its
+                    // siblings, because a role's twin is named by the
+                    // server, not by the role (#501).
                     list.set_mailbox(
-                        &crate::sidebar::display_name(&mailbox),
+                        &crate::sidebar::display_name(&mailbox, &folders.mailboxes()),
                         mailbox.counts.unread,
                     );
                 }

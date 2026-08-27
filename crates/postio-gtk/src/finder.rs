@@ -234,7 +234,7 @@ pub fn folders(mailboxes: &[Mailbox], query: &str) -> Vec<FolderHit> {
         .iter()
         .filter(|mailbox| mailbox.selectable)
         .filter_map(|mailbox| {
-            let name = crate::sidebar::display_name(mailbox);
+            let name = crate::sidebar::display_name(mailbox, mailboxes);
             let matched = score(query, &name)?;
             Some(FolderHit {
                 id: mailbox.id,
