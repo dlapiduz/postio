@@ -124,8 +124,8 @@ fn backend_for(
     tokens: Arc<dyn postio_imap::auth::TokenSource>,
     connector: Arc<RustlsConnector>,
 ) -> Arc<dyn MailBackend> {
-    if let postio_model::account::Backend::Jmap { session_url } = &account.backend {
-        match session_url.parse() {
+    match &account.backend {
+        postio_model::account::Backend::Jmap { session_url } => match session_url.parse() {
             Ok(url) => {
                 return Arc::new(postio_jmap::JmapBackend::with_token_source(
                     url, key, tokens,
@@ -138,7 +138,11 @@ fn backend_for(
                     "the stored JMAP session URL does not parse; falling back to IMAP"
                 );
             }
+        },
+        postio_model::account::Backend::Gmail => {
+            return Arc::new(postio_gmail::GmailBackend::with_token_source(key, tokens));
         }
+        postio_model::account::Backend::Imap => {}
     }
     Arc::new(ImapBackend::over(Arc::new(
         ConnectionPool::with_token_source(
@@ -387,6 +391,13 @@ mod tests {
         assert!(
             format!("{chosen:?}").contains("JmapBackend"),
             "a stored jmap choice gets the JMAP adapter: {chosen:?}"
+        );
+
+        account.backend = postio_model::account::Backend::Gmail;
+        let chosen = backend_for(&account, key.clone(), tokens.clone(), connector.clone());
+        assert!(
+            format!("{chosen:?}").contains("GmailBackend"),
+            "a stored gmail choice gets the Gmail REST adapter: {chosen:?}"
         );
 
         account.backend = postio_model::account::Backend::Jmap {

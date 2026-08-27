@@ -78,7 +78,8 @@ impl<'a> AccountRepository<'a> {
                 match &account.backend {
                     postio_model::account::Backend::Jmap { session_url } =>
                         Some(session_url.as_str()),
-                    postio_model::account::Backend::Imap => None,
+                    postio_model::account::Backend::Imap
+                    | postio_model::account::Backend::Gmail => None,
                 },
             ],
         )?;
@@ -155,7 +156,8 @@ impl<'a> AccountRepository<'a> {
                 match &account.backend {
                     postio_model::account::Backend::Jmap { session_url } =>
                         Some(session_url.as_str()),
-                    postio_model::account::Backend::Imap => None,
+                    postio_model::account::Backend::Imap
+                    | postio_model::account::Backend::Gmail => None,
                 },
             ],
         )?;
@@ -608,6 +610,7 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
             // falling back to IMAP keeps the account working rather than
             // dead — the incoming server is stored either way.
             ("jmap", Some(session_url)) => postio_model::account::Backend::Jmap { session_url },
+            ("gmail", _) => postio_model::account::Backend::Gmail,
             _ => postio_model::account::Backend::Imap,
         },
     })

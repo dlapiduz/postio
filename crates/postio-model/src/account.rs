@@ -114,6 +114,10 @@ pub enum Backend {
         /// at add time and persisted so startup needs no discovery.
         session_url: String,
     },
+    /// The Gmail REST adapter (#546). Everything it needs beyond the
+    /// account's OAuth credential is Google's fixed API endpoint, so it
+    /// carries no composition data.
+    Gmail,
 }
 
 impl Backend {
@@ -122,6 +126,7 @@ impl Backend {
         match self {
             Self::Imap => "imap",
             Self::Jmap { .. } => "jmap",
+            Self::Gmail => "gmail",
         }
     }
 }
