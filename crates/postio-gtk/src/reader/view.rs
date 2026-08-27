@@ -802,6 +802,11 @@ fn handle_decide_policy(
     let parent = view
         .root()
         .and_then(|root| root.downcast::<gtk::Window>().ok());
+    // POSTIO-CONSENT: launched only from a deliberate click on a link in the
+    // message the user is reading — this handler fires on a navigation the
+    // user started, never on render (the view has JS and network off, so a
+    // page cannot navigate itself). Each click is its own consent; nothing
+    // is prefetched and no setting turns this on.
     gtk::UriLauncher::new(&uri).launch(parent.as_ref(), gio::Cancellable::NONE, |result| {
         if let Err(error) = result {
             glib::g_warning!("postio", "could not open {}", error);

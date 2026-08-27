@@ -127,6 +127,28 @@ def main() -> int:
         should_fail=False,
     )
 
+    case(
+        "the GTK browser launcher fails without recorded consent",
+        "let launcher = gtk::UriLauncher::new(&uri);\n",
+        should_fail=True,
+        expect_text="UriLauncher",
+    )
+
+    case(
+        "the GTK file launcher fails without recorded consent",
+        "let launcher = gtk::FileLauncher::new(Some(&file));\n",
+        should_fail=True,
+        expect_text="FileLauncher",
+    )
+
+    case(
+        "a GTK launcher with recorded consent passes",
+        "// POSTIO-CONSENT: launched only from a deliberate click on a link\n"
+        "// in the message being read, never on render.\n"
+        "gtk::UriLauncher::new(&uri).launch(parent, cancellable, done);\n",
+        should_fail=False,
+    )
+
     # Header names are case-insensitive and so is a patch author.
     case(
         "a lower-case spelling does not slip past",

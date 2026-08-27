@@ -981,6 +981,11 @@ pub(crate) async fn save_all_parts(
 /// default handler for the file's type -- what the panel's `x` promises by
 /// calling itself "Open with…".
 fn launch(window: &Window, path: &std::path::Path, always_ask: bool) {
+    // POSTIO-CONSENT: runs only from the parts panel's own Open / Open with…
+    // commands — a per-part, deliberate activation on a file already saved
+    // locally. What the desktop's handler then does is the user's choice of
+    // application; Postio opens no connection here and nothing runs on
+    // render.
     let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(path)));
     launcher.set_always_ask(always_ask);
     launcher.launch(Some(window), gio::Cancellable::NONE, |result| {
