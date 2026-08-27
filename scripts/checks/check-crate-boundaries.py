@@ -70,6 +70,32 @@ from collections import deque
 # depending on the lower layer directly.
 
 RULES: dict[str, dict[str, object]] = {
+    "postio-ffi": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+        ],
+        # `rusqlite` is deliberately *not* banned. postio-ffi sits above
+        # postio-session, exactly where postio-app does, and the store is on
+        # the other side of that composition root by design.
+        "why": (
+            "postio-ffi is the boundary the macOS app talks to (ADR 0019). "
+            "It composes postio-session and speaks Command/Event, so it must "
+            "never see a toolkit: a GTK type here would mean the seam had "
+            "grown a second frontend's assumptions. It carries no "
+            "macOS-specific code either, which is what lets `cargo test -p "
+            "postio-ffi` run in the Linux gate and stop a Linux session "
+            "breaking the macOS seam unnoticed."
+        ),
+    },
     "postio-gmail": {
         "banned": [
             "gtk4",

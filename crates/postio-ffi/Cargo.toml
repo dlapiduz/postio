@@ -1,0 +1,24 @@
+[package]
+name = "postio-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# `staticlib` is what the macOS app links; `cdylib` is what `uniffi-bindgen`
+# reads metadata from when generating the Swift. `lib` stays so the crate is
+# an ordinary dependency for tests.
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+uniffi = { version = "0.29", features = ["cli"] }
+
+[lints]
+workspace = true
