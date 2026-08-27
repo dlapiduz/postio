@@ -345,3 +345,32 @@ fn the_scope_blind_listing_still_documents_every_command() {
         "the reference documents the vocabulary, not the current scope"
     );
 }
+
+/// Adding a second account is a *command*, not a button somewhere.
+///
+/// ADR 0012 Q1 decided the entry point that way, and `docs/ARCHITECTURE.md`
+/// §2 says why it has to be: a command that is not in the registry does not
+/// exist. It would be in neither the palette nor the `?` cheat sheet, which
+/// is exactly where a keyboard-first user looks for "add another account"
+/// before they go hunting in a settings panel.
+#[test]
+fn adding_an_account_is_reachable_wherever_settings_is() {
+    let spec = registry::get(CommandId::AddAccount);
+
+    assert_eq!(
+        spec.contexts,
+        registry::get(CommandId::Settings).contexts,
+        "add account is reached from the same places settings is (ADR 0012 Q1); \
+         a narrower set would hide it from a surface that offers settings"
+    );
+    assert!(
+        spec.contexts.contains(Context::Sidebar),
+        "ADR 0012 Q1 names the folder list specifically: it is where the \
+         account being added will eventually appear"
+    );
+    assert!(
+        !spec.destructive,
+        "adding an account destroys nothing, so it must not ask first"
+    );
+    assert_eq!(spec.requires, None, "any scope can gain an account");
+}

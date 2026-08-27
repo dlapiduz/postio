@@ -37,6 +37,7 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("command_palette", "ctrl+k"),
     ("cheat_sheet", "?"),
     ("settings", "ctrl+comma"),
+    ("add_account", "ctrl+shift+n"),
     ("edit_config", "ctrl+e"),
 ];
 
