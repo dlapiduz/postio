@@ -245,9 +245,14 @@ impl<S: Write> Write for Cancellable<S> {
 // ---------------------------------------------------------------------------
 
 /// [`DiscoveryTransport`] backed by `io-pim-discovery`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PimalayaTransport {
     resolver: url::Url,
+    /// Where every connection attempt is reported (#151), or nowhere.
+    /// Discovery probes servers for an account that does not exist yet, so
+    /// its events carry no account id; the wiring's sink records them as
+    /// pre-account traffic.
+    egress: Option<std::sync::Arc<dyn postio_model::egress::EgressSink>>,
 }
 
 /// Fallback resolver when the host has none we can read (a Flatpak sandbox
@@ -270,7 +275,20 @@ impl PimalayaTransport {
 
     /// Builds a transport against a specific DNS-over-TCP resolver.
     pub fn with_resolver(resolver: url::Url) -> Self {
-        Self { resolver }
+        Self {
+            resolver,
+            egress: None,
+        }
+    }
+
+    /// Report every connection attempt to `sink` — the egress log's seam
+    /// (#151), the same contract as the IMAP and SMTP connectors.
+    pub fn with_egress(
+        mut self,
+        sink: std::sync::Arc<dyn postio_model::egress::EgressSink>,
+    ) -> Self {
+        self.egress = Some(sink);
+        self
     }
 
     /// The autoconfig endpoints speak plain HTTP/1.1 over TLS.
@@ -339,6 +357,37 @@ pub(crate) fn connect_tcp(
     })
 }
 
+impl std::fmt::Debug for PimalayaTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PimalayaTransport")
+            .field("resolver", &self.resolver)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Report one discovery connection attempt, if a sink is listening.
+fn report_egress(
+    egress: &Option<std::sync::Arc<dyn postio_model::egress::EgressSink>>,
+    host: &str,
+    port: u16,
+    connected: bool,
+) {
+    if let Some(sink) = egress {
+        sink.record(postio_model::egress::EgressEvent {
+            at: chrono::Utc::now(),
+            subsystem: postio_model::egress::EgressSubsystem::Discovery,
+            account: None,
+            host: host.to_owned(),
+            port,
+            outcome: if connected {
+                postio_model::egress::EgressOutcome::Connected
+            } else {
+                postio_model::egress::EgressOutcome::Failed
+            },
+        });
+    }
+}
+
 impl Default for PimalayaTransport {
     fn default() -> Self {
         Self::new()
@@ -358,6 +407,7 @@ impl DiscoveryTransport for PimalayaTransport {
         let resolver = self.resolver.clone();
         let endpoint = endpoint.to_owned_endpoint();
         let cancel = cancel.clone();
+        let egress = self.egress.clone();
 
         // `io-pim-discovery`'s std clients block. Parking them on the
         // blocking pool is what keeps the caller's runtime — and therefore
@@ -369,17 +419,20 @@ impl DiscoveryTransport for PimalayaTransport {
         blocking(move || {
             let http = {
                 let cancel = cancel.clone();
+                let egress = egress.clone();
                 move |url: &url::Url| -> anyhow::Result<Cancellable<Stream>> {
                     let host = url
                         .host_str()
                         .ok_or_else(|| anyhow::anyhow!("HTTP URL `{url}` has no host"))?;
                     let port = url.port_or_known_default().unwrap_or(80);
-                    let stream = Stream::connect_tcp(host, port, connect_options())?;
-                    Ok(Cancellable::new(stream, cancel.clone()))
+                    let stream = Stream::connect_tcp(host, port, connect_options());
+                    report_egress(&egress, host, port, stream.is_ok());
+                    Ok(Cancellable::new(stream?, cancel.clone()))
                 }
             };
             let https = {
                 let cancel = cancel.clone();
+                let egress = egress.clone();
                 move |url: &url::Url| -> anyhow::Result<Cancellable<Stream>> {
                     let host = url
                         .host_str()
@@ -390,13 +443,23 @@ impl DiscoveryTransport for PimalayaTransport {
                         retry: pimalaya_stream::retry::Retry::Until(DISCOVERY_IO_TIMEOUT),
                         ..Default::default()
                     };
-                    let stream = Stream::connect_tls(host, port, options)?;
-                    Ok(Cancellable::new(stream, cancel.clone()))
+                    let stream = Stream::connect_tls(host, port, options);
+                    report_egress(&egress, host, port, stream.is_ok());
+                    Ok(Cancellable::new(stream?, cancel.clone()))
                 }
             };
             let tcp = {
                 let cancel = cancel.clone();
-                move |url: &url::Url| connect_tcp(url, &cancel)
+                let egress = egress.clone();
+                move |url: &url::Url| {
+                    let stream = connect_tcp(url, &cancel);
+                    if let (Some(host), Some(port)) =
+                        (url.host_str(), url.port_or_known_default())
+                    {
+                        report_egress(&egress, host, port, stream.is_ok());
+                    }
+                    stream
+                }
             };
 
             // Registered after `new`, which installs the plain defaults, so
@@ -430,11 +493,20 @@ impl DiscoveryTransport for PimalayaTransport {
         let resolver = self.resolver.clone();
         let domain = domain.to_owned();
         let cancel = cancel.clone();
+        let egress = self.egress.clone();
 
         blocking(move || {
             let tcp = {
                 let cancel = cancel.clone();
-                move |url: &url::Url| connect_tcp(url, &cancel)
+                move |url: &url::Url| {
+                    let stream = connect_tcp(url, &cancel);
+                    if let (Some(host), Some(port)) =
+                        (url.host_str(), url.port_or_known_default())
+                    {
+                        report_egress(&egress, host, port, stream.is_ok());
+                    }
+                    stream
+                }
             };
             let mut client = DiscoverySrvClientStd::new(resolver).with_factory("tcp", tcp);
             client

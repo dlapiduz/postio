@@ -12,6 +12,7 @@ repository.workspace = true
 async-trait = "0.1.92"
 io-sasl = { version = "=0.1.0", default-features = false }
 io-smtp = { version = "=0.3.0", default-features = false, features = ["client"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 rustls-platform-verifier = "0.7"
