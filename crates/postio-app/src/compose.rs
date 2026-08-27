@@ -75,6 +75,7 @@ pub fn install(
 
     let last_id = install_autosave(&composer, database.clone(), account);
     install_send(&composer, database.clone(), Rc::clone(&last_id));
+    install_send_later(&composer, database.clone(), Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
     install_reply_source(&composer, database, blobs.clone(), showing);
@@ -378,6 +379,37 @@ fn install_send(composer: &Composer, database: Database, last_id: Rc<Cell<Option
 fn queue_send(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write()?;
     DraftRepository::new(&connection).queue_send(draft, Utc::now())?;
+    Ok(())
+}
+
+/// [`install_send`]'s counterpart for [`Composer::connect_send_later`] — the
+/// picker behind [`CommandId::ScheduleSend`](postio_core::CommandId::ScheduleSend).
+///
+/// Everything [`install_send`]'s own doc comment says about `last_id` and
+/// about failing without a status line applies here unchanged: the composer
+/// closes the instant a time is chosen, the same way it does for an
+/// immediate send, so there is nothing on screen left to read a status line
+/// from by the time a queue error could be reported.
+fn install_send_later(composer: &Composer, database: Database, last_id: Rc<Cell<Option<DraftId>>>) {
+    composer.connect_send_later(move |draft, send_at| {
+        let mut draft = draft.clone();
+        last_id.set(None);
+        if let Err(error) = queue_send_at(&database, &mut draft, send_at) {
+            tracing::error!(%error, "could not schedule the draft for sending");
+        }
+    });
+}
+
+/// Schedule send: the draft goes to `Queued` and its `Operation::Send` row is
+/// written with `send_at` as the time the drainer must not touch it before —
+/// see `DraftRepository::queue_send_at`.
+fn queue_send_at(
+    database: &Database,
+    draft: &mut Draft,
+    send_at: chrono::DateTime<Utc>,
+) -> postio_storage::Result<()> {
+    let (connection, _permit) = database.interactive_write()?;
+    DraftRepository::new(&connection).queue_send_at(draft, Utc::now(), send_at)?;
     Ok(())
 }
 
