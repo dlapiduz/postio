@@ -215,7 +215,10 @@ pub(crate) fn resolve(
         draft: draft_id,
         account: account.id,
         account_address: account.address.address.clone(),
-        outgoing: ConnectionSettings::from_server_config(&account.outgoing),
+        // `.with_auth`, or the stored mechanism dies here the way it died
+        // in the IMAP engine (#533): SMTP has spoken XOAUTH2 since #193 and
+        // was never told when to.
+        outgoing: ConnectionSettings::from_server_config(&account.outgoing).with_auth(account.auth),
         from: identity.address.address.clone(),
         recipients,
         bcc: draft.bcc.clone(),
