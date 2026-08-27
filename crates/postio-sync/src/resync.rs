@@ -176,12 +176,38 @@ pub async fn resync_mailbox(
                 reason = ?reason,
                 "falling back to a full resync"
             );
-            if let Some(generation) = previous.generation {
-                wipe_mailbox(connection, mailbox.id, generation)?;
-            }
+            // Only a renumbering invalidates cached rows — the same line
+            // `rebuild` below draws (#564). A modseq-less backend plans
+            // this path on *every* pass, and wiping there would refetch
+            // the world each tick and lose local rows whose flags have
+            // not drained; the generation held, so the rows are refreshed
+            // in place instead.
+            let (wiped, coverage) = match reason {
+                FullResyncReason::GenerationChanged | FullResyncReason::NeverSynced => {
+                    if let Some(generation) = previous.generation {
+                        wipe_mailbox(connection, mailbox.id, generation)?;
+                    }
+                    (true, initial::Coverage::Missing)
+                }
+                FullResyncReason::NoModSeq | FullResyncReason::ModSeqWentBackwards => {
+                    (false, initial::Coverage::Everything)
+                }
+            };
             sync_state.observe(mailbox.id, &reported, Utc::now())?;
-            let report =
-                initial::sync_mailbox(connection, backend, mailbox, cancel, on_progress).await?;
+            let report = if wiped {
+                initial::sync_mailbox(connection, backend, mailbox, cancel, on_progress).await?
+            } else {
+                initial::enumerate(
+                    connection,
+                    backend,
+                    mailbox,
+                    initial::DEFAULT_BATCH_SIZE,
+                    coverage,
+                    cancel,
+                    on_progress,
+                )
+                .await?
+            };
             Ok(Outcome::Full { reason, report })
         }
         ResyncPlan::Incremental { since } => {
