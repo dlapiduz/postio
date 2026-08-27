@@ -610,6 +610,14 @@ pub fn purge_fetch_debris(blobs: &BlobStore) -> Result<usize, Box<dyn std::error
 /// batches until there is nothing left.
 const INDEX_BODY_BATCH: u32 = 200;
 
+/// How long [`index_local_bodies`] pauses between batches.
+///
+/// The pass is a catch-up, not a foreground job: nothing waits on it, and the
+/// search index it fills is useful incomplete. A large archive takes a few
+/// hundred batches either way; the pause is what keeps the disk answering
+/// searches while it happens.
+const INDEX_BODY_BREATHER: Duration = Duration::from_millis(25);
+
 /// Index every message whose body is already on this machine and whose
 /// indexed text is empty. Answers how many it indexed.
 ///
@@ -648,6 +656,7 @@ pub fn index_local_bodies(
     blobs: &BlobStore,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let mut indexed = 0usize;
+    let mut last_batch: Vec<i64> = Vec::new();
     loop {
         let connection = database.connection()?;
         let candidates =
@@ -655,7 +664,28 @@ pub fn index_local_bodies(
         if candidates.is_empty() {
             break;
         }
+        // The candidate query's contract is that indexing a message removes
+        // it from the answer. If a whole batch comes back identical, that
+        // contract is broken and going around again can only spin — which is
+        // not hypothetical: before #500, a store with one batch of
+        // attachment-only messages ran this loop at 100% of a core for as
+        // long as the app was open. Stopping leaves the index exactly as
+        // caught-up as it was ever going to get this start.
+        if candidates == last_batch {
+            tracing::warn!(
+                batch = candidates.len(),
+                "a body-index batch made no progress; stopping the pass"
+            );
+            break;
+        }
+
+        // Read first, write after, in phases: the reads are a blob per
+        // message and must not happen inside the write transaction below,
+        // where they would hold SQLite's one write lock through disk I/O
+        // that needs nothing of it.
         let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut bodies: Vec<(i64, postio_model::MessageBody)> =
+            Vec::with_capacity(candidates.len());
         for id in &candidates {
             let message = postio_model::MessageId::new(*id);
             let body = match messages.body_blobs(message) {
@@ -665,24 +695,49 @@ pub fn index_local_bodies(
                 },
                 // The row says its body is local and it names no blobs. That
                 // is a message that genuinely had none -- a header-only
-                // notification, say -- and writing the empty string is how it
-                // stops being asked about on every start.
+                // notification, say -- and the empty index row it gets below
+                // is how it stops being asked about on every start.
                 Ok(None) => postio_model::MessageBody::default(),
                 Err(error) => {
                     tracing::debug!(message = id, %error, "cannot read a body to index");
                     continue;
                 }
             };
-            match postio_index::index::index_body_of(&connection, *id, &body) {
-                Ok(()) => indexed += 1,
-                Err(error) => tracing::debug!(message = id, %error, "cannot index a body"),
-            }
+            bodies.push((*id, body));
         }
+
+        // One gated transaction per batch, not an autocommit per message.
+        // Each of those commits was its own WAL append taken without the
+        // write gate, so a long catch-up ran a stream of ungated writes
+        // against whatever the user was doing. The permit comes first, and
+        // from the background lane: a keystroke's flag write goes ahead of
+        // this whole batch.
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, body) in &bodies {
+                match postio_index::index::index_body_of(&connection, *id, body) {
+                    Ok(()) => indexed += 1,
+                    Err(error) => tracing::debug!(message = id, %error, "cannot index a body"),
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+
         let taken = candidates.len();
+        last_batch = candidates;
         drop(connection);
         if taken < INDEX_BODY_BATCH as usize {
             break;
         }
+        // Let go of the machine between batches. The pass runs at start on a
+        // worker while the window is already live; without a pause it reads
+        // blobs and writes the index as fast as the disk allows, and the
+        // search this index exists to serve pays for that in evicted cache
+        // and queued reads (#500).
+        std::thread::sleep(INDEX_BODY_BREATHER);
     }
     if indexed > 0 {
         // A count and nothing else: what a log may carry about mail.
