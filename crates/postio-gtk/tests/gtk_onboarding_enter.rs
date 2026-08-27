@@ -49,12 +49,12 @@ fn enter_in_a_manual_field_submits() {
             imap: Server {
                 host: "imap.example.com".to_owned(),
                 port: 993,
-                tls: true,
+                security: Default::default(),
             },
             smtp: Server {
                 host: "smtp.example.com".to_owned(),
                 port: 465,
-                tls: true,
+                security: Default::default(),
             },
             login: "lena@example.com".to_owned(),
             source: "a common-name guess".to_owned(),

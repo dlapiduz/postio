@@ -198,6 +198,7 @@ fn onboard(transport: Arc<dyn DiscoveryTransport>) -> (Window, Onboarding, Bridg
         notifier,
         None,
         transport,
+        std::sync::Arc::new(postio_imap::oauth::browser::SystemBrowserOpener),
     );
 
     let screen = window

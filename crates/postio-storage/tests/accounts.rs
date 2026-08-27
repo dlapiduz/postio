@@ -597,7 +597,6 @@ fn two_accounts_never_see_each_others_signatures() {
     assert_eq!(loaded.signatures[0].text, "Lena");
 }
 
-
 #[test]
 fn oauth_composition_data_round_trips_and_stays_optional() {
     // #534: what the engine needs at every launch to rebuild an OAuth

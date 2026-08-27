@@ -111,6 +111,7 @@ pub fn install(
     notifier: crate::notifications::Notifier,
     repairing: Option<Account>,
     transport: Arc<dyn DiscoveryTransport>,
+    opener: Arc<dyn postio_imap::oauth::BrowserOpener>,
 ) {
     let screen = Onboarding::new();
     let previous = window.content();
@@ -119,7 +120,9 @@ pub fn install(
         Some(account) => {
             screen.set_address(&account.address.address);
             screen.set_status(Status::Reauthenticate(configured(account)));
-            screen.focus_password();
+            if account.oauth.is_none() {
+                screen.focus_password();
+            }
         }
         None => screen.focus_address(),
     }
@@ -128,17 +131,47 @@ pub fn install(
     // the token in it, `Connect` clears it.
     let cancellation = ProbeCancellation::default();
 
+    // The provider's OAuth offer, parked by the probe for the submit to
+    // sign in with — and pre-filled on a repair, where the account row
+    // already recorded the resolved endpoints (#534).
+    let offer: OAuthOfferSlot = Rc::new(RefCell::new(repairing.as_ref().and_then(|account| {
+        account
+            .oauth
+            .as_ref()
+            .map(|oauth| postio_imap::discovery::OAuthOffer {
+                issuer: None,
+                authorize: Some(oauth.authorize_url.clone()),
+                token: Some(oauth.token_url.clone()),
+                scopes: oauth.scopes.split_whitespace().map(str::to_owned).collect(),
+            })
+    })));
+
+    // The browser wait's own cancel token, wired to the screen's Cancel
+    // button and Esc. Separate from the probe's: cancelling a sign-in must
+    // not kill a probe and vice versa.
+    let sign_in_cancel: Rc<RefCell<Option<CancelToken>>> = Rc::new(RefCell::new(None));
+    screen.connect_cancel_sign_in({
+        let sign_in_cancel = sign_in_cancel.clone();
+        move || {
+            if let Some(cancel) = sign_in_cancel.borrow().as_ref() {
+                cancel.cancel();
+            }
+        }
+    });
+
     screen.connect_probe({
         let screen = screen.clone();
         let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
+        let offer = offer.clone();
         move |address| {
-            probe(
+            probe_with_offer(
                 &screen,
                 &runtime,
                 address,
                 &cancellation,
                 Arc::clone(&transport),
+                offer.clone(),
             )
         }
     });
@@ -162,13 +195,38 @@ pub fn install(
                 crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
             }
         };
+        let offer = offer.clone();
+        let sign_in_cancel = sign_in_cancel.clone();
+        let opener = opener.clone();
         move |submission| {
             // Pressing Connect settles the question the probe was asking, and
             // the screen is on its way out either way. Leaving a discovery
             // request open past that point is a socket held for an answer
             // nobody will read.
             cancellation.stop();
-            submit(&screen, &wiring, submission.clone(), on_saved.clone())
+            if submission.oauth_client.is_some() {
+                let Some(offer) = offer.borrow().clone() else {
+                    screen.set_status(Status::Failed(
+                        "This provider's OAuth settings were not found — probe \
+                         the address again."
+                            .to_owned(),
+                    ));
+                    return;
+                };
+                let cancel = CancelToken::new();
+                *sign_in_cancel.borrow_mut() = Some(cancel.clone());
+                submit_oauth(
+                    &screen,
+                    &wiring,
+                    submission.clone(),
+                    offer,
+                    cancel,
+                    opener.clone(),
+                    on_saved.clone(),
+                );
+            } else {
+                submit(&screen, &wiring, submission.clone(), on_saved.clone())
+            }
         }
     });
 }
@@ -263,6 +321,32 @@ pub(crate) fn probe(
     cancellation: &ProbeCancellation,
     transport: Arc<dyn DiscoveryTransport>,
 ) {
+    probe_with_offer(
+        screen,
+        runtime,
+        address,
+        cancellation,
+        transport,
+        OAuthOfferSlot::default(),
+    )
+}
+
+/// The OAuth offer the last successful probe carried, shared between the
+/// probe that writes it and the submit that reads it (#534). The screen's
+/// form fields cannot carry it — endpoints and scopes are protocol data
+/// the widget deliberately does not know.
+pub(crate) type OAuthOfferSlot = Rc<RefCell<Option<postio_imap::discovery::OAuthOffer>>>;
+
+/// [`probe`], also parking the discovered OAuth offer in `offer` for the
+/// submit handler to sign in with.
+pub(crate) fn probe_with_offer(
+    screen: &Onboarding,
+    runtime: &tokio::runtime::Handle,
+    address: &str,
+    cancellation: &ProbeCancellation,
+    transport: Arc<dyn DiscoveryTransport>,
+    offer: OAuthOfferSlot,
+) {
     screen.set_status(Status::Probing);
 
     let (sender, receiver) = async_channel::bounded(1);
@@ -283,9 +367,15 @@ pub(crate) fn probe(
                 return;
             };
             match answer {
-                Ok(report) => screen.set_status(status_for(&report)),
+                Ok(report) => {
+                    *offer.borrow_mut() = report
+                        .settings()
+                        .and_then(|settings| settings.oauth.clone());
+                    screen.set_status(status_for(&report));
+                }
                 Err(error) => {
                     tracing::info!(%error, "autoconfig found nothing");
+                    *offer.borrow_mut() = None;
                     screen.set_status(Status::Manual { suggestion: None });
                 }
             }
@@ -371,6 +461,279 @@ pub(crate) fn submit(
             on_saved();
         }
     });
+}
+
+/// The browser sign-in, end to end (#534, ADR 0006 Q3): resolve the
+/// endpoints, run [`postio_imap::oauth::authorize`] through the system
+/// browser, prove the token against the IMAP server, and only then
+/// persist — the same nothing-stranded order the password path keeps.
+///
+/// Cancellable at every stage: `cancel` is the flow's own token, wired to
+/// the screen's Cancel button and `Esc`. A cancelled attempt returns the
+/// screen to the settings it was showing, because the user changed their
+/// mind — that is not a failure and must not read as one.
+pub(crate) fn submit_oauth(
+    screen: &Onboarding,
+    wiring: &Wiring,
+    submission: Submission,
+    offer: postio_imap::discovery::OAuthOffer,
+    cancel: CancelToken,
+    opener: Arc<dyn postio_imap::oauth::BrowserOpener>,
+    on_saved: impl Fn() + 'static,
+) {
+    let Some(client) = submission.oauth_client.clone() else {
+        return;
+    };
+    screen.set_status(Status::WaitingForBrowser);
+
+    let settings = connection_settings(&submission);
+    let (sender, receiver) = async_channel::bounded(1);
+    let flow_cancel = cancel.clone();
+    let scopes = offer.scopes.clone();
+    wiring.runtime.spawn(async move {
+        let answer = run_sign_in(&settings, &client, &offer, opener.as_ref(), &flow_cancel).await;
+        let _ = sender.send(answer).await;
+    });
+
+    glib::spawn_future_local({
+        let screen = screen.clone();
+        let wiring = wiring.clone();
+        async move {
+            let answer = match receiver.recv().await {
+                Ok(answer) => answer,
+                Err(_) => Err(SignInError::Failed(
+                    "Postio's runtime stopped before the sign-in finished.".to_owned(),
+                )),
+            };
+            let (endpoints, tokens) = match answer {
+                Ok(done) => done,
+                Err(SignInError::Cancelled) => {
+                    // The user's own Esc. Back to where they were, quietly.
+                    screen.set_status(Status::Found(submission.settings.clone()));
+                    return;
+                }
+                Err(SignInError::Failed(reason)) => {
+                    screen.set_status(Status::Failed(reason));
+                    return;
+                }
+            };
+
+            let (sender, receiver) = async_channel::bounded(1);
+            let database = wiring.database.clone();
+            let secrets = wiring.secrets.clone();
+            let written = submission.clone();
+            let scopes = scopes.clone();
+            wiring.runtime.spawn(async move {
+                let _ = sender
+                    .send(
+                        persist_oauth(&database, secrets, &written, &endpoints, &scopes, tokens)
+                            .await,
+                    )
+                    .await;
+            });
+            let stored = receiver.recv().await.unwrap_or_else(|_| {
+                Err("Postio's runtime stopped before the account was saved.".to_owned())
+            });
+            if let Err(reason) = stored {
+                screen.set_status(Status::Failed(reason));
+                return;
+            }
+
+            screen.set_status(Status::Saved);
+            on_saved();
+        }
+    });
+}
+
+/// How a sign-in attempt ended without tokens.
+enum SignInError {
+    /// The user cancelled — the screen goes back, not to a failure.
+    Cancelled,
+    /// Everything else, in words the user can act on.
+    Failed(String),
+}
+
+/// The runtime half of the sign-in: endpoints, the browser flow, and the
+/// proof against the IMAP server, in that order.
+async fn run_sign_in(
+    settings: &ConnectionSettings,
+    client: &postio_gtk::onboarding::OAuthClientSubmission,
+    offer: &postio_imap::discovery::OAuthOffer,
+    opener: &dyn postio_imap::oauth::BrowserOpener,
+    cancel: &CancelToken,
+) -> Result<
+    (
+        postio_imap::oauth::Endpoints,
+        postio_imap::oauth::TokenResponse,
+    ),
+    SignInError,
+> {
+    use postio_imap::oauth;
+
+    let cancelled = |error: &oauth::OAuthError| matches!(error, oauth::OAuthError::Cancelled);
+
+    // Endpoints: the row's own, or resolved from its issuer (RFC 8414 —
+    // ADR 0006 Q4 as amended by #152). Both are validated at preset load,
+    // so a row reaching here without either is a bug worth the sentence.
+    let endpoints = match (&offer.authorize, &offer.token) {
+        (Some(authorize), Some(token)) => oauth::Endpoints {
+            authorize: authorize.parse().map_err(|error| {
+                SignInError::Failed(format!(
+                    "The provider's sign-in address is invalid: {error}"
+                ))
+            })?,
+            token: token.parse().map_err(|error| {
+                SignInError::Failed(format!("The provider's token address is invalid: {error}"))
+            })?,
+        },
+        _ => {
+            let issuer = offer.issuer.as_deref().ok_or_else(|| {
+                SignInError::Failed(
+                    "This provider's settings name no OAuth endpoints — check the \
+                     providers.toml row."
+                        .to_owned(),
+                )
+            })?;
+            let issuer = issuer.parse().map_err(|error| {
+                SignInError::Failed(format!("The provider's issuer is invalid: {error}"))
+            })?;
+            oauth::exchange::resolve_endpoints(&issuer, cancel)
+                .await
+                .map_err(|error| {
+                    if cancelled(&error) {
+                        SignInError::Cancelled
+                    } else {
+                        SignInError::Failed(format!(
+                            "Could not discover the provider's sign-in endpoints: {error}"
+                        ))
+                    }
+                })?
+        }
+    };
+
+    let tokens = oauth::authorize(
+        oauth::AuthorizeRequest {
+            client_id: client.client_id.clone(),
+            client_secret: client.client_secret.clone(),
+            authorize_endpoint: endpoints.authorize.clone(),
+            token_endpoint: endpoints.token.clone(),
+            scopes: offer.scopes.clone(),
+        },
+        opener,
+        cancel,
+    )
+    .await
+    .map_err(|error| {
+        if cancelled(&error) {
+            SignInError::Cancelled
+        } else {
+            SignInError::Failed(format!("The sign-in did not complete: {error}"))
+        }
+    })?;
+
+    // The proof, before anything persists: the token opens a real session
+    // against the account's own IMAP server, the same test the password
+    // path runs. A consent screen that granted the wrong scopes fails
+    // here, in front of the user, instead of at the first background sync.
+    let mut verified = settings.clone();
+    verified.auth = postio_model::account::AuthMethod::XOAuth2;
+    let connector = RustlsConnector::new().map_err(|error| {
+        SignInError::Failed(format!(
+            "Postio could not start a TLS connection on this machine: {error}"
+        ))
+    })?;
+    ImapSession::open(&verified, &tokens.access_token, &connector)
+        .await
+        .map(|_| ())
+        .map_err(|error| SignInError::Failed(explain(&error)))?;
+
+    Ok((endpoints, tokens))
+}
+
+/// The OAuth writes, in the same nothing-stranded order [`persist`] keeps:
+/// secrets first, then the row, rolling the secrets back if the row write
+/// fails.
+async fn persist_oauth(
+    database: &Database,
+    secrets: Arc<dyn SecretStore>,
+    submission: &Submission,
+    endpoints: &postio_imap::oauth::Endpoints,
+    scopes: &[String],
+    tokens: postio_imap::oauth::TokenResponse,
+) -> Result<(), String> {
+    let Some(client) = submission.oauth_client.clone() else {
+        return Err("The sign-in lost its client on the way to the store.".to_owned());
+    };
+    let key = AccountKey::new(submission.address.clone());
+
+    let source = postio_imap::oauth::OwnClientTokenSource::new(
+        secrets.clone(),
+        endpoints.token.clone(),
+        client.client_id.clone(),
+        client.client_secret.clone(),
+    );
+    source.seed(&key, tokens).await.map_err(|error| {
+        format!(
+            "The sign-in worked but its token could not be stored in the \
+             keyring: {error}. Is the keyring unlocked?"
+        )
+    })?;
+    if let Some(secret) = &client.client_secret {
+        source
+            .store_client_secret(&key, &Password::new(secret.clone()))
+            .await
+            .map_err(|error| {
+                format!("The OAuth client secret could not be stored in the keyring: {error}")
+            })?;
+    }
+
+    if let Err(reason) = save_oauth(database, submission, &client, endpoints, scopes) {
+        // Roll the secrets back the same way `persist` does: nothing reads
+        // a credential no account row names, but leaving one is untidy.
+        let _ = secrets
+            .delete(&AccountKey::new(format!("{}#oauth-refresh", key.account())))
+            .await;
+        return Err(reason);
+    }
+    Ok(())
+}
+
+/// The row write for an OAuth sign-in: auth method, client, endpoints.
+fn save_oauth(
+    database: &Database,
+    submission: &Submission,
+    client: &postio_gtk::onboarding::OAuthClientSubmission,
+    endpoints: &postio_imap::oauth::Endpoints,
+    scopes: &[String],
+) -> Result<(), String> {
+    save(database, submission)?;
+    let connection = database
+        .connection()
+        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
+    let repository = AccountRepository::new(&connection);
+    let Some(mut account) = repository
+        .list()
+        .map_err(|error| format!("Postio could not read its local store: {error}"))?
+        .into_iter()
+        .find(|account| {
+            account
+                .address
+                .address
+                .eq_ignore_ascii_case(&submission.address)
+        })
+    else {
+        return Err("The account row vanished while it was being written.".to_owned());
+    };
+    account.auth = AuthMethod::XOAuth2;
+    account.oauth = Some(postio_model::account::OAuthConfig {
+        client_id: client.client_id.clone(),
+        token_url: endpoints.token.to_string(),
+        authorize_url: endpoints.authorize.to_string(),
+        scopes: scopes.join(" "),
+    });
+    repository
+        .update(&mut account)
+        .map_err(|error| format!("Postio could not record the sign-in: {error}"))
 }
 
 /// Both writes, in the order that cannot strand an account.
@@ -475,13 +838,20 @@ fn save(database: &Database, submission: &Submission) -> Result<(), String> {
 fn configure(account: &mut Account, submission: &Submission) {
     account.incoming.host = submission.settings.imap.host.clone();
     account.incoming.port = submission.settings.imap.port;
-    account.incoming.security = security(submission.settings.imap.tls);
+    account.incoming.security = submission.settings.imap.security;
     account.incoming.username = submission.settings.login.clone();
     account.outgoing.host = submission.settings.smtp.host.clone();
     account.outgoing.port = submission.settings.smtp.port;
-    account.outgoing.security = security(submission.settings.smtp.tls);
+    account.outgoing.security = submission.settings.smtp.security;
     account.outgoing.username = submission.settings.login.clone();
-    account.auth = AuthMethod::Password;
+    // An OAuth submission's auth and client are written by `persist_oauth`,
+    // which is the only caller holding the resolved endpoints; a password
+    // submission resets both, so switching a repaired account from OAuth
+    // back to a password leaves no stale client behind.
+    if submission.oauth_client.is_none() {
+        account.auth = AuthMethod::Password;
+        account.oauth = None;
+    }
     // A repair over an account somebody had disabled is still a repair: the
     // user just proved they want to sign in to it.
     account.enabled = true;
@@ -498,7 +868,7 @@ pub(crate) fn configured(account: &Account) -> Settings {
     let server = |config: &postio_model::account::ServerConfig| Server {
         host: config.host.clone(),
         port: config.port,
-        tls: config.security == TransportSecurity::Tls,
+        security: config.security,
     };
     Settings {
         imap: server(&account.incoming),
@@ -507,6 +877,15 @@ pub(crate) fn configured(account: &Account) -> Settings {
         requires_app_password: false,
         note: None,
         help_url: None,
+        // A repair signs in the way the account did: an OAuth account's
+        // repair is a fresh browser sign-in, not a password prompt for a
+        // password that never existed (#534).
+        oauth_sign_in: account.oauth.is_some()
+            || matches!(
+                account.auth,
+                postio_model::account::AuthMethod::OAuth2
+                    | postio_model::account::AuthMethod::XOAuth2
+            ),
         source: "saved with this account".to_owned(),
     }
 }
@@ -516,7 +895,11 @@ fn shown(settings: &AccountSettings) -> Settings {
     let server = |server: &postio_imap::discovery::ServerSettings| Server {
         host: server.host.clone(),
         port: server.port,
-        tls: server.encryption == Encryption::Tls,
+        security: match server.encryption {
+            Encryption::Tls => TransportSecurity::Tls,
+            Encryption::StartTls => TransportSecurity::StartTls,
+            Encryption::None => TransportSecurity::None,
+        },
     };
     Settings {
         imap: server(&settings.imap),
@@ -525,6 +908,9 @@ fn shown(settings: &AccountSettings) -> Settings {
         requires_app_password: settings.requires_app_password,
         note: settings.note.clone(),
         help_url: settings.password_help_url.clone(),
+        // The provider's preferred door (#534): a preset row that leads
+        // with oauth2 opens the browser sign-in.
+        oauth_sign_in: settings.oauth.is_some(),
         source: settings.source.label().to_owned(),
     }
 }
@@ -534,17 +920,9 @@ fn connection_settings(submission: &Submission) -> ConnectionSettings {
     ConnectionSettings::new(
         submission.settings.imap.host.clone(),
         submission.settings.imap.port,
-        security(submission.settings.imap.tls),
+        submission.settings.imap.security,
         submission.settings.login.clone(),
     )
-}
-
-fn security(tls: bool) -> TransportSecurity {
-    if tls {
-        TransportSecurity::Tls
-    } else {
-        TransportSecurity::StartTls
-    }
 }
 
 /// Turn a backend error into something the user can act on.
@@ -681,6 +1059,7 @@ mod tests {
             requires_app_password: false,
             note: None,
             password_help_url: None,
+            oauth: None,
         }
     }
 
@@ -700,20 +1079,21 @@ mod tests {
         accounts.into_iter().next()
     }
 
-    fn submission(host: &str, tls: bool) -> Submission {
+    fn submission(host: &str, security: TransportSecurity) -> Submission {
         Submission {
             address: "lena@example.com".to_owned(),
             password: "hunter2".to_owned(),
+            oauth_client: None,
             settings: Settings {
                 imap: Server {
                     host: host.to_owned(),
                     port: 993,
-                    tls,
+                    security,
                 },
                 smtp: Server {
                     host: "smtp.example.com".to_owned(),
                     port: 465,
-                    tls: true,
+                    security: TransportSecurity::Tls,
                 },
                 login: "lena@example.com".to_owned(),
                 ..Settings::default()
@@ -725,7 +1105,7 @@ mod tests {
     fn the_connection_test_uses_the_login_name_not_the_address() {
         // An iCloud custom domain logs in as the Apple ID, which is the case
         // `examples/provision.rs` needs POSTIO_USERNAME for.
-        let mut wanted = submission("imap.mail.me.com", true);
+        let mut wanted = submission("imap.mail.me.com", TransportSecurity::Tls);
         wanted.settings.login = "lena@example.net".to_owned();
 
         let settings = connection_settings(&wanted);
@@ -737,7 +1117,8 @@ mod tests {
 
     #[test]
     fn a_server_without_implicit_tls_is_tested_over_starttls() {
-        let settings = connection_settings(&submission("mail.example.com", false));
+        let settings =
+            connection_settings(&submission("mail.example.com", TransportSecurity::StartTls));
         assert_eq!(settings.security, TransportSecurity::StartTls);
     }
 
@@ -802,7 +1183,7 @@ mod tests {
         let outcome = persist(
             &database,
             &MemorySecretStore::locked(),
-            &submission("imap.example.com", true),
+            &submission("imap.example.com", TransportSecurity::Tls),
         )
         .await;
 
@@ -818,9 +1199,13 @@ mod tests {
         let database = postio_storage::test_support::memory();
         let secrets = MemorySecretStore::new();
 
-        persist(&database, &secrets, &submission("imap.example.com", true))
-            .await
-            .expect("both writes should land");
+        persist(
+            &database,
+            &secrets,
+            &submission("imap.example.com", TransportSecurity::Tls),
+        )
+        .await
+        .expect("both writes should land");
 
         let account = stored(&database).expect("an account row");
         assert_eq!(account.address.address, "lena@example.com");
@@ -848,7 +1233,12 @@ mod tests {
         drop(connection);
         let secrets = MemorySecretStore::new();
 
-        let outcome = persist(&database, &secrets, &submission("imap.example.com", true)).await;
+        let outcome = persist(
+            &database,
+            &secrets,
+            &submission("imap.example.com", TransportSecurity::Tls),
+        )
+        .await;
 
         assert!(outcome.is_err(), "there is no table to write the row into");
         assert!(
@@ -865,14 +1255,22 @@ mod tests {
         // `first_account` picking between two.
         let database = postio_storage::test_support::memory();
         let secrets = MemorySecretStore::new();
-        persist(&database, &secrets, &submission("old.example.com", true))
-            .await
-            .expect("the first run should land");
+        persist(
+            &database,
+            &secrets,
+            &submission("old.example.com", TransportSecurity::Tls),
+        )
+        .await
+        .expect("the first run should land");
         let first = stored(&database).expect("an account row");
 
-        persist(&database, &secrets, &submission("new.example.com", true))
-            .await
-            .expect("the repair should land");
+        persist(
+            &database,
+            &secrets,
+            &submission("new.example.com", TransportSecurity::Tls),
+        )
+        .await
+        .expect("the repair should land");
 
         // `stored` fails the test outright on a second row.
         let repaired = stored(&database).expect("an account row");
@@ -890,9 +1288,13 @@ mod tests {
         // identity every saved draft refers to.
         let database = postio_storage::test_support::memory();
         let secrets = MemorySecretStore::new();
-        persist(&database, &secrets, &submission("imap.example.com", true))
-            .await
-            .expect("the first run should land");
+        persist(
+            &database,
+            &secrets,
+            &submission("imap.example.com", TransportSecurity::Tls),
+        )
+        .await
+        .expect("the first run should land");
         let before = stored(&database).expect("an account row");
         let identity = before
             .identities
@@ -900,9 +1302,13 @@ mod tests {
             .expect("a first run gives the account its default identity")
             .id;
 
-        persist(&database, &secrets, &submission("imap.example.com", true))
-            .await
-            .expect("the repair should land");
+        persist(
+            &database,
+            &secrets,
+            &submission("imap.example.com", TransportSecurity::Tls),
+        )
+        .await
+        .expect("the repair should land");
 
         let after = stored(&database).expect("an account row");
         assert_eq!(
