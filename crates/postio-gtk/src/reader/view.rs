@@ -323,6 +323,20 @@ impl Reader {
         self.header.set_message(from, to, cc, subject, date);
     }
 
+    /// Names the account the message on screen arrived in, or hides the line.
+    ///
+    /// See [`MessageHeader::set_account`] for why the reading pane is where
+    /// this is answered and the list row is not (#185).
+    pub fn set_account(&self, name: Option<&str>, hue: usize) {
+        self.header.set_account(name, hue);
+    }
+
+    /// The account line's text, or `None` when hidden. For tests.
+    #[doc(hidden)]
+    pub fn account_label(&self) -> Option<String> {
+        self.header.account_label()
+    }
+
     /// Render `body` into the pane.
     ///
     /// `sender` is the allow-list key: with a sender already on the standing
