@@ -698,6 +698,28 @@ fn main() -> glib::ExitCode {
     // `Window::show_message` the running application calls, so a shot can
     // show the reader as something other than an empty pane.
     if flag("open") {
+        // The envelope strip (#319), so the shot shows the header the running
+        // application draws rather than a body floating under nothing.
+        window.reader().set_message_header(
+            &[postio_model::EmailAddress::new(
+                Some("Lena Tomlin"),
+                "lena@example.com",
+            )],
+            &[postio_model::EmailAddress::new(
+                Some("Ada Norwood"),
+                "ada@example.net",
+            )],
+            &[],
+            Some("Re: maildir index rebuild is O(n²)"),
+            chrono::Utc::now(),
+        );
+        // Which account it arrived in (#185). Drawn only with more than one
+        // account configured, so `accounts` is what a shot uses to see it --
+        // without the flag this is exactly what a single-account install
+        // shows, which is nothing.
+        if flag("accounts") {
+            window.reader().set_account(Some("Work"), 2);
+        }
         window.show_message(
             &postio_model::MessageBody {
                 text: None,
