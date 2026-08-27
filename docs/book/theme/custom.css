@@ -1,0 +1,106 @@
+/* Postio's own type, layered over mdBook's default theme.
+ *
+ * Font files are the same self-hosted .ttf's the app and the landing page
+ * use (site/assets/fonts/, copied here under their OFL licence) -- no
+ * Google Fonts, no CDN (ADR 0011 Q5). They live under src/brand-fonts/
+ * rather than theme/fonts/ because mdBook's theme/fonts/ is reserved for
+ * its own font-bundling convention and silently drops anything else placed
+ * there; files under src/ are the general mechanism mdBook already uses to
+ * ship images referenced from a page, and it copies them verbatim. Colour
+ * and layout are left to mdBook's own theme switcher; only typography is
+ * Postio's here, so light/dark/high-contrast keep working via mdBook's
+ * built-in themes.
+ *
+ * This file itself is loaded via `additional-css` (book.toml) from
+ * theme/custom.css and served one level under the book root, so every
+ * url() below climbs back out with `../` before reaching brand-fonts/.
+ */
+
+@font-face {
+  font-family: "Barlow";
+  src: url("../brand-fonts/barlow/Barlow-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow";
+  src: url("../brand-fonts/barlow/Barlow-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow";
+  src: url("../brand-fonts/barlow/Barlow-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow";
+  src: url("../brand-fonts/barlow/Barlow-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("../brand-fonts/barlow-condensed/BarlowCondensed-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("../brand-fonts/barlow-condensed/BarlowCondensed-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("../brand-fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("../brand-fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --postio-font-body: "Barlow", sans-serif;
+  --postio-font-heading: "Barlow Condensed", sans-serif;
+  --postio-font-mono: "IBM Plex Mono", monospace;
+}
+
+body,
+.content p,
+.content li {
+  font-family: var(--postio-font-body);
+}
+
+.content h1,
+.content h2,
+.content h3,
+.content h4,
+.content h5,
+.content h6,
+.menu-title,
+#sidebar .chapter li a {
+  font-family: var(--postio-font-heading);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.content code,
+.content pre,
+pre code,
+.content kbd {
+  font-family: var(--postio-font-mono);
+}
