@@ -24,6 +24,7 @@ mod resume_draft;
 mod search_index;
 mod search_results;
 mod search_wiring;
+mod send_later_wiring;
 mod send_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
@@ -111,6 +112,10 @@ const CASES: &[(&str, fn())] = &[
         "search_wiring::typing_in_the_box_searches_the_store_and_fills_every_search_surface",
         search_wiring::typing_in_the_box_searches_the_store_and_fills_every_search_surface
             as fn(),
+    ),
+    (
+        "send_later_wiring::choosing_a_time_schedules_the_draft_for_sending",
+        send_later_wiring::choosing_a_time_schedules_the_draft_for_sending as fn(),
     ),
     (
         "send_wiring::ctrl_return_queues_the_draft_for_sending",
