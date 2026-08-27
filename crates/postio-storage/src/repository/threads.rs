@@ -84,6 +84,49 @@ pub struct ThreadListQuery {
     pub after: Option<ThreadCursor>,
 }
 
+/// One window of the unified list: every account, newest first.
+#[derive(Debug, Clone, Copy)]
+pub struct UnifiedThreadListQuery {
+    /// How many groups at most.
+    pub limit: u32,
+    /// Where to resume — the cursor of the last group drawn.
+    pub after: Option<ThreadCursor>,
+}
+
+/// One unified-list row: a conversation, wherever the user received it.
+///
+/// See [`ThreadRepository::unified_page`]. `row` is what the list draws;
+/// `members` is what an action expands to — one thread per account holding
+/// a copy, so "archive" means two operations in two per-account queues,
+/// which is the only answer that matches what the user believes they did
+/// (ADR 0005 Q2).
+#[derive(Debug, Clone)]
+pub struct ThreadGroup {
+    /// The row the list draws, counts deduped across members.
+    pub row: ThreadListRow,
+    /// Every copy of the conversation: `(account, thread)` pairs.
+    pub members: Vec<(AccountId, ThreadId)>,
+}
+
+impl ThreadGroup {
+    /// Where the next page resumes after this group.
+    pub fn cursor(&self) -> ThreadCursor {
+        ThreadCursor {
+            last_at: self.row.last_at,
+            id: self.row.sort_id,
+        }
+    }
+}
+
+/// `THREAD_COLUMNS`, each qualified with `alias.` for a joined statement.
+fn prefixed_thread_columns(alias: &str) -> String {
+    THREAD_COLUMNS
+        .split(',')
+        .map(|column| format!("{alias}.{}", column.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl ThreadListQuery {
     /// Every thread in an account.
     pub fn account(account_id: AccountId) -> Self {
@@ -386,6 +429,294 @@ impl<'a> ThreadRepository<'a> {
               WHERE messages.thread_id = ?1 AND messages.{MEMBER}
               ORDER BY messages.received_at {direction}, messages.id {direction}"
         )
+    }
+
+    /// One window of the unified thread list: every account, grouped at
+    /// read time (#184, ADR 0005 Q2).
+    ///
+    /// A thread never spans accounts — that is sync state, and it stays
+    /// per-account. What the unified list shows is a [`ThreadGroup`]:
+    /// threads from different accounts folded into one row when the
+    /// conversation is one conversation to the *user*. Two rules, in
+    /// order:
+    ///
+    /// - **Root identity.** Another account holds a copy of this thread's
+    ///   JWZ root (same `RfcMessageId`), looked up over
+    ///   `idx_messages_rfc_message_id`.
+    /// - **Subject, within the window.** Neither thread has a root id to
+    ///   compare — common — but their normalised subjects match and their
+    ///   activity is within [`postio_model::subject::COALESCING_WINDOW_DAYS`].
+    ///   A bare subject match with no window would fold every "Weekly
+    ///   digest" the user receives at two addresses into one eternal row.
+    ///
+    /// The page walks threads newest-first over `idx_threads_last_at` and
+    /// emits a group only at its **newest** member — an older partner is
+    /// absorbed, on this page or any later one, so no conversation is ever
+    /// two rows. Dedupe is display-only (Q13): `message_count` counts
+    /// distinct `RfcMessageId`s across the members, both copies stay, and
+    /// [`ThreadGroup::members`] is exactly what an action must expand to.
+    pub fn unified_page(&self, query: &UnifiedThreadListQuery) -> Result<Vec<ThreadGroup>> {
+        let mut groups: Vec<ThreadGroup> = Vec::new();
+        let mut absorbed: std::collections::HashSet<ThreadId> = std::collections::HashSet::new();
+        let mut cursor = query.after;
+
+        // The raw page over-fetches: absorption folds rows together, so a
+        // page of threads can under-fill the page of groups. Loop until the
+        // groups fill or the list ends; each pass is one indexed window.
+        'fill: loop {
+            let raw = self.unified_raw_page(query.limit.max(2) * 2, cursor)?;
+            let Some(last) = raw.last() else {
+                break;
+            };
+            cursor = Some(ThreadCursor {
+                last_at: last.last_at,
+                id: last.id.get(),
+            });
+            let exhausted = raw.len() < (query.limit.max(2) * 2) as usize;
+
+            let mut partner_map = self.group_partners_for(&raw)?;
+            for thread in raw {
+                if absorbed.contains(&thread.id) {
+                    continue;
+                }
+                let partners = partner_map.remove(&thread.id).unwrap_or_default();
+                // A partner newer than this thread means this is not the
+                // group's head: the head already drew the row (this page or
+                // an earlier one), or will when the walk reaches it — it
+                // cannot, because the walk is newest-first; it already did.
+                if partners.iter().any(|partner| {
+                    (partner.last_at, partner.id.get()) > (thread.last_at, thread.id.get())
+                }) {
+                    continue;
+                }
+                for partner in &partners {
+                    absorbed.insert(partner.id);
+                }
+
+                let row = self.group_row(&thread, &partners)?;
+                let members = std::iter::once((thread.account_id, thread.id))
+                    .chain(
+                        partners
+                            .iter()
+                            .map(|partner| (partner.account_id, partner.id)),
+                    )
+                    .collect();
+                groups.push(ThreadGroup { row, members });
+                if groups.len() as u32 >= query.limit {
+                    break 'fill;
+                }
+            }
+            if exhausted {
+                break;
+            }
+        }
+
+        // Two reads for the whole page rather than two per group — the same
+        // batching `page` does, for the same reason.
+        let heads: Vec<ThreadId> = groups.iter().filter_map(|group| group.row.id).collect();
+        let mut participants = self.participants_for(&heads)?;
+        let mut latest = self.latest_messages_for(&heads, None)?;
+        for group in &mut groups {
+            if let Some(id) = group.row.id {
+                group.row.participants = participants.remove(&id).unwrap_or_default();
+                group.row.latest = latest.remove(&id);
+            }
+        }
+        Ok(groups)
+    }
+
+    /// One raw window of threads across every account, newest first.
+    fn unified_raw_page(&self, limit: u32, after: Option<ThreadCursor>) -> Result<Vec<Thread>> {
+        let cursor = if after.is_some() {
+            " AND (last_at, id) < (?1, ?2)"
+        } else {
+            ""
+        };
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {THREAD_COLUMNS} FROM threads
+              WHERE message_count > 0{cursor}
+              ORDER BY last_at DESC, id DESC LIMIT {limit}"
+        ))?;
+        let mut arguments: Vec<i64> = Vec::new();
+        if let Some(after) = after {
+            arguments.push(to_millis(after.last_at));
+            arguments.push(after.id);
+        }
+        let rows = statement.query_map(params_from_iter(arguments), read_thread)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The threads in *other* accounts that are each page thread's
+    /// conversation — by root identity, then by subject within the window.
+    ///
+    /// Three statements for the whole page, not three per thread: the
+    /// per-thread version was the unified page's entire cost.
+    fn group_partners_for(&self, page: &[Thread]) -> Result<HashMap<ThreadId, Vec<Thread>>> {
+        let mut partners: HashMap<ThreadId, Vec<Thread>> = HashMap::new();
+        let mut seen: HashMap<ThreadId, std::collections::HashSet<ThreadId>> = HashMap::new();
+        if page.is_empty() {
+            return Ok(partners);
+        }
+        let ids: Vec<i64> = page.iter().map(|thread| thread.id.get()).collect();
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // 1. Every page thread's root RfcMessageId, in one window pass.
+        let mut roots: HashMap<String, Vec<&Thread>> = HashMap::new();
+        {
+            let mut statement = self.connection.prepare(&format!(
+                "SELECT thread_id, rfc_message_id FROM (
+                     SELECT thread_id, rfc_message_id,
+                            row_number() OVER (PARTITION BY thread_id
+                                               ORDER BY received_at, id) AS rank
+                       FROM messages
+                      WHERE thread_id IN ({placeholders}) AND {MEMBER}
+                 ) WHERE rank = 1"
+            ))?;
+            let rows = statement.query_map(params_from_iter(&ids), |row| {
+                Ok((
+                    ThreadId::new(row.get::<_, i64>(0)?),
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            })?;
+            for row in rows {
+                let (thread_id, root) = row?;
+                if let (Some(root), Some(thread)) = (
+                    root.filter(|root| !root.is_empty()),
+                    page.iter().find(|thread| thread.id == thread_id),
+                ) {
+                    roots.entry(root).or_default().push(thread);
+                }
+            }
+        }
+
+        // 2. Partners by root identity, over idx_messages_rfc_message_id.
+        if !roots.is_empty() {
+            let root_keys: Vec<&String> = roots.keys().collect();
+            let root_placeholders = std::iter::repeat_n("?", root_keys.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut statement = self.connection.prepare(&format!(
+                "SELECT DISTINCT m.rfc_message_id, {columns} FROM threads t
+                   JOIN messages m ON m.thread_id = t.id
+                  WHERE m.rfc_message_id IN ({root_placeholders})
+                    AND t.message_count > 0",
+                columns = prefixed_thread_columns("t")
+            ))?;
+            let rows = statement.query_map(params_from_iter(&root_keys), |row| {
+                let root: String = row.get(0)?;
+                let mut candidate = read_thread_offset(row, 1)?;
+                candidate.message_ids = Vec::new();
+                Ok((root, candidate))
+            })?;
+            for row in rows {
+                let (root, candidate) = row?;
+                for thread in roots.get(root.as_str()).into_iter().flatten() {
+                    if candidate.account_id != thread.account_id
+                        && seen.entry(thread.id).or_default().insert(candidate.id)
+                    {
+                        partners
+                            .entry(thread.id)
+                            .or_default()
+                            .push(candidate.clone());
+                    }
+                }
+            }
+        }
+
+        // 3. Partners by subject, inside the coalescing window.
+        let subjects: Vec<&str> = page
+            .iter()
+            .filter_map(|thread| thread.subject.as_deref())
+            .filter(|subject| !subject.is_empty())
+            .collect();
+        if !subjects.is_empty() {
+            let window_millis =
+                postio_model::subject::COALESCING_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+            let subject_placeholders = std::iter::repeat_n("?", subjects.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut statement = self.connection.prepare(&format!(
+                "SELECT {THREAD_COLUMNS} FROM threads
+                  WHERE subject IN ({subject_placeholders}) AND message_count > 0"
+            ))?;
+            let rows = statement.query_map(params_from_iter(&subjects), read_thread)?;
+            for candidate in rows {
+                let candidate = candidate?;
+                for thread in page {
+                    if thread.subject.as_deref() == candidate.subject.as_deref()
+                        && candidate.account_id != thread.account_id
+                        && (to_millis(candidate.last_at) - to_millis(thread.last_at)).abs()
+                            <= window_millis
+                        && seen.entry(thread.id).or_default().insert(candidate.id)
+                    {
+                        partners
+                            .entry(thread.id)
+                            .or_default()
+                            .push(candidate.clone());
+                    }
+                }
+            }
+        }
+        Ok(partners)
+    }
+
+    /// The group's display row: the head thread's row, counts deduped
+    /// across every member.
+    ///
+    /// Participants and the latest message are filled by the caller in one
+    /// batched read per page, the same way [`ThreadRepository::page`] does —
+    /// per-group reads were most of a page's cost.
+    fn group_row(&self, head: &Thread, partners: &[Thread]) -> Result<ThreadListRow> {
+        let mut row = ThreadListRow {
+            id: Some(head.id),
+            subject: head.subject.clone(),
+            participants: Vec::new(),
+            message_count: head.message_count,
+            unread_count: head.unread_count,
+            has_attachments: head.has_attachments,
+            is_flagged: head.is_flagged,
+            first_at: head.first_at,
+            last_at: head.last_at,
+            latest: None,
+            sort_id: head.id.get(),
+        };
+        if partners.is_empty() {
+            // The overwhelmingly common group: one thread, one account. Its
+            // own maintained counts are already the answer, and asking SQL
+            // to dedupe a set of one was most of the unified page's cost.
+            return Ok(row);
+        }
+
+        // Distinct messages, not distinct rows: a copy received at two
+        // addresses is one message to the user. A message with no
+        // RfcMessageId can never be anyone's copy, so it counts by row.
+        let mut members: Vec<i64> = vec![head.id.get()];
+        members.extend(partners.iter().map(|partner| partner.id.get()));
+        let placeholders = std::iter::repeat_n("?", members.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let (message_count, unread_count): (u32, u32) = self.connection.query_row(
+            &format!(
+                "SELECT
+                     count(DISTINCT coalesce(nullif(m.rfc_message_id, ''), 'row:' || m.id)),
+                     count(DISTINCT CASE WHEN m.seen = 0
+                         THEN coalesce(nullif(m.rfc_message_id, ''), 'row:' || m.id) END)
+                   FROM messages m
+                  WHERE m.thread_id IN ({placeholders}) AND m.{MEMBER}"
+            ),
+            params_from_iter(&members),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        row.message_count = message_count;
+        row.unread_count = unread_count;
+        for partner in partners {
+            row.has_attachments |= partner.has_attachments;
+            row.is_flagged |= partner.is_flagged;
+            row.first_at = row.first_at.min(partner.first_at);
+        }
+        Ok(row)
     }
 
     /// One window of the thread list, most recently active first.
@@ -777,6 +1108,25 @@ fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
         params![id.get(), root_subject.as_deref().map(normalize_subject)],
     )?;
     Ok(())
+}
+
+/// [`read_thread`], with the thread's columns starting at `offset`.
+fn read_thread_offset(row: &Row<'_>, offset: usize) -> rusqlite::Result<Thread> {
+    Ok(Thread {
+        id: ThreadId::new(row.get(offset)?),
+        account_id: AccountId::new(row.get(offset + 1)?),
+        subject: row.get(offset + 2)?,
+        message_ids: Vec::new(),
+        participants: Vec::new(),
+        mailbox_ids: Vec::new(),
+        labels: Vec::new(),
+        message_count: row.get(offset + 3)?,
+        unread_count: row.get(offset + 4)?,
+        has_attachments: row.get(offset + 5)?,
+        is_flagged: row.get(offset + 6)?,
+        first_at: from_millis(row.get(offset + 7)?),
+        last_at: from_millis(row.get(offset + 8)?),
+    })
 }
 
 fn read_thread(row: &Row<'_>) -> rusqlite::Result<Thread> {

@@ -51,8 +51,8 @@ pub use settings::SettingsRepository;
 pub use sync_state::SyncStateRepository;
 pub use threading::{Threaded, ThreadingRepository};
 pub use threads::{
-    DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadListQuery, ThreadListRow, ThreadOrder,
-    ThreadRepository,
+    DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
+    ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
 };
 
 pub use messages::{
