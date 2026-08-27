@@ -214,6 +214,11 @@ jobs:
         # worktree it protected puts two sessions in one tree. #328.
         run: python3 scripts/tests/test-issue-claim-no-adoption.py
 
+      - name: Prove the workflow scripts run on BSD userland too
+        # GNU-only `sed \+` and `date -d` made the whole issue workflow
+        # unusable on macOS -- you could not claim, so you could do nothing. #559.
+        run: python3 scripts/tests/test-scripts-bsd-portable.py
+
       - name: Prove the stale sweep spares any claim whose worktree exists
         # The orphaned-lock branch used to trust the in-progress label alone,
         # which is how live claims got swept. #328.

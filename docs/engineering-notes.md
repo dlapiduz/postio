@@ -2867,6 +2867,25 @@ check that exists to catch that lie — the merge test's stub had been taught
 this; the base-branch one had not). If you change the landing machinery, run
 `scripts/tests/` yourself; nothing else will until CI is back.
 
+**`scripts/` runs on BSD userland too, and GNU-only syntax fails there
+loudly-but-misleadingly (2026-08-27, #559).** A session on macOS could not
+claim an issue at all: `issue-claim.sh` built the branch slug with
+`sed 's/[^a-z0-9]\+/-/g'`, and BSD sed has no `\+`, so the substitution
+matched nothing, the title passed through with its spaces and colons, and git
+refused the ref — *after* the claim lock had been taken, so the retry then
+reported the issue as already claimed. `issue-land.sh` had the same `\+`
+extracting the issue number; on BSD it yielded the empty string and the guard
+below it reported "not an issue branch", which is true-sounding and about the
+wrong thing entirely. `issue-release.sh` aged claims with GNU `date -d`.
+**The rule: the issue-workflow scripts run wherever a session runs, so they are
+POSIX or they are broken somewhere nobody is looking.** Use `[x][x]*` not
+`[x]\+`, and `python3` rather than `date -d` — every check already needs
+python3, so it costs no dependency. `scripts/tests/test-scripts-bsd-portable.py`
+enforces this, and names the three scripts that are Linux-only *by nature*
+(`headless-runner.sh`, `test-headless.sh`, `install-local.sh` — mutter, /proc,
+the XDG hicolor layout) so that exemption is a decision on the record rather
+than a script that happened to fail.
+
 **sccache is wired in through `.cargo/config.toml`**
 (`build.rustc-wrapper = "scripts/rustc-wrapper.sh"`), not exported per shell.
 The wrapper execs plain rustc when sccache is missing, so it cannot cause the

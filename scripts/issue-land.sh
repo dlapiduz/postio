@@ -58,7 +58,10 @@ if [ "$BRANCH" = "main" ]; then
     echo "claim an issue first with scripts/issue-claim.sh." >&2
     exit 2
 fi
-ISSUE=$(printf '%s' "$BRANCH" | sed -n 's/^issue-\([0-9]\+\)-.*/\1/p')
+# `[0-9][0-9]*` rather than `[0-9]\+`: BSD sed has no `\+`, so this yielded
+# the empty string on macOS and the guard below reported "not an issue branch"
+# -- true-sounding, and about the wrong thing entirely. #559.
+ISSUE=$(printf '%s' "$BRANCH" | sed -n 's/^issue-\([0-9][0-9]*\)-.*/\1/p')
 if [ -z "$ISSUE" ]; then
     echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)." >&2
     exit 2
