@@ -667,6 +667,11 @@ impl Database {
     /// creates. The pool keeps the guard alive for as long as any clone of
     /// this handle exists, so a lazily opened connection never finds the
     /// path already deleted.
+    ///
+    /// Gated the same as its only caller (`test_support`, #489): a build
+    /// without the `test-support` feature has no way to reach this and
+    /// `dead_code` is right to say so.
+    #[cfg(feature = "test-support")]
     pub(crate) fn open_file_with_guard(
         path: &Path,
         guard: Box<dyn std::any::Any + Send + Sync>,
