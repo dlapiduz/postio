@@ -43,9 +43,14 @@ pub fn run_search_opens_the_box_and_answers_immediately() {
         .expect("the box has a field, so it has a readout");
 
     let asked: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let sequences: Rc<RefCell<Vec<u64>>> = Rc::new(RefCell::new(Vec::new()));
     live.connect_run({
         let asked = asked.clone();
-        move |query, _sequence| asked.borrow_mut().push(query.input().to_owned())
+        let sequences = sequences.clone();
+        move |query, sequence| {
+            asked.borrow_mut().push(query.input().to_owned());
+            sequences.borrow_mut().push(sequence);
+        }
     });
 
     assert!(!finder.is_open(), "closed before anything asks it to open");
@@ -66,6 +71,19 @@ pub fn run_search_opens_the_box_and_answers_immediately() {
         "the query must run right away -- a saved search cannot be made to \
          wait out the debounce a keystroke would"
     );
+
+    // The store answers, as it always does in the running application. One
+    // search is in flight at a time (#500), so until this answer lands a
+    // second saved search would wait its turn rather than stack behind it.
+    let first = *sequences.borrow().last().expect("a run went out");
+    assert!(live.deliver(
+        first,
+        postio_gtk::search::Outcome {
+            hits: 3,
+            capped: false,
+            elapsed: std::time::Duration::from_millis(2),
+        }
+    ));
 
     // Running a different saved search replaces the box's contents rather
     // than piling a second query behind the first.

@@ -142,6 +142,80 @@ pub fn the_readout_answers_the_query_on_screen_and_no_other() {
     pump();
     assert_eq!(readout(&window), "3 hits · 4 ms");
 
+    // -- while one search runs, the next query waits its turn -------------
+    //
+    // One search in flight at a time (#500). On a fast store the debounce is
+    // the only pacing anyone ever sees; on a store that has gone slow — a
+    // cold cache, a backfill hammering the disk — every keystroke used to
+    // launch another search into the pool while the last one was still out,
+    // and the pile-up made the slow store slower. The rule: a new query
+    // waits for the outstanding answer, and replaces any query already
+    // waiting.
+
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "radon".to_owned(),
+    });
+    wait_out_the_debounce();
+    assert_eq!(
+        asked.borrow().len(),
+        3,
+        "nothing is in flight, so the query goes straight out"
+    );
+    let (_, running) = asked.borrow()[2];
+
+    // The user keeps typing while that search is still out at the store.
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "radon report".to_owned(),
+    });
+    wait_out_the_debounce();
+    assert_eq!(
+        asked.borrow().len(),
+        3,
+        "a store still answering one query must not be asked a second"
+    );
+
+    // The running search answers — stale, so it is dropped — and the query
+    // that was waiting goes out the moment the store is free.
+    assert!(!live.deliver(running, outcome(112, 3788)));
+    assert_eq!(
+        asked.borrow().len(),
+        4,
+        "the waiting query runs as soon as the outstanding answer lands"
+    );
+    assert_eq!(asked.borrow()[3].0, "radon report");
+    let (_, follow) = asked.borrow()[3];
+    assert!(live.deliver(follow, outcome(7, 12)));
+    pump();
+    assert_eq!(readout(&window), "7 hits · 12 ms");
+
+    // -- Enter does not wait out the debounce ------------------------------
+    //
+    // The debounce is sized to typing cadence, which makes it long enough to
+    // feel if a person types a query and hits Enter inside the window. Enter
+    // means "search now", so it flushes the queued query instead of waiting.
+
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "radon urgent".to_owned(),
+    });
+    assert_eq!(
+        asked.borrow().len(),
+        4,
+        "the debounce has not fired; the query is still queued"
+    );
+    finder.activate();
+    assert_eq!(
+        asked.borrow().len(),
+        5,
+        "Enter runs the queued query immediately"
+    );
+    assert_eq!(asked.borrow()[4].0, "radon urgent");
+    let (_, entered) = asked.borrow()[4];
+    assert!(live.deliver(entered, outcome(2, 5)));
+    pump();
+
     // -- emptying the box takes the count down ----------------------------
 
     finder.set_query(Query {

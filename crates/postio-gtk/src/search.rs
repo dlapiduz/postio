@@ -164,12 +164,18 @@ pub fn spoken(chip: &Chip) -> String {
 
 /// How long the box waits after a keystroke before it searches.
 ///
-/// Short enough to read as instant — well under the ~100 ms at which a delay
-/// stops feeling like part of the keystroke — and long enough that a burst of
-/// typing costs one search rather than one per character. The debounce is
-/// what keeps typing inside the 16 ms interaction budget: the keystroke never
-/// waits for a search, it only ever reschedules one.
-pub const DEBOUNCE: Duration = Duration::from_millis(60);
+/// Sized to *typing*, not to the frame budget: people type at roughly
+/// 150–250 ms a key, and the 60 ms this used to be fired between almost
+/// every pair of keystrokes — typing `radon` searched `r`, `ra`, `rad`,
+/// `rado`, `radon`, five queries for one question (#500). At 200 ms a word
+/// typed at ordinary speed is one search, and the price is one beat between
+/// the last keystroke and the answer. `Enter` does not wait: it flushes the
+/// queued query immediately.
+///
+/// The keystroke itself never waits for a search — it only ever reschedules
+/// one — which is what keeps typing inside the 16 ms interaction budget
+/// regardless of this number.
+pub const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// The slot the readout reserves, in characters.
 ///
@@ -327,6 +333,18 @@ struct LiveInner {
     asked: RefCell<Option<ParsedQuery>>,
     outcome: Cell<Option<Outcome>>,
     run: RefCell<Vec<RunHandler>>,
+    /// The sequence number of the run whose answer has not come back yet.
+    ///
+    /// One search in flight at a time (#500): while this is set, [`flush`]
+    /// leaves the queued query where it is, and [`deliver`] releases it. On
+    /// a store answering in single-digit milliseconds nobody can tell; on a
+    /// store gone slow — cold cache, a backfill on the same disk — this is
+    /// what keeps a burst of typing from stacking a search per keystroke
+    /// onto a pool that is already struggling.
+    ///
+    /// [`flush`]: Live::flush
+    /// [`deliver`]: Live::deliver
+    in_flight: Cell<Option<u64>>,
 }
 
 impl Live {
@@ -354,6 +372,7 @@ impl Live {
                 asked: RefCell::new(None),
                 outcome: Cell::new(None),
                 run: RefCell::new(Vec::new()),
+                in_flight: Cell::new(None),
             }),
         };
         live.render();
@@ -432,10 +451,18 @@ impl Live {
     /// What `Enter` does, and what a test does instead of sleeping.
     pub fn flush(&self) {
         self.cancel_pending();
+        if self.inner.in_flight.get().is_some() {
+            // The store is still answering the last question. The queued
+            // query waits — `deliver` (or `settled`) sends it the moment the
+            // answer lands, and a newer keystroke replaces it while it
+            // waits. This is what "one search in flight" means.
+            return;
+        }
         let Some(query) = self.inner.queued.borrow_mut().take() else {
             return;
         };
         let sequence = self.inner.pacer.borrow_mut().issue();
+        self.inner.in_flight.set(Some(sequence));
         for handler in self.inner.run.borrow().iter() {
             handler(&query, sequence);
         }
@@ -447,12 +474,42 @@ impl Live {
     /// superseded while it ran, and the caller should drop the rest of the
     /// results too rather than filling the list with them.
     pub fn deliver(&self, sequence: u64, outcome: Outcome) -> bool {
-        if !self.inner.pacer.borrow().accepts(sequence) {
-            return false;
+        if self.inner.in_flight.get() == Some(sequence) {
+            self.inner.in_flight.set(None);
         }
-        self.inner.outcome.set(Some(outcome));
-        self.render();
-        true
+        let taken = if self.inner.pacer.borrow().accepts(sequence) {
+            self.inner.outcome.set(Some(outcome));
+            self.render();
+            true
+        } else {
+            false
+        };
+        // Whether or not the answer was worth drawing, the store is free
+        // now: if a query queued up behind this run, it goes out.
+        if self.inner.in_flight.get().is_none() && self.inner.queued.borrow().is_some() {
+            self.flush();
+        }
+        taken
+    }
+
+    /// The run for `sequence` ended without an answer — the store could not
+    /// be read, or the search failed.
+    ///
+    /// The single-flight rule holds a queued query until the outstanding run
+    /// resolves, so a run that dies silently would wedge the box: nothing in
+    /// flight ever answers, and nothing queued ever runs. Whoever answers
+    /// [`connect_run`] must call this on every path that will not reach
+    /// [`deliver`].
+    ///
+    /// [`connect_run`]: Live::connect_run
+    /// [`deliver`]: Live::deliver
+    pub fn settled(&self, sequence: u64) {
+        if self.inner.in_flight.get() == Some(sequence) {
+            self.inner.in_flight.set(None);
+        }
+        if self.inner.in_flight.get().is_none() && self.inner.queued.borrow().is_some() {
+            self.flush();
+        }
     }
 
     /// Stop searching and take the readout down — the box closed.
