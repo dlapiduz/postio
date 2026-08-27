@@ -31,7 +31,7 @@ use postio_core::{ActionId, CommandId, Context};
 use crate::cheatsheet::CheatSheet;
 use crate::feed::{Feeds, Folders, MailboxSource, MessageSource};
 use crate::finder::{Finder, Mode, Query};
-use crate::keymap::{self, KeyContext, Outcome, Resolver};
+use crate::keymap::{self, ChordFromGdk, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
 use crate::settings::SettingsPanel;
