@@ -6,7 +6,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::{
-    Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget,
+    Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget, Uid,
     TransportSecurity,
 };
 use postio_smtp::transport::{ScriptedConnector, SmtpScript};
@@ -207,6 +207,24 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
         commands
             .iter()
             .any(|line| line.contains("grace@example.net"))
+    );
+
+    // #543: a row born from an append carries the backend-neutral identity
+    // the adapter spelled for it, agreeing with the wire pair on the row.
+    let repository = postio_storage::repository::MessageRepository::new(&connection);
+    let status = backend.status("Sent").await.expect("status again");
+    let filed = repository
+        .by_uid(sent_mailbox, status.uid_validity, Uid::new(1))
+        .expect("look up the filed copy")
+        .expect("the filed copy has its wire identity");
+    assert_eq!(
+        filed
+            .server
+            .remote_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
+        Some(format!("{}:{}", status.uid_validity, Uid::new(1))),
+        "the filed copy's identity must be the adapter's spelling"
     );
 }
 

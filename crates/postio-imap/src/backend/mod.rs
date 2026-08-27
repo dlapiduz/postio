@@ -47,6 +47,7 @@
 
 mod capability;
 mod error;
+pub mod identity;
 mod message;
 mod mock;
 mod sink;
