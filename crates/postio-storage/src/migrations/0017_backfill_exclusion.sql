@@ -1,0 +1,13 @@
+-- A folder can opt out of full background backfill (ADR 0016, #350).
+--
+-- Local preference, never server state -- the same shape as `signature_id`
+-- (#394): nothing in a sync pass ever sets or reads it. `postio-sync::discover`
+-- reconciles a mailbox row by cloning the existing one and copying across
+-- only what the server's LIST said, so a column no sync code touches
+-- survives a resync unchanged, the same way `signature_id` already does.
+--
+-- Excludes both axes ADR 0017 split backfill into -- headers/text and
+-- attachment payloads. The interesting middle case, "keep this folder
+-- searchable but skip its attachments", is `AttachmentPolicy` (#377), not
+-- this: a folder excluded here is excluded from both.
+ALTER TABLE mailboxes ADD COLUMN backfill_excluded INTEGER NOT NULL DEFAULT 0;

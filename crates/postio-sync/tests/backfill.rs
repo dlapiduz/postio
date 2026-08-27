@@ -8,11 +8,11 @@ use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMes
 use postio_imap::cancel::CancelToken;
 use postio_model::{BodyState, Mailbox, MessageId, Uid, UidValidity};
 use postio_storage::BlobStore;
-use postio_storage::repository::MessageRepository;
+use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::test_support::{self, TempDatabase};
 use postio_sync::backfill::{
     AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Priority, Want, fetch_body,
-    request_payloads, seed_payloads,
+    request_body, request_payloads, seed, seed_payloads,
 };
 use postio_sync::sync_mailbox;
 
@@ -423,6 +423,75 @@ fn progress_accounts_for_every_message_that_went_in() {
     let last = backfill.next_body().expect("work");
     backfill.finished(last.request.message, Outcome::Stored { bytes: 1_024 });
     assert!(backfill.is_idle());
+}
+
+// ---------------------------------------------------------------------------
+// A folder can opt out of the background lane (ADR 0016, #350)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_excluded_folder_seeds_nothing_into_the_background_lane() {
+    let backend = server(5).await;
+    let local = local();
+    headers(&local, &backend).await;
+
+    MailboxRepository::new(&local.connection)
+        .set_backfill_excluded(local.inbox.id, true)
+        .expect("exclude the inbox");
+
+    let mut backfill = Backfill::new(policy());
+    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200).expect("seed");
+
+    assert_eq!(
+        queued, 0,
+        "an excluded folder must not join the background lane"
+    );
+    assert!(backfill.next_body().is_none());
+}
+
+#[tokio::test]
+async fn an_ordinary_folder_still_seeds_once_excluded_elsewhere() {
+    // Regression guard beside the exclusion test above: the new check must
+    // not turn into "nothing ever seeds again".
+    let backend = server(5).await;
+    let local = local();
+    headers(&local, &backend).await;
+
+    let mut backfill = Backfill::new(policy());
+    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200).expect("seed");
+
+    assert_eq!(queued, 5);
+}
+
+#[tokio::test]
+async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
+    // Turning off the background lane must not turn off reading: #350's own
+    // acceptance criterion, and the same distinction
+    // `BackfillPolicy::background`'s doc comment already draws for the
+    // account-wide knob.
+    let backend = server(1).await;
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    MailboxRepository::new(&local.connection)
+        .set_backfill_excluded(local.inbox.id, true)
+        .expect("exclude the inbox");
+
+    let mut backfill = Backfill::new(policy());
+    let asked = request_body(&local.connection, &mut backfill, id).expect("request_body");
+    assert!(asked, "an on-open request must still be honoured");
+
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+    assert!(matches!(outcome, Outcome::Stored { .. }));
 }
 
 // ---------------------------------------------------------------------------

@@ -84,6 +84,7 @@ fn sample_mailbox() -> Mailbox {
         highest_mod_seq: Some(ModSeq::new(4_000)),
         last_synced_at: Some(at(2_000)),
         signature_id: Some(SignatureId::new(5)),
+        backfill_excluded: false,
     }
 }
 
