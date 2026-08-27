@@ -120,9 +120,13 @@ if [ -z "$CANDIDATES" ]; then
     exit 1
 fi
 
+# `[^a-z0-9][^a-z0-9]*` rather than the `\+` it used to say: `\+` is a GNU
+# extension, and BSD sed (macOS) matches it as a literal plus. The title then
+# passed through untouched and git refused the ref -- "is not a valid branch
+# name" -- after the claim lock had already been taken. #559.
 slug() {
     printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
-        | sed -e 's/[^a-z0-9]\+/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40
+        | sed -e 's/[^a-z0-9][^a-z0-9]*/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40
 }
 
 while IFS=$'\t' read -r NUM TITLE; do

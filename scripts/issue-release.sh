@@ -54,7 +54,13 @@ if [ "${1:-}" = "--stale" ]; then
                 --jq '[.[] | select(.event=="labeled" and .label.name=="in-progress")]
                       | last | .created_at' 2>/dev/null)
             if [ -n "$since" ] && [ "$since" != "null" ]; then
-                age=$(( ( $(date +%s) - $(date -d "$since" +%s) ) / 86400 ))
+                # python3 rather than `date -d`: `-d` is GNU, and BSD date
+                # (macOS) rejects it outright. Every check in scripts/checks/
+                # already needs python3, so this adds no dependency. #559.
+                age=$(python3 -c 'import datetime, sys
+since = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+now = datetime.datetime.now(datetime.timezone.utc)
+print(int((now - since).total_seconds()) // 86400)' "$since")
                 if [ "$age" -lt "$DAYS" ]; then
                     echo "#$num claimed ${age}d ago — leaving it (needs ${DAYS}d)"
                     continue
