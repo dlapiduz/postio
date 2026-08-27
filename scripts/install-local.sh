@@ -25,10 +25,17 @@ metainfo="$data_home/metainfo/dev.postio.Postio.metainfo.xml"
 refresh_caches() {
     # Best-effort: the spec says these caches are optional, and a desktop
     # without the tools still picks the files up on next login.
+    #
+    # `-f`/`--force` matters: without it, gtk-update-icon-cache treats an
+    # already-present icon-theme.cache as done rather than rebuilding it, so
+    # a cache left over from an earlier run (or another app sharing this
+    # user's hicolor theme) went on serving whatever it indexed before
+    # Postio's icon existed there (#427). `-t` still skips demanding an
+    # index.theme in this directory, which a user theme override never has.
     command -v update-desktop-database >/dev/null &&
         update-desktop-database "$data_home/applications" 2>/dev/null || true
     command -v gtk-update-icon-cache >/dev/null &&
-        gtk-update-icon-cache -qt "$data_home/icons/hicolor" 2>/dev/null || true
+        gtk-update-icon-cache -qtf "$data_home/icons/hicolor" 2>/dev/null || true
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
@@ -54,3 +61,6 @@ refresh_caches
 
 echo "Installed: $bin"
 echo "Postio is in your app grid. If \$PATH lacks $prefix/bin, add it or run $bin directly."
+echo "If the app grid still shows a generic icon, some shells cache icon"
+echo "lookups per session and need a fresh login (or a shell restart) to"
+echo "pick up a newly installed one."
