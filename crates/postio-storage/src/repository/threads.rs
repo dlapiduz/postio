@@ -237,9 +237,14 @@ first_at, last_at";
 
 /// A member of a thread, for the purposes of every aggregate here.
 ///
-/// A message hidden pending a remote delete is not one: the list does not show
-/// it, so it must not be in the count, in the drill-in or in the participants.
-const MEMBER: &str = "deleted_locally = 0";
+/// A message hidden pending a remote delete, or snoozed and not yet due, is
+/// not one: the list does not show it, so it must not be in the count, in
+/// the drill-in or in the participants. Every call site interpolates this
+/// as `{alias}.{MEMBER}` or bare `{MEMBER}`, so the snooze half is written
+/// without an alias of its own — `snoozed_until` names no other table in
+/// any query here, so it resolves the same way regardless.
+const MEMBER: &str =
+    "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
 
 impl<'a> ThreadRepository<'a> {
     /// Borrows a connection.
