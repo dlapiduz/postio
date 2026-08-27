@@ -166,10 +166,20 @@ pub fn moving_the_thread_cursor_fills_the_reading_pane() {
         .thread()
         .cursor()
         .expect("the drill-in leaves the cursor on a message");
+    // The conversation pane, not the single-message reader: ADR 0015 Q4 gave
+    // the reading pane to the whole conversation and made this column an
+    // index into it. What this test is about — that moving the column moves
+    // what the pane shows — is unchanged; where to ask is not.
     assert!(
-        settle_until(|| window.reading()),
-        "opening the thread never filled the reading pane with its own \
-         selection"
+        settle_until(|| window.conversation().len() == 2),
+        "opening the thread never filled the reading pane with the \
+         conversation"
+    );
+    assert_eq!(
+        window.conversation().focused(),
+        Some(first_in_thread),
+        "the column and the conversation are one current message, and \
+         opening has to leave them agreeing"
     );
 
     // ── the thread's own cursor move, and the pane follows it ────────────
@@ -192,10 +202,15 @@ pub fn moving_the_thread_cursor_fills_the_reading_pane() {
     );
 
     assert!(
-        settle_until(|| window.reader().header().subject_label() == "the first message"),
-        "moving the cursor inside the thread never changed what the \
-         reading pane shows: {}",
-        window.reader().header().subject_label()
+        settle_until(|| window.conversation().focused() == Some(second_in_thread)),
+        "moving the cursor inside the thread never moved the conversation \
+         pane's focus: it is on {:?}",
+        window.conversation().focused()
+    );
+    assert!(
+        window.conversation().is_expanded(second_in_thread),
+        "jumping to a message from the index has to open it, or the index \
+         cannot reach a message that has already been read"
     );
 
     bridge.shutdown();
