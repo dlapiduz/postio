@@ -61,6 +61,7 @@ mod gtk_selection;
 mod gtk_settings;
 mod gtk_settings_accounts;
 mod gtk_sidebar;
+mod gtk_sidebar_backfill_exclusion;
 mod gtk_sidebar_keys;
 mod gtk_sidebar_saved_searches;
 mod gtk_sidebar_tree;
@@ -247,6 +248,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
         gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands as fn(),
+    ),
+    (
+        "gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state",
+        gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state
+            as fn(),
     ),
     (
         "gtk_sidebar_keys::a_mailbox_can_be_chosen_without_touching_the_mouse",

@@ -79,6 +79,11 @@ pub enum SavedSearchAction {
 /// What to call when a saved search's context menu picks an action.
 type SavedSearchActionHandler = Box<dyn Fn(String, SavedSearchAction)>;
 
+/// What to call when a folder's context menu flips whether it participates
+/// in background backfill (ADR 0016, #350) — the mailbox, and what it
+/// should become.
+type BackfillExclusionHandler = Box<dyn Fn(MailboxId, bool)>;
+
 /// The protocol the status line names. v1 is IMAP only (CLAUDE.md).
 const PROTOCOL: &str = "imap";
 
@@ -436,6 +441,10 @@ mod imp {
         /// second right-click before the first closes replaces it rather
         /// than stacking a second grabbing popup on top.
         pub saved_search_menu: RefCell<Option<gtk::PopoverMenu>>,
+        pub backfill_exclusion_changed: RefCell<Vec<BackfillExclusionHandler>>,
+        /// The ordinary-folder context menu currently up, if any -- the same
+        /// shape as `saved_search_menu`, and for the same reason.
+        pub folder_menu: RefCell<Option<gtk::PopoverMenu>>,
         pub dropped: RefCell<Vec<DropHandler>>,
         /// Set while a selection is being applied programmatically, so
         /// restoring one does not look like the user clicking it.
@@ -670,6 +679,27 @@ impl Sidebar {
         ));
         imp.saved.add_controller(menu);
 
+        // Skip/resume background backfill (ADR 0016, #350): a folder's own
+        // context menu, the same right-click-a-row idiom as the
+        // saved-search one just above. On both sections, not only the
+        // ordinary tree — ADR 0016's own motivating example, Junk, is a
+        // special-use folder and lives in `special`, not `ordinary`.
+        for list in [&imp.special, &imp.ordinary] {
+            let folder_menu = gtk::GestureClick::new();
+            folder_menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+            folder_menu.set_propagation_phase(gtk::PropagationPhase::Capture);
+            folder_menu.connect_pressed(glib::clone!(
+                #[weak(rename_to = sidebar)]
+                self,
+                #[weak]
+                list,
+                move |_, _, x, y| {
+                    sidebar.open_folder_menu(&list, x, y);
+                }
+            ));
+            list.add_controller(folder_menu);
+        }
+
         self.set_child(Some(&column));
         self.set_status(SyncStatus::default());
     }
@@ -807,9 +837,155 @@ impl Sidebar {
         popover.popup();
     }
 
+    /// Opens an ordinary folder row's context menu exactly as a right-click
+    /// on it would, registering its action on `self` -- the same shape
+    /// `test_open_saved_search_menu` uses, and for the same reason (GTK4
+    /// gives a test no way to simulate the click itself; see #424, #437).
+    ///
+    /// Takes the row rather than a click point: unlike the saved-search
+    /// list, a `GtkListBoxRow`'s allocation is not dependably queryable
+    /// through `row_at_y`/`compute_bounds` in the headless test compositor
+    /// this crate's tests run under, and a test that already has the row
+    /// (from walking the tree for it, the way every test here does) loses
+    /// nothing by handing it over directly.
+    #[doc(hidden)]
+    pub fn test_open_ordinary_folder_menu(&self, row: &gtk::ListBoxRow) {
+        let list = self.imp().ordinary.clone();
+        self.open_folder_menu_for_row(&list, row);
+    }
+
+    /// As [`Sidebar::test_open_ordinary_folder_menu`], for a row in the
+    /// special-use section instead — Inbox, Sent, Junk and the rest, which
+    /// live in their own `GtkListBox` (see `sections`).
+    #[doc(hidden)]
+    pub fn test_open_special_folder_menu(&self, row: &gtk::ListBoxRow) {
+        let list = self.imp().special.clone();
+        self.open_folder_menu_for_row(&list, row);
+    }
+
+    /// Closes the folder context menu, if one is open — see
+    /// `test_close_saved_search_menu` for why a test must call this rather
+    /// than letting `window.destroy()` do it.
+    #[doc(hidden)]
+    pub fn test_close_folder_menu(&self) {
+        if let Some(popover) = self.imp().folder_menu.take() {
+            popover.popdown();
+        }
+    }
+
+    /// Skip/resume background backfill for one folder (ADR 0016, #350): a
+    /// single toggling entry, labelled for whichever direction it currently
+    /// offers, at `(x, y)` in `list` if there is a folder row there.
+    ///
+    /// Takes `list` explicitly rather than assuming the ordinary tree: the
+    /// special-use section (`imp.special`) is a separate `GtkListBox` with
+    /// its own coordinate space, and ADR 0016's own motivating example,
+    /// Junk, lives there.
+    ///
+    /// Not generated from the command registry the way the message list's
+    /// context menu is: this verb has no keyboard path (it is a settings
+    /// toggle, not a message action), so a menu entry with no binding and no
+    /// cheat-sheet line is not a lie about what the registry promises here —
+    /// there is no registry entry to disagree with.
+    fn open_folder_menu(&self, list: &gtk::ListBox, x: f64, y: f64) {
+        let Some(row) = list.row_at_y(y as i32) else {
+            return;
+        };
+        self.open_folder_menu_at(list, &row, x, y);
+    }
+
+    /// As [`Sidebar::open_folder_menu`], with the row already resolved --
+    /// what the two `test_open_*_folder_menu` methods use, since neither a
+    /// click point nor the row's own allocation can be trusted to answer
+    /// `row_at_y` reliably outside a real, fully laid-out window (see their
+    /// doc comments). `(1.0, 0.0)` stands in for a click point a test has
+    /// none of; the popover's position is not part of what either checks.
+    fn open_folder_menu_for_row(&self, list: &gtk::ListBox, row: &gtk::ListBoxRow) {
+        self.open_folder_menu_at(list, row, 1.0, 0.0);
+    }
+
+    fn open_folder_menu_at(&self, list: &gtk::ListBox, row: &gtk::ListBoxRow, x: f64, y: f64) {
+        let imp = self.imp();
+        if let Some(previous) = imp.folder_menu.take() {
+            previous.popdown();
+        }
+        let id = MailboxId::new(row_id(row));
+        let Some(mailbox) = imp.mailboxes.borrow().iter().find(|m| m.id == id).cloned() else {
+            return;
+        };
+        let excluded = mailbox.backfill_excluded;
+
+        let menu = gtk::gio::Menu::new();
+        menu.append(
+            Some(if excluded {
+                "Resume backing up locally"
+            } else {
+                "Skip backing up locally"
+            }),
+            Some("folder.toggle-backfill"),
+        );
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(list);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        let actions = gtk::gio::SimpleActionGroup::new();
+        let toggle = gtk::gio::SimpleAction::new("toggle-backfill", None);
+        toggle.connect_activate(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |_, _| {
+                for callback in sidebar.imp().backfill_exclusion_changed.borrow().iter() {
+                    callback(id, !excluded);
+                }
+            }
+        ));
+        actions.add_action(&toggle);
+        // On `self`, for the same reason `open_saved_search_menu` does:
+        // `test_open_ordinary_folder_menu`/`test_open_special_folder_menu`
+        // drive the result with
+        // `WidgetExt::activate_action("folder.toggle-backfill", None)`.
+        self.insert_action_group("folder", Some(&actions));
+
+        popover.connect_closed(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            #[weak]
+            popover,
+            move |_| {
+                popover.unparent();
+                let current = sidebar.imp().folder_menu.borrow().clone();
+                if current.as_ref() == Some(&popover) {
+                    sidebar.imp().folder_menu.take();
+                }
+            }
+        ));
+        *imp.folder_menu.borrow_mut() = Some(popover.clone());
+        popover.popup();
+    }
+
+    /// Called when a folder's context menu flips whether it participates in
+    /// background backfill (ADR 0016, #350), with the mailbox and what it
+    /// should become. Persisting the change and calling
+    /// [`Sidebar::set_mailboxes`] with the result is the caller's job, the
+    /// same split [`Sidebar::connect_saved_search_action`] already draws.
+    pub fn connect_backfill_exclusion_changed(&self, handler: impl Fn(MailboxId, bool) + 'static) {
+        self.imp()
+            .backfill_exclusion_changed
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
     /// The account address shown at the top.
     pub fn set_account(&self, address: &str) {
         self.imp().account.set_text(address);
+    }
+
+    /// The mailbox list [`Sidebar::set_mailboxes`] was last given.
+    pub fn mailboxes(&self) -> Vec<Mailbox> {
+        self.imp().mailboxes.borrow().clone()
     }
 
     /// Replace the folder list.
