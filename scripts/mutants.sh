@@ -77,9 +77,13 @@ fi
 if [ ! -f "$BASELINE" ]; then
     echo "no baseline recorded yet at $BASELINE." >&2
     echo >&2
-    echo "This run found $(wc -l < "$SURVIVED") surviving mutant(s). Read them," >&2
-    echo "file an issue for any that are a genuine missing test, then seed the" >&2
-    echo "baseline with what remains:" >&2
+    echo "This run found $(wc -l < "$SURVIVED") surviving mutant(s):" >&2
+    echo >&2
+    sort "$SURVIVED" >&2
+    echo >&2
+    echo "Read them, file an issue for any that are a genuine missing test," >&2
+    echo "then seed the baseline with what remains -- on a CI runner, not a" >&2
+    echo "workstation other sessions share (see this script's own header):" >&2
     echo >&2
     echo "    MUTANTS_UPDATE_BASELINE=1 scripts/mutants.sh" >&2
     exit 1
