@@ -474,15 +474,15 @@ this issue to design a settings keyboard context it does not need yet.
   the next launch. The panel says so.
 - **Remove** — per Q6's semantics and its undo, implemented as
   `AccountRepository::mark_pending_deletion`/`restore`/
-  `reap_pending_deletions`: marking is instant and reversible from the
-  undo toast, the account leaves the sidebar and stops appearing in any
-  list immediately, and the actual `DELETE ... CASCADE` only runs once,
-  at the next startup, before any engine is created — which is also what
-  makes a crash before the toast expires harmless rather than a race
-  against a live cascade. The keyring entry is untouched either way,
-  exactly as Q6 says: deleting it is a separate, still-unbuilt, confirmed
-  step of its own, not something this removal does on the account's
-  behalf.
+  `reap_pending_deletions`. Marking is instant and reversible from the
+  undo toast; the actual `DELETE ... CASCADE` only runs once, at the next
+  startup, before any engine is created — the same restart boundary
+  disabling already has to live with, for the same reason (no live
+  account teardown yet), and also what makes a crash before the toast
+  expires harmless rather than a race against a live cascade. The keyring
+  entry is untouched either way, exactly as Q6 says: deleting it is a
+  separate, still-unbuilt, confirmed step of its own, not something this
+  removal does on the account's behalf.
 - **Update credential** — the one truly new piece. **Reuses
   `Status::Reauthenticate`, which already exists and is already tested**
   (`postio-app/src/onboarding.rs`, `crates/postio-app/tests/app_suite/
