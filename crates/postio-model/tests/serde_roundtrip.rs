@@ -78,6 +78,7 @@ fn sample_mailbox() -> Mailbox {
             total: 42,
             unread: 3,
             flagged: 1,
+            snoozed: 0,
         },
         uid_validity: Some(UidValidity::new(12)),
         uid_next: Some(Uid::new(900)),

@@ -32,6 +32,9 @@ pub enum MailboxRole {
     Junk,
     /// A server-side flagged/starred view.
     Flagged,
+    /// The sidebar's "Snoozed" view — client-only, the same as [`Self::Flagged`]
+    /// wearing a folder's clothes; no `SPECIAL-USE` attribute names it.
+    Snoozed,
     /// An ordinary user folder.
     #[default]
     Regular,
@@ -126,6 +129,7 @@ impl MailboxRole {
             "trash" => Some(Self::Trash),
             "junk" => Some(Self::Junk),
             "flagged" => Some(Self::Flagged),
+            "snoozed" => Some(Self::Snoozed),
             "regular" => Some(Self::Regular),
             _ => None,
         }
@@ -141,6 +145,7 @@ impl MailboxRole {
             Self::Trash => "trash",
             Self::Junk => "junk",
             Self::Flagged => "flagged",
+            Self::Snoozed => "snoozed",
             Self::Regular => "regular",
         }
     }
@@ -255,6 +260,8 @@ pub struct MailboxCounts {
     pub unread: u32,
     /// Messages with `\Flagged`.
     pub flagged: u32,
+    /// Messages currently snoozed (`snoozed_until` in the future).
+    pub snoozed: u32,
 }
 
 /// A folder on the server, mirrored locally.
