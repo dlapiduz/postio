@@ -538,6 +538,54 @@ fn queueing_a_draft_for_sending_marks_it_and_enqueues_the_operation() {
 }
 
 #[test]
+fn scheduling_a_send_marks_it_queued_but_holds_it_until_the_chosen_time() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+
+    let send_at = at(120);
+    let queued = drafts
+        .queue_send_at(&mut draft, at(1), send_at)
+        .expect("schedule the send");
+
+    assert_eq!(queued.operation, Operation::Send { draft: draft.id });
+    assert_eq!(queued.target, OperationTarget::Draft(draft.id));
+    assert_eq!(
+        queued.next_attempt_at,
+        Some(send_at),
+        "the drainer must not touch this before the chosen time"
+    );
+    assert_eq!(queued.attempts, 0, "nothing has been attempted yet");
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("the draft is still here")
+            .state,
+        DraftState::Queued,
+        "queued the same way an immediate send is — the composer has let go \
+         of it either way"
+    );
+
+    let queue = OperationQueueRepository::new(&connection);
+    let too_early = queue.pending(account.id, at(60)).expect("pending");
+    assert!(
+        too_early.is_empty(),
+        "the scheduled send must not drain before its time"
+    );
+    let due = queue.pending(account.id, send_at).expect("pending");
+    assert_eq!(
+        due.into_iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![queued.id],
+        "and must drain once its time arrives"
+    );
+}
+
+#[test]
 fn queueing_a_send_writes_the_draft_that_was_never_saved() {
     // Ctrl+Enter can beat the debounced autosave: a draft typed and sent
     // inside the quiet period has no row and no id yet. The enqueue names the

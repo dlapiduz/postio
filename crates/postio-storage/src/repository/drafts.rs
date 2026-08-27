@@ -224,6 +224,38 @@ impl<'a> DraftRepository<'a> {
         Ok(queued)
     }
 
+    /// [`queue_send`](Self::queue_send), except the drainer must not touch
+    /// the row before `send_at` — a scheduled send.
+    ///
+    /// The draft goes to `Queued` immediately, same as an immediate send:
+    /// the composer has let go of it either way, and there is nothing left
+    /// to edit while a send — due now or due later — is sitting in the
+    /// queue. What differs is only when [`OperationQueueRepository::pending`]
+    /// starts offering the row to the drainer, which is stored on the row
+    /// itself and so survives a restart with no timer to lose.
+    pub fn queue_send_at(
+        &self,
+        draft: &mut Draft,
+        at: DateTime<Utc>,
+        send_at: DateTime<Utc>,
+    ) -> Result<QueuedOperation> {
+        let scope = super::Scope::open(self.connection)?;
+
+        draft.state = DraftState::Queued;
+        draft.updated_at = at;
+        DraftRepository::new(&scope).save(draft)?;
+        let queued = OperationQueueRepository::new(&scope).enqueue_not_before(
+            draft.account_id,
+            OperationTarget::Draft(draft.id),
+            &Operation::Send { draft: draft.id },
+            at,
+            send_at,
+        )?;
+
+        scope.commit()?;
+        Ok(queued)
+    }
+
     /// Deletes a draft and queues the removal of its server copy.
     ///
     /// The local row goes now: discarding a draft is local-first like every
