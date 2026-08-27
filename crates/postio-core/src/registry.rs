@@ -476,6 +476,24 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::ScheduleSend,
+        // The ellipsis matches `Attach file…`: neither command finishes on
+        // its own, both open a picker the keystroke or palette row cannot
+        // resolve a payload for.
+        title: "Schedule send…",
+        // Beside `ctrl+Return`, not sharing it: this opens the picker rather
+        // than sending, so it earns its own keystroke rather than a modifier
+        // on Send's.
+        default_binding: "ctrl+shift+Return",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // Opening the picker commits nothing; `Recovery::Undo` belongs to
+        // whichever time the user picks, exactly as it does for `Send`.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::SaveDraft,
         title: "Save draft",
         default_binding: "ctrl+s",
