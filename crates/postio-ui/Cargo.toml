@@ -1,0 +1,15 @@
+[package]
+name = "postio-ui"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Toolkit-free presentation logic shared by every Postio frontend (ADR 0019)"
+
+[lints]
+workspace = true
+
+[dependencies]
+postio-body = { version = "0.1.0", path = "../postio-body" }
+postio-core = { version = "0.1.0", path = "../postio-core" }
+postio-model = { version = "0.1.0", path = "../postio-model" }
+postio-search = { version = "0.1.0", path = "../postio-search" }
