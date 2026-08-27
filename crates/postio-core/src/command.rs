@@ -111,6 +111,8 @@ command_ids! {
     Compose => "compose",
     /// Send what is in the composer.
     Send => "send",
+    /// Open the picker for sending later instead of now.
+    ScheduleSend => "schedule_send",
     /// Save the composer's contents as a draft.
     SaveDraft => "save_draft",
     /// Throw away the draft in the composer.
@@ -435,6 +437,13 @@ pub enum Command {
     },
     /// Send the composer's message.
     Send,
+    /// Open the picker for sending the composer's message later.
+    ///
+    /// No payload, the same way `AttachFile { path: None }` opens a chooser
+    /// rather than naming a file: choosing a time is a widget interaction
+    /// inside the composer, not something the keymap or the palette can
+    /// resolve on the command's behalf.
+    ScheduleSend,
     /// Save the composer's message as a draft.
     SaveDraft,
     /// Throw away the composer's draft.
@@ -572,6 +581,7 @@ impl Command {
             Command::SaveSearch => CommandId::SaveSearch,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
+            Command::ScheduleSend => CommandId::ScheduleSend,
             Command::SaveDraft => CommandId::SaveDraft,
             Command::DiscardDraft => CommandId::DiscardDraft,
             Command::AttachFile { .. } => CommandId::AttachFile,
@@ -657,6 +667,7 @@ impl Command {
             CommandId::SaveSearch => Command::SaveSearch,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
+            CommandId::ScheduleSend => Command::ScheduleSend,
             CommandId::SaveDraft => Command::SaveDraft,
             CommandId::DiscardDraft => Command::DiscardDraft,
             CommandId::AttachFile => Command::AttachFile { path: None },
