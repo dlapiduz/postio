@@ -163,6 +163,40 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
 }
 
 #[tokio::test]
+async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
+    // ADR 0016, #350: excluding a folder from background backfill is a local
+    // preference, the same shape `signature_id` (#394) already is. A LIST
+    // response says nothing about it, so a reconnection must not silently
+    // re-include a folder the user deliberately excluded.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_server().await;
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("first pass");
+
+    let mailboxes = MailboxRepository::new(&connection);
+    let inbox = mailboxes
+        .by_role(account.id, MailboxRole::Inbox)
+        .expect("by role")
+        .expect("an inbox");
+    mailboxes
+        .set_backfill_excluded(inbox.id, true)
+        .expect("exclude the inbox");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("second pass");
+
+    assert!(
+        mailboxes.backfill_excluded(inbox.id).expect("read"),
+        "a resync must not reach a decision the server was never asked about"
+    );
+}
+
+#[tokio::test]
 async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     // The row is not deleted: `messages.mailbox_id` cascades, so deleting a
     // folder because one LIST did not mention it would delete the user's mail.

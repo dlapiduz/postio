@@ -4,7 +4,7 @@ use postio_model::{
     AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, SignatureId, Uid,
     UidValidity,
 };
-use rusqlite::{Connection, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
@@ -24,7 +24,7 @@ pub struct MailboxRepository<'a> {
 const MAILBOX_COLUMNS: &str = "\
 m.id, m.account_id, m.parent_id, m.name, m.path, m.delimiter, m.role, m.selectable,
 m.subscribed, m.total_count, m.unread_count, m.flagged_count, m.last_synced_at,
-s.uid_validity, s.uid_next, s.highest_mod_seq, m.signature_id";
+s.uid_validity, s.uid_next, s.highest_mod_seq, m.signature_id, m.backfill_excluded";
 
 const FROM_MAILBOXES: &str = "\
 FROM mailboxes m LEFT JOIN sync_state s ON s.mailbox_id = m.id";
@@ -50,8 +50,9 @@ impl<'a> MailboxRepository<'a> {
         transaction.execute(
             "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
                                     selectable, subscribed, total_count, unread_count,
-                                    flagged_count, last_synced_at, signature_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                    flagged_count, last_synced_at, signature_id,
+                                    backfill_excluded)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 account_id,
                 optional_id(mailbox.parent_id),
@@ -66,6 +67,7 @@ impl<'a> MailboxRepository<'a> {
                 mailbox.counts.flagged,
                 mailbox.last_synced_at.map(to_millis),
                 optional_signature_id(mailbox.signature_id),
+                mailbox.backfill_excluded,
             ],
         )?;
         let id = MailboxId::new(transaction.last_insert_rowid());
@@ -91,7 +93,7 @@ impl<'a> MailboxRepository<'a> {
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
                     role = ?7, selectable = ?8, subscribed = ?9, total_count = ?10,
                     unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
-                    signature_id = ?14
+                    signature_id = ?14, backfill_excluded = ?15
               WHERE id = ?1",
             params![
                 id,
@@ -108,6 +110,7 @@ impl<'a> MailboxRepository<'a> {
                 mailbox.counts.flagged,
                 mailbox.last_synced_at.map(to_millis),
                 optional_signature_id(mailbox.signature_id),
+                mailbox.backfill_excluded,
             ],
         )?;
         if changed == 0 {
@@ -125,6 +128,45 @@ impl<'a> MailboxRepository<'a> {
     /// One mailbox.
     pub fn get(&self, id: MailboxId) -> Result<Option<Mailbox>> {
         self.one("WHERE m.id = ?1", [id.get()])
+    }
+
+    /// Whether `id` is excluded from the background backfill lane (ADR 0016,
+    /// #350).
+    ///
+    /// A single-column read rather than [`MailboxRepository::get`] plus a
+    /// field access: `postio-sync::backfill::seed` calls this on every
+    /// top-up pass for every mailbox and does not otherwise need the row.
+    /// A mailbox that no longer exists answers `false` rather than an error
+    /// — the caller's own query over `messages` already answers "nothing to
+    /// seed" for that case, and failing open toward "still backfills" is the
+    /// safer direction for a mechanism nobody asked to turn off.
+    pub fn backfill_excluded(&self, id: MailboxId) -> Result<bool> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT backfill_excluded FROM mailboxes WHERE id = ?1",
+                [id.get()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// Flips whether `id` participates in background backfill — the
+    /// settings-surface counterpart of [`AccountRepository`]'s
+    /// [`set_enabled`](super::AccountRepository::set_enabled), for the same
+    /// reason: the caller here is a folder's own settings toggle, not code
+    /// holding a full, freshly-loaded [`Mailbox`].
+    ///
+    /// Does not touch anything already pulled, and does not affect an
+    /// interactive, on-open fetch — only what [`MailboxRepository::backfill_excluded`]
+    /// answers for the background lane's own seeding pass.
+    pub fn set_backfill_excluded(&self, id: MailboxId, excluded: bool) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE mailboxes SET backfill_excluded = ?2 WHERE id = ?1",
+            params![id.get(), excluded],
+        )?;
+        Ok(changed > 0)
     }
 
     /// The mailbox at `path` within an account.
@@ -365,6 +407,7 @@ fn read_mailbox(row: &Row<'_>) -> rusqlite::Result<Mailbox> {
             .map(|value| ModSeq::new(value as u64)),
         last_synced_at: row.get::<_, Option<i64>>(12)?.map(from_millis),
         signature_id: row.get::<_, Option<i64>>(16)?.map(SignatureId::new),
+        backfill_excluded: row.get(17)?,
     })
 }
 

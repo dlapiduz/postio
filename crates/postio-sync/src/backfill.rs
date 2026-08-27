@@ -49,7 +49,9 @@ use postio_imap::backend::{BackendError, BodyPart, MailBackend, VecSink};
 use postio_imap::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
-use postio_storage::repository::{BackfillCandidate, BodyBlobs, MessageRepository};
+use postio_storage::repository::{
+    BackfillCandidate, BodyBlobs, MailboxRepository, MessageRepository,
+};
 use rusqlite::Connection;
 
 use crate::blob_sink::BlobSink;
@@ -741,12 +743,22 @@ impl Backfill {
 /// over the size cap, or all set aside after failing this session, answers
 /// rows for ever and must answer zero here, or the top-up would never stop.
 /// Not an error for there to be none.
+///
+/// Queues nothing at all for a folder marked
+/// [`backfill_excluded`](postio_storage::repository::MailboxRepository::backfill_excluded)
+/// (ADR 0016, #350) — the background lane only. [`request_body`] and
+/// [`request_whole`] answer an interactive, on-open fetch exactly as they
+/// would for any other folder; only the unattended top-up this feeds skips
+/// an excluded one.
 pub fn seed(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+        return Ok(0);
+    }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
@@ -900,6 +912,9 @@ pub fn seed_payloads(
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+        return Ok(0);
+    }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
