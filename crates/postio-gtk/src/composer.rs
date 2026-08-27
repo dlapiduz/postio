@@ -1543,8 +1543,12 @@ impl Composer {
 
         let reader = window.shell().reader();
         self.set_vexpand(true);
-        self.set_visible(false);
         reader.append(self);
+        // The pane's arbiter owns this widget's visibility from here on
+        // (#502): hidden until the composer claims the pane.
+        window
+            .shell()
+            .register_reader_occupant(crate::shell::ReaderOccupant::Composer, self.upcast_ref());
 
         let action = gio::SimpleAction::new("compose", None);
         action.connect_activate(glib::clone!(
@@ -1990,9 +1994,11 @@ impl Composer {
             .restore
             .set(Some((window.context(), shell.focused_pane())));
 
-        for sibling in pane_siblings(self) {
-            sibling.set_visible(false);
-        }
+        // Through the pane's one owner (#502): the shell hides whichever
+        // occupant had the pane and shows this composer. The old shape —
+        // hide every sibling here, show every sibling on release — is what
+        // put a search preview back under an open message.
+        shell.set_composing(true);
         // In the one-pane mode the reader is not necessarily on screen, and a
         // composer the user cannot see is the worst possible mode.
         shell.set_focused_pane(Pane::Reader);
@@ -2000,14 +2006,16 @@ impl Composer {
         window.set_context(Context::Composer);
     }
 
-    /// Puts the reading pane back the way it was.
+    /// Gives the reading pane back to whatever is active now.
     fn release_pane(&self) {
-        for sibling in pane_siblings(self) {
-            sibling.set_visible(true);
-        }
         let Some(window) = self.imp().window.upgrade() else {
             return;
         };
+        // Computed, not replayed: the shell shows what the current state
+        // calls for — the search preview if search is up, the message the
+        // pane was open on, or nothing. Showing every sibling here is the
+        // #502 bug.
+        window.shell().set_composing(false);
         window.shell().remove_css_class(COMPOSING_CLASS);
         if let Some((context, pane)) = self.imp().restore.take() {
             window.set_context(context);
@@ -2862,22 +2870,6 @@ pub fn install(window: &Window) -> Composer {
 }
 
 /// The other children of the reading pane — what the composer takes over from.
-fn pane_siblings(composer: &Composer) -> Vec<gtk::Widget> {
-    let Some(pane) = composer.parent() else {
-        return Vec::new();
-    };
-    let this: gtk::Widget = composer.clone().upcast();
-    let mut siblings = Vec::new();
-    let mut child = pane.first_child();
-    while let Some(widget) = child {
-        child = widget.next_sibling();
-        if widget != this {
-            siblings.push(widget);
-        }
-    }
-    siblings
-}
-
 /// Whether `focus` is `widget` or something inside it.
 /// Dress one toolbar button: icon, identity, and a tooltip that teaches the
 /// key — title and binding both read from the registry, so the toolbar can
