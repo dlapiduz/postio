@@ -17,8 +17,27 @@ crate-type = ["lib", "staticlib", "cdylib"]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
+[features]
+# An in-memory session, for tests on either side of the boundary. A feature
+# rather than always-on: a store that lives only in RAM is not a mode a mail
+# client should be able to reach by accident.
+testing = ["dep:tempfile", "postio-storage/test-support"]
+
 [dependencies]
+postio-core.workspace = true
+postio-model.workspace = true
+postio-session.workspace = true
+postio-storage.workspace = true
+tempfile = { version = "3.27.0", optional = true }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
+tracing = "0.1"
 uniffi = { version = "0.29", features = ["cli"] }
+
+[dev-dependencies]
+# The crate's own testing feature, the way postio-storage does it: a test
+# needs the in-memory constructor, and making it a default would ship it.
+postio-ffi = { path = ".", features = ["testing"] }
 
 [lints]
 workspace = true
