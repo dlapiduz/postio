@@ -497,6 +497,122 @@ fn write_scheme(
     Ok(())
 }
 
+/// How many distinct account hues the palette carries.
+///
+/// A fixed, ordered palette: account *n* gets hue `n % ACCOUNT_HUES`, so the
+/// colour a person learns for an account is stable for as long as the account
+/// keeps its position, and a ninth account reuses the first hue rather than
+/// inventing an unbounded rainbow. Eight is well past what anyone configures
+/// and still leaves 45 degrees between neighbours, which is the smallest gap
+/// that stays distinguishable at the size these are drawn.
+pub const ACCOUNT_HUES: usize = 8;
+
+/// The generated names, in order. `--postio-account-0` is the accent itself,
+/// so a single-account install sees exactly the colour it sees today.
+const ACCOUNT_HUE_NAMES: [&str; ACCOUNT_HUES] = [
+    "--postio-account-0",
+    "--postio-account-1",
+    "--postio-account-2",
+    "--postio-account-3",
+    "--postio-account-4",
+    "--postio-account-5",
+    "--postio-account-6",
+    "--postio-account-7",
+];
+
+/// The floor this puts under the accent's saturation when rotating it.
+///
+/// Industry's accent is a steel — deliberately desaturated — and eight
+/// rotations of a near-grey are eight near-greys. Lifting saturation to a
+/// floor keeps the hues telling *apart* while leaving lightness alone, which
+/// is what keeps every account's contrast against the row identical to every
+/// other's. Below this they stop being distinguishable at a 20px chip; much
+/// above it and the palette stops looking like this design system.
+const ACCOUNT_SATURATION_FLOOR: f64 = 0.38;
+
+/// The palette, derived from `accent` by rotating hue in equal steps.
+///
+/// Nothing here is a typed-in colour (ARCHITECTURE.md §10): retune the design
+/// system's accent and all eight follow it, keeping its lightness and so its
+/// contrast behaviour. Index 0 is the accent unchanged.
+fn account_hues(
+    t: &Tokens,
+    name: &str,
+    reference: &str,
+) -> Result<Vec<(&'static str, String)>, TokenError> {
+    // The literal the design system holds, not `Tokens::var`'s `var(--…)`
+    // reference: hue rotation needs the colour, and GTK cannot compute one.
+    account_palette(t.need(name)?, reference)
+        .map_err(|_| TokenError(format!("`--{name}` is not a plain hex colour")))
+}
+
+/// [`account_hues`] over a literal, so the derivation is testable without a
+/// whole design system behind it.
+fn account_palette(
+    literal: &str,
+    reference: &str,
+) -> Result<Vec<(&'static str, String)>, TokenError> {
+    let Some((r, g, b)) = parse_hex(literal) else {
+        return err(format!(
+            "{literal:?} is not a plain hex colour, so the account palette \
+             cannot be derived from it"
+        ));
+    };
+    let (h, s, l) = rgb_to_hsl(r, g, b);
+    let saturation = s.max(ACCOUNT_SATURATION_FLOOR);
+
+    Ok(ACCOUNT_HUE_NAMES
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let value = if index == 0 {
+                reference.to_owned()
+            } else {
+                let turn = 360.0 / ACCOUNT_HUES as f64 * index as f64;
+                let (r, g, b) = hsl_to_rgb((h + turn) % 360.0, saturation, l);
+                format!("#{r:02x}{g:02x}{b:02x}")
+            };
+            (*name, value)
+        })
+        .collect())
+}
+
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
+    let (r, g, b) = (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let delta = max - min;
+    if delta.abs() < f64::EPSILON {
+        return (0.0, 0.0, l);
+    }
+    let s = delta / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if (max - r).abs() < f64::EPSILON {
+        60.0 * (((g - b) / delta) % 6.0)
+    } else if (max - g).abs() < f64::EPSILON {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+    ((h + 360.0) % 360.0, s, l)
+}
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match h {
+        h if h < 60.0 => (c, x, 0.0),
+        h if h < 120.0 => (x, c, 0.0),
+        h if h < 180.0 => (0.0, c, x),
+        h if h < 240.0 => (0.0, x, c),
+        h if h < 300.0 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let to_byte = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    (to_byte(r), to_byte(g), to_byte(b))
+}
+
 fn light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
     let ground = t.var("color-bg")?;
     let surface = t.var("color-surface")?;
@@ -504,7 +620,7 @@ fn light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
     let hairline = t.var("color-divider")?;
     let accent = t.var("color-accent")?;
 
-    Ok(vec![
+    let mut roles: Vec<(&'static str, String)> = vec![
         ("", "Ground and ink".into()),
         ("--postio-ground", ground.clone()),
         ("--postio-surface", surface.clone()),
@@ -572,7 +688,13 @@ fn light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
         ("--scrollbar-outline-color", ground.clone()),
         ("--accent-bg-color", accent.clone()),
         ("--accent-fg-color", ground.clone()),
-    ])
+    ];
+    roles.push((
+        "",
+        "Per-account identity — a fixed ordered palette, rotated from the accent".into(),
+    ));
+    roles.extend(account_hues(t, "color-accent", &accent)?);
+    Ok(roles)
 }
 
 fn dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
@@ -582,7 +704,7 @@ fn dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
     let hairline = t.var("color-neutral-700")?;
     let accent = t.var("color-accent-400")?;
 
-    Ok(vec![
+    let mut roles: Vec<(&'static str, String)> = vec![
         ("", "Ground and ink".into()),
         ("--postio-ground", ground.clone()),
         ("--postio-surface", surface.clone()),
@@ -657,7 +779,13 @@ fn dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
         ("--scrollbar-outline-color", ground.clone()),
         ("--accent-bg-color", accent.clone()),
         ("--accent-fg-color", ground.clone()),
-    ])
+    ];
+    roles.push((
+        "",
+        "Per-account identity — rotated from the dark scheme's own accent step".into(),
+    ));
+    roles.extend(account_hues(t, "color-accent-400", &accent)?);
+    Ok(roles)
 }
 
 fn light_hc_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
@@ -963,5 +1091,53 @@ mod tests {
     #[test]
     fn expands_three_digit_hex() {
         assert_eq!(parse_hex("#abc"), Some((0xaa, 0xbb, 0xcc)));
+    }
+    #[test]
+    fn the_account_palette_is_derived_rather_than_typed() {
+        // ARCHITECTURE.md §10: no colour is retyped. Every hue but the first
+        // is computed from the accent, so retuning the design system moves
+        // all eight.
+        let accent = "#4f6fb0";
+        let hues =
+            account_palette(accent, "var(--postio-color-accent)").expect("a palette");
+
+        assert_eq!(hues.len(), ACCOUNT_HUES);
+        assert_eq!(
+            hues[0].1, "var(--postio-color-accent)",
+            "account 0 is the accent itself, so one account looks exactly as \
+             it does today"
+        );
+
+        // Uniform lightness is the property that matters: it is what makes
+        // every account's contrast against a row identical, so no account is
+        // harder to read than another.
+        let (_, _, reference) = {
+            let (r, g, b) = parse_hex(accent).unwrap();
+            rgb_to_hsl(r, g, b)
+        };
+        for (name, value) in hues.iter().skip(1) {
+            let (r, g, b) = parse_hex(value).unwrap_or_else(|| panic!("{name} = {value:?}"));
+            let (_, _, lightness) = rgb_to_hsl(r, g, b);
+            assert!(
+                (lightness - reference).abs() < 0.02,
+                "{name} sits at lightness {lightness:.3} against the accent's \
+                 {reference:.3}, so it will not read the same against a row"
+            );
+        }
+
+        // And they are actually different colours.
+        let distinct: std::collections::BTreeSet<&str> =
+            hues.iter().map(|(_, value)| value.as_str()).collect();
+        assert_eq!(distinct.len(), ACCOUNT_HUES, "two accounts share a hue");
+    }
+
+    #[test]
+    fn hsl_round_trips_a_colour() {
+        for hex in ["#4f6fb0", "#1d1f20", "#f2f2f3", "#b04f68"] {
+            let (r, g, b) = parse_hex(hex).unwrap();
+            let (h, s, l) = rgb_to_hsl(r, g, b);
+            let (r2, g2, b2) = hsl_to_rgb(h, s, l);
+            assert_eq!((r, g, b), (r2, g2, b2), "{hex} did not survive HSL");
+        }
     }
 }
