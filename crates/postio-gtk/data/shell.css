@@ -686,6 +686,42 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
+/* The accounts strip (#185): Unified, then one row per account.
+ *
+ * Absent below two accounts rather than disabled — see
+ * `Sidebar::set_accounts`. The swatch is the same element the reading pane
+ * uses, so an account's colour is the same object in both places. */
+.postio-accounts {
+  background: transparent;
+}
+
+.postio-account-row {
+  padding: var(--postio-space-1) var(--postio-space-3);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-account-row:hover {
+  background: var(--postio-hover-bg);
+}
+
+/* Background only, and no 3px left edge — which is the one place in the app
+ * a selected row does not get one. That position is already the account's own
+ * swatch, and putting the selection border there too would be the exact
+ * collision that moving account identity off the message rows avoided: two
+ * meanings on one edge, so "selected" and "this is Home" become the same
+ * mark. The strip is short and always visible, so a background carries it. */
+.postio-account-row:selected {
+  background: var(--postio-selected-bg);
+  color: var(--postio-selected-fg);
+}
+
+/* Unified takes no account's colour: it is every account rather than one, so
+ * a swatch there would claim an identity it does not have. The element stays
+ * so every row's text starts at the same x. */
+.postio-account-swatch-none {
+  background: transparent;
+}
+
 /* Which account a message arrived in (#185).
  *
  * Only ever drawn in the reading pane -- never on a list row, so the row's

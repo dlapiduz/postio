@@ -412,6 +412,50 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // showing mailboxes and ignores `Event::SearchResults`.
     feeds.messages.set_result_source(sources);
 
+    // The accounts strip, and what a click on it does (#185).
+    //
+    // Absent below two accounts — `set_accounts` decides that, not this — so
+    // for everybody with one account this is a length check and nothing on
+    // screen changes. The order is `enabled_accounts`' own, which is
+    // ascending id, the same order `AppState::accounts` uses: the hue is the
+    // position, so it has to be the same list in both places or an account
+    // changes colour depending on which surface is drawing it.
+    let named: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
+        .into_iter()
+        .map(|account| (account.id, account.display_name))
+        .collect();
+    //
+    // `offer_unified: false` until #184: a unified *list* is that issue's
+    // work, and a row that selects a scope nothing can draw would be a dead
+    // end. `g a` cycles through the accounts for the same reason.
+    window.sidebar().set_accounts(
+        &named,
+        postio_core::state::Scope::Account(account.id),
+        false,
+    );
+    window.sidebar().connect_scope_selected({
+        let feeds = feeds.clone();
+        let addresses: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
+            .into_iter()
+            .map(|account| (account.id, account.address.address))
+            .collect();
+        move |scope| {
+            // Re-point the folder feed, which re-reads that account's tree
+            // and, through its own loaded handler, opens its inbox. Nothing
+            // here reaches into the list: the folders are what the list
+            // follows, so there is one path rather than two that can
+            // disagree about which account is on screen.
+            let Some(id) = scope.account() else {
+                return;
+            };
+            let Some((_, address)) = addresses.iter().find(|(candidate, _)| *candidate == id)
+            else {
+                return;
+            };
+            feeds.folders.open(id, address);
+        }
+    });
+
     // Which message is on screen: one cell, read by the pane that paints it
     // and by the composer that replies to it. Two separately-updated copies
     // is exactly what #325 was.

@@ -31,11 +31,15 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_core::ConnectionState;
-use postio_model::ids::MailboxId;
+use postio_model::AccountScope;
+use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 
 /// What to call when the user picks a folder.
 type SelectionHandler = Box<dyn Fn(MailboxId)>;
+
+/// Called when the user picks an account, or Unified, from the strip.
+type ScopeSelectionHandler = Box<dyn Fn(AccountScope)>;
 
 /// What to call when the user picks a saved search.
 type SearchSelectionHandler = Box<dyn Fn(String)>;
@@ -288,6 +292,61 @@ fn role_order(role: MailboxRole) -> Option<u8> {
     }
 }
 
+/// One row of the accounts strip.
+///
+/// `hue` indexes the generated palette; `None` is Unified, which is every
+/// account rather than one and so takes no account's colour — a swatch there
+/// would be claiming an identity it does not have.
+fn scope_row(name: &str, hue: Option<usize>) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("postio-account-row");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+
+    let swatch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    swatch.add_css_class("postio-account-swatch");
+    match hue {
+        Some(hue) => {
+            swatch.add_css_class(&format!(
+                "postio-account-{}",
+                hue % postio_ui::tokens::ACCOUNT_HUES
+            ));
+        }
+        // Kept in the tree rather than left out, so every row's text starts
+        // at the same x — a ragged left edge is what makes a short list look
+        // like a mistake.
+        None => swatch.add_css_class("postio-account-swatch-none"),
+    }
+    content.append(&swatch);
+
+    let label = gtk::Label::new(Some(name));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_ellipsize(pango::EllipsizeMode::Middle);
+    content.append(&label);
+
+    row.set_child(Some(&content));
+    row.set_accessible_role(gtk::AccessibleRole::ListItem);
+    row.update_property(&[gtk::accessible::Property::Label(name)]);
+    row
+}
+
+/// The first non-empty label under `widget`, for the strip's test accessor.
+fn first_label(widget: &gtk::Widget) -> Option<String> {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>()
+        && !label.text().is_empty()
+    {
+        return Some(label.text().to_string());
+    }
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        if let Some(found) = first_label(&node) {
+            return Some(found);
+        }
+        child = node.next_sibling();
+    }
+    None
+}
+
 /// Split the mailboxes into the two sections the canvas draws, each in order.
 ///
 /// Unselectable folders — `\Noselect` containers that exist only to hold a
@@ -434,6 +493,15 @@ mod imp {
     #[derive(Default)]
     pub struct Sidebar {
         pub account: gtk::Label,
+        /// The accounts strip: Unified, then one row per account. Hidden
+        /// entirely below two accounts -- see `Sidebar::set_accounts`.
+        pub accounts: gtk::ListBox,
+        pub accounts_section: gtk::Box,
+        pub scope_selected: RefCell<Vec<ScopeSelectionHandler>>,
+        /// What each strip row means, by row index. A parallel vector rather
+        /// than data hung off the widget: this crate's library code forbids
+        /// `unsafe`, and `gtk::glib::object::ObjectExt::set_data` is not.
+        pub scopes: RefCell<Vec<AccountScope>>,
         pub special: gtk::ListBox,
         pub ordinary: gtk::ListBox,
         pub ordinary_section: gtk::Box,
@@ -580,7 +648,21 @@ impl Sidebar {
         // drag, scroll, and start again.
         crate::autoscroll::attach(&scroller);
 
+        // The accounts strip sits above the address kicker and, when it is
+        // visible, replaces it: with two accounts the address of whichever
+        // one happens to be open is not the useful line, the list of them is.
+        imp.accounts.add_css_class("postio-accounts");
+        imp.accounts.set_selection_mode(gtk::SelectionMode::Single);
+        imp.accounts_section
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.accounts_section.append(&imp.accounts);
+        let accounts_rule = gtk::Separator::new(gtk::Orientation::Horizontal);
+        accounts_rule.add_css_class("postio-rule");
+        imp.accounts_section.append(&accounts_rule);
+        imp.accounts_section.set_visible(false);
+
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&imp.accounts_section);
         column.append(&imp.account);
         column.append(&scroller);
 
@@ -596,6 +678,27 @@ impl Sidebar {
         // One landmark, read as a unit, rather than two stray lines.
         status.set_accessible_role(gtk::AccessibleRole::Status);
         column.append(&status);
+
+        // Picking an account, or Unified. Its own list rather than a fourth
+        // block of the folder list: a scope is not a folder, and a `j` that
+        // walked from "Home" into "Inbox" would be crossing between two
+        // different questions without saying so.
+        imp.accounts.connect_row_selected(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |_, row| {
+                let Some(row) = row else { return };
+                if sidebar.imp().echoing.get() {
+                    return;
+                }
+                let index = row.index();
+                let scope = sidebar.imp().scopes.borrow().get(index as usize).copied();
+                let Some(scope) = scope else { return };
+                for handler in sidebar.imp().scope_selected.borrow().iter() {
+                    handler(scope);
+                }
+            }
+        ));
 
         // Selecting in one list clears the other two: together they are one
         // list of folders, plus the saved searches, drawn in blocks.
@@ -995,6 +1098,104 @@ impl Sidebar {
     /// The mailbox list [`Sidebar::set_mailboxes`] was last given.
     pub fn mailboxes(&self) -> Vec<Mailbox> {
         self.imp().mailboxes.borrow().clone()
+    }
+
+    /// Replace the accounts strip: Unified, then `accounts` in order.
+    ///
+    /// # Why it disappears below two accounts
+    ///
+    /// One account has nothing to switch between, and "Unified" over a single
+    /// account is the same mail under a second name. Drawing the strip anyway
+    /// would put a choice in front of everybody who has never made one, which
+    /// is what #185 means by "no noise for today's users" — so the strip is
+    /// *absent*, not disabled, and the address kicker it replaces comes back.
+    ///
+    /// The order is the caller's, and it must be the order
+    /// `AppState::accounts` uses: the hue is the position, so an account that
+    /// has been green must not turn amber because a later one appeared.
+    ///
+    /// `offer_unified` draws the Unified root above them. It is the caller's
+    /// call because it is the caller that knows whether picking it would lead
+    /// anywhere: a unified *list* is #184, and a row that selects a scope
+    /// nothing can draw is the dead end `/ux-architect` forbids. The strip is
+    /// still the surface for it — the row appears the day there is something
+    /// behind it, and nothing else has to change.
+    pub fn set_accounts(
+        &self,
+        accounts: &[(AccountId, String)],
+        scope: AccountScope,
+        offer_unified: bool,
+    ) {
+        let imp = self.imp();
+        while let Some(row) = imp.accounts.first_child() {
+            imp.accounts.remove(&row);
+        }
+        if accounts.len() < 2 {
+            imp.accounts_section.set_visible(false);
+            imp.account.set_visible(true);
+            return;
+        }
+
+        let mut scopes = Vec::new();
+        if offer_unified {
+            scopes.push(AccountScope::Unified);
+            imp.accounts.append(&scope_row("Unified", None));
+        }
+        for (hue, (id, name)) in accounts.iter().enumerate() {
+            imp.accounts.append(&scope_row(name, Some(hue)));
+            scopes.push(AccountScope::Account(*id));
+        }
+        *imp.scopes.borrow_mut() = scopes;
+        imp.accounts_section.set_visible(true);
+        // The strip names every account, so the single address below it is
+        // one of them repeated -- and, worse, the *wrong* one to read as a
+        // heading once there is more than one.
+        imp.account.set_visible(false);
+        self.set_scope(scope);
+    }
+
+    /// Mark which scope the strip is showing as current.
+    pub fn set_scope(&self, scope: AccountScope) {
+        let imp = self.imp();
+        let Some(index) = imp.scopes.borrow().iter().position(|s| *s == scope) else {
+            return;
+        };
+        if let Some(row) = imp.accounts.row_at_index(index as i32) {
+            let was = imp.echoing.replace(true);
+            imp.accounts.select_row(Some(&row));
+            imp.echoing.set(was);
+        }
+    }
+
+    /// What to call when the user picks an account, or Unified, in the strip.
+    pub fn connect_scope_selected(&self, callback: impl Fn(AccountScope) + 'static) {
+        self.imp()
+            .scope_selected
+            .borrow_mut()
+            .push(Box::new(callback));
+    }
+
+    /// Click the strip's `index`th row, as a pointer would. For tests.
+    #[doc(hidden)]
+    pub fn test_click_account_row(&self, index: usize) {
+        let imp = self.imp();
+        if let Some(row) = imp.accounts.row_at_index(index as i32) {
+            imp.accounts.select_row(Some(&row));
+        }
+    }
+
+    /// The strip's rows, top to bottom, as they read. For tests.
+    #[doc(hidden)]
+    pub fn account_rows(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut row = self.imp().accounts.first_child();
+        while let Some(candidate) = row {
+            row = candidate.next_sibling();
+            if let Some(label) = first_label(&candidate) {
+                names.push(label);
+            }
+        }
+        names
     }
 
     /// Replace the folder list.
