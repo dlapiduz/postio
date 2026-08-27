@@ -2613,6 +2613,15 @@ dependencies = [
 name = "postio-ffi"
 version = "0.1.0"
 dependencies = [
+ "postio-core",
+ "postio-ffi",
+ "postio-model",
+ "postio-session",
+ "postio-storage",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
  "uniffi",
 ]
 

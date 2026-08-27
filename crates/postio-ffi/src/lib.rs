@@ -35,6 +35,12 @@
 //! handles none of them still runs. Today the floor is one function; the
 //! scaffolding around it is the part that had to be proven first.
 
+mod event;
+mod session;
+
+pub use event::UiEvent;
+pub use session::{Session, SessionError, SessionOptions};
+
 uniffi::setup_scaffolding!();
 
 /// Answers with the name of this application.
