@@ -34,6 +34,7 @@
 mod feed;
 mod feed_results;
 mod gtk_composer_autosave;
+mod gtk_conversation;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_recipient_select;
@@ -123,6 +124,10 @@ const CASES: &[(&str, fn())] = &[
         "gtk_composer_signature_default::no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere",
         gtk_composer_signature_default::no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere
             as fn(),
+    ),
+    (
+        "gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message",
+        gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
