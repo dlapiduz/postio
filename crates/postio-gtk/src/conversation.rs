@@ -613,6 +613,20 @@ impl ConversationView {
         }
     }
 
+    /// The widget the reader factory built for `message`, if it has been
+    /// expanded — what a test downcasts to check what is actually on
+    /// screen inside an entry, rather than only what the pane's own state
+    /// says (#487).
+    #[doc(hidden)]
+    pub fn test_expanded_widget(&self, message: MessageId) -> Option<gtk::Widget> {
+        self.imp()
+            .entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.message == message)
+            .and_then(|entry| entry.body.first_child())
+    }
+
     // -- internals ---------------------------------------------------------
 
     fn scroll_to(&self, message: MessageId) {

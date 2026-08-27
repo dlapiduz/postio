@@ -377,11 +377,13 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         let parts = Rc::clone(&parts);
         move |message| {
             let reader = window.new_reader();
-            // The reader's own sender/recipients/subject/date strip stays
-            // hidden here: the entry above it already carries that line, and
-            // an empty strip is a hundred pixels of nothing between every
-            // header and its body down the whole stack.
-            reader.header().widget().set_visible(false);
+            // The reader's own sender/subject/date stay hidden (#308): the
+            // entry above it already carries that line. Recipients (#487)
+            // are the one part of this header the entry does not draw, so
+            // the header widget itself stays visible and only its identity
+            // portion is hidden — `fill_reader` fills in To/Cc once the
+            // envelope has loaded.
+            reader.header().set_identity_visible(false);
             let widget = reader.widget();
             widget.set_hexpand(true);
             // Hidden until it has something to draw, so an expanded message
@@ -536,15 +538,21 @@ impl Fill {
                 else {
                     return;
                 };
-                // Deliberately *not* `set_message_header`. In the single
-                // pane the reader draws the sender/recipients/subject/date
-                // strip because nothing else does; in the conversation the
-                // entry already carries that line above the body, and a
-                // second one would say the same thing twice per message down
-                // the whole stack. `envelope` is still read because it is the
-                // same query either way — dropping it here would fork the
-                // load path for one field.
-                let _ = &envelope;
+                // `set_message_header` is still called here, unlike before
+                // #487: the conversation entry above already carries
+                // sender/subject/date, so the reader's own copies of those
+                // stay hidden (`set_identity_visible(false)`, set once when
+                // this reader was built) — but recipients have nowhere else
+                // to go, and the header is the only place that draws To/Cc.
+                if let Some(envelope) = &envelope {
+                    reader.set_message_header(
+                        &envelope.from,
+                        &envelope.to,
+                        &envelope.cc,
+                        envelope.subject.as_deref(),
+                        envelope.date,
+                    );
+                }
                 match body {
                     crate::compose::Body::Ready(body) => {
                         let root = root_type(content_type.as_deref(), &body, &parts);
