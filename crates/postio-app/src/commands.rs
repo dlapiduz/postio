@@ -31,7 +31,7 @@ use postio_core::state::{Selection, SharedState, ViewScope};
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
-use postio_model::MessageId;
+use postio_model::{MessageId, ThreadId};
 
 use adw::prelude::*;
 use gtk::glib;
@@ -92,12 +92,20 @@ pub fn mirror(
 /// * The verb must still be **aimed at the selection**. A hover action or a
 ///   drop names its own rows and app state is explicitly told to take those
 ///   at their word; re-aiming one would be second-guessing the user's point.
-/// * Nothing may be **explicitly selected**. With rows marked, the selection
-///   is the target and this is not the gesture being made. (Multi-selecting
-///   thread rows is its own predicate — the ADR's "selection excepts thread
-///   ids and the store expands members" — and is not this.)
-/// * The cursor row must **be** a thread row. In a query view it is not, and
-///   the verb goes on meaning what it always meant.
+/// * The rows it aims at must **be** thread rows. In a query view they are
+///   not, and the verb goes on meaning what it always meant.
+///
+/// With rows marked it is the same rule over the marked set: a selection of
+/// thread rows is a selection of *conversations*. That is the half #307 left
+/// and #468 was — a thread row's id is its newest message, so the verbs took
+/// a marked set at its word and archived six representatives out of six
+/// conversations, leaving the rest of every one of them in the folder after a
+/// gesture that looked like it worked.
+///
+/// `MessageTarget::Threads` carries it from here; `Actions::aim` expands the
+/// members store-side, which is where ADR 0015 Q3 says the expansion belongs.
+/// The frontend never enumerates a conversation to act on it — it names the
+/// conversations and stops.
 fn aim_at_the_conversation(
     list: &postio_gtk::list_view::MessageListView,
     command: Command,
@@ -105,19 +113,77 @@ fn aim_at_the_conversation(
     if !matches!(command.target(), Some(MessageTarget::Selection)) {
         return command;
     }
-    if !matches!(list.selection().selection(), Selection::These(rows) if rows.is_empty()) {
-        return command;
+    match list.selection().selection() {
+        // Nothing marked: the gesture is about the cursor row.
+        Selection::These(marked) if marked.is_empty() => {
+            let Some(row) = list.cursor_row() else {
+                return command;
+            };
+            if !row.is_thread() {
+                return command;
+            }
+            let Some(thread) = row.thread else {
+                return command;
+            };
+            command.with_target(MessageTarget::Thread(thread))
+        }
+        // Rows marked: every one of them is a conversation (#468).
+        Selection::These(marked) => match threads_of(list, &marked) {
+            Some(threads) => command.with_target(MessageTarget::Threads(threads)),
+            // A set that is not all thread rows — a query view, or a folder
+            // mid-switch whose rows have not been replaced yet. Leaving it as
+            // `Selection` is today's meaning, and acting on the messages
+            // named is never *wrong*, only narrower than a conversation.
+            None => command,
+        },
+        // `Ctrl+A` is a predicate over the view, not a list of rows, and its
+        // exceptions are still message ids. Excepting a conversation rather
+        // than its representative is the rest of ADR 0015 Q3 and wants
+        // `MessageSet` to grow a members-of-these-threads variant, which is
+        // its own change — see #468.
+        Selection::Everything { .. } => command,
     }
-    let Some(row) = list.cursor_row() else {
-        return command;
-    };
-    if !row.is_thread() {
-        return command;
+}
+
+/// The conversations `marked` names, or `None` if any of them is not a thread
+/// row.
+///
+/// All-or-nothing on purpose. A half-converted target would archive some rows
+/// as conversations and some as single messages from one keystroke, which is
+/// a rule nobody could hold in their head — and in a threaded folder every
+/// row is a thread row, so the mixed case is a view that is not threaded at
+/// all rather than a set worth splitting.
+fn threads_of(
+    list: &postio_gtk::list_view::MessageListView,
+    marked: &[MessageId],
+) -> Option<Vec<ThreadId>> {
+    let model = list.model();
+    let mut by_id = std::collections::BTreeMap::new();
+    for index in 0..model.n_items() {
+        let Some(row) = model
+            .item(index)
+            .and_then(|item| item.downcast::<postio_gtk::list::MessageRow>().ok())
+            .and_then(|item| item.row())
+        else {
+            continue;
+        };
+        by_id.insert(row.id, row);
     }
-    let Some(thread) = row.thread else {
-        return command;
-    };
-    command.with_target(MessageTarget::Thread(thread))
+
+    let mut threads = Vec::with_capacity(marked.len());
+    for id in marked {
+        // A marked row that is not resident any more cannot be checked, and
+        // guessing it is a thread would act on a conversation the user may
+        // not have marked. Fall back to the message ids instead.
+        let row = by_id.get(id)?;
+        if !row.is_thread() {
+            return None;
+        }
+        threads.push(row.thread?);
+    }
+    threads.sort_unstable();
+    threads.dedup();
+    Some(threads)
 }
 
 /// The app-state scope a feed scope stands for.

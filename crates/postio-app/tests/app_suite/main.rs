@@ -36,6 +36,7 @@ mod settings_credential_wiring;
 mod sidebar_backfill_wiring;
 mod signature_default_wiring;
 mod startup_repair;
+mod thread_bulk_keystroke;
 mod thread_cursor_preview;
 mod thread_keystroke;
 mod window_drain;
@@ -179,6 +180,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane",
         thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane as fn(),
+    ),
+    (
+        "thread_bulk_keystroke::marking_two_thread_rows_archives_both_conversations",
+        thread_bulk_keystroke::marking_two_thread_rows_archives_both_conversations as fn(),
     ),
     (
         "thread_keystroke::pressing_a_on_a_thread_row_archives_the_whole_conversation",

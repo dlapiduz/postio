@@ -304,9 +304,26 @@ impl MessageSet {
                 let mut sql =
                     format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
                 if !except.is_empty() {
+                    // Excepted by *conversation*, not by row (ADR 0015 Q3,
+                    // #468). A folder shows one row per thread, so the id in
+                    // `except` is a row the user took back out of a select-all
+                    // -- and that row is a conversation. Excepting only the id
+                    // would leave the rest of it in the set, so `Ctrl+A` then
+                    // deselecting one thread would archive all of it but its
+                    // newest message: the worst of both readings.
+                    //
+                    // The `IS NULL` arm keeps the comparison total. A message
+                    // with no thread is only ever excepted by its own id, and
+                    // `NOT IN` against a set containing NULL is NULL -- which
+                    // would quietly drop every unthreaded message from the
+                    // set rather than keep it.
+                    let ids = placeholders(except.len(), first + 1);
                     sql.push_str(&format!(
-                        " AND messages.id NOT IN ({})",
-                        placeholders(except.len(), first + 1)
+                        " AND messages.id NOT IN ({ids}) \
+                          AND (messages.thread_id IS NULL \
+                               OR messages.thread_id NOT IN \
+                                  (SELECT thread_id FROM messages \
+                                    WHERE id IN ({ids}) AND thread_id IS NOT NULL))"
                     ));
                 }
                 let mut arguments = vec![mailbox.get()];
