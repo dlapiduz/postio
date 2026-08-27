@@ -510,6 +510,8 @@ pub struct BackfillCandidate {
     pub mailbox_path: String,
     /// The server's identifier for the message.
     pub uid: Uid,
+    /// The backend's own identity — what the fetch is addressed by (#543).
+    pub remote_id: RemoteId,
     /// `RFC822.SIZE`, as the header fetch reported it.
     pub size: u64,
     /// When the server received it. The backlog's sort key.
@@ -699,14 +701,12 @@ impl<'a> MessageRepository<'a> {
         // handful of drafts, and a page holds hundreds of messages.
         let mine = own_draft_copies(&transaction)?;
         let before = batch.len();
-        batch.retain(|message| {
-            match (message.server.uid, message.server.uid_validity) {
-                (Some(uid), Some(validity)) => {
-                    !mine.contains(&(message.mailbox_id, validity.get(), uid.get()))
-                }
-                // Nowhere to have landed, so nothing to be a second copy of.
-                _ => true,
+        batch.retain(|message| match &message.server.remote_id {
+            Some(remote_id) => {
+                !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
             }
+            // Nowhere to have landed, so nothing to be a second copy of.
+            None => true,
         });
         report.own_drafts = before - batch.len();
 
@@ -714,15 +714,13 @@ impl<'a> MessageRepository<'a> {
         // out of this mailbox and the server has not been told about yet.
         let shadowed = shadowed_by_pending_operation(&transaction)?;
         let before = batch.len();
-        batch.retain(|message| {
-            match (message.server.uid, message.server.uid_validity) {
-                (Some(uid), Some(validity)) => {
-                    !shadowed.contains(&(message.mailbox_id, validity.get(), uid.get()))
-                }
-                // No server identity, so no queue row can be shadowing it: the
-                // snapshot is of server coordinates, and this message has none.
-                _ => true,
+        batch.retain(|message| match &message.server.remote_id {
+            Some(remote_id) => {
+                !shadowed.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
             }
+            // No server identity, so no queue row can be shadowing it: the
+            // snapshot is of server coordinates, and this message has none.
+            None => true,
         });
         report.shadowed_by_pending = before - batch.len();
 
@@ -1336,11 +1334,12 @@ impl<'a> MessageRepository<'a> {
     ) -> Result<Vec<BackfillCandidate>> {
         let mut statement = self.connection.prepare(
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path
+                    mailboxes.path, messages.remote_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
                 AND messages.body_state = 'partial'
                 AND messages.uid IS NOT NULL
+                AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0
                 AND EXISTS (SELECT 1 FROM attachments
                              WHERE attachments.message_id = messages.id
@@ -1397,11 +1396,12 @@ impl<'a> MessageRepository<'a> {
     ) -> Result<Vec<BackfillCandidate>> {
         let mut statement = self.connection.prepare(
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path
+                    mailboxes.path, messages.remote_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
                 AND messages.body_state IN ('not_fetched', 'headers_only')
                 AND messages.uid IS NOT NULL
+                AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
@@ -1491,18 +1491,19 @@ impl<'a> MessageRepository<'a> {
     pub fn backfill_candidate(&self, message_id: MessageId) -> Result<Option<BackfillCandidate>> {
         let mut statement = self.connection.prepare(
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.mailbox_id
+                    mailboxes.path, messages.remote_id, messages.mailbox_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.id = ?1
                 AND messages.body_state <> 'full'
                 AND messages.uid IS NOT NULL
+                AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0",
         )?;
         let mut rows = statement.query([message_id.get()])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
-        let mailbox_id = MailboxId::new(row.get(5)?);
+        let mailbox_id = MailboxId::new(row.get(6)?);
         Ok(Some(read_backfill_candidate(row, mailbox_id)?))
     }
 
@@ -1845,6 +1846,7 @@ fn read_backfill_candidate(
         size: row.get::<_, i64>(2)? as u64,
         received_at: from_millis(row.get(3)?),
         mailbox_path: row.get(4)?,
+        remote_id: RemoteId::new(row.get::<_, String>(5)?),
     })
 }
 
@@ -2064,27 +2066,23 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
 
 /// Where every draft this client has uploaded is sitting on the server.
 ///
-/// `(mailbox, UIDVALIDITY, UID)` — the same identity `find_by_uid` matches on,
-/// because that is the only one the server guarantees. Scoped to the account's
-/// Drafts mailbox: UIDs are per-mailbox, so the message that happens to be
-/// number 7 in the inbox has nothing to do with the draft that is number 7 in
-/// Drafts. A draft whose append the server would not locate has no `uid` and
-/// is absent from this — `postio-sync` flags the folder for a resync instead
-/// of guessing which message is the one it just wrote.
-fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, u32, u32)>> {
+/// `(mailbox, remote_id)` — the backend's own identity (#543). Scoped to
+/// the account's Drafts mailbox: IMAP identities are per-mailbox, so the
+/// message that happens to carry the same spelling in the inbox has nothing
+/// to do with the draft in Drafts. A draft whose append the server would
+/// not locate has no identity and is absent from this — `postio-sync` flags
+/// the folder for a resync instead of guessing which message is the one it
+/// just wrote.
+fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
     let mut statement = connection.prepare(
-        "SELECT mailboxes.id, drafts.uid_validity, drafts.uid
+        "SELECT mailboxes.id, drafts.remote_id
            FROM drafts
            JOIN mailboxes ON mailboxes.account_id = drafts.account_id
                          AND mailboxes.role = 'drafts'
-          WHERE drafts.uid IS NOT NULL AND drafts.uid_validity IS NOT NULL",
+          WHERE drafts.remote_id IS NOT NULL",
     )?;
     let rows = statement.query_map([], |row| {
-        Ok((
-            MailboxId::new(row.get::<_, i64>(0)?),
-            row.get::<_, i64>(1)? as u32,
-            row.get::<_, i64>(2)? as u32,
-        ))
+        Ok((MailboxId::new(row.get::<_, i64>(0)?), row.get(1)?))
     })?;
     rows.collect::<rusqlite::Result<BTreeSet<_>>>()
         .map_err(Into::into)
@@ -2111,22 +2109,17 @@ fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, u32,
 /// the only thing that still remembers where the server has it.
 fn shadowed_by_pending_operation(
     connection: &Connection,
-) -> Result<BTreeSet<(MailboxId, u32, u32)>> {
+) -> Result<BTreeSet<(MailboxId, String)>> {
     let mut statement = connection.prepare(
-        "SELECT mailbox_id, source_uid_validity, source_uid
+        "SELECT mailbox_id, source_remote_id
            FROM operation_queue
           WHERE state IN ('pending', 'in_flight')
             AND op_type IN ('move', 'delete')
             AND mailbox_id IS NOT NULL
-            AND source_uid IS NOT NULL
-            AND source_uid_validity IS NOT NULL",
+            AND source_remote_id IS NOT NULL",
     )?;
     let rows = statement.query_map([], |row| {
-        Ok((
-            MailboxId::new(row.get::<_, i64>(0)?),
-            row.get::<_, i64>(1)? as u32,
-            row.get::<_, i64>(2)? as u32,
-        ))
+        Ok((MailboxId::new(row.get::<_, i64>(0)?), row.get(1)?))
     })?;
     rows.collect::<rusqlite::Result<BTreeSet<_>>>()
         .map_err(Into::into)

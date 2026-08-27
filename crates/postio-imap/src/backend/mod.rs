@@ -57,7 +57,7 @@ use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use postio_model::{ModSeq, Uid};
+use postio_model::{ModSeq, RemoteId};
 
 use crate::cancel::CancelToken;
 
@@ -96,8 +96,9 @@ pub use postio_model::Disposition;
 /// This trait is the porting surface. A JMAP or Exchange backend implements
 /// these methods and nothing above `postio-sync` changes. The concepts that
 /// look IMAP-shaped are the ones every mail protocol has under some name:
-/// a folder, a server-assigned message id ([`Uid`]), a generation counter that
-/// invalidates them ([`UidValidity`](postio_model::UidValidity)), and a change
+/// a folder, a server-assigned message id ([`RemoteId`] — opaque here; the
+/// IMAP adapter packs its generation-and-uid pair into one and keeps the
+/// renumbering dance behind this seam, per ADR 0018 Q2), and a change
 /// counter ([`ModSeq`]). A protocol without one reports `None` and the sync
 /// engine falls back to comparing listings.
 #[async_trait]
@@ -156,7 +157,7 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     async fn fetch_part(
         &self,
         mailbox: &str,
-        uid: Uid,
+        id: &RemoteId,
         part: &BodyPart,
         sink: &mut dyn BodySink,
         cancel: &CancelToken,
@@ -166,19 +167,19 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     async fn fetch_body(
         &self,
         mailbox: &str,
-        uid: Uid,
+        id: &RemoteId,
         sink: &mut dyn BodySink,
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody> {
-        self.fetch_part(mailbox, uid, &BodyPart::Whole, sink, cancel)
+        self.fetch_part(mailbox, id, &BodyPart::Whole, sink, cancel)
             .await
     }
 
-    /// Changes flags on `uids` and reports what they are now.
+    /// Changes flags on `ids` and reports what they are now.
     async fn store_flags(
         &self,
         mailbox: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         change: &FlagChange,
     ) -> BackendResult<Vec<FlagUpdate>>;
 
@@ -190,7 +191,7 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     async fn move_messages(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
     ) -> BackendResult<Vec<UidMapping>>;
 
@@ -198,13 +199,13 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     async fn copy_messages(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
     ) -> BackendResult<Vec<UidMapping>>;
 
     /// Expunges messages marked `\Deleted`, and reports which went.
     ///
-    /// With `uids`, only those are considered — the `UID EXPUNGE` of RFC 4315,
+    /// With `ids`, only those are considered — the `UID EXPUNGE` of RFC 4315,
     /// which is what stops Postio from expunging a message another client
     /// marked in the same mailbox. A server without that extension cannot
     /// honour a targeted expunge at all, and declines rather than widening it
@@ -212,11 +213,16 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     ///
     /// **An IMAP server reports the removals as sequence numbers**, not UIDs,
     /// so a real backend returns an empty list here however much it removed:
-    /// turning a sequence number into a UID needs a map this layer does not
-    /// keep, and a plausible wrong UID is worse than none. Treat a successful
-    /// expunge as "resync this mailbox", and read the returned UIDs only from
-    /// implementations that genuinely know them, such as [`MockBackend`].
-    async fn expunge(&self, mailbox: &str, uids: Option<&UidSet>) -> BackendResult<Vec<Uid>>;
+    /// turning a sequence number into an identity needs a map this layer does
+    /// not keep, and a plausible wrong id is worse than none. Treat a
+    /// successful expunge as "resync this mailbox", and read the returned ids
+    /// only from implementations that genuinely know them, such as
+    /// [`MockBackend`].
+    async fn expunge(
+        &self,
+        mailbox: &str,
+        ids: Option<&[RemoteId]>,
+    ) -> BackendResult<Vec<RemoteId>>;
 
     /// Uploads a message into a mailbox.
     ///
@@ -242,7 +248,7 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         &self,
         mailbox: &str,
         message_id: &str,
-    ) -> BackendResult<Option<Uid>> {
+    ) -> BackendResult<Option<RemoteId>> {
         let _ = (mailbox, message_id);
         Ok(None)
     }

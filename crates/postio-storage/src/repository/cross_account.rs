@@ -7,7 +7,7 @@
 //! possible failure a duplicate, never a loss.
 
 use chrono::Utc;
-use postio_model::ids::{AccountId, CrossAccountMoveId, MailboxId, MessageId, Uid};
+use postio_model::ids::{AccountId, CrossAccountMoveId, MailboxId, MessageId, RemoteId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::{Error, Result};
@@ -94,7 +94,7 @@ pub struct CrossAccountMove {
     /// Where the saga is.
     pub phase: MovePhase,
     /// Where the target server filed it, once proven.
-    pub confirmed_uid: Option<Uid>,
+    pub confirmed_remote_id: Option<RemoteId>,
 }
 
 /// What a new saga needs to exist. Everything else starts empty.
@@ -160,7 +160,7 @@ impl<'a> CrossAccountMoveRepository<'a> {
             .query_row(
                 "SELECT id, source_message_id, source_account_id, source_mailbox_id,
                         target_account_id, target_mailbox_id, target_message_id,
-                        raw_blob_id, rfc_message_id, phase, confirmed_uid
+                        raw_blob_id, rfc_message_id, phase, confirmed_remote_id
                    FROM cross_account_moves WHERE id = ?1",
                 [id.get()],
                 |row| {
@@ -176,9 +176,9 @@ impl<'a> CrossAccountMoveRepository<'a> {
                         raw_blob_id: row.get(7)?,
                         rfc_message_id: row.get(8)?,
                         phase: MovePhase::parse(&phase).unwrap_or(MovePhase::Aborted),
-                        confirmed_uid: row
-                            .get::<_, Option<i64>>(10)?
-                            .map(|uid| Uid::new(uid as u32)),
+                        confirmed_remote_id: row
+                            .get::<_, Option<String>>(10)?
+                            .map(RemoteId::new),
                     })
                 },
             )
@@ -218,14 +218,14 @@ impl<'a> CrossAccountMoveRepository<'a> {
 
     /// Record the proof of arrival and move to `confirmed`.
     ///
-    /// `uid` is `Some` from APPENDUID, `None` when a Message-ID search
-    /// proved presence without naming the UID.
-    pub fn confirm(&self, id: CrossAccountMoveId, uid: Option<Uid>) -> Result<()> {
+    /// `remote_id` is `Some` from APPENDUID, `None` when a Message-ID
+    /// search proved presence without naming where.
+    pub fn confirm(&self, id: CrossAccountMoveId, remote_id: Option<&RemoteId>) -> Result<()> {
         self.transition(id, MovePhase::Confirmed)?;
-        if let Some(uid) = uid {
+        if let Some(remote_id) = remote_id {
             self.connection.execute(
-                "UPDATE cross_account_moves SET confirmed_uid = ?2 WHERE id = ?1",
-                params![id.get(), uid.get() as i64],
+                "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
+                params![id.get(), remote_id.as_str()],
             )?;
         }
         Ok(())
@@ -286,11 +286,11 @@ mod tests {
             "unconfirmed -> done is exactly the guess the ADR forbids"
         );
         sagas
-            .confirm(id, Some(Uid::new(4242)))
-            .expect("unconfirmed -> confirmed, with the UID recorded");
+            .confirm(id, Some(&RemoteId::new("1:4242")))
+            .expect("unconfirmed -> confirmed, with the identity recorded");
         let saga = sagas.get(id).expect("read").expect("the saga");
         assert_eq!(saga.phase, MovePhase::Confirmed);
-        assert_eq!(saga.confirmed_uid, Some(Uid::new(4242)));
+        assert_eq!(saga.confirmed_remote_id, Some(RemoteId::new("1:4242")));
 
         sagas
             .transition(id, MovePhase::Done)

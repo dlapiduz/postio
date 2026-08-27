@@ -876,6 +876,7 @@ fn body_request(mailbox: &Mailbox, message: MessageId, uid: Uid) -> BodyRequest 
         message,
         mailbox: mailbox.id,
         path: mailbox.path.clone(),
+        remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:{uid}")),
         uid,
         size: 0,
         received_at: at(9),

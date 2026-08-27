@@ -447,6 +447,7 @@ fn discarding_a_draft_removes_it_locally_and_queues_the_server_copy() {
     let mut draft = a_draft(account.id);
     draft.server.uid = Some(postio_model::Uid::new(41));
     draft.server.uid_validity = Some(postio_model::UidValidity::new(9));
+    draft.server.remote_id = Some(postio_model::RemoteId::new("9:41"));
     drafts.save(&mut draft).expect("save");
 
     let queued = drafts
@@ -458,8 +459,7 @@ fn discarding_a_draft_removes_it_locally_and_queues_the_server_copy() {
         queued.operation,
         Operation::DiscardDraft {
             mailbox: drafts_mailbox,
-            uid: postio_model::Uid::new(41),
-            uid_validity: postio_model::UidValidity::new(9),
+            remote_id: postio_model::RemoteId::new("9:41"),
         },
         "the operation carries the copy to remove, because the row that knew \
          it is about to be gone"
@@ -653,6 +653,7 @@ fn fetched(
     message.subject = Some("Tide gate interlock".to_owned());
     message.server.uid = Some(postio_model::Uid::new(uid));
     message.server.uid_validity = Some(postio_model::UidValidity::new(validity));
+    message.server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     message
 }
 
@@ -669,8 +670,11 @@ fn uploaded(
     drafts
         .set_server_copy(
             id,
-            Some(postio_model::Uid::new(uid)),
-            Some(postio_model::UidValidity::new(validity)),
+            Some(&postio_storage::repository::ServerCopyLocation {
+                remote_id: postio_model::RemoteId::new(format!("{validity}:{uid}")),
+                uid: postio_model::Uid::new(uid),
+                uid_validity: postio_model::UidValidity::new(validity),
+            }),
         )
         .expect("record where the append landed");
     id
@@ -1015,8 +1019,11 @@ fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
     drafts
         .set_server_copy(
             draft.id,
-            Some(postio_model::Uid::new(7)),
-            Some(postio_model::UidValidity::new(1)),
+            Some(&postio_storage::repository::ServerCopyLocation {
+                remote_id: postio_model::RemoteId::new("1:7"),
+                uid: postio_model::Uid::new(7),
+                uid_validity: postio_model::UidValidity::new(1),
+            }),
         )
         .expect("record where the append landed");
 

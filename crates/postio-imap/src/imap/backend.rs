@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use postio_model::{ModSeq, Uid};
+use postio_model::{ModSeq, RemoteId};
 
 use crate::backend::{
     AppendMessage, BackendResult, BodyPart, BodySink, Capabilities, FetchedBody, FetchedMessage,
@@ -159,43 +159,47 @@ impl MailBackend for ImapBackend {
     async fn fetch_part(
         &self,
         mailbox: &str,
-        uid: Uid,
+        id: &RemoteId,
         part: &BodyPart,
         sink: &mut dyn BodySink,
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody> {
-        fetch_part(&self.pool, mailbox, uid, part, sink, self.priority, cancel).await
+        fetch_part(&self.pool, mailbox, id, part, sink, self.priority, cancel).await
     }
 
     async fn store_flags(
         &self,
         mailbox: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         change: &FlagChange,
     ) -> BackendResult<Vec<FlagUpdate>> {
-        store_flags(&self.pool, mailbox, uids, change, self.priority).await
+        store_flags(&self.pool, mailbox, ids, change, self.priority).await
     }
 
     async fn move_messages(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
     ) -> BackendResult<Vec<UidMapping>> {
-        move_messages(&self.pool, from, uids, to, self.priority).await
+        move_messages(&self.pool, from, ids, to, self.priority).await
     }
 
     async fn copy_messages(
         &self,
         from: &str,
-        uids: &UidSet,
+        ids: &[RemoteId],
         to: &str,
     ) -> BackendResult<Vec<UidMapping>> {
-        copy_messages(&self.pool, from, uids, to, self.priority).await
+        copy_messages(&self.pool, from, ids, to, self.priority).await
     }
 
-    async fn expunge(&self, mailbox: &str, uids: Option<&UidSet>) -> BackendResult<Vec<Uid>> {
-        expunge(&self.pool, mailbox, uids, self.priority).await
+    async fn expunge(
+        &self,
+        mailbox: &str,
+        ids: Option<&[RemoteId]>,
+    ) -> BackendResult<Vec<RemoteId>> {
+        expunge(&self.pool, mailbox, ids, self.priority).await
     }
 
     async fn append(
@@ -210,7 +214,7 @@ impl MailBackend for ImapBackend {
         &self,
         mailbox: &str,
         message_id: &str,
-    ) -> BackendResult<Option<postio_model::Uid>> {
+    ) -> BackendResult<Option<RemoteId>> {
         super::mutate::find_by_message_id(&self.pool, mailbox, message_id, self.priority).await
     }
 

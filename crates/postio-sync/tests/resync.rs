@@ -27,6 +27,11 @@ fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
 
+/// The identity the pinned generation gives `uid`.
+fn rid(uid: u32) -> postio_model::RemoteId {
+    postio_model::RemoteId::new(format!("{VALIDITY}:{uid}"))
+}
+
 fn note(n: u32) -> Vec<u8> {
     format!(
         "From: Ada Lovelace <ada@example.com>\r\n\
@@ -100,7 +105,7 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     backend
         .store_flags(
             INBOX,
-            &UidSet::single(Uid::new(2)),
+            &[rid(2)],
             &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
@@ -109,13 +114,13 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     backend
         .store_flags(
             INBOX,
-            &UidSet::single(Uid::new(3)),
+            &[rid(3)],
             &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
         )
         .await
         .expect("mark deleted");
     backend
-        .expunge(INBOX, Some(&UidSet::single(Uid::new(3))))
+        .expunge(INBOX, Some(&[rid(3)]))
         .await
         .expect("expunge");
 
@@ -176,7 +181,7 @@ async fn a_flag_only_change_does_not_double_count_the_correspondent() {
     backend
         .store_flags(
             INBOX,
-            &UidSet::single(Uid::new(2)),
+            &[rid(2)],
             &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
@@ -276,7 +281,7 @@ async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
     backend
         .store_flags(
             INBOX,
-            &UidSet::single(Uid::new(1)),
+            &[rid(1)],
             &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
@@ -420,7 +425,7 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
     backend
         .store_flags(
             INBOX,
-            &UidSet::from_iter([Uid::new(1)]),
+            &[rid(1)],
             &postio_imap::backend::FlagChange::Add(flagged),
         )
         .await
