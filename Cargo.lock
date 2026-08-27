@@ -2662,6 +2662,7 @@ dependencies = [
  "postio-core",
  "postio-model",
  "postio-search",
+ "postio-ui",
  "tempfile",
  "thiserror",
  "tracing",
@@ -2857,6 +2858,16 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "postio-ui"
+version = "0.1.0"
+dependencies = [
+ "postio-body",
+ "postio-core",
+ "postio-model",
+ "postio-search",
 ]
 
 [[package]]

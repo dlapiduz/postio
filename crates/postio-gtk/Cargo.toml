@@ -21,6 +21,7 @@ postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
 postio-model.workspace = true
+postio-ui.workspace = true
 postio-search.workspace = true
 thiserror = "2.0.20"
 tracing = "0.1.44"

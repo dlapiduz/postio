@@ -84,7 +84,9 @@ pub mod reader;
 pub mod resources;
 pub mod row;
 pub mod search;
-pub mod selection;
+// Moved to postio-ui (#566, ADR 0019): the selection model has no toolkit
+// in it, and re-exporting keeps every call site and test resolving here.
+pub use postio_ui::selection;
 pub mod settings;
 pub mod shell;
 pub mod sidebar;
