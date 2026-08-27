@@ -127,6 +127,20 @@ pub struct AccountSettings {
     /// (#534): what the sign-in flow needs to run. Only preset-sourced
     /// discoveries carry one — autoconfig and SRV say nothing about OAuth.
     pub oauth: Option<OAuthOffer>,
+    /// The provider's JMAP offer, when its preset row advertises the
+    /// backend (ADR 0018 Q5). Like [`oauth`](Self::oauth), preset-only:
+    /// autoconfig and SRV describe IMAP servers.
+    pub jmap: Option<JmapOffer>,
+    /// Preference order among the backends the provider is reached over.
+    /// `["imap"]` for everything but a preset row that says otherwise.
+    pub backends: Vec<String>,
+}
+
+/// What a preset row offers a JMAP add (ADR 0018 Q5).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JmapOffer {
+    /// The RFC 8620 session resource URL.
+    pub session_url: String,
 }
 
 /// What a preset row's `[provider.<id>.oauth]` table offers the sign-in

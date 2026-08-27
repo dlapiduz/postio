@@ -68,7 +68,7 @@ pub mod thread;
 pub mod threading;
 
 pub use account::{
-    Account, AccountScope, AuthMethod, Identity, OAuthConfig, ServerConfig, Signature,
+    Account, AccountScope, AuthMethod, Backend, Identity, OAuthConfig, ServerConfig, Signature,
     TransportSecurity,
 };
 pub use address::EmailAddress;

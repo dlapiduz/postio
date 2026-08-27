@@ -111,7 +111,9 @@ use io_pim_discovery::autoconfig::config::{
 };
 
 pub use self::builtin::{Preset, preset_for_domain, presets};
-pub use self::settings::{AccountSettings, Encryption, OAuthOffer, ServerSettings, SettingsSource};
+pub use self::settings::{
+    AccountSettings, Encryption, JmapOffer, OAuthOffer, ServerSettings, SettingsSource,
+};
 pub use self::transport::{
     AutoconfigEndpoint, DISCOVERY_IO_TIMEOUT, DiscoveryAutoconfig, DiscoverySrvReport,
     DiscoverySrvService, DiscoveryTransport, PimalayaTransport, TransportError,
@@ -526,6 +528,8 @@ fn settings_from_autoconfig(
         display_name: provider.display_name.clone(),
         // Autoconfig, SRV and guesses say nothing about OAuth (#534).
         oauth: None,
+        jmap: None,
+        backends: vec!["imap".to_owned()],
     })
 }
 
@@ -623,6 +627,8 @@ fn settings_from_srv(address: &Address, report: &DiscoverySrvReport) -> Option<A
         display_name: None,
         // Autoconfig, SRV and guesses say nothing about OAuth (#534).
         oauth: None,
+        jmap: None,
+        backends: vec!["imap".to_owned()],
     })
 }
 
@@ -645,6 +651,8 @@ fn guess(address: &Address) -> Option<AccountSettings> {
         display_name: None,
         // Autoconfig, SRV and guesses say nothing about OAuth (#534).
         oauth: None,
+        jmap: None,
+        backends: vec!["imap".to_owned()],
     })
 }
 

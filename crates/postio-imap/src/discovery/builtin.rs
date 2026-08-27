@@ -153,6 +153,17 @@ impl Preset {
             // The sign-in offer, only when the row *prefers* oauth2: a row
             // listing it second is a fallback for the user to reach through
             // the client-id path, not the door the wizard opens first.
+            jmap: self
+                .row
+                .backend
+                .iter()
+                .any(|backend| backend == "jmap")
+                .then_some(self.row.jmap.as_ref())
+                .flatten()
+                .map(|jmap| crate::discovery::settings::JmapOffer {
+                    session_url: jmap.session_url.clone(),
+                }),
+            backends: self.row.backend.clone(),
             oauth: self
                 .row
                 .auth

@@ -56,6 +56,17 @@ impl JmapBackend {
         }
     }
 
+    /// A backend whose bearer comes from the account's token source.
+    pub fn with_token_source(
+        session_url: Url,
+        key: postio_imap::secret::AccountKey,
+        tokens: std::sync::Arc<dyn postio_imap::auth::TokenSource>,
+    ) -> Self {
+        Self {
+            connection: JmapConnection::with_token_source(session_url, key, tokens),
+        }
+    }
+
     /// The mailbox object whose assembled path is `path`.
     async fn mailbox(&self, path: &str) -> BackendResult<JmapMailbox> {
         let wanted = path.to_owned();

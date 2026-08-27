@@ -77,10 +77,12 @@ pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
     let transport: Arc<dyn DiscoveryTransport> =
         Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone()));
 
+    let jmap = crate::onboarding::JmapOfferSlot::default();
     screen.connect_probe({
         let screen = screen.clone();
         let runtime = wiring.runtime.clone();
         let cancellation = cancellation.clone();
+        let jmap = jmap.clone();
         move |address| {
             probe(
                 &screen,
@@ -88,6 +90,7 @@ pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
                 address,
                 &cancellation,
                 Arc::clone(&transport),
+                jmap.clone(),
             )
         }
     });
@@ -107,7 +110,13 @@ pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
         };
         move |submission| {
             cancellation.stop();
-            submit(&screen, &wiring, submission.clone(), on_saved.clone())
+            submit(
+                &screen,
+                &wiring,
+                submission.clone(),
+                jmap.borrow().clone(),
+                on_saved.clone(),
+            )
         }
     });
 

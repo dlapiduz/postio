@@ -65,6 +65,10 @@ sources = ["own-client", "broker"]
 [provider.fastmail]
 display_name = "Fastmail"
 domains = ["fastmail.com", "fastmail.fm"]
+# Fastmail's native protocol first (ADR 0018 Q5); the add-account proof
+# tries backends in this order and stores the first that works, so a
+# credential that only speaks IMAP still lands.
+backend = ["jmap", "imap"]
 imap_host = "imap.fastmail.com"
 imap_port = 993
 imap_security = "tls"
@@ -73,4 +77,8 @@ smtp_port = 465
 smtp_security = "tls"
 requires_app_password = true
 password_help_url = "https://app.fastmail.com/settings/security/devicekeys"
+
 auth = ["app-password"]
+
+[provider.fastmail.jmap]
+session_url = "https://api.fastmail.com/jmap/session/"
