@@ -2613,13 +2613,17 @@ dependencies = [
 name = "postio-ffi"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "async-trait",
+ "chrono",
  "postio-core",
  "postio-ffi",
  "postio-imap",
  "postio-model",
+ "postio-runtime",
  "postio-session",
  "postio-storage",
+ "postio-ui",
  "tempfile",
  "thiserror",
  "tokio",
