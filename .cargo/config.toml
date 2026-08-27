@@ -22,20 +22,46 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # Linking is the memory peak, not compiling. One fat binary that pulls in GTK,
 # WebKit and SQLite is where the resident set spikes, so keep the linker's own
 # parallelism modest too.
+#
+# Scoped to one triple deliberately, and it is *not* an oversight the way the
+# runner below was (#551). `-Wl,--threads=2` is a linker flag whose support
+# depends on the binutils on the box, not on the target: GNU ld only learned
+# `--threads` recently, and widening this to a triple nobody here can build for
+# would trade a memory-pressure tuning for a link that fails outright. It is a
+# comfort setting for the machine this is developed on; the runner is a
+# correctness one.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--threads=2"]
 
-# Every test binary runs on a compositor of its own, so `cargo test` is
-# headless by default and nobody has to remember a wrapper. postio-gtk has
-# ~20 test binaries that present real windows; without this they land on
-# whoever is at the keyboard, steal focus mid-keystroke, and — until it was
-# fixed — left a save dialog behind that outlived the run.
+# Every test binary on **every Linux target** runs on a compositor of its own,
+# so `cargo test` is headless by default and nobody has to remember a wrapper.
+# postio-gtk has ~20 test binaries that present real windows; without this they
+# land on whoever is at the keyboard, steal focus mid-keystroke, and — until it
+# was fixed — left a save dialog behind that outlived the run.
+#
+# `cfg(target_os = "linux")` rather than a triple, because a triple is what
+# #551 was: this sat under `[target.x86_64-unknown-linux-gnu]`, so on aarch64
+# it never applied, no compositor started, and all ~117 GTK test files took
+# their "no display, skip" branch and reported success having asserted nothing.
+# A runner's absence is invisible by construction — that is the whole hazard —
+# so it is scoped to the property that actually decides it: this is a Linux box
+# with a compositor to talk to. macOS keeps getting no runner, which is right;
+# `headless-runner.sh` reads /proc and needs XDG_RUNTIME_DIR.
+#
+# `runner` is resolved from the matching `[target.<cfg>]` table when no
+# `[target.<triple>]` table names one — verified against this cargo, not
+# assumed. Note this is *not* how `rustflags` composes: a triple table's
+# rustflags suppress the cfg tables' entirely, which is why the two settings
+# live apart above rather than being merged into one block.
 #
 # The runner fails open: no mutter, no XDG_RUNTIME_DIR, or a compositor that
 # will not start, and it execs the binary unchanged. POSTIO_HEADLESS=0
 # bypasses it. Only cargo's hash-suffixed test and bench binaries are sent to
 # the compositor; `cargo run -p postio-app` and examples pass through to the
 # real display (#315).
+#
+# `gtk_display_required.rs` is what notices when this stops applying.
+[target.'cfg(target_os = "linux")']
 runner = "scripts/headless-runner.sh"
 
 # rustc and the linker write intermediate files to TMPDIR, which on this
