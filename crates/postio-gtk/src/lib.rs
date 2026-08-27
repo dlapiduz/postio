@@ -63,10 +63,10 @@
 
 pub mod app;
 pub mod autoscroll;
-pub mod conversation;
 pub mod cheatsheet;
 pub mod composer;
 pub mod config;
+pub mod conversation;
 pub mod drag_out;
 pub mod editor;
 pub mod feed;
