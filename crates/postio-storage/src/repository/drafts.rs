@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, AttachmentId, BlobId, Disposition, Draft, DraftId, DraftKind,
     DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
-    OperationTarget, ServerIdentifiers, ThreadId, Uid, UidValidity,
+    OperationTarget, RemoteId, ServerIdentifiers, ThreadId, Uid, UidValidity,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -92,7 +92,7 @@ impl<'a> DraftRepository<'a> {
                         .uid_validity
                         .map(|validity| i64::from(validity.get())),
                     draft.server.mod_seq.map(|seq| seq.get() as i64),
-                    draft.server.remote_id,
+                    draft.server.remote_id.as_ref().map(|id| id.as_str().to_owned()),
                     to_millis(draft.updated_at),
                 ],
             )?;
@@ -125,7 +125,7 @@ impl<'a> DraftRepository<'a> {
                         .uid_validity
                         .map(|validity| i64::from(validity.get())),
                     draft.server.mod_seq.map(|seq| seq.get() as i64),
-                    draft.server.remote_id,
+                    draft.server.remote_id.as_ref().map(|id| id.as_str().to_owned()),
                     to_millis(draft.created_at),
                     to_millis(draft.updated_at),
                 ],
@@ -817,7 +817,7 @@ fn read_draft(row: &Row<'_>) -> rusqlite::Result<Draft> {
             mod_seq: row
                 .get::<_, Option<i64>>(12)?
                 .map(|seq| ModSeq::new(seq as u64)),
-            remote_id: row.get(13)?,
+            remote_id: row.get::<_, Option<String>>(13)?.map(RemoteId::new),
         },
         created_at: from_millis(row.get(14)?),
         updated_at: from_millis(row.get(15)?),

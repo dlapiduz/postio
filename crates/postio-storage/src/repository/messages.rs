@@ -26,7 +26,7 @@ use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, BlobId, BodyState, Disposition, EmailAddress, Flag, FlagSet, LabelId,
     LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange, RfcMessageId,
-    ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
+    RemoteId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
 };
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -1708,7 +1708,7 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
                 .map(|validity| i64::from(validity.get())),
         ),
         maybe_integer(message.server.mod_seq.map(|seq| seq.get() as i64)),
-        maybe_text(message.server.remote_id.clone()),
+        maybe_text(message.server.remote_id.as_ref().map(|id| id.as_str().to_owned())),
         text(message.sync.body_state.as_str()),
         boolean(message.sync.flags_dirty),
         boolean(message.sync.has_pending_operations),
@@ -1889,7 +1889,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
             mod_seq: row
                 .get::<_, Option<i64>>(16)?
                 .map(|seq| ModSeq::new(seq as u64)),
-            remote_id: row.get(17)?,
+            remote_id: row.get::<_, Option<String>>(17)?.map(RemoteId::new),
         },
         sync: LocalSyncState {
             body_state: BodyState::from_name(&body_state).ok_or_else(|| {
