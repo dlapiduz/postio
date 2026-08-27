@@ -64,6 +64,7 @@ command from inside a text field.
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, thread, reader |  | `compose` |
 | `ctrl+Return` | Send | Composer | Undoable | `send` |
+| `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
