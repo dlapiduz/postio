@@ -103,6 +103,9 @@ pub enum ListScope {
     Account(AccountId),
     /// The sidebar's "Flagged" view.
     Flagged(AccountId),
+    /// The sidebar's "Snoozed" view — the one scope every other one hides
+    /// a still-snoozed message from.
+    Snoozed(AccountId),
     /// One conversation, wherever its messages are filed.
     ///
     /// Not a narrowing of a mailbox: a thread routinely spans folders, and
@@ -136,6 +139,11 @@ impl ListQuery {
     /// Every flagged message in an account.
     pub fn flagged(id: AccountId) -> Self {
         Self::new(ListScope::Flagged(id))
+    }
+
+    /// Every currently snoozed message in an account.
+    pub fn snoozed(id: AccountId) -> Self {
+        Self::new(ListScope::Snoozed(id))
     }
 
     /// Every message of one thread, in every folder it touches.
@@ -570,7 +578,7 @@ id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_id
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
 raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
-html_part_id, html_part_headers";
+html_part_id, html_part_headers, snoozed_until";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -1055,6 +1063,81 @@ impl<'a> MessageRepository<'a> {
         Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
     }
 
+    /// Hides messages from every ordinary list until `until`, then they
+    /// restore themselves the moment either [`Self::wake_due`] or a fresh
+    /// page query notices the time has passed.
+    ///
+    /// Never touched by `insert`/`write_update`: a fresh or resynced row is
+    /// never born snoozed, so there is nothing for a header sync to clobber.
+    /// See migration 0021's own comment for the rest of that reasoning.
+    pub fn snooze(&self, ids: &[MessageId], until: DateTime<Utc>) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let sql = format!(
+            "UPDATE messages SET snoozed_until = ?1 WHERE id IN ({})",
+            placeholders(ids.len(), 2)
+        );
+        let mut arguments = vec![to_millis(until)];
+        arguments.extend(ids.iter().map(|id| id.get()));
+        Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
+    }
+
+    /// Cancels a snooze immediately, without waiting for its time to arrive.
+    pub fn unsnooze(&self, ids: &[MessageId]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let sql = format!(
+            "UPDATE messages SET snoozed_until = NULL WHERE id IN ({})",
+            placeholders(ids.len(), 1)
+        );
+        Ok(self
+            .connection
+            .execute(&sql, params_from_iter(ids.iter().map(|id| id.get())))?)
+    }
+
+    /// Clears every snooze whose time has passed as of `now` in `account`,
+    /// and says which mailboxes had a row wake up.
+    ///
+    /// Scoped to one account rather than the whole store: there is one
+    /// engine thread per account, each ticking on its own `POLL_INTERVAL`
+    /// with no coordination between them, so an unscoped sweep would have
+    /// every account's engine racing to clear every other account's rows on
+    /// every tick.
+    ///
+    /// Visibility itself never depends on this running: `where_clause`,
+    /// `MEMBER` and `VISIBLE` all read `snoozed_until` fresh against
+    /// wall-clock time on every page, so a woken row that this has not yet
+    /// reached is already correct to a query. What only this does is clear
+    /// the column (so the cached `mailboxes.snoozed_count` trigger fires and
+    /// the row stops being "due" forever after) and name what to repaint —
+    /// `postio_runtime`'s `POLL_INTERVAL` sweep is the caller, so a message
+    /// coming due while the app is open turns into a visible row promptly
+    /// rather than only the next time something else writes that row.
+    pub fn wake_due(&self, account: AccountId, now: DateTime<Utc>) -> Result<Vec<MailboxId>> {
+        let now_millis = to_millis(now);
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT mailbox_id FROM messages
+              WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2
+              ORDER BY mailbox_id",
+        )?;
+        let woken: Vec<MailboxId> = statement
+            .query_map(params![account.get(), now_millis], |row| {
+                Ok(MailboxId::new(row.get(0)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+
+        if !woken.is_empty() {
+            self.connection.execute(
+                "UPDATE messages SET snoozed_until = NULL
+                  WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
+                params![account.get(), now_millis],
+            )?;
+        }
+        Ok(woken)
+    }
+
     /// Removes messages outright, returning how many there were.
     ///
     /// For an expunge the server has confirmed. Recipients, attachments and
@@ -1453,12 +1536,28 @@ impl<'a> MessageRepository<'a> {
 /// `deleted_locally = 0` is here rather than in the index because it is a
 /// filter on a handful of rows, not a way in: the list index gives the order
 /// and the scope gives the range.
+/// Whether `snoozed_until` gates a scope out or *is* the scope.
+///
+/// Every ordinary scope hides a message until its snooze is due, read fresh
+/// against wall-clock time on every page — the live half of the two-tier
+/// arrangement `mailboxes.snoozed_count` (migration 0021) is the cached
+/// half of. [`ListScope::Snoozed`] inverts it: that view's entire point is
+/// the messages every other scope is hiding.
+const NOT_YET_DUE: &str =
+    "(messages.snoozed_until IS NULL OR messages.snoozed_until <= (strftime('%s','now') * 1000))";
+const STILL_SNOOZED: &str =
+    "messages.snoozed_until IS NOT NULL AND messages.snoozed_until > (strftime('%s','now') * 1000)";
+
 fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
-    let scope = match query.scope {
-        ListScope::Mailbox(_) => "messages.mailbox_id = ?1",
-        ListScope::Account(_) => "messages.account_id = ?1",
-        ListScope::Flagged(_) => "messages.account_id = ?1 AND messages.flagged = 1",
-        ListScope::Thread(_) => "messages.thread_id = ?1",
+    let (scope, snooze) = match query.scope {
+        ListScope::Mailbox(_) => ("messages.mailbox_id = ?1", NOT_YET_DUE),
+        ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
+        ListScope::Flagged(_) => (
+            "messages.account_id = ?1 AND messages.flagged = 1",
+            NOT_YET_DUE,
+        ),
+        ListScope::Snoozed(_) => ("messages.account_id = ?1", STILL_SNOOZED),
+        ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
     };
     let cursor = if with_cursor {
         // A row value, so SQLite can turn it into one range constraint on
@@ -1468,13 +1567,13 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
     } else {
         ""
     };
-    format!("{scope} AND messages.deleted_locally = 0{cursor}")
+    format!("{scope} AND messages.deleted_locally = 0 AND {snooze}{cursor}")
 }
 
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     vec![match scope {
         ListScope::Mailbox(id) => id.get(),
-        ListScope::Account(id) | ListScope::Flagged(id) => id.get(),
+        ListScope::Account(id) | ListScope::Flagged(id) | ListScope::Snoozed(id) => id.get(),
         ListScope::Thread(id) => id.get(),
     }]
 }
@@ -1812,6 +1911,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         text_part_headers: row.get(27)?,
         html_part_id: row.get(28)?,
         html_part_headers: row.get(29)?,
+        snoozed_until: row.get::<_, Option<i64>>(30)?.map(from_millis),
     })
 }
 

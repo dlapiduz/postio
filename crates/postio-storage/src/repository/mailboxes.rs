@@ -24,17 +24,28 @@ pub struct MailboxRepository<'a> {
 const MAILBOX_COLUMNS: &str = "\
 m.id, m.account_id, m.parent_id, m.name, m.path, m.delimiter, m.role, m.selectable,
 m.subscribed, m.total_count, m.unread_count, m.flagged_count, m.last_synced_at,
-s.uid_validity, s.uid_next, s.highest_mod_seq, m.signature_id, m.backfill_excluded";
+s.uid_validity, s.uid_next, s.highest_mod_seq, m.signature_id, m.backfill_excluded,
+m.snoozed_count";
 
 const FROM_MAILBOXES: &str = "\
 FROM mailboxes m LEFT JOIN sync_state s ON s.mailbox_id = m.id";
 
 /// What counts as a message for the sidebar: one that the list would show.
 ///
-/// A message hidden pending a remote delete or move is not in the list, so
-/// counting it would put a number on screen the user cannot reconcile with
-/// what they see.
-const VISIBLE: &str = "deleted_locally = 0";
+/// A message hidden pending a remote delete or a snooze not yet due is not
+/// in the list, so counting it would put a number on screen the user cannot
+/// reconcile with what they see. `snoozed_until` is compared against
+/// SQLite's own clock rather than a bound parameter, matching the trigger
+/// this mirrors (migration 0021) — both are the cached-count half of the
+/// same two-tier arrangement the live list query (`where_clause`) is the
+/// other half of.
+const VISIBLE: &str =
+    "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+
+/// What counts as snoozed for the sidebar's own badge: the inverse of the
+/// snooze half of [`VISIBLE`], still gated on `deleted_locally` the same way.
+const SNOOZED: &str =
+    "deleted_locally = 0 AND snoozed_until IS NOT NULL AND snoozed_until > (strftime('%s','now') * 1000)";
 
 impl<'a> MailboxRepository<'a> {
     /// Borrows a connection.
@@ -93,7 +104,7 @@ impl<'a> MailboxRepository<'a> {
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
                     role = ?7, selectable = ?8, subscribed = ?9, total_count = ?10,
                     unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
-                    signature_id = ?14, backfill_excluded = ?15
+                    signature_id = ?14, backfill_excluded = ?15, snoozed_count = ?16
               WHERE id = ?1",
             params![
                 id,
@@ -111,6 +122,7 @@ impl<'a> MailboxRepository<'a> {
                 mailbox.last_synced_at.map(to_millis),
                 optional_signature_id(mailbox.signature_id),
                 mailbox.backfill_excluded,
+                mailbox.counts.snoozed,
             ],
         )?;
         if changed == 0 {
@@ -222,7 +234,8 @@ impl<'a> MailboxRepository<'a> {
     /// The cached counts on a mailbox row.
     pub fn counts(&self, id: MailboxId) -> Result<Option<MailboxCounts>> {
         let mut statement = self.connection.prepare(
-            "SELECT total_count, unread_count, flagged_count FROM mailboxes WHERE id = ?1",
+            "SELECT total_count, unread_count, flagged_count, snoozed_count
+               FROM mailboxes WHERE id = ?1",
         )?;
         let mut rows = statement.query([id.get()])?;
         let Some(row) = rows.next()? else {
@@ -232,6 +245,7 @@ impl<'a> MailboxRepository<'a> {
             total: row.get(0)?,
             unread: row.get(1)?,
             flagged: row.get(2)?,
+            snoozed: row.get(3)?,
         }))
     }
 
@@ -239,11 +253,22 @@ impl<'a> MailboxRepository<'a> {
     ///
     /// For a server `STATUS` response, which reports on messages that have not
     /// been fetched yet and therefore have no local rows to count.
+    ///
+    /// `counts.snoozed` is never a server's to report — `STATUS` has no
+    /// concept of it — so the only real caller is [`Self::recount`], whose
+    /// own live scan computes a genuine value.
     pub fn set_counts(&self, id: MailboxId, counts: MailboxCounts) -> Result<()> {
         let changed = self.connection.execute(
-            "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4
+            "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4,
+                snoozed_count = ?5
               WHERE id = ?1",
-            params![id.get(), counts.total, counts.unread, counts.flagged],
+            params![
+                id.get(),
+                counts.total,
+                counts.unread,
+                counts.flagged,
+                counts.snoozed
+            ],
         )?;
         if changed == 0 {
             return Err(Error::NotFound {
@@ -270,12 +295,16 @@ impl<'a> MailboxRepository<'a> {
     /// `tests/mailbox_counts.rs`, which is what would notice if the two ever
     /// drifted apart. postio-qhz.8.
     pub fn recount(&self, id: MailboxId) -> Result<MailboxCounts> {
+        let now_millis = "(strftime('%s','now') * 1000)";
+        let not_snoozed = format!("(snoozed_until IS NULL OR snoozed_until <= {now_millis})");
         let counts = self.connection.query_row(
             &format!(
-                "SELECT count(*),
-                        coalesce(sum(seen = 0), 0),
-                        coalesce(sum(flagged = 1), 0)
-                   FROM messages WHERE mailbox_id = ?1 AND {VISIBLE}"
+                "SELECT coalesce(sum(deleted_locally = 0 AND {not_snoozed}), 0),
+                        coalesce(sum(deleted_locally = 0 AND {not_snoozed} AND seen = 0), 0),
+                        coalesce(sum(deleted_locally = 0 AND {not_snoozed} AND flagged = 1), 0),
+                        coalesce(sum(deleted_locally = 0 AND snoozed_until IS NOT NULL
+                                      AND snoozed_until > {now_millis}), 0)
+                   FROM messages WHERE mailbox_id = ?1"
             ),
             [id.get()],
             |row| {
@@ -283,6 +312,7 @@ impl<'a> MailboxRepository<'a> {
                     total: row.get::<_, i64>(0)? as u32,
                     unread: row.get::<_, i64>(1)? as u32,
                     flagged: row.get::<_, i64>(2)? as u32,
+                    snoozed: row.get::<_, i64>(3)? as u32,
                 })
             },
         )?;
@@ -307,7 +337,9 @@ impl<'a> MailboxRepository<'a> {
                                                     AND seen = 0), 0),
                         flagged_count = coalesce((SELECT count(*) FROM messages
                                                    WHERE mailbox_id = mailboxes.id AND {VISIBLE}
-                                                     AND flagged = 1), 0)
+                                                     AND flagged = 1), 0),
+                        snoozed_count = coalesce((SELECT count(*) FROM messages
+                                                   WHERE mailbox_id = mailboxes.id AND {SNOOZED}), 0)
                   WHERE account_id = ?1"
             ),
             [account_id.get()],
@@ -320,7 +352,7 @@ impl<'a> MailboxRepository<'a> {
         self.connection
             .query_row(
                 "SELECT coalesce(sum(total_count), 0), coalesce(sum(unread_count), 0),
-                    coalesce(sum(flagged_count), 0)
+                    coalesce(sum(flagged_count), 0), coalesce(sum(snoozed_count), 0)
                FROM mailboxes WHERE account_id = ?1",
                 [account_id.get()],
                 |row| {
@@ -328,6 +360,7 @@ impl<'a> MailboxRepository<'a> {
                         total: row.get::<_, i64>(0)? as u32,
                         unread: row.get::<_, i64>(1)? as u32,
                         flagged: row.get::<_, i64>(2)? as u32,
+                        snoozed: row.get::<_, i64>(3)? as u32,
                     })
                 },
             )
@@ -395,6 +428,7 @@ fn read_mailbox(row: &Row<'_>) -> rusqlite::Result<Mailbox> {
             total: row.get(9)?,
             unread: row.get(10)?,
             flagged: row.get(11)?,
+            snoozed: row.get(18)?,
         },
         uid_validity: row
             .get::<_, Option<i64>>(13)?
