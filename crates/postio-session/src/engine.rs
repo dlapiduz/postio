@@ -85,7 +85,7 @@ pub fn start(
     // A password account is a `TokenSource` too. That is the point of the
     // seam — the composition root chooses which kind of credential this
     // account has, and nothing downstream asks again.
-    let tokens: Arc<dyn TokenSource> = Arc::new(StoredPasswordSource::new(secrets.clone()));
+    let tokens = token_source(account, &secrets);
 
     let backend: Arc<dyn MailBackend> = Arc::new(ImapBackend::over(Arc::new(
         ConnectionPool::with_token_source(
@@ -126,6 +126,43 @@ pub fn start(
 /// Field for field. The two types exist separately because `postio-model`
 /// describes an account and `postio-imap` describes a connection, and neither
 /// should have to change when the other does.
+/// Which strategy obtains this account's credential (ADR 0006 Q1, #534).
+///
+/// The account's own data decides: an [`OAuthConfig`] on the row means the
+/// sign-in flow ran with the user's own client, and refreshes go through
+/// it — the client secret, when one exists, read from the keyring under
+/// its derived key. No config means the keyring entry *is* the credential:
+/// a stored password, an app password, or a broker-minted token that an
+/// external tool keeps fresh — all the same shape to the sessions.
+///
+/// [`OAuthConfig`]: postio_model::account::OAuthConfig
+fn token_source(account: &Account, secrets: &Arc<dyn SecretStore>) -> Arc<dyn TokenSource> {
+    if let Some(oauth) = &account.oauth {
+        match oauth.token_url.parse() {
+            Ok(token_url) => {
+                return Arc::new(
+                    postio_imap::oauth::OwnClientTokenSource::with_stored_secret(
+                        secrets.clone(),
+                        token_url,
+                        oauth.client_id.clone(),
+                    ),
+                );
+            }
+            Err(error) => {
+                // A row this build cannot parse must not cost the account
+                // its mail: the keyring may still hold a workable token,
+                // and saying so beats an engine that never starts.
+                tracing::error!(
+                    %error,
+                    "the account's stored OAuth token endpoint is not a URL; \
+                     falling back to the stored credential"
+                );
+            }
+        }
+    }
+    Arc::new(StoredPasswordSource::new(secrets.clone()))
+}
+
 fn settings(
     server: &postio_model::account::ServerConfig,
     auth: postio_model::account::AuthMethod,
@@ -291,6 +328,47 @@ pub fn start_joining(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_token_source_follows_the_accounts_oauth_shape() {
+        // #534, ADR 0006 Q1: which strategy obtains the credential is the
+        // account's data. A password account reads the keyring as it
+        // always has; an OAuth account that signed in with its own client
+        // refreshes through that client; an OAuth account with *no* client
+        // of its own is broker-fed — its token is already in the keyring,
+        // which is exactly the stored-password shape (#533's path).
+        let secrets: Arc<dyn postio_imap::secret::SecretStore> =
+            Arc::new(postio_imap::secret::MemorySecretStore::new());
+        let mut account = postio_model::Account::new(
+            "Ada",
+            postio_model::EmailAddress::new(None::<String>, "ada@example.com"),
+        );
+
+        let source = token_source(&account, &secrets);
+        assert!(
+            format!("{source:?}").contains("StoredPasswordSource"),
+            "password accounts keep the keyring path: {source:?}"
+        );
+
+        account.auth = postio_model::account::AuthMethod::XOAuth2;
+        let source = token_source(&account, &secrets);
+        assert!(
+            format!("{source:?}").contains("StoredPasswordSource"),
+            "broker-fed OAuth carries no client and stays keyring-shaped: {source:?}"
+        );
+
+        account.oauth = Some(postio_model::account::OAuthConfig {
+            client_id: "postio-desktop.apps.example".to_string(),
+            token_url: "https://auth.example.com/token".to_string(),
+            authorize_url: "https://auth.example.com/authorize".to_string(),
+            scopes: "https://mail.example.com/".to_string(),
+        });
+        let source = token_source(&account, &secrets);
+        assert!(
+            format!("{source:?}").contains("OwnClientTokenSource"),
+            "an own-client sign-in refreshes through its client: {source:?}"
+        );
+    }
 
     #[test]
     fn the_connection_settings_carry_the_accounts_auth_method() {
