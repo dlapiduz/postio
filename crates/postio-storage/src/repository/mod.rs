@@ -28,6 +28,7 @@
 //!   constraints then enforce.
 
 mod accounts;
+mod contact_groups;
 mod contacts;
 mod drafts;
 mod mailboxes;
@@ -38,6 +39,7 @@ mod threading;
 mod threads;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
+pub use contact_groups::ContactGroupRepository;
 pub use contacts::ContactRepository;
 pub use drafts::DraftRepository;
 pub use mailboxes::MailboxRepository;

@@ -81,6 +81,13 @@ pub enum Field {
     /// it (#186): "this account's inbox" and "every account's inbox" are both
     /// things to be able to ask for, so account and role compose.
     Account,
+    /// `group:` — a named contact group, by name.
+    ///
+    /// ADR 0007 Q3: a group answers *which people*, not which messages, so
+    /// unlike every other field here it cannot be expressed any other way
+    /// in this language — it composes with the rest rather than replacing
+    /// them, resolved by `postio-index` to the member address set.
+    Group,
 }
 
 impl Field {
@@ -99,6 +106,7 @@ impl Field {
         Field::Smaller,
         Field::List,
         Field::Account,
+        Field::Group,
     ];
 
     /// The canonical keyword, without the trailing colon.
@@ -117,6 +125,7 @@ impl Field {
             Field::Smaller => "smaller",
             Field::List => "list",
             Field::Account => "account",
+            Field::Group => "group",
         }
     }
 
@@ -137,6 +146,7 @@ impl Field {
             "smaller" => Some(Field::Smaller),
             "list" => Some(Field::List),
             "account" => Some(Field::Account),
+            "group" => Some(Field::Group),
             _ => None,
         }
     }
@@ -154,6 +164,7 @@ impl Field {
                 | Field::Filename
                 | Field::List
                 | Field::Account
+                | Field::Group
         )
     }
 }
@@ -197,6 +208,12 @@ pub enum Filter {
     /// meaning the same thing after an account is removed and re-added under
     /// a new id.
     Account(String),
+    /// `group:family` — a contact group by name, unresolved.
+    ///
+    /// Stays text for the same reason `Account` does: resolving it to
+    /// member addresses needs the store, which this crate does not have.
+    /// `postio-index` does the resolving.
+    Group(String),
     /// `has:attach`
     HasAttachment,
     /// `is:unread`, `is:read`, `is:flagged`
@@ -222,6 +239,7 @@ impl Filter {
             Filter::Filename(_) => Field::Filename,
             Filter::List(_) => Field::List,
             Filter::Account(_) => Field::Account,
+            Filter::Group(_) => Field::Group,
             Filter::HasAttachment => Field::Has,
             Filter::Is(_) => Field::Is,
             Filter::After(_) => Field::After,

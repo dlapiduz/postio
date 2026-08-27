@@ -25,7 +25,7 @@
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::composer;
+use postio_gtk::composer::{self, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::EmailAddress;
@@ -70,8 +70,14 @@ fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
     composer.connect_recipient_suggestions(|prefix| {
         if prefix == "grac" {
             vec![
-                EmailAddress::new(Some("Grace Hopper"), "grace@example.com"),
-                EmailAddress::new(Some("Graham Bell"), "graham@example.net"),
+                RecipientCandidate::Contact(EmailAddress::new(
+                    Some("Grace Hopper"),
+                    "grace@example.com",
+                )),
+                RecipientCandidate::Contact(EmailAddress::new(
+                    Some("Graham Bell"),
+                    "graham@example.net",
+                )),
             ]
         } else {
             Vec::new()

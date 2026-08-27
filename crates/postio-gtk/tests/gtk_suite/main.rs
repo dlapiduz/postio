@@ -115,6 +115,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
     ),
     (
+        "gtk_composer_recipient_select::accepting_a_group_inserts_every_member",
+        gtk_composer_recipient_select::accepting_a_group_inserts_every_member as fn(),
+    ),
+    (
         "gtk_composer_signature_default::a_resolved_signature_wins_over_the_identity_s_own",
         gtk_composer_signature_default::a_resolved_signature_wins_over_the_identity_s_own as fn(),
     ),

@@ -212,6 +212,16 @@ fn sample_label() -> Label {
     }
 }
 
+fn sample_contact_group() -> ContactGroup {
+    ContactGroup {
+        id: ContactGroupId::new(3),
+        account_id: None,
+        name: "Book club".into(),
+        uid: Some("group-uid-1".into()),
+        created_at: at(3_400),
+    }
+}
+
 #[test]
 fn every_entity_round_trips() {
     roundtrip(&sample_account());
@@ -221,6 +231,7 @@ fn every_entity_round_trips() {
     roundtrip(&sample_thread());
     roundtrip(&sample_attachment());
     roundtrip(&sample_contact());
+    roundtrip(&sample_contact_group());
     roundtrip(&sample_label());
     roundtrip(&sample_draft());
 }

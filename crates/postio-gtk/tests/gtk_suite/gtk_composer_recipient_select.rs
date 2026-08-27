@@ -25,7 +25,7 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::composer::{self, Composer};
+use postio_gtk::composer::{self, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
@@ -71,7 +71,10 @@ fn a_composer_offering_two() -> Option<(Window, Composer, Rc<Cell<usize>>)> {
             // Answers for every prefix of "graham", so that anything not
             // offered is the gate's doing and never the provider's.
             if "graham".starts_with(prefix) {
-                vec![grace(), graham()]
+                vec![
+                    RecipientCandidate::Contact(grace()),
+                    RecipientCandidate::Contact(graham()),
+                ]
             } else {
                 Vec::new()
             }
@@ -141,6 +144,65 @@ pub fn return_commits_the_suggestion_the_popover_has_selected() {
         composer.draft().to,
         vec![graham()],
         "Return should commit the row Down moved to"
+    );
+    assert!(!composer.test_recipient_popover_visible());
+}
+
+/// A composer offering one group, "Family", with two members.
+fn a_composer_offering_a_group() -> Option<(Window, Composer)> {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return None;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    settle();
+
+    let composer = composer::install(&window);
+    composer.open(postio_model::Draft::new(
+        postio_model::AccountId::UNASSIGNED,
+    ));
+    settle();
+
+    composer.connect_recipient_suggestions(move |prefix| {
+        if "family".starts_with(prefix) {
+            vec![RecipientCandidate::Group {
+                name: "Family".to_string(),
+                members: vec![grace(), graham()],
+            }]
+        } else {
+            Vec::new()
+        }
+    });
+
+    Some((window, composer))
+}
+
+/// Picking a group inserts every member as its own address, not a group
+/// reference (ADR 0007 Q3) — the whole point of expanding at pick time.
+pub fn accepting_a_group_inserts_every_member() {
+    let Some((_window, composer)) = a_composer_offering_a_group() else {
+        return;
+    };
+
+    composer.test_set_to("fami");
+    settle();
+    assert!(
+        composer.test_recipient_popover_visible(),
+        "four characters should have offered the group"
+    );
+
+    assert!(composer.test_click_recipient_suggestion(0));
+    settle();
+
+    assert_eq!(
+        composer.draft().to,
+        vec![grace(), graham()],
+        "accepting the group inserts both members, not a group reference"
     );
     assert!(!composer.test_recipient_popover_visible());
 }

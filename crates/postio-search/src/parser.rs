@@ -153,6 +153,7 @@ fn operator(negated: bool, field: Field, value: String, today: NaiveDate) -> Tok
         Field::Filename => filter(Filter::Filename(value)),
         Field::List => filter(Filter::List(value)),
         Field::Account => filter(Filter::Account(value)),
+        Field::Group => filter(Filter::Group(value)),
         Field::Has => match value.to_ascii_lowercase().as_str() {
             "attach" | "attachment" | "attachments" | "file" | "files" => {
                 filter(Filter::HasAttachment)
