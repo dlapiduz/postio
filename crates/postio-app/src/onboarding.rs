@@ -145,31 +145,30 @@ pub fn install(
 
     screen.connect_submit({
         let screen = screen.clone();
-        let window = window.clone();
         let wiring = wiring.clone();
-        let previous = previous.clone();
-        let state = state.clone();
-        let wired = wired.clone();
-        let events = Rc::clone(&events);
-        let notifier = notifier.clone();
         let cancellation = cancellation.clone();
+        let on_saved = {
+            let window = window.clone();
+            let wiring = wiring.clone();
+            let previous = previous.clone();
+            move || {
+                window.set_content(previous.as_ref());
+                // The exact sequence `run()`'s `activate` handler runs when
+                // an account is there from the start — installing the
+                // command handlers and draining the event queues, not only
+                // feeding the panes. Without that a window fed here would
+                // show mail and answer no key, which is the shape of bug
+                // `postio-bl2` is named for.
+                crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
+            }
+        };
         move |submission| {
             // Pressing Connect settles the question the probe was asking, and
             // the screen is on its way out either way. Leaving a discovery
             // request open past that point is a socket held for an answer
             // nobody will read.
             cancellation.stop();
-            submit(
-                &screen,
-                &window,
-                &wiring,
-                previous.as_ref(),
-                submission.clone(),
-                state.clone(),
-                wired.clone(),
-                Rc::clone(&events),
-                notifier.clone(),
-            )
+            submit(&screen, &wiring, submission.clone(), on_saved.clone())
         }
     });
 }
@@ -294,18 +293,21 @@ fn probe(
     });
 }
 
-/// Test the credentials, then write the account and the password.
-#[allow(clippy::too_many_arguments)]
+/// Test the credentials, then write the account and the password, then run
+/// `on_saved` -- what happens next differs by host (#464): the first-run and
+/// startup-repair screen replaces itself with the running application
+/// ([`install`]'s own `on_saved`, built from the same five pieces this
+/// function used to take directly); a credential-update dialog over an
+/// already-running app
+/// ([`crate::settings_credential::install`]) only has to close.
+///
+/// `on_saved` runs once, only after the credential and the account row are
+/// both written -- never on a failed probe or a failed connection test.
 fn submit(
     screen: &Onboarding,
-    window: &Window,
     wiring: &Wiring,
-    previous: Option<&gtk::Widget>,
     submission: Submission,
-    state: SharedState,
-    wired: Vec<CommandId>,
-    events: Rc<RefCell<Option<EventStream>>>,
-    notifier: crate::notifications::Notifier,
+    on_saved: impl Fn() + 'static,
 ) {
     screen.set_status(Status::Connecting);
 
@@ -329,9 +331,7 @@ fn submit(
 
     glib::spawn_future_local({
         let screen = screen.clone();
-        let window = window.clone();
         let wiring = wiring.clone();
-        let previous = previous.cloned();
         async move {
             let answer = match receiver.recv().await {
                 Ok(answer) => answer,
@@ -368,14 +368,7 @@ fn submit(
             }
 
             screen.set_status(Status::Saved);
-            window.set_content(previous.as_ref());
-            // The exact sequence `run()`'s `activate` handler runs when an
-            // account is there from the start — installing the command
-            // handlers and draining the event queues, not only feeding the
-            // panes. Without that a window fed here would show mail and
-            // answer no key, which is the shape of bug `postio-bl2` is
-            // named for.
-            crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
+            on_saved();
         }
     });
 }
