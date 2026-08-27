@@ -186,8 +186,7 @@ fn reference_config() -> Config {
 /// prose instead, not as rows in this table.
 fn schema_paths() -> Vec<String> {
     let text = toml::to_string(&reference_config()).expect("Config always serialises");
-    let value: toml::Value =
-        toml::from_str(&text).expect("what was just serialised, parses");
+    let value: toml::Value = toml::from_str(&text).expect("what was just serialised, parses");
     let mut paths = Vec::new();
     let toml::Value::Table(sections) = value else {
         panic!("a config document is always a table at the top level");
