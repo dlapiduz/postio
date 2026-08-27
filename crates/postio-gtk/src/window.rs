@@ -702,6 +702,14 @@ impl Window {
         }
     }
 
+    /// *Account removed — Undo*, with `on_undo` reachable only from this
+    /// toast's own button — see [`crate::toast::Toast::show_removable`].
+    pub fn show_removable_toast(&self, description: &str, on_undo: impl Fn() + 'static) {
+        if let Some(toast) = self.imp().toast.get() {
+            toast.show_removable(description, on_undo);
+        }
+    }
+
     /// The list pane's placeholder for inbox zero, offline and sync failure.
     ///
     /// Canvas 3d. It sits *over* the message list rather than beside it and
