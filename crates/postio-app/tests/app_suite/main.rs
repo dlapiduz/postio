@@ -11,6 +11,7 @@ mod add_account_wiring;
 mod attach_account;
 mod bulk_keystroke;
 mod compose_detach;
+mod conversation_recipients;
 mod cursor_preview;
 mod drag_out_portal;
 mod drag_out_wiring;
@@ -59,6 +60,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application",
         compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application as fn(),
+    ),
+    (
+        "conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header",
+        conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header
+            as fn(),
     ),
     (
         "cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing",
