@@ -120,32 +120,32 @@ impl<'a> ContactRepository<'a> {
 
     /// Autocomplete: contacts whose address or name starts with `prefix`.
     ///
-    /// Ranked by how *recently* the correspondent was seen, then by how often
-    /// — the address someone just used outranks one they used to use, and
-    /// between two equally recent addresses the more familiar one wins. An
-    /// empty prefix therefore offers whoever was written to last, which is
-    /// what an empty recipient field should put in reach.
+    /// **Banded, then ranked within a band — never across.** ADR 0007 Q6:
+    /// `times_seen = 400` for a mailing-list robot is not evidence that the
+    /// user wants to write to it, so a `user`- or `import`-sourced contact
+    /// always outranks every `mail` sighting, however frequent or recent.
+    /// Promoting a `mail` row to `user` (ADR 0007 Q1) moves it into the upper
+    /// band immediately, the same as creating one directly.
     ///
-    /// Recency leads because frequency alone cannot tell a correspondent from
-    /// a robot. ADR 0007 Q6 makes exactly that point — "`times_seen = 400` for
-    /// a mailing list robot is not evidence that the user wants to write to
-    /// it" — and answers it by *banding*, ranking deliberately-created
-    /// contacts above mere mail sightings and leaving `times_seen DESC` to
-    /// order within the sighting band. Those bands do not exist: there is no
-    /// `source` column, every row here is a mail sighting, and so the band
-    /// that was meant to keep a person above a robot never applies. Ordering
-    /// is the only lever left, and a person answered this morning is better
-    /// evidence of intent than a list that shouts daily. See #424; when bands
-    /// arrive they compose with this rather than replacing it, since they sort
-    /// across bands and this sorts within one.
+    /// Within a band: by how *recently* the correspondent was seen, then by
+    /// how often — the address someone just used outranks one they used to
+    /// use, and between two equally recent addresses the more familiar one
+    /// wins. A contact with no sighting at all (created, never mailed) sorts
+    /// after one that has been, which only matters within the upper band
+    /// since the lower band has no other kind of row. An empty prefix
+    /// therefore offers whoever was written to last, which is what an empty
+    /// recipient field should put in reach. Recency leads over frequency
+    /// because frequency alone cannot tell a correspondent from a robot —
+    /// see #424 for that half of the ordering; this issue (#476) is the band
+    /// above it, and the two compose rather than one replacing the other.
     ///
     /// The match is a prefix on the address, on the local part, and on any word
     /// of the display name: people type the name they remember, and they type
     /// surnames as often as first names.
     ///
-    /// A suppressed contact (ADR 0007 Q2) never matches: it is a deleted
-    /// `mail` contact whose row survives only to stop the next sighting from
-    /// resurrecting it, so autocomplete must treat it as gone.
+    /// A suppressed contact (ADR 0007 Q2) never matches, in either band: it
+    /// is a deleted `mail` contact whose row survives only to stop the next
+    /// sighting from resurrecting it, so autocomplete must treat it as gone.
     pub fn search(
         &self,
         account_id: Option<AccountId>,
@@ -165,7 +165,8 @@ impl<'a> ContactRepository<'a> {
                  OR lower(coalesce(address_name, '')) LIKE ?{text} || '%'
                  OR lower(coalesce(address_name, '')) LIKE '% ' || ?{text} || '%'
               )
-              ORDER BY last_seen_at DESC, times_seen DESC, id
+              ORDER BY CASE WHEN source = 'mail' THEN 1 ELSE 0 END,
+                       last_seen_at DESC, times_seen DESC, id
               LIMIT ?{limit_index}",
             account_filter(account_id)
         ))?;
