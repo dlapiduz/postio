@@ -934,6 +934,7 @@ impl MailBackend for MockBackend {
                 None => true,
             })
             .map(|message| FetchedMessage {
+                remote_id: identity::remote_id(folder.uid_validity, Uid::new(message.uid)),
                 uid: Uid::new(message.uid),
                 uid_validity: folder.uid_validity,
                 mod_seq: condstore.then(|| ModSeq::new(message.mod_seq)),
@@ -1161,6 +1162,7 @@ impl MailBackend for MockBackend {
                 source: Uid::new(uid),
                 destination: Uid::new(uid),
                 uid_validity,
+                destination_remote_id: identity::remote_id(uid_validity, Uid::new(uid)),
             })
         };
 
@@ -1247,6 +1249,10 @@ impl MockBackend {
                 source: Uid::new(message.uid),
                 destination: Uid::new(uid),
                 uid_validity: folder.uid_validity,
+                destination_remote_id: identity::remote_id(
+                    folder.uid_validity,
+                    Uid::new(uid),
+                ),
             });
         }
 
