@@ -161,6 +161,8 @@ command_ids! {
     PrevFolder => "prev_folder",
     /// Expand or collapse the focused folder's children.
     ToggleFolder => "toggle_folder",
+    /// Move to the next account scope: unified, then each account in turn.
+    NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
     Refresh => "refresh",
     /// Show the focused message's MIME structure.
@@ -532,6 +534,13 @@ pub enum Command {
     PrevFolder,
     /// Expand or collapse the focused folder's children.
     ToggleFolder,
+    /// Move to the next account scope: unified, then each account in turn.
+    ///
+    /// Cycling rather than `SetScope(id)` because a keystroke has no argument
+    /// to carry one, and because the sidebar's own rows are the surface for
+    /// naming a scope directly — the same split `NextFolder` and clicking a
+    /// folder already have.
+    NextScope,
     /// Check for new mail now.
     Refresh,
 
@@ -667,6 +676,7 @@ impl Command {
             Command::NextFolder => CommandId::NextFolder,
             Command::PrevFolder => CommandId::PrevFolder,
             Command::ToggleFolder => CommandId::ToggleFolder,
+            Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
             Command::NextPart => CommandId::NextPart,
@@ -761,6 +771,7 @@ impl Command {
             CommandId::NextFolder => Command::NextFolder,
             CommandId::PrevFolder => Command::PrevFolder,
             CommandId::ToggleFolder => Command::ToggleFolder,
+            CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,
             CommandId::NextPart => Command::NextPart,

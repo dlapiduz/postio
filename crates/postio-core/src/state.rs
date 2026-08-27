@@ -434,6 +434,46 @@ impl AppState {
             .unwrap_or(ConnectionState::Offline)
     }
 
+    /// Every account the application has heard about, in a stable order.
+    ///
+    /// `connections` is keyed by [`AccountId`] in a `BTreeMap`, so this is
+    /// ascending id — the order accounts were created in, which does not
+    /// change when one is disabled or when another is added. That stability
+    /// is load-bearing for [`next_scope`](Self::next_scope) and for the
+    /// per-account hue the sidebar draws: a colour a person has learned must
+    /// not move because a later account appeared.
+    pub fn accounts(&self) -> Vec<AccountId> {
+        self.connections.keys().copied().collect()
+    }
+
+    /// Move to the next scope: unified, then each account in turn, and round.
+    ///
+    /// What `g a` does. Cycling rather than a menu because the set is small
+    /// and ordered, and because a keystroke has no argument to name a scope
+    /// with — the sidebar's rows are the surface for going somewhere
+    /// directly.
+    ///
+    /// With no accounts, or exactly one, this is a no-op rather than a
+    /// pointless flicker between "unified" and the only account there is:
+    /// they show the same mail, so switching would be a visible change that
+    /// changes nothing.
+    pub fn next_scope(&mut self) -> Vec<Event> {
+        let accounts = self.accounts();
+        if accounts.len() < 2 {
+            return Vec::new();
+        }
+        match self.scope {
+            Scope::Unified => self.open_account(accounts[0]),
+            Scope::Account(current) => match accounts.iter().position(|id| *id == current) {
+                Some(index) if index + 1 < accounts.len() => self.open_account(accounts[index + 1]),
+                // Past the last account, or an account that has gone away
+                // since the scope was set — both land back at unified, which
+                // is the one scope that is always valid.
+                _ => self.open_unified(),
+            },
+        }
+    }
+
     /// How many steps `Esc` can still unwind.
     pub fn back_depth(&self) -> usize {
         self.back.len()

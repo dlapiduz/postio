@@ -543,3 +543,81 @@ fn widening_to_unified_drops_the_mailbox_that_belonged_to_one_account() {
         "keeping it would let an action land in a folder the view no longer shows"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cycling the account scope (#185)
+// ---------------------------------------------------------------------------
+
+/// A state that has heard from `count` accounts, ids 1..=count.
+fn with_accounts(count: i64) -> AppState {
+    let mut state = AppState::default();
+    for id in 1..=count {
+        state.set_connection(AccountId::new(id), ConnectionState::Online);
+    }
+    state
+}
+
+#[test]
+fn next_scope_walks_unified_then_every_account_and_round() {
+    let mut state = with_accounts(3);
+    assert_eq!(state.scope(), Scope::Unified, "unified is where it starts");
+
+    state.next_scope();
+    assert_eq!(state.scope(), Scope::Account(AccountId::new(1)));
+    state.next_scope();
+    assert_eq!(state.scope(), Scope::Account(AccountId::new(2)));
+    state.next_scope();
+    assert_eq!(state.scope(), Scope::Account(AccountId::new(3)));
+    state.next_scope();
+    assert_eq!(
+        state.scope(),
+        Scope::Unified,
+        "past the last account it comes back to unified rather than sticking"
+    );
+}
+
+#[test]
+fn the_account_order_is_stable_when_a_later_account_appears() {
+    // The hue the sidebar draws is keyed off this position, so an account
+    // that has been blue must not turn green because a fourth account was
+    // added after it.
+    let mut state = with_accounts(2);
+    let before = state.accounts();
+
+    state.set_connection(AccountId::new(9), ConnectionState::Online);
+    let after = state.accounts();
+
+    assert_eq!(
+        after[..2],
+        before[..],
+        "the existing accounts kept their places"
+    );
+    assert_eq!(after.len(), 3);
+}
+
+#[test]
+fn cycling_does_nothing_at_all_with_fewer_than_two_accounts() {
+    // Unified over one account and that one account show the same mail, so a
+    // switch would be a visible change that changes nothing — and it would
+    // put "Unified" in front of people who have never configured a second
+    // account, which #185 explicitly does not want.
+    for count in [0, 1] {
+        let mut state = with_accounts(count);
+        let events = state.next_scope();
+        assert_eq!(state.scope(), Scope::Unified, "with {count} account(s)");
+        assert!(events.is_empty(), "with {count} account(s)");
+    }
+}
+
+#[test]
+fn a_scope_on_an_account_that_has_gone_lands_back_on_unified() {
+    let mut state = with_accounts(2);
+    state.open_account(AccountId::new(404));
+    state.next_scope();
+    assert_eq!(
+        state.scope(),
+        Scope::Unified,
+        "unified is the one scope that is always valid, so it is where an \
+         unknown account falls back to"
+    );
+}
