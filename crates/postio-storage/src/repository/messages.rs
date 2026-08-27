@@ -732,9 +732,7 @@ impl<'a> MessageRepository<'a> {
             // enumeration hints (#544) insert a second copy of a message it
             // already holds.
             let by_identity = match &message.server.remote_id {
-                Some(remote_id) => {
-                    find_by_remote_id(&transaction, message.mailbox_id, remote_id)?
-                }
+                Some(remote_id) => find_by_remote_id(&transaction, message.mailbox_id, remote_id)?,
                 None => None,
             };
             let existing = match (by_identity, message.server.uid, message.server.uid_validity) {
@@ -1835,9 +1833,8 @@ fn find_by_remote_id(
     mailbox_id: MailboxId,
     remote_id: &RemoteId,
 ) -> Result<Option<MessageId>> {
-    let mut statement = connection.prepare(
-        "SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2",
-    )?;
+    let mut statement =
+        connection.prepare("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")?;
     let mut rows = statement.query(params![mailbox_id.get(), remote_id.as_str()])?;
     Ok(match rows.next()? {
         Some(row) => Some(MessageId::new(row.get(0)?)),

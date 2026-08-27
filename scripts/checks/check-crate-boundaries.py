@@ -70,6 +70,27 @@ from collections import deque
 # depending on the lower layer directly.
 
 RULES: dict[str, dict[str, object]] = {
+    "postio-jmap": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+        ],
+        # io-imap is banned too, but not here: workspace feature unification
+        # puts it in the resolved graph however this crate's manifest asks
+        # (the same reason postio-sync's rule lives in its own boundary.rs).
+        # `crates/postio-jmap/tests/boundary.rs` guards the manifest.
+        "why": (
+            "postio-jmap answers the MailBackend seam in RFC 8620/8621 "
+            "(ADR 0018): a protocol leaf like the adapter beside it. No GTK "
+            "and no SQL; io-imap is kept out by its own boundary.rs, so the "
+            "two protocol crates never see each other."
+        ),
+    },
     "postio-core": {
         "banned": [
             "gtk4",
