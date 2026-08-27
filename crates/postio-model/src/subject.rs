@@ -6,6 +6,19 @@ const PREFIXES: &[&str] = &[
     "fwd", "fw", "re", "aw", "sv", "vs", "antw", "odp", "ref", "rif", "enc", "tr", "res",
 ];
 
+/// How far apart, in days, two rootless conversations can be and still be
+/// the same conversation to the unified list's subject fallback (#184,
+/// ADR 0005 Q2).
+///
+/// Within one account, subject-fallback threading matches on the normalised
+/// subject alone — an account's own mail gives `References` headers most of
+/// the time, and the fallback exists for the remainder. Across accounts the
+/// fallback is doing more of the work and a bare subject match would fold
+/// every "Weekly digest" the user receives at two addresses into one
+/// eternal conversation. A week is the window in which "same words, both
+/// inboxes" overwhelmingly *is* the same conversation.
+pub const COALESCING_WINDOW_DAYS: i64 = 7;
+
 /// Strips reply and forward decoration from a subject and folds case.
 ///
 /// Used to group messages whose `References` chains were broken in transit — a

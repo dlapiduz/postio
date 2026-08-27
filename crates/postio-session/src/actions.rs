@@ -892,6 +892,16 @@ impl Actions {
                 let ids = thread_messages(connection, thread)?;
                 return self.rows(connection, ids).map(Aim::Rows);
             }
+            Resolved::Threads(threads) => {
+                // The unified group: every member thread's messages, in one
+                // aim — `relocate`'s per-account split (#182) is what turns
+                // the rows into one unit per account queue.
+                let mut ids = Vec::new();
+                for thread in threads {
+                    ids.extend(thread_messages(connection, thread)?);
+                }
+                return self.rows(connection, ids).map(Aim::Rows);
+            }
             Resolved::Everything { scope, except } => match scope {
                 ViewScope::Mailbox(mailbox) => (
                     MessageSet::InMailbox { mailbox, except },
@@ -2228,6 +2238,86 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, Event::MessagesChanged { .. })),
             "naming the rows is exactly what this path must not do"
+        );
+    }
+
+    #[test]
+    fn archiving_a_thread_group_archives_every_copy_one_unit_per_account() {
+        // #184, ADR 0005 Q2: the unified list's deduped row stands for one
+        // conversation the user received at two addresses. Archiving it has
+        // to hit *every* copy — two operations in two per-account queues —
+        // because that is the only answer that matches what the user
+        // believes they did. `MessageTarget::Threads` is the group's
+        // expansion, and `relocate`'s existing per-account split (#182) is
+        // what turns it into per-account units.
+        let world = world();
+        let (second, second_inbox, second_archive) = {
+            let connection = world.database.connection().expect("a connection");
+            let mut account = postio_model::Account::new(
+                "Second",
+                postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+            );
+            postio_storage::repository::AccountRepository::new(&connection)
+                .create(&mut account)
+                .expect("second account");
+            let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+            let archive = test_support::mailbox(&connection, &account, "Archive").id;
+            (account.id, inbox, archive)
+        };
+
+        // The same message at both addresses, threaded in each account.
+        let file = |account: AccountId, mailbox: MailboxId| -> ThreadId {
+            let connection = world.database.connection().expect("a connection");
+            let mut message = Message::new(account, mailbox, Utc::now());
+            message.rfc_message_id = Some(postio_model::RfcMessageId::new("<pair@example.com>"));
+            message.subject = Some("Paired".to_owned());
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message");
+            postio_storage::repository::ThreadingRepository::new(&connection, account)
+                .thread(&message)
+                .expect("threaded")
+                .thread_id
+        };
+        let first_thread = file(world.account.id, world.inbox);
+        let second_thread = file(second, second_inbox);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Threads(vec![first_thread, second_thread]),
+            })
+            .expect("the group archives");
+
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let in_archive = |mailbox: MailboxId| -> u32 {
+            messages
+                .count(&postio_storage::repository::ListQuery {
+                    scope: postio_storage::repository::ListScope::Mailbox(mailbox),
+                    limit: 10,
+                    after: None,
+                })
+                .expect("a count")
+        };
+        assert_eq!(
+            in_archive(world.archive),
+            1,
+            "the first account's copy moved"
+        );
+        assert_eq!(
+            in_archive(second_archive),
+            1,
+            "and the second account's copy moved into *its own* Archive"
+        );
+
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let first_ops = queue.pending(world.account.id, Utc::now()).expect("queue");
+        let second_ops = queue.pending(second, Utc::now()).expect("queue");
+        assert_eq!(first_ops.len(), 1, "one operation in the first queue");
+        assert_eq!(
+            second_ops.len(),
+            1,
+            "one in the second: per-account, always"
         );
     }
 

@@ -44,7 +44,7 @@ use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_model::MailboxRole;
 use postio_model::ids::MailboxId;
 use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
-use postio_storage::repository::{ThreadListQuery, ThreadRepository};
+use postio_storage::repository::{ThreadListQuery, ThreadRepository, UnifiedThreadListQuery};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
@@ -249,10 +249,78 @@ fn bench_thread_page(c: &mut Criterion) {
     }
 }
 
+/// What a page of the *unified* list costs (#184, ADR 0005 Q2).
+///
+/// Two accounts, each with a full mailbox, read as one grouped list. The
+/// page walks `idx_threads_last_at` across both and does bounded per-row
+/// work — a root lookup and two partner probes per emitted group — so the
+/// claim under test is the same as every other page here: the cost is the
+/// page's, not the mailbox's, and it fits the interaction budget.
+fn bench_unified_page(c: &mut Criterion) {
+    let database = test_support::temp();
+    let first = seed_large(&database, 7, HUGE / 2);
+    thread_seeded_messages(&database, first.account.id, PER_THREAD);
+    // A second account of the same size: the unified list's whole point.
+    let second = {
+        let connection = database.connection().expect("a connection");
+        let mut account = postio_model::Account::new(
+            "Second",
+            postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+        );
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .expect("second account");
+        let inbox = test_support::mailbox(&connection, &account, "INBOX");
+        // A modest second corpus, written directly: seed_large seeds one
+        // account per store, and what this bench needs from the second is
+        // rows to group against, not another 50k of them.
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        connection.execute_batch("BEGIN").expect("begin");
+        for i in 0..2_000u32 {
+            let mut message = postio_model::Message::new(
+                account.id,
+                inbox.id,
+                chrono::Utc::now() - chrono::Duration::minutes(i as i64),
+            );
+            message.subject = Some(format!("Cross-account update {i}"));
+            messages.create(&mut message).expect("a message");
+        }
+        connection.execute_batch("COMMIT").expect("commit");
+        thread_seeded_messages(&database, account.id, PER_THREAD);
+        account.id
+    };
+    let _ = second;
+
+    let read = |query: &UnifiedThreadListQuery| {
+        let connection = database.connection().expect("a connection");
+        black_box(
+            ThreadRepository::new(&connection)
+                .unified_page(query)
+                .expect("a unified page"),
+        );
+    };
+    let query = UnifiedThreadListQuery {
+        limit: PAGE,
+        after: None,
+    };
+
+    c.bench_function("unified page, two accounts", |b| b.iter(|| read(&query)));
+
+    // Criterion reports; this fails. Same reasoning as the message page.
+    read(&query);
+    let start = Instant::now();
+    read(&query);
+    let measured = start.elapsed();
+    if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
+        panic!("a unified page over two accounts is over budget: {exceeded:?}");
+    }
+}
+
 criterion_group!(
     benches,
     bench_message_page,
     bench_thread_page,
+    bench_unified_page,
     bench_where_the_time_goes
 );
 criterion_main!(benches);
