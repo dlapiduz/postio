@@ -1,7 +1,7 @@
 //! The reading pane: a hardened `WebView` for message bodies.
 //!
-//! Three issues, one module, because they build on each other in a straight
-//! line:
+//! Several issues, one module, because they build on each other in a
+//! straight line:
 //!
 //! * [`postio-lu6`](view) — the `WebView` itself: JavaScript and network
 //!   access off, inline images through a local [`scheme::BlobSource`],
@@ -16,6 +16,10 @@
 //! * `#319` — [`message_header`], the sender/recipients/subject/date strip
 //!   above the banner: the reading pane's answer to the three questions a
 //!   reader asks before it ever reaches the body.
+//! * `#498` — [`actions`], the Reply/Reply all/Forward/Archive bar under the
+//!   body: the pointer's way to reach the same four verbs the keyboard
+//!   already had, and the reading pane's only click target of any kind
+//!   before this.
 //!
 //! [`view::Reader`] is the module's one public entry point; everything else
 //! is a piece it assembles.
@@ -32,12 +36,14 @@
 //! The names are re-exported below so this module still reads as one thing
 //! from the outside.
 
+pub mod actions;
 pub mod allowlist;
 pub mod banner;
 pub mod message_header;
 pub mod scheme;
 pub mod view;
 
+pub use actions::ReaderActions;
 pub use allowlist::RemoteImageAllowList;
 pub use message_header::MessageHeader;
 pub use postio_body::{RemoteImages, quote, sanitize};

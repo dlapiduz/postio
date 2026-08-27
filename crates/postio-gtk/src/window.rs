@@ -700,6 +700,15 @@ impl Window {
             }
         });
 
+        // The action bar's mouse runs the same commands the keyboard does,
+        // through the same path `list_view`'s row actions use: a button that
+        // acted directly would be a second implementation of a verb the
+        // registry already owns.
+        reader.connect_command({
+            let window = self.clone();
+            move |command| window.act(command)
+        });
+
         let _ = self.imp().reader.set(reader.clone());
         reader
     }
@@ -1934,6 +1943,7 @@ impl Window {
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap.clone());
         self.parts().set_keymap(&keymap);
+        self.reader().set_keymap(&keymap);
     }
 
     /// Apply the `[ui]` block: what the list shows, and how much of it.
