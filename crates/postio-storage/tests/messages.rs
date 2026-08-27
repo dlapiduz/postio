@@ -671,6 +671,161 @@ fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
     );
 }
 
+#[test]
+fn a_snoozed_message_leaves_every_ordinary_scope_and_appears_in_snoozed() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 70);
+    let id = messages.create(&mut message).expect("create");
+    let until = Utc::now() + Duration::from_secs(3600);
+
+    assert_eq!(messages.snooze(&[id], until).expect("snooze"), 1);
+
+    assert!(
+        messages
+            .page(&ListQuery::mailbox(inbox))
+            .expect("page")
+            .is_empty(),
+        "a snoozed message must leave the folder it is filed in"
+    );
+    assert!(
+        messages
+            .page(&ListQuery::account(account.id))
+            .expect("page")
+            .is_empty(),
+        "and the unified account view too, or it would just reappear there"
+    );
+    assert_eq!(
+        messages
+            .page(&ListQuery::snoozed(account.id))
+            .expect("page")
+            .len(),
+        1,
+        "but the whole point is that it is still findable, in its own view"
+    );
+    assert!(
+        messages.get(id).expect("get").is_some(),
+        "snoozing is not deleting"
+    );
+}
+
+#[test]
+fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_changed() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive");
+    let messages = MessageRepository::new(&connection);
+
+    let mut due = a_message(inbox, account.id, 70);
+    let due_id = messages.create(&mut due).expect("create due");
+    let mut not_due = a_message(archive.id, account.id, 71);
+    let not_due_id = messages.create(&mut not_due).expect("create not due");
+
+    let now = Utc::now();
+    messages
+        .snooze(&[due_id], now - Duration::from_secs(1))
+        .expect("snooze the one whose time has already come");
+    messages
+        .snooze(&[not_due_id], now + Duration::from_secs(3600))
+        .expect("snooze the one whose time has not come");
+
+    let woken = messages.wake_due(account.id, now).expect("wake due");
+    assert_eq!(
+        woken,
+        vec![inbox],
+        "only the folder holding the due message should be told to repaint"
+    );
+
+    assert_eq!(
+        messages.get(due_id).expect("get").unwrap().snoozed_until,
+        None,
+        "waking clears the snooze rather than merely revealing it"
+    );
+    assert!(
+        messages
+            .page(&ListQuery::mailbox(inbox))
+            .expect("page")
+            .iter()
+            .any(|row| row.id == due_id),
+        "the due message is back in its folder"
+    );
+    assert!(
+        messages
+            .page(&ListQuery::mailbox(archive.id))
+            .expect("page")
+            .is_empty(),
+        "the one whose time has not come stays hidden"
+    );
+
+    assert_eq!(
+        messages.wake_due(account.id, now).expect("wake due again"),
+        Vec::new(),
+        "nothing left to wake, so nothing left to repaint"
+    );
+}
+
+#[test]
+fn waking_due_snoozes_never_touches_another_accounts_rows() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account_a, inbox_a) = test_support::account_with_inbox(&connection);
+    let (account_b, inbox_b) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message_a = a_message(inbox_a, account_a.id, 70);
+    let id_a = messages.create(&mut message_a).expect("create a");
+    let mut message_b = a_message(inbox_b, account_b.id, 71);
+    let id_b = messages.create(&mut message_b).expect("create b");
+
+    let now = Utc::now();
+    // Truncated to millisecond precision: that is what the column stores,
+    // and the round trip below has to match it exactly.
+    let due = DateTime::from_timestamp_millis((now - Duration::from_secs(1)).timestamp_millis())
+        .unwrap();
+    messages.snooze(&[id_a], due).expect("snooze a");
+    messages.snooze(&[id_b], due).expect("snooze b");
+
+    assert_eq!(
+        messages.wake_due(account_a.id, now).expect("wake a"),
+        vec![inbox_a],
+        "only account a's engine asked, so only account a's row may wake"
+    );
+    assert_eq!(
+        messages.get(id_b).expect("get b").unwrap().snoozed_until,
+        Some(due),
+        "account b's own engine has not ticked yet, so its snooze must stand"
+    );
+}
+
+#[test]
+fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 70);
+    let id = messages.create(&mut message).expect("create");
+    messages
+        .snooze(&[id], Utc::now() + Duration::from_secs(3600))
+        .expect("snooze");
+
+    assert_eq!(messages.unsnooze(&[id]).expect("unsnooze"), 1);
+    assert_eq!(messages.get(id).expect("get").unwrap().snoozed_until, None);
+    assert_eq!(
+        messages
+            .page(&ListQuery::mailbox(inbox))
+            .expect("page")
+            .len(),
+        1,
+        "cancelling a snooze has to be as immediate as pressing the key"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The windowed list query
 // ---------------------------------------------------------------------------

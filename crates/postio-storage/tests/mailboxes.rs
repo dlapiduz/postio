@@ -367,7 +367,8 @@ fn recounting_fills_in_the_sidebars_numbers() {
         MailboxCounts {
             total: 4,
             unread: 2,
-            flagged: 2
+            flagged: 2,
+            snoozed: 0
         }
     );
     assert_eq!(
@@ -427,7 +428,8 @@ fn a_message_deleted_locally_is_not_in_the_counts() {
         MailboxCounts {
             total: 1,
             unread: 1,
-            flagged: 0
+            flagged: 0,
+            snoozed: 0
         },
         "the list hides it, so the sidebar must not count it"
     );
@@ -464,7 +466,8 @@ fn every_mailbox_in_an_account_can_be_recounted_at_once() {
         MailboxCounts {
             total: 3,
             unread: 1,
-            flagged: 0
+            flagged: 0,
+            snoozed: 0
         },
         "the account row in the sidebar sums its folders"
     );
@@ -486,6 +489,7 @@ fn counts_can_be_written_directly_for_a_server_reported_status() {
         total: 12_000,
         unread: 37,
         flagged: 4,
+        snoozed: 0,
     };
     mailboxes.set_counts(id, reported).expect("set counts");
 
