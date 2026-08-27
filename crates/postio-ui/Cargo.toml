@@ -9,6 +9,7 @@ description = "Toolkit-free presentation logic shared by every Postio frontend (
 workspace = true
 
 [dependencies]
+base64 = "0.22"
 postio-body = { version = "0.1.0", path = "../postio-body" }
 postio-core = { version = "0.1.0", path = "../postio-core" }
 postio-model = { version = "0.1.0", path = "../postio-model" }
