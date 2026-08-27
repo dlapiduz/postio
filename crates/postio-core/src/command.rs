@@ -256,6 +256,13 @@ pub enum MessageTarget {
     Messages(Vec<MessageId>),
     /// Every message in this thread.
     Thread(ThreadId),
+    /// Every message in each of these threads.
+    ///
+    /// The unified list's group expansion (#184, ADR 0005 Q2): a deduped
+    /// row stands for one conversation whose copies live in several
+    /// accounts' threads, and an action on it must hit every copy in one
+    /// gesture — one undo, one unit per account.
+    Threads(Vec<ThreadId>),
     /// Every message a run of queue rows named.
     ///
     /// Only undo builds one of these, and only to take back a whole-mailbox

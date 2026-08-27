@@ -195,6 +195,8 @@ pub enum Resolved {
         /// Rows the user removed from the selection.
         except: Vec<MessageId>,
     },
+    /// Every message in each of these threads — a unified group (#184).
+    Threads(Vec<ThreadId>),
     /// Every message in a thread.
     Thread(ThreadId),
     /// Every message a run of queue rows named, and where they are now.
@@ -366,6 +368,7 @@ impl AppState {
     pub fn resolve(&self, target: &MessageTarget) -> Option<Resolved> {
         match target {
             MessageTarget::Thread(thread) => Some(Resolved::Thread(*thread)),
+            MessageTarget::Threads(threads) => Some(Resolved::Threads(threads.clone())),
             // Taken at its word for the same reason a named list of messages
             // is: undo built this, and it names exactly what it moved.
             MessageTarget::Batch {
