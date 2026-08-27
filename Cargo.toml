@@ -9,6 +9,7 @@ members = [
     "crates/postio-config",
     "crates/postio-imap",
     "crates/postio-jmap",
+    "crates/postio-gmail",
     "crates/postio-smtp",
     "crates/postio-sync",
     "crates/postio-core",
@@ -70,6 +71,7 @@ postio-config  = { path = "crates/postio-config" }
 postio-session = { path = "crates/postio-session" }
 postio-imap    = { path = "crates/postio-imap" }
 postio-jmap    = { path = "crates/postio-jmap" }
+postio-gmail   = { path = "crates/postio-gmail" }
 postio-smtp    = { path = "crates/postio-smtp" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }

@@ -39,6 +39,11 @@ password_help_url = "https://appleid.apple.com/account/manage"
 auth = ["app-password"]
 
 [provider.gmail]
+# IMAP first until #195 clears Google's CASA review for Postio's own
+# client (ADR 0018 Q5); the REST backend is reachable today with the
+# user's own client or a broker, and flipping the order is a data
+# change, not a release.
+backend = ["imap", "gmail"]
 display_name = "Gmail"
 domains = ["gmail.com", "googlemail.com"]
 imap_host = "imap.gmail.com"

@@ -70,6 +70,24 @@ from collections import deque
 # depending on the lower layer directly.
 
 RULES: dict[str, dict[str, object]] = {
+    "postio-gmail": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+        ],
+        # io-imap and io-jmap are banned too, but by the crate's own
+        # boundary.rs — the same feature-unification reason as postio-jmap's.
+        "why": (
+            "postio-gmail answers the MailBackend seam over the Gmail REST "
+            "API (ADR 0018): a protocol leaf. No GTK and no SQL; the other "
+            "protocol crates are held out by its own boundary.rs."
+        ),
+    },
     "postio-jmap": {
         "banned": [
             "gtk4",
