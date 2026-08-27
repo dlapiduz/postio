@@ -36,6 +36,7 @@ tempfile = "3.27.0"
 
 [build-dependencies]
 glib-build-tools = "0.21.0"
+postio-ui.workspace = true
 
 [[bench]]
 name = "list_scroll"

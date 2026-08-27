@@ -1,15 +1,25 @@
 //! The generated stylesheet is a build artefact of the design system. These
 //! tests are what stops it drifting: they re-run the generator and compare it
-//! with the copy checked in at `data/tokens.css`.
+//! with the copy checked in at `postio-gtk/data/tokens.css` — still there,
+//! not moved here, because that is where the running app's GResource bundle
+//! reads it from (#569).
 //!
-//! No GTK here — see `gtk_style.rs` for the checks that need a display.
+//! No display to guard: this crate has no toolkit dependency at all.
 
 use std::path::PathBuf;
 
-use postio_gtk::tokens::{self, Tokens};
+use postio_ui::tokens::{self, Tokens};
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// `postio-gtk`'s own directory, a sibling under `crates/`.
+fn gtk_dir() -> PathBuf {
+    manifest_dir()
+        .parent()
+        .expect("crates/postio-ui")
+        .join("postio-gtk")
 }
 
 /// The same discovery `build.rs` does, so the two cannot disagree.
@@ -54,7 +64,7 @@ fn label(path: &std::path::Path) -> String {
 }
 
 fn generated() -> String {
-    std::fs::read_to_string(manifest_dir().join("data").join("tokens.css"))
+    std::fs::read_to_string(gtk_dir().join("data").join("tokens.css"))
         .expect("data/tokens.css is missing; run `cargo build -p postio-gtk`")
 }
 

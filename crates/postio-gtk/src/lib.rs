@@ -10,9 +10,11 @@
 //!
 //! The foundation:
 //!
-//! - [`tokens`] — the Industry design system, parsed and turned into GTK CSS
-//!   by `build.rs`. Retune `Design/_ds/industry-*/styles.css` and the app
-//!   follows; nothing is retyped by hand.
+//! - `postio_ui::tokens` — the Industry design system, parsed and turned
+//!   into GTK CSS by `build.rs` (a build-dependency, not a module here:
+//!   nothing at runtime needs it, only the build script and the drift
+//!   tests do — see #569). Retune `Design/_ds/industry-*/styles.css` and
+//!   the app follows; nothing is retyped by hand.
 //! - [`resources`] — the compiled GResource bundle carrying the stylesheets,
 //!   the icon and the vendored OFL fonts.
 //! - [`fonts`] — Barlow / Barlow Condensed / IBM Plex Mono, registered from
@@ -96,6 +98,5 @@ pub mod style;
 pub mod thread;
 pub mod thread_row;
 pub mod toast;
-pub mod tokens;
 pub mod unavailable;
 pub mod window;
