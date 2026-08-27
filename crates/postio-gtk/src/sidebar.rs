@@ -1948,10 +1948,7 @@ mod tests {
             "one row per role: the mailbox actions route to, and no twin"
         );
         assert_eq!(
-            special
-                .iter()
-                .map(|m| m.path.as_str())
-                .collect::<Vec<_>>(),
+            special.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(),
             ["INBOX", "Sent", "Archive", "Deleted Messages"],
             "the primary is by_role's own answer: first by path"
         );
