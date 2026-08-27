@@ -43,6 +43,10 @@ use postio_core::bridge::EventSink;
 /// `secrets` is handed in rather than built here for the reason the module
 /// docs give: it is the composition root's choice, and it is the same store
 /// onboarding writes the password into and startup reads it back from.
+// Nine parts because the composition root chooses all nine — the module
+// docs' whole argument. `start_joining` below already carries the allow for
+// the same reason.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     account: &Account,
     database: &Database,
@@ -51,18 +55,21 @@ pub fn start(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    egress: Arc<dyn postio_model::egress::EgressSink>,
 ) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
 
+    // Both transports report to the egress log (#151): every connection
+    // this engine opens is a row the user can audit.
     let connector = match RustlsConnector::new() {
-        Ok(connector) => Arc::new(connector),
+        Ok(connector) => Arc::new(connector.with_egress(egress.clone())),
         Err(error) => {
             tracing::error!(%error, "no IMAP transport, so no sync");
             return None;
         }
     };
     let smtp = match postio_smtp::transport::RustlsConnector::new() {
-        Ok(connector) => Arc::new(connector),
+        Ok(connector) => Arc::new(connector.with_egress(egress)),
         Err(error) => {
             tracing::error!(%error, "no SMTP transport, so nothing can be sent");
             return None;
@@ -186,6 +193,7 @@ pub fn engine_budget(max_connections: usize) -> usize {
 /// Refuses rather than truncating when there are more accounts than the pool
 /// can serve. Starting nine of ten engines would leave the tenth account
 /// looking permanently offline with nothing in the interface explaining why.
+#[allow(clippy::too_many_arguments)]
 pub fn start_all(
     accounts: &[Account],
     database: &Database,
@@ -194,6 +202,7 @@ pub fn start_all(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Vec<(AccountId, Engine)>, StartupRefusal> {
     let enabled: Vec<&Account> = accounts.iter().filter(|account| account.enabled).collect();
     let budget = engine_budget(database.pool().max_connections());
@@ -217,6 +226,7 @@ pub fn start_all(
             Arc::clone(&secrets),
             mailbox_roles.clone(),
             backfill,
+            egress.for_account(account.id),
         ) {
             engines.push((account.id, engine));
         }
@@ -251,6 +261,7 @@ pub fn start_joining(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Option<Engine>, StartupRefusal> {
     let budget = engine_budget(database.pool().max_connections());
     if accounts > budget {
@@ -264,6 +275,7 @@ pub fn start_joining(
         secrets,
         mailbox_roles,
         backfill,
+        egress.for_account(account.id),
     ))
 }
 

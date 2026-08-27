@@ -296,6 +296,9 @@ mod imp {
         pub keymap_problems: RefCell<Vec<String>>,
         /// One row per account, enable switch and context menu (#464).
         pub accounts_list: gtk::ListBox,
+        /// The egress log's audit list (#151): what left this machine.
+        pub egress_list: gtk::ListBox,
+        pub egress_scroller: gtk::ScrolledWindow,
         /// Hidden entirely when there are no accounts to show a row for.
         pub accounts_scroller: gtk::ScrolledWindow,
         /// The accounts the rows above were built from — kept so a right
@@ -327,6 +330,8 @@ mod imp {
                 last_good: RefCell::new(None),
                 keymap_problems: RefCell::new(Vec::new()),
                 accounts_list: gtk::ListBox::new(),
+                egress_list: gtk::ListBox::new(),
+                egress_scroller: gtk::ScrolledWindow::new(),
                 accounts_scroller: gtk::ScrolledWindow::new(),
                 accounts: RefCell::new(Vec::new()),
                 account_menu: RefCell::new(None),
@@ -545,6 +550,58 @@ impl SettingsPanel {
         }
         imp.accounts_scroller.set_visible(!accounts.is_empty());
         *imp.accounts.borrow_mut() = accounts;
+    }
+
+    /// The connections Postio has opened, newest first (#151).
+    ///
+    /// This list is the privacy claim made auditable: every outbound
+    /// connection the transports report lands in the egress log, and this
+    /// is where a person reads it back. Hidden while the log is empty —
+    /// which on a machine that has never synced is exactly the claim.
+    pub fn set_egress(&self, entries: Vec<postio_model::egress::EgressEvent>) {
+        let imp = self.imp();
+        while let Some(row) = imp.egress_list.row_at_index(0) {
+            imp.egress_list.remove(&row);
+        }
+        for entry in &entries {
+            let row = gtk::ListBoxRow::new();
+            row.add_css_class("postio-settings-egress-row");
+            row.set_selectable(false);
+            row.set_activatable(false);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            let when = gtk::Label::new(Some(
+                &entry
+                    .at
+                    .with_timezone(&chrono::Local)
+                    .format("%d %b %H:%M")
+                    .to_string(),
+            ));
+            when.add_css_class("postio-settings-egress-when");
+            let what = gtk::Label::new(Some(&format!(
+                "{} · {}:{}",
+                entry.subsystem.as_str(),
+                entry.host,
+                entry.port
+            )));
+            what.set_hexpand(true);
+            what.set_xalign(0.0);
+            what.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let outcome = gtk::Label::new(Some(entry.outcome.as_str()));
+            outcome.add_css_class("postio-settings-egress-outcome");
+            line.append(&when);
+            line.append(&what);
+            line.append(&outcome);
+            row.set_child(Some(&line));
+            row.update_property(&[gtk::accessible::Property::Label(&format!(
+                "{} connected to {} port {}, {}",
+                entry.subsystem.as_str(),
+                entry.host,
+                entry.port,
+                entry.outcome.as_str()
+            ))]);
+            imp.egress_list.append(&row);
+        }
+        imp.egress_scroller.set_visible(!entries.is_empty());
     }
 
     /// One account's row: name and address, an enabled switch at the end.
@@ -920,10 +977,25 @@ impl SettingsPanel {
         footer.append(&imp.status);
         footer.append(&imp.revert);
 
+        // ── egress: the connections Postio opened, auditable (#151) ──────
+        imp.egress_list.add_css_class("postio-settings-egress-list");
+        imp.egress_list.set_selection_mode(gtk::SelectionMode::None);
+        imp.egress_list
+            .update_property(&[gtk::accessible::Property::Label("Recent connections")]);
+        imp.egress_scroller.set_child(Some(&imp.egress_list));
+        imp.egress_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.egress_scroller
+            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
+        imp.egress_scroller.set_propagate_natural_height(true);
+        imp.egress_scroller.add_css_class("postio-settings-egress");
+        imp.egress_scroller.set_visible(false);
+
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&header);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&imp.accounts_scroller);
+        column.append(&imp.egress_scroller);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);

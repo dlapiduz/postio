@@ -162,7 +162,7 @@ acceptance criteria, not advice.
    sender's markup to a third party. Postio must never make a recipient run
    something its own user was protected from. Test it against a hostile corpus
    fixture, in both the reply and forward paths.
-7. **`postio-qhz.2`'s request log covers the composer**, so "no network from
+7. **The egress log (#151) covers the composer**, so "no network from
    compose" is a proven claim rather than an asserted one.
 
 ## Q3 — How does replying to an HTML message quote it?

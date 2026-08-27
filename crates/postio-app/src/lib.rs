@@ -37,6 +37,7 @@ pub mod reading;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
+mod settings_egress;
 pub mod sidebar_backfill;
 
 // The toolkit-free half of the composition root lives in `postio-session`, so
@@ -305,7 +306,10 @@ pub fn open_or_onboard(
                     events,
                     notifier,
                     repairing.map(|account| *account),
-                    std::sync::Arc::new(postio_imap::discovery::PimalayaTransport::new()),
+                    std::sync::Arc::new(
+                        postio_imap::discovery::PimalayaTransport::new()
+                            .with_egress(wiring.egress.clone()),
+                    ),
                 ),
             }
         }
@@ -431,6 +435,8 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 
     // The settings panel's account rows: enable/disable, remove-with-undo.
     settings_accounts::install(window, wiring);
+    // And its connection list: the egress log, auditable (#151).
+    settings_egress::install(window, wiring);
 
     // A folder's own context menu: skip/resume background backfill (ADR
     // 0016, #350).
@@ -577,6 +583,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        &wiring.egress,
     ) {
         Ok(engines) => engines,
         Err(refusal) => {
@@ -626,6 +633,7 @@ pub fn attach_account(
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        &wiring.egress,
     )?;
     if let Some(sync) = started {
         adopt_engine(window, wiring, account.id, sync);
