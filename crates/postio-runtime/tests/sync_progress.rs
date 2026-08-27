@@ -29,7 +29,7 @@ use std::time::Duration;
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
 use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
-use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
+use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::{BlobStore, test_support};
 
 /// Five batches of `postio_sync::initial::DEFAULT_BATCH_SIZE`.
@@ -108,6 +108,7 @@ async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 

@@ -12,7 +12,7 @@ use postio_core::bridge::{EventStream, event_channel};
 use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
-use postio_runtime::engine::{Engine, EngineParts, Link, NetworkSource, NetworkState};
+use postio_runtime::engine::{Engine, EngineParts, Link, NetworkSource, NetworkState, SystemClock};
 use postio_storage::repository::OperationQueueRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
@@ -83,6 +83,7 @@ fn engine_with(
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 
@@ -836,6 +837,7 @@ fn engine_over_arc(
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
     (engine, events)
@@ -978,6 +980,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 
@@ -1080,6 +1083,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 
@@ -1324,6 +1328,7 @@ fn engine_seeding_in_batches(
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 
@@ -1516,6 +1521,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 
@@ -1659,6 +1665,7 @@ fn engine_over_a_real_sync(
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
     let id = account.id;

@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
-use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
+use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{ListQuery, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
@@ -171,6 +171,7 @@ fn no_message_content_reaches_the_log_at_any_level() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
 

@@ -29,7 +29,7 @@ use postio_imap::imap::{
 };
 use postio_imap::secret::{AccountKey, SecretStore};
 use postio_model::{Account, AccountId};
-use postio_runtime::engine::{Engine, EngineParts, NetworkSource};
+use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::{BlobStore, Database};
 
 use postio_core::bridge::EventSink;
@@ -104,6 +104,7 @@ pub fn start(
         watch: Default::default(),
         network: NetworkSource::NetworkManager,
         mailbox_roles,
+        clock: Arc::new(SystemClock),
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {
