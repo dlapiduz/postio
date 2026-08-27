@@ -309,6 +309,13 @@ impl<'a> Drainer<'a> {
         capabilities: &Capabilities,
         resync: &mut BTreeSet<i64>,
     ) -> Outcome {
+        if let Operation::CrossAccountCopy { saga } = &context.operation {
+            return crate::cross_account::copy(self.backend, self.blobs, connection, *saga).await;
+        }
+        if let Operation::CrossAccountRemove { saga } = &context.operation {
+            return crate::cross_account::remove(self.backend, connection, *saga).await;
+        }
+
         let result = match &context.operation {
             Operation::SetFlags { flags } => self
                 .store(context, FlagChange::Add(flags.clone()))
@@ -336,6 +343,9 @@ impl<'a> Drainer<'a> {
                             Outcome::Applied
                         }
                     })
+            }
+            Operation::CrossAccountCopy { .. } | Operation::CrossAccountRemove { .. } => {
+                unreachable!("handled above, before the match")
             }
             Operation::Expunge { .. } => self
                 .backend
@@ -424,6 +434,23 @@ impl<'a> Drainer<'a> {
         if let Some(resolved) = self.resolve_draft(connection, step)? {
             return Ok(resolved);
         }
+        if matches!(
+            step.operation,
+            Operation::CrossAccountCopy { .. } | Operation::CrossAccountRemove { .. }
+        ) {
+            // Everything a saga phase needs lives on the saga row, which
+            // `send` reads fresh — a Context resolved here could be a
+            // restart old by the time it runs.
+            return Ok(Resolved::Ready(Context {
+                operation: step.operation.clone(),
+                path: String::new(),
+                destination: None,
+                uids: UidSet::new(),
+                mailbox: MailboxId::UNASSIGNED,
+                send: None,
+                draft: None,
+            }));
+        }
         if matches!(step.operation, Operation::Append { .. }) {
             // Resolved as ready so `send` can report it uniformly; there is no
             // mailbox or UID to look up.
@@ -461,7 +488,9 @@ impl<'a> Drainer<'a> {
             Operation::Append { .. }
             | Operation::Send { .. }
             | Operation::SaveDraft { .. }
-            | Operation::DiscardDraft { .. } => unreachable!("handled above"),
+            | Operation::DiscardDraft { .. }
+            | Operation::CrossAccountCopy { .. }
+            | Operation::CrossAccountRemove { .. } => unreachable!("handled above"),
         };
 
         let uids = match step.target {

@@ -227,6 +227,25 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         message: &AppendMessage,
     ) -> BackendResult<Option<UidMapping>>;
 
+    /// Finds the one message in `mailbox` whose RFC 5322 `Message-ID`
+    /// header is `message_id`, if the backend can search at all.
+    ///
+    /// The cross-account move saga's confirmation fallback (#188, ADR 0005
+    /// Q9): on a server without UIDPLUS an append proves nothing, and this
+    /// targeted `UID SEARCH HEADER Message-ID` is what stands in. The
+    /// default answers `None` — "this backend cannot search" — which the
+    /// saga reads as *unconfirmed*: it stops and asks, it never guesses.
+    /// More than one match also answers the newest, since any copy proves
+    /// arrival.
+    async fn find_by_message_id(
+        &self,
+        mailbox: &str,
+        message_id: &str,
+    ) -> BackendResult<Option<Uid>> {
+        let _ = (mailbox, message_id);
+        Ok(None)
+    }
+
     /// Waits for the server to say something about `mailbox`.
     ///
     /// Returns as soon as anything arrives, when `timeout` elapses, or when

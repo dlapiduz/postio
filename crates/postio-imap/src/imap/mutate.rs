@@ -236,6 +236,49 @@ pub async fn append(
 // Shared bodies
 // ---------------------------------------------------------------------------
 
+/// `UID SEARCH HEADER Message-ID <...>`: the one message carrying
+/// `message_id`, or `None`.
+///
+/// The cross-account saga's confirmation fallback (#188): where APPENDUID
+/// is not spoken, presence in the target mailbox is proven by this search.
+/// The newest match is returned when a server reports several — any copy
+/// proves arrival.
+pub async fn find_by_message_id(
+    pool: &ConnectionPool,
+    mailbox: &str,
+    message_id: &str,
+    priority: Priority,
+) -> BackendResult<Option<postio_model::Uid>> {
+    use io_imap::rfc3501::search::ImapMessageSearchOptions;
+    use io_imap::types::core::{AString, Vec1};
+    use io_imap::types::search::SearchKey;
+
+    let mailbox = mailbox.to_owned();
+    let message_id = message_id.to_owned();
+
+    pool.execute(priority, async |session| {
+        session.ensure_selected(&mailbox, false).await?;
+        let header =
+            AString::try_from("Message-ID".to_owned()).map_err(|error| BackendError::Protocol {
+                reason: format!("Message-ID is not an IMAP astring: {error}"),
+            })?;
+        let value =
+            AString::try_from(message_id.clone()).map_err(|error| BackendError::Protocol {
+                reason: format!("`{message_id}` is not an IMAP astring: {error}"),
+            })?;
+        let criteria = Vec1::from(SearchKey::Header(header, value));
+        let found = session
+            .search(criteria, ImapMessageSearchOptions { uid: true })
+            .await
+            .map_err(|error| session.command_error("SEARCH", error))?;
+        Ok(found
+            .into_iter()
+            .max()
+            .map(|uid| postio_model::Uid::new(uid.get())))
+    })
+    .await
+}
+
 /// `UID STORE` against the already-selected mailbox.
 async fn store(
     session: &mut ImapSession,

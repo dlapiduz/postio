@@ -489,6 +489,20 @@ impl Actions {
             rows.iter().all(|row| row.account_id == account),
             "relocate_rows is single-account by construction; `relocate` groups"
         );
+        // A destination in another account is not a move at all — there is
+        // no server-side operation between two servers. It becomes the
+        // three-phase saga of ADR 0005 Q9, and the row here is only its
+        // local-first half: the message appears there and leaves here
+        // immediately, and the saga reconciles.
+        if let Destination::Mailbox(mailbox) = to {
+            let target = MailboxRepository::new(connection)
+                .get(mailbox)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That folder no longer exists"))?;
+            if target.account_id != account {
+                return self.cross_account_relocate(connection, rows, &target, kind);
+            }
+        }
         let destination = mailbox_for(connection, account, to)?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
@@ -561,6 +575,113 @@ impl Actions {
             reloaded: Vec::new(),
             changed: Vec::new(),
             removed,
+        })
+    }
+
+    /// The local-first half of a cross-account move (#188, ADR 0005 Q9).
+    ///
+    /// One saga per message: a provisional row appears in the target
+    /// account's mailbox at once, the source row is hidden at once, and two
+    /// queue operations — the copy on the target's queue, the remove on the
+    /// source's — carry the server work. The remove cannot run until the
+    /// copy is confirmed; that ordering lives in the saga table and its
+    /// drainer, not here.
+    ///
+    /// No undo entry yet: the inverse of a saga is the inverse saga, driven
+    /// from the confirmed target UID, and `u` offering a plain move back
+    /// would be offering something the servers cannot do. Filed as the
+    /// follow-up this function's PR names.
+    fn cross_account_relocate(
+        &self,
+        connection: &mut PooledConnection,
+        rows: Vec<Message>,
+        target: &postio_model::Mailbox,
+        kind: UndoKind,
+    ) -> Result<Applied, CommandError> {
+        let account = rows[0].account_id;
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        let mut moved: Vec<MessageId> = Vec::new();
+        let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
+        {
+            let messages = MessageRepository::new(&transaction);
+            let queue = OperationQueueRepository::new(&transaction);
+            let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&transaction);
+            for row in &rows {
+                // The provisional copy the user sees in the target at once.
+                // Blobs are content-addressed, so the copy shares the
+                // source's bytes rather than duplicating them.
+                let mut copy = row.clone();
+                copy.id = MessageId::UNASSIGNED;
+                copy.account_id = target.account_id;
+                copy.mailbox_id = target.id;
+                copy.thread_id = None;
+                copy.server.uid = None;
+                copy.server.uid_validity = None;
+                let copy_id = messages.create(&mut copy).map_err(store_failure)?;
+                if let Some(blobs) = messages.body_blobs(row.id).map_err(store_failure)? {
+                    messages
+                        .set_body_blobs(copy_id, &blobs, row.sync.body_state)
+                        .map_err(store_failure)?;
+                }
+
+                let saga = sagas
+                    .create(&postio_storage::repository::NewCrossAccountMove {
+                        source_message: row.id,
+                        source_account: account,
+                        source_mailbox: row.mailbox_id,
+                        target_account: target.account_id,
+                        target_mailbox: target.id,
+                        target_message: Some(copy_id),
+                        raw_blob_id: row
+                            .raw_blob_id
+                            .as_ref()
+                            .map(|blob| blob.as_str().to_owned()),
+                        rfc_message_id: row
+                            .rfc_message_id
+                            .as_ref()
+                            .map(|id| id.as_str().to_owned()),
+                    })
+                    .map_err(store_failure)?;
+
+                queue
+                    .enqueue(
+                        target.account_id,
+                        postio_model::OperationTarget::Message(copy_id),
+                        &Operation::CrossAccountCopy { saga },
+                        at,
+                    )
+                    .map_err(store_failure)?;
+                queue
+                    .enqueue(
+                        account,
+                        postio_model::OperationTarget::Message(row.id),
+                        &Operation::CrossAccountRemove { saga },
+                        at,
+                    )
+                    .map_err(store_failure)?;
+                messages
+                    .set_deleted_locally(&[row.id], true)
+                    .map_err(store_failure)?;
+
+                moved.push(row.id);
+                by_source.entry(row.mailbox_id).or_default().push(row.id);
+            }
+        }
+        transaction.commit().map_err(store_failure)?;
+
+        Ok(Applied {
+            account,
+            kind,
+            count: moved.len(),
+            messages: moved,
+            // Deliberately empty: see the doc comment. `u` says "nothing to
+            // undo" rather than pretending a saga is a move.
+            inverse: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            removed: by_source.into_iter().collect(),
         })
     }
 
@@ -2318,6 +2439,97 @@ mod tests {
             second_ops.len(),
             1,
             "one in the second: per-account, always"
+        );
+    }
+
+    #[test]
+    fn a_move_to_another_accounts_folder_starts_the_saga_not_a_move() {
+        // #188, ADR 0005 Q9: between accounts there is no server-side move.
+        // The command's local half is immediate — the message appears in
+        // the target account and leaves the source — and the server work is
+        // two saga operations, one per account queue, ordered by the saga
+        // table so nothing deletes before the copy is confirmed.
+        let world = world();
+        let (second, second_inbox) = {
+            let connection = world.database.connection().expect("a connection");
+            let mut account = postio_model::Account::new(
+                "Second",
+                postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+            );
+            postio_storage::repository::AccountRepository::new(&connection)
+                .create(&mut account)
+                .expect("second account");
+            let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+            (account.id, inbox)
+        };
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+
+        let connection = world.database.connection().expect("a connection");
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let source_ops = queue.pending(world.account.id, Utc::now()).expect("queue");
+        let target_ops = queue.pending(second, Utc::now()).expect("queue");
+        assert_eq!(source_ops.len(), 1);
+        assert_eq!(
+            source_ops[0].operation.op_type(),
+            "cross_account_remove",
+            "the source queue holds phase 3, and only phase 3"
+        );
+        assert_eq!(target_ops.len(), 1);
+        assert_eq!(target_ops[0].operation.op_type(), "cross_account_copy");
+
+        // Local-first: gone from here, visible there, immediately.
+        let messages = MessageRepository::new(&connection);
+        let source_row = messages.get(message).expect("read").expect("the row");
+        assert!(
+            source_row.sync.deleted_locally,
+            "the source row is hidden at once; the saga reconciles"
+        );
+        let copies = messages
+            .count(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(second_inbox),
+                limit: 10,
+                after: None,
+            })
+            .expect("a count");
+        assert_eq!(copies, 1, "the provisional copy is already in the target");
+    }
+
+    #[test]
+    fn a_move_within_one_account_stays_a_single_move_operation() {
+        // The cheap case must stay cheap (ADR 0005 Q9): nothing about the
+        // saga applies inside one account, where the server has a real MOVE.
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(world.archive),
+            })
+            .expect("the move applies");
+
+        let connection = world.database.connection().expect("a connection");
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let ops = queue.pending(world.account.id, Utc::now()).expect("queue");
+        assert_eq!(ops.len(), 1, "one operation on one queue");
+        assert_eq!(ops[0].operation.op_type(), "move");
+        let sagas: i64 = connection
+            .query_row("SELECT count(*) FROM cross_account_moves", [], |row| {
+                row.get(0)
+            })
+            .expect("count");
+        assert_eq!(
+            sagas, 0,
+            "and no saga exists for the common case to pay for"
         );
     }
 

@@ -52,6 +52,7 @@ pub mod blob_sink;
 pub mod coalesce;
 pub mod connect;
 mod contacts;
+mod cross_account;
 pub mod discover;
 pub mod drafts;
 pub mod drain;

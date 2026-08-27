@@ -71,7 +71,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 19] = [
+static MIGRATIONS: [Migration; 20] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -166,6 +166,11 @@ static MIGRATIONS: [Migration; 19] = [
         version: 19,
         name: "unified_threads",
         sql: include_str!("0019_unified_threads.sql"),
+    },
+    Migration {
+        version: 20,
+        name: "cross_account_moves",
+        sql: include_str!("0020_cross_account_moves.sql"),
     },
 ];
 
