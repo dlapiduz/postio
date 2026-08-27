@@ -36,10 +36,12 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod event;
+mod list;
 mod registry;
 mod session;
 
 pub use event::UiEvent;
+pub use list::{RowFfi, ScopeFfi};
 pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
 pub use session::{Session, SessionError, SessionOptions};
 
