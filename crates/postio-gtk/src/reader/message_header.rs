@@ -30,6 +30,9 @@ pub struct MessageHeader {
     /// three (#487), and only the recipients below belong to this widget
     /// there.
     identity: gtk::Box,
+    account_row: gtk::Box,
+    account_swatch: gtk::Box,
+    account_name: gtk::Label,
     subject: gtk::Label,
     sender: gtk::Label,
     date: gtk::Label,
@@ -46,6 +49,25 @@ impl MessageHeader {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
         root.add_css_class("postio-message-header");
         root.set_accessible_role(gtk::AccessibleRole::Group);
+
+        // Which account this arrived in, above everything else — the first
+        // question in a mixed list, and the only place it is asked. See
+        // `set_account` for why it is not on the list row. Outside
+        // `identity`, which #487 hides wholesale in the conversation pane:
+        // the entry header there repeats the subject and sender, not the
+        // account, so this line still has something to say.
+        let account_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        account_row.add_css_class("postio-message-header-account");
+        account_row.set_visible(false);
+        let account_swatch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        account_swatch.add_css_class("postio-account-swatch");
+        account_row.append(&account_swatch);
+        let account_name = gtk::Label::new(None);
+        account_name.set_xalign(0.0);
+        account_name.set_ellipsize(pango::EllipsizeMode::End);
+        account_name.add_css_class("postio-message-header-account-name");
+        account_row.append(&account_name);
+        root.append(&account_row);
 
         let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
         root.append(&identity);
@@ -108,6 +130,9 @@ impl MessageHeader {
         Self {
             root,
             identity,
+            account_row,
+            account_swatch,
+            account_name,
             subject,
             sender,
             date,
@@ -170,9 +195,60 @@ impl MessageHeader {
         }
     }
 
+    /// Names the account this message arrived in, or hides the line.
+    ///
+    /// # Why here and not on the list row
+    ///
+    /// ADR 0005 Q4 originally put per-account identity on every row in
+    /// unified scope. The maintainer's call on #185 is that a mixed list is
+    /// fine *as* a mixed list — you are reading "all messages", so of course
+    /// it is mixed — and the question "whose is this?" is one you ask about
+    /// the message in front of you, not about forty rows at once. Answering
+    /// it here costs one line in the pane instead of a colour and a short
+    /// name on every row, and it leaves the row's 3px left edge meaning
+    /// exactly one thing, which is `selected`.
+    ///
+    /// `None` hides the line entirely. That is the single-account case, and
+    /// it is why somebody who has never configured a second account sees no
+    /// trace of this: naming the only account there is would be noise about a
+    /// choice they have not made.
+    ///
+    /// `hue` indexes the generated palette (`tokens.rs`, `ACCOUNT_HUES`), so
+    /// the colour comes from the design system rather than from this widget.
+    /// It is never the only signal — the name is right beside it.
+    pub fn set_account(&self, name: Option<&str>, hue: usize) {
+        let Some(name) = name else {
+            self.account_row.set_visible(false);
+            return;
+        };
+        for index in 0..crate::tokens::ACCOUNT_HUES {
+            self.account_swatch
+                .remove_css_class(&format!("postio-account-{index}"));
+        }
+        self.account_swatch.add_css_class(&format!(
+            "postio-account-{}",
+            hue % crate::tokens::ACCOUNT_HUES
+        ));
+        self.account_name.set_label(name);
+        self.account_row.set_visible(true);
+        self.account_row
+            .update_property(&[gtk::accessible::Property::Label(&format!(
+                "Account: {name}"
+            ))]);
+    }
+
+    /// The account line's text, or `None` when it is hidden. For tests.
+    #[doc(hidden)]
+    pub fn account_label(&self) -> Option<String> {
+        self.account_row
+            .is_visible()
+            .then(|| self.account_name.label().to_string())
+    }
+
     /// Empties every field — the pane closed, or moved to a different
     /// message before this one finished loading.
     pub fn clear(&self) {
+        self.account_row.set_visible(false);
         self.subject.set_label("");
         self.sender.set_label("");
         self.date.set_label("");

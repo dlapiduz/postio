@@ -67,7 +67,37 @@ pub type Showing = Rc<Cell<Option<MessageId>>>;
 /// already renders it, so this reuses that seam (`Folders::status`,
 /// `Folders::connect_status`) rather than opening a second one onto the
 /// engine.
+/// The accounts the reading pane may have to name, in the order
+/// `AppState::accounts` uses, so an account's hue matches the sidebar's.
+///
+/// Read once at install rather than per message: it is a handful of rows that
+/// change only when an account is added or removed, and the reading pane is
+/// on the interaction budget.
+///
+/// Empty when the store holds one account or none — which is what makes the
+/// account line invisible for everybody who has not configured a second one
+/// (#185). Not "hidden by a flag": there is nothing to say.
+fn accounts_to_name(database: &postio_storage::Database) -> Vec<(postio_model::AccountId, String)> {
+    let Ok(connection) = database.connection() else {
+        return Vec::new();
+    };
+    let accounts = postio_storage::repository::AccountRepository::new(&connection)
+        .list()
+        .unwrap_or_default();
+    if accounts.len() < 2 {
+        return Vec::new();
+    }
+    accounts
+        .into_iter()
+        .map(|account| (account.id, account.display_name))
+        .collect()
+}
+
 pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
+    // See `accounts_to_name`: empty in the single-account case, which is the
+    // common one, and then this costs a length check per message.
+    let named_accounts: Rc<Vec<(postio_model::AccountId, String)>> =
+        Rc::new(accounts_to_name(&wiring.database));
     // `showing` is what the pane is showing, or is waiting to show. Set the
     // instant the cursor reaches a row rather than when the body lands, so a
     // body that arrives late can tell it is late. `compose.rs` reads the
@@ -335,6 +365,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         runtime,
         showing,
         opened,
+        named_accounts,
         offline: Cell::new(is_offline(&feeds.folders.status())),
     });
     window.list().connect_cursor_moved(glib::clone!(
@@ -485,6 +516,10 @@ struct Fill {
     /// What the pane is showing, or is waiting to show.
     showing: Showing,
     opened: Rc<RefCell<Option<Opened>>>,
+    /// The accounts the pane may have to name — see [`accounts_to_name`].
+    /// Empty in the single-account case, which is what keeps the account
+    /// line off screen for anybody who has not configured a second one.
+    named_accounts: Rc<Vec<(postio_model::AccountId, String)>>,
     /// Whether the engine has no connection at all right now. Read by
     /// [`Fill::fill`] to pick `Absent::Offline` over `Absent::Partial`, and
     /// kept current by the `connect_status` handler `install` wires.
@@ -604,6 +639,7 @@ impl Fill {
         glib::spawn_future_local({
             let showing = self.showing.clone();
             let opened = self.opened.clone();
+            let self_accounts = Rc::clone(&self.named_accounts);
             let window = window.clone();
             async move {
                 let Ok(Some((body, content_type, parts, envelope))) = answer.recv().await else {
@@ -627,6 +663,16 @@ impl Fill {
                         envelope.subject.as_deref(),
                         envelope.date,
                     );
+                    // Whose mail this is. Silent with one account, because
+                    // `named_accounts` is empty then and there is nothing to
+                    // say (#185).
+                    let named = self_accounts
+                        .iter()
+                        .position(|(id, _)| *id == envelope.account)
+                        .map(|hue| (hue, self_accounts[hue].1.as_str()));
+                    window
+                        .reader()
+                        .set_account(named.map(|(_, name)| name), named.map_or(0, |(h, _)| h));
                 }
                 match body {
                     crate::compose::Body::Ready(body) => {
@@ -713,6 +759,10 @@ struct Opened {
 /// [`Message`] row so `Fill::fill`'s database closure hands only what the
 /// GTK side needs across the channel, not the whole row.
 struct Envelope {
+    /// Which account it arrived in. Read here rather than looked up later
+    /// because the message row is already in hand and the reading pane is
+    /// where #185 answers "whose is this?".
+    account: postio_model::AccountId,
     from: Vec<EmailAddress>,
     to: Vec<EmailAddress>,
     cc: Vec<EmailAddress>,
@@ -725,6 +775,7 @@ struct Envelope {
 impl From<Message> for Envelope {
     fn from(message: Message) -> Self {
         Self {
+            account: message.account_id,
             from: message.from,
             to: message.to,
             cc: message.cc,
