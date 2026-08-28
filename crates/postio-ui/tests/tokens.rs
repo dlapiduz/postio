@@ -244,3 +244,89 @@ fn luminance(hex: &str) -> f32 {
     let (r, g, b) = ((v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
     0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
 }
+
+#[test]
+fn the_swift_emitter_carries_the_same_values() {
+    // The point of generating rather than typing: a Swift file with `#5980a6`
+    // in it is a copy that is right on the day it is written. Ghostty
+    // hand-writes 921 lines of the equivalent and calls it their worst
+    // duplication.
+    let path = design_system().expect("the design system is present");
+    let css = std::fs::read_to_string(&path).expect("the design system");
+    let parsed = tokens::Tokens::parse(&css).expect("parse failed");
+    let swift = tokens::generate_swift(&parsed, &label(&path)).expect("generation failed");
+
+    assert!(swift.contains("public enum PostioTokens"));
+    assert!(swift.contains("import AppKit"));
+    assert!(
+        swift.contains("GENERATED FILE"),
+        "a generated file must say so, or somebody edits it"
+    );
+
+    // Names arrive in Swift's shape, not CSS's.
+    assert!(swift.contains("public static let colorBg"));
+    assert!(
+        !swift.contains("color-bg ="),
+        "a CSS name leaked into Swift and would not compile"
+    );
+
+    // The accent is the design system's, not a colour invented here.
+    let accent = parsed.get("color-accent").expect("an accent");
+    assert!(
+        swift.contains(&format!("`{accent}`")),
+        "the emitted Swift does not cite the source value for color-accent"
+    );
+}
+
+#[test]
+fn the_swift_emitter_converts_rather_than_copying_css() {
+    let path = design_system().expect("the design system is present");
+    let css = std::fs::read_to_string(&path).expect("the design system");
+    let parsed = tokens::Tokens::parse(&css).expect("parse failed");
+    let swift = tokens::generate_swift(&parsed, &label(&path)).expect("generation failed");
+
+    // Colours become NSColor, not strings a runtime would have to parse — a
+    // hex string in Swift is a parse that can fail at the worst moment.
+    assert!(swift.contains("NSColor(srgbRed:"));
+    // Lengths become CGFloat, so layout arithmetic is arithmetic.
+    assert!(swift.contains(": CGFloat ="));
+    // No `px` survives: a CSS unit in Swift means something was copied.
+    assert!(
+        !swift.contains("px\n"),
+        "a CSS length reached Swift without being converted"
+    );
+}
+
+#[test]
+fn every_required_token_reaches_swift() {
+    // The guard the first version of the emitter needed and did not have: it
+    // parsed lengths as whole pixels, the spacing ramp is `3.4px`, and it
+    // emitted *nothing* for every space token. The file compiled and was
+    // missing half the design system, which is the worst shape a generator
+    // failure can take.
+    let path = design_system().expect("the design system is present");
+    let css = std::fs::read_to_string(&path).expect("the design system");
+    let parsed = tokens::Tokens::parse(&css).expect("parse failed");
+    let swift = tokens::generate_swift(&parsed, &label(&path)).expect("generation failed");
+
+    for name in ["color-bg", "color-accent", "color-text", "color-divider"] {
+        let swift_name = name.replace("color-", "color").replace('-', "");
+        assert!(
+            swift.to_lowercase().contains(&swift_name.to_lowercase()),
+            "{name} did not reach Swift"
+        );
+    }
+    for step in ["space1", "space2", "space3", "space4", "space6", "space8"] {
+        assert!(
+            swift.contains(&format!("let {step}:")),
+            "{step} did not reach Swift; the spacing ramp is fractional and an \
+             integer parse drops all of it"
+        );
+    }
+    for radius in ["radiusSm", "radiusMd", "radiusLg"] {
+        assert!(
+            swift.contains(&format!("let {radius}:")),
+            "{radius} did not reach Swift"
+        );
+    }
+}
