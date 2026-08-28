@@ -1375,8 +1375,12 @@ impl Window {
         source: &impl IsA<gtk::Window>,
         context: Context,
     ) -> glib::Propagation {
+        // Same two halves as `is_typing`, read off the satellite's focus
+        // rather than this window's. `focused_field` walks up from its own
+        // root, so it answers for whichever window the composer is in.
         let typing = gtk::prelude::GtkWindowExt::focus(source.as_ref())
-            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>());
+            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
+            || self.composer_body_has_keyboard();
         self.resolve_key(key, state, KeyContext::from(context), typing)
     }
 
@@ -1668,6 +1672,30 @@ impl Window {
     fn is_typing(&self) -> bool {
         gtk::prelude::GtkWindowExt::focus(self)
             .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
+            || self.composer_body_has_keyboard()
+    }
+
+    /// Whether the composer's body has the keyboard.
+    ///
+    /// The other half of [`is_typing`](Self::is_typing), and it cannot be
+    /// answered by a type test. The body is a `WebView` over a
+    /// `contenteditable` document rather than a `GtkText`, so the widget test
+    /// above says "not typing" in the one field where a person is doing
+    /// nothing else -- which is #602: `e` ran *reply* instead of typing an
+    /// `e`, and a half-written reply answered itself.
+    ///
+    /// Not "the focus is a `WebView`": the reader is one too, and `e` has to
+    /// keep meaning reply while reading. What separates them is that the body
+    /// is editable, and `Composer::focused_field` is where that distinction
+    /// already lives -- asked rather than restated, so the two cannot drift.
+    ///
+    /// Asks the slot, not [`Window::composer`], which would *install* a
+    /// composer to be told there is not one.
+    fn composer_body_has_keyboard(&self) -> bool {
+        self.imp()
+            .composer
+            .get()
+            .is_some_and(|composer| composer.focused_field() == Some(crate::composer::Field::Body))
     }
 
     fn key_context(&self) -> KeyContext {
