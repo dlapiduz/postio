@@ -18,26 +18,10 @@ use webkit6::{URISchemeRequest, WebContext};
 
 use postio_body::sanitize::{CID_SCHEME, percent_decode};
 
-/// Resolves a `Content-ID` to its bytes and MIME type.
-///
-/// A `Content-ID` is passed exactly as `postio_body::sanitize::percent_decode` recovered
-/// it: without the `cid:` prefix and without the angle brackets some senders
-/// wrap it in (`sanitize_body` already strips those before encoding).
-///
-/// Synchronous and local by design — see the module docs — so an
-/// implementation is a blob-store read or a lookup into whatever the caller
-/// already has in memory for the open message, never a call that blocks on
-/// I/O the reader would have to await.
-pub trait BlobSource {
-    /// The part's bytes and MIME type, or `None` if no part carries this id.
-    fn resolve(&self, content_id: &str) -> Option<(Vec<u8>, String)>;
-}
-
-impl<F: Fn(&str) -> Option<(Vec<u8>, String)>> BlobSource for F {
-    fn resolve(&self, content_id: &str) -> Option<(Vec<u8>, String)> {
-        self(content_id)
-    }
-}
+// `BlobSource` now lives in `postio_ui::reader::parts`: what a `Content-ID`
+// may resolve to is a security property both frontends have to share, not a
+// GTK detail (#608). Re-exported so every path here still resolves.
+pub use postio_ui::reader::parts::BlobSource;
 
 /// Register [`CID_SCHEME`] on `context`, resolving every request through
 /// `source`.

@@ -45,6 +45,7 @@ pub mod egress;
 pub mod engine;
 pub mod logging;
 pub mod paths;
+pub mod reading;
 pub mod refresh;
 
 use std::path::Path;
