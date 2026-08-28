@@ -72,6 +72,13 @@ System dependencies — Fedora 40+:
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
                  sqlite-devel libsecret-devel glib2-devel pkgconf-pkg-config
+
+# The store is SQLCipher, which builds OpenSSL from source (ADR 0014). Its
+# `Configure` is a perl program, and Fedora splits the perl standard library
+# into packages — without these the build stops at a `Can't locate X.pm in
+# @INC` inside a cargo build script, one module at a time.
+sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
+                 perl-Text-Template perl-Time-Piece
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
@@ -81,6 +88,10 @@ sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
                  libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
                  libglib2.0-dev libpango1.0-dev
 ```
+
+Debian and Ubuntu ship the perl modules OpenSSL needs in `perl-base` and
+`perl-modules`, both of which `build-essential` already pulls in, so the
+extra step above is Fedora-specific.
 
 Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) — with
 [rustup](https://rustup.rs), the right compiler arrives on the first `cargo`

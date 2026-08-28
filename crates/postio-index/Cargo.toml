@@ -20,7 +20,7 @@ postio-search = { workspace = true }
 # Matches `postio-storage`: one `links = "sqlite3"` crate in the graph, so
 # the feature that selects SQLCipher has to agree everywhere (ADR 0014).
 rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher",
+    "bundled-sqlcipher-vendored-openssl",
 ] }
 thiserror = "2.0.20"
 tracing = "0.1"
