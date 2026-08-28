@@ -74,6 +74,8 @@ pub struct SessionOptions {
     in_memory: bool,
     #[cfg(feature = "testing")]
     seeded: Option<postio_storage::Database>,
+    #[cfg(feature = "testing")]
+    seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
 }
 
 impl SessionOptions {
@@ -87,6 +89,8 @@ impl SessionOptions {
             in_memory: false,
             #[cfg(feature = "testing")]
             seeded: None,
+            #[cfg(feature = "testing")]
+            seeded_blobs: None,
         }
     }
 
@@ -132,6 +136,22 @@ impl SessionOptions {
         }
     }
 
+    /// Use a blob store the caller already wrote bodies into.
+    ///
+    /// A reader test has to put a body in the blob store *before* the session
+    /// opens, and the session otherwise makes its own — so a body written
+    /// afterwards would land in a different directory and the reader would
+    /// correctly report that there is nothing there.
+    #[cfg(feature = "testing")]
+    pub fn with_blobs_for_test(
+        mut self,
+        blobs: postio_storage::BlobStore,
+        scratch: tempfile::TempDir,
+    ) -> Self {
+        self.seeded_blobs = Some((blobs, scratch));
+        self
+    }
+
     /// An in-memory session on a runtime and command bus the caller owns.
     ///
     /// `postio-app` builds its own [`Bridge`] and hands the parts to
@@ -171,6 +191,14 @@ pub struct Session {
     /// undo by asking again behind its back.
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     reads: Arc<std::sync::atomic::AtomicUsize>,
+    /// Whether the engine currently has no connection at all.
+    ///
+    /// Pushed down by the frontend rather than observed here: reachability is
+    /// a platform question, and Swift has `NWPathMonitor` while Rust would
+    /// need `unsafe` bindings in a crate that forbids it. It only changes
+    /// which *absence* the reader reports — "offline" against "still
+    /// downloading" — so being briefly wrong costs a word, not correctness.
+    offline: Arc<std::sync::atomic::AtomicBool>,
     /// Events this boundary raises itself, merged into the drain alongside
     /// the engine's. `PageReady` lives here rather than in `postio-core`
     /// because paging is how this frontend reads a list, not something the
@@ -247,6 +275,33 @@ impl Session {
         self.row_at(position)
     }
 
+    /// The whole document for a message, ready to hand a `WKWebView`.
+    ///
+    /// Swift's job is to build a hardened configuration, hand it this string,
+    /// and refuse navigations. It composes no reader HTML of its own.
+    #[uniffi::method(name = "readerDocument")]
+    pub fn reader_document_ffi(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
+        self.reader_document(message, remote)
+    }
+
+    /// One inline part of `message`, by its `Content-ID`.
+    ///
+    /// What a `WKURLSchemeHandler` for `postio-cid:` answers with. `nil` is a
+    /// broken image, deliberately — never a fetch.
+    #[uniffi::method(name = "resolveCid")]
+    pub fn resolve_cid_ffi(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
+        self.resolve_cid(message, content_id)
+    }
+
+    /// Tell the engine whether the machine currently has a connection.
+    ///
+    /// Pushed down from Swift's `NWPathMonitor`: reachability is a platform
+    /// question, and the platform's own language is where it gets asked.
+    #[uniffi::method(name = "setOffline")]
+    pub fn set_offline_ffi(&self, offline: bool) {
+        self.set_offline(offline);
+    }
+
     /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
@@ -298,14 +353,22 @@ impl Session {
                     }
                 })?,
             };
-            let scratch = tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
-                message: error.to_string(),
-            })?;
-            let blobs = postio_storage::BlobStore::open(scratch.path()).map_err(|error| {
-                SessionError::StoreUnavailable {
-                    message: error.to_string(),
+            let (blobs, scratch) = match options.seeded_blobs {
+                Some((blobs, scratch)) => (blobs, scratch),
+                None => {
+                    let scratch =
+                        tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
+                            message: error.to_string(),
+                        })?;
+                    let blobs =
+                        postio_storage::BlobStore::open(scratch.path()).map_err(|error| {
+                            SessionError::StoreUnavailable {
+                                message: error.to_string(),
+                            }
+                        })?;
+                    (blobs, scratch)
                 }
-            })?;
+            };
             // The default secret store is left in place. It is the real
             // keyring type, but it does not reach the keyring until something
             // asks it for a secret, and nothing in this slice does — so an
@@ -318,6 +381,7 @@ impl Session {
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
+                offline: Arc::default(),
                 reads: Arc::default(),
                 local: async_channel::unbounded(),
                 events,
@@ -353,6 +417,7 @@ impl Session {
             scope: Mutex::new(None),
             in_flight: Arc::default(),
             reads: Arc::default(),
+            offline: Arc::default(),
             local: async_channel::unbounded(),
             events,
             _bridge: owned_bridge,
@@ -480,6 +545,82 @@ impl Session {
     #[cfg(feature = "testing")]
     pub fn page_reads_for_test(&self) -> usize {
         self.reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The whole document for a message, ready to hand a web view.
+    ///
+    /// Not fragments to assemble: the content security policy, the embedded
+    /// font faces, the reader tokens, the sanitized body, its `.postio-body`
+    /// container and the scroll markers all come from `postio_ui`, which is
+    /// what the GTK reader composes through too. **The frontend's entire job
+    /// is to build a hardened web view, hand it this string, and refuse
+    /// navigations** — so the two readers cannot disagree about the policy,
+    /// because there is only one that produces it (ADR 0019 Q6).
+    pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
+        use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
+
+        let remote = postio_body::RemoteImages::from(remote);
+        let Some((database, blobs)) = self.store_and_blobs() else {
+            return wrap_document(
+                &absent_html(postio_ui::reader::document::Absent::Missing),
+                postio_body::RemoteImages::Blocked,
+            );
+        };
+        let Ok(connection) = database.connection() else {
+            return wrap_document(
+                &absent_html(postio_ui::reader::document::Absent::Missing),
+                postio_body::RemoteImages::Blocked,
+            );
+        };
+        let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
+        match postio_session::reading::load_body_or_reason(
+            &connection,
+            &blobs,
+            message.into(),
+            offline,
+        ) {
+            postio_session::reading::Body::Ready(body) => {
+                let (content, _held_back) = body_html(&body, remote);
+                document_for(&content, remote)
+            }
+            // A state plate is Postio's own words, so it is served with remote
+            // images blocked whatever the caller asked for: there is nothing
+            // in it a sender wrote, and nothing for them to reach through.
+            postio_session::reading::Body::Absent(state) => {
+                wrap_document(&absent_html(state), postio_body::RemoteImages::Blocked)
+            }
+        }
+    }
+
+    /// One inline part of `message`, by its `Content-ID`.
+    ///
+    /// Synchronous and local, matching the contract the GTK scheme handler
+    /// works under: a URL scheme handler runs on the main thread on both
+    /// platforms, so this must never block on I/O the reader would await.
+    ///
+    /// `message` is a parameter rather than ambient state because a
+    /// `Content-ID` means something only inside the message that declared it
+    /// — resolving one globally would let a sender address another sender's
+    /// parts. `None` when the bytes are not already here, which is the
+    /// privacy commitment rather than a gap: fetching would be the tracking
+    /// pixel arriving through the back door.
+    pub fn resolve_cid(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
+        let (database, blobs) = self.store_and_blobs()?;
+        postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
+            .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
+    }
+
+    /// Tell the engine whether the machine currently has a connection.
+    pub fn set_offline(&self, offline: bool) {
+        self.offline
+            .store(offline, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The database and blob store, while the session is open.
+    fn store_and_blobs(&self) -> Option<(postio_storage::Database, postio_storage::BlobStore)> {
+        let guard = self.wiring.lock().expect("wiring lock");
+        let wiring = guard.as_ref()?;
+        Some((wiring.database.clone(), wiring.blobs.clone()))
     }
 
     /// Every command the registry knows, in cheat-sheet order.

@@ -336,6 +336,25 @@ pub fn contain_body(content: &str) -> String {
     format!(r#"<div class="postio-body">{content}</div>"#)
 }
 
+/// The whole document for sender content that has already been sanitized.
+///
+/// The three steps a reader must not get wrong, in one place: bound the
+/// sender's markup in `.postio-body`, append the scroll markers, and wrap the
+/// result in the hardened template.
+///
+/// It exists because those three were a `format!` at the call site, and a
+/// second frontend composing its own would be free to forget one. Forgetting
+/// [`contain_body`] in particular loses a **security affordance** rather than
+/// a style: #323 gave the sender's content a visible edge so that markup
+/// imitating application chrome has a harder time, and a reader missing it
+/// would look completely fine.
+pub fn document_for(content: &str, remote: RemoteImages) -> String {
+    wrap_document(
+        &format!("{}{}", contain_body(content), scroll_markers()),
+        remote,
+    )
+}
+
 /// What the sanitizer already enforces at the DOM level, restated as policy
 /// the rendering engine itself refuses to violate — so a sanitizer bug
 /// degrades to broken markup, not a live request.
