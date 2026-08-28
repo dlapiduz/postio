@@ -236,11 +236,10 @@ pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     let path = config_dir.join("config.toml");
-    // Nothing pinned yet: a window presented with a saved search already on
-    // screen and no mail list to focus instead can land its very first
-    // keyboard focus on that row and auto-select it -- a real quirk,
-    // independent of #455, that a hand-added pin below sidesteps rather
-    // than fights.
+    // Nothing pinned yet, so `j`/`k` below has something else to cross
+    // *from*: the one folder set a moment later. (A pin already on disk at
+    // `present()` time no longer needs sidestepping here -- see #614's own
+    // `a_pinned_saved_search_does_not_auto_run_on_first_present`.)
     std::fs::write(&path, "").unwrap();
 
     let window = Window::default();
@@ -308,14 +307,22 @@ pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
     window.close_finder();
     settle();
     assert_eq!(window.context(), Context::Sidebar);
-    // `close_finder` restores `Context::Sidebar` (asserted above) but not
-    // real keyboard focus onto the row that was on: `before_finder`'s own
-    // notion of "pane" predates the sidebar being a keyboard context at all
-    // (`postio-cfd.2`) and does not know to name one of its rows. A second,
-    // pre-existing gap, independent of #455 -- `focus_folders` is the same
-    // repair `enter_sidebar` already leans on.
-    window.sidebar().focus_folders();
-    settle();
+    // `close_finder` restores `Context::Sidebar` above, and must also give
+    // real GTK keyboard focus back to the row that opened the search --
+    // `before_finder`'s own notion of "pane" predates the sidebar being a
+    // keyboard context at all (`postio-cfd.2`) and has no shape to name one
+    // of its rows, so `close_finder` asks the sidebar directly the same way
+    // `enter_sidebar` already does (#614). Without that, the shift+Down
+    // below would resolve against whatever `shell().grab_focus()`'s own
+    // memory happened to restore instead.
+    let focused = gtk::prelude::GtkWindowExt::focus(&window);
+    let alpha = saved_search_row(&window, "alpha").expect("alpha's row");
+    assert_eq!(
+        focused.as_ref(),
+        Some(alpha.upcast_ref::<gtk::Widget>()),
+        "closing a search opened by stepping onto a saved search should return \
+         real keyboard focus to that row"
+    );
 
     // ── `shift+Down` moves the focused saved search down, on disk and on
     //    screen, with no dialog to answer -- unlike rename/delete, which
@@ -358,6 +365,71 @@ pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
         saved_search_names_in_order(&window),
         before_guard,
         "a folder was focused, not a saved search -- this must not touch the file"
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// #614, symptom 1: a pinned filter is on screen before the window ever
+/// presents (`install_at` runs first, same as `app.rs`'s own startup
+/// order), and with no folders synced yet its saved-search row is the only
+/// focusable thing in the sidebar. `GtkListBox` in `SelectionMode::Single`
+/// selects a row it focuses, and selecting a saved search runs it -- so an
+/// undirected initial focus can open the app straight into a search result
+/// instead of the message list, on a fresh install or any account that is
+/// still syncing.
+pub fn a_pinned_saved_search_does_not_auto_run_on_first_present() {
+    let root = std::env::temp_dir().join(format!(
+        "postio-saved-searches-startup-{}",
+        std::process::id()
+    ));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "[filters.needs-reply]\nquery = \"is:unread from:team\"\npinned = true\n",
+    )
+    .unwrap();
+
+    // Exactly `app.rs`'s own order: build, load config (which puts the
+    // pinned row on screen), then present -- and no mailboxes at all, the
+    // still-syncing shape that leaves the saved search as the only
+    // focusable row in the sidebar.
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+
+    assert_eq!(
+        saved_search_names(&window),
+        ["needs-reply".to_string()],
+        "the pinned filter should be on screen for this to be a real test of it"
+    );
+    assert!(
+        !window.finder().is_open(),
+        "a pinned saved search must not auto-select and run itself just because \
+         the window presented with nothing else in the sidebar to focus"
+    );
+    assert_eq!(
+        window.context(),
+        Context::List,
+        "the window should still present onto the message list by default"
     );
 
     window.close();
