@@ -16,7 +16,7 @@
 
 use postio_model::{BodyState, Message};
 use postio_storage::repository::MessageRepository;
-use postio_storage::{BlobStore, test_support};
+use postio_storage::test_support;
 
 /// More textless messages than one `INDEX_BODY_BATCH`, so the pass has to
 /// come back for a second batch — the shape that used to loop for ever.
@@ -25,14 +25,14 @@ const TEXTLESS: usize = 450;
 #[test]
 fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
     let database = test_support::temp();
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
     let connection = database.connection().expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection);
 
-    // Local body, no blobs: what an attachment-only message looks like to
-    // the pass. `body_blobs` answers `None`, the indexable text is empty,
-    // and before #500 that meant the message never left the candidate set.
+    // Local body, no text: what an attachment-only message looks like to the
+    // pass. `body` answers a row holding no parts, the indexable text is
+    // empty, and before #500 that meant the message never left the candidate
+    // set.
     let messages = MessageRepository::new(&connection);
     connection.execute_batch("BEGIN").expect("begin fixture");
     for i in 0..TEXTLESS {
@@ -48,7 +48,7 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
     connection.execute_batch("COMMIT").expect("commit fixture");
     drop(connection);
 
-    let indexed = postio_session::index_local_bodies(&database, &blobs).expect("the pass runs");
+    let indexed = postio_session::index_local_bodies(&database).expect("the pass runs");
     assert_eq!(indexed, TEXTLESS, "every message was visited exactly once");
 
     let connection = database.connection().expect("checkout");
@@ -60,6 +60,6 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
     );
 
     drop(connection);
-    let second = postio_session::index_local_bodies(&database, &blobs).expect("the second pass");
+    let second = postio_session::index_local_bodies(&database).expect("the second pass");
     assert_eq!(second, 0, "a caught-up store costs one query and no writes");
 }

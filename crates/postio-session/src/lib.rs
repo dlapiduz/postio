@@ -488,11 +488,12 @@ pub fn end_session(database: &Database) {
 /// `messages_fts` did not exist on any real store and search had nothing to
 /// search — `postio-x4e`, and the ninth instance of `postio-bl2`.
 ///
-/// Message *bodies* are a separate matter: they live in the blob store, so no
-/// trigger can reach them and nothing here can either — this function has no
-/// blob store. `postio_sync::backfill::fetch_body` indexes each body as it
-/// lands, and [`index_local_bodies`] catches up whatever landed before that
-/// call existed (#327).
+/// Message *bodies* are a separate matter. They are compressed columns on the
+/// `messages` row (ADR 0020), so no trigger can reach them — a trigger would
+/// see the ciphertext of a zstd frame, not words to index.
+/// `postio_sync::backfill::fetch_body` indexes each body as it lands, and
+/// [`index_local_bodies`] catches up whatever landed before that call existed
+/// (#327).
 pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error::Error>> {
     let connection = database.connection()?;
     postio_index::index::ensure_schema(&connection)?;
@@ -674,8 +675,8 @@ pub fn purge_fetch_debris(blobs: &BlobStore) -> Result<usize, Box<dyn std::error
 /// How many bodies one pass of [`index_local_bodies`] reads before letting go
 /// of its connection.
 ///
-/// The pass holds a pooled connection and reads a blob per message, and the
-/// rest of the application shares that pool. Batching bounds how long any one
+/// The pass holds a pooled connection and decompresses a body per message,
+/// and the rest of the application shares that pool. Batching bounds how long any one
 /// checkout lasts without making the pass itself stop early: it keeps taking
 /// batches until there is nothing left.
 const INDEX_BODY_BATCH: u32 = 200;
@@ -712,19 +713,16 @@ const INDEX_BODY_BREATHER: Duration = Duration::from_millis(25);
 ///
 /// # Not on the startup path
 ///
-/// The first run over an existing archive reads a blob per message, which is
-/// minutes of I/O on a large one. Callers must put this on a worker — the
-/// application spawns it on the runtime after the window is up — because a
-/// mail client that will not draw until its search index is warm has traded
-/// the wrong thing for search.
+/// The first run over an existing archive reads and decompresses a body per
+/// message, which is minutes of work on a large one. Callers must put this on
+/// a worker — the application spawns it on the runtime after the window is up
+/// — because a mail client that will not draw until its search index is warm
+/// has traded the wrong thing for search.
 ///
 /// Errors on one message are logged and skipped rather than abandoning the
-/// pass: one unreadable blob should cost that message its body search, not
+/// pass: one unreadable body should cost that message its body search, not
 /// every message after it.
-pub fn index_local_bodies(
-    database: &Database,
-    blobs: &BlobStore,
-) -> Result<usize, Box<dyn std::error::Error>> {
+pub fn index_local_bodies(database: &Database) -> Result<usize, Box<dyn std::error::Error>> {
     let mut indexed = 0usize;
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
@@ -749,24 +747,26 @@ pub fn index_local_bodies(
             break;
         }
 
-        // Read first, write after, in phases: the reads are a blob per
+        // Read first, write after, in phases: the reads decompress a body per
         // message and must not happen inside the write transaction below,
-        // where they would hold SQLite's one write lock through disk I/O
-        // that needs nothing of it.
+        // where they would hold SQLite's one write lock through work that
+        // needs nothing of it.
+        //
+        // One repository for the whole batch, deliberately: it caches the
+        // compression dictionary it loads, so a batch of two hundred bodies
+        // builds the decoding table once rather than two hundred times.
         let messages = postio_storage::repository::MessageRepository::new(&connection);
         let mut bodies: Vec<(i64, postio_model::MessageBody)> =
             Vec::with_capacity(candidates.len());
         for id in &candidates {
             let message = postio_model::MessageId::new(*id);
-            let body = match messages.body_blobs(message) {
+            let body = match messages.body(message) {
                 Ok(Some(stored)) => postio_model::MessageBody {
-                    text: stored.text.and_then(|id| read_text(blobs, &id)),
-                    html: stored.html.and_then(|id| read_text(blobs, &id)),
+                    text: stored.text,
+                    html: stored.html,
                 },
-                // The row says its body is local and it names no blobs. That
-                // is a message that genuinely had none -- a header-only
-                // notification, say -- and the empty index row it gets below
-                // is how it stops being asked about on every start.
+                // No such row any more -- expunged between the candidate query
+                // and here. Nothing to index.
                 Ok(None) => postio_model::MessageBody::default(),
                 Err(error) => {
                     tracing::debug!(message = id, %error, "cannot read a body to index");
@@ -803,10 +803,10 @@ pub fn index_local_bodies(
             break;
         }
         // Let go of the machine between batches. The pass runs at start on a
-        // worker while the window is already live; without a pause it reads
-        // blobs and writes the index as fast as the disk allows, and the
-        // search this index exists to serve pays for that in evicted cache
-        // and queued reads (#500).
+        // worker while the window is already live; without a pause it
+        // decompresses bodies and writes the index as fast as the machine
+        // allows, and the search this index exists to serve pays for that in
+        // evicted cache and queued reads (#500).
         std::thread::sleep(INDEX_BODY_BREATHER);
     }
     if indexed > 0 {
@@ -814,11 +814,6 @@ pub fn index_local_bodies(
         tracing::info!(indexed, "indexed bodies that were already local");
     }
     Ok(indexed)
-}
-
-/// One body blob as text, or nothing if it cannot be read or is not UTF-8.
-fn read_text(blobs: &BlobStore, id: &postio_model::BlobId) -> Option<String> {
-    String::from_utf8(blobs.get(id).ok()?).ok()
 }
 
 /// The account to open, if the store holds one.

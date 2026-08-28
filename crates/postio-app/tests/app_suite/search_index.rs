@@ -24,7 +24,7 @@ use postio_model::{AccountId, BodyState};
 use postio_search::facets::Scope;
 use postio_search::parse;
 use postio_session::{Wiring, ensure_search_index, index_local_bodies};
-use postio_storage::repository::{BodyBlobs, MessageRepository};
+use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
 
@@ -78,22 +78,16 @@ fn all_messages(database: &Database) -> Vec<MessageId> {
 }
 
 /// Land a body for `id`, the way a settled backfill leaves one.
-fn give_body(
-    database: &Database,
-    blobs: &BlobStore,
-    id: MessageId,
-    text: Option<&str>,
-    html: Option<&str>,
-) {
+fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Option<&str>) {
     let connection = database.connection().expect("a connection");
-    let stored = BodyBlobs {
-        text: text.map(|text| blobs.put(text.as_bytes()).expect("a text blob")),
-        html: html.map(|html| blobs.put(html.as_bytes()).expect("an html blob")),
+    let stored = StoredBody {
+        text: text.map(str::to_owned),
+        html: html.map(str::to_owned),
         headers: None,
     };
     MessageRepository::new(&connection)
-        .set_body_blobs(id, &stored, BodyState::Full)
-        .expect("record where the body landed");
+        .set_body(id, &stored, BodyState::Full)
+        .expect("store the body");
 }
 
 fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> {
@@ -133,8 +127,6 @@ fn hits(database: &Database, account: AccountId, query: &str) -> Vec<MessageId> 
 pub fn a_store_that_predates_body_indexing_catches_up() {
     let database = test_support::memory();
     let report = seed_small(&database, 29);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
 
     let messages = all_messages(&database);
     assert!(messages.len() > 2, "not enough seeded mail to tell apart");
@@ -144,14 +136,12 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
     let (plain, markup, never_fetched) = (messages[0], messages[1], messages[2]);
     give_body(
         &database,
-        &blobs,
         plain,
         Some("The turbines held at ninety-one percent all quarter."),
         None,
     );
     give_body(
         &database,
-        &blobs,
         markup,
         None,
         Some(
@@ -169,7 +159,7 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
         "nothing has indexed a body yet, so this cannot be measuring the pass"
     );
 
-    let indexed = index_local_bodies(&database, &blobs).expect("the pass runs");
+    let indexed = index_local_bodies(&database).expect("the pass runs");
     assert_eq!(
         indexed, 2,
         "the pass should index exactly the two messages whose body is on          this machine"
@@ -205,7 +195,7 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
     // `message_id`, so a duplicate would be a second FTS row for one message
     // — one message appearing twice in its own result list.
     assert_eq!(
-        index_local_bodies(&database, &blobs).expect("a second pass"),
+        index_local_bodies(&database).expect("a second pass"),
         0,
         "the pass indexed the same bodies again, so it is not safe to run on          every start"
     );
@@ -242,7 +232,6 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
     let target = all_messages(&database)[0];
     give_body(
         &database,
-        &blobs,
         target,
         Some("A word no header in the corpus carries: photogrammetry."),
         None,
