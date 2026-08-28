@@ -883,3 +883,83 @@ async fn the_submitted_message_carries_the_reserved_id() {
          the row: looked for {reserved}"
     );
 }
+
+/// The headline guarantee, end to end: a send that is deferred and then goes
+/// through submits **one** message, not two that happen to say the same
+/// thing.
+///
+/// Before ADR 0021 this was the ordinary case rather than an edge one. A
+/// `Send` is resolved — and therefore rebuilt — on every drain attempt, and
+/// every build minted a fresh `Message-ID`, so the second attempt was a
+/// distinct message no receiver could recognise as a duplicate of the first.
+/// A 4xx from a rate-limited server is enough to reach it.
+#[tokio::test]
+async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_sent(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    drafts.save(&mut draft).expect("save draft");
+    drafts
+        .queue_send(&mut draft, at(9))
+        .expect("queue the send");
+    let reserved = draft.rfc_message_id.clone().expect("a reservation");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(&account).await;
+    let blobs = TempBlobs::new();
+
+    // Attempt one: the server asks to try later.
+    let refused = ScriptedConnector::new(script_replying_to_rcpt("450 slow down"));
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &refused,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(report.deferred, 1, "{report:?}");
+    let after_refusal = drafts.get(draft.id).expect("get").expect("still here");
+    assert_eq!(
+        after_refusal.rfc_message_id,
+        Some(reserved.clone()),
+        "a deferral must not spend the reservation",
+    );
+    assert_eq!(
+        after_refusal.state,
+        postio_model::DraftState::Queued,
+        "the `Sending` mark comes back off when the server answers and \
+         refuses: leaving it on would make `resolve` reject the very retry \
+         the backoff just scheduled, and a 4xx from a rate-limited server \
+         would quietly end the message's life",
+    );
+
+    // Attempt two, once the backoff has elapsed: it goes.
+    let accepted = ScriptedConnector::new(accepting_script());
+    let report = Drainer::new(&backend)
+        .with_smtp(SmtpContext {
+            connector: &accepted,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        })
+        .drain(&connection, account.id, at(11))
+        .await
+        .expect("drain");
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let written = String::from_utf8_lossy(&accepted.log().written).to_lowercase();
+    assert!(
+        written.contains(&reserved.without_brackets().to_lowercase()),
+        "the retry has to be the same message the first attempt was, or a \
+         receiver has no way to tell it is one: looked for {reserved}",
+    );
+}
