@@ -427,13 +427,151 @@ mod tests {
 
     #[test]
     fn only_the_commands_the_bus_answers_are_sent_to_it() {
-        let wired = vec![CommandId::Archive];
+        let wired = vec![CommandId::Archive, CommandId::Undo];
         assert!(is_wired(
             &wired,
             &Command::Archive {
                 target: MessageTarget::Selection
             }
         ));
+        assert!(is_wired(&wired, &Command::Undo));
         assert!(!is_wired(&wired, &Command::Back));
+        assert!(!is_wired(&wired, &Command::Reply { message: None }));
+    }
+
+    /// What an unopenable store leaves behind. Every key would otherwise
+    /// answer with a rejection it can do nothing about.
+    #[test]
+    fn a_bus_with_nothing_wired_is_told_nothing() {
+        assert!(!is_wired(
+            &[],
+            &Command::Archive {
+                target: MessageTarget::Selection
+            }
+        ));
+    }
+
+    // -- what the mirror puts into app state ----------------------------
+    //
+    // Moved here from `postio-app` with the rule itself: these assert
+    // against `SharedState::resolve`, which is core, and they were only
+    // ever in a GTK crate because GTK was what called them. They now run
+    // with no display, on any host.
+
+    use crate::state::Resolved;
+    use postio_model::MailboxId;
+
+    fn mailbox() -> MailboxId {
+        MailboxId::new(4)
+    }
+
+    fn mirrored(
+        selection: &Selection,
+        cursor: Option<i64>,
+        scope: Option<ViewScope>,
+    ) -> SharedState {
+        let state = SharedState::default();
+        let (quiet, _reader) = crate::bridge::event_channel();
+        let rows = FakeRows::default();
+        mirror(
+            &state,
+            &quiet,
+            &Aim {
+                scope,
+                selection,
+                cursor: cursor.map(message),
+                rows: &rows,
+            },
+        );
+        state
+    }
+
+    /// The daily case, and the one that fails silently: click a message —
+    /// which *clears* the selection in this list — and press `a`.
+    #[test]
+    fn an_empty_selection_aims_a_verb_at_the_cursor() {
+        let state = mirrored(
+            &Selection::These(Vec::new()),
+            Some(9),
+            Some(ViewScope::Mailbox(mailbox())),
+        );
+
+        assert_eq!(
+            state.read(|app| app.resolve(&MessageTarget::Selection)),
+            Some(Resolved::Messages(vec![message(9)])),
+        );
+    }
+
+    #[test]
+    fn a_deliberate_selection_survives_the_mirror() {
+        let state = mirrored(
+            &Selection::These(vec![message(1), message(2)]),
+            Some(9),
+            Some(ViewScope::Mailbox(mailbox())),
+        );
+
+        assert_eq!(
+            state.read(|app| app.resolve(&MessageTarget::Selection)),
+            Some(Resolved::Messages(vec![message(1), message(2)])),
+            "what the user marked, not where they happen to be looking",
+        );
+    }
+
+    #[test]
+    fn select_all_arrives_as_a_predicate_and_keeps_its_exceptions() {
+        let state = mirrored(
+            &Selection::Everything {
+                except: vec![message(7)],
+            },
+            Some(7),
+            Some(ViewScope::Mailbox(mailbox())),
+        );
+
+        assert_eq!(
+            state.read(|app| app.resolve(&MessageTarget::Selection)),
+            Some(Resolved::Everything {
+                scope: ViewScope::Mailbox(mailbox()),
+                except: vec![message(7)],
+            }),
+            "resolving it here would be the mailbox-sized read it exists to avoid",
+        );
+    }
+
+    /// An action landing on mail the user cannot see is the failure this
+    /// prevents; the list drops its selection on the same boundary.
+    #[test]
+    fn changing_mailbox_does_not_carry_the_old_selection_over() {
+        let state = SharedState::default();
+        let (quiet, _reader) = crate::bridge::event_channel();
+        let rows = FakeRows::default();
+
+        let held = Selection::These(vec![message(1)]);
+        mirror(
+            &state,
+            &quiet,
+            &Aim {
+                scope: Some(ViewScope::Mailbox(mailbox())),
+                selection: &held,
+                cursor: Some(message(1)),
+                rows: &rows,
+            },
+        );
+
+        let empty = Selection::These(Vec::new());
+        mirror(
+            &state,
+            &quiet,
+            &Aim {
+                scope: Some(ViewScope::Mailbox(MailboxId::new(5))),
+                selection: &empty,
+                cursor: None,
+                rows: &rows,
+            },
+        );
+
+        assert_eq!(
+            state.read(|app| app.resolve(&MessageTarget::Selection)),
+            None,
+        );
     }
 }
