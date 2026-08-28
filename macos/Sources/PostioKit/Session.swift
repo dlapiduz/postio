@@ -74,6 +74,17 @@ public final class PostioSession {
     /// `UiEvent.pageReady` says when to ask again.
     public func row(at position: UInt32) -> RowFfi? { inner.rowAt(position: position) }
 
+    /// Tell the engine whether the machine currently has a connection.
+    ///
+    /// Reachability is a platform question, asked in the platform's own
+    /// language (`Reachability`) and pushed down. Coming back from offline
+    /// nudges a reconnect on the other side, so this is safe to call with the
+    /// same answer repeatedly — `NWPathMonitor` does exactly that.
+    public func setOffline(_ offline: Bool) { inner.setOffline(offline: offline) }
+
+    /// Whether the platform has told the engine there is no connection.
+    public var isOffline: Bool { inner.isOffline() }
+
     /// The whole document for a message, ready to hand a web view.
     ///
     /// Not fragments to assemble: the content security policy, the embedded
