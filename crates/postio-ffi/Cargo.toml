@@ -32,6 +32,7 @@ postio-runtime.workspace = true
 postio-ui.workspace = true
 postio-model.workspace = true
 postio-session.workspace = true
+postio-smtp.workspace = true
 postio-storage.workspace = true
 tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.20"
