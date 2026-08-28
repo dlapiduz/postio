@@ -97,10 +97,16 @@ pub enum Field {
 }
 
 /// Where the keyboard goes when a composition of this kind opens.
+///
+/// Reply and reply-all come from `reply_draft` with the original sender or
+/// recipients already filled into `to`, so the keyboard can go straight to
+/// the body. Forward has no recipient at all -- there is nobody to forward
+/// to until the user picks one -- so it belongs with `New`, not with the
+/// replies (#690).
 pub fn first_field(kind: DraftKind) -> Field {
     match kind {
-        DraftKind::New => Field::To,
-        DraftKind::Reply | DraftKind::ReplyAll | DraftKind::Forward => Field::Body,
+        DraftKind::New | DraftKind::Forward => Field::To,
+        DraftKind::Reply | DraftKind::ReplyAll => Field::Body,
     }
 }
 
@@ -3386,8 +3392,10 @@ mod tests {
 
     #[test]
     fn a_reply_starts_in_the_body_and_new_mail_starts_in_to() {
-        assert_eq!(first_field(DraftKind::New), Field::To);
-        for kind in [DraftKind::Reply, DraftKind::ReplyAll, DraftKind::Forward] {
+        for kind in [DraftKind::New, DraftKind::Forward] {
+            assert_eq!(first_field(kind), Field::To, "{kind:?}");
+        }
+        for kind in [DraftKind::Reply, DraftKind::ReplyAll] {
             assert_eq!(first_field(kind), Field::Body, "{kind:?}");
         }
     }
