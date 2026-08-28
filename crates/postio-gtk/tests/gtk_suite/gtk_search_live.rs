@@ -253,6 +253,9 @@ fn outcome(hits: u64, millis: u64) -> Outcome {
         hits,
         capped: false,
         elapsed: Duration::from_millis(millis),
+        // A settled account, which is what this file's assertions about the
+        // readout's wording are written against (#352).
+        corpus_complete: true,
     }
 }
 
