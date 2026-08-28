@@ -38,6 +38,7 @@ FAILURES: list[str] = []
 # Answers the handful of questions the scripts ask, and logs every call so the
 # test can assert on the base `gh pr create` was actually given.
 GH_STUB = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
     cat "$STUB_DIR/issues.json"
@@ -124,6 +125,7 @@ def build_repo(root: Path, channel: str) -> None:
     (scripts / "checks").mkdir()
     shutil.copy(HERE / "check.sh", scripts / "check.sh")
     (scripts / "check.sh").chmod(0o755)
+    shutil.copytree(HERE / "lib", scripts / "lib")
     for source in (CLAIM, LAND, HERE / "wait-for-checks.sh", HERE / "checks" / "ci-expected-workflows.py"):
         into = scripts / "checks" if source.parent.name == "checks" else scripts
         shutil.copy(source, into / source.name)

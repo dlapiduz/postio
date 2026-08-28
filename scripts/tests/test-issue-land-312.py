@@ -62,6 +62,7 @@ FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 # remote. This is the shape of a working day, and the control for the two
 # failure stubs below.
 GH_STUB_HEALTHY = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
     printf '%s' "$*" | grep -q -- "--json state" && { echo "OPEN"; exit 0; }
@@ -82,6 +83,7 @@ exit 0
 
 # The incident: a merged PR for this head branch, and a merge that no-ops.
 GH_STUB_ALREADY_MERGED = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
     printf '%s' "$*" | grep -q -- "--json state" && { echo "MERGED"; exit 0; }
@@ -130,6 +132,7 @@ def build_sandbox(root: Path, channel: str) -> None:
     (scripts / "checks").mkdir()
     shutil.copy(HERE / "check.sh", scripts / "check.sh")
     (scripts / "check.sh").chmod(0o755)
+    shutil.copytree(HERE / "lib", scripts / "lib")
     for source in (ISSUE_LAND, WAIT_FOR_CHECKS, CI_EXPECTED_WORKFLOWS):
         into = scripts / "checks" if source.parent.name == "checks" else scripts
         shutil.copy(source, into / source.name)
