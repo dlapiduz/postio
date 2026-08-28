@@ -42,6 +42,13 @@ public final class PostioSession {
     /// reaches this application without anybody editing it.
     public var commands: [CommandSpecFfi] { inner.commands() }
 
+    /// Every folder of every enabled account.
+    ///
+    /// A flat list carrying parent ids: the tree is rebuilt for display rather
+    /// than crossing as nested structures, which keeps the boundary's types
+    /// simple and loses nothing — the nesting is in `parent`.
+    public var mailboxes: [MailboxFfi] { inner.mailboxes() }
+
     /// Show `scope`, and answer the generation the window is now on.
     @discardableResult
     public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }

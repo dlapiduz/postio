@@ -1,3 +1,4 @@
+import PostioFFI
 import PostioKit
 import SwiftUI
 
@@ -31,6 +32,7 @@ final class Engine {
             state = .open(MessageTableController(source: SessionRowSource(session: session)))
             // Nothing was ever fetched before this: the store opened and
             // stayed empty because no engine had been started (#648).
+            mailboxes = session.mailboxes
             if let started = try? session.startSyncing(), started > 0 {
                 // Engines run on their own runtime; the list repaints from
                 // events rather than from anything awaited here.
@@ -43,6 +45,31 @@ final class Engine {
             state = .unavailable(String(describing: error))
             session = nil
         }
+    }
+
+    /// Every folder, flat, with parent ids.
+    private(set) var mailboxes: [MailboxFfi] = []
+
+    /// Folders with no parent, in the order the store returned them.
+    var folderRoots: [MailboxFfi] {
+        mailboxes.filter { $0.parent == nil }
+    }
+
+    /// The children of `parent`.
+    func children(of parent: Int64) -> [MailboxFfi] {
+        mailboxes.filter { $0.parent == parent }
+    }
+
+    /// Show a folder's messages.
+    ///
+    /// Re-scoping drops the selection on the other side, which is right:
+    /// "these twelve" means something else the moment the list does, and an
+    /// action carrying a selection across would land on mail the user cannot
+    /// see.
+    func open(mailbox: Int64) {
+        guard let session, case let .open(controller) = state else { return }
+        session.openScope(.mailbox(mailbox: mailbox))
+        controller.tableView?.reloadData()
     }
 
     /// How many rows the open scope has, or zero when there is no session.

@@ -37,12 +37,14 @@
 
 mod event;
 mod list;
+mod mailbox;
 mod reader;
 mod registry;
 mod session;
 
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
 pub use list::{RowFfi, ScopeFfi};
+pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
 pub use session::{Session, SessionError, SessionOptions};
