@@ -131,13 +131,29 @@ mod imp {
         /// Whether the user has put the cursor anywhere yet.
         ///
         /// `SingleSelection` autoselects row 0 the moment the model has rows,
-        /// which is not somebody looking at a message — and the reading pane
-        /// must not fill on startup for a row nobody chose. Once the dwell
-        /// timer of #71 exists, that would also mark the newest message read
-        /// for the sole reason that the application was opened, which is the
-        /// unread signal destroying itself. Every real move sets this; the
-        /// autoselect does not.
+        /// which is not somebody choosing a message. Every real move sets
+        /// this; the autoselect does not.
+        ///
+        /// What it gates is the **dwell**, not the report (#601). The pane
+        /// fills for the autoselect, because a window that opens with a row
+        /// selected and nothing beside it reads as a broken app. What must
+        /// not happen is #71's clock starting on the newest message every
+        /// time Postio is launched, marking it read for no better reason than
+        /// that it was opened — the unread signal destroying itself. Showing
+        /// a message and counting it as read are two different things, and
+        /// only the second needs a person to have chosen the row.
         pub(super) landed: Cell<bool>,
+        /// A [`select_message`](super::MessageListView::select_message) that
+        /// has not resolved yet.
+        ///
+        /// Somebody has named the message this pane is to land on — a
+        /// notification's click — and it is not resident, so the cursor is
+        /// still wherever it was, usually the autoselected row 0. Reporting
+        /// that row when the page arrives would put a message nobody asked
+        /// for in the reading pane for the frame before the real one lands.
+        /// Since #601 made the autoselect report at all, this is what keeps
+        /// that from being visible.
+        pub(super) pending_select: Cell<bool>,
         /// Subscribers to "the cursor rested here long enough to have been
         /// read". See [`DWELL_TO_READ`].
         pub(super) dwelled: RefCell<Vec<DwellHandler>>,
@@ -194,6 +210,7 @@ mod imp {
                 cursor_moved: RefCell::new(Vec::new()),
                 reported: Cell::new(None),
                 landed: Cell::new(false),
+                pending_select: Cell::new(false),
                 dwelled: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(DWELL_TO_READ),
@@ -551,13 +568,13 @@ impl MessageListView {
     /// a landing, and the id is what tells them apart.
     fn report_cursor(&self) {
         let imp = self.imp();
-        let position = imp.cursor.selected();
-        if !imp.landed.get() {
-            // The autoselect, not a person. Remember where it put the cursor
-            // so the first real move is still a change, but say nothing.
-            imp.reported.set(imp.model.peek(position));
+        // Somebody named a message and it has not arrived yet: the cursor is
+        // still on whatever the autoselect chose, and showing that would be
+        // answering a question nobody asked.
+        if imp.pending_select.get() {
             return;
         }
+        let position = imp.cursor.selected();
         if position == gtk::INVALID_LIST_POSITION {
             imp.reported.set(None);
             // Nothing under the cursor is nothing to have been reading.
@@ -580,12 +597,24 @@ impl MessageListView {
         for handler in imp.cursor_moved.borrow().iter() {
             handler(row.clone());
         }
-        // After the report and only on a real landing, which the check above
-        // has already established: a flag repaint or a page arriving for the
-        // row the cursor is *already* on returns early, so neither restarts
-        // the clock. Without that a mailbox syncing under the cursor would
-        // keep resetting the dwell and nothing would ever be marked read.
-        self.arm_dwell(row.id);
+        // After the report, and only for a landing a person made.
+        //
+        // Showing a message and counting it as read are two different things,
+        // and only the second needs somebody to have chosen the row (#601).
+        // `SingleSelection` autoselects row 0 as soon as the model has rows:
+        // reporting that is what fills the pane on startup, so a window does
+        // not open with a row selected and nothing beside it. Arming the
+        // dwell for it would start #71's clock on the newest message every
+        // time Postio is launched and mark it read for no better reason --
+        // the unread signal destroying itself.
+        //
+        // The early return above also matters here: a flag repaint, or a page
+        // arriving for the row the cursor is already on, never reaches this
+        // line, so a mailbox syncing under the cursor cannot keep resetting
+        // the clock.
+        if imp.landed.get() {
+            self.arm_dwell(row.id);
+        }
     }
 
     /// What a drag from this pane offers a receiver.
@@ -755,6 +784,7 @@ impl MessageListView {
             self.move_cursor_to(position);
             return;
         }
+        self.imp().pending_select.set(true);
         let _ = self.model().item(0);
         let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
         let id = self.imp().model.connect_items_changed(glib::clone!(
@@ -764,12 +794,21 @@ impl MessageListView {
             handler,
             move |model, _, _, _| {
                 if let Some(position) = model.position_of(message) {
+                    // Cleared first: `move_cursor_to` reports, and this
+                    // landing is the one that was being waited for.
+                    pane.imp().pending_select.set(false);
                     pane.move_cursor_to(position);
                 } else if !model.resident_pages().contains(&0) {
                     // The page that would hold it has not landed yet -- this
                     // was the count arriving, or an unrelated page. Keep
                     // waiting for the one that matters.
                     return;
+                } else {
+                    // Page 0 arrived without it: moved, deleted, or
+                    // overtaken. The cursor stays where it is, and the row it
+                    // is on is now worth showing like any other.
+                    pane.imp().pending_select.set(false);
+                    pane.report_cursor();
                 }
                 if let Some(id) = handler.borrow_mut().take() {
                     pane.imp().model.disconnect(id);
@@ -1355,12 +1394,12 @@ impl MessageListView {
         // the click that *does* move the cursor cannot double-fire.
         //
         // The dedup has to be cleared first, and this is the startup case
-        // rather than an exotic one: `SingleSelection` autoselects row 0 and
-        // the `!landed` branch of `report_cursor` records it as reported
-        // without telling anyone. Clicking that row is then a position that
-        // has not changed *and* an id already in `reported` — so without
-        // this the commonest first thing anyone does with a mouse, clicking
-        // the top message, leaves the pane blank.
+        // rather than an exotic one: `SingleSelection` autoselects row 0, and
+        // reporting it puts that id in `reported`. Clicking that row is then
+        // a position that has not changed *and* an id already reported — so
+        // without this the click would be swallowed. The pane is already
+        // showing that message, but the click still has to land: it is what
+        // makes the landing a person's, which is what starts the dwell.
         if imp.cursor.selected() == position {
             imp.reported.set(None);
             self.report_cursor();

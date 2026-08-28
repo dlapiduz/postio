@@ -154,17 +154,31 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     );
     let composer = window.composer();
 
-    // ── `e` with genuinely nothing open is still nothing ─────────────────
-    // The cursor is autoselected onto row 0 the moment the list has rows,
-    // and that is not somebody reading: the pane is deliberately empty until
-    // the user moves. Replying to a message nobody opened would be worse
-    // than doing nothing.
-    assert!(!window.reading(), "an untouched window is showing nothing");
+    // ── `e` on a window nobody has touched replies to what it is showing ─
+    // This used to assert the opposite: the pane was empty until the user
+    // moved, so `e` had nothing to answer and did nothing. Since #601 the
+    // pane fills for the autoselected row, and the rule underneath is
+    // unchanged — `e` replies to the message the reader is *showing* — so
+    // the same rule now has the opposite outcome. Worth pinning in that
+    // form, because it is what a person meets one keystroke into a fresh
+    // window.
+    let autoselected = list.cursor_id().expect("a row is autoselected");
+    assert!(
+        settle_until(|| window.reading()),
+        "the window opened without filling the pane"
+    );
     press(&window, "e", gdk::ModifierType::empty());
     assert!(
-        !composer.is_open(),
-        "`e` opened a composer for a message the reader was never shown"
+        composer.is_open(),
+        "`e` answered nothing, though the pane was showing a message"
     );
+    assert_eq!(
+        composer.draft().in_reply_to,
+        Some(autoselected),
+        "`e` replied to something other than the message on screen"
+    );
+    composer.discard();
+    settle();
 
     // ── Return still opens a reply, on a window whose cursor never moved ─
     // Activation was the *only* path in before #325, and it must not
