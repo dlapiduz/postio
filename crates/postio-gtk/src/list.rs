@@ -575,3 +575,16 @@ impl MessageList {
         }
     }
 }
+
+/// The list model is what `postio_core::aim` asks about rows.
+///
+/// Delegating to the `ListWindow` inside rather than reimplementing the rule:
+/// `postio_ui`'s blanket implementation is the shared answer, and the FFI
+/// boundary reaches the same one through the same window. All this adds is
+/// the borrow, taken and released per call so nothing holds it across a
+/// callback that might want the window itself.
+impl postio_core::aim::RowFacts for MessageList {
+    fn row_kind(&self, message: MessageId) -> postio_core::aim::RowKind {
+        self.imp().window.borrow().row_kind(message)
+    }
+}
