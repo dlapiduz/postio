@@ -12,6 +12,7 @@ import PostioFFI
 /// Deliberately not a `List`. SwiftUI's wraps `NSTableView` anyway and hides
 /// the two things this needs — real cell reuse, and explicit scroll-anchor
 /// control when new mail arrives at the top.
+@MainActor
 public final class MessageTableController: NSObject {
     /// Where rows come from.
     public var source: MessageRowSource {
@@ -45,6 +46,21 @@ public final class MessageTableController: NSObject {
     public func presentation(at position: UInt32) -> RowPresentation {
         guard let row = source.row(at: position) else { return .placeholder }
         return RowPresentation(row: row)
+    }
+
+    /// Called when the row under the cursor changes, with its message.
+    ///
+    /// The *cursor*, not the selection. `PRODUCT.md` §9 keeps them separate:
+    /// moving down the list shows a message without adding it to a
+    /// multi-message selection, and a frontend that conflates them makes
+    /// shift-click destroy what the user had. The full semantics are their own
+    /// work; this is the one signal the reading pane needs.
+    public var onCursorChanged: ((Int64?) -> Void)?
+
+    /// The message under the cursor, if the row has arrived.
+    public func messageAt(row: Int) -> Int64? {
+        guard row >= 0 else { return nil }
+        return source.row(at: UInt32(row))?.id
     }
 
     /// The cell to draw into: `existing` if AppKit handed one back, else a new one.
@@ -90,6 +106,12 @@ extension MessageTableController: NSTableViewDataSource {
 }
 
 extension MessageTableController: NSTableViewDelegate {
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let table = notification.object as? NSTableView else { return }
+        onCursorChanged?(messageAt(row: table.selectedRow))
+    }
+
+
     public func tableView(
         _ tableView: NSTableView,
         viewFor tableColumn: NSTableColumn?,

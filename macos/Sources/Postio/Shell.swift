@@ -16,6 +16,7 @@ import SwiftUI
 struct Shell: View {
     @State private var engine: Engine
     @State private var selectedFolder: String? = "Inbox"
+    @State private var showing: Int64?
 
     init(engine: Engine) {
         _engine = State(initialValue: engine)
@@ -54,6 +55,7 @@ struct Shell: View {
                 )
             } else {
                 MessageListView(controller: controller)
+                    .onAppear { controller.onCursorChanged = { showing = $0 } }
             }
         case let .unavailable(reason):
             ContentUnavailableView {
@@ -66,10 +68,17 @@ struct Shell: View {
 
     @ViewBuilder
     private var reader: some View {
-        ContentUnavailableView(
-            "No message selected",
-            systemImage: "envelope",
-            description: Text("The reading pane arrives with the reader.")
-        )
+        if let session = engine.session, let showing {
+            // Remote images blocked. `PRODUCT.md`'s "nothing leaves this
+            // machine that the user did not ask for" starts at the tracking
+            // pixel, and per-sender allowing is its own work.
+            ReaderView(session: session, message: showing, remoteImages: .blocked)
+        } else {
+            ContentUnavailableView(
+                "No message selected",
+                systemImage: "envelope",
+                description: Text("Choose a message to read it.")
+            )
+        }
     }
 }

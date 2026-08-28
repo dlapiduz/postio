@@ -59,6 +59,32 @@ public final class PostioSession {
     /// `UiEvent.pageReady` says when to ask again.
     public func row(at position: UInt32) -> RowFfi? { inner.rowAt(position: position) }
 
+    /// The whole document for a message, ready to hand a web view.
+    ///
+    /// Not fragments to assemble: the content security policy, the embedded
+    /// font faces, the sanitized body inside its container and the scroll
+    /// markers all come from the engine, which is what the GTK reader renders
+    /// too. Swift composes no reader HTML.
+    public func readerDocument(message: Int64, remote: RemoteImagesFfi) -> String {
+        inner.readerDocument(message: message, remote: remote)
+    }
+
+    /// One inline part of `message`, by its `Content-ID`.
+    ///
+    /// `nil` when the bytes are not already on this machine — the privacy
+    /// commitment rather than a gap to fill in later. Fetching here would be
+    /// the tracking pixel the reader blocks, arriving through the back door.
+    public func resolveCid(message: Int64, contentId: String) -> InlinePart? {
+        inner.resolveCid(message: message, contentId: contentId)
+    }
+
+    /// Start syncing every configured account; answers how many started.
+    @discardableResult
+    public func startSyncing() throws -> UInt32 { try inner.startSyncing() }
+
+    /// How many accounts are configured and enabled.
+    public var configuredAccounts: UInt32 { inner.configuredAccounts() }
+
     /// Drops the store and ends the event drain.
     public func shutdown() { inner.shutdown() }
 
