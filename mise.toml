@@ -1,0 +1,65 @@
+# The tools around the compiler, pinned the way the compiler already is.
+#
+# `rust-toolchain.toml` pins rustc because a floating compiler decided whether
+# a PR was green (#38). Everything *else* the gates run on floated exactly as
+# hard, and had never been written down anywhere: 54 Python scripts enforce
+# every repository invariant in `scripts/checks/`, and nothing said which
+# Python. This is that list.
+#
+#   mise install     # once, and on every bump below
+#   mise ls          # what you are actually running
+#
+# mise is optional. Nothing in the build, the test suite or CI reads this
+# file — the scripts call `python3`, `gh` and `jq` off `PATH` as they always
+# have, and a box without mise resolves them the way it did yesterday. What
+# this buys is that everyone who *does* use it resolves them the same way.
+#
+# # What this deliberately does not pin
+#
+# **Rust.** `rust-toolchain.toml` owns the compiler and
+# `scripts/checks/check-toolchain-pinned.py` enforces that it does — including
+# that no workflow selects a toolchain of its own, because a second place to
+# say it is the bug that check exists to prevent. mise would be a third.
+# rustup honours `rust-toolchain.toml` everywhere, so the right compiler
+# already arrives on the first `cargo` command; adding `rust` here would take
+# a pin that is enforced and make it a pin that is merely agreed.
+#
+# **The system libraries.** GTK 4, libadwaita, WebKitGTK, SQLite, libsecret
+# and glib are distro packages with C headers and a pkg-config graph, not
+# language tooling, and mise does not manage them. The README's `dnf`/`apt`
+# lines remain the only way in, and the GTK 4.20 floor is a property of the
+# distro rather than of anything here.
+#
+# # Bumping one
+#
+# The same rule `rust-toolchain.toml` states: an exact version, so the change
+# is a commit somebody made on purpose rather than weather. Bump it, run
+# `scripts/check.sh`, and land the two together.
+
+[tools]
+# Every invariant in `scripts/checks/` is a Python script, so this is the
+# interpreter that decides whether the repository is well-formed. 3.11 is the
+# floor rather than a preference: the checks read `Cargo.toml` with `tomllib`,
+# which is stdlib from 3.11 and absent before it.
+python = "3.14.7"
+
+# `scripts/issue-*.sh` are the whole workflow — claim, land, release — and
+# they are `gh` from end to end. A `gh` whose JSON output has moved does not
+# fail loudly; it returns an empty field, and the script decides an issue is
+# unassigned or a PR unmerged.
+gh = "2.98.0"
+
+# Reads that `gh` output, and the release scripts' own.
+jq = "1.8.1"
+
+# Not optional tooling: `.cargo/config.toml` wires sccache in through
+# `scripts/rustc-wrapper.sh` for every session on the machine, and the wrapper
+# pins the daemon's TMPDIR off the tmpfs. One shared daemon means one version
+# — a session on a different one restarts it under everybody else.
+sccache = "0.17.0"
+
+# Not pinned here, on purpose: `cargo-deny`, `cargo-fuzz`, `cargo-mutants` and
+# `cargo-llvm-cov`. Each is a from-source cargo build measured in minutes, all
+# four are needed only by the gates that name them, and putting them here
+# would make `mise install` — the thing a newcomer runs first — the slowest
+# step in setting up. `cargo install` them when a gate asks for one.
