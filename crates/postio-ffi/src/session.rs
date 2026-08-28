@@ -399,7 +399,7 @@ impl Session {
         // refused, so a locked keyring leaves no half-made store behind.
         let secrets: Arc<dyn postio_imap::secret::SecretStore> = match options.secrets {
             Some(secrets) => secrets,
-            None => Arc::new(postio_imap::secret::KeyringSecretStore::default()),
+            None => postio_imap::secret::platform_keyring(),
         };
         let key = postio_session::store_key_blocking(secrets.as_ref())
             .map_err(SessionError::from_secret_error)?;
