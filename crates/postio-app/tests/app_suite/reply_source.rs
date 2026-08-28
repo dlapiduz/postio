@@ -45,7 +45,7 @@ use postio_model::BodyState;
 use postio_model::DraftKind;
 use postio_model::ids::MessageId;
 use postio_session::Wiring;
-use postio_storage::repository::{BodyBlobs, MessageRepository};
+use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
 
@@ -77,22 +77,16 @@ fn marker(id: MessageId) -> String {
 }
 
 /// Land a body for `id` in the store, the way a settled backfill leaves one.
-fn give_body(
-    database: &Database,
-    blobs: &BlobStore,
-    id: MessageId,
-    text: Option<&str>,
-    html: Option<&str>,
-) {
+fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Option<&str>) {
     let connection = database.connection().expect("a connection");
-    let stored = BodyBlobs {
-        text: text.map(|text| blobs.put(text.as_bytes()).expect("a text blob")),
-        html: html.map(|html| blobs.put(html.as_bytes()).expect("an html blob")),
+    let stored = StoredBody {
+        text: text.map(str::to_owned),
+        html: html.map(str::to_owned),
         headers: None,
     };
     MessageRepository::new(&connection)
-        .set_body_blobs(id, &stored, BodyState::Full)
-        .expect("record where the body landed");
+        .set_body(id, &stored, BodyState::Full)
+        .expect("store the body");
 }
 
 /// Move the cursor one row down and answer which message it is on now.
@@ -188,7 +182,6 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let activated = list.cursor_id().expect("a row is autoselected");
     give_body(
         &database,
-        &blobs,
         activated,
         Some(&format!("{}\n", marker(activated))),
         None,
@@ -217,7 +210,6 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let replied_to = next_message(&window);
     give_body(
         &database,
-        &blobs,
         replied_to,
         Some(&format!("{}\n", marker(replied_to))),
         None,
@@ -263,7 +255,6 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let replied_all_to = next_message(&window);
     give_body(
         &database,
-        &blobs,
         replied_all_to,
         None,
         Some(&format!("<p>{}</p>", marker(replied_all_to))),
@@ -292,7 +283,6 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let forwarded = next_message(&window);
     give_body(
         &database,
-        &blobs,
         forwarded,
         Some(&format!("{}\n", marker(forwarded))),
         None,

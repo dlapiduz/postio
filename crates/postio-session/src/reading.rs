@@ -5,10 +5,10 @@
 //! and a second copy on the macOS side would reproduce the bugs rather than
 //! the behaviour -- which is what ADR 0019 Q6 exists to prevent.
 //!
-//! [`load_body_or_reason`] tells apart situations that look identical at the
-//! blob layer: a local draft, another client's draft, not-fetched against
-//! offline, and genuinely-empty against blobs that will not read. Issue #70
-//! Cause A was all of them rendering as one blank column.
+//! [`load_body_or_reason`] tells apart situations that look identical in the
+//! columns: a local draft, another client's draft, not-fetched against
+//! offline, and genuinely-empty against a body that will not decode. Issue
+//! #70 Cause A was all of them rendering as one blank column.
 //!
 //! [`cid_source`] carries a security property in fifteen lines: a
 //! `Content-ID` resolves only within the message that declares it, so one
@@ -32,17 +32,13 @@ use postio_ui::reader::parts::BlobSource;
 /// body not yet — which is the ordinary state of a mailbox mid-backfill, not
 /// a fault. Replying to one just quotes nothing, the same way any degraded
 /// state here should: fewer words in the draft, never a broken one.
-pub fn load_body(
-    connection: &postio_storage::PooledConnection,
-    blobs: &BlobStore,
-    id: MessageId,
-) -> MessageBody {
-    let Ok(Some(blob_ids)) = MessageRepository::new(connection).body_blobs(id) else {
+pub fn load_body(connection: &postio_storage::PooledConnection, id: MessageId) -> MessageBody {
+    let Ok(Some(stored)) = MessageRepository::new(connection).body(id) else {
         return MessageBody::default();
     };
     MessageBody {
-        text: blob_ids.text.and_then(|id| read_blob_text(blobs, &id)),
-        html: blob_ids.html.and_then(|id| read_blob_text(blobs, &id)),
+        text: stored.text,
+        html: stored.html,
     }
 }
 
@@ -64,9 +60,9 @@ pub enum Body {
 /// As [`load_body`], but distinguishing the ways a body can be missing.
 ///
 /// The message's own [`BodyState`] is what says whether a body was ever
-/// fetched, and it has to be: `body_blobs` answers a row naming no blobs for
+/// fetched, and it has to be: `body` answers a row holding no parts for
 /// a message nobody has downloaded *and* for one that was downloaded and had
-/// no body in it. Those two look identical at the blob layer and are opposite
+/// no body in it. Those two look identical in the columns and are opposite
 /// things to a reader — one is worth waiting for and one is finished.
 ///
 /// So:
@@ -74,10 +70,10 @@ pub enum Body {
 /// * **not fetched** (`NotFetched`, `HeadersOnly`) — the backfill has not
 ///   been here. The ordinary state of a mailbox that has just been added,
 ///   and not a fault.
-/// * **fetched, naming no blobs** — the message really has neither a text
+/// * **fetched, holding no parts** — the message really has neither a text
 ///   nor an HTML part.
-/// * **fetched, naming blobs that will not read** — the database and the
-///   blob directory disagree. Rare, and a genuine fault.
+/// * **fetched, holding parts that will not decode** — the row and this build
+///   disagree about what is in the column. Rare, and a genuine fault.
 ///
 /// `is_offline` is what tells [`Absent::Offline`] from [`Absent::Partial`]
 /// for a body that has not been fetched: both are "nothing here yet", but
@@ -89,17 +85,16 @@ pub enum Body {
 /// [`Absent::Offline`]: Absent::Offline
 pub fn load_body_or_reason(
     connection: &postio_storage::PooledConnection,
-    blobs: &BlobStore,
     id: MessageId,
     is_offline: bool,
 ) -> Body {
     use Absent;
 
-    // A draft's row has no body in the blob store and never will: the
-    // composer's buffer is inline TEXT, deliberately, because a
-    // content-addressed store would take one immutable blob per keystroke.
-    // Reading the row would say "still downloading" about words the user is
-    // looking at in another pane. #166.
+    // A draft's body is not in `messages` and never will be: the composer's
+    // buffer is `drafts.body_text`, inline and uncompressed, deliberately,
+    // because autosave writes it on a keystroke. Reading the message row
+    // would say "still downloading" about words the user is looking at in
+    // another pane. #166.
     if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id) {
         return Body::Ready(draft.body);
     }
@@ -110,8 +105,8 @@ pub fn load_body_or_reason(
     match repository.get(id) {
         // `\Draft` is set, but the `by_message` lookup above found no local
         // buffer: this row belongs to another client's draft. Its body may
-        // well be sitting in the blob store already, but showing it as an
-        // ordinary, readable message would be exactly the dead end #175
+        // well be stored already, but showing it as an ordinary, readable
+        // message would be exactly the dead end #175
         // exists to close -- there is nothing here this machine can edit,
         // whatever state the body is in.
         Ok(Some(message)) if message.flags.is_draft() => {
@@ -135,46 +130,28 @@ pub fn load_body_or_reason(
         }
     }
 
-    let blob_ids = match repository.body_blobs(id) {
-        Ok(Some(blob_ids)) => blob_ids,
-        // Fetched, and nothing recorded to show for it.
-        Ok(None) => return Body::Absent(Absent::Empty),
+    let stored = match repository.body(id) {
+        Ok(Some(stored)) => stored,
+        // The row went between the two reads above and here.
+        Ok(None) => return Body::Absent(Absent::Missing),
         Err(error) => {
-            tracing::warn!(message = id.get(), %error, "cannot read a message's body record");
+            // Either the row will not read, or a stored part will not
+            // decompress. Both are faults, and both leave the pane empty --
+            // what the user needs is to be told it is empty because something
+            // is wrong, not because they should wait.
+            tracing::warn!(message = id.get(), %error, "cannot read a message's body");
             return Body::Absent(Absent::Missing);
         }
     };
 
-    if blob_ids.text.is_none() && blob_ids.html.is_none() {
+    if stored.text.is_none() && stored.html.is_none() {
         return Body::Absent(Absent::Empty);
     }
 
-    let body = postio_model::MessageBody {
-        text: blob_ids.text.and_then(|id| read_blob_text(blobs, &id)),
-        html: blob_ids.html.and_then(|id| read_blob_text(blobs, &id)),
-    };
-    if body.text.is_none() && body.html.is_none() {
-        // Blobs were named and none of them read back. `read_blob_text` has
-        // already logged why; what the user needs is to be told the pane is
-        // empty because something is wrong, not because they should wait.
-        return Body::Absent(Absent::Missing);
-    }
-    Body::Ready(body)
-}
-
-/// A body blob as text, or nothing with the reason logged.
-///
-/// Module-private, as it was in `postio-app`: it is the shared tail of
-/// [`load_body`] and [`load_body_or_reason`], not a way for a caller to reach
-/// past them into the blob store.
-fn read_blob_text(blobs: &BlobStore, id: &postio_model::ids::BlobId) -> Option<String> {
-    let bytes = blobs
-        .get(id)
-        .map_err(|error| tracing::warn!(%error, "could not read a message body blob"))
-        .ok()?;
-    String::from_utf8(bytes)
-        .map_err(|error| tracing::warn!(%error, "a body blob was not valid UTF-8"))
-        .ok()
+    Body::Ready(postio_model::MessageBody {
+        text: stored.text,
+        html: stored.html,
+    })
 }
 
 /// Where a rendered message resolves its `cid:` parts from.

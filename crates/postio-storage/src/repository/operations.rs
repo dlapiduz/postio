@@ -79,7 +79,9 @@ impl QueuedOperation {
 /// # use postio_model::{AccountId, MailboxId, MessageId, Operation, OperationTarget};
 /// # use postio_storage::repository::OperationQueueRepository;
 /// # fn main() -> Result<(), postio_storage::Error> {
-/// # let database = postio_storage::Database::open("postio.db")?;
+/// # use postio_storage::key::{Purpose, StoreKey};
+/// # let key = StoreKey::generate().derive(Purpose::Database);
+/// # let database = postio_storage::Database::open("postio.db", &key)?;
 /// # let mut connection = database.connection()?;
 /// # let (account, message) = (AccountId::new(1), MessageId::new(1));
 /// # let (inbox, archive) = (MailboxId::new(1), MailboxId::new(2));

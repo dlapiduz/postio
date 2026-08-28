@@ -79,7 +79,7 @@ pub fn install(
     install_send_later(&composer, database.clone(), Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
-    install_reply_source(&composer, database, blobs.clone(), showing);
+    install_reply_source(&composer, database, showing);
     install_attach(&composer, blobs.clone(), runtime.clone());
     install_inline_image(&composer, blobs.clone(), runtime);
     install_attachment_bytes(&composer, blobs);
@@ -540,12 +540,7 @@ fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
 /// message", updated by different signals, can only ever be one signal away
 /// from disagreeing; reading `showing` is the version of this that has no
 /// second copy to drift.
-fn install_reply_source(
-    composer: &Composer,
-    database: Database,
-    blobs: BlobStore,
-    showing: crate::reading::Showing,
-) {
+fn install_reply_source(composer: &Composer, database: Database, showing: crate::reading::Showing) {
     composer.connect_reply_source(move || {
         // `None` is ordinary: `e` on a window nobody has read from yet is
         // nothing to reply to, not an error. It is logged all the same,
@@ -560,7 +555,7 @@ fn install_reply_source(
             .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
             .ok()?;
         let mut message = MessageRepository::new(&connection).get(id).ok().flatten()?;
-        message.body = load_body(&connection, &blobs, id);
+        message.body = load_body(&connection, id);
         let account = AccountRepository::new(&connection)
             .get(message.account_id)
             .ok()
@@ -695,20 +690,18 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
         let connection = database.connection().unwrap();
 
         assert!(
             matches!(
-                load_body_or_reason(&connection, &blobs, id, false),
+                load_body_or_reason(&connection, id, false),
                 Body::Absent(postio_gtk::reader::Absent::Partial)
             ),
             "online and not yet fetched is the ordinary backfill wait"
         );
         assert!(
             matches!(
-                load_body_or_reason(&connection, &blobs, id, true),
+                load_body_or_reason(&connection, id, true),
                 Body::Absent(postio_gtk::reader::Absent::Offline)
             ),
             "offline and not yet fetched has to say so, not promise a backfill \
@@ -731,18 +724,16 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
         let connection = database.connection().unwrap();
 
         // No blobs were ever named for it, so this is the "fetched, naming
         // no blobs" case -- `Absent::Empty` -- either way.
         assert!(matches!(
-            load_body_or_reason(&connection, &blobs, id, false),
+            load_body_or_reason(&connection, id, false),
             Body::Absent(postio_gtk::reader::Absent::Empty)
         ));
         assert!(matches!(
-            load_body_or_reason(&connection, &blobs, id, true),
+            load_body_or_reason(&connection, id, true),
             Body::Absent(postio_gtk::reader::Absent::Empty)
         ));
     }
@@ -766,15 +757,13 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
         let connection = database.connection().unwrap();
 
         // No local `DraftRepository` row exists for this message, which is
         // exactly what makes it another client's draft rather than one this
         // machine is editing.
         assert!(matches!(
-            load_body_or_reason(&connection, &blobs, id, false),
+            load_body_or_reason(&connection, id, false),
             Body::Absent(postio_gtk::reader::Absent::ForeignDraft)
         ));
     }
@@ -808,12 +797,13 @@ mod tests {
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
-        let account = seed_account(&Database::open(&db_path).unwrap());
+        let account =
+            seed_account(&Database::open(&db_path, &postio_storage::test_support::key()).unwrap());
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
         // ── Run one: type, park the draft with Esc, exit cleanly ─────────
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();
@@ -844,7 +834,7 @@ mod tests {
 
         // ── Run two: the draft is parked, not in the way ─────────────────
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();
@@ -898,7 +888,8 @@ mod tests {
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
-        let account = seed_account(&Database::open(&db_path).unwrap());
+        let account =
+            seed_account(&Database::open(&db_path, &postio_storage::test_support::key()).unwrap());
         // Only `install_attach` ever spawns onto this; nothing in this test
         // attaches a file, so it exists purely to give `install` a handle.
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -910,7 +901,7 @@ mod tests {
         // block is the whole simulation: the transaction `save()` already
         // committed is what has to survive it, not an orderly exit.
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();
@@ -937,7 +928,7 @@ mod tests {
 
         // ── Run two: a fresh window, a fresh database handle, same file ──
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();

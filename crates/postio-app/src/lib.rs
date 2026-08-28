@@ -210,6 +210,18 @@ pub fn run() -> glib::ExitCode {
     });
 
     let code = application.run();
+
+    // The sync engines first, and before anything else here: they are the one
+    // thing in this process still writing to the database on a thread of
+    // their own, and every page they write goes through libcrypto. Letting
+    // `main` return with one of them mid-commit means the process's exit
+    // handlers tear libcrypto down underneath it -- a reproducible coredump,
+    // and the reason `Engine` keeps its `JoinHandle` at all.
+    //
+    // Bounded: `stop_retained` waits a few seconds per engine and gives up
+    // rather than holding a closed window open on a stalled network read.
+    postio_runtime::stop_retained();
+
     // Taken rather than borrowed: `shutdown` consumes the bridge, and by here
     // the window is gone and nothing else is going to read this.
     if let Some(ready) = opened.borrow_mut().take() {
@@ -521,9 +533,41 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
+    train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
     Some(Wired { feeds, search })
+}
+
+/// Train a body-compression dictionary from the mail already here.
+///
+/// The other half of ADR 0020's disk saving, and the half that is worth about
+/// a further 28% of the store. Compression itself needs no pass — the
+/// repository does it on every write — but the dictionary has to be learned
+/// from a corpus that only exists once mail has arrived.
+///
+/// `spawn_blocking` and once per start, for the same two reasons
+/// [`catch_up_the_body_index`] is: it is synchronous SQLite that decompresses
+/// a few thousand bodies, and nothing on screen waits for it.
+/// `postio_session::train_body_dictionary` is what decides it is not worth
+/// running, which is the ordinary answer on a store that already has one.
+///
+/// After the index catch-up rather than before: that pass is what makes local
+/// mail searchable, which somebody is waiting to do, and this one only makes
+/// the *next* mail smaller.
+fn train_the_body_dictionary(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn_blocking(move || {
+        match postio_session::train_body_dictionary(&database) {
+            Ok(_) => {}
+            // Recoverable, like every other idle pass here: mail written
+            // without a dictionary is mail that reads perfectly and takes a
+            // little more disk, and the next start tries again.
+            Err(error) => {
+                tracing::warn!(%error, "could not train a body compression dictionary");
+            }
+        }
+    });
 }
 
 /// Give back the disk nothing is using any more, out of the way.
@@ -611,12 +655,12 @@ fn reclaim_disk(wiring: &Wiring) {
 /// disk and should still become searchable.
 ///
 /// `spawn_blocking`, not `spawn`: this is synchronous SQLite and synchronous
-/// blob reads from beginning to end, and a blocking call inside a tokio task
-/// stalls whatever else that worker was meant to poll.
+/// decompression from beginning to end, and a blocking call inside a tokio
+/// task stalls whatever else that worker was meant to poll.
 fn catch_up_the_body_index(wiring: &Wiring) {
-    let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    let database = wiring.database.clone();
     wiring.runtime.spawn_blocking(move || {
-        if let Err(error) = postio_session::index_local_bodies(&database, &blobs) {
+        if let Err(error) = postio_session::index_local_bodies(&database) {
             // Recoverable, and the same judgement `ensure_search_index`
             // makes: a mail client whose body search is behind still reads
             // mail, and the next start tries again.
@@ -724,15 +768,18 @@ fn adopt_engine(
     account: postio_model::AccountId,
     sync: postio_runtime::Engine,
 ) {
-    // Leaked for the same reason the feeds are: it lives as long as the
-    // process, and dropping it at exit would stop the engine a moment
-    // before the process ends anyway.
-    let sync: &'static _ = Box::leak(Box::new(sync));
+    // Retained rather than leaked. It does live as long as the session, but
+    // "dropping it at exit would stop the engine a moment before the process
+    // ends anyway" -- which is what the leak was for -- stopped being true
+    // when the store became SQLCipher: that moment is exactly when libcrypto
+    // goes away underneath a thread still encrypting a page. `run` calls
+    // `stop_retained` before it returns.
+    postio_runtime::retain(sync.clone());
     // `Refresh` is the one command that needs it, and it is pressed long
     // after the bus was built. The first engine fills the slot; the
     // others are reached through their own account's work.
     wiring.engine.fill(sync.clone());
-    seed_the_backfill(account, sync, wiring);
+    seed_the_backfill(account, sync.clone(), wiring);
     fetch_what_is_opened(window, sync, wiring.runtime.clone());
 }
 
@@ -761,11 +808,14 @@ fn enabled_accounts(database: &Database) -> Vec<postio_model::Account> {
 /// it goes to the front of the queue rather than the back.
 fn fetch_what_is_opened(
     window: &Window,
-    sync: &'static postio_runtime::Engine,
+    sync: postio_runtime::Engine,
     runtime: tokio::runtime::Handle,
 ) {
     window.list().connect_activated(move |row| {
         let message = row.id;
+        // A handle per activation: `Engine` is a channel sender and an `Arc`,
+        // so cloning is cheap, and the closure is `Fn` rather than `FnOnce`.
+        let sync = sync.clone();
         runtime.spawn(async move {
             if let Err(error) = sync.request_body(message).await {
                 tracing::warn!(message = message.get(), %error, "cannot fetch that body");
@@ -783,7 +833,7 @@ fn fetch_what_is_opened(
 /// rather than the only one (#318).
 fn seed_the_backfill(
     account: postio_model::AccountId,
-    sync: &'static postio_runtime::Engine,
+    sync: postio_runtime::Engine,
     wiring: &Wiring,
 ) {
     let Ok(connection) = wiring.database.connection() else {
@@ -808,6 +858,7 @@ fn seed_the_backfill(
     tracing::info!(known = mailboxes.len(), selectable, "folders known locally");
 
     for mailbox in mailboxes.into_iter().filter(|mailbox| mailbox.selectable) {
+        let sync = sync.clone();
         wiring.runtime.spawn(async move {
             if let Err(error) = sync.seed_backfill(mailbox.id, BACKFILL_PER_MAILBOX).await {
                 tracing::warn!(mailbox = %mailbox.path, %error, "cannot seed the backfill");

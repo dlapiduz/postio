@@ -1,11 +1,16 @@
 //! The content-addressed blob store.
 //!
-//! SQLite holds metadata; the bytes live here. A message's raw RFC 5322 source,
-//! its decoded bodies and its attachment payloads are written to a file named
-//! after the BLAKE3 digest of its content, and the database keeps only the
-//! digest. That is what keeps the database small enough to meet the `<100 ms`
-//! search and `<16 ms` interaction budgets in CLAUDE.md — the message list pages
-//! through rows of a few hundred bytes, not through inboxes of PDFs.
+//! A message's raw RFC 5322 source and its attachment payloads are written to
+//! a file named after the BLAKE3 digest of its content, and the database keeps
+//! only the digest. That is what keeps the database small enough to meet the
+//! `<100 ms` search and `<16 ms` interaction budgets in CLAUDE.md — the message
+//! list pages through rows of a few hundred bytes, not through inboxes of PDFs.
+//!
+//! **Message bodies are not here.** They are compressed columns on the
+//! `messages` row (ADR 0020): the median body is 325 bytes, identical bodies
+//! are rare, and a file per body would leak its size and its mtime whatever
+//! the contents were encrypted with. Everything below is about attachments and
+//! raw messages, which are none of those things.
 //!
 //! # Why content addressing
 //!
@@ -48,7 +53,9 @@
 //! let id = store.put(b"raw message bytes")?;
 //! assert_eq!(store.get(&id)?, b"raw message bytes");
 //!
-//! let database = postio_storage::Database::open("postio.db")?;
+//! # use postio_storage::key::{Purpose, StoreKey};
+//! # let key = StoreKey::generate().derive(Purpose::Database);
+//! let database = postio_storage::Database::open("postio.db", &key)?;
 //! let connection = database.connection()?;
 //! let report = store.collect_garbage(&connection, GarbageCollection::default())?;
 //! eprintln!("reclaimed {} bytes", report.bytes_reclaimed);
@@ -205,8 +212,9 @@ impl BlobStore {
 
     /// Reads a whole blob into memory.
     ///
-    /// For a body or a header block, which is what the reading pane wants. Use
-    /// [`BlobStore::reader`] for anything that might be an attachment.
+    /// For a raw message the parser needs whole. Use [`BlobStore::reader`] for
+    /// anything that might be an attachment — a 30 MiB payload must never
+    /// exist whole in memory just to be handed to a viewer.
     pub fn get(&self, id: &BlobId) -> Result<Vec<u8>> {
         let path = self.path_of(id)?;
         let stored = std::fs::read(&path).map_err(|source| self.read_error(id, path, source))?;
@@ -328,9 +336,10 @@ impl BlobStore {
     /// Deletes every stored blob the database no longer references.
     ///
     /// The reference set is read from the columns that hold a blob key:
-    /// `messages.raw_blob_id`, `body_text_blob_id`, `body_html_blob_id`,
-    /// `headers_blob_id` and `attachments.blob_id`. A blob younger than
-    /// `options.min_age` is left alone even if unreferenced — see the
+    /// `messages.raw_blob_id`, `attachments.blob_id` and
+    /// `cross_account_moves.raw_blob_id`. Message bodies are not among them —
+    /// they are columns on the row now, not files (ADR 0020). A blob younger
+    /// than `options.min_age` is left alone even if unreferenced — see the
     /// [module docs](self).
     ///
     /// Files under the root that are not named like a digest are ignored
@@ -351,10 +360,13 @@ impl BlobStore {
     /// 2. **Attachment payloads.** Something the user asked for once, and can
     ///    ask for again.
     ///
-    /// **Never message text.** It is the corpus search is made of, and losing
-    /// it would shrink search silently — `body_state` would still say the body
-    /// is local, so not even #352's honesty surface could report the gap.
-    /// Drafts and the queue are not blobs and are never in scope.
+    /// **Never message text**, which since ADR 0020 is structural rather than
+    /// a rule this pass has to remember: bodies are compressed columns on the
+    /// `messages` row, so there is no blob here for eviction to take. That
+    /// matters because text is the corpus search is made of, and losing it
+    /// would shrink search silently — `body_state` would still say the body is
+    /// local, so not even #352's honesty surface could report the gap. Drafts
+    /// and the queue are not blobs and are never in scope either.
     ///
     /// # Oldest mail first, not least-recently-used
     ///
@@ -416,9 +428,10 @@ impl BlobStore {
     /// Deletes every stored blob the database no longer references.
     ///
     /// The reference set is read from the columns that hold a blob key:
-    /// `messages.raw_blob_id`, `body_text_blob_id`, `body_html_blob_id`,
-    /// `headers_blob_id` and `attachments.blob_id`. A blob younger than
-    /// `options.min_age` is left alone even if unreferenced — see the
+    /// `messages.raw_blob_id`, `attachments.blob_id` and
+    /// `cross_account_moves.raw_blob_id`. Message bodies are not among them —
+    /// they are columns on the row now, not files (ADR 0020). A blob younger
+    /// than `options.min_age` is left alone even if unreferenced — see the
     /// [module docs](self).
     ///
     /// Files under the root that are not named like a digest are ignored
@@ -674,17 +687,11 @@ pub struct EvictionReport {
 
 fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
     const SQL: &str = "\
-SELECT raw_blob_id       FROM messages    WHERE raw_blob_id       IS NOT NULL
+SELECT raw_blob_id FROM messages            WHERE raw_blob_id IS NOT NULL
 UNION
-SELECT body_text_blob_id FROM messages    WHERE body_text_blob_id IS NOT NULL
+SELECT blob_id     FROM attachments         WHERE blob_id     IS NOT NULL
 UNION
-SELECT body_html_blob_id FROM messages    WHERE body_html_blob_id IS NOT NULL
-UNION
-SELECT headers_blob_id   FROM messages    WHERE headers_blob_id   IS NOT NULL
-UNION
-SELECT blob_id           FROM attachments WHERE blob_id           IS NOT NULL
-UNION
-SELECT raw_blob_id       FROM cross_account_moves WHERE raw_blob_id IS NOT NULL";
+SELECT raw_blob_id FROM cross_account_moves WHERE raw_blob_id IS NOT NULL";
 
     let mut statement = connection.prepare(SQL)?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;

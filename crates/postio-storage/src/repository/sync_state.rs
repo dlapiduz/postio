@@ -29,7 +29,9 @@ use crate::error::{Error, Result};
 /// # use postio_model::{Generation, MailboxStatus, MailboxId};
 /// # use postio_storage::repository::SyncStateRepository;
 /// # fn main() -> Result<(), postio_storage::Error> {
-/// # let database = postio_storage::Database::open("postio.db")?;
+/// # use postio_storage::key::{Purpose, StoreKey};
+/// # let key = StoreKey::generate().derive(Purpose::Database);
+/// # let database = postio_storage::Database::open("postio.db", &key)?;
 /// # let mut connection = database.connection()?;
 /// # let mailbox = MailboxId::new(1);
 /// # let status = MailboxStatus::new(Generation::new(1));

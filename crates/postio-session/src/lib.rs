@@ -118,15 +118,7 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
     }
 }
 
-/// The keyring entry the store's master key lives under.
-///
-/// Not an address, and it cannot become one: there is no `@` in it, so it
-/// can never collide with an account's own entry however many accounts an
-/// installation grows. Written out rather than derived from the store path
-/// because the key has to be findable by a person in `seahorse` when they
-/// want to know what Postio keeps — the label reads
-/// "Postio (local store encryption key)".
-pub const STORE_KEY_ENTRY: &str = "local store encryption key";
+pub use postio_storage::key::STORE_KEY_ENTRY;
 
 /// The master key this installation's store is encrypted under, minting one
 /// on first run.
@@ -388,18 +380,23 @@ pub fn open_store_at(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Database, BlobStore), String> {
-    // Taken and not yet used, deliberately and for one slice only. ADR 0014
-    // lands as three sequenced pieces: this one mints and reads the key
-    // (#299), #300 issues `PRAGMA key` with its database subkey, and #301
-    // takes the blob subkeys. Requiring it *here*, at the moment the store
-    // opens, is what makes "a locked keyring means the mail does not open"
-    // true before there is anything encrypted to protect — so the ordering
-    // is proven by the time it starts mattering, rather than bolted on
-    // afterwards by whoever is holding #300.
-    let _store_key = store_key;
+    // The database subkey. BLAKE3-derived from the master key, so the
+    // database, the blob contents and the blob ids are cryptographically
+    // separated without three keyring entries (ADR 0014 Q3). #301 takes the
+    // other two.
+    let database_key = store_key.derive(postio_storage::key::Purpose::Database);
     let path = path.into();
-    let database = match Database::open(&path) {
+    let database = match Database::open(&path, &database_key) {
         Ok(database) => database,
+        // A wrong key is its own sentence. `Error::WrongStoreKey` says the
+        // store belongs to another installation and is *intact*, where
+        // SQLite's own wording for the same condition is "file is not a
+        // database" — which would tell somebody their mail is corrupt when
+        // the only thing wrong is which key we offered.
+        Err(error @ postio_storage::Error::WrongStoreKey) => {
+            tracing::error!(path = %path.display(), "the store will not decrypt with this key");
+            return Err(format!("Postio could not unlock its local store. {error}"));
+        }
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store");
             // The sentence goes back to the caller as well as to the log,
@@ -488,11 +485,12 @@ pub fn end_session(database: &Database) {
 /// `messages_fts` did not exist on any real store and search had nothing to
 /// search — `postio-x4e`, and the ninth instance of `postio-bl2`.
 ///
-/// Message *bodies* are a separate matter: they live in the blob store, so no
-/// trigger can reach them and nothing here can either — this function has no
-/// blob store. `postio_sync::backfill::fetch_body` indexes each body as it
-/// lands, and [`index_local_bodies`] catches up whatever landed before that
-/// call existed (#327).
+/// Message *bodies* are a separate matter. They are compressed columns on the
+/// `messages` row (ADR 0020), so no trigger can reach them — a trigger would
+/// see the ciphertext of a zstd frame, not words to index.
+/// `postio_sync::backfill::fetch_body` indexes each body as it lands, and
+/// [`index_local_bodies`] catches up whatever landed before that call existed
+/// (#327).
 pub fn ensure_search_index(database: &Database) -> Result<(), Box<dyn std::error::Error>> {
     let connection = database.connection()?;
     postio_index::index::ensure_schema(&connection)?;
@@ -653,6 +651,61 @@ pub fn reclaim_orphaned_blobs(
     Ok(report)
 }
 
+/// Train a body-compression dictionary from the mail already on this machine,
+/// if the corpus has grown enough to be worth one. Answers whether it did.
+///
+/// # Why it is worth a pass of its own
+///
+/// Bodies compress about 1.57x on their own and about 2.19x against a
+/// dictionary trained on the mailbox they came from (ADR 0020) — mail from one
+/// correspondence is full of the same signatures, quoted headers and
+/// boilerplate. On the reference account that further quarter is most of a
+/// gigabyte, and it is unreachable until something calls
+/// [`postio_storage::body::train_dictionary`].
+///
+/// # Not on the startup path, and not on every start
+///
+/// It decompresses a few thousand bodies to train from, so it belongs on a
+/// worker beside [`index_local_bodies`]. And it asks
+/// [`postio_storage::body::should_train`] first, which holds it to ADR 0017's
+/// heuristic: train once, then again only when the corpus has grown tenfold.
+/// A pass that retrained on every start would leave a table of near-identical
+/// dictionaries that nothing may ever delete — rows name them, and the schema
+/// refuses to drop a dictionary a row names, because dropping one would take
+/// that message's text with it.
+///
+/// # Nothing is rewritten
+///
+/// A zstd frame can only be read with the dictionary it was written against,
+/// so every body already stored keeps naming whatever it was written against
+/// and goes on reading. Only writes after this use the new one. Rewriting the
+/// mailbox to recompress it would be hours of somebody's disk to save a
+/// fraction of a gigabyte, against a non-zero chance of losing a message.
+pub fn train_body_dictionary(database: &Database) -> Result<bool, Box<dyn std::error::Error>> {
+    let connection = database.connection()?;
+    if !postio_storage::body::should_train(&connection)? {
+        tracing::debug!("the body corpus has not grown enough to retrain a dictionary");
+        return Ok(false);
+    }
+
+    // The write is one small row, but the read that precedes it is the whole
+    // sample. Take the permit from the background lane so a keystroke's flag
+    // write goes first.
+    let _permit = connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Background);
+    let Some(dictionary) = postio_storage::body::train_dictionary(&connection)? else {
+        return Ok(false);
+    };
+
+    // An id, and nothing about what it was trained on.
+    tracing::info!(
+        dictionary = dictionary.get(),
+        "trained a body compression dictionary"
+    );
+    Ok(true)
+}
+
 /// Delete leftover `.part` files from fetches that never finished. Answers how
 /// many.
 ///
@@ -674,8 +727,8 @@ pub fn purge_fetch_debris(blobs: &BlobStore) -> Result<usize, Box<dyn std::error
 /// How many bodies one pass of [`index_local_bodies`] reads before letting go
 /// of its connection.
 ///
-/// The pass holds a pooled connection and reads a blob per message, and the
-/// rest of the application shares that pool. Batching bounds how long any one
+/// The pass holds a pooled connection and decompresses a body per message,
+/// and the rest of the application shares that pool. Batching bounds how long any one
 /// checkout lasts without making the pass itself stop early: it keeps taking
 /// batches until there is nothing left.
 const INDEX_BODY_BATCH: u32 = 200;
@@ -712,19 +765,16 @@ const INDEX_BODY_BREATHER: Duration = Duration::from_millis(25);
 ///
 /// # Not on the startup path
 ///
-/// The first run over an existing archive reads a blob per message, which is
-/// minutes of I/O on a large one. Callers must put this on a worker — the
-/// application spawns it on the runtime after the window is up — because a
-/// mail client that will not draw until its search index is warm has traded
-/// the wrong thing for search.
+/// The first run over an existing archive reads and decompresses a body per
+/// message, which is minutes of work on a large one. Callers must put this on
+/// a worker — the application spawns it on the runtime after the window is up
+/// — because a mail client that will not draw until its search index is warm
+/// has traded the wrong thing for search.
 ///
 /// Errors on one message are logged and skipped rather than abandoning the
-/// pass: one unreadable blob should cost that message its body search, not
+/// pass: one unreadable body should cost that message its body search, not
 /// every message after it.
-pub fn index_local_bodies(
-    database: &Database,
-    blobs: &BlobStore,
-) -> Result<usize, Box<dyn std::error::Error>> {
+pub fn index_local_bodies(database: &Database) -> Result<usize, Box<dyn std::error::Error>> {
     let mut indexed = 0usize;
     let mut last_batch: Vec<i64> = Vec::new();
     loop {
@@ -749,24 +799,26 @@ pub fn index_local_bodies(
             break;
         }
 
-        // Read first, write after, in phases: the reads are a blob per
+        // Read first, write after, in phases: the reads decompress a body per
         // message and must not happen inside the write transaction below,
-        // where they would hold SQLite's one write lock through disk I/O
-        // that needs nothing of it.
+        // where they would hold SQLite's one write lock through work that
+        // needs nothing of it.
+        //
+        // One repository for the whole batch, deliberately: it caches the
+        // compression dictionary it loads, so a batch of two hundred bodies
+        // builds the decoding table once rather than two hundred times.
         let messages = postio_storage::repository::MessageRepository::new(&connection);
         let mut bodies: Vec<(i64, postio_model::MessageBody)> =
             Vec::with_capacity(candidates.len());
         for id in &candidates {
             let message = postio_model::MessageId::new(*id);
-            let body = match messages.body_blobs(message) {
+            let body = match messages.body(message) {
                 Ok(Some(stored)) => postio_model::MessageBody {
-                    text: stored.text.and_then(|id| read_text(blobs, &id)),
-                    html: stored.html.and_then(|id| read_text(blobs, &id)),
+                    text: stored.text,
+                    html: stored.html,
                 },
-                // The row says its body is local and it names no blobs. That
-                // is a message that genuinely had none -- a header-only
-                // notification, say -- and the empty index row it gets below
-                // is how it stops being asked about on every start.
+                // No such row any more -- expunged between the candidate query
+                // and here. Nothing to index.
                 Ok(None) => postio_model::MessageBody::default(),
                 Err(error) => {
                     tracing::debug!(message = id, %error, "cannot read a body to index");
@@ -803,10 +855,10 @@ pub fn index_local_bodies(
             break;
         }
         // Let go of the machine between batches. The pass runs at start on a
-        // worker while the window is already live; without a pause it reads
-        // blobs and writes the index as fast as the disk allows, and the
-        // search this index exists to serve pays for that in evicted cache
-        // and queued reads (#500).
+        // worker while the window is already live; without a pause it
+        // decompresses bodies and writes the index as fast as the machine
+        // allows, and the search this index exists to serve pays for that in
+        // evicted cache and queued reads (#500).
         std::thread::sleep(INDEX_BODY_BREATHER);
     }
     if indexed > 0 {
@@ -814,11 +866,6 @@ pub fn index_local_bodies(
         tracing::info!(indexed, "indexed bodies that were already local");
     }
     Ok(indexed)
-}
-
-/// One body blob as text, or nothing if it cannot be read or is not UTF-8.
-fn read_text(blobs: &BlobStore, id: &postio_model::BlobId) -> Option<String> {
-    String::from_utf8(blobs.get(id).ok()?).ok()
 }
 
 /// The account to open, if the store holds one.

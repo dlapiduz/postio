@@ -68,7 +68,9 @@ pub use self::message::{
     FlagUpdate, MailboxEvent, MailboxFilter, MailboxStatus, MailboxSummary, PartNode, SelectMode,
     UidMapping,
 };
-pub use self::mock::{Fault, MockBackend, MockBackendBuilder, MockMailbox, MockMessage};
+pub use self::mock::{
+    Fault, FetchEvent, MockBackend, MockBackendBuilder, MockMailbox, MockMessage,
+};
 pub use self::sink::{BodySink, CountingSink, VecSink};
 pub use self::uid_set::UidSet;
 

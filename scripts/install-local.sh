@@ -7,6 +7,9 @@
 #   scripts/install-local.sh              # build --release and install
 #   scripts/install-local.sh --uninstall  # remove exactly what was installed
 #
+# It checks the build dependencies before starting the compile and names every
+# missing one at once; POSTIO_SKIP_DEP_CHECK=1 goes ahead regardless.
+#
 # Everything lands under ~/.local (or $XDG_DATA_HOME/$PREFIX if set), which
 # every desktop following the XDG spec already searches. For the sandboxed
 # route, see flatpak/README.md instead.
@@ -43,6 +46,86 @@ if [[ "${1:-}" == "--uninstall" ]]; then
     refresh_caches
     echo "Postio removed from $prefix and $data_home."
     exit 0
+fi
+
+check_build_dependencies() {
+    local missing_modules=() missing_libraries=() lines=() module library
+
+    if ! command -v perl >/dev/null 2>&1; then
+        lines+=("  perl itself — OpenSSL's \`Configure\` is a perl program")
+    else
+        for module in "${PERL_MODULES[@]}"; do
+            perl "-M$module" -e1 >/dev/null 2>&1 || missing_modules+=("$module")
+        done
+    fi
+
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        lines+=("  pkg-config — nothing can find the GTK libraries without it")
+    else
+        for library in "${PKG_CONFIG_LIBS[@]}"; do
+            pkg-config --exists "$library" || missing_libraries+=("$library")
+        done
+    fi
+
+    if [ ${#missing_modules[@]} -gt 0 ]; then
+        lines+=("  perl modules: ${missing_modules[*]}")
+    fi
+    if [ ${#missing_libraries[@]} -gt 0 ]; then
+        lines+=("  libraries: ${missing_libraries[*]}")
+    fi
+    if [ ${#lines[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    {
+        echo "Postio cannot be built here yet. Missing:"
+        echo
+        printf '%s\n' "${lines[@]}"
+        echo
+        if [ ${#missing_modules[@]} -gt 0 ]; then
+            echo "The perl modules are for OpenSSL: the store is SQLCipher and its"
+            echo "OpenSSL is compiled from source (ADR 0014), by a \`Configure\`"
+            echo "written in perl. Distributions that split the perl standard"
+            echo "library into packages ship none of them by default."
+            echo
+            # Fedora's package for a perl module is its name with `::`
+            # hyphenated, which is mechanical enough to print. Every other
+            # distribution has its own spelling, so this says whose command it is.
+            local packages=()
+            for module in "${missing_modules[@]}"; do
+                packages+=("perl-${module//::/-}")
+            done
+            echo "On Fedora: sudo dnf install ${packages[*]}"
+        fi
+        if [ ${#missing_libraries[@]} -gt 0 ]; then
+            echo "On Fedora, each library is a \`-devel\` package: see README.md."
+        fi
+        echo "Elsewhere, install your distribution's package for each name above."
+        echo
+        echo "README.md (\"System dependencies\") lists the whole set, for Fedora"
+        echo "and for Debian/Ubuntu."
+        echo
+        echo "Set POSTIO_SKIP_DEP_CHECK=1 to build anyway if this check is wrong"
+        echo "about your machine."
+    } >&2
+    exit 1
+}
+
+# Checked here rather than discovered by the compiler, because the compiler
+# discovers them one build at a time: OpenSSL's `Configure` stops at the first
+# `Can't locate X.pm in @INC` it hits, several minutes into a release build,
+# and the next module is only found by the next build. Six modules were six
+# failed builds (#646). Probing costs milliseconds and answers in one go.
+PERL_MODULES=(FindBin IPC::Cmd Pod::Html Digest::SHA Text::Template Time::Piece)
+# The three top-level libraries the app links. Each names glib, pango and
+# gdk-pixbuf in its own `Requires:`, so pkg-config resolves those transitively
+# — listing them here would only add names a distribution might spell
+# differently. SQLite is deliberately absent: rusqlite bundles SQLCipher, so
+# no system sqlite3 is involved in a build.
+PKG_CONFIG_LIBS=(gtk4 libadwaita-1 webkitgtk-6.0)
+
+if [ -z "${POSTIO_SKIP_DEP_CHECK:-}" ]; then
+    check_build_dependencies
 fi
 
 echo "Building postio (release) — the first build takes a while..."

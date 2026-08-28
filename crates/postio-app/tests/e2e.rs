@@ -362,7 +362,12 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         );
     }
 
-    // The engine and window run until the process ends, like the binary; the
-    // server's runtime must not block teardown on its live sessions.
+    // The engine and window run until the end, like the binary — and like the
+    // binary, the engine is stopped before the process exits rather than left
+    // writing into libraries that are being torn down. `postio_app::run` calls
+    // this in the same place, right after the GTK loop returns.
+    postio_runtime::stop_retained();
+
+    // The server's runtime must not block teardown on its live sessions.
     server_runtime.shutdown_background();
 }

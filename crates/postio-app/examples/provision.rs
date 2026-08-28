@@ -118,7 +118,20 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let database = match Database::open(&store_path) {
+    // The store is encrypted under the keyring's key (ADR 0014), so
+    // provisioning an account needs it exactly as the application does.
+    let secrets = postio_imap::secret::KeyringSecretStore::default();
+    let store_key = match postio_session::store_key_blocking(&secrets) {
+        Ok(key) => key,
+        Err(error) => {
+            eprintln!("postio: cannot read the store key (is the keyring unlocked?): {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let database = match Database::open(
+        &store_path,
+        &store_key.derive(postio_storage::key::Purpose::Database),
+    ) {
         Ok(database) => database,
         Err(error) => {
             eprintln!("postio: cannot open the store: {error}");

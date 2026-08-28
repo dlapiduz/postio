@@ -105,6 +105,36 @@ pub enum Error {
         reason: String,
     },
 
+    /// The database will not decrypt under the key it was given.
+    ///
+    /// The store belongs to a different installation, or the keyring entry has
+    /// been replaced or was written by something else. **The database is not
+    /// damaged** — it is intact and locked, and the right key still opens it.
+    ///
+    /// A variant of its own rather than the `SQLITE_NOTADB` this is made from,
+    /// because SQLite's own wording for a wrong key is "file is not a
+    /// database", which tells a user their mail is corrupt. That sentence
+    /// reaches a screen (#404), and it would be a lie.
+    #[error(
+        "the local store will not open with this key: it belongs to another \
+         installation, or the keyring entry has been replaced. The database \
+         itself is intact"
+    )]
+    WrongStoreKey,
+
+    /// A stored message body could not be compressed or read back.
+    ///
+    /// The row and this build disagree about what is in the column: a frame
+    /// that will not decode, a dictionary the database does not have, or bytes
+    /// that are not UTF-8. Deliberately loud rather than an empty body — a
+    /// reading pane that renders nothing looks the same as a message that had
+    /// nothing in it, and those are opposite facts (#70).
+    #[error("a stored message body could not be decoded: {reason}")]
+    UnreadableBody {
+        /// What about it could not be decoded.
+        reason: String,
+    },
+
     /// The blob store has no blob under this key.
     #[error("no blob stored under `{id}`")]
     BlobNotFound {
