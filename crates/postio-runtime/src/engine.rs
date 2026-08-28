@@ -33,7 +33,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -275,13 +275,153 @@ enum Job {
     },
 }
 
+/// Engines the application keeps running for the whole session.
+///
+/// The application used to `Box::leak` each engine, on the reasoning that it
+/// lives as long as the process and "dropping it at exit would stop the
+/// engine a moment before the process ends anyway". That reasoning was sound
+/// until the store became SQLCipher; now the moment before the process ends
+/// is exactly when libcrypto goes away underneath a thread that is still
+/// encrypting a page. See [`EngineThread`].
+///
+/// So they are retained here instead, where [`stop_retained`] can reach them.
+static RETAINED: Mutex<Vec<Engine>> = Mutex::new(Vec::new());
+
+/// Keep `engine` alive for the session, and reachable by [`stop_retained`].
+pub fn retain(engine: Engine) {
+    RETAINED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(engine);
+}
+
+/// Stop every retained engine and wait for its thread. Call before exiting.
+///
+/// Idempotent, and a no-op in a process that retained none — which is every
+/// test that builds its own engine and drops it.
+pub fn stop_retained() {
+    let engines = std::mem::take(
+        &mut *RETAINED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    if engines.is_empty() {
+        return;
+    }
+    tracing::debug!(count = engines.len(), "stopping the sync engines");
+    for engine in &engines {
+        engine.stop();
+    }
+}
+
 /// A handle to the sync engine.
 ///
 /// Cloning gives another handle to the same thread. Dropping every handle
-/// stops it.
+/// stops it — and **waits for it to stop**, which is the part that matters.
+/// See [`EngineThread`].
 #[derive(Debug, Clone)]
 pub struct Engine {
+    /// Declared first, so it drops first: closing the channel is what tells
+    /// the thread to finish, and [`EngineThread`] is what then waits for it.
+    /// Reordering these two fields reintroduces a deadlock.
     jobs: async_channel::Sender<Job>,
+    /// Never read. Held so that the last handle to go joins the thread, which
+    /// is entirely a `Drop` effect — see [`EngineThread`].
+    #[allow(dead_code)]
+    thread: Arc<EngineThread>,
+}
+
+/// The engine's thread, joined when the last [`Engine`] handle goes.
+///
+/// # Why this is not a detached thread
+///
+/// It was one. `Engine::spawn` started a thread and dropped its
+/// `JoinHandle`, so nothing could wait for it even in principle — and
+/// `exit()` does not stop threads, it runs the process's exit handlers and
+/// then kills it. A sync pass still committing at that moment kept writing
+/// while the libraries underneath it were being torn down.
+///
+/// That was survivable until the store became SQLCipher. Encrypting a page
+/// goes through libcrypto, and libcrypto is finalized by those same exit
+/// handlers, so the window turned into a reproducible coredump:
+///
+/// ```text
+/// thread A: exit() -> __run_exit_handlers -> (libcrypto goes away)
+/// thread B: sqlcipher_page_cipher -> walWriteOneFrame
+///           -> sqlite3PagerCommitPhaseOne -> SyncStateRepository::observe
+/// ```
+///
+/// No mail was lost — a torn WAL frame is what recovery is for — but the
+/// process died on the way out, in the tests about half the time and in the
+/// application whenever somebody quit mid-sync.
+///
+/// # Bounded, because `Drop` runs on somebody else's thread
+///
+/// The last handle usually goes on the GTK main loop, and a shutdown that
+/// blocks it for as long as a stalled network read is a worse bug than the
+/// one being fixed. So this waits [`SHUTDOWN_GRACE`] for the thread to
+/// finish whatever job it was on and gives up otherwise, saying so. Giving
+/// up is the old behaviour, which is the right thing to degrade to.
+#[derive(Debug)]
+struct EngineThread {
+    handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+/// How long dropping the last [`Engine`] waits for its thread to stop.
+///
+/// The loop notices a closed channel at its next `select!`, so in practice
+/// this is the tail of one in-flight job and expires in microseconds. The
+/// bound is for the case where that job is waiting out a network read.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+impl EngineThread {
+    /// Wait for the thread to stop, up to [`SHUTDOWN_GRACE`], and join it.
+    ///
+    /// Idempotent: the handle is taken out, so a second call has nothing left
+    /// to wait for. That is what lets [`Engine::stop`] and this type's `Drop`
+    /// both be correct without either having to know about the other.
+    ///
+    /// The caller must have closed the job channel first, or there is nothing
+    /// telling the thread to finish and this simply spends the grace period.
+    fn join_bounded(&self) {
+        let Some(handle) = self
+            .handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
+            return;
+        };
+
+        // The engine dropping its own handle. Joining here would be a thread
+        // waiting on itself, which never returns.
+        if handle.thread().id() == std::thread::current().id() {
+            return;
+        }
+
+        let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
+        while !handle.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        if handle.is_finished() {
+            let _ = handle.join();
+        } else {
+            // Detached again, deliberately: a stalled engine must not hold the
+            // window shut. This is the state everything was in before the
+            // handle was kept, so the risk is the one that was always there.
+            tracing::warn!(
+                "the sync engine did not stop within {SHUTDOWN_GRACE:?}; leaving it running"
+            );
+        }
+    }
+}
+
+impl Drop for EngineThread {
+    fn drop(&mut self) {
+        // The last handle went, so the sender went with it and the channel is
+        // closed. See `Engine`'s field order for why that is already true.
+        self.join_bounded();
+    }
 }
 
 impl fmt::Debug for Job {
@@ -319,12 +459,37 @@ impl Engine {
         let (jobs, inbox) = async_channel::unbounded::<Job>();
         let pool = parts.database.pool().clone();
 
-        std::thread::Builder::new()
+        // The handle is kept, not dropped. See `EngineThread` for the
+        // coredump that came of dropping it.
+        let handle = std::thread::Builder::new()
             .name("postio-sync".to_string())
             .spawn(move || run(parts, pool, inbox))
             .map_err(|error| EngineError::new(format!("the sync engine did not start: {error}")))?;
 
-        Ok(Engine { jobs })
+        Ok(Engine {
+            jobs,
+            thread: Arc::new(EngineThread {
+                handle: Mutex::new(Some(handle)),
+            }),
+        })
+    }
+
+    /// Stop the engine and wait for its thread, whatever else still holds a
+    /// handle.
+    ///
+    /// `Drop` covers the ordinary case — the last handle goes and the thread
+    /// is joined — but the application keeps handles that outlive any scope,
+    /// in `Wiring` and in the retained list, precisely so the engine runs for
+    /// the whole session. Nothing drops those, so nothing would join the
+    /// thread, and the process would exit with a sync pass still writing. See
+    /// [`EngineThread`] for what that costs now that pages are encrypted.
+    ///
+    /// Idempotent, and safe to call from any thread except the engine's own.
+    pub fn stop(&self) {
+        // Close first: this is what makes the loop's `recv` return, and
+        // without it the wait below just spends its grace period.
+        self.jobs.close();
+        self.thread.join_bounded();
     }
 
     /// Send everything the queue is holding for `account`.

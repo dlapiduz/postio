@@ -54,5 +54,8 @@ rusqlite = { version = "0.40.2", features = [
     "trace",
 ] }
 
-[lints]
-workspace = true
+[lints.rust]
+# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
+# One FFI call in `db.rs` stops libcrypto registering an `atexit` handler.
+unsafe_code = "deny"
+missing_docs = "warn"
