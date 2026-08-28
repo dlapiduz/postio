@@ -26,6 +26,16 @@ public protocol MessageRowSource: AnyObject {
     /// redraw, on the main thread. `nil` means draw a placeholder; the page is
     /// already being fetched by the time this returns.
     func row(at position: UInt32) -> RowFfi?
+
+    /// The search excerpt for a message, when the list is showing results.
+    ///
+    /// Defaulted, because a source that only ever lists a folder has nothing
+    /// to say here and should not have to write `nil` to say it.
+    func snippet(for message: Int64) -> SnippetFfi?
+}
+
+public extension MessageRowSource {
+    func snippet(for message: Int64) -> SnippetFfi? { nil }
 }
 
 /// A row source backed by the engine.
@@ -39,6 +49,8 @@ public final class SessionRowSource: MessageRowSource {
     public var rowCount: UInt32 { session.rowCount }
 
     public func row(at position: UInt32) -> RowFfi? { session.row(at: position) }
+
+    public func snippet(for message: Int64) -> SnippetFfi? { session.snippet(for: message) }
 }
 
 /// What one row shows, once the decisions are made.

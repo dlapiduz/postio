@@ -67,6 +67,35 @@ public final class PostioSession {
     /// thousand rows are a number here, never a hundred thousand structs.
     public var rowCount: UInt32 { inner.rowCount() }
 
+    /// Run `query`, and answer the generation the list is now on.
+    ///
+    /// Swift parses none of it. `is:unread`, `from:`, a date range — the query
+    /// language is `postio-search`'s on both platforms, because a second parser
+    /// wearing the same syntax would accept different queries and nobody would
+    /// notice until one of them refused something the other took.
+    ///
+    /// Synchronous: the index is local and the budget is under 100 ms. This is
+    /// the one shape of engine call the UI is allowed to wait on, and only
+    /// because it never touches the network.
+    @discardableResult
+    public func search(_ query: String) -> UInt64 { inner.search(query: query) }
+
+    /// Put the folder that was open back in the list.
+    ///
+    /// The engine remembers which one, so clearing costs a count rather than a
+    /// reload of the world — and the frontend does not hold navigation state
+    /// that the GTK side would then hold differently.
+    @discardableResult
+    public func clearSearch() -> UInt64 { inner.clearSearch() }
+
+    /// A hit's excerpt and the ranges within it that matched.
+    ///
+    /// `nil` for a row that is not a search hit, and for a hit whose body is
+    /// not on this machine — no excerpt rather than a wrong one.
+    public func snippet(for message: Int64) -> SnippetFfi? {
+        inner.searchSnippet(message: message)
+    }
+
     /// The row at `position`, or `nil` while its page is on its way.
     ///
     /// Synchronous and does no I/O. A `nil` means draw a placeholder — the

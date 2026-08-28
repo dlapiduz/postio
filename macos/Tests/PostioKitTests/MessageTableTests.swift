@@ -164,3 +164,63 @@ struct MessageTableTests {
         #expect(!rendered.subject.contains("First"))
     }
 }
+
+/// The excerpt a search row draws, and the reuse hazard around it.
+@MainActor
+@Suite("Search excerpts in the list")
+struct MessageTableExcerptTests {
+    /// A source that lists rows and answers excerpts for some of them.
+    private final class Searching: MessageRowSource {
+        let rowCount: UInt32 = 3
+        var snippets: [Int64: SnippetFfi] = [:]
+
+        func row(at position: UInt32) -> RowFfi? {
+            makeRow(id: Int64(position) + 1)
+        }
+
+        func snippet(for message: Int64) -> SnippetFfi? { snippets[message] }
+    }
+
+    @Test("a row with no excerpt draws none")
+    func noExcerpt() {
+        let controller = MessageTableController(source: Searching())
+        #expect(controller.excerpt(at: 0) == nil)
+    }
+
+    @Test("a hit's excerpt comes back marked")
+    func markedExcerpt() {
+        let source = Searching()
+        source.snippets[1] = SnippetFfi(
+            text: "the quarterly numbers",
+            ranges: [MatchRangeFfi(start: 4, end: 13)]
+        )
+        let controller = MessageTableController(source: source)
+        let excerpt = controller.excerpt(at: 0)
+        #expect(excerpt != nil)
+        #expect(SearchHighlight.markedSubstrings(of: excerpt!) == ["quarterly"])
+    }
+
+    @Test("an empty excerpt is nothing to draw, not an empty line")
+    func emptyExcerpt() {
+        // What a hit with no local body answers. Drawing an empty attributed
+        // string would leave a blank row where the message's own preview
+        // should still be.
+        let source = Searching()
+        source.snippets[1] = SnippetFfi(text: "", ranges: [])
+        let controller = MessageTableController(source: source)
+        #expect(controller.excerpt(at: 0) == nil)
+    }
+
+    @Test("a reused cell does not keep the previous row's highlighting")
+    func reuseClearsTheExcerpt() {
+        // The recycled-cell bug, in the one field that carries query state.
+        // Row 2 has no excerpt; if `show` did not clear it, row 2 would draw
+        // row 1's highlighted text.
+        let cell = MessageRowCell()
+        cell.show(RowPresentation(row: makeRow(preview: "first")))
+        cell.markedExcerpt = AttributedString("quarterly")
+        cell.show(RowPresentation(row: makeRow(preview: "second")))
+        #expect(cell.markedExcerpt == nil)
+        #expect(cell.renderedForTesting.preview == "second")
+    }
+}

@@ -17,6 +17,7 @@ struct Shell: View {
     @State private var engine: Engine
     @State private var selectedFolder: Int64?
     @State private var showing: Int64?
+    @State private var query = ""
     /// The folder that was open. Application state rather than window state —
     /// it is about the account, not the window — but stored with the scene
     /// because that is where a scene's restoration lives.
@@ -66,6 +67,19 @@ struct Shell: View {
             reader
         }
         .navigationTitle("Postio")
+        // The native search field, in the toolbar where macOS puts it. The
+        // query language is the engine's; this is a text box.
+        .searchable(
+            text: $query,
+            placement: .toolbar,
+            prompt: "Search mail"
+        )
+        .onChange(of: query) { _, typed in engine.search(typed) }
+        .onChange(of: engine.query) { _, engineQuery in
+            // The engine drops the query when a folder is chosen. Following it
+            // here keeps the field from showing a search that is no longer on.
+            if engineQuery.isEmpty, !query.isEmpty { query = "" }
+        }
         // A notification click. The engine has already switched the list to
         // the folder; the sidebar selection and the reader follow so that all
         // three panes agree about what is being shown.
@@ -96,11 +110,22 @@ struct Shell: View {
                 // Empty is a state, not a blank. A list showing nothing and a
                 // list that failed to load look identical otherwise, and only
                 // one of them is worth waiting for.
-                ContentUnavailableView(
-                    "No messages",
-                    systemImage: "tray",
-                    description: Text("This store has no mail in it yet.")
-                )
+                if engine.isSearching {
+                    // A different sentence from an empty folder, because they
+                    // are different situations and only one of them is fixed
+                    // by typing something else.
+                    ContentUnavailableView(
+                        "No results",
+                        systemImage: "magnifyingglass",
+                        description: Text("Nothing here matches \(engine.query).")
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No messages",
+                        systemImage: "tray",
+                        description: Text("This store has no mail in it yet.")
+                    )
+                }
             } else {
                 MessageListView(controller: controller)
                     .onAppear { controller.onCursorChanged = { showing = $0 } }

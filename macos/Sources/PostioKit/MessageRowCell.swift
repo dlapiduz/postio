@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 
 /// One row of the message list.
 ///
@@ -79,6 +80,19 @@ public final class MessageRowCell: NSTableCellView {
         (sender.stringValue, subject.stringValue, preview.stringValue)
     }
 
+    /// The search excerpt, marked, when this row is a hit.
+    ///
+    /// Set after [`show`](showself), which clears it — the excerpt depends on
+    /// the query and the preview does not, so they arrive from different
+    /// places and the reset has to live with the rest of them.
+    public var markedExcerpt: AttributedString? {
+        didSet {
+            guard let markedExcerpt else { return }
+            preview.attributedStringValue = NSAttributedString(markedExcerpt)
+            preview.isHidden = false
+        }
+    }
+
     /// Draw `presentation`.
     ///
     /// Every field is set on every call, including to its empty value. A cell
@@ -90,6 +104,10 @@ public final class MessageRowCell: NSTableCellView {
         subject.stringValue = presentation.subject
         preview.stringValue = presentation.preview
         preview.isHidden = presentation.preview.isEmpty
+        // Reset on every call, like every other field: a reused cell that kept
+        // the previous row's marked excerpt would highlight a word this row
+        // does not contain.
+        markedExcerpt = nil
 
         unreadDot.isHidden = !presentation.unread
         flag.isHidden = !presentation.flagged
