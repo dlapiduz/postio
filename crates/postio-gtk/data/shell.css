@@ -718,7 +718,12 @@ button.postio-compose {
 /* Unified takes no account's colour: it is every account rather than one, so
  * a swatch there would claim an identity it does not have. The element stays
  * so every row's text starts at the same x. */
-.postio-account-swatch-none {
+.postio-account-swatch.postio-account-swatch-none {
+  /* Two class selectors, matching the `.postio-account-N` rules below and for
+   * the same reason: `.postio-account-swatch` carries a default background and
+   * is written later in this file, so a single-class rule here loses the
+   * cascade to it on equal specificity and Unified drew account 0's hue --
+   * claiming exactly the identity the comment above says it must not. */
   background: transparent;
 }
 
