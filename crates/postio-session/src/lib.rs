@@ -654,6 +654,61 @@ pub fn reclaim_orphaned_blobs(
     Ok(report)
 }
 
+/// Train a body-compression dictionary from the mail already on this machine,
+/// if the corpus has grown enough to be worth one. Answers whether it did.
+///
+/// # Why it is worth a pass of its own
+///
+/// Bodies compress about 1.57x on their own and about 2.19x against a
+/// dictionary trained on the mailbox they came from (ADR 0020) — mail from one
+/// correspondence is full of the same signatures, quoted headers and
+/// boilerplate. On the reference account that further quarter is most of a
+/// gigabyte, and it is unreachable until something calls
+/// [`postio_storage::body::train_dictionary`].
+///
+/// # Not on the startup path, and not on every start
+///
+/// It decompresses a few thousand bodies to train from, so it belongs on a
+/// worker beside [`index_local_bodies`]. And it asks
+/// [`postio_storage::body::should_train`] first, which holds it to ADR 0017's
+/// heuristic: train once, then again only when the corpus has grown tenfold.
+/// A pass that retrained on every start would leave a table of near-identical
+/// dictionaries that nothing may ever delete — rows name them, and the schema
+/// refuses to drop a dictionary a row names, because dropping one would take
+/// that message's text with it.
+///
+/// # Nothing is rewritten
+///
+/// A zstd frame can only be read with the dictionary it was written against,
+/// so every body already stored keeps naming whatever it was written against
+/// and goes on reading. Only writes after this use the new one. Rewriting the
+/// mailbox to recompress it would be hours of somebody's disk to save a
+/// fraction of a gigabyte, against a non-zero chance of losing a message.
+pub fn train_body_dictionary(database: &Database) -> Result<bool, Box<dyn std::error::Error>> {
+    let connection = database.connection()?;
+    if !postio_storage::body::should_train(&connection)? {
+        tracing::debug!("the body corpus has not grown enough to retrain a dictionary");
+        return Ok(false);
+    }
+
+    // The write is one small row, but the read that precedes it is the whole
+    // sample. Take the permit from the background lane so a keystroke's flag
+    // write goes first.
+    let _permit = connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Background);
+    let Some(dictionary) = postio_storage::body::train_dictionary(&connection)? else {
+        return Ok(false);
+    };
+
+    // An id, and nothing about what it was trained on.
+    tracing::info!(
+        dictionary = dictionary.get(),
+        "trained a body compression dictionary"
+    );
+    Ok(true)
+}
+
 /// Delete leftover `.part` files from fetches that never finished. Answers how
 /// many.
 ///

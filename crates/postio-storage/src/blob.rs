@@ -1,11 +1,16 @@
 //! The content-addressed blob store.
 //!
-//! SQLite holds metadata; the bytes live here. A message's raw RFC 5322 source,
-//! its decoded bodies and its attachment payloads are written to a file named
-//! after the BLAKE3 digest of its content, and the database keeps only the
-//! digest. That is what keeps the database small enough to meet the `<100 ms`
-//! search and `<16 ms` interaction budgets in CLAUDE.md — the message list pages
-//! through rows of a few hundred bytes, not through inboxes of PDFs.
+//! A message's raw RFC 5322 source and its attachment payloads are written to
+//! a file named after the BLAKE3 digest of its content, and the database keeps
+//! only the digest. That is what keeps the database small enough to meet the
+//! `<100 ms` search and `<16 ms` interaction budgets in CLAUDE.md — the message
+//! list pages through rows of a few hundred bytes, not through inboxes of PDFs.
+//!
+//! **Message bodies are not here.** They are compressed columns on the
+//! `messages` row (ADR 0020): the median body is 325 bytes, identical bodies
+//! are rare, and a file per body would leak its size and its mtime whatever
+//! the contents were encrypted with. Everything below is about attachments and
+//! raw messages, which are none of those things.
 //!
 //! # Why content addressing
 //!
@@ -205,8 +210,9 @@ impl BlobStore {
 
     /// Reads a whole blob into memory.
     ///
-    /// For a body or a header block, which is what the reading pane wants. Use
-    /// [`BlobStore::reader`] for anything that might be an attachment.
+    /// For a raw message the parser needs whole. Use [`BlobStore::reader`] for
+    /// anything that might be an attachment — a 30 MiB payload must never
+    /// exist whole in memory just to be handed to a viewer.
     pub fn get(&self, id: &BlobId) -> Result<Vec<u8>> {
         let path = self.path_of(id)?;
         let stored = std::fs::read(&path).map_err(|source| self.read_error(id, path, source))?;

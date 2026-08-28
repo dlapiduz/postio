@@ -114,8 +114,8 @@ const METADATA_SCHEMA_VERSION: i64 = 2;
 /// The body half's version: `message_bodies_fts` alone.
 ///
 /// **Kept separate deliberately.** Refilling the metadata half is cheap SQL;
-/// refilling this one means `index_local_bodies` re-reading every body blob
-/// on disk — minutes on a real archive, against a search that answers
+/// refilling this one means `index_local_bodies` re-reading and decompressing
+/// every body on disk — minutes on a real archive, against a search that answers
 /// metadata-only until it finishes. A metadata bump must never cost that,
 /// so this only moves when `message_bodies_fts` itself changes shape. On
 /// mismatch the table is dropped; the catch-up pass finds every message
