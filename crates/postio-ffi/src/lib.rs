@@ -37,11 +37,13 @@
 
 mod event;
 mod list;
+mod reader;
 mod registry;
 mod session;
 
 pub use event::UiEvent;
 pub use list::{RowFfi, ScopeFfi};
+pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
 pub use session::{Session, SessionError, SessionOptions};
 

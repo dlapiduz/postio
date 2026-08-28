@@ -25,6 +25,7 @@ testing = ["dep:tempfile", "postio-storage/test-support"]
 
 [dependencies]
 async-channel = "2.5.0"
+postio-body.workspace = true
 postio-core.workspace = true
 postio-imap.workspace = true
 postio-runtime.workspace = true
