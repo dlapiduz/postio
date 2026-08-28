@@ -105,7 +105,11 @@ fn build_corpus() -> Corpus {
     let directory = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("search-under-load-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a bench scratch directory");
-    let database = Database::open(directory.join("postio.db")).expect("a bench store");
+    // The fixed test key, so the bench measures the encrypted store the
+    // application actually runs (ADR 0014): every page read here costs a
+    // decrypt, which is precisely what the budget has to survive.
+    let database =
+        Database::open(directory.join("postio.db"), &test_support::key()).expect("a bench store");
     let connection = database.connection().expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection);

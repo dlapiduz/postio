@@ -53,7 +53,9 @@
 //! let id = store.put(b"raw message bytes")?;
 //! assert_eq!(store.get(&id)?, b"raw message bytes");
 //!
-//! let database = postio_storage::Database::open("postio.db")?;
+//! # use postio_storage::key::{Purpose, StoreKey};
+//! # let key = StoreKey::generate().derive(Purpose::Database);
+//! let database = postio_storage::Database::open("postio.db", &key)?;
 //! let connection = database.connection()?;
 //! let report = store.collect_garbage(&connection, GarbageCollection::default())?;
 //! eprintln!("reclaimed {} bytes", report.bytes_reclaimed);

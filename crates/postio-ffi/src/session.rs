@@ -347,11 +347,21 @@ impl Session {
         if options.in_memory {
             let database = match options.seeded {
                 Some(database) => database,
-                None => postio_storage::Database::open_in_memory().map_err(|error| {
-                    SessionError::StoreUnavailable {
-                        message: error.to_string(),
-                    }
-                })?,
+                None => {
+                    // A fresh key per session, from the OS RNG. The database
+                    // lives and dies inside this process, so there is nothing
+                    // to reopen it with later — and an in-memory session still
+                    // runs the encrypted path, which is the whole point of ADR
+                    // 0014 Q3's "nothing tests a plaintext configuration that
+                    // no longer ships". No keyring is touched.
+                    let key = postio_storage::key::StoreKey::generate()
+                        .derive(postio_storage::key::Purpose::Database);
+                    postio_storage::Database::open_in_memory(&key).map_err(|error| {
+                        SessionError::StoreUnavailable {
+                            message: error.to_string(),
+                        }
+                    })?
+                }
             };
             let (blobs, scratch) = match options.seeded_blobs {
                 Some((blobs, scratch)) => (blobs, scratch),

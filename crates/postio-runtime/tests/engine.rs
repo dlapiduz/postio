@@ -1787,23 +1787,26 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
         .expect("the engine answers");
     assert!(asked, "there is a payload on the server to ask for");
 
-    let blob = until_some(&database, "the payload land", |_| {
-        attachment_blob(&database, message)
+    // The state, not the blob that precedes it: `fetch_payloads` writes the
+    // attachment's blob id and the message's `body_state` separately, so a
+    // read taken between the two sees `Partial` for a payload that is already
+    // on disk. See the note in `eager_drains_the_payloads_with_nobody_asking`.
+    let row = until_some(&database, "the payload land and settle", |connection| {
+        let row = postio_storage::repository::MessageRepository::new(connection)
+            .get(message)
+            .ok()??;
+        (row.sync.body_state == postio_model::BodyState::Full).then_some(row)
     })
     .await;
 
-    let connection = database.connection().expect("checkout");
-    let row = postio_storage::repository::MessageRepository::new(&connection)
-        .get(message)
-        .expect("get")
-        .expect("row");
-    assert_eq!(
-        row.sync.body_state,
-        postio_model::BodyState::Full,
+    assert!(
+        row.attachments[0].is_downloaded(),
         "every part is local now"
     );
-    assert!(row.attachments[0].is_downloaded());
-    let _ = blob;
+    assert!(
+        attachment_blob(&database, message).is_some(),
+        "and the blob it names is in the store"
+    );
     drop(engine);
 }
 
@@ -1818,21 +1821,30 @@ async fn eager_drains_the_payloads_with_nobody_asking() {
     });
     let message = the_synced_message(&database, account).await;
 
-    let blob = until_some(&database, "the payload land", |_| {
-        attachment_blob(&database, message)
+    // Wait for the state this asserts, not for the blob that precedes it.
+    //
+    // The payload's blob id and the message's `body_state` are two writes, not
+    // one: `fetch_payloads` records each part as it lands and only then
+    // re-reads the row to decide whether *every* part is local. So there is a
+    // window — microseconds wide, and real — where the attachment row names a
+    // blob and the message still says `Partial`. Waiting on the blob and then
+    // reading `body_state` in the next breath is a coin toss, and page
+    // encryption slowed the second write just enough to start losing it.
+    let settled = until_some(&database, "the payload land and settle", |connection| {
+        let row = postio_storage::repository::MessageRepository::new(connection)
+            .get(message)
+            .ok()??;
+        (row.sync.body_state == postio_model::BodyState::Full).then_some(row)
     })
     .await;
-    let _ = blob;
 
-    let connection = database.connection().expect("checkout");
-    assert_eq!(
-        postio_storage::repository::MessageRepository::new(&connection)
-            .get(message)
-            .expect("get")
-            .expect("row")
-            .sync
-            .body_state,
-        postio_model::BodyState::Full,
+    assert!(
+        settled.attachments[0].is_downloaded(),
+        "`full` means the payload is here, not merely asked for"
+    );
+    assert!(
+        attachment_blob(&database, message).is_some(),
+        "and the blob it names is in the store"
     );
     drop(engine);
 }
