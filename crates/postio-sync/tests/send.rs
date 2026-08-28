@@ -6,7 +6,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::{
-    Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget,
+    Account, Draft, DraftId, EmailAddress, Identity, MailboxId, Operation, OperationTarget,
     TransportSecurity, Uid,
 };
 use postio_smtp::transport::{ScriptedConnector, SmtpScript};
@@ -684,5 +684,202 @@ async fn a_rejected_send_credential_is_invalidated_once_and_retried_once() {
         tokens.invalidated.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "invalidated once, so the source knew to produce something else"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The commit point (ADR 0021, decision 2)
+// ---------------------------------------------------------------------------
+
+/// Queues a `Send` for `draft_id` without going through `queue_send`, so a
+/// test can put the draft in whatever state it wants to drain from.
+fn enqueue_send(connection: &Connection, account: postio_model::AccountId, draft_id: DraftId) {
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+}
+
+/// The crash case, from the side that decides it.
+///
+/// Before ADR 0021 the durable fact that stopped a resend was the *deletion
+/// of the draft row*, which is the second-to-last thing `file_sent_copy`
+/// does — behind `QUIT`, a whole `APPEND` of the message to the Sent
+/// mailbox, a blob write and three more writes. A process that died anywhere
+/// in that window came back to a draft that still existed and a `Send` still
+/// pending, and submitted the message a second time.
+///
+/// Now the draft is committed `Sent` the instant SMTP accepts, before any of
+/// that, so the drain that comes after the crash has something to read.
+#[tokio::test]
+async fn a_draft_already_accepted_is_never_submitted_again() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_sent(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = drafts.save(&mut draft).expect("save draft");
+    enqueue_send(&connection, account.id, draft_id);
+    // Exactly the state a crash between SMTP accepting and the `APPEND`
+    // leaves behind: the mark is committed, the filing never finished, and
+    // the row and its queued operation are both still here.
+    drafts
+        .set_state(draft_id, postio_model::DraftState::Sent)
+        .expect("the drainer's post-acceptance commit");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(&account).await;
+    // Would deliver, if anything asked it to. That is the point: the
+    // assertion below is about what did *not* happen, so the transport has
+    // to be one that would have succeeded.
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    assert_eq!(
+        report.obsolete, 1,
+        "an accepted send has nothing left to do: {report:?}"
+    );
+    assert_eq!(report.applied, 0);
+    assert!(report.failed.is_empty(), "{report:?}");
+
+    let log = connector.log();
+    assert!(
+        log.tcp.is_empty() && log.tls.is_empty(),
+        "nothing may reach a submission server for a message it already has: \
+         {log:?}"
+    );
+    assert_eq!(
+        backend.status("Sent").await.expect("status").exists,
+        0,
+        "and no second copy is filed either"
+    );
+}
+
+/// The other half of the same window: a process that died with the SMTP
+/// transaction open.
+///
+/// Nothing can know whether the payload reached the server, so this must not
+/// resend — every ambiguity in this path resolves toward asking rather than
+/// duplicating. It settles loudly instead, and the wording deliberately does
+/// not claim the message failed to go.
+///
+/// This is the interim ADR 0021 names: #674 replaces the outcome with
+/// `Outcome::Uncertain` and a visible `Unconfirmed` draft. What must not
+/// change with it is that no second submission happens.
+#[tokio::test]
+async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_sent(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = drafts.save(&mut draft).expect("save draft");
+    enqueue_send(&connection, account.id, draft_id);
+    drafts
+        .set_state(draft_id, postio_model::DraftState::Sending)
+        .expect("the mark taken before the transaction opened");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    let log = connector.log();
+    assert!(
+        log.tcp.is_empty() && log.tls.is_empty(),
+        "a message that may already be on its way must not be sent again: {log:?}"
+    );
+    assert_eq!(report.applied, 0);
+    assert_eq!(
+        report.deferred, 0,
+        "and it is not queued to try later either"
+    );
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    let reason = &report.failed[0].reason;
+    assert!(
+        reason.contains("may"),
+        "the reason has to leave the question open rather than claim it did \
+         not go: {reason}"
+    );
+}
+
+/// The reservation is what makes a retry recognisable downstream, so it has
+/// to reach the bytes that are actually submitted.
+#[tokio::test]
+async fn the_submitted_message_carries_the_reserved_id() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_sent(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    drafts.save(&mut draft).expect("save draft");
+    drafts
+        .queue_send(&mut draft, at(9))
+        .expect("queue the send");
+    let reserved = draft.rfc_message_id.clone().expect("a reservation");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let written = String::from_utf8_lossy(&connector.log().written).to_lowercase();
+    assert!(
+        written.contains(&reserved.without_brackets().to_lowercase()),
+        "the reserved id has to be in the bytes DATA carried, not merely in \
+         the row: looked for {reserved}"
     );
 }

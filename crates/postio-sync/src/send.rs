@@ -24,13 +24,51 @@
 //! are best-effort bookkeeping instead: a failure among them is a resync's
 //! job to reconcile, not a reason to send again. See [`send`].
 //!
-//! # A known gap
+//! # The commit point, and what it replaced
 //!
-//! A crash between the SMTP transaction succeeding and this module recording
-//! that — vanishingly narrow, but real — can still leave a draft that
-//! resends on the next drain. No transport-level idempotency key exists to
-//! close it completely; the mitigation here is to do as little as possible
-//! in that window; see [`send`].
+//! That rule protects a caller who is *told* the send failed. It said nothing
+//! about a process that is never told anything, and this module's own docs
+//! used to call that gap "vanishingly narrow". It was not.
+//!
+//! The durable fact that stopped a resend was the **deletion of the draft
+//! row**, because [`resolve`] reads a missing draft as obsolete. That deletion
+//! is the second-to-last thing [`file_sent_copy`] does — behind `QUIT`, an
+//! `APPEND` of the whole message to the Sent mailbox, a blob write, a
+//! `messages.create`, threading and a body write. On a slow link the `APPEND`
+//! alone is seconds. It was the largest single piece of network work in the
+//! send path, and every moment of it was a window in which a crash meant the
+//! recipient got the message twice.
+//!
+//! ADR 0021 moves the commit ahead of all of it. [`send`] takes two marks:
+//!
+//! * **`DraftState::Sending`**, committed immediately before the transaction
+//!   opens — after connect and auth, which are ordinarily retryable and leave
+//!   the draft `Queued`.
+//! * **`DraftState::Sent`**, committed the instant `send_message` returns
+//!   `Ok`, ahead of `QUIT` and everything else.
+//!
+//! [`resolve`] reads both back, which is what makes them a guarantee rather
+//! than bookkeeping: `Sent` is obsolete and is never rebuilt, and `Sending`
+//! is refused rather than retried, because nothing can know whether the
+//! payload reached the server and a duplicate cannot be recalled while a
+//! message that needs sending again costs three seconds.
+//!
+//! # Why a retry is recognisable at all
+//!
+//! Every attempt at one draft now carries the same `Message-ID`. It is minted
+//! once, by `DraftRepository::queue_send`, in the transaction that enqueues
+//! the operation, and lives on [`Draft::rfc_message_id`]; `outgoing::build`
+//! uses it instead of generating one per build. That matters less for
+//! receiver-side deduplication — unreliable, and not something Postio may
+//! promise — than for Postio recognising *its own* message when it comes back
+//! in a Sent-folder sync, which is what #674 uses to resolve an interrupted
+//! send without asking the user anything.
+//!
+//! SMTP has no transport-level idempotency key, so none of this is a proof of
+//! delivery. What it is, is at-most-once submission: no path here submits a
+//! message that may already have been submitted.
+//!
+//! [`Draft::rfc_message_id`]: postio_model::Draft::rfc_message_id
 
 use chrono::Utc;
 use postio_imap::auth::{TokenSource, with_credential};
@@ -38,7 +76,8 @@ use postio_imap::backend::{AppendMessage, MailBackend};
 use postio_imap::secret::AccountKey;
 use postio_model::ids::{AccountId, DraftId};
 use postio_model::{
-    Attachment, Flag, FlagSet, MailboxId, MailboxRole, OutgoingAttachment, mime, outgoing,
+    Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, OutgoingAttachment, mime,
+    outgoing,
 };
 use postio_smtp::cancel::CancelToken;
 use postio_smtp::session::SmtpSession;
@@ -133,6 +172,34 @@ pub(crate) fn resolve(
             "the draft is no longer in the local store".to_owned(),
         ));
     };
+    // The commit point, read back (ADR 0021). `Sent` is written the instant
+    // SMTP accepts, ahead of `QUIT`, the `APPEND` and every local write that
+    // follows, so a process that died anywhere in that window comes back to
+    // this and stops here instead of delivering the message a second time.
+    if draft.state == DraftState::Sent {
+        return Ok(ResolvedSend::Obsolete(
+            "the submission server already accepted this message".to_owned(),
+        ));
+    }
+    // And the window nothing can see into: the transaction was open when the
+    // process stopped. Whether the payload reached the server is not knowable
+    // from here and never will be, so this does not retry — a duplicate is
+    // delivered to somebody else's inbox and cannot be recalled, while a
+    // message that needs saying "send it again" costs three seconds to a
+    // person who has been told what happened.
+    //
+    // `Impossible` rather than a retry is the interim ADR 0021 names: #674
+    // gives this its own `Outcome::Uncertain` and a visible `Unconfirmed`
+    // draft, because "failed" claims more than is known. The reason below is
+    // written so that what the user reads is true under either.
+    if draft.state == DraftState::Sending {
+        return Ok(ResolvedSend::Impossible(
+            "this send was interrupted while it was being submitted, so it \
+             may or may not have arrived — Postio will not send it again on \
+             its own"
+                .to_owned(),
+        ));
+    }
     if !draft.has_recipients() {
         return Ok(ResolvedSend::Impossible(
             "the draft has no recipients".to_owned(),
@@ -279,6 +346,21 @@ pub(crate) async fn send(
         }
     };
 
+    // The first of ADR 0021's two marks, and it is taken *here* rather than
+    // earlier on purpose: connecting and authenticating are ordinarily
+    // retryable and leave the draft `Queued`, while everything past this line
+    // may put a payload on the wire. A process that dies from here on comes
+    // back to `Sending`, which `resolve` refuses to submit again.
+    if let Err(error) = mark(connection, job, DraftState::Sending) {
+        // Nothing has been submitted yet, so this is safe to retry — and it
+        // must be a refusal rather than a shrug: sending without the mark is
+        // sending with the crash window wide open again.
+        return Outcome::Retry {
+            reason: format!("could not record that the send had started: {error}"),
+            after: None,
+        };
+    }
+
     let cancel = CancelToken::new();
     if let Err(error) = session
         .send_message(&job.from, &job.recipients, &job.raw, &cancel)
@@ -287,11 +369,28 @@ pub(crate) async fn send(
         return outcome_from_smtp_error(error);
     }
 
-    // Delivered. Everything from here is best-effort: it may not turn this
-    // outcome into anything but Applied.
+    // Delivered, and the second mark is the very next thing that happens —
+    // ahead of `QUIT`, the `APPEND`, the blob write and the local row. Before
+    // ADR 0021 the fact that stopped a resend was the draft's *deletion* at
+    // the end of `file_sent_copy`, which put a whole IMAP round trip inside
+    // the window a crash could reopen. Now the window is one local commit.
+    //
+    // A failure here cannot become anything but `Applied`, for the same
+    // reason nothing else below can: the message has gone.
+    let _ = mark(connection, job, DraftState::Sent);
+
     let _ = session.quit().await;
     file_sent_copy(connection, backend, smtp, resync, job).await;
     Outcome::Applied
+}
+
+/// Commits `state` onto the draft this job is sending.
+///
+/// Its own function because the two calls in [`send`] are the whole of ADR
+/// 0021's second decision, and they are the only two writes in this module
+/// whose *ordering* — not merely their success — is the guarantee.
+fn mark(connection: &Connection, job: &SendJob, state: DraftState) -> postio_storage::Result<()> {
+    DraftRepository::new(connection).set_state(job.draft, state)
 }
 
 /// Records the send locally: appends to the server's Sent folder, writes the

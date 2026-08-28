@@ -553,9 +553,19 @@ impl<'a> DraftRepository<'a> {
     }
 
     /// Moves a draft through its life cycle.
+    ///
+    /// Returning it to `Editing` gives the reserved `Message-ID` back, the
+    /// same way [`save`](Self::save) does — the invariant is that no row can
+    /// be both editable and still named by a message a previous attempt may
+    /// have delivered, and it holds on every write path or it is not an
+    /// invariant. See [`reservation_for`] for why.
     pub fn set_state(&self, id: DraftId, state: DraftState) -> Result<()> {
         let changed = self.connection.execute(
-            "UPDATE drafts SET state = ?2 WHERE id = ?1",
+            "UPDATE drafts
+                SET state = ?2,
+                    rfc_message_id = CASE WHEN ?2 = 'editing'
+                                          THEN NULL ELSE rfc_message_id END
+              WHERE id = ?1",
             params![id.get(), state.as_str()],
         )?;
         if changed == 0 {
