@@ -2939,7 +2939,12 @@ fn style_toolbar_button(button: &gtk::Button, id: CommandId, icon: &str, class: 
     button.set_tooltip_text(Some(&format!(
         "{} ({})",
         spec.title,
-        pretty_binding(spec.default_binding)
+        // Expanded first: the registry stores `mod+shift+8` since #669, and a
+        // tooltip reading "Mod+Shift+8" would be nonsense on either platform.
+        pretty_binding(&postio_config::keys::expand_mod(
+            spec.default_binding,
+            postio_config::paths::Platform::host(),
+        ))
     )));
     button.update_property(&[gtk::accessible::Property::Label(spec.title)]);
     // The click acts on the editor's selection; taking the focus would

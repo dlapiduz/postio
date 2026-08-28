@@ -115,7 +115,11 @@ fn the_composer_detaches_into_its_own_window_and_comes_back() {
         "and it is in the palette and the cheat sheet, from that one entry"
     );
     assert_eq!(
-        spec.default_binding, "ctrl+shift+o",
+        postio_config::keys::expand_mod(
+            spec.default_binding,
+            postio_config::paths::Platform::Freedesktop,
+        ),
+        "ctrl+shift+o",
         "and it has a key of its own, so it is not pointer-only"
     );
 

@@ -8,6 +8,7 @@
 
 use std::time::{Duration, Instant};
 
+use postio_config::paths::Platform;
 use postio_config::{Config, KeyBindings, validate};
 use postio_core::ActionId;
 use postio_core::bridge::event_channel;
@@ -88,7 +89,10 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
 
 #[test]
 fn a_key_resolves_only_in_the_contexts_its_command_lives_in() {
-    let keymap = Keymap::resolve(&KeyBindings::default());
+    // Named rather than host-derived: this asserts an accelerator, and since
+    // #669 the accelerator for the palette differs by platform. Left as
+    // `resolve` it passed on Linux and failed on a Mac.
+    let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
 
     assert_eq!(
         keymap.command_for(Context::List, "a"),
@@ -103,6 +107,20 @@ fn a_key_resolves_only_in_the_contexts_its_command_lives_in() {
         keymap.command_for(Context::Composer, "ctrl+k"),
         Some(ActionId::Builtin(CommandId::CommandPalette)),
         "the palette is reachable everywhere"
+    );
+}
+
+#[test]
+fn the_palette_is_command_k_on_a_mac_and_control_k_does_not_reach_it() {
+    let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    assert_eq!(
+        keymap.command_for(Context::Composer, "cmd+k"),
+        Some(ActionId::Builtin(CommandId::CommandPalette))
+    );
+    assert_eq!(
+        keymap.command_for(Context::Composer, "ctrl+k"),
+        None,
+        "Control is a different key on macOS and must not shadow the palette"
     );
 }
 

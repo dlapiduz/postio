@@ -1,0 +1,69 @@
+next_message	j | Down
+prev_message	k | Up
+first_message	g g
+last_message	G
+open_message	Return | l | Right
+toggle_selection	x
+extend_selection_down	J | shift+Down
+extend_selection_up	K | shift+Up
+select_all	ctrl+a
+prev_view	h | Left
+back	Escape
+thread	t
+toggle_thread_unread	n
+toggle_thread_order	o
+toggle_result_order	o
+reply	e
+reply_all	E
+forward	f
+archive	a
+archive_thread	A
+delete	d
+move	m
+flag	s
+mark_unread	U
+snooze	b
+unsnooze	B
+add_label	L
+search	/
+save_search	ctrl+s
+compose	c
+send	ctrl+Return
+schedule_send	ctrl+shift+Return
+save_draft	ctrl+s
+discard_draft	ctrl+d
+attach_file	ctrl+shift+a
+detach_composer	ctrl+shift+o
+bold	ctrl+b
+italic	ctrl+i
+bullet_list	ctrl+shift+8
+numbered_list	ctrl+shift+7
+insert_link	ctrl+shift+k
+quote_block	ctrl+shift+9
+undo	u
+command_palette	ctrl+k
+cheat_sheet	?
+settings	ctrl+comma
+add_account	ctrl+shift+n
+edit_config	ctrl+e
+toggle_sidebar	ctrl+b
+focus_sidebar	g f
+next_folder	j | Down
+prev_folder	k | Up
+toggle_folder	space
+rename_saved_search	r
+move_saved_search_up	shift+Up
+move_saved_search_down	shift+Down
+delete_saved_search	d
+next_scope	g a
+refresh	F5 | R
+open_parts	p
+next_part	j | Down
+prev_part	k | Up
+open_part	Return
+save_part	s
+save_all_parts	S
+open_part_externally	x
+render_part_once	H
+scroll_reader_down	Page_Down | space
+scroll_reader_up	Page_Up | shift+space
