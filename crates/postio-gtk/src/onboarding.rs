@@ -547,6 +547,45 @@ impl Onboarding {
         }
     }
 
+    /// Fires `activate` on the name field, as Return would (#629).
+    #[doc(hidden)]
+    pub fn test_activate_name(&self) {
+        self.imp().name.emit_activate();
+    }
+
+    /// Fires `activate` on the address field, as Return would.
+    #[doc(hidden)]
+    pub fn test_activate_address(&self) {
+        self.imp().address.emit_activate();
+    }
+
+    /// Fires `activate` on the password field, as Return would.
+    #[doc(hidden)]
+    pub fn test_activate_password(&self) {
+        self.imp().password.emit_activate();
+    }
+
+    /// Whether the address field is the one `grab_focus` last landed on —
+    /// what a test uses to confirm Return in an earlier field moved on to
+    /// it, since the field itself is private (#629).
+    ///
+    /// Walks up from the toplevel's own focus widget rather than asking
+    /// `imp.address.is_focus()`: a `gtk::Entry` is a composite widget whose
+    /// real keyboard focus lands on an internal `GtkText`, never on the
+    /// `Entry` itself, so `is_focus` on the entry is always false. And not
+    /// `has_focus`, which also asks whether the *toplevel* is active, which
+    /// a headless test window never becomes.
+    #[doc(hidden)]
+    pub fn test_address_has_focus(&self) -> bool {
+        self.root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok())
+            .and_then(|window| gtk::prelude::RootExt::focus(&window))
+            .is_some_and(|focus| {
+                focus.is_ancestor(&self.imp().address)
+                    || focus == self.imp().address.clone().upcast::<gtk::Widget>()
+            })
+    }
+
     // -- internals ---------------------------------------------------------
 
     fn fill_manual(&self, settings: &Settings) {
@@ -730,6 +769,15 @@ impl Onboarding {
 
         imp.name.set_placeholder_text(Some("Ada Lovelace"));
         imp.name.set_hexpand(true);
+        // Nothing to probe or submit with only a name typed -- Return moves
+        // on to the next field, the "Tab between fields" idiom the hint
+        // under the form already promises (#629; #68 fixed the same dead-
+        // Return gap on the two fields that existed then).
+        imp.name.connect_activate(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.focus_address()
+        ));
 
         imp.address.set_placeholder_text(Some("you@example.com"));
         imp.address.set_input_purpose(gtk::InputPurpose::Email);
