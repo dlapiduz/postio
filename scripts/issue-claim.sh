@@ -19,6 +19,8 @@
 #   scripts/issue-claim.sh --ready-label ready-mac   # a different queue
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"

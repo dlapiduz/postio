@@ -33,6 +33,7 @@ ISSUE_RELEASE = HERE / "issue-release.sh"
 # `issue view` reports the issue open, claimed by nobody visible: no
 # in-progress label, which is exactly the state the orphan branch fires on.
 GH_STUB = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
     echo "OPEN ready,p2"
     exit 0
@@ -77,6 +78,7 @@ def main() -> int:
         (repo / "scripts").mkdir(parents=True)
         shutil.copy(ISSUE_RELEASE, repo / "scripts" / "issue-release.sh")
         (repo / "scripts" / "issue-release.sh").chmod(0o755)
+        shutil.copytree(HERE / "lib", repo / "scripts" / "lib")
         gh = stub_dir / "bin" / "gh"
         gh.write_text(GH_STUB, encoding="utf-8")
         gh.chmod(0o755)

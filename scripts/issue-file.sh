@@ -24,6 +24,8 @@
 #   2  possible duplicates found and nothing was filed
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+
 TITLE=""
 BODY=""
 BODY_FILE=""

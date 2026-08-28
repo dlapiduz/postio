@@ -105,6 +105,17 @@ you do not. It deliberately does not pin Rust (`rust-toolchain.toml` owns
 that, and a second place to say it is the bug that pin exists to prevent) or
 the system libraries above, which are distro packages rather than tooling.
 
+`gh` needs to be **2.94.0 or newer**: `scripts/issue-claim.sh` reads
+`--json blockedBy`, which that release added (cli/cli#13057). An older `gh`
+rejects the field outright — writes its complaint to stderr, nothing to
+stdout — so `scripts/issue-*.sh` refuse up front with a sentence naming both
+versions rather than the traceback that used to follow from the empty
+stdout (#558). `mise.toml` already pins comfortably above the floor, which
+is the ordinary way this stays true; the runtime check in
+`scripts/lib/require-gh.sh` is the backstop for the sessions that do not use
+mise, the same gap `RUSTUP_TOOLCHAIN` leaves for the Rust pin
+(`docs/engineering-notes.md`).
+
 ```bash
 cargo run -p postio-app        # build and run
 cargo test --workspace         # never touches the network
