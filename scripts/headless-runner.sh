@@ -34,6 +34,27 @@ set -uo pipefail
 # stayed green. `gtk_display_required.rs` is the reader.
 export POSTIO_TEST_RUNNER=headless-runner
 
+# `.cargo/config.toml` points TMPDIR at `target/tmp`, relative to the workspace
+# root, to keep rustc's and the linker's scratch off the tmpfs -- and nothing
+# creates it. `tempfile` opens a file inside `$TMPDIR` and reports what the OS
+# said, so the first temp file in a fresh tree fails with `NotFound` naming a
+# `.tmpXXXXXX` nobody wrote, under a `target/` that plainly exists, three
+# directories from the config that pointed there. It reads as a bug in whatever
+# you just ran (#613).
+#
+# `issue-claim.sh` already did this for the worktrees it makes (#178, #219).
+# Here it covers the trees it does not: a plain `git clone`, and a hand-made
+# `git worktree add`.
+#
+# Up here with the marker, before the bail-outs below, and for the same reason:
+# this has to happen on every path including the fail-open ones, because a
+# binary that reaches the real display still wants somewhere to write. Fail
+# open like the rest of the file -- a directory that cannot be created costs
+# the pinning, never the run.
+if [ -n "${TMPDIR:-}" ]; then
+    mkdir -p "$TMPDIR" 2>/dev/null || true
+fi
+
 exec_target() { exec "$@"; }
 
 [ "${POSTIO_HEADLESS:-1}" = "0" ] && exec_target "$@"

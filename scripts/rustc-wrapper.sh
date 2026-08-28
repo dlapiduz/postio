@@ -41,6 +41,17 @@
 # Only on the sccache path. Without sccache there is no daemon, rustc runs
 # straight from cargo, and cargo's per-worktree TMPDIR is what keeps its
 # scratch off the tmpfs -- so that case is left exactly as it was.
+# Cargo's own TMPDIR is `target/tmp` (relative), and nothing creates it, so the
+# first temp file in a fresh clone or worktree fails with `NotFound` (#613).
+# Ensured here, before the branch below replaces TMPDIR with the daemon's, so
+# what gets created is cargo's directory rather than sccache's -- and on every
+# platform, including the ones with no `runner` to do it at launch.
+#
+# Fail open, like everything else in this file.
+if [ -n "${TMPDIR:-}" ]; then
+    mkdir -p "$TMPDIR" 2>/dev/null || true
+fi
+
 if command -v sccache >/dev/null 2>&1; then
     scratch="${SCCACHE_DIR:-${HOME:-}/.cache/sccache}/tmp"
     # Fail open, like everything else in this file: a temp directory that
