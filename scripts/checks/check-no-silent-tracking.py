@@ -74,6 +74,13 @@ TRACKING: dict[str, str] = {
     # moment they run (#550).
     "urilauncher::new": "opens the user's system browser (GTK UriLauncher)",
     "filelauncher::new": "opens a file with an external application (GTK FileLauncher)",
+    # The Swift half (ADR 0019). `URLSession` is the one that matters most:
+    # the reader's whole privacy claim is that its web view has no network, so
+    # any HTTP client in the frontend is the tracking pixel arriving through
+    # the back door. The others reach the same places the GTK launchers do.
+    "urlsession": "makes an HTTP request from the frontend (Swift URLSession)",
+    "nsworkspace.shared.open": "opens the user's system browser (Swift NSWorkspace)",
+    "uiapplication.shared.open": "opens the user's system browser (Swift UIApplication)",
 }
 
 # The marker that says a human decided how the user asks for this.
@@ -99,15 +106,29 @@ class CheckError(Exception):
 
 
 def tracked_sources() -> list[Path]:
-    """Every Rust file under a crate's ``src``, as git sees it.
+    """Every Rust and Swift source file this repository ships, as git sees it.
 
     Asking git rather than walking the tree keeps the check off build output
     and off another session's scratch files, and means an untracked
-    experiment cannot fail somebody else's run.
+    experiment cannot fail somebody else's run. It also keeps the generated
+    UniFFI bindings out: they are a build product under ``target/`` and are
+    not tracked, so the scan sees hand-written Swift only.
+
+    Both a ``**`` pattern and a flat one per language, because ``git
+    ls-files`` does not treat ``**`` the way a shell does and a pattern that
+    matched only top-level files would leave every real source file — all of
+    which are nested — unscanned.
     """
     try:
         listed = subprocess.run(
-            ["git", "ls-files", "crates/*/src/**/*.rs", "crates/*/src/*.rs"],
+            [
+                "git",
+                "ls-files",
+                "crates/*/src/**/*.rs",
+                "crates/*/src/*.rs",
+                "macos/Sources/**/*.swift",
+                "macos/Sources/*.swift",
+            ],
             capture_output=True,
             text=True,
             check=True,
