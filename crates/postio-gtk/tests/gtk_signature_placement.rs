@@ -9,7 +9,6 @@
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_body::Placement;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
