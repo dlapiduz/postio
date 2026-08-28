@@ -36,7 +36,6 @@
 //!
 //! Nothing here touches the network.
 
-use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::finder::{Mode, Query};

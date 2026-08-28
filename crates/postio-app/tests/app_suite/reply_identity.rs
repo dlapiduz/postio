@@ -24,7 +24,6 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
-use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
