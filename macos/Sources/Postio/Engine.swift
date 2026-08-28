@@ -1,3 +1,4 @@
+import AppKit
 import PostioFFI
 import PostioKit
 import SwiftUI
@@ -37,6 +38,13 @@ final class Engine {
                 // Engines run on their own runtime; the list repaints from
                 // events rather than from anything awaited here.
             }
+            notifications.start()
+            notifications.open = { [weak self] mailbox, message in
+                self?.requested = (mailbox, message)
+                self?.requestedToken += 1
+                self?.open(mailbox: mailbox)
+            }
+            consumeEvents(from: session)
         } catch {
             // The message the boundary wrote, not one invented here: a locked
             // keychain says how to unlock it, and a broken store says what
@@ -49,6 +57,20 @@ final class Engine {
 
     /// Every folder, flat, with parent ids.
     private(set) var mailboxes: [MailboxFfi] = []
+
+    /// The folder the list currently has open, for deciding what is news.
+    private(set) var showingMailbox: Int64?
+
+    /// The message a notification click asked for, for the shell to open.
+    ///
+    /// A tuple rather than a struct because nothing else reads it, and paired
+    /// with a counter because two clicks on the same notification are two
+    /// requests: SwiftUI's `onChange` compares values, and the second would
+    /// otherwise look like nothing happened.
+    private(set) var requested: (mailbox: Int64, message: Int64?)?
+    private(set) var requestedToken = 0
+
+    private let notifications = MailNotifications()
 
     /// Folders with no parent, in the order the store returned them.
     var folderRoots: [MailboxFfi] {
@@ -68,12 +90,69 @@ final class Engine {
     /// see.
     func open(mailbox: Int64) {
         guard let session, case let .open(controller) = state else { return }
+        showingMailbox = mailbox
         session.openScope(.mailbox(mailbox: mailbox))
         controller.tableView?.reloadData()
     }
 
     /// How many rows the open scope has, or zero when there is no session.
     var rowCount: UInt32 { session?.rowCount ?? 0 }
+
+    /// Drain the engine's events for as long as the session is open.
+    ///
+    /// `nextEvent` is an `async fn` on the Rust side, so this is the same
+    /// shape the GTK frontend uses — `glib::spawn_future_local` around
+    /// `EventStream::next()` — rather than a polling timer. The task ends when
+    /// `nextEvent` answers `nil`, which is what `shutdown` makes it do.
+    private func consumeEvents(from session: PostioSession) {
+        Task { @MainActor [weak self] in
+            while let event = await session.nextEvent() {
+                self?.handle(event)
+            }
+        }
+    }
+
+    /// React to one engine event.
+    ///
+    /// The `default:` arm is deliberate and ADR 0019 Q7 asks for it: the event
+    /// union is append-only and one-way, so an application built against an
+    /// older boundary has to degrade to ignoring a variant it does not know
+    /// rather than failing to compile or crashing on it.
+    private func handle(_ event: UiEvent) {
+        guard case let .open(controller) = state else { return }
+        switch event {
+        case .pageReady:
+            // The page the table asked for arrived. Redrawing everything is
+            // right at this size and wrong at scale; narrowing it to the rows
+            // that changed is what `reloadData(forRowIndexes:)` is for and
+            // belongs with the rest of the list work.
+            controller.tableView?.reloadData()
+        case .messageListChanged, .messagesChanged, .messagesRemoved:
+            controller.tableView?.reloadData()
+        case .mailboxesChanged:
+            mailboxes = session?.mailboxes ?? []
+        case let .newMail(account, mailbox, messages):
+            arrived(MailArrival(account: account, mailbox: mailbox, messages: messages))
+        default:
+            // Everything else is something this build has no opinion about.
+            break
+        }
+    }
+
+    /// Decide what to do about new mail, and do it.
+    private func arrived(_ arrival: MailArrival) {
+        let decision = MailNotifier.decide(
+            arrival,
+            showing: showingMailbox,
+            // Asked at the moment the decision is made rather than tracked:
+            // `isActive` is a live property of the application, and a cached
+            // copy would go stale in exactly the window that matters.
+            isActive: NSApplication.shared.isActive,
+            mailboxName: mailboxes.first { $0.id == arrival.mailbox }?.name
+        )
+        guard case let .deliver(notification) = decision else { return }
+        notifications.post(notification)
+    }
 
     /// Stop the engines and drop the store, in that order.
     ///

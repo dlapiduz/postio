@@ -50,6 +50,17 @@ struct Shell: View {
             reader
         }
         .navigationTitle("Postio")
+        // A notification click. The engine has already switched the list to
+        // the folder; the sidebar selection and the reader follow so that all
+        // three panes agree about what is being shown.
+        .onChange(of: engine.requestedToken) { _, _ in
+            guard let requested = engine.requested else { return }
+            selectedFolder = requested.mailbox
+            // A burst names no message -- "3 new messages" does not pick one --
+            // so it opens the folder and leaves the cursor where the folder's
+            // own selection puts it.
+            if let message = requested.message { showing = message }
+        }
     }
 
     @ViewBuilder
