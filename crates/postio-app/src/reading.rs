@@ -366,7 +366,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         showing,
         opened,
         named_accounts,
-        offline: Cell::new(is_offline(&feeds.folders.status())),
+        offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -523,7 +523,9 @@ struct Fill {
     /// Whether the engine has no connection at all right now. Read by
     /// [`Fill::fill`] to pick `Absent::Offline` over `Absent::Partial`, and
     /// kept current by the `connect_status` handler `install` wires.
-    offline: Cell<bool>,
+    /// Shared, because a fill reads it twice: once to ask the store, and
+    /// again when the answer comes back. See [`Fill::waiting_reason`].
+    offline: Rc<Cell<bool>>,
 }
 
 impl Fill {
@@ -544,6 +546,34 @@ impl Fill {
     /// still its answer, or it has been dropped and rendering into it is
     /// harmless. Reusing `showing` here would be worse than useless — it
     /// would discard every message in the stack except the focused one.
+    /// The reason to show for a body that is not here, decided **now**.
+    ///
+    /// A fill captures the connection state, crosses to a worker to read the
+    /// store, and comes back a moment later — and the connection can move in
+    /// between. Applying the captured answer then undoes what
+    /// [`repaint_if_waiting`](Self::repaint_if_waiting) just did: coming
+    /// online flips the plate to `Partial`, an in-flight fill lands with the
+    /// `Offline` it set out with, and the pane goes back to promising a
+    /// backfill that is in fact already running.
+    ///
+    /// Only the two waiting states are re-derived. `Missing` and `Empty` are
+    /// facts about the message rather than about the link, and a reconnection
+    /// does not change them.
+    ///
+    /// [`repaint_if_waiting`]: Self::repaint_if_waiting
+    fn waiting_reason(offline: &Cell<bool>, reason: Absent) -> Absent {
+        match reason {
+            Absent::Partial | Absent::Offline => {
+                if offline.get() {
+                    Absent::Offline
+                } else {
+                    Absent::Partial
+                }
+            }
+            settled => settled,
+        }
+    }
+
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
         let offline = self.offline.get();
         let answer = crate::search::ask(&self.database, &self.runtime, {
@@ -568,6 +598,7 @@ impl Fill {
         });
         glib::spawn_future_local({
             let reader = reader.clone();
+            let offline_now = self.offline.clone();
             async move {
                 let Ok(Some((body, content_type, parts, envelope, sender))) = answer.recv().await
                 else {
@@ -601,7 +632,7 @@ impl Fill {
                             &parts,
                         );
                         reader.set_attachments(&root, &parts);
-                        reader.show_absent(reason);
+                        reader.show_absent(Self::waiting_reason(&offline_now, reason));
                     }
                 }
                 reader.widget().set_visible(true);
@@ -640,6 +671,7 @@ impl Fill {
             let showing = self.showing.clone();
             let opened = self.opened.clone();
             let self_accounts = Rc::clone(&self.named_accounts);
+            let offline_now = Rc::clone(&self.offline);
             let window = window.clone();
             async move {
                 let Ok(Some((body, content_type, parts, envelope))) = answer.recv().await else {
@@ -697,6 +729,7 @@ impl Fill {
                             &postio_model::MessageBody::default(),
                             &parts,
                         );
+                        let reason = Self::waiting_reason(&offline_now, reason);
                         window.reader().set_attachments(&root, &parts);
                         *opened.borrow_mut() = Some(Opened {
                             root,

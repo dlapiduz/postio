@@ -89,11 +89,12 @@ pub fn clicking_a_message_fills_the_reading_pane() {
         "the list is empty, so there is nothing to click"
     );
 
-    // ── the autoselect is not somebody reading ───────────────────────────
-    assert!(
-        !window.reading(),
-        "an untouched window shows the pane's empty state, not a message"
-    );
+    // The autoselect fills the pane now (#601), so `window.reading()` is no
+    // longer what tells a click apart from a window that just opened. What
+    // this test is about is the *click* reaching the reader, so it clears the
+    // pane first and watches it come back.
+    window.clear_reader();
+    assert!(!window.reading(), "the pane was just cleared");
 
     // ── clicking the row the autoselect is already on ────────────────────
     // The first thing a mouse user does: open the top message. The cursor is
