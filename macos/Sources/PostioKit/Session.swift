@@ -14,6 +14,14 @@ import PostioFFI
 /// decision — which command a key runs, what a reader document contains, how
 /// a list pages — belongs on the other side of the boundary, where both
 /// frontends share it (ADR 0019).
+/// Safe to hand across threads.
+///
+/// The Rust type behind it is `Send + Sync` — uniffi requires that of an
+/// exported object, and every field of ours is behind a lock or an `Arc`. That
+/// is what lets a reader document be built off the main actor instead of on
+/// the cursor's own thread.
+extension PostioSession: @unchecked Sendable {}
+
 public final class PostioSession {
     private let inner: Session
 

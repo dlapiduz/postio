@@ -62,6 +62,8 @@ public struct ReaderView: NSViewRepresentable {
         private let session: PostioSession
         private var showing: Int64?
         private var showingRemote: RemoteImagesFfi = .blocked
+        private let gate = RenderGate()
+        private var pending: Task<Void, Never>?
 
         init(session: PostioSession) {
             self.session = session
@@ -76,14 +78,22 @@ public struct ReaderView: NSViewRepresentable {
 
         /// Render `message`, or the empty document when there is none.
         ///
-        /// Skips the reload when nothing changed. A `WKWebView` reloaded on
-        /// every SwiftUI update would flicker and lose its scroll position on
-        /// each unrelated state change, which reads as the application
-        /// fighting the user.
+        /// The document is built **off the main actor**. It is a SQLite read,
+        /// a sanitise and a wrap, and doing that on the cursor's own thread
+        /// makes every `j` cost a disk read — `PRODUCT.md` §18 budgets an
+        /// interaction at 16 ms, and a large HTML body is not that.
+        ///
+        /// Which means results can arrive out of order, so each render carries
+        /// a token and a stale one is dropped rather than drawn. Drawing it
+        /// would put one message's body under another's header, which is the
+        /// shape of #70 and the reason `reading.rs` carries the same guard.
         func load(into view: WKWebView, message: Int64?, remote: RemoteImagesFfi) {
             guard showing != message || showingRemote != remote else { return }
             showing = message
             showingRemote = remote
+
+            let token = gate.begin()
+            pending?.cancel()
 
             guard let message else {
                 view.loadHTMLString("", baseURL: nil)
@@ -93,8 +103,19 @@ public struct ReaderView: NSViewRepresentable {
             // Before the load, so a `postio-cid:` request arriving during it
             // resolves against the right message rather than the previous one.
             cid.message = message
-            let document = session.readerDocument(message: message, remote: remote)
-            view.loadHTMLString(document, baseURL: URL(string: "\(ReaderConfiguration.baseScheme):///"))
+
+            let session = self.session
+            pending = Task { [weak self] in
+                let document = await Task.detached {
+                    session.readerDocument(message: message, remote: remote)
+                }.value
+
+                guard let self, !Task.isCancelled, self.gate.isCurrent(token) else { return }
+                view.loadHTMLString(
+                    document,
+                    baseURL: URL(string: "\(ReaderConfiguration.baseScheme):///")
+                )
+            }
         }
     }
 }
