@@ -59,6 +59,7 @@ FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 # The merge succeeds; the ref shows up late. `disown` so the push outlives the
 # `gh` process the way GitHub's own replication outlives the API call.
 GH_STUB_LAGGING = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
     printf '%s' "$*" | grep -q -- "--json state" && { echo "OPEN"; exit 0; }
@@ -108,6 +109,7 @@ def build_sandbox(root: Path, channel: str) -> None:
     (scripts / "checks").mkdir()
     shutil.copy(HERE / "check.sh", scripts / "check.sh")
     (scripts / "check.sh").chmod(0o755)
+    shutil.copytree(HERE / "lib", scripts / "lib")
     for source in (ISSUE_LAND, WAIT_FOR_CHECKS, CI_EXPECTED_WORKFLOWS):
         into = scripts / "checks" if source.parent.name == "checks" else scripts
         shutil.copy(source, into / source.name)

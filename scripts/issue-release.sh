@@ -9,6 +9,8 @@
 #   scripts/issue-release.sh --stale 0     # no age check (you are sure)
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+
 REPO_ROOT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"

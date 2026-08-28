@@ -300,6 +300,14 @@ git push -u origin "$BRANCH"
 
 [ "$WIP" = 1 ] && { echo; echo "pushed $BRANCH without a PR (work in progress)."; exit 0; }
 
+# Checked here, not at the top: everything above -- the commit guard, the
+# gates, the push -- never touches `gh` at all (see
+# scripts/tests/test-issue-land-commit-guard.py's own reasoning), so a
+# script that refused a dirty tree or a red gate before this point had no
+# reason to demand `gh` either. This is the last point before the first
+# real `gh` call below.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+
 # The *state*, not merely the existence, of a PR for this head branch.
 # `gh pr view` resolves the most recent PR for the branch whatever state it is
 # in, so a branch name that has been used before -- which

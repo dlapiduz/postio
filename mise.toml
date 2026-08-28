@@ -46,7 +46,10 @@ python = "3.14.7"
 # `scripts/issue-*.sh` are the whole workflow — claim, land, release — and
 # they are `gh` from end to end. A `gh` whose JSON output has moved does not
 # fail loudly; it returns an empty field, and the script decides an issue is
-# unassigned or a PR unmerged.
+# unassigned or a PR unmerged. Comfortably above the hard floor,
+# `scripts/lib/require-gh.sh`'s 2.94.0 (`--json blockedBy`, #558) — this pin
+# is what keeps a session that uses mise from ever meeting that floor at
+# all; the runtime check exists for the session that does not.
 gh = "2.98.0"
 
 # Reads that `gh` output, and the release scripts' own.

@@ -68,6 +68,7 @@ FIXTURE_ISSUES = [
 ]
 
 GH_STUB = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
     cat "$STUB_DIR/issues.json"
     exit 0
@@ -103,6 +104,7 @@ def world(base: Path) -> tuple[Path, Path]:
     (repo / "scripts").mkdir(parents=True)
     shutil.copy(ISSUE_CLAIM, repo / "scripts" / "issue-claim.sh")
     (repo / "scripts" / "issue-claim.sh").chmod(0o755)
+    shutil.copytree(SCRIPTS / "lib", repo / "scripts" / "lib")
 
     gh = stub_dir / "bin" / "gh"
     gh.write_text(GH_STUB, encoding="utf-8")

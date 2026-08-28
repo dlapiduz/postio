@@ -36,6 +36,7 @@ FAILURES: list[str] = []
 # Prints whatever `$STUB_DIR/found` holds for `issue list`, and records every
 # call so the test can assert the *order*: searched, then filed or not.
 GH_STUB = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
     cat "$STUB_DIR/found"
@@ -144,6 +145,7 @@ def main() -> int:
         widening = stub_dir / "bin" / "gh"
         widening.write_text(
             """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
     # Two terms match; three do not. The word count is the stand-in for
