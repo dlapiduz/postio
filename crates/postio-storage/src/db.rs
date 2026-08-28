@@ -93,6 +93,71 @@ PRAGMA cache_size = -16000;
 PRAGMA busy_timeout = 5000;
 ";
 
+/// Stops libcrypto tearing itself down while a thread is still writing.
+///
+/// # The crash this exists for
+///
+/// SQLCipher encrypts every page through libcrypto, and libcrypto registers
+/// an `atexit` handler that frees its own state. `exit()` does not stop other
+/// threads — it runs those handlers and then kills the process — so a sync
+/// pass still committing when the application exits can encrypt a page
+/// through memory that has just been freed:
+///
+/// ```text
+/// thread A: exit() -> __run_exit_handlers -> (libcrypto frees its state)
+/// thread B: sqlcipher_page_cipher -> sqlite3Codec -> walWriteOneFrame
+///           -> sqlite3PagerCommitPhaseOne -> SyncStateRepository::observe
+/// ```
+///
+/// That is a coredump, not a hypothesis. No mail is lost — a torn WAL frame
+/// is what WAL recovery is for — but the process dies on the way out.
+///
+/// `OPENSSL_INIT_NO_ATEXIT` means nothing registers, so nothing is freed
+/// early; the operating system reclaims the memory when the process dies,
+/// which is all that handler was ever going to achieve for a program that is
+/// exiting anyway.
+///
+/// # This is the belt, not the braces
+///
+/// The underlying fault is that a thread was still writing at all, and
+/// `postio_runtime::Engine` fixes that by joining its thread before the
+/// process gets to exit. This stays because "every thread has stopped" is an
+/// invariant nobody can enforce from here, and the cost of being wrong about
+/// it is a crash in somebody's mail client rather than a leak of memory that
+/// was about to be reclaimed.
+fn silence_openssl_atexit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: `OPENSSL_init_crypto` is libcrypto's own initialiser, linked
+        // into this binary by `libsqlite3-sys`'s SQLCipher build. It is
+        // documented as safe to call from any thread and any number of times;
+        // the `Once` is for clarity rather than for soundness. A null
+        // `settings` pointer is the documented "no settings" argument, and the
+        // return value is 1 on success — ignored deliberately, because a
+        // libcrypto that will not initialise here will fail loudly at the
+        // first `PRAGMA key` with a message about the actual problem.
+        //
+        // It must run before libcrypto is first used, which is why every
+        // pool calls it before opening its first connection.
+        #[allow(unsafe_code)]
+        unsafe {
+            OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT, std::ptr::null());
+        }
+    });
+}
+
+/// libcrypto's "do not register an `atexit` handler" flag.
+const OPENSSL_INIT_NO_ATEXIT: u64 = 0x0008_0000;
+
+#[allow(unsafe_code)]
+unsafe extern "C" {
+    /// libcrypto's initialiser. Declared rather than depended on: `openssl-sys`
+    /// is only in the graph for the vendored-OpenSSL build, and this has to
+    /// work for the system-libcrypto one too. The symbol is present either way,
+    /// because SQLCipher is what pulls it in.
+    fn OPENSSL_init_crypto(opts: u64, settings: *const std::ffi::c_void) -> std::ffi::c_int;
+}
+
 /// Unlocks a connection with `key` and applies [`PRAGMAS`] to it.
 ///
 /// The pool does this for every connection it opens; call it directly only for
@@ -508,6 +573,10 @@ impl Pool {
         guard: Option<Box<dyn std::any::Any + Send + Sync>>,
     ) -> Result<Self> {
         assert!(max_connections > 0, "a pool needs at least one connection");
+
+        // Before the first connection, because that is the first thing to
+        // touch libcrypto. See the function's own docs for the coredump.
+        silence_openssl_atexit();
 
         let keeper = match location {
             Location::File(_) => None,
