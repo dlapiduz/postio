@@ -207,6 +207,31 @@ fn load_key_bindings(text: Option<&str>) -> postio_config::keys::KeyBindings {
 /// lives behind a lock and an `Option` so that [`shutdown`](Self::shutdown)
 /// can drop it: dropping the wiring drops the event sink, which ends the
 /// stream, which ends the frontend's `while let Some(event)` loop. A drain
+/// Where the window's rows come from.
+///
+/// A folder pages by offset; a result set is a ranked list of ids. Both end up
+/// in the same `ListWindow`, so the frontend's table code cannot tell them
+/// apart -- which is the point. A search matching forty thousand messages has
+/// to be a count and a few resident pages, exactly like a mailbox.
+enum Source {
+    /// Nothing is open yet.
+    Nothing,
+    /// A folder, paged by offset.
+    Scope(postio_runtime::store::ListScope),
+    /// A result set, in rank order.
+    Hits(Vec<postio_model::MessageId>),
+}
+
+/// One page read, already resolved against the current [`Source`].
+///
+/// Resolved before the spawn rather than inside it, so the async block never
+/// takes the source lock -- a page landing must not contend with the table
+/// asking for a row.
+enum Fetch {
+    Page(postio_runtime::store::PageRequest),
+    Rows(Vec<postio_model::MessageId>),
+}
+
 /// that never ends is an application that cannot quit.
 #[derive(uniffi::Object)]
 pub struct Session {
@@ -217,7 +242,17 @@ pub struct Session {
     list: Arc<Mutex<postio_ui::list::ListWindow<crate::RowFfi>>>,
     /// What the window is currently showing, so a page fetch knows what to
     /// ask the store for.
-    scope: Mutex<Option<postio_runtime::store::ListScope>>,
+    source: Mutex<Source>,
+    /// The scope to come back to when a search is cleared.
+    ///
+    /// Held separately from [`source`](Self::source) so that clearing restores
+    /// the folder without the frontend having to remember and re-send it --
+    /// which is the same thing as the frontend owning navigation state, and it
+    /// would then own it differently from the GTK side.
+    resting: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// The current result set, by message and in rank order, with each hit's
+    /// excerpt. Capped at `HIT_LIMIT`, so holding it is bounded.
+    hits: Mutex<Vec<crate::search::Hit>>,
     /// Page reads still in flight, and how many have been issued in total.
     ///
     /// The first is what `settle_for_test` waits on. The second is how a test
@@ -317,6 +352,24 @@ impl Session {
     #[uniffi::method(name = "openScope")]
     pub fn open_scope_ffi(&self, scope: crate::ScopeFfi) -> u64 {
         self.open_scope(scope)
+    }
+
+    /// Run `query`, and answer the generation the window is now on.
+    #[uniffi::method(name = "search")]
+    pub fn search_ffi(&self, query: String) -> u64 {
+        self.search(query)
+    }
+
+    /// Put the folder that was open back in the window.
+    #[uniffi::method(name = "clearSearch")]
+    pub fn clear_search_ffi(&self) -> u64 {
+        self.clear_search()
+    }
+
+    /// A hit's excerpt, as text plus the ranges that matched.
+    #[uniffi::method(name = "searchSnippet")]
+    pub fn search_snippet_ffi(&self, message: i64) -> Option<crate::SnippetFfi> {
+        self.search_snippet(message)
     }
 
     /// How many rows the current scope has — a table's `numberOfRows`.
@@ -489,7 +542,9 @@ impl Session {
                 wiring: Mutex::new(Some(wiring)),
                 keys: load_key_bindings(options.config_text.as_deref()),
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
-                scope: Mutex::new(None),
+                source: Mutex::new(Source::Nothing),
+                resting: Mutex::new(None),
+                hits: Mutex::new(Vec::new()),
                 in_flight: Arc::default(),
                 reconnects: Arc::default(),
                 offline: Arc::default(),
@@ -533,7 +588,9 @@ impl Session {
             keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
-            scope: Mutex::new(None),
+            source: Mutex::new(Source::Nothing),
+            resting: Mutex::new(None),
+            hits: Mutex::new(Vec::new()),
             in_flight: Arc::default(),
             reads: Arc::default(),
             reconnects: Arc::default(),
@@ -553,13 +610,93 @@ impl Session {
     /// `numberOfRows` is: a table asks how tall it is before it draws
     /// anything, and there is no version of that question which can await.
     pub fn open_scope(&self, scope: crate::ScopeFfi) -> u64 {
-        let listed: postio_runtime::store::ListScope = scope.into();
+        self.show(scope.into())
+    }
+
+    /// Put a folder in the window, and remember it as where search returns to.
+    fn show(&self, listed: postio_runtime::store::ListScope) -> u64 {
         let Some((store, runtime)) = self.reader() else {
             return 0;
         };
         let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
-        *self.scope.lock().expect("scope lock") = Some(listed);
+        *self.source.lock().expect("source lock") = Source::Scope(listed);
+        *self.resting.lock().expect("resting lock") = Some(listed);
+        self.hits.lock().expect("hits lock").clear();
         self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Run `query` and put its hits in the window.
+    ///
+    /// Answers the generation the window is now on, as `open_scope` does, so
+    /// the frontend has one thing to compare a late page against whichever it
+    /// was that changed the list.
+    ///
+    /// The query text is parsed by `postio-search` and run by
+    /// `postio-session`: the operators mean here exactly what they mean on the
+    /// GTK side, because the same parser and the same executor read them. A
+    /// frontend that parsed `is:unread` itself would be a second query
+    /// language wearing the same syntax.
+    pub fn search(&self, query: String) -> u64 {
+        // A query that matched nothing empties the list rather than leaving
+        // the previous folder's rows under it, which would read as "here are
+        // your results". A query that could not *run* is the same answer to
+        // the frontend and a warning in the log, as it is on the GTK side.
+        let Some(results) = self.run_query(&query) else {
+            *self.source.lock().expect("source lock") = Source::Hits(Vec::new());
+            self.hits.lock().expect("hits lock").clear();
+            return self.list.lock().expect("list lock").reset(0);
+        };
+        let hits: Vec<crate::search::Hit> = results
+            .hits
+            .iter()
+            .map(|hit| crate::search::Hit {
+                message: hit.message_id.get(),
+                snippet: crate::search::snippet_of(&hit.snippet),
+            })
+            .collect();
+        let ids: Vec<postio_model::MessageId> =
+            results.hits.iter().map(|hit| hit.message_id).collect();
+        let total = ids.len() as u32;
+
+        *self.source.lock().expect("source lock") = Source::Hits(ids);
+        *self.hits.lock().expect("hits lock") = hits;
+        self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Put the folder that was open back in the window.
+    ///
+    /// Restoring rather than reloading the world: the scope is remembered
+    /// here, so clearing costs one count query and the frontend never has to
+    /// re-send which folder it was on. Nothing to go back to -- a search from
+    /// a cold start -- empties the list, which is what the sidebar shows.
+    pub fn clear_search(&self) -> u64 {
+        let resting = *self.resting.lock().expect("resting lock");
+        self.hits.lock().expect("hits lock").clear();
+        match resting {
+            Some(scope) => self.show(scope),
+            None => {
+                *self.source.lock().expect("source lock") = Source::Nothing;
+                self.list.lock().expect("list lock").reset(0)
+            }
+        }
+    }
+
+    /// The excerpt for a hit, and where in it the query matched.
+    ///
+    /// `None` for a row that is not in the current result set, and for a hit
+    /// with no local body -- a message whose bytes have not been fetched gets
+    /// no excerpt rather than a wrong one.
+    ///
+    /// A scan, because the set is capped at `HIT_LIMIT`; an index over two
+    /// hundred entries would cost more to keep than it saves.
+    pub fn search_snippet(&self, message: i64) -> Option<crate::SnippetFfi> {
+        self.hits
+            .lock()
+            .expect("hits lock")
+            .iter()
+            .find(|hit| hit.message == message)
+            .map(|hit| hit.snippet.clone())
+            .filter(|snippet| !snippet.text.is_empty())
     }
 
     /// How many rows the current scope has.
@@ -596,8 +733,21 @@ impl Session {
         let Some((store, runtime)) = self.reader() else {
             return;
         };
-        let Some(scope) = *self.scope.lock().expect("scope lock") else {
-            return;
+        let request = match &*self.source.lock().expect("source lock") {
+            Source::Nothing => return,
+            Source::Scope(scope) => Fetch::Page(postio_runtime::store::PageRequest {
+                scope: *scope,
+                offset: page * postio_ui::list::PAGE_SIZE,
+                limit: postio_ui::list::PAGE_SIZE,
+            }),
+            // The slice of the ranked ids this page covers. `message_rows`
+            // answers in the order asked, which is what carries relevance
+            // across -- reading them back sorted would silently discard it.
+            Source::Hits(ids) => {
+                let offset = (page * postio_ui::list::PAGE_SIZE) as usize;
+                let limit = postio_ui::list::PAGE_SIZE as usize;
+                Fetch::Rows(ids.iter().skip(offset).take(limit).copied().collect())
+            }
         };
         let local = self.local.0.clone();
         let list = self.list.clone();
@@ -607,13 +757,14 @@ impl Session {
         in_flight.fetch_add(1, ordering);
         self.reads.fetch_add(1, ordering);
         runtime.spawn(async move {
-            let request = postio_runtime::store::PageRequest {
-                scope,
-                offset: page * postio_ui::list::PAGE_SIZE,
-                limit: postio_ui::list::PAGE_SIZE,
+            let fetched = match request {
+                Fetch::Page(request) => store.list_page(request).await.map(crate::list::rows_of),
+                Fetch::Rows(ids) => store
+                    .message_rows(ids)
+                    .await
+                    .map(crate::list::rows_of_messages),
             };
-            if let Ok(fetched) = store.list_page(request).await {
-                let rows = crate::list::rows_of(fetched);
+            if let Ok(rows) = fetched {
                 let delivered = list
                     .lock()
                     .expect("list lock")
@@ -982,6 +1133,32 @@ impl Session {
         let guard = self.wiring.lock().expect("wiring lock");
         let wiring = guard.as_ref()?;
         Some((wiring.database.clone(), wiring.blobs.clone()))
+    }
+
+    /// Parse and run one query against the first enabled account.
+    ///
+    /// `None` when there is no store, no account, or the query could not run.
+    /// Synchronous: the index is local and the budget is under 100 ms, so this
+    /// is not a network wait -- the rule the UI must never break.
+    fn run_query(&self, query: &str) -> Option<postio_search::SearchResults> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connection().ok()?;
+        // The composition root still opens exactly one account, the same
+        // assumption `postio-app` makes; #183 is where that stops being true.
+        let account = postio_storage::repository::AccountRepository::new(&connection)
+            .list_enabled()
+            .ok()?
+            .into_iter()
+            .next()?
+            .id;
+        let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
+        postio_session::search::execute(
+            &connection,
+            account,
+            &parsed,
+            postio_search::facets::Scope::default(),
+            postio_search::ResultOrder::default(),
+        )
     }
 
     /// Every command the registry knows, in cheat-sheet order.

@@ -163,3 +163,14 @@ pub fn rows_of(page: ListPage) -> Vec<RowFfi> {
         ListPage::Threads(page) => page.rows.into_iter().map(RowFfi::from).collect(),
     }
 }
+
+/// The same rows, from a set of messages asked for by id.
+///
+/// What a search result set becomes. Separate from [`rows_of`] because the
+/// store answers a different type — hits are ranked, so they arrive as
+/// messages in the order asked rather than as a page of a scope — and
+/// identical from the frontend's side on purpose: a table that could tell the
+/// two apart would be a second scrolling path to get wrong.
+pub fn rows_of_messages(rows: Vec<MessageSummary>) -> Vec<RowFfi> {
+    rows.into_iter().map(RowFfi::from).collect()
+}
