@@ -23,7 +23,6 @@
 //! Skips without a display. Nothing here touches the network.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::MessageBody;

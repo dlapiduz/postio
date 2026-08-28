@@ -19,7 +19,6 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};

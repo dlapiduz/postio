@@ -26,7 +26,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
