@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 
+pub use postio_config::paths::Platform;
+
 /// Overrides everything when set. For a second profile, and for tests.
 const STORE_PATH_ENV: &str = "POSTIO_STORE";
 
@@ -20,29 +22,43 @@ const EXPORT_PATH_ENV: &str = "POSTIO_EXPORT_DIR";
 /// this is the user's mail, so it is neither a preference they can retype nor
 /// something safe to delete.
 pub fn store_path() -> PathBuf {
-    store_path_from(|key| std::env::var(key).ok())
+    store_path_from(|key| std::env::var(key).ok(), Platform::host())
 }
 
-/// As [`store_path`], for an arbitrary environment lookup.
-fn store_path_from<F>(env: F) -> PathBuf
+/// As [`store_path`], for an arbitrary environment lookup and layout.
+///
+/// On [`Platform::Apple`] the answer is
+/// `~/Library/Application Support/Postio/postio.db` — the platform's own
+/// convention, which is where a Mac user looks and where every backup tool
+/// already knows to go (#556).
+///
+/// `$POSTIO_STORE` and a deliberate `$XDG_DATA_HOME` still win on either
+/// platform. Someone who set one meant it, and it is what lets a store be
+/// shared with a Linux VM on the same machine — and what keeps every fixture
+/// and `scripts/run-isolated.sh` working untouched.
+fn store_path_from<F>(env: F, platform: Platform) -> PathBuf
 where
     F: Fn(&str) -> Option<String>,
 {
     if let Some(explicit) = env(STORE_PATH_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(explicit);
     }
-    let directory = env("XDG_DATA_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env("HOME")
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("share"))
-        })
+    if let Some(xdg) = env("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(xdg).join("postio").join("postio.db");
+    }
+    let Some(home) = env("HOME").filter(|value| !value.is_empty()) else {
         // Nowhere to put it: the working directory is a poor answer and a
         // loud one, which is better than a silent one somewhere surprising.
-        .unwrap_or_else(|| PathBuf::from("."));
-    directory.join("postio").join("postio.db")
+        return PathBuf::from(".").join("postio").join("postio.db");
+    };
+    match platform {
+        Platform::Apple => Platform::apple_support_dir(&home).join("postio.db"),
+        Platform::Freedesktop => PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("postio")
+            .join("postio.db"),
+    }
 }
 
 /// Where messages dragged out of Postio are written.
@@ -84,27 +100,39 @@ where
 /// and it exists for half-finished writes rather than for files another
 /// process is about to open.
 pub fn export_dir() -> PathBuf {
-    export_dir_from(|key| std::env::var(key).ok())
+    export_dir_from(|key| std::env::var(key).ok(), Platform::host())
 }
 
-/// As [`export_dir`], for an arbitrary environment lookup.
-fn export_dir_from<F>(env: F) -> PathBuf
+/// As [`export_dir`], for an arbitrary environment lookup and layout.
+///
+/// On [`Platform::Apple`], `~/Library/Caches/Postio/drag`. Still *cache*
+/// rather than data on either platform, for the reason above: these are
+/// copies of mail that is already stored, and Apple's reclaimable directory
+/// is `~/Library/Caches`, not `Application Support`.
+fn export_dir_from<F>(env: F, platform: Platform) -> PathBuf
 where
     F: Fn(&str) -> Option<String>,
 {
     if let Some(explicit) = env(EXPORT_PATH_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(explicit);
     }
-    let directory = env("XDG_CACHE_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env("HOME")
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".cache"))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    directory.join("postio").join("drag")
+    if let Some(xdg) = env("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(xdg).join("postio").join("drag");
+    }
+    let Some(home) = env("HOME").filter(|value| !value.is_empty()) else {
+        return PathBuf::from(".").join("postio").join("drag");
+    };
+    match platform {
+        Platform::Apple => PathBuf::from(home)
+            .join("Library")
+            .join("Caches")
+            .join("Postio")
+            .join("drag"),
+        Platform::Freedesktop => PathBuf::from(home)
+            .join(".cache")
+            .join("postio")
+            .join("drag"),
+    }
 }
 
 #[cfg(test)]
@@ -125,13 +153,79 @@ mod tests {
     }
 
     #[test]
+    fn on_apple_the_store_lives_where_apple_puts_it() {
+        // Decided by the maintainer, 2026-08-27 (#556): the platform's own
+        // convention, not the XDG layout wearing a mac hat. This is where a
+        // Mac user looks and where every backup tool already knows to go.
+        assert_eq!(
+            store_path_from(env(&[("HOME", "/Users/ada")]), Platform::Apple),
+            PathBuf::from("/Users/ada/Library/Application Support/Postio/postio.db")
+        );
+    }
+
+    #[test]
+    fn both_platforms_answer_from_either_host() {
+        // Why this is a parameter and not a `#[cfg]`. A `cfg` would mean each
+        // machine could only ever prove half of this, so the half nobody runs
+        // is the half that rots -- and the macOS answer is exactly the one
+        // most sessions cannot check.
+        let home = env(&[("HOME", "/home/ada")]);
+        assert_eq!(
+            store_path_from(&home, Platform::Freedesktop),
+            PathBuf::from("/home/ada/.local/share/postio/postio.db")
+        );
+        assert_eq!(
+            store_path_from(&home, Platform::Apple),
+            PathBuf::from("/home/ada/Library/Application Support/Postio/postio.db")
+        );
+    }
+
+    #[test]
+    fn an_explicit_path_still_wins_on_apple() {
+        // Every fixture, `scripts/run-isolated.sh` and the tests that set
+        // these directly depend on this staying true on both platforms.
+        assert_eq!(
+            store_path_from(
+                env(&[("POSTIO_STORE", "/tmp/other.db"), ("HOME", "/Users/ada")]),
+                Platform::Apple
+            ),
+            PathBuf::from("/tmp/other.db")
+        );
+    }
+
+    #[test]
+    fn an_explicit_xdg_home_still_wins_on_apple() {
+        // A deliberate `$XDG_DATA_HOME` is a person saying where they want it,
+        // and the platform default has no business overruling that. It is also
+        // what lets one store be shared with a Linux VM on the same machine.
+        assert_eq!(
+            store_path_from(
+                env(&[("XDG_DATA_HOME", "/data"), ("HOME", "/Users/ada")]),
+                Platform::Apple
+            ),
+            PathBuf::from("/data/postio/postio.db")
+        );
+    }
+
+    #[test]
+    fn on_apple_dragged_out_mail_goes_to_library_caches() {
+        // Still cache rather than data, for the reason the freedesktop case
+        // gives: these are copies of mail that is already stored. Apple's
+        // reclaimable directory is `~/Library/Caches`.
+        assert_eq!(
+            export_dir_from(env(&[("HOME", "/Users/ada")]), Platform::Apple),
+            PathBuf::from("/Users/ada/Library/Caches/Postio/drag")
+        );
+    }
+
+    #[test]
     fn the_store_lives_under_the_data_directory() {
         assert_eq!(
-            store_path_from(env(&[("XDG_DATA_HOME", "/data")])),
+            store_path_from(env(&[("XDG_DATA_HOME", "/data")]), Platform::Freedesktop),
             PathBuf::from("/data/postio/postio.db")
         );
         assert_eq!(
-            store_path_from(env(&[("HOME", "/home/ada")])),
+            store_path_from(env(&[("HOME", "/home/ada")]), Platform::Freedesktop),
             PathBuf::from("/home/ada/.local/share/postio/postio.db"),
             "not $HOME/.config: mail is data, not a preference"
         );
@@ -140,10 +234,13 @@ mod tests {
     #[test]
     fn an_explicit_path_wins() {
         assert_eq!(
-            store_path_from(env(&[
-                ("POSTIO_STORE", "/tmp/other.db"),
-                ("XDG_DATA_HOME", "/data"),
-            ])),
+            store_path_from(
+                env(&[
+                    ("POSTIO_STORE", "/tmp/other.db"),
+                    ("XDG_DATA_HOME", "/data")
+                ]),
+                Platform::Freedesktop
+            ),
             PathBuf::from("/tmp/other.db")
         );
     }
@@ -153,15 +250,15 @@ mod tests {
         // A copy of mail that is already stored. The system may reclaim it;
         // the mail it came from it may not.
         assert_eq!(
-            export_dir_from(env(&[
-                ("XDG_CACHE_HOME", "/cache"),
-                ("XDG_DATA_HOME", "/data"),
-            ])),
+            export_dir_from(
+                env(&[("XDG_CACHE_HOME", "/cache"), ("XDG_DATA_HOME", "/data")]),
+                Platform::Freedesktop
+            ),
             PathBuf::from("/cache/postio/drag"),
             "exports must not land beside the database"
         );
         assert_eq!(
-            export_dir_from(env(&[("HOME", "/home/ada")])),
+            export_dir_from(env(&[("HOME", "/home/ada")]), Platform::Freedesktop),
             PathBuf::from("/home/ada/.cache/postio/drag")
         );
     }
@@ -169,10 +266,13 @@ mod tests {
     #[test]
     fn the_export_directory_can_be_pointed_somewhere_else() {
         assert_eq!(
-            export_dir_from(env(&[
-                ("POSTIO_EXPORT_DIR", "/tmp/drag"),
-                ("XDG_CACHE_HOME", "/cache"),
-            ])),
+            export_dir_from(
+                env(&[
+                    ("POSTIO_EXPORT_DIR", "/tmp/drag"),
+                    ("XDG_CACHE_HOME", "/cache"),
+                ]),
+                Platform::Freedesktop
+            ),
             PathBuf::from("/tmp/drag")
         );
     }
@@ -180,7 +280,10 @@ mod tests {
     #[test]
     fn an_empty_override_is_not_an_override() {
         assert_eq!(
-            store_path_from(env(&[("POSTIO_STORE", ""), ("XDG_DATA_HOME", "/data")])),
+            store_path_from(
+                env(&[("POSTIO_STORE", ""), ("XDG_DATA_HOME", "/data")]),
+                Platform::Freedesktop
+            ),
             PathBuf::from("/data/postio/postio.db")
         );
     }

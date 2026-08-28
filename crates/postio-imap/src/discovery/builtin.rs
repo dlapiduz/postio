@@ -18,6 +18,8 @@
 //! collision.
 
 use std::collections::BTreeMap;
+
+use postio_config::paths::Platform;
 use std::sync::LazyLock;
 
 use crate::discovery::providers_toml::{self, OAuthRow, ProviderRow, Security};
@@ -211,7 +213,10 @@ fn overlay_rows_from<F>(env: F) -> BTreeMap<String, ProviderRow>
 where
     F: Fn(&str) -> Option<String>,
 {
-    let Ok(dir) = postio_config::paths::config_dir_from(env) else {
+    // The same directory `config.toml` is in, on whichever platform: this
+    // file sits beside it, and a user who moved one expects the other to
+    // follow. #556.
+    let Ok(dir) = postio_config::paths::config_dir_from(env, Platform::host()) else {
         return BTreeMap::new();
     };
     let path = dir.join("providers.toml");
