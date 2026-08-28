@@ -777,6 +777,60 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::RenameSavedSearch,
+        title: "Rename saved search",
+        // Free in `Context::Sidebar`: none of the message surfaces' bindings
+        // reach here, since `Sidebar` is not one of `MESSAGE_SURFACES`.
+        default_binding: "r",
+        alternate_bindings: &[],
+        // Only meaningful with a saved search focused, not a folder — the
+        // guard is defensive the same way `ToggleThreadUnread`'s is, since
+        // the registry already keeps this to the one context both kinds of
+        // row share (#455).
+        contexts: ctx(&[Context::Sidebar]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::MoveSavedSearchUp,
+        title: "Move saved search up",
+        // The same physical key `PrevFolder`'s alternate binding sits on,
+        // with Shift held to move the row instead of the cursor — the usual
+        // "hold Shift to reorder" idiom rather than a second unrelated key.
+        default_binding: "shift+Up",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Sidebar]),
+        destructive: false,
+        // A reorder destroys nothing; moving it back is the same action
+        // once more, same as the mouse menu's version of this verb.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::MoveSavedSearchDown,
+        title: "Move saved search down",
+        default_binding: "shift+Down",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Sidebar]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::DeleteSavedSearch,
+        title: "Delete saved search",
+        default_binding: "d",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Sidebar]),
+        // Deleting a saved search is a config-file edit with no undo stack
+        // to reach (see `postio-gtk::config::request_delete`'s doc comment),
+        // so like `DiscardDraft` this asks first rather than offering undo.
+        destructive: true,
+        recovery: Recovery::Confirm,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
