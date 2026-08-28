@@ -47,7 +47,7 @@ pub use contacts::ContactRepository;
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
 };
-pub use drafts::{DraftRepository, ServerCopyLocation};
+pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
 pub use mailboxes::MailboxRepository;
 pub use operations::{OperationQueueRepository, QueuedOperation};

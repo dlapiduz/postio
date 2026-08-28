@@ -44,8 +44,8 @@ use postio_model::ids::{AccountId, MessageId};
 use postio_model::signature_default;
 use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress};
 use postio_storage::repository::{
-    AccountRepository, ContactGroupRepository, ContactRepository, DraftRepository,
-    MailboxRepository, MessageRepository,
+    AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
+    DraftRepository, MailboxRepository, MessageRepository,
 };
 use postio_storage::{BlobStore, Database};
 
@@ -227,6 +227,10 @@ fn install_signature_default(
 /// with no local buffer and reports [`postio_gtk::reader::Absent::ForeignDraft`]
 /// instead, whatever the body's own download state is. See
 /// `docs/engineering-notes.md`.
+/// What the composer says once opening a queued draft has cancelled its
+/// pending send (#433).
+const SEND_CANCELLED: &str = "send cancelled — you're editing this draft again";
+
 fn install_resume(
     window: &Window,
     composer: &Composer,
@@ -235,6 +239,7 @@ fn install_resume(
 ) {
     window.list().connect_activated({
         let composer = composer.clone();
+        let window = window.clone();
         move |row| {
             if !row.draft {
                 return;
@@ -242,12 +247,56 @@ fn install_resume(
             let Some(draft) = draft_behind(&database, row.id) else {
                 return;
             };
+            let draft = if draft.state == DraftState::Queued {
+                // #433: the row stays in the Drafts folder for as long as the
+                // send sits in the queue, and opening it here used to reopen
+                // it live for editing while the drainer could pick the same
+                // row up at any moment — an edit landed or did not, purely on
+                // timing. Cancelling the send is what makes editing it again
+                // safe: see `DraftRepository::cancel_send`.
+                let Some(reopened) = cancel_queued_send(&database, draft.id) else {
+                    return;
+                };
+                window.show_action_completed(SEND_CANCELLED, false);
+                reopened
+            } else {
+                draft
+            };
             // So that closing it empty clears the right row: `connect_closed`
             // carries what became of the draft and not which one it was.
             last_id.set(Some(draft.id));
             composer.resume(draft);
         }
     });
+}
+
+/// Cancels a queued draft's pending send and returns it as it now stands, so
+/// the caller can resume the composer on live state rather than the stale
+/// `Queued` snapshot it read before cancelling.
+///
+/// `None` when there is nothing safe to resume: the send already drained,
+/// started draining, or the draft is gone — [`DraftRepository::cancel_send`]'s
+/// non-[`CancelSendOutcome::Cancelled`] outcomes. Opening the composer on a
+/// draft mid-send would risk a second, different message going out behind
+/// the one already on the wire, so this declines rather than guessing.
+fn cancel_queued_send(database: &Database, id: DraftId) -> Option<Draft> {
+    let connection = database
+        .connection()
+        .map_err(|error| tracing::warn!(%error, "could not open the store to cancel a send"))
+        .ok()?;
+    let drafts = DraftRepository::new(&connection);
+    match drafts.cancel_send(id, Utc::now()) {
+        Ok(CancelSendOutcome::Cancelled) => drafts
+            .get(id)
+            .map_err(|error| tracing::warn!(%error, "could not reread a draft after cancelling its send"))
+            .ok()
+            .flatten(),
+        Ok(CancelSendOutcome::NotQueued | CancelSendOutcome::AlreadyInFlight) => None,
+        Err(error) => {
+            tracing::warn!(%error, "could not cancel a queued draft's send");
+            None
+        }
+    }
 }
 
 /// The draft a message row is listing, if it is listing one.
