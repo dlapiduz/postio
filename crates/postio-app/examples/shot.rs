@@ -459,8 +459,8 @@ fn main() -> glib::ExitCode {
                 (AccountId::new(1), "Work".to_owned()),
                 (AccountId::new(2), "Home".to_owned()),
             ],
-            postio_model::AccountScope::Account(AccountId::new(1)),
-            false,
+            postio_model::AccountScope::Unified,
+            true,
         );
     }
     // The screen a store that will not open puts up instead of the mail
@@ -655,14 +655,6 @@ fn main() -> glib::ExitCode {
         // message's, drawn from the store, so there is nothing left to stage
         // for the picture.
         window.list().click_row(0);
-        // Which account it arrived in (#185). Drawn only with more than one
-        // account configured, so `accounts` is what a shot uses to see it --
-        // without the flag this is exactly what a single-account install
-        // shows, which is nothing. After the click, not before: rendering a
-        // message is what would otherwise overwrite it.
-        if flag("accounts") {
-            window.reader().set_account(Some("Work"), 2);
-        }
         // WebKit's load is async, on its own clock the frame-counting
         // `settle` above does not wait on -- wall time instead of frames.
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -670,6 +662,26 @@ fn main() -> glib::ExitCode {
         while Instant::now() < deadline {
             context.iteration(false);
             std::thread::sleep(Duration::from_millis(10));
+        }
+        // Which account it arrived in (#185). Drawn only with more than one
+        // account configured, so `accounts` is what a shot uses to see it --
+        // without the flag this is exactly what a single-account install
+        // shows, which is nothing.
+        //
+        // After the *fill*, not merely after the click. The click starts a
+        // store read that crosses to the runtime and comes back a turn or two
+        // later, and that reply sets the account line itself -- to `None`
+        // here, because the seed has one account and `named_accounts` is
+        // empty. Setting this before the reply lands means the reply wins and
+        // the line never appears, which is what happened when #596 turned the
+        // synchronous `show_message` into a real click.
+        if flag("accounts") {
+            // Hue 0, because `Work` is first in the strip above and takes
+            // hue 0 there. A shot that drew the same account blue in the
+            // sidebar and magenta in the reader would be teaching the
+            // opposite of what the per-account hue is for.
+            window.reader().set_account(Some("Work"), 0);
+            while context.iteration(false) {}
         }
     }
 
