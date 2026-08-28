@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use postio_storage::db::{self, DEFAULT_MAX_CONNECTIONS, Database};
 use postio_storage::migrations;
+use postio_storage::test_support::key;
 
 // ---------------------------------------------------------------------------
 // Acceptance: the helper gives a migrated database in a single call
@@ -94,8 +95,17 @@ fn a_file_backed_connection_carries_postios_pragmas() {
     );
     assert_eq!(pragmas.synchronous, 1, "synchronous = NORMAL");
     assert!(pragmas.foreign_keys, "foreign keys are enforced");
-    assert_eq!(pragmas.temp_store, 2, "temp_store = MEMORY");
-    assert!(pragmas.mmap_size > 0, "mmap is on");
+    assert_eq!(
+        pragmas.temp_store, 2,
+        "temp_store = MEMORY, so a sort never spills plaintext to disk"
+    );
+    assert_eq!(
+        pragmas.mmap_size, 0,
+        "mmap must stay off: memory-mapping is meaningless over encrypted \
+         pages, because SQLCipher has to decrypt each one into the page cache. \
+         This asserted `> 0` until ADR 0014, and the README's memory numbers \
+         were re-measured rather than adjusted"
+    );
     assert!(
         pragmas.cache_size < 0,
         "cache_size is negative, i.e. expressed in KiB rather than pages"
@@ -221,7 +231,7 @@ fn a_returned_connection_is_reused_rather_than_reopened() {
 
 #[test]
 fn the_pool_opens_up_to_its_limit_and_no_further() {
-    let database = Database::open_in_memory_with(2).expect("open");
+    let database = Database::open_in_memory_with(&key(), 2).expect("open");
     let pool = database.pool();
 
     let _one = pool.get().expect("first");
@@ -341,7 +351,7 @@ fn opening_a_database_creates_the_parent_directory() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("nested/deeper/postio.db");
 
-    let database = Database::open(&path).expect("open creates what it needs");
+    let database = Database::open(&path, &key()).expect("open creates what it needs");
 
     assert!(path.exists());
     assert_eq!(
@@ -356,7 +366,7 @@ fn reopening_a_database_keeps_its_rows_and_does_not_remigrate() {
     let path = directory.path().join("postio.db");
 
     {
-        let database = Database::open(&path).expect("open");
+        let database = Database::open(&path, &key()).expect("open");
         database
             .connection()
             .expect("checkout")
@@ -371,7 +381,7 @@ fn reopening_a_database_keeps_its_rows_and_does_not_remigrate() {
             .expect("insert");
     }
 
-    let database = Database::open(&path).expect("reopen");
+    let database = Database::open(&path, &key()).expect("reopen");
     let count: i64 = database
         .connection()
         .expect("checkout")
@@ -406,7 +416,7 @@ mod private_by_default {
         // created it, only `Database::open` will.
         let path = directory.path().join("postio").join("postio.db");
 
-        let database = Database::open(&path).expect("open");
+        let database = Database::open(&path, &key()).expect("open");
         drop(database);
 
         assert_eq!(
@@ -425,13 +435,13 @@ mod private_by_default {
 
         // A store from before this existed: created, then loosened, the way
         // a pre-fix Postio -- or a stray `chmod -R` -- would leave it.
-        let _ = Database::open(&path).expect("first open");
+        let _ = Database::open(&path, &key()).expect("first open");
         std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o755))
             .expect("loosen the directory");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
             .expect("loosen the file");
 
-        Database::open(&path).expect("reopen");
+        Database::open(&path, &key()).expect("reopen");
 
         assert_eq!(
             mode_of(&store),

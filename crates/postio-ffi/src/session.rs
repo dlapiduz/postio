@@ -199,6 +199,12 @@ pub struct Session {
     /// which *absence* the reader reports — "offline" against "still
     /// downloading" — so being briefly wrong costs a word, not correctness.
     offline: Arc<std::sync::atomic::AtomicBool>,
+    /// The engines this session started, kept alive for as long as it is.
+    ///
+    /// Retained rather than leaked, for the reason `postio-app` records: the
+    /// store is SQLCipher, and dropping an engine at process exit is exactly
+    /// when libcrypto goes away underneath a thread still encrypting a page.
+    engines: Mutex<Vec<postio_runtime::Engine>>,
     /// Events this boundary raises itself, merged into the drain alongside
     /// the engine's. `PageReady` lives here rather than in `postio-core`
     /// because paging is how this frontend reads a list, not something the
@@ -224,6 +230,17 @@ pub struct Session {
 /// no crossing, so the exported constructor takes the one thing a frontend
 /// actually chooses — where the store lives — and everything else is decided
 /// on this side.
+// ---------------------------------------------------------------------------
+// The exported surface. EVERYTHING IN THIS BLOCK CROSSES TO SWIFT.
+//
+// A plain Rust method added here is exported too, and the failure is
+// bewildering: uniffi generates scaffolding for it, and a method the rest of
+// the crate calls normally reports "not found for struct `Arc<Session>`" *at
+// its own definition*. Test-only methods behind `#[cfg(feature = "testing")]`
+// produce exactly that when the feature is off.
+//
+// Rust-side methods go in the second `impl Session` block, below.
+// ---------------------------------------------------------------------------
 #[uniffi::export]
 impl Session {
     /// Opens a session over the store at `store_path`, or the usual path.
@@ -302,6 +319,22 @@ impl Session {
         self.set_offline(offline);
     }
 
+    /// Start syncing every configured account; answers how many started.
+    ///
+    /// Zero is not an error — a store with no account configured is the
+    /// ordinary first-run state. Does not block: the connection attempt
+    /// happens on the engine's own runtime.
+    #[uniffi::method(name = "startSyncing")]
+    pub fn start_syncing_ffi(&self) -> Result<u32, SessionError> {
+        self.start_syncing()
+    }
+
+    /// How many accounts are configured and enabled.
+    #[uniffi::method(name = "configuredAccounts")]
+    pub fn configured_accounts_ffi(&self) -> u32 {
+        self.configured_accounts()
+    }
+
     /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
@@ -315,6 +348,10 @@ impl Session {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The Rust surface. Nothing here crosses to Swift; the block above wraps what
+// should. Test-only methods belong here.
+// ---------------------------------------------------------------------------
 impl Session {
     /// Opens a session, or says why it could not.
     ///
@@ -347,11 +384,21 @@ impl Session {
         if options.in_memory {
             let database = match options.seeded {
                 Some(database) => database,
-                None => postio_storage::Database::open_in_memory().map_err(|error| {
-                    SessionError::StoreUnavailable {
-                        message: error.to_string(),
-                    }
-                })?,
+                None => {
+                    // A fresh key per session, from the OS RNG. The database
+                    // lives and dies inside this process, so there is nothing
+                    // to reopen it with later — and an in-memory session still
+                    // runs the encrypted path, which is the whole point of ADR
+                    // 0014 Q3's "nothing tests a plaintext configuration that
+                    // no longer ships". No keyring is touched.
+                    let key = postio_storage::key::StoreKey::generate()
+                        .derive(postio_storage::key::Purpose::Database);
+                    postio_storage::Database::open_in_memory(&key).map_err(|error| {
+                        SessionError::StoreUnavailable {
+                            message: error.to_string(),
+                        }
+                    })?
+                }
             };
             let (blobs, scratch) = match options.seeded_blobs {
                 Some((blobs, scratch)) => (blobs, scratch),
@@ -382,6 +429,7 @@ impl Session {
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
                 offline: Arc::default(),
+                engines: Mutex::new(Vec::new()),
                 reads: Arc::default(),
                 local: async_channel::unbounded(),
                 events,
@@ -413,6 +461,7 @@ impl Session {
         let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
+            engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
@@ -560,7 +609,10 @@ impl Session {
         use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
 
         let remote = postio_body::RemoteImages::from(remote);
-        let Some((database, blobs)) = self.store_and_blobs() else {
+        // The blob store is not consulted: a body is a compressed column on
+        // the message's row since ADR 0020. Inline parts still come from it,
+        // which is why `store_and_blobs` is the accessor either way.
+        let Some((database, _blobs)) = self.store_and_blobs() else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
@@ -573,12 +625,7 @@ impl Session {
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        match postio_session::reading::load_body_or_reason(
-            &connection,
-            &blobs,
-            message.into(),
-            offline,
-        ) {
+        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline) {
             postio_session::reading::Body::Ready(body) => {
                 let (content, _held_back) = body_html(&body, remote);
                 document_for(&content, remote)
@@ -608,6 +655,139 @@ impl Session {
         let (database, blobs) = self.store_and_blobs()?;
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
+    }
+
+    /// How many accounts are configured and enabled.
+    ///
+    /// ADR 0005 Q3: the first account is not special, so this counts every
+    /// enabled one rather than looking for a primary.
+    pub fn configured_accounts(&self) -> u32 {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return 0;
+        };
+        let Ok(connection) = database.connection() else {
+            return 0;
+        };
+        postio_storage::repository::AccountRepository::new(&connection)
+            .list_enabled()
+            .map(|accounts| accounts.len() as u32)
+            .unwrap_or(0)
+    }
+
+    /// Whether an engine has been started and reached the slot.
+    pub fn has_engine(&self) -> bool {
+        self.wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .is_some_and(|wiring| wiring.engine.get().is_some())
+    }
+
+    /// Start syncing every configured account, and answer how many started.
+    ///
+    /// **The gap this closes:** the application opened a store and it stayed
+    /// empty forever, because nothing here ever started a sync. The store
+    /// being empty was never a rendering problem — nothing had fetched
+    /// anything.
+    ///
+    /// Zero accounts is `Ok(0)`, not an error. A fresh store with nothing
+    /// configured is the ordinary first-run state, and putting an error on
+    /// screen for somebody who has simply not finished setting up is worse
+    /// than saying nothing.
+    ///
+    /// Does not block: `engine::start_all` spawns onto the runtime the
+    /// session already holds, and the connection attempt happens there. The
+    /// UI never awaits the network.
+    pub fn start_syncing(&self) -> Result<u32, SessionError> {
+        // Idempotent. An application lifecycle calls this twice more often
+        // than once — a window reopening, a wake from sleep — and a second
+        // set of engines would double every connection to the server.
+        if self.has_engine() {
+            return Ok(self.engines.lock().expect("engines lock").len() as u32);
+        }
+
+        let guard = self.wiring.lock().expect("wiring lock");
+        let Some(wiring) = guard.as_ref() else {
+            return Err(SessionError::StoreUnavailable {
+                message: "the session has been shut down".to_string(),
+            });
+        };
+
+        let accounts =
+            {
+                let connection = wiring.database.connection().map_err(|error| {
+                    SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    }
+                })?;
+                postio_storage::repository::AccountRepository::new(&connection)
+                    .list_enabled()
+                    .map_err(|error| SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    })?
+            };
+        if accounts.is_empty() {
+            return Ok(0);
+        }
+
+        let started = postio_session::engine::start_all(
+            &accounts,
+            &wiring.database,
+            wiring.blobs.clone(),
+            wiring.events.clone(),
+            wiring.secrets.clone(),
+            wiring.mailbox_roles.clone(),
+            wiring.backfill,
+            &wiring.egress,
+        )
+        .map_err(|refusal| SessionError::StoreUnavailable {
+            message: refusal.to_string(),
+        })?;
+
+        let count = started.len() as u32;
+        for (_, engine) in started {
+            // The slot is what `Refresh` reads, and it is pressed long after
+            // the bus was built. An engine that ran but never reached it
+            // would sync happily and leave the refresh command inert.
+            wiring.engine.fill(engine.clone());
+            postio_runtime::retain(engine.clone());
+            self.engines.lock().expect("engines lock").push(engine);
+        }
+        Ok(count)
+    }
+
+    /// Adopt an engine over `MockBackend`, so adoption is testable.
+    ///
+    /// The real path builds a TLS connector and then connects, which no test
+    /// in the default suite may do. This exercises the half that is this
+    /// boundary's own — retaining the engine and filling the slot — against
+    /// the seam CLAUDE.md names for it.
+    #[cfg(feature = "testing")]
+    pub fn adopt_mock_engine_for_test(&self) {
+        let guard = self.wiring.lock().expect("wiring lock");
+        let Some(wiring) = guard.as_ref() else { return };
+        let parts = postio_runtime::EngineParts {
+            account: 1.into(),
+            database: wiring.database.clone(),
+            blobs: wiring.blobs.clone(),
+            backend: Arc::new(postio_imap::backend::MockBackend::new()),
+            smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+                postio_imap::secret::MemorySecretStore::default(),
+            ))),
+            events: wiring.events.clone(),
+            mailbox_roles: wiring.mailbox_roles.clone(),
+            clock: Arc::new(postio_runtime::SystemClock),
+            retry: Default::default(),
+            backfill: Default::default(),
+            reconnect: Default::default(),
+            watch: Default::default(),
+            network: postio_runtime::NetworkSource::Ignored,
+        };
+        if let Ok(engine) = postio_runtime::Engine::spawn(parts) {
+            wiring.engine.fill(engine.clone());
+            self.engines.lock().expect("engines lock").push(engine);
+        }
     }
 
     /// Tell the engine whether the machine currently has a connection.

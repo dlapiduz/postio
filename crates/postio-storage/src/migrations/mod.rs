@@ -1,5 +1,19 @@
 //! Forward-only, numbered schema migrations.
 //!
+//! # There is one, and that is deliberate
+//!
+//! `0001_initial_schema.sql` is the whole schema, not the first of a series of
+//! corrections. It replaced twenty-five numbered migrations in August 2026 —
+//! every one of them a fact about a past mistake and none of them a fact about
+//! the schema, so a reader had to walk all twenty-five to find out what was
+//! true.
+//!
+//! Collapsing them discarded every existing store, which was affordable
+//! exactly once, while the installed user count was one. ADR 0020 records the
+//! decision and calls it a licence rather than a policy. **It does not
+//! generalize**: the rules below apply again from here, and the next schema
+//! change is `0002`.
+//!
 //! # The rules
 //!
 //! 1. **Migrations are numbered from 1 with no gaps** and are applied in
@@ -71,133 +85,11 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 25] = [
-    Migration {
-        version: 1,
-        name: "initial_schema",
-        sql: include_str!("0001_initial_schema.sql"),
-    },
-    Migration {
-        version: 2,
-        name: "thread_links",
-        sql: include_str!("0002_thread_links.sql"),
-    },
-    Migration {
-        version: 3,
-        name: "mailbox_counts",
-        sql: include_str!("0003_mailbox_counts.sql"),
-    },
-    Migration {
-        version: 4,
-        name: "message_content_type",
-        sql: include_str!("0004_message_content_type.sql"),
-    },
-    Migration {
-        version: 5,
-        name: "draft_list_rows",
-        sql: include_str!("0005_draft_list_rows.sql"),
-    },
-    Migration {
-        version: 6,
-        name: "operation_source_snapshot",
-        sql: include_str!("0006_operation_source_snapshot.sql"),
-    },
-    Migration {
-        version: 7,
-        name: "list_id",
-        sql: include_str!("0007_list_id.sql"),
-    },
-    Migration {
-        version: 8,
-        name: "text_part_sections",
-        sql: include_str!("0008_text_part_sections.sql"),
-    },
-    Migration {
-        version: 9,
-        name: "named_signatures",
-        sql: include_str!("0009_named_signatures.sql"),
-    },
-    Migration {
-        version: 10,
-        name: "attachment_payloads",
-        sql: include_str!("0010_attachment_payloads.sql"),
-    },
-    Migration {
-        version: 11,
-        name: "shared_addresses",
-        sql: include_str!("0011_shared_addresses.sql"),
-    },
-    Migration {
-        version: 12,
-        name: "signature_defaults",
-        sql: include_str!("0012_signature_defaults.sql"),
-    },
-    Migration {
-        version: 13,
-        name: "unified_recency",
-        sql: include_str!("0013_unified_recency.sql"),
-    },
-    Migration {
-        version: 14,
-        name: "pending_account_deletion",
-        sql: include_str!("0014_pending_account_deletion.sql"),
-    },
-    Migration {
-        version: 15,
-        name: "contact_groups",
-        sql: include_str!("0015_contact_groups.sql"),
-    },
-    Migration {
-        version: 16,
-        name: "thread_list_index",
-        sql: include_str!("0016_thread_list_index.sql"),
-    },
-    Migration {
-        version: 17,
-        name: "backfill_exclusion",
-        sql: include_str!("0017_backfill_exclusion.sql"),
-    },
-    Migration {
-        version: 18,
-        name: "egress_log",
-        sql: include_str!("0018_egress_log.sql"),
-    },
-    Migration {
-        version: 19,
-        name: "unified_threads",
-        sql: include_str!("0019_unified_threads.sql"),
-    },
-    Migration {
-        version: 20,
-        name: "cross_account_moves",
-        sql: include_str!("0020_cross_account_moves.sql"),
-    },
-    Migration {
-        version: 21,
-        name: "message_snooze",
-        sql: include_str!("0021_message_snooze.sql"),
-    },
-    Migration {
-        version: 22,
-        name: "account_oauth",
-        sql: include_str!("0022_account_oauth.sql"),
-    },
-    Migration {
-        version: 23,
-        name: "message_remote_identity",
-        sql: include_str!("0023_message_remote_identity.sql"),
-    },
-    Migration {
-        version: 24,
-        name: "queue_remote_identity",
-        sql: include_str!("0024_queue_remote_identity.sql"),
-    },
-    Migration {
-        version: 25,
-        name: "account_backend",
-        sql: include_str!("0025_account_backend.sql"),
-    },
-];
+static MIGRATIONS: [Migration; 1] = [Migration {
+    version: 1,
+    name: "initial_schema",
+    sql: include_str!("0001_initial_schema.sql"),
+}];
 
 /// What [`migrate`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

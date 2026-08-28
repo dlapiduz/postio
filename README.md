@@ -72,6 +72,13 @@ System dependencies — Fedora 40+:
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
                  sqlite-devel libsecret-devel glib2-devel pkgconf-pkg-config
+
+# The store is SQLCipher, which builds OpenSSL from source (ADR 0014). Its
+# `Configure` is a perl program, and Fedora splits the perl standard library
+# into packages — without these the build stops at a `Can't locate X.pm in
+# @INC` inside a cargo build script, one module at a time.
+sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
+                 perl-Text-Template perl-Time-Piece
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
@@ -81,6 +88,10 @@ sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
                  libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
                  libglib2.0-dev libpango1.0-dev
 ```
+
+Debian and Ubuntu ship the perl modules OpenSSL needs in `perl-base` and
+`perl-modules`, both of which `build-essential` already pulls in, so the
+extra step above is Fedora-specific.
 
 Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) — with
 [rustup](https://rustup.rs), the right compiler arrives on the first `cargo`
@@ -168,13 +179,24 @@ Performance is a functional requirement, enforced by `cargo bench`:
 
 | Budget | Target | Measured |
 |---|---|---|
-| Startup to usable UI (populated DB) | < 500 ms | **147 ms** |
-| Ordinary UI interaction | < 16 ms | **~2 ms** |
-| Local search | < 100 ms | **27 ms** |
-| Memory, 100,000 messages | no full-mailbox load | **47 MiB**, flat |
+| Startup to usable UI (populated DB) | < 500 ms | **427 ms** |
+| Ordinary UI interaction | < 16 ms | **0.3 ms** typical |
+| Local search | < 100 ms | **42 ms** worst shape |
+| Memory, 100,000 messages | no full-mailbox load | **55 MiB**, flat past 100k |
 
-The full baseline — what was measured, on what, and how to reproduce every
-number — is [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+Measured against an **encrypted** store — the database is SQLCipher (ADR 0014)
+and there is no unencrypted configuration in normal use, so each figure already
+carries the cost of decrypting every page on the way in.
+
+The full baseline — what was measured, on what, which numbers are floors
+rather than means, and how to reproduce every one — is
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). Two cases are outside budget
+today and tracked as their own issues rather than smoothed over here: a
+unified thread page across two accounts ([#619]), and startup against its
+recorded baseline ([#636]).
+
+[#619]: https://github.com/dlapiduz/postio/issues/619
+[#636]: https://github.com/dlapiduz/postio/issues/636
 
 ## Configuration
 

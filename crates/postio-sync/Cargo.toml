@@ -24,7 +24,11 @@ postio-index.workspace = true
 postio-model.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+# Matches `postio-storage`: one `links = "sqlite3"` crate in the graph, so
+# the feature that selects SQLCipher has to agree everywhere (ADR 0014).
+rusqlite = { version = "0.40.2", features = [
+    "bundled-sqlcipher-vendored-openssl",
+] }
 secrecy = "0.10.3"
 thiserror = "2.0.20"
 tracing = "0.1"

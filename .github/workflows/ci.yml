@@ -376,6 +376,13 @@ jobs:
         # app grid kept the default icon after a fresh install. #427.
         run: python3 scripts/tests/test-install-local-icon.py
 
+      - name: Prove install-local.sh names every missing build dependency at once
+        # OpenSSL's Configure stops at the first module it cannot find, minutes
+        # into a release build, so the six perl modules Fedora leaves out were
+        # six failed builds to discover. The check must also stay silent on a
+        # machine that has everything. #646.
+        run: python3 scripts/tests/test-install-local-build-deps.py
+
       - name: Prove coverage.sh's floor comparison fails in both directions
         # Stubs cargo-llvm-cov so the floor-comparison arithmetic gets to be
         # red-then-green without spending the minutes a real instrumented

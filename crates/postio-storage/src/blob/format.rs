@@ -44,13 +44,20 @@ pub(crate) const HEADER_LEN: usize = MAGIC.len() + 7;
 
 /// Dictionary id meaning "compressed against no dictionary".
 ///
-/// The field exists from the first version because it must: a zstd frame can
-/// only be read with the dictionary it was written against, so a blob that
-/// does not record which one it used is a blob that can never be read once a
-/// second dictionary exists. Adding the field later would mean rewriting every
-/// blob a user owns — under ADR 0016 that is their whole mailbox.
+/// **This is the only value a blob will ever carry**, and the field stays
+/// anyway.
 ///
-/// Training one is separate work; this reserves the ability to.
+/// It was reserved for compressing text against a trained dictionary. ADR 0020
+/// moved the text into `messages` rows, where the dictionary lives as a row
+/// beside it (`postio_storage::body`), and what is left in the blob store is
+/// attachment payloads and raw `.eml`. Payloads are largely already compressed
+/// — 8.9 GB of JPEG, PNG, PDF and ZIP on the reference account — and a
+/// dictionary buys nothing on bytes that do not compress.
+///
+/// Removing the field would mean a container version bump and rewriting every
+/// blob a user owns, which under ADR 0016 is their whole mailbox, to reclaim
+/// four bytes per file. Reading it and refusing anything else costs nothing
+/// and keeps the door open, which is what a version field is for.
 pub(crate) const NO_DICTIONARY: u32 = 0;
 
 /// Compression level for the incompressibility probe.
@@ -165,7 +172,7 @@ pub(crate) fn framing_of(start: &[u8]) -> Result<Framing> {
 /// already compressed.
 pub(crate) fn looks_compressible(sample: &[u8]) -> bool {
     // Too small to tell, and too small to matter either way. Compressing keeps
-    // the common case -- short text bodies -- on one path.
+    // small attachments and short raw messages on one path.
     if sample.len() < 512 {
         return true;
     }

@@ -623,8 +623,11 @@ impl Actions {
             let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&transaction);
             for row in &rows {
                 // The provisional copy the user sees in the target at once.
-                // Blobs are content-addressed, so the copy shares the
-                // source's bytes rather than duplicating them.
+                // The raw `.eml` and the payloads are content-addressed, so
+                // the copy shares those bytes; the body text is copied, since
+                // ADR 0020 put it in the row. That is a second copy of a value
+                // whose median is 325 bytes, against a saga that already holds
+                // the whole message's raw source.
                 let mut copy = row.clone();
                 copy.id = MessageId::UNASSIGNED;
                 copy.account_id = target.account_id;
@@ -633,9 +636,9 @@ impl Actions {
                 copy.server.uid = None;
                 copy.server.uid_validity = None;
                 let copy_id = messages.create(&mut copy).map_err(store_failure)?;
-                if let Some(blobs) = messages.body_blobs(row.id).map_err(store_failure)? {
+                if let Some(body) = messages.body(row.id).map_err(store_failure)? {
                     messages
-                        .set_body_blobs(copy_id, &blobs, row.sync.body_state)
+                        .set_body(copy_id, &body, row.sync.body_state)
                         .map_err(store_failure)?;
                 }
 

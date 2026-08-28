@@ -15,7 +15,9 @@ use postio_model::{
     Attachment, BodyState, Disposition, EmailAddress, Flag, FlagSet, MailboxId, Message, MessageId,
     ModSeq, RfcMessageId, ThreadId, Uid, UidValidity,
 };
-use postio_storage::repository::{BodyBlobs, FlagSource, ListCursor, ListQuery, MessageRepository};
+use postio_storage::repository::{
+    FlagSource, ListCursor, ListQuery, MessageRepository, StoredBody,
+};
 use postio_storage::test_support;
 
 fn at(seconds: i64) -> DateTime<Utc> {
@@ -273,39 +275,48 @@ fn deleting_messages_takes_their_recipients_and_attachments() {
     );
 }
 
+/// The body is stored on the row (ADR 0020) but is *not* carried on the
+/// [`Message`] a `get` hands back.
+///
+/// That is the whole reason `body` is a separate call: the list pages over
+/// rows of a few hundred bytes, and a body on every `Message` would put the
+/// mailbox in memory. `tests/body.rs` holds down the round trip itself.
 #[test]
-fn the_body_and_headers_live_in_the_blob_store_and_the_row_holds_the_keys() {
+fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection);
     let messages = MessageRepository::new(&connection);
 
     let mut message = a_message(inbox, account.id, 5);
+    // The raw `.eml` is still a blob: large, streamed, deduplicated.
     message.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
     let id = messages.create(&mut message).expect("create");
 
     assert_eq!(
-        messages.body_blobs(id).expect("blobs").expect("the row"),
-        BodyBlobs::default(),
+        messages.body(id).expect("body").expect("the row"),
+        StoredBody::default(),
         "nothing has been downloaded yet"
     );
 
-    let blobs = BodyBlobs {
-        text: Some(postio_model::BlobId::new("b".repeat(64))),
-        html: Some(postio_model::BlobId::new("c".repeat(64))),
-        headers: Some(postio_model::BlobId::new("d".repeat(64))),
-    };
     messages
-        .set_body_blobs(id, &blobs, BodyState::Full)
+        .set_body(
+            id,
+            &StoredBody {
+                text: Some("the plain text".to_owned()),
+                html: Some("<p>the html</p>".to_owned()),
+                headers: Some("Subject: hello\r\n".to_owned()),
+            },
+            BodyState::Full,
+        )
         .expect("set");
 
     let stored = messages.get(id).expect("get").expect("the message");
-    assert_eq!(messages.body_blobs(id).expect("blobs"), Some(blobs));
     assert_eq!(stored.raw_blob_id, message.raw_blob_id);
     assert_eq!(stored.sync.body_state, BodyState::Full);
     assert!(
         stored.body.is_empty() && stored.headers.is_empty(),
-        "the bytes themselves are the blob store's, not SQLite's"
+        "a listed message does not drag its body along; `body` is the way to it"
     );
 }
 
@@ -413,7 +424,7 @@ fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
     assert_eq!(candidate.uid, message.server.uid.unwrap());
 
     messages
-        .set_body_blobs(message.id, &BodyBlobs::default(), BodyState::Full)
+        .set_body(message.id, &StoredBody::default(), BodyState::Full)
         .expect("mark it fetched");
     assert!(
         messages

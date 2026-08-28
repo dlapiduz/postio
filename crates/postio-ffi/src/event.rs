@@ -1,5 +1,66 @@
 //! What the frontend hears, and the rules for adding to it.
 
+/// Why a connection stopped in a way retrying will not fix.
+///
+/// Crosses because the remedies are different and only one of them is the
+/// user's: a rejected credential needs them to re-enter it, and a broken
+/// network path recovers on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FailureReasonFfi {
+    /// The server refused the credential. **Never retried on a timer** —
+    /// retrying a rejected credential is how an account gets locked.
+    Auth,
+    /// The network path is broken in a way backoff has given up on. Recovers
+    /// on its own; nothing for the user to fix in Postio.
+    Network,
+    /// The server accepted the connection and is refusing the work.
+    Server,
+    /// Something else the supervisor could not classify.
+    Other,
+}
+
+/// What an account's connection is doing.
+///
+/// Four states rather than a boolean, and the distinction earns its keep:
+/// **offline** means working from the local store, **connecting** means wait,
+/// and **failing** means stop waiting and go and fix something. Rendering
+/// `Failing` as "offline" tells the user to check their network when the
+/// answer is their password, and they will wait for a reconnect that is never
+/// coming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ConnectionStateFfi {
+    /// Working from the local database only.
+    Offline,
+    /// Establishing a connection, or waiting out a backoff that will retry.
+    Connecting,
+    /// Connected, with an idle or streaming session.
+    Online,
+    /// Stopped on something retrying will not fix, and waiting for a person.
+    Failing {
+        /// What kind of person-shaped problem it is.
+        reason: FailureReasonFfi,
+    },
+}
+
+impl From<postio_core::ConnectionState> for ConnectionStateFfi {
+    fn from(state: postio_core::ConnectionState) -> Self {
+        use postio_core::{ConnectionState, FailureReason};
+        match state {
+            ConnectionState::Offline => ConnectionStateFfi::Offline,
+            ConnectionState::Connecting => ConnectionStateFfi::Connecting,
+            ConnectionState::Online => ConnectionStateFfi::Online,
+            ConnectionState::Failing { reason } => ConnectionStateFfi::Failing {
+                reason: match reason {
+                    FailureReason::Auth => FailureReasonFfi::Auth,
+                    FailureReason::Network => FailureReasonFfi::Network,
+                    FailureReason::Server => FailureReasonFfi::Server,
+                    _ => FailureReasonFfi::Other,
+                },
+            },
+        }
+    }
+}
+
 /// One thing that happened, on its way to a repaint.
 ///
 /// # Adding a variant
@@ -74,6 +135,25 @@ pub enum UiEvent {
         /// The page whose rows are now resident.
         page: u32,
     },
+    /// An account's connection changed.
+    ConnectionChanged {
+        /// The account.
+        account: i64,
+        /// What it is doing now.
+        state: ConnectionStateFfi,
+    },
+    /// How far a synchronisation has got.
+    ///
+    /// The only thing a first run has to show that something is happening: a
+    /// backfill of a large mailbox is otherwise minutes of an empty list.
+    SyncProgress {
+        /// The account being synchronised.
+        account: i64,
+        /// Units completed.
+        done: u32,
+        /// Units expected.
+        total: u32,
+    },
     /// Something happened that this boundary does not model yet.
     ///
     /// Deliberately not a silent drop. The core's event vocabulary is larger
@@ -119,6 +199,19 @@ impl From<postio_core::Event> for UiEvent {
                 account: account.into(),
                 mailbox: mailbox.into(),
                 messages: messages.into_iter().map(Into::into).collect(),
+            },
+            Event::ConnectionChanged { account, state } => UiEvent::ConnectionChanged {
+                account: account.into(),
+                state: state.into(),
+            },
+            Event::SyncProgress {
+                account,
+                done,
+                total,
+            } => UiEvent::SyncProgress {
+                account: account.into(),
+                done,
+                total,
             },
             // Rule 2 in practice: everything the boundary has not modelled yet
             // still arrives, named. `{:?}` would carry the payload, and rule 3
