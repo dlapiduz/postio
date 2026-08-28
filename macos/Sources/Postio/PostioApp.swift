@@ -10,10 +10,17 @@ import SwiftUI
 @main
 struct PostioApp: App {
     @State private var engine = Engine()
+    @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup("Postio") {
             Shell(engine: engine)
+        }
+        .onChange(of: phase) { _, now in
+            // Orderly rather than at process exit: the store is SQLCipher, and
+            // dropping an engine as the process ends is exactly when
+            // libcrypto goes away underneath a thread still encrypting a page.
+            if now == .background { engine.shutdown() }
         }
         .defaultSize(width: 1100, height: 700)
         .windowToolbarStyle(.unified)
