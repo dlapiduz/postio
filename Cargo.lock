@@ -2640,6 +2640,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "postio-body",
+ "postio-config",
  "postio-core",
  "postio-ffi",
  "postio-imap",
