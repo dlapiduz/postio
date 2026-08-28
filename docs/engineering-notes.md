@@ -2886,6 +2886,34 @@ enforces this, and names the three scripts that are Linux-only *by nature*
 the XDG hicolor layout) so that exemption is a decision on the record rather
 than a script that happened to fail.
 
+**The reader's privacy claim is proved by a loopback listener, and that is
+not a network test (2026-08-28, #651).** `macos/Tests/PostioKitTests/ReaderEgressTests.swift`
+binds an `NWListener` on loopback, puts its URL in a message body as a remote
+image, renders it and counts connections. Nothing leaves the machine — which is
+the property under test — and it is the same reading the OAuth loopback
+redirect already relies on. **Do not delete it for touching a socket.**
+
+Three things about it are load-bearing:
+
+- **The "allowed" case is not optional.** A test that only asserted zero
+  connections when blocked would pass against a reader that renders no images
+  at all. The counter-assertion — exactly one connection when the sender is
+  allowed — is what makes the blocked case mean anything.
+- **No `NSWindow`.** Creating one in the test process and tearing it down
+  segfaults the runner. A `WKWebView` with a real frame lays out and loads its
+  resources without one, which the allowed case confirms every run.
+- **It is the only assertion that fails when the reader starts fetching.**
+  Every other check of the privacy claim is a reading of the code: the settings
+  look right, the policy string looks right. A content security policy that is
+  present and permissive looks exactly like one that works.
+
+Related, from the same work: a `WKNavigationDelegate` method that "nearly
+matches" is **never called**, and Swift 6 reports it as a warning. The
+completion-handler `decidePolicyFor:preferences:decisionHandler:` takes a
+`@MainActor @Sendable` handler, and a plain `@escaping` closure is a different
+type — so the reader had no navigation policy at all while looking correct.
+Use the `async` form, and treat "nearly matches" as an error.
+
 **A platform difference is a parameter, not a `#[cfg]` (2026-08-27, #556).**
 The store, the config directory and the drag-out cache answer differently on
 Apple — `~/Library/Application Support/Postio`, `~/Library/Caches/Postio` — and
