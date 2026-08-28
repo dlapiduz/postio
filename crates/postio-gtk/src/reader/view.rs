@@ -44,8 +44,8 @@ use postio_body::sanitize::RemoteImages;
 // Q6): one implementation for every frontend, re-exported here so existing
 // paths keep resolving. What remains in this file is webkit6 glue.
 pub use postio_ui::reader::document::{
-    Absent, DOCUMENT_BASE_URI, HeldBack, SCROLL_MARKERS, absent_html, body_html, contain_body,
-    content_security_policy, scroll_markers, wrap_document,
+    Absent, DOCUMENT_BASE_URI, HeldBack, SCROLL_MARKERS, absent_html, body_html,
+    content_security_policy, document_for, wrap_document,
 };
 
 /// The message currently on screen, kept so the banner's two actions can ask
@@ -539,10 +539,7 @@ fn render_open(
     banner.set_sender(sender.as_deref());
     banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
 
-    let document = wrap_document(
-        &format!("{}{}", contain_body(&content), scroll_markers()),
-        remote,
-    );
+    let document = document_for(&content, remote);
     view.load_html(&document, Some(DOCUMENT_BASE_URI));
     // `load_html` always starts a document at the top, whatever `page` said
     // before this call -- see `Reader::page_down`.
