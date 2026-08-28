@@ -1529,7 +1529,19 @@ impl Sidebar {
     /// requery does not cost the selection.
     pub fn set_saved_searches(&self, searches: &[SavedSearch]) {
         let imp = self.imp();
+        // `GtkListBox` in `SelectionMode::Single` selects the first row a
+        // caller appends to it if nothing is selected yet -- true of the
+        // very first `[filters]` pin an account has, appended here while
+        // nothing else in the sidebar has ever been selected. Unguarded,
+        // that auto-selection fires `imp.saved`'s own `connect_row_selected`
+        // exactly as a click would, running the search before a single key
+        // is pressed or a mailbox has even synced (#614). `echoing` is the
+        // same guard `select` already uses for the identical shape: a
+        // programmatic selection change that must repaint without being
+        // echoed back out as a user action.
+        imp.echoing.set(true);
         sync_search_rows(&imp.saved, searches);
+        imp.echoing.set(false);
         imp.saved_section.set_visible(!searches.is_empty());
     }
 
