@@ -699,6 +699,15 @@ struct FolderInner {
     sidebar: crate::sidebar::Sidebar,
     source: Rc<dyn MailboxSource>,
     account: Cell<Option<AccountId>>,
+    /// Every account whose tree the sidebar is drawing, in the order the
+    /// strip lists them (#185).
+    ///
+    /// Empty means the single-account shape: `account` alone, and the sidebar
+    /// draws one flat folder list exactly as it always has. That is the
+    /// common case and it costs one query, which is why this is a separate
+    /// field rather than `account` becoming a `Vec` — a store with one
+    /// account must not start paying for a loop it has no use for.
+    sections: RefCell<Vec<AccountId>>,
     /// The folders as last read — including the synthetic ones — so picking
     /// one can name it without another round trip.
     mailboxes: RefCell<Vec<Mailbox>>,
@@ -713,27 +722,47 @@ struct FolderInner {
 
 impl FolderInner {
     fn reload_now(self: Rc<Self>) {
-        let Some(account) = self.account.get() else {
-            return;
+        let accounts: Vec<AccountId> = match self.sections.borrow().as_slice() {
+            [] => self.account.get().into_iter().collect(),
+            many => many.to_vec(),
         };
+        if accounts.is_empty() {
+            return;
+        }
         let generation = self.generation.get();
-        let future = self.source.mailboxes(account);
+        // One request per account, awaited in order and concatenated.
+        // `Mailbox` carries its own `account_id`, so the sidebar can group a
+        // flat list back into sections without a second shape to keep in
+        // step — see `sidebar::folder_rows`.
+        //
+        // In order rather than joined: a folder list is a handful of rows
+        // from a local table, and two accounts is two of those. Racing them
+        // would buy nothing and would make the sidebar's order depend on
+        // which query answered first, which is the one thing it must not do
+        // (the hue is the position).
+        let futures: Vec<_> = accounts
+            .iter()
+            .map(|account| self.source.mailboxes(*account))
+            .collect();
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: `MailboxSource::mailboxes` is a trait method, and the trait's
-            // contract is that what it returns is pollable on the main
-            // context -- `postio-app` implements it by spawning the runtime
-            // work and handing back a channel receive. A `MailBackend` future
-            // must never be returned from it directly.
-            match future.await {
-                Ok(mailboxes) => self.arrived(generation, mailboxes),
-                Err(message) => {
-                    if generation == self.generation.get() {
-                        for handler in self.errors.borrow().iter() {
-                            handler(message.clone());
+            let mut all = Vec::new();
+            for future in futures {
+                // POSTIO-GLIB-SAFE: see the note on the single-account path
+                // below -- `MailboxSource::mailboxes` returns something
+                // pollable on the main context by contract.
+                match future.await {
+                    Ok(mailboxes) => all.extend(mailboxes),
+                    Err(message) => {
+                        if generation == self.generation.get() {
+                            for handler in self.errors.borrow().iter() {
+                                handler(message.clone());
+                            }
                         }
+                        return;
                     }
                 }
             }
+            self.arrived(generation, all);
         });
     }
 
@@ -845,6 +874,7 @@ impl Folders {
             sidebar: sidebar.clone(),
             source,
             account: Cell::new(None),
+            sections: RefCell::new(Vec::new()),
             mailboxes: RefCell::new(Vec::new()),
             tracker: RefCell::new(SyncTracker::new()),
             generation: Cell::new(0),
@@ -864,6 +894,22 @@ impl Folders {
         let inner = &self.0;
         inner.generation.set(inner.generation.get() + 1);
         inner.account.set(Some(account));
+        inner.sections.borrow_mut().clear();
+        inner.sidebar.set_account(address);
+        inner.clone().reload_now();
+    }
+
+    /// Draw every account's tree at once, as sections (#185).
+    ///
+    /// `selected` stays the account a verb without a folder is aimed at —
+    /// the sections are what is *visible*, not what is *current*, and
+    /// conflating them would make opening a section move the scope under
+    /// somebody who only wanted to look.
+    pub fn open_sections(&self, accounts: &[AccountId], selected: AccountId, address: &str) {
+        let inner = &self.0;
+        inner.generation.set(inner.generation.get() + 1);
+        inner.account.set(Some(selected));
+        *inner.sections.borrow_mut() = accounts.to_vec();
         inner.sidebar.set_account(address);
         inner.clone().reload_now();
     }
