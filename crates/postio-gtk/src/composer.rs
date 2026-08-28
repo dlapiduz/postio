@@ -535,6 +535,11 @@ mod imp {
         /// opens, not to when the composer itself was built.
         pub schedule_send: gtk::MenuButton,
         pub save: gtk::Button,
+        /// "Esc keeps the draft", trailing the action row. The least
+        /// essential of the four (#692): it ellipsizes under a narrow
+        /// allocation rather than the row overflowing the window with a
+        /// bare edge-clip, or a button's own label losing a word.
+        pub escape: gtk::Label,
         pub warning: gtk::Label,
         /// Issue #116: "this reply quotes a link to a domain other than the
         /// sender's own" — purely informational, next to `warning` but a
@@ -636,6 +641,7 @@ mod imp {
                 send: gtk::Button::new(),
                 schedule_send: gtk::MenuButton::new(),
                 save: gtk::Button::new(),
+                escape: gtk::Label::new(None),
                 warning: gtk::Label::new(None),
                 tracking_notice: gtk::Label::new(None),
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
@@ -2683,15 +2689,21 @@ impl Composer {
             move |_| composer.save()
         ));
 
-        let escape = gtk::Label::new(Some("Esc keeps the draft"));
-        escape.add_css_class("postio-compose-escape");
-        escape.set_hexpand(true);
-        escape.set_xalign(1.0);
+        imp.escape.set_label("Esc keeps the draft");
+        imp.escape.add_css_class("postio-compose-escape");
+        imp.escape.set_hexpand(true);
+        imp.escape.set_xalign(1.0);
+        // #692: the least essential of the four, so it is the one that
+        // gives way under a narrow allocation. Without this, nothing here
+        // can shrink below its natural width, and the whole row overflows
+        // the window instead -- clipping this label against the window's
+        // own edge rather than showing anything legible.
+        imp.escape.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
         row.append(&imp.send);
         row.append(&imp.schedule_send);
         row.append(&imp.save);
-        row.append(&escape);
+        row.append(&imp.escape);
         row
     }
 
@@ -2751,6 +2763,15 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_schedule_send_button(&self) -> gtk::MenuButton {
         self.imp().schedule_send.clone()
+    }
+
+    /// Whether the action row's trailing hint is allowed to give way under a
+    /// narrow allocation (#692) -- the least essential of the row's four
+    /// elements, so it is the one that should, rather than a button's own
+    /// label losing a word or the row overflowing the window outright.
+    #[doc(hidden)]
+    pub fn test_escape_hint_ellipsizes(&self) -> bool {
+        self.imp().escape.ellipsize() == gtk::pango::EllipsizeMode::End
     }
 
     /// Types `text` into the body, the way a keystroke reaches the buffer.
