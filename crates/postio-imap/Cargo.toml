@@ -95,11 +95,6 @@ tracing = "0.1"
 url = "2.5.8"
 zeroize = "1.9.0"
 
-# The Keychain store (ADR 0019). Already in `Cargo.lock` via
-# `rustls-platform-verifier`, so this adds no new dependency class -- only a
-# direct edge to something the graph already contains.
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3.7.0"
 
 # `providers_toml.rs` is compiled a second time by build.rs (`#[path]`), the
 # same idiom `postio-gtk/build.rs` uses for design tokens (ARCHITECTURE.md
@@ -120,6 +115,17 @@ postio-imap = { path = ".", features = ["test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 serde-xml-rs = "0.8"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
+
+# The Keychain store (ADR 0019). Already in `Cargo.lock` via
+# `rustls-platform-verifier`, so this adds no new dependency class -- only a
+# direct edge to something the graph already contains.
+#
+# Platform sections live at the foot of the manifest, after every plain
+# dependency table. A TOML table runs until the next header, so one of these
+# placed mid-list silently makes everything below it conditional --
+# `check-target-sections-last.py` and #642.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"
 
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
