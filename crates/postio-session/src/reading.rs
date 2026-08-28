@@ -203,16 +203,42 @@ pub fn cid_source(
     database: Database,
     blobs: BlobStore,
 ) -> Rc<dyn BlobSource> {
-    Rc::new(move |content_id: &str| {
-        let message = showing()?;
-        let connection = database.connection().ok()?;
-        let part = MessageRepository::new(&connection)
-            .get(message)
-            .ok()??
-            .attachments
-            .into_iter()
-            .find(|part| part.content_id.as_deref() == Some(content_id))?;
-        let bytes = blobs.get(&part.blob_id?).ok()?;
-        Some((bytes, part.mime_type))
-    })
+    Rc::new(move |content_id: &str| resolve_cid(&database, &blobs, showing()?, content_id))
+}
+
+/// One inline part of `message`, by its `Content-ID`.
+///
+/// The same resolution [`cid_source`] performs, as a plain call — because a
+/// frontend across an FFI cannot hold an `Rc<dyn BlobSource>`, and a second
+/// implementation of these six lines would be a second chance to get the
+/// scoping wrong.
+///
+/// # Scoped to `message`, and that is the whole point
+///
+/// A `Content-ID` is only meaningful inside the message that declares it, so
+/// resolving one globally would let a sender address another sender's parts.
+/// The message is a parameter rather than something read from ambient state,
+/// so a caller cannot forget to supply it.
+///
+/// # A part that is not here does not draw
+///
+/// `None` when the bytes are not already on this machine. That is the privacy
+/// commitment working rather than a gap to fill in later: fetching here would
+/// be the tracking pixel the reader spends so much effort blocking, arriving
+/// through the back door.
+pub fn resolve_cid(
+    database: &Database,
+    blobs: &BlobStore,
+    message: MessageId,
+    content_id: &str,
+) -> Option<(Vec<u8>, String)> {
+    let connection = database.connection().ok()?;
+    let part = MessageRepository::new(&connection)
+        .get(message)
+        .ok()??
+        .attachments
+        .into_iter()
+        .find(|part| part.content_id.as_deref() == Some(content_id))?;
+    let bytes = blobs.get(&part.blob_id?).ok()?;
+    Some((bytes, part.mime_type))
 }

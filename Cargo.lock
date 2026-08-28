@@ -2616,6 +2616,7 @@ dependencies = [
  "async-channel",
  "async-trait",
  "chrono",
+ "postio-body",
  "postio-core",
  "postio-ffi",
  "postio-imap",
