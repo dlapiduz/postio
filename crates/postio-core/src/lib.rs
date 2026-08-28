@@ -50,6 +50,7 @@
 //! the vocabulary they share.
 
 pub mod action;
+pub mod aim;
 pub mod bridge;
 pub mod command;
 pub mod config;
