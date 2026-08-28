@@ -2,6 +2,8 @@
 
 - **Status:** Accepted — **GO** (2026-08-26)
 - **Date:** 2026-08-26
+- **Amended:** 2026-08-27 — why blobs rather than compressed rows, and the
+  dictionary deferred behind a measurement ([#399](https://github.com/dlapiduz/postio/issues/399))
 - **Decision by:** the maintainer, asking what ADR 0016 actually implies for
   attachments, memory, disk, compression and encryption
 - **Extends:** [ADR 0016](0016-full-mailbox-backfill-by-default.md) (full-mailbox
@@ -174,7 +176,9 @@ Message text compresses 5–8x with zstd, and mail text compresses far better th
 that in aggregate because every reply quotes its parent and every message carries
 the same signature. **Blobs are stored zstd-compressed**, level 3, with a
 dictionary trained on the store's own text corpus and versioned in the blob
-header.
+header. **The dictionary half is deferred — see the amendment below**, which
+does the arithmetic this sentence skipped: it is worth 2.2% of the reference
+account, against a permanent invariant.
 
 Three constraints on how:
 
@@ -304,6 +308,117 @@ land rather than discovered by them.
    `pause_on_metered` exists and stays. What is added is honesty: because
    `BODYSTRUCTURE` gives us the totals for free, first run *states the number*
    before spending it.
+
+## Amendment — blobs rather than compressed rows, and what the dictionary is worth
+
+Asked directly: *why hand-roll any of this instead of using something that
+compresses SQLite?* The question is a good one and it has two halves. The first
+was already answered above and is restated here because it kept being
+re-asked. The second changes a decision this ADR made.
+
+### Why the bodies are not SQLite rows
+
+Page compression is settled: **no**, for the reason Axis 3 gives — SQLCipher is
+going underneath, and stacking a second VFS is a build and correctness problem
+larger than the saving. Row-level compression (`sqlite-zstd`, which does
+per-column zstd with automatic dictionary training — very nearly this issue, as
+a library) does not rescue that: it would have to be a loadable extension
+inside an encrypted database, and the store bundles rusqlite statically.
+
+But the deeper reason is that **the bytes are not shaped like rows**:
+
+- **88.5% of a real mailbox is attachment payloads**, and 8.9 GB of the
+  reference account's 11 GB is JPEG, PNG, PDF and ZIP. Compression buys
+  essentially nothing on those, so the thing a compression extension is *for*
+  does not apply to the overwhelming majority of the bytes.
+- **Reads must stream.** `BlobStore::reader` hands back a file, so a 30 MB
+  attachment never exists whole in memory. Row-level compression decompresses
+  a whole value.
+- **The id is the hash of the plaintext**, which is what makes the store
+  content-addressed: an attachment sent to five people, or quoted down a
+  forwarded thread, is stored once. ADR 0014 builds its keyed-BLAKE3 id on
+  that. Rows have no such property; getting it back would mean a
+  content-addressed table — the blob store, reimplemented inside SQLite, minus
+  streaming.
+- An 11 GB database is a `VACUUM` that rewrites 11 GB, a backup that copies it
+  whole, and one file whose corruption costs everything rather than one
+  message.
+
+So the blob store is not a rejection of libraries — `zstd` does all the actual
+compression. It is the shape the data has. The ~12 bytes of container header
+exist for the one thing no compression library can answer: *is this blob
+compressed at all*, given that most of them deliberately are not.
+
+### What the dictionary is worth, which is less than this ADR implied
+
+Axis 3 above says blobs are stored "with a dictionary trained on the store's
+own text corpus". #399 is that work. Doing the arithmetic before building the
+training half turned up a number that should have been here from the start.
+
+The measured ratios are per-blob **1.57x** against a shared-dictionary ceiling
+of **2.19x**. That is a 40% improvement, and 40% is how #399 states it — but it
+is 40% *of the smallest axis*. On the reference mailbox:
+
+| | |
+|---|---:|
+| text axis, uncompressed | 1.43 GB |
+| stored today (1.57x) | 0.91 GB |
+| stored with a perfect dictionary (2.19x) | 0.65 GB |
+| **saving** | **0.26 GB** |
+| **as a share of the 11.9 GB store** | **2.2%** |
+
+Against that 2.2%, a dictionary is **permanent, load-bearing data**:
+
+- Lose it and every blob written against it is unreadable. That is a *new way
+  to lose mail* in a store whose entire design is that the id is the hash of
+  the plaintext, so bytes can always be verified.
+- It is derived from the user's mail, so ADR 0014 requires it inside the
+  encrypted store — a new table, a new backup-and-restore obligation.
+- Dictionaries accumulate and may never be dropped, so the store carries every
+  one it ever trained.
+- It adds an error class that looks exactly like corruption and is not.
+
+**Decision: keep per-blob compression; do not build the dictionary yet.** What
+ships today (1.57x, no dictionary, no invariant) already takes the text axis
+from 1.43 GB to 0.91 GB. The marginal 0.26 GB does not buy a permanent
+data-loss-shaped invariant.
+
+### The condition that would change it
+
+The prize is entirely a function of the account's shape — how much payload
+sits beside the text:
+
+| payloads beside a 1.43 GB text axis | dictionary saves |
+|---|---:|
+| 11.0 GB (the reference account) | 2.2% |
+| 3.0 GB | 6.6% |
+| 1.0 GB | 13.5% |
+| 0.15 GB (mailing lists, no attachments) | **24.3%** |
+
+So this is not "the dictionary is not worth it". It is **"the dictionary is
+worth it for text-heavy accounts and not for attachment-heavy ones, and the
+only account measured is attachment-heavy."** A subscriber to busy lists who
+never receives attachments is at the bottom row, where it is worth a quarter of
+their store.
+
+Build it when a real account measurement shows payload-to-text below roughly
+3:1. Until then the format work stands — the container header carries the
+dictionary id, `BlobStore` resolves it, and a blob written against one reads
+back — so this is a decision that can be reversed by writing the training half,
+with no migration and no flag day. That was the point of reserving the field in
+#380, and it is still being served.
+
+### What would falsify this
+
+- A real account whose payload-to-text ratio is far below the reference
+  account's 7.7:1. That is the measurement #78 needs a live server for, and it
+  answers this question as a side effect.
+- Text bodies compressing materially better than 2.19x under a dictionary
+  trained on a real corpus rather than this project's synthetic one. The 2.19x
+  ceiling is measured on 902 messages; a real corpus has more redundancy to
+  find, and if the ceiling is nearer 3x the arithmetic moves.
+
+---
 
 ## Consequences
 
