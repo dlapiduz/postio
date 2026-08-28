@@ -310,6 +310,31 @@ fn fixtures_carry_the_headers_their_categories_promise() {
     }
 }
 
+/// #597: `duplicate-message-id` declared `charset=us-ascii` and then put two
+/// UTF-8 em-dashes in its body, which is not what its `[Threading,
+/// PlainText]` categories or its description are about -- a fixture that
+/// lies about its own charset teaches a dedup/threading test to expect
+/// mojibake for a reason that has nothing to do with what the fixture is
+/// named for. Corpus-wide, not just the one fixture, so nothing else can
+/// grow the same mismatch unnoticed.
+#[test]
+fn a_fixture_declaring_us_ascii_contains_only_ascii_bytes() {
+    for fixture in test_corpus::all() {
+        if !fixture
+            .text_lossy()
+            .to_lowercase()
+            .contains("charset=us-ascii")
+        {
+            continue;
+        }
+        assert!(
+            fixture.bytes().is_ascii(),
+            "{}: declares charset=us-ascii but contains a byte above 0x7f",
+            fixture.name()
+        );
+    }
+}
+
 #[test]
 fn the_large_attachment_is_actually_large() {
     let large = test_corpus::load("attachment-large");

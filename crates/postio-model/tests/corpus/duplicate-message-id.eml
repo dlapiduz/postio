@@ -9,7 +9,7 @@ Content-Transfer-Encoding: 7bit
 
 This message deliberately reuses the Message-ID of
 plain-text-simple.eml, with a different body and a four-second later
-Date. Servers do deliver the same Message-ID twice — a Bcc to oneself, a
-mailing list echo, a resend from a broken client — so deduplication
+Date. Servers do deliver the same Message-ID twice -- a Bcc to oneself, a
+mailing list echo, a resend from a broken client -- so deduplication
 must key on more than the Message-ID alone, and threading must not build
 a cycle out of the pair.
