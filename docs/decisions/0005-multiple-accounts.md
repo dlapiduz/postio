@@ -5,7 +5,8 @@
   ([#435](https://github.com/dlapiduz/postio/issues/435)), **Q5b decided
   2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186)),
   **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464)),
-  **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470))
+  **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470)),
+  **Q6c decided 2026-08-28** ([#471](https://github.com/dlapiduz/postio/issues/471))
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -570,6 +571,78 @@ is exactly where Q6a left them and is a separate gap; the difference is that
 it now *looks* unreachable instead of looking editable and lying. Whoever
 closes that gap should do it in the account row, beside the three affordances
 Q6a already put there, not in a text file.
+
+### Q6c — The account list is a keyboard context, and it is not the settings panel (#471)
+
+**Decided 2026-08-28.** Q6a put three affordances on each account row as a
+`gio::SimpleActionGroup` and filed #471 for the keyboard path it deliberately
+did not build, naming the open question as *"does the settings panel become a
+real `Context`?"*. **A context, yes — but `Context::Accounts`, not
+`Context::Settings`, and the difference is the decision.**
+
+**The precedent is #455, and it is exact.** Saved searches had the same shape:
+widget-scoped context-menu verbs (`savedsearch.rename` et al.), no keyboard
+path, no registry entries, and the same worry about whether registering them
+needed a new navigation model. b05192f resolved it by making the rows
+reachable from the keyboard and the verbs real `CommandId`s scoped to a
+context that already existed. Nothing here needs a different answer; the only
+reason a context has to be *added* is that no existing one covers this widget.
+
+**Why the widget and not the panel.** The settings panel is a nav, an account
+list, an egress list and a `GtkTextView` holding the literal `config.toml`. A
+`Context::Settings` spanning all of that would put bare-letter bindings live
+while the user is typing TOML — `d` removing an account instead of inserting a
+`d`. That is not a bug to be careful about; it is a bug the name invites,
+because the next person to add a binding will scope it to the context whose
+name says "the settings panel". `Context::Accounts` covers exactly the
+`accounts_list` widget, the way `Sidebar` and `Parts` are named for theirs, and
+the mechanism follows from the name: an `EventControllerFocus` on the list
+flips the context on enter and restores the previous on leave, which is
+verbatim what `window.rs` already does for `Context::Sidebar`. The `TextView`
+never enters it, so the trap is closed by construction rather than by
+remembering.
+
+**There is no account-picker problem, and that is Q6a's second open question
+dissolved rather than answered.** #471 asked what these commands do in the
+palette with no natural target, pointing at `Move` and `AddLabel`, which open a
+picker when invoked with `None`. They need one because they are invoked from a
+list of mail, where the target is not an account. These are only ever offered
+while `Context::Accounts` is active, which means an account row has focus,
+which means the target is that row — exactly as `Archive`'s target is the
+current selection. Building a picker so that `Ctrl+K → Remove account` works
+from the message list would be a second way to do a thing whose first way is
+"open settings, land on the account, press the key", and it would put an
+account-scale deletion one fuzzy match away from somebody who was not looking
+at accounts.
+
+The three commands:
+
+| Command | Binding | Destructive | Recovery |
+|---|---|---|---|
+| `ToggleAccountEnabled` | `Return` | no | `None` — pressing it again is the reversal |
+| `RemoveAccount` | `d` | **yes** | `Undo` |
+| `UpdateCredential` | none; palette only | no | `None` |
+
+`d` matches `DeleteSavedSearch`'s spelling in `Context::Sidebar`, which is the
+neighbouring list and the same verb. `UpdateCredential` gets no default binding
+— ten commands already have none — because it opens a dialog, happens once
+every few months, and the palette is the right discoverability for exactly that
+shape of verb. Getting into the list needs no new key either: the account rows
+sit above the text in the focus chain, so `Tab` already reaches them.
+
+**`Recovery::Undo` on `RemoveAccount` has to become true.** Q6a built the
+removal as soft-delete plus a narrower toast wired straight to
+`AccountRepository::restore`, explicitly *not* through the global undo stack,
+and said so because `Remove` was not a command then. Registering it makes the
+recovery a declaration the registry enforces, and a declaration nothing backs
+from the keyboard is the thing this whole ADR keeps refusing to ship. So while
+that toast is up, `u` in `Context::Accounts` invokes it. Context-local state,
+context-local binding, no change to the global stack — which is what a context
+is for. After the next start the reap has run and there is nothing to undo,
+which is exactly why Q6a put the reap at a restart boundary.
+
+`Context::ALL` gains `Accounts` at the end, so the `?` sheet grows a section
+rather than reordering the ones people have learned.
 
 ---
 
