@@ -209,6 +209,13 @@ jobs:
         # issue-release.sh deletes that worktree. #359.
         run: python3 scripts/tests/test-rustc-wrapper-tmpdir.py
 
+      - name: Prove a fresh tree's TMPDIR is created before anything wants it
+        # .cargo/config.toml points TMPDIR at target/tmp and nothing creates
+        # it, so the first temp file in a fresh clone or worktree failed with
+        # NotFound, naming a path nobody wrote. Both scripts that front cargo
+        # have to make it, and both have to stay fail-open. #613.
+        run: python3 scripts/tests/test-tmpdir-created.py
+
       - name: Prove issue-claim.sh never adopts an existing worktree
         # A claim lock can go missing while its session works; adopting the
         # worktree it protected puts two sessions in one tree. #328.
