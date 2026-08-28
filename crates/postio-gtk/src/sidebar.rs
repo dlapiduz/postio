@@ -532,6 +532,14 @@ mod imp {
         pub mailboxes: RefCell<Vec<Mailbox>>,
         /// Folders the ordinary tree is showing collapsed (#324).
         pub collapsed: RefCell<HashSet<MailboxId>>,
+        /// Every folder `GtkListBox`, in the order it is drawn.
+        ///
+        /// Two of them today -- special-use, then the ordinary tree -- and one
+        /// pair per account once the sidebar wears sections (#185). The
+        /// selection, the keyboard and `select` all walk this rather than
+        /// naming the boxes, because the number of boxes is a fact about the
+        /// drawing and none of those three is allowed to know it.
+        pub folder_lists: RefCell<Vec<gtk::ListBox>>,
         pub collapsed_changed: RefCell<Vec<Box<dyn Fn()>>>,
     }
 
@@ -700,70 +708,23 @@ impl Sidebar {
             }
         ));
 
-        // Selecting in one list clears the other two: together they are one
+        // Selecting in one list clears every other: together they are one
         // list of folders, plus the saved searches, drawn in blocks.
-        let special = imp.special.clone();
-        let ordinary = imp.ordinary.clone();
-        let saved = imp.saved.clone();
+        //
+        // Registered rather than named. `connect_folder_list` is what every
+        // folder box gets, so a box built later -- an account's, once the
+        // sidebar wears sections -- is coordinated by having been registered
+        // rather than by this function being edited again.
+        *imp.folder_lists.borrow_mut() = vec![imp.special.clone(), imp.ordinary.clone()];
+        self.connect_folder_list(&imp.special);
+        self.connect_folder_list(&imp.ordinary);
 
-        imp.special.connect_row_selected(glib::clone!(
-            #[weak(rename_to = sidebar)]
-            self,
-            #[weak]
-            ordinary,
-            #[weak]
-            saved,
-            move |_, row| {
-                let Some(row) = row else { return };
-                ordinary.unselect_all();
-                saved.unselect_all();
-                if sidebar.imp().echoing.get() {
-                    return;
-                }
-                let id = MailboxId::new(row_id(row));
-                for callback in sidebar.imp().selected.borrow().iter() {
-                    callback(id);
-                }
-            }
-        ));
-        imp.ordinary.connect_row_selected(glib::clone!(
-            #[weak(rename_to = sidebar)]
-            self,
-            #[weak]
-            special,
-            #[weak]
-            saved,
-            move |_, row| {
-                let Some(row) = row else { return };
-                special.unselect_all();
-                saved.unselect_all();
-                if sidebar.imp().echoing.get() {
-                    return;
-                }
-                let id = MailboxId::new(row_id(row));
-                // A `\Noselect` container has nothing to open — clicking it
-                // toggles its children instead, since that is the only
-                // thing selecting it could mean (#324).
-                if !sidebar.is_openable(id) {
-                    sidebar.toggle(id);
-                    return;
-                }
-                for callback in sidebar.imp().selected.borrow().iter() {
-                    callback(id);
-                }
-            }
-        ));
         imp.saved.connect_row_selected(glib::clone!(
             #[weak(rename_to = sidebar)]
             self,
-            #[weak]
-            special,
-            #[weak]
-            ordinary,
-            move |_, row| {
+            move |list, row| {
                 let Some(row) = row else { return };
-                special.unselect_all();
-                ordinary.unselect_all();
+                sidebar.clear_selection_except(list);
                 if sidebar.imp().echoing.get() {
                     return;
                 }
@@ -1329,7 +1290,7 @@ impl Sidebar {
         }
 
         imp.echoing.set(true);
-        for list in [&imp.special, &imp.ordinary] {
+        for list in imp.folder_lists.borrow().iter() {
             match find_row(list, id) {
                 Some(row) => list.select_row(Some(&row)),
                 None => list.unselect_all(),
@@ -1342,9 +1303,61 @@ impl Sidebar {
     /// folders in either section, or a saved search. At most one list ever
     /// has a selected row: selecting in one clears the other two (see
     /// `constructed`'s three `connect_row_selected` handlers).
+    /// Every list the selection coordinates across, in the order they are
+    /// drawn: the folder boxes as currently built, then the saved searches.
+    ///
+    /// Saved searches last because they are drawn last, and `rows` hands this
+    /// order straight to the keyboard.
+    fn selectable_lists(&self) -> Vec<gtk::ListBox> {
+        let mut lists = self.imp().folder_lists.borrow().clone();
+        lists.push(self.imp().saved.clone());
+        lists
+    }
+
+    /// Clear the selection everywhere but `keep`.
+    ///
+    /// At most one row in the whole sidebar is ever selected: the boxes are a
+    /// visual split, and a second highlighted row would say an action had two
+    /// targets.
+    fn clear_selection_except(&self, keep: &gtk::ListBox) {
+        for list in self.selectable_lists() {
+            if &list != keep {
+                list.unselect_all();
+            }
+        }
+    }
+
+    /// Wire a folder box into the selection, the callbacks and the collapse
+    /// behaviour every folder box shares.
+    ///
+    /// The `\Noselect` branch is here rather than only on the ordinary tree:
+    /// a container with nothing to open toggles its children instead, since
+    /// that is the only thing selecting it could mean (#324). Special-use
+    /// folders are never `\Noselect`, so sharing this costs them nothing.
+    fn connect_folder_list(&self, list: &gtk::ListBox) {
+        list.connect_row_selected(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |list, row| {
+                let Some(row) = row else { return };
+                sidebar.clear_selection_except(list);
+                if sidebar.imp().echoing.get() {
+                    return;
+                }
+                let id = MailboxId::new(row_id(row));
+                if !sidebar.is_openable(id) {
+                    sidebar.toggle(id);
+                    return;
+                }
+                for callback in sidebar.imp().selected.borrow().iter() {
+                    callback(id);
+                }
+            }
+        ));
+    }
+
     fn selected_row(&self) -> Option<gtk::ListBoxRow> {
-        let imp = self.imp();
-        for list in [&imp.special, &imp.ordinary, &imp.saved] {
+        for list in self.selectable_lists() {
             if let Some(row) = list.selected_row() {
                 return Some(row);
             }
@@ -1360,9 +1373,8 @@ impl Sidebar {
     /// the next, because that is the next row on screen — a folder there or
     /// a saved search makes no difference to how far `j` reaches.
     fn rows(&self) -> Vec<gtk::ListBoxRow> {
-        let imp = self.imp();
         let mut rows = Vec::new();
-        for list in [&imp.special, &imp.ordinary, &imp.saved] {
+        for list in self.selectable_lists() {
             let mut index = 0;
             while let Some(row) = list.row_at_index(index) {
                 rows.push(row);
