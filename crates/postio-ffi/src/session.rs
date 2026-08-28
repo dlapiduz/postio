@@ -335,6 +335,12 @@ impl Session {
         self.configured_accounts()
     }
 
+    /// Every folder of every enabled account, for the sidebar.
+    #[uniffi::method(name = "mailboxes")]
+    pub fn mailboxes_ffi(&self) -> Vec<crate::MailboxFfi> {
+        self.mailboxes()
+    }
+
     /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
@@ -655,6 +661,35 @@ impl Session {
         let (database, blobs) = self.store_and_blobs()?;
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
+    }
+
+    /// Every folder of every enabled account, for the sidebar.
+    ///
+    /// Blocks on a local read, like `openScope` does and for the same reason:
+    /// a sidebar is drawn before anything can be selected in it, and the read
+    /// is a few milliseconds of SQLite rather than the network.
+    pub fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
+        let Some((store, runtime)) = self.reader() else {
+            return Vec::new();
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Vec::new();
+        };
+        let Ok(connection) = database.connection() else {
+            return Vec::new();
+        };
+        let accounts = postio_storage::repository::AccountRepository::new(&connection)
+            .list_enabled()
+            .unwrap_or_default();
+        drop(connection);
+
+        let mut folders = Vec::new();
+        for account in accounts {
+            if let Ok(found) = runtime.block_on(store.mailboxes(account.id)) {
+                folders.extend(found.into_iter().map(crate::MailboxFfi::from));
+            }
+        }
+        folders
     }
 
     /// How many accounts are configured and enabled.
