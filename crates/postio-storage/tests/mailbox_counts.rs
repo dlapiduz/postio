@@ -39,25 +39,6 @@ fn cached(connection: &Connection, mailbox: MailboxId) -> (u32, u32, u32) {
     (counts.total, counts.unread, counts.flagged)
 }
 
-/// The same three columns, read directly rather than through
-/// [`MailboxRepository::counts`].
-///
-/// Only for a schema built from a migration prefix that predates
-/// `snoozed_count` (#493, migration 0021): the repository's own query
-/// selects that column unconditionally, which is correct for every real
-/// database (migrations always run to head before anything queries it) and
-/// wrong for a fixture that deliberately freezes an old schema to prove a
-/// later migration repairs it.
-fn cached_before_snooze_existed(connection: &Connection, mailbox: MailboxId) -> (u32, u32, u32) {
-    connection
-        .query_row(
-            "SELECT total_count, unread_count, flagged_count FROM mailboxes WHERE id = ?1",
-            [mailbox.get()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("read the cached counts")
-}
-
 /// A message with only what the counts care about.
 fn a_message(account: &Account, mailbox: MailboxId, uid: u32, flags: &[Flag]) -> Message {
     let at = Utc
@@ -248,61 +229,59 @@ fn hiding_a_message_twice_does_not_take_it_out_twice() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_store_written_without_the_counts_repairs_itself_on_open() {
-    // The 81,716-message store from `postio-qhz.7`. Its rows are all there and
-    // every cached count is zero, so nothing lists until the column is made
-    // true — and it has to happen on open, offline, because a populated local
-    // store is populated whether or not a server can be reached.
-    let mut connection = Connection::open_in_memory().expect("a database");
-    let old = &postio_storage::migrations::all()[..2];
-    postio_storage::migrations::migrate_with(&mut connection, old).expect("the old schema");
+fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
+    // `postio-qhz.7`: a store of 81,716 messages whose every `total_count`
+    // was 0, so the list drew nothing in every folder while
+    // `select count(*) from messages` returned the real number.
+    //
+    // The triggers are what stop that arising now, and the rest of this file
+    // is about them. This is the other half: if a count ever does drift — a
+    // bulk write that went round the triggers, a database edited by hand —
+    // `recount` puts it right from the rows themselves, offline. A populated
+    // local store is populated whether or not a server can be reached, so the
+    // repair must never need one.
+    //
+    // This used to freeze an old migration prefix and prove that migrating to
+    // head repaired the counts. There are no old stores and no migration
+    // history any more (ADR 0020), and a fresh schema has the triggers from
+    // its first statement, so the drift is induced directly instead.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    write(
+        &connection,
+        &account,
+        inbox,
+        &[&[], &[], &[], &[Flag::Seen], &[Flag::Seen, Flag::Flagged]],
+    );
+    assert_eq!(cached(&connection, inbox), (5, 3, 1));
 
+    // Drift, spelled out: the rows are all there and the column is a lie.
     connection
         .execute(
-            "INSERT INTO accounts (display_name, address, incoming_host, incoming_port,
-                                   incoming_username, outgoing_host, outgoing_port,
-                                   outgoing_username, created_at)
-             VALUES ('Test', 'ada@example.com', 'imap.example.com', 993, 'ada',
-                     'smtp.example.com', 587, 'ada', 0)",
+            "UPDATE mailboxes SET total_count = 0, unread_count = 0, flagged_count = 0",
             [],
         )
-        .expect("an account");
-    connection
-        .execute(
-            "INSERT INTO mailboxes (account_id, name, path, role) VALUES (1, 'INBOX', 'INBOX', 'inbox')",
-            [],
-        )
-        .expect("a folder");
-    for uid in 1..=5 {
-        connection
-            .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, seen, flagged)
-                 VALUES (1, 1, ?1, ?2, ?3)",
-                rusqlite::params![uid, i64::from(uid > 3), i64::from(uid == 1)],
-            )
-            .expect("a message");
-    }
-    let inbox = MailboxId::new(1);
+        .expect("zero the counts");
     assert_eq!(
-        cached_before_snooze_existed(&connection, inbox),
+        cached(&connection, inbox),
         (0, 0, 0),
         "the state the bug leaves behind"
     );
 
-    postio_storage::migrations::migrate(&mut connection).expect("migrate to head");
-
+    MailboxRepository::new(&connection)
+        .recount(inbox)
+        .expect("recount");
     assert_eq!(
         cached(&connection, inbox),
         (5, 3, 1),
-        "the store repairs its own counts rather than waiting for a sync"
+        "the store repairs its counts from its own rows"
     );
 
-    // And it keeps them from there on, without a recount.
-    connection
-        .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at) VALUES (1, 1, 99)",
-            [],
-        )
+    // And the triggers keep them from there on, without a second recount.
+    let mut sixth = a_message(&account, inbox, 6, &[]);
+    MessageRepository::new(&connection)
+        .create(&mut sixth)
         .expect("one more");
     assert_eq!(cached(&connection, inbox), (6, 4, 1));
 }

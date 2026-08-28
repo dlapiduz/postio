@@ -285,17 +285,17 @@ fn database() -> postio_storage::test_support::TempDatabase {
     database
 }
 
-fn insert_message(
-    connection: &rusqlite::Connection,
-    raw: Option<&BlobId>,
-    text: Option<&BlobId>,
-) -> i64 {
+/// A message holding the raw `.eml` blob, if it has one.
+///
+/// There is no body parameter: since ADR 0020 a body is a compressed column on
+/// this row, not a file, so it is not something the blob store can reference,
+/// collect or evict.
+fn insert_message(connection: &rusqlite::Connection, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id,
-                                   body_text_blob_id)
-             VALUES (1, 1, 0, ?1, ?2)",
-            rusqlite::params![raw.map(BlobId::as_str), text.map(BlobId::as_str)],
+            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id)
+             VALUES (1, 1, 0, ?1)",
+            rusqlite::params![raw.map(BlobId::as_str)],
         )
         .expect("insert a message");
     connection.last_insert_rowid()
@@ -308,22 +308,24 @@ fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     let connection = database.connection().expect("checkout");
 
     let raw = store.put(b"the raw message").expect("put");
-    let body = store.put(b"the plain text body").expect("put");
     let attached = store.put(b"an attachment").expect("put");
+    let also_attached = store.put(b"a second attachment").expect("put");
     let orphan = store.put(b"nothing points at this").expect("put");
     // What the orphan actually occupies, which is what collecting it frees.
     // Not the length of its content: blobs are compressed and carry a
     // container header (ADR 0017), so the two differ.
     let orphan_bytes = store.len_of(&orphan).expect("the orphan's size on disk");
 
-    let message = insert_message(&connection, Some(&raw), Some(&body));
-    connection
-        .execute(
-            "INSERT INTO attachments (message_id, mime_type, size, blob_id)
-             VALUES (?1, 'application/pdf', 13, ?2)",
-            rusqlite::params![message, attached.as_str()],
-        )
-        .expect("insert an attachment");
+    let message = insert_message(&connection, Some(&raw));
+    for blob in [&attached, &also_attached] {
+        connection
+            .execute(
+                "INSERT INTO attachments (message_id, mime_type, size, blob_id)
+                 VALUES (?1, 'application/pdf', 13, ?2)",
+                rusqlite::params![message, blob.as_str()],
+            )
+            .expect("insert an attachment");
+    }
 
     let report = store
         .collect_garbage(&connection, GarbageCollection::immediate())
@@ -334,8 +336,8 @@ fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     assert_eq!(report.bytes_reclaimed, orphan_bytes);
 
     assert!(store.contains(&raw));
-    assert!(store.contains(&body));
     assert!(store.contains(&attached));
+    assert!(store.contains(&also_attached));
     assert!(!store.contains(&orphan));
 }
 
@@ -346,8 +348,8 @@ fn a_blob_becomes_collectable_once_its_last_reference_goes() {
     let connection = database.connection().expect("checkout");
 
     let shared = store.put(b"referenced twice").expect("put");
-    let first = insert_message(&connection, Some(&shared), None);
-    insert_message(&connection, Some(&shared), None);
+    let first = insert_message(&connection, Some(&shared));
+    insert_message(&connection, Some(&shared));
 
     connection
         .execute("DELETE FROM messages WHERE id = ?1", [first])
@@ -735,23 +737,17 @@ fn a_compressed_blob_streams_without_being_read_whole() {
 // A budget, and evicting what can be refetched — ADR 0017, axis 3
 // ---------------------------------------------------------------------------
 
-/// A message received `received_at`, with whichever blobs it holds.
+/// A message received `received_at`, holding the raw `.eml` blob if it has one.
 fn insert_message_at(
     connection: &rusqlite::Connection,
     received_at: i64,
     raw: Option<&BlobId>,
-    text: Option<&BlobId>,
 ) -> i64 {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id,
-                                   body_text_blob_id, body_state)
-             VALUES (1, 1, ?1, ?2, ?3, 'full')",
-            rusqlite::params![
-                received_at,
-                raw.map(BlobId::as_str),
-                text.map(BlobId::as_str)
-            ],
+            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id, body_state)
+             VALUES (1, 1, ?1, ?2, 'full')",
+            rusqlite::params![received_at, raw.map(BlobId::as_str)],
         )
         .expect("insert a message");
     connection.last_insert_rowid()
@@ -778,40 +774,66 @@ fn eviction_takes_raw_source_before_it_takes_a_payload() {
     let connection = database.connection().expect("checkout");
 
     let raw = store.put(&vec![b'r'; 40_000]).expect("put");
-    let text = store
-        .put(b"the words, which are never evicted")
-        .expect("put");
     let payload = store.put(&vec![b'p'; 40_000]).expect("put");
-    let message = insert_message_at(&connection, 1_000, Some(&raw), Some(&text));
+    let message = insert_message_at(&connection, 1_000, Some(&raw));
     attach(&connection, message, &payload, 40_000);
 
     // A budget that only one of the two big blobs can fit under.
-    let budget = store.len_of(&payload).expect("len") + store.len_of(&text).expect("len") + 16;
+    let budget = store.len_of(&payload).expect("len") + 16;
     let report = store.evict_to_fit(&connection, budget).expect("evict");
 
     assert!(report.removed >= 1);
     assert!(!store.contains(&raw), "raw source goes first");
     assert!(store.contains(&payload), "the attachment survives it");
-    assert!(store.contains(&text), "and the words are never touched");
 }
 
 #[test]
-fn eviction_never_takes_the_text_that_search_is_made_of() {
-    // The one class that is not refetchable in any meaningful sense: losing
-    // it silently shrinks search, and #352's honesty surface could not even
-    // report the gap because `body_state` would still say the body is local.
+fn eviction_cannot_reach_the_text_that_search_is_made_of() {
+    // Message text is the one class that is not refetchable in any meaningful
+    // sense: losing it silently shrinks search, and #352's honesty surface
+    // could not even report the gap because `body_state` would still say the
+    // body is local.
+    //
+    // Since ADR 0020 that is structural rather than a rule eviction has to
+    // remember: bodies are compressed columns on the row, so there is no blob
+    // for a pass over the blob store to take. This test drives a budget of
+    // nothing at all across a message whose body is stored, and asserts the
+    // words are still readable afterwards.
     let (_directory, store) = store();
     let database = database();
     let connection = database.connection().expect("checkout");
+    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
 
-    let text = store.put(&vec![b't'; 40_000]).expect("put");
-    insert_message_at(&connection, 1_000, None, Some(&text));
+    let mut message = postio_model::Message::new(
+        account.id,
+        inbox,
+        chrono::TimeZone::timestamp_opt(&chrono::Utc, 1_000, 0)
+            .single()
+            .expect("a timestamp"),
+    );
+    let messages = postio_storage::repository::MessageRepository::new(&connection);
+    let id = messages.create(&mut message).expect("create");
+    let words = "the words, which are never evicted".repeat(40);
+    messages
+        .set_body(
+            id,
+            &postio_storage::repository::StoredBody {
+                text: Some(words.clone()),
+                ..Default::default()
+            },
+            postio_model::BodyState::Full,
+        )
+        .expect("store a body");
 
     // A budget of nothing at all: even then, the words stay.
     let report = store.evict_to_fit(&connection, 0).expect("evict");
-
     assert_eq!(report.removed, 0);
-    assert!(store.contains(&text));
+
+    assert_eq!(
+        messages.body(id).expect("body").expect("the row").text,
+        Some(words),
+        "no eviction budget can reach a body: it is not in the blob store"
+    );
 }
 
 #[test]
@@ -829,8 +851,8 @@ fn eviction_takes_the_oldest_mail_first() {
 
     let old = store.put(&vec![b'o'; 40_000]).expect("put");
     let new = store.put(&vec![b'n'; 40_000]).expect("put");
-    insert_message_at(&connection, 1_000, Some(&old), None);
-    insert_message_at(&connection, 9_000, Some(&new), None);
+    insert_message_at(&connection, 1_000, Some(&old));
+    insert_message_at(&connection, 9_000, Some(&new));
 
     let budget = store.len_of(&new).expect("len") + 16;
     store.evict_to_fit(&connection, budget).expect("evict");
@@ -849,7 +871,7 @@ fn an_evicted_payload_puts_its_message_back_to_partial() {
     let connection = database.connection().expect("checkout");
 
     let payload = store.put(&vec![b'p'; 40_000]).expect("put");
-    let message = insert_message_at(&connection, 1_000, None, None);
+    let message = insert_message_at(&connection, 1_000, None);
     attach(&connection, message, &payload, 40_000);
 
     store.evict_to_fit(&connection, 0).expect("evict");
@@ -880,7 +902,7 @@ fn a_store_already_under_its_budget_evicts_nothing() {
     let connection = database.connection().expect("checkout");
 
     let raw = store.put(&vec![b'r'; 4_000]).expect("put");
-    insert_message_at(&connection, 1_000, Some(&raw), None);
+    insert_message_at(&connection, 1_000, Some(&raw));
 
     let report = store
         .evict_to_fit(&connection, 100 * 1024 * 1024)

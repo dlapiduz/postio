@@ -480,19 +480,27 @@ pub struct UpsertReport {
     pub shadowed_by_pending: usize,
 }
 
-/// The blob keys for a message's decoded content.
+/// A message's decoded content, as text.
 ///
-/// The bytes live in the blob store; the row holds these. They are not on
-/// [`Message`] because nothing above the storage layer should be handling blob
-/// keys — it asks for the body and gets bytes.
+/// The bytes are columns on the message's row, zstd-compressed (ADR 0020).
+/// Callers never see that: they hand this type strings and get strings back.
+///
+/// `None` is "there is no such part". `Some("")` is a part that exists and is
+/// empty, which is a different fact — the reading pane distinguishes them, and
+/// collapsing the two is how a message that genuinely had no body became
+/// indistinguishable from one still downloading (#70).
+///
+/// Not on [`Message`] because the list never wants it: paging a mailbox reads
+/// rows of a few hundred bytes, and a body on every one of them would be the
+/// whole mailbox in memory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BodyBlobs {
+pub struct StoredBody {
     /// The `text/plain` body.
-    pub text: Option<BlobId>,
+    pub text: Option<String>,
     /// The `text/html` body.
-    pub html: Option<BlobId>,
+    pub html: Option<String>,
     /// The full header block.
-    pub headers: Option<BlobId>,
+    pub headers: Option<String>,
 }
 
 /// One message still missing all or part of its body.
@@ -573,6 +581,14 @@ impl StorageFootprint {
 #[derive(Debug)]
 pub struct MessageRepository<'a> {
     connection: &'a Connection,
+    /// Compression dictionaries this repository has already loaded.
+    ///
+    /// Interior mutability so `body` and `set_body` stay `&self` like every
+    /// other method here. Held per repository rather than globally: a pass
+    /// that reads a batch of bodies builds one repository and loads the
+    /// dictionary once, and a repository built for a single read never loads
+    /// one it does not need. See [`crate::body::Dictionaries`].
+    dictionaries: std::cell::RefCell<crate::body::Dictionaries>,
 }
 
 const MESSAGE_COLUMNS: &str = "\
@@ -610,7 +626,10 @@ messages.size,
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
-        Self { connection }
+        Self {
+            connection,
+            dictionaries: std::cell::RefCell::default(),
+        }
     }
 
     /// Inserts a message with its recipients, attachments and labels.
@@ -1230,44 +1249,101 @@ impl<'a> MessageRepository<'a> {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// The blob keys for a message's decoded content.
-    pub fn body_blobs(&self, id: MessageId) -> Result<Option<BodyBlobs>> {
+    /// A message's decoded text, HTML and header block.
+    ///
+    /// `None` when there is no such message. A message that exists but has
+    /// never been downloaded answers `Some(StoredBody::default())` — the row
+    /// is there and holds no parts, which is not the same as no row.
+    ///
+    /// Decompression happens here (ADR 0020) and is what puts this on the
+    /// reading pane's 16 ms path, so it reads exactly the three columns it
+    /// needs rather than a whole row.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnreadableBody`] if a stored value will not decode. Loudly,
+    /// rather than as an absent body: those are opposite facts to a reader.
+    pub fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         let mut statement = self.connection.prepare(
-            "SELECT body_text_blob_id, body_html_blob_id, headers_blob_id
+            "SELECT body_text, body_html, body_headers, body_dictionary_id
                FROM messages WHERE id = ?1",
         )?;
         let mut rows = statement.query([id.get()])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
-        Ok(Some(BodyBlobs {
-            text: row.get::<_, Option<String>>(0)?.map(BlobId::new),
-            html: row.get::<_, Option<String>>(1)?.map(BlobId::new),
-            headers: row.get::<_, Option<String>>(2)?.map(BlobId::new),
+        let text: Option<Vec<u8>> = row.get(0)?;
+        let html: Option<Vec<u8>> = row.get(1)?;
+        let headers: Option<Vec<u8>> = row.get(2)?;
+        let dictionary_id: Option<i64> = row.get(3)?;
+        drop(rows);
+        drop(statement);
+
+        // Loaded once for all three parts: they were written together against
+        // one dictionary, so there is one to load.
+        let dictionary = match dictionary_id {
+            None => None,
+            Some(dictionary_id) => Some(
+                self.dictionaries
+                    .borrow_mut()
+                    .get(self.connection, dictionary_id)?,
+            ),
+        };
+        let dictionary = dictionary.as_ref().map(|loaded| loaded.as_slice());
+
+        let decode = |stored: Option<Vec<u8>>| -> Result<Option<String>> {
+            stored
+                .map(|stored| crate::body::decompress(&stored, dictionary))
+                .transpose()
+        };
+        Ok(Some(StoredBody {
+            text: decode(text)?,
+            html: decode(html)?,
+            headers: decode(headers)?,
         }))
     }
 
-    /// Records where a message's content landed in the blob store.
+    /// Stores a message's decoded content on its row, compressed.
     ///
-    /// Takes the new [`BodyState`] with it: the keys and "how much of this
+    /// Takes the new [`BodyState`] with it: the content and "how much of this
     /// message is local" are one fact, and writing them separately would leave
     /// a window where the backfill queue disagrees with the reader.
-    pub fn set_body_blobs(
-        &self,
-        id: MessageId,
-        blobs: &BodyBlobs,
-        body_state: BodyState,
-    ) -> Result<()> {
+    ///
+    /// **Replaces every part.** A `None` clears the column rather than leaving
+    /// what was there, so a refetch that finds no HTML part does not leave the
+    /// previous fetch's HTML behind to be read as this message's.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotFound`] if no such message, and [`Error::UnreadableBody`]
+    /// if a value cannot be compressed.
+    pub fn set_body(&self, id: MessageId, body: &StoredBody, body_state: BodyState) -> Result<()> {
+        // The dictionary to write against, if one has been trained. Whichever
+        // one this is gets named on the row, and stays readable for ever after:
+        // the schema refuses to delete a dictionary a row still names.
+        let dictionary = self.dictionaries.borrow_mut().newest(self.connection)?;
+        let (dictionary_id, dictionary_bytes) = match &dictionary {
+            None => (None, None),
+            Some((id, bytes)) => (Some(*id), Some(bytes.as_slice())),
+        };
+
+        let encode = |value: &Option<String>| -> Result<Option<Vec<u8>>> {
+            value
+                .as_deref()
+                .map(|value| crate::body::compress(value, dictionary_bytes))
+                .transpose()
+        };
         let changed = self.connection.execute(
             "UPDATE messages
-                SET body_text_blob_id = ?2, body_html_blob_id = ?3, headers_blob_id = ?4,
-                    body_state = ?5
+                SET body_text = ?2, body_html = ?3, body_headers = ?4,
+                    body_dictionary_id = ?5, body_state = ?6
               WHERE id = ?1",
             params![
                 id.get(),
-                blobs.text.as_ref().map(BlobId::as_str),
-                blobs.html.as_ref().map(BlobId::as_str),
-                blobs.headers.as_ref().map(BlobId::as_str),
+                encode(&body.text)?,
+                encode(&body.html)?,
+                encode(&body.headers)?,
+                dictionary_id,
                 body_state.as_str(),
             ],
         )?;

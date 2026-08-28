@@ -4,6 +4,12 @@
 //! prove the *columns exist* and round-trip every field of a fully populated
 //! [`Message`] — the model is the input to the schema, so a missing column is a
 //! schema bug and belongs here rather than three issues later.
+//!
+//! The body columns are deliberately not written here. They are compressed
+//! (ADR 0020), so hand-written SQL cannot produce a value the reader would
+//! accept, and inventing one would prove the opposite of what this file is
+//! for. `tests/body.rs` covers that round trip through the repository, which
+//! is the only thing that may write those columns.
 
 use chrono::{TimeZone, Utc};
 use rusqlite::{Connection, params};
@@ -155,7 +161,7 @@ fn insert_message(connection: &Connection, message: &Message) -> i64 {
                  preview, size, flags, seen, flagged, answered, draft, deleted, has_attachments,
                  uid, uid_validity, mod_seq, remote_id,
                  body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
-                 raw_blob_id, body_text_blob_id, body_html_blob_id, headers_blob_id)
+                 raw_blob_id)
              VALUES (
                  ?1, ?2, NULL,
                  ?3, ?4, ?5,
@@ -163,7 +169,7 @@ fn insert_message(connection: &Connection, message: &Message) -> i64 {
                  ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26, ?27,
-                 ?28, NULL, NULL, NULL)",
+                 ?28)",
             params![
                 message.account_id.get(),
                 message.mailbox_id.get(),
