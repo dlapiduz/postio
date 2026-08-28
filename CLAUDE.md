@@ -100,8 +100,16 @@ format only files you changed, by name: `rustfmt --edition 2024 <paths>`.
   links `--release` — never run it while other sessions are building.
   `cargo run -p postio-app` runs whatever half-finished state is on disk.
 - **To prove a change reaches the running app**, use the integration tests in
-  `crates/postio-app/tests/` (`wiring.rs`, `keystroke.rs`) — the composition
-  root is testable without a GUI.
+  `crates/postio-app/tests/app_suite/` (`wiring.rs` lists mail, `keystroke.rs`
+  acts on it, `click_preview.rs` reads it) — the composition root is testable
+  without a GUI. They are one binary behind a custom harness, so run them with
+  `cargo test -p postio-app --test app_suite [name]`, and a new case is a
+  module plus a row in `main.rs`'s `CASES`.
+- **Assert on what a person would see, not on what a layer was handed.** Every
+  layer here is tested and passes; the bugs that reach users live *between*
+  them (#70 twice, `postio-bl2`). A reader test that checks the reader was
+  told about a message cannot fail when nothing tells it, and a `shot` that
+  draws rows it read itself cannot fail when the wiring is broken (#596).
 - **Logging is `POSTIO_LOG`** (an `EnvFilter`: `debug`, or
   `postio_sync=debug`), not `RUST_LOG`. `[logging]` in `config.toml` retunes
   a running instance live.
