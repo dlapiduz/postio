@@ -373,6 +373,9 @@ impl FromStr for Chord {
 
         let mut modifiers = Modifiers::NONE;
         for name in modifier_names {
+            if name.eq_ignore_ascii_case("mod") {
+                return Err(ParseError::UnexpandedMod);
+            }
             let parsed = Modifiers::parse(name).ok_or_else(|| ParseError::UnknownModifier {
                 modifier: (*name).to_owned(),
             })?;
@@ -458,8 +461,21 @@ pub enum ParseError {
     /// The binding string was empty or all whitespace.
     #[error("a binding cannot be empty")]
     Empty,
+    /// The platform-neutral `mod` reached the resolver unexpanded.
+    ///
+    /// Its own variant rather than an [`UnknownModifier`](Self::UnknownModifier),
+    /// because the message would otherwise send someone looking for a typo in a
+    /// binding that is spelled exactly right. `mod` is a config-file word:
+    /// `Keymap::resolve` turns it into a concrete accelerator, and anything
+    /// reading a registry or `[keys]` literal directly has to expand it first.
+    #[error(
+        "`mod` is resolved when the keymap is built, so it cannot reach the \
+         resolver; expand it with `postio_config::keys::expand_mod` first"
+    )]
+    UnexpandedMod,
+
     /// A `+`-separated part was not a modifier.
-    #[error("`{modifier}` is not a modifier; use ctrl, alt, shift or super")]
+    #[error("`{modifier}` is not a modifier; use mod, ctrl, alt, shift or super")]
     UnknownModifier {
         /// What was written.
         modifier: String,
@@ -1461,5 +1477,28 @@ mod tests {
         resolver.set_keymap(canvas_keymap());
 
         assert_eq!(resolver.pending(), None);
+    }
+}
+
+#[cfg(test)]
+mod unexpanded_mod_tests {
+    use super::*;
+
+    #[test]
+    fn the_token_is_rejected_with_a_message_that_names_the_fix() {
+        // The resolver matching a literal `mod+k` would be the bad outcome:
+        // the key would work on a machine where nothing expanded it and
+        // silently differ from every other surface.
+        let error = "mod+k".parse::<Binding>().expect_err("mod must not parse");
+        assert!(matches!(error, ParseError::UnexpandedMod));
+        assert!(
+            error.to_string().contains("expand_mod"),
+            "the message has to name the fix: {error}"
+        );
+    }
+
+    #[test]
+    fn ctrl_still_parses() {
+        assert!("ctrl+k".parse::<Binding>().is_ok());
     }
 }

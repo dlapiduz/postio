@@ -28,6 +28,11 @@ different bindings. An override that cannot be used, or that collides
 with a key already taken in the same place, is reported in the settings
 panel and the command keeps its default.
 
+`mod` is the primary accelerator: Control here, Command on macOS.
+Every default above uses it, which is why the same `config.toml`
+means the same thing on both. Writing `ctrl` instead pins the
+binding to Control everywhere.
+
 While you are typing, single-key bindings do not fire. Only `Escape`,
 the function keys, and chords holding `Ctrl`, `Alt` or `Super` reach a
 command from inside a text field.
