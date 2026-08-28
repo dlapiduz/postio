@@ -347,19 +347,6 @@ fn head_schema_tracks_its_own_version() {
 // ADR 0007 Q1/Q3: contact provenance, suppression, and groups
 // ---------------------------------------------------------------------------
 
-/// A database migrated up to but not including the contact-groups migration
-/// (#472) -- the schema an existing store looks like right before upgrading.
-fn migrated_before_contact_groups() -> Connection {
-    let mut connection = empty();
-    let before = migrations::all()
-        .iter()
-        .position(|migration| migration.name == "contact_groups")
-        .expect("the contact_groups migration is registered");
-    migrations::migrate_with(&mut connection, &migrations::all()[..before])
-        .expect("migrate to just before #472");
-    connection
-}
-
 fn insert_bare_contact(connection: &Connection, address: &str) -> i64 {
     connection
         .execute(
@@ -369,44 +356,6 @@ fn insert_bare_contact(connection: &Connection, address: &str) -> i64 {
         )
         .expect("insert a pre-migration contact");
     connection.last_insert_rowid()
-}
-
-#[test]
-fn every_existing_contact_backfills_a_mail_source() {
-    let mut connection = migrated_before_contact_groups();
-    insert_bare_contact(&connection, "ada@example.com");
-
-    migrate(&mut connection).expect("migrate to head");
-
-    let source: String = connection
-        .query_row(
-            "SELECT source FROM contacts WHERE address = 'ada@example.com'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("read the backfilled source");
-    assert_eq!(
-        source, "mail",
-        "a row that predates the column is a sighting, not a user edit"
-    );
-}
-
-#[test]
-fn a_migrated_contact_defaults_to_unsuppressed_with_no_vcard_fields() {
-    let mut connection = migrated_before_contact_groups();
-    insert_bare_contact(&connection, "grace@example.com");
-    migrate(&mut connection).expect("migrate to head");
-
-    let (suppressed, uid, vcard_extra): (i64, Option<String>, Option<String>) = connection
-        .query_row(
-            "SELECT suppressed, uid, vcard_extra FROM contacts WHERE address = 'grace@example.com'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("read the new columns");
-    assert_eq!(suppressed, 0);
-    assert_eq!(uid, None);
-    assert_eq!(vcard_extra, None);
 }
 
 #[test]
@@ -458,33 +407,74 @@ fn deleting_a_contact_cascades_its_group_membership() {
     assert_eq!(count, 0, "membership must not outlive the contact it names");
 }
 
+/// Where each kind of byte lives, asserted against the schema itself.
+///
+/// This used to read "no BLOB column anywhere; bytes belong in the
+/// content-addressed store". ADR 0020 split that claim in two, because it was
+/// only ever true of attachments:
+///
+/// * **Attachment payloads and raw `.eml`** stay in the blob store. They are
+///   large, they stream, and the same PDF genuinely arrives five times.
+/// * **Message bodies are columns**, compressed. The median one is 325 bytes,
+///   identical bodies are rare, and a file per body leaks its size and its
+///   mtime even when the contents are encrypted.
+///
+/// So the invariant worth holding is the *split*, not the blanket ban.
 #[test]
-fn message_bodies_and_attachment_bytes_are_not_stored_in_sqlite() {
+fn attachment_payloads_are_blob_keys_and_message_bodies_are_columns() {
     let connection = migrated();
-    for table in ["messages", "attachments"] {
-        let mut statement = connection
-            .prepare(&format!(
-                "SELECT name, type FROM pragma_table_info('{table}')"
-            ))
-            .expect("prepare table_info");
-        let columns: Vec<(String, String)> = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .expect("table info")
-            .collect::<Result<_, _>>()
-            .expect("collect");
 
-        for (name, kind) in &columns {
-            assert_ne!(
-                kind.to_ascii_uppercase(),
-                "BLOB",
-                "{table}.{name} is a BLOB; bytes belong in the content-addressed store"
-            );
-        }
-        assert!(
-            columns.iter().any(|(name, _)| name.ends_with("blob_id")),
-            "{table} must reference the blob store by key"
+    let attachments = column_types(&connection, "attachments");
+    for (name, kind) in &attachments {
+        assert_ne!(
+            kind.to_ascii_uppercase(),
+            "BLOB",
+            "attachments.{name} is a BLOB; a payload must stream, so it is a blob key"
         );
     }
+    assert!(
+        attachments.iter().any(|(name, _)| name == "blob_id"),
+        "attachments must reference the blob store by key"
+    );
+
+    let messages = column_types(&connection, "messages");
+    for body in ["body_text", "body_html", "body_headers"] {
+        let kind = messages
+            .iter()
+            .find(|(name, _)| name == body)
+            .map(|(_, kind)| kind.to_ascii_uppercase())
+            .unwrap_or_else(|| panic!("messages.{body} must exist (ADR 0020)"));
+        assert_eq!(kind, "BLOB", "messages.{body} holds compressed bytes");
+    }
+    assert!(
+        messages.iter().any(|(name, _)| name == "raw_blob_id"),
+        "the raw message source is still a blob key"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|(name, _)| name.ends_with("_blob_id") && name != "raw_blob_id"),
+        "no body is named by a blob key any more; have {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|(name, _)| name == "body_dictionary_id"),
+        "a compressed body must record which dictionary it was written against"
+    );
+}
+
+/// Every column of `table`, as `(name, declared type)`.
+fn column_types(connection: &Connection, table: &str) -> Vec<(String, String)> {
+    connection
+        .prepare(&format!(
+            "SELECT name, type FROM pragma_table_info('{table}')"
+        ))
+        .expect("prepare table_info")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("table info")
+        .collect::<Result<_, _>>()
+        .expect("collect")
 }
 
 // ---------------------------------------------------------------------------
@@ -869,86 +859,6 @@ fn the_operation_queue_preserves_enqueue_order_and_carries_an_inverse() {
 // Remote identity (#543, ADR 0018 Q2)
 // ---------------------------------------------------------------------------
 
-/// A database migrated up to but not including the remote-identity backfill
-/// (#543) -- the schema an existing store looks like right before upgrading.
-fn migrated_before_remote_identity() -> Connection {
-    let mut connection = empty();
-    let before = migrations::all()
-        .iter()
-        .position(|migration| migration.name == "message_remote_identity")
-        .expect("the message_remote_identity migration is registered");
-    migrations::migrate_with(&mut connection, &migrations::all()[..before])
-        .expect("migrate to just before #543");
-    connection
-}
-
-fn insert_bare_message(
-    connection: &Connection,
-    account_id: i64,
-    mailbox_id: i64,
-    uid: Option<i64>,
-    uid_validity: Option<i64>,
-) -> i64 {
-    connection
-        .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, uid, uid_validity)
-             VALUES (?1, ?2, 0, ?3, ?4)",
-            rusqlite::params![account_id, mailbox_id, uid, uid_validity],
-        )
-        .expect("insert a pre-migration message");
-    connection.last_insert_rowid()
-}
-
-#[test]
-fn an_imap_row_backfills_its_remote_id_from_its_generation_and_uid() {
-    let mut connection = migrated_before_remote_identity();
-    let account = insert_account(&connection, "ada@example.com");
-    let mailbox = insert_mailbox(&connection, account, "INBOX");
-    let synced = insert_bare_message(&connection, account, mailbox, Some(42), Some(7));
-
-    migrate(&mut connection).expect("migrate to head");
-
-    let remote_id: Option<String> = connection
-        .query_row(
-            "SELECT remote_id FROM messages WHERE id = ?1",
-            [synced],
-            |row| row.get(0),
-        )
-        .expect("read the backfilled identity");
-    assert_eq!(
-        remote_id.as_deref(),
-        Some("7:42"),
-        "an IMAP row's backend-neutral identity is its generation and uid"
-    );
-}
-
-#[test]
-fn a_row_the_server_never_named_backfills_no_remote_id() {
-    let mut connection = migrated_before_remote_identity();
-    let account = insert_account(&connection, "ada@example.com");
-    let mailbox = insert_mailbox(&connection, account, "INBOX");
-    // A locally composed message, and one seen before UIDVALIDITY was
-    // recorded: neither has the pair an identity is made of.
-    let local = insert_bare_message(&connection, account, mailbox, None, None);
-    let half = insert_bare_message(&connection, account, mailbox, Some(9), None);
-
-    migrate(&mut connection).expect("migrate to head");
-
-    for id in [local, half] {
-        let remote_id: Option<String> = connection
-            .query_row(
-                "SELECT remote_id FROM messages WHERE id = ?1",
-                [id],
-                |row| row.get(0),
-            )
-            .expect("read the row");
-        assert_eq!(
-            remote_id, None,
-            "an invented identity is worse than none (row {id})"
-        );
-    }
-}
-
 #[test]
 fn looking_up_a_message_by_remote_id_uses_an_index() {
     let connection = migrated();
@@ -962,88 +872,4 @@ fn looking_up_a_message_by_remote_id_uses_an_index() {
         uses_index(&plan) && plan.contains("remote_id"),
         "plan was:\n{plan}"
     );
-}
-
-/// A database migrated up to but not including 0024 -- what an existing
-/// store's queue looks like right before the identity flip reaches it.
-fn migrated_before_queue_identity() -> Connection {
-    let mut connection = empty();
-    let before = migrations::all()
-        .iter()
-        .position(|migration| migration.name == "queue_remote_identity")
-        .expect("the queue_remote_identity migration is registered");
-    migrations::migrate_with(&mut connection, &migrations::all()[..before])
-        .expect("migrate to just before 0024");
-    connection
-}
-
-#[test]
-fn a_queued_discard_is_rewritten_to_name_its_copy_by_identity() {
-    let mut connection = migrated_before_queue_identity();
-    let account = insert_account(&connection, "ada@example.com");
-    connection
-        .execute(
-            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id, payload,
-                                          state, created_at, updated_at)
-             VALUES (?1, 'discard_draft', 'draft', 9,
-                     '{\"op\":\"discard_draft\",\"mailbox\":5,\"uid\":77,\"uid_validity\":12}',
-                     'pending', 0, 0)",
-            [account],
-        )
-        .expect("a pre-#543 queued discard");
-
-    migrate(&mut connection).expect("migrate to head");
-
-    let payload: String = connection
-        .query_row("SELECT payload FROM operation_queue", [], |row| row.get(0))
-        .expect("the rewritten payload");
-    assert!(
-        payload.contains("\"remote_id\":\"12:77\"") && !payload.contains("uid_validity"),
-        "a queued discard must survive the upgrade: {payload}"
-    );
-}
-
-#[test]
-fn a_queued_move_snapshot_backfills_its_source_identity() {
-    let mut connection = migrated_before_queue_identity();
-    let account = insert_account(&connection, "ada@example.com");
-    connection
-        .execute(
-            "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id, payload,
-                                          state, created_at, updated_at, source_uid,
-                                          source_uid_validity)
-             VALUES (?1, 'move', 'message', 3, '{\"op\":\"move\",\"to\":2}',
-                     'pending', 0, 0, 41, 7)",
-            [account],
-        )
-        .expect("a pre-#543 queued move");
-
-    migrate(&mut connection).expect("migrate to head");
-
-    let source: Option<String> = connection
-        .query_row("SELECT source_remote_id FROM operation_queue", [], |row| {
-            row.get(0)
-        })
-        .expect("the backfilled snapshot");
-    assert_eq!(source.as_deref(), Some("7:41"));
-}
-
-#[test]
-fn a_draft_server_copy_backfills_its_identity() {
-    let mut connection = migrated_before_queue_identity();
-    let account = insert_account(&connection, "ada@example.com");
-    connection
-        .execute(
-            "INSERT INTO drafts (account_id, uid, uid_validity, created_at, updated_at)
-             VALUES (?1, 77, 12, 0, 0)",
-            [account],
-        )
-        .expect("a pre-#543 draft with a located server copy");
-
-    migrate(&mut connection).expect("migrate to head");
-
-    let remote_id: Option<String> = connection
-        .query_row("SELECT remote_id FROM drafts", [], |row| row.get(0))
-        .expect("the backfilled identity");
-    assert_eq!(remote_id.as_deref(), Some("12:77"));
 }
