@@ -47,7 +47,7 @@ use postio_model::{
     Account, Attachment, BodyState, EmailAddress, Flag, FlagSet, Mailbox, MailboxRole, Message,
     RfcMessageId, ids::MessageId, test_corpus,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 use crate::db::Database;
 use crate::repository::{
@@ -329,15 +329,17 @@ pub fn thread_seeded_messages(
     assert!(per_thread > 0, "a conversation holds at least one message");
     let connection = database.connection().expect("a checked-out connection");
 
-    let ids: Vec<i64> = {
+    let rows: Vec<(i64, Option<String>)> = {
         let mut statement = connection
             .prepare(
-                "SELECT id FROM messages WHERE account_id = ?1
+                "SELECT id, subject FROM messages WHERE account_id = ?1
                   ORDER BY received_at DESC, id DESC",
             )
             .expect("prepare the seeded message list");
         let rows = statement
-            .query_map([account.get()], |row| row.get::<_, i64>(0))
+            .query_map([account.get()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+            })
             .expect("read the seeded message list");
         rows.collect::<rusqlite::Result<_>>()
             .expect("collect the seeded message list")
@@ -345,17 +347,34 @@ pub fn thread_seeded_messages(
 
     let scope = Scope::open(&connection).expect("open a threading batch");
     let mut threads = 0;
-    for chunk in ids.chunks(per_thread) {
+    for chunk in rows.chunks(per_thread) {
+        // A real thread's subject is one of its own messages' (`recompute_in`
+        // reads the oldest member's), never a constant -- and a benchmark
+        // that gave every seeded thread the identical literal subject once
+        // sent `unified_page`'s subject-coalescing query chasing all 13,000
+        // of them as candidates for every page row, which is what #619's
+        // budget miss actually was, not a query-plan problem: instrumenting
+        // confirmed every one of the top 100 raw threads shared this one
+        // literal subject, and fixing only that (nothing in `unified_page`
+        // itself) took `cargo bench`'s own measurement from 18.6-19.5ms to
+        // 1.7-1.9ms. Any member's subject keeps every seeded thread's
+        // subject as distinct as its messages' already are, which is "the
+        // same shape of data" this function promises rather than a
+        // pathological one no real mailbox produces.
+        let subject = chunk
+            .first()
+            .and_then(|(_, subject)| subject.as_deref())
+            .unwrap_or("seeded conversation");
         scope
             .execute(
                 "INSERT INTO threads (account_id, subject, message_count, unread_count,
                                       has_attachments, is_flagged, first_at, last_at)
-                 VALUES (?1, 'seeded conversation', 0, 0, 0, 0, 0, 0)",
-                [account.get()],
+                 VALUES (?1, ?2, 0, 0, 0, 0, 0, 0)",
+                params![account.get(), subject],
             )
             .expect("insert a seeded thread");
         let thread = scope.last_insert_rowid();
-        for id in chunk {
+        for (id, _) in chunk {
             scope
                 .execute(
                     "UPDATE messages SET thread_id = ?1 WHERE id = ?2",
