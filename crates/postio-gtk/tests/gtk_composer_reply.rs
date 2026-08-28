@@ -18,7 +18,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use gtk::gdk;
-use postio_gtk::composer;
+use postio_gtk::composer::{self, Field};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{Account, AccountId, EmailAddress, Message};
@@ -111,6 +111,12 @@ fn e_shift_e_and_f_open_reply_reply_all_and_forward() {
         vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")],
         "a plain reply goes to the sender"
     );
+    assert_eq!(
+        composer.focused_field(),
+        Some(Field::Body),
+        "a reply already has its recipient, so the keyboard goes straight \
+         to the body"
+    );
     composer.discard();
     settle();
 
@@ -118,6 +124,29 @@ fn e_shift_e_and_f_open_reply_reply_all_and_forward() {
     press_shifted(&window, "e");
     assert!(composer.is_open(), "shift+e opens reply-all");
     assert_eq!(composer.draft().subject, "Re: Quarterly numbers");
+    assert_eq!(composer.focused_field(), Some(Field::Body));
+
+    // ── Already composing: e does not reopen or reset it ─────────────────
+    // The reply-all from the step above is still open, focused in the body
+    // -- not a field `e` would otherwise be typed into -- so this is the
+    // scenario #426 is about: e is for the reading pane, not for replacing
+    // an in-progress composition with a new one, but it must not go
+    // silently ignored either. The status line was already showing
+    // something ("draft is in the composer only", set when the reply-all
+    // opened), so the test is not "status is non-empty" but "status changed
+    // to say why e did nothing".
+    press(&window, "e");
+    assert_eq!(
+        composer.draft().subject,
+        "Re: Quarterly numbers",
+        "e while composing must not clobber what is being written"
+    );
+    assert_eq!(
+        composer.status(),
+        "not opened — finish or close the current draft first",
+        "e while composing silently did nothing instead of explaining why: {:?}",
+        composer.status()
+    );
     composer.discard();
     settle();
 
@@ -129,24 +158,12 @@ fn e_shift_e_and_f_open_reply_reply_all_and_forward() {
         composer.draft().to.is_empty(),
         "a forward starts with no recipients"
     );
-
-    // ── Already composing: e does not reopen or reset it ─────────────────
-    // The forward from the step above is still open; e is for the reading
-    // pane, not for replacing an in-progress composition with a new one --
-    // but it must not go silently ignored either (#426). The status line
-    // was already showing something ("draft is in the composer only", set
-    // when the forward opened), so the test is not "status is non-empty"
-    // but "status changed to say why e did nothing".
-    press(&window, "e");
+    // #690: a forward has nobody to send to yet, so -- unlike a reply -- the
+    // keyboard lands on To, exactly where New mail's does, not on the body.
     assert_eq!(
-        composer.draft().subject,
-        "Fwd: Quarterly numbers",
-        "e while composing must not clobber what is being written"
-    );
-    assert_eq!(
-        composer.status(),
-        "not opened — finish or close the current draft first",
-        "e while composing silently did nothing instead of explaining why: {:?}",
-        composer.status()
+        composer.focused_field(),
+        Some(Field::To),
+        "a forward starts with no recipient, so the keyboard must land on \
+         To rather than a body nobody can address yet"
     );
 }
