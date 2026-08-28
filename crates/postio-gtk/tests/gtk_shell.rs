@@ -20,10 +20,10 @@ use postio_gtk::{app, fonts, header, resources, style, window::Window};
 fn the_plate_layout_matches_the_canvas() {
     // Before any glib call: `g_get_user_state_dir` caches its answer, and a
     // test has no business writing into the developer's real state directory.
-    let state_dir = std::env::temp_dir().join(format!("postio-shell-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir_guard = tempfile::tempdir().expect("a state directory");
+    let state_dir = state_dir_guard.path();
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -35,7 +35,7 @@ fn the_plate_layout_matches_the_canvas() {
     app::install_icons(&display);
 
     assert!(
-        WindowState::path().starts_with(&state_dir),
+        WindowState::path().starts_with(state_dir),
         "the test should be writing to its own state directory, not {}",
         WindowState::path().display()
     );

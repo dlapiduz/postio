@@ -23,11 +23,9 @@ use postio_model::address::EmailAddress;
 
 #[test]
 fn the_header_names_the_account_only_when_there_is_more_than_one() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-reader-account-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

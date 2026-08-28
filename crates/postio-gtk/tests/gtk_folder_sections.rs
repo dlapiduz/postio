@@ -65,11 +65,9 @@ fn settle() {
 
 #[test]
 fn the_feed_reads_every_account_it_is_given_and_keeps_their_order() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-folder-sections-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

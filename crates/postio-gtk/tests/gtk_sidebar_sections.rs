@@ -47,11 +47,9 @@ fn tree(account: AccountId, paths: &[&str]) -> Vec<Mailbox> {
 
 #[test]
 fn each_account_folds_away_its_own_folders() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-sidebar-sections-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
