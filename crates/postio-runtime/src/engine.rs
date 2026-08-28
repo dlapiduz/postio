@@ -33,6 +33,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -672,7 +673,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 backfill_announced: None,
                 footprint: None,
                 supervisor: Supervisor::new(parts.reconnect),
-                status: RefCell::new(StatusTracker::new()),
+                status: Rc::new(RefCell::new(StatusTracker::new())),
                 online: false,
                 to_sync: std::collections::VecDeque::new(),
                 watcher: None,
@@ -841,7 +842,13 @@ struct State {
     /// The engine is a single-thread runtime, so this is a borrow checker
     /// question rather than a thread-safety one, and no borrow is ever held
     /// across an await: every one of them is a single call on the tracker.
-    status: RefCell<StatusTracker>,
+    ///
+    /// `Rc` on top of that so `sync_wave` can clone a handle each wave
+    /// (#631): every pass borrows through the clone, never through `state`
+    /// itself, which is what lets a pass be settled — `&mut State` and all —
+    /// the moment it finishes, while its wave-mates are still running and
+    /// still hold a clone of their own.
+    status: Rc<RefCell<StatusTracker>>,
     /// Whether the link was up last time anything looked.
     ///
     /// Only the *transition* is interesting: a connection that has been up
@@ -1911,62 +1918,71 @@ async fn sync_wave(
     // keeps everything it committed and resumes from there, so this costs at
     // most the batch that was on the wire.
     let cancel = postio_imap::cancel::CancelToken::new();
-    let mut outcomes: Vec<PassOutcome> = Vec::with_capacity(lanes.len());
 
-    {
-        // Borrowed by every pass at once, which is what the `RefCell` is for.
-        // Nothing holds the borrow across an await: `Committed::batch` takes
-        // it, folds one batch in, and gives it back.
-        let status = &state.status;
-        let mut running = FuturesUnordered::new();
-        for (mailbox, connection) in &lanes {
-            running.push(sync_pass(parts, connection, status, *mailbox, &cancel));
-        }
+    // Cloned, not borrowed: every pass folds its own batches into this for as
+    // long as it runs (`Committed::batch`, never across an await), and below
+    // a pass is settled — `&mut state` and all — the moment it finishes,
+    // while its wave-mates may still be running and still holding a clone of
+    // their own. A borrow of `state.status` tied to `state` itself would rule
+    // that out; an owned handle on the same `RefCell` does not. See
+    // `State::status`.
+    let status = state.status.clone();
+    let mut running = FuturesUnordered::new();
+    for (mailbox, connection) in &lanes {
+        running.push(sync_pass(parts, connection, &status, *mailbox, &cancel));
+    }
 
-        let mut asked_to_stop = false;
-        while !running.is_empty() {
-            tokio::select! {
-                biased;
-                // Completions first: a wave that is already finishing should
-                // finish rather than notice the job it was about to be told
-                // about and mark everything cancelled.
-                Some(outcome) = running.next() => outcomes.push(outcome),
-                _ = wait_for_job(inbox), if !asked_to_stop => {
-                    asked_to_stop = true;
-                    cancel.cancel();
+    // #631: settled and pumped the instant each individual pass finishes,
+    // not batched until every lane in the wave has. Batching outcomes meant
+    // INBOX's own bodies waited out however long its wave-mate's headers
+    // took to enumerate, even though INBOX's own pass had long since
+    // finished — the outer loop's phase separation (headers, then bodies)
+    // was not the only place that happened; it happened inside one wave too.
+    let mut interrupted: Vec<MailboxId> = Vec::new();
+    let mut asked_to_stop = false;
+    while !running.is_empty() {
+        tokio::select! {
+            biased;
+            // Completions first: a wave that is already finishing should
+            // finish rather than notice the job it was about to be told
+            // about and mark everything cancelled.
+            Some(outcome) = running.next() => {
+                let stopped_early = outcome.was_cancelled();
+                if stopped_early {
+                    interrupted.push(outcome.mailbox);
                 }
+                // The wave is the engine acting on its own initiative, so a
+                // failed pass is reported to the user here rather than
+                // returned to a caller who asked for it. An interrupted one
+                // is not a failure: it stops where it was told to and
+                // resumes, and saying so would put a spurious error on
+                // screen every time the user did something during a first
+                // sync.
+                let connection = &lanes[0].1;
+                if let Err(error) = settle_pass(parts, state, connection, outcome)
+                    && !stopped_early
+                {
+                    parts.events.emit(Event::Error {
+                        message: error.message().to_string(),
+                    });
+                }
+                // Not once a job is waiting: draining the backfill queue
+                // here is exactly the extra work a waiting job must not
+                // queue behind.
+                if !asked_to_stop {
+                    while pump_body(parts, pool, state).await {}
+                }
+            }
+            _ = wait_for_job(inbox), if !asked_to_stop => {
+                asked_to_stop = true;
+                cancel.cancel();
             }
         }
     }
 
-    // Then fold every pass back into the engine's state, sequentially — this
-    // is where the `&mut` work lives, and there is no reason for it to be
-    // concurrent.
-    let connection = &lanes[0].1;
-    let mut interrupted: Vec<MailboxId> = Vec::new();
-    for outcome in outcomes {
-        let stopped_early = outcome.was_cancelled();
-        if stopped_early {
-            interrupted.push(outcome.mailbox);
-        }
-        // The wave is the engine acting on its own initiative, so a failed
-        // pass is reported to the user here rather than returned to a caller
-        // who asked for it. An interrupted one is not a failure: it stops
-        // where it was told to and resumes, and saying so would put a
-        // spurious error on screen every time the user did something during a
-        // first sync.
-        if let Err(error) = settle_pass(parts, state, connection, outcome)
-            && !stopped_early
-        {
-            parts.events.emit(Event::Error {
-                message: error.message().to_string(),
-            });
-        }
-    }
-
     // Back on the front of the queue, in the order they were taken off it —
-    // `outcomes` is in completion order, which says nothing about priority,
-    // and INBOX must not come back behind the archive it started alongside.
+    // completion order says nothing about priority, and INBOX must not come
+    // back behind the archive it started alongside.
     for (mailbox, _) in lanes.iter().rev() {
         if interrupted.contains(mailbox) {
             state.to_sync.push_front(*mailbox);
@@ -2500,7 +2516,7 @@ mod tests {
             backfill_announced: None,
             footprint: None,
             supervisor: Supervisor::new(ReconnectPolicy::default()),
-            status: RefCell::new(StatusTracker::new()),
+            status: Rc::new(RefCell::new(StatusTracker::new())),
             online: false,
             to_sync: std::collections::VecDeque::new(),
             watcher: None,
