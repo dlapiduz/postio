@@ -72,6 +72,15 @@ def build_fixture(
     write_crate(root, "crates", "postio-model", model_deps)
     write_crate(root, "crates", "postio-config", config_deps)
     write_crate(root, "crates", "helper", helper_deps)
+    # Bystanders: every crate `RULES` names has to exist as a workspace
+    # member, or `find_violations` raises before any rule gets checked
+    # (#560) -- so a rule added for a real crate the fixture never grew a
+    # stand-in for takes the whole self-test down on its very first case,
+    # regardless of what that case is actually about. None of the cases here
+    # target these three, so a dependency-free crate that trivially passes
+    # every rule is all they need to be.
+    for bystander in ("postio-ffi", "postio-gmail", "postio-jmap"):
+        write_crate(root, "crates", bystander)
     # Stand-ins for the real third-party crates, so nothing is fetched.
     for banned in ("gtk4", "libadwaita", "rusqlite", "io-imap", "ammonia", "tokio"):
         write_crate(root, "vendor", banned)

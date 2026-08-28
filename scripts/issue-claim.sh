@@ -145,6 +145,15 @@ while IFS=$'\t' read -r NUM TITLE; do
     TREE="$WORKTREES/issue-$NUM"
 
     if [ "$DRY" = 1 ]; then
+        # A dry run previews the real decision, and the real run never
+        # adopts an existing worktree (#328) -- so a preview that names this
+        # issue anyway is previewing a claim that would immediately refuse.
+        # No lock to release here: dry-run never takes one.
+        if [ -d "$TREE" ]; then
+            echo "#$NUM already has a worktree at $TREE; not adopting it -- a session may be in it." >&2
+            echo "trying the next candidate." >&2
+            continue
+        fi
         echo "would claim #$NUM  $TITLE"
         echo "  branch: $BRANCH"
         echo "  tree:   $TREE"
