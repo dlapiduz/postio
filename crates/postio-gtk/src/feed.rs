@@ -629,8 +629,20 @@ impl SyncTracker {
                 // the queue actually drains — that is the boundary that
                 // matters for this number, not a connection event.
             }
-            Event::BackfillProgress { done, total, .. } => {
+            Event::BackfillProgress {
+                done,
+                total,
+                footprint,
+                ..
+            } => {
                 self.status.backfill = Some((*done, *total));
+                // Kept even when the queue drains below: the size of an
+                // account's mail is true whether or not a backfill is
+                // running, and the settings panel asks for it at a moment
+                // that has nothing to do with one.
+                if footprint.is_some() {
+                    self.status.footprint = *footprint;
+                }
                 // Drained. Clear it rather than leaving `2000 of 2000` on
                 // screen -- the same trap `SyncProgress` documents above,
                 // and the same answer. `last_sync` is deliberately not

@@ -91,7 +91,7 @@ use postio_storage::seed::SeedReport;
 ///
 /// `feed_the_window` reads the local store. `start_syncing` is the half that
 /// opens a socket, and this never calls it.
-fn populate(window: &Window, two_accounts: bool) {
+fn populate(window: &Window, two_accounts: bool, backfill: bool) {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
     let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
@@ -126,6 +126,22 @@ fn populate(window: &Window, two_accounts: bool) {
         account,
         state: ConnectionState::Online,
     });
+    // A backfill in flight, with the size of the account's mail beside it
+    // (#411). Applied only for the shot that wants it: the ordinary `demo`
+    // line reads `idle · imap` / `last sync 12s`, which is the canvas.
+    if backfill {
+        wired.feeds.apply(&postio_core::Event::BackfillProgress {
+            account,
+            done: 12_400,
+            total: 81_744,
+            footprint: Some(postio_core::event::MailFootprint {
+                total_bytes: 1_503_238_553,
+                attachment_bytes: 1_400_000_000,
+                local_bytes: 933_232_640,
+                complete: true,
+            }),
+        });
+    }
 
     Box::leak(Box::new(wired));
     Box::leak(Box::new(bridge));
@@ -456,7 +472,7 @@ fn main() -> glib::ExitCode {
         window.set_default_size(width, height);
     }
     if flag("demo") {
-        populate(&window, flag("accounts"));
+        populate(&window, flag("accounts"), flag("backfill"));
     }
     // The screen a store that will not open puts up instead of the mail
     // (#404). Rendered from the same words `SecretError::Locked` writes, so

@@ -157,31 +157,10 @@ pub fn prefix(node: &Node) -> String {
     format!("{indent}{branch}")
 }
 
-/// A size, the way the canvas writes it: `11 KB`, `1.1 MB`.
-///
-/// Binary units, matching `postio-search`'s `larger:`/`smaller:` parser — a
-/// part the panel calls `1.0 MB` has to be one `larger:1M` finds, or the two
-/// halves of the application disagree about what a megabyte is.
-pub fn human_size(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    let bytes = bytes as f64;
-    let (value, unit) = if bytes < KIB {
-        return format!("{bytes:.0} B");
-    } else if bytes < KIB * KIB {
-        (bytes / KIB, "KB")
-    } else if bytes < KIB * KIB * KIB {
-        (bytes / (KIB * KIB), "MB")
-    } else {
-        (bytes / (KIB * KIB * KIB), "GB")
-    };
-    // One decimal below ten, none above: `1.1 MB` and `340 KB`, never
-    // `1.1 KB` sitting in a column beside `340.2 KB`.
-    if value < 10.0 {
-        format!("{value:.1} {unit}")
-    } else {
-        format!("{value:.0} {unit}")
-    }
-}
+// `human_size` moved to `postio_ui::format` (#411): the status line and the
+// attachment setting both show byte totals now, and two surfaces formatting
+// them their own way is how `1.4 GB` and `1,400 MB` end up on one screen.
+pub use postio_ui::format::human_size;
 
 /// The header line: `multipart/mixed · 4 parts · 1.2 MB`.
 ///
