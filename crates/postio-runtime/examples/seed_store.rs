@@ -33,7 +33,24 @@ fn main() {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let database = match postio_storage::Database::open(&path) {
+    // The store is encrypted under the key in the keyring (ADR 0014), and a
+    // store seeded under any other key is one `postio-app` cannot open — which
+    // would make this tool useless for the thing it exists for.
+    let store_key = match read_store_key() {
+        Some(key) => key,
+        None => {
+            eprintln!(
+                "cannot read this installation's store key. Unlock the keyring, \n\
+                 and run postio-app once if it has never run: the key is minted \n\
+                 on first start and this tool deliberately never mints one."
+            );
+            std::process::exit(1);
+        }
+    };
+    let database = match postio_storage::Database::open(
+        &path,
+        &store_key.derive(postio_storage::key::Purpose::Database),
+    ) {
         Ok(database) => database,
         Err(error) => {
             eprintln!("cannot open {}: {error}", path.display());
@@ -50,4 +67,25 @@ fn main() {
         path.display(),
         started.elapsed().as_secs_f64()
     );
+}
+
+/// This installation's master key, or `None` if it cannot be read.
+///
+/// **Never mints one.** `postio_session::store_key` is what may create a key,
+/// and it is careful about when: only a *missing* entry is a first run, since
+/// minting for a locked keyring would encrypt the next thing written under
+/// something the existing store knows nothing about. A development tool has no
+/// business making that judgement, so this only ever reads — a store that has
+/// no key yet is one the application has not opened, and the fix is to open it.
+fn read_store_key() -> Option<postio_storage::key::StoreKey> {
+    use postio_imap::secret::{AccountKey, SecretStore};
+
+    let secrets = postio_imap::secret::KeyringSecretStore::default();
+    let entry = AccountKey::new(postio_storage::key::STORE_KEY_ENTRY);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let stored = runtime.block_on(secrets.retrieve(&entry)).ok()?;
+    postio_storage::key::StoreKey::from_hex(stored.expose()).ok()
 }

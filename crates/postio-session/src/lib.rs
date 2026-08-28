@@ -118,15 +118,7 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
     }
 }
 
-/// The keyring entry the store's master key lives under.
-///
-/// Not an address, and it cannot become one: there is no `@` in it, so it
-/// can never collide with an account's own entry however many accounts an
-/// installation grows. Written out rather than derived from the store path
-/// because the key has to be findable by a person in `seahorse` when they
-/// want to know what Postio keeps — the label reads
-/// "Postio (local store encryption key)".
-pub const STORE_KEY_ENTRY: &str = "local store encryption key";
+pub use postio_storage::key::STORE_KEY_ENTRY;
 
 /// The master key this installation's store is encrypted under, minting one
 /// on first run.
@@ -388,18 +380,23 @@ pub fn open_store_at(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Database, BlobStore), String> {
-    // Taken and not yet used, deliberately and for one slice only. ADR 0014
-    // lands as three sequenced pieces: this one mints and reads the key
-    // (#299), #300 issues `PRAGMA key` with its database subkey, and #301
-    // takes the blob subkeys. Requiring it *here*, at the moment the store
-    // opens, is what makes "a locked keyring means the mail does not open"
-    // true before there is anything encrypted to protect — so the ordering
-    // is proven by the time it starts mattering, rather than bolted on
-    // afterwards by whoever is holding #300.
-    let _store_key = store_key;
+    // The database subkey. BLAKE3-derived from the master key, so the
+    // database, the blob contents and the blob ids are cryptographically
+    // separated without three keyring entries (ADR 0014 Q3). #301 takes the
+    // other two.
+    let database_key = store_key.derive(postio_storage::key::Purpose::Database);
     let path = path.into();
-    let database = match Database::open(&path) {
+    let database = match Database::open(&path, &database_key) {
         Ok(database) => database,
+        // A wrong key is its own sentence. `Error::WrongStoreKey` says the
+        // store belongs to another installation and is *intact*, where
+        // SQLite's own wording for the same condition is "file is not a
+        // database" — which would tell somebody their mail is corrupt when
+        // the only thing wrong is which key we offered.
+        Err(error @ postio_storage::Error::WrongStoreKey) => {
+            tracing::error!(path = %path.display(), "the store will not decrypt with this key");
+            return Err(format!("Postio could not unlock its local store. {error}"));
+        }
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store");
             // The sentence goes back to the caller as well as to the log,

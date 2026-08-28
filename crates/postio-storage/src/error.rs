@@ -105,6 +105,23 @@ pub enum Error {
         reason: String,
     },
 
+    /// The database will not decrypt under the key it was given.
+    ///
+    /// The store belongs to a different installation, or the keyring entry has
+    /// been replaced or was written by something else. **The database is not
+    /// damaged** — it is intact and locked, and the right key still opens it.
+    ///
+    /// A variant of its own rather than the `SQLITE_NOTADB` this is made from,
+    /// because SQLite's own wording for a wrong key is "file is not a
+    /// database", which tells a user their mail is corrupt. That sentence
+    /// reaches a screen (#404), and it would be a lie.
+    #[error(
+        "the local store will not open with this key: it belongs to another \
+         installation, or the keyring entry has been replaced. The database \
+         itself is intact"
+    )]
+    WrongStoreKey,
+
     /// A stored message body could not be compressed or read back.
     ///
     /// The row and this build disagree about what is in the column: a frame

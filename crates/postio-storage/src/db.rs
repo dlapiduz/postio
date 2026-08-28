@@ -21,7 +21,9 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), postio_storage::Error> {
-//! let database = postio_storage::Database::open("postio.db")?;
+//! # use postio_storage::key::{Purpose, StoreKey};
+//! # let key = StoreKey::generate().derive(Purpose::Database);
+//! let database = postio_storage::Database::open("postio.db", &key)?;
 //! let connection = database.connection()?;
 //! let unread: i64 = connection.query_row(
 //!     "SELECT count(*) FROM messages WHERE seen = 0",
@@ -40,7 +42,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OpenFlags};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::key::Subkey;
 use crate::migrations;
 
 /// How many connections a [`Pool`] opens before callers start waiting.
@@ -63,27 +66,106 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 ///   clauses and `ON DELETE CASCADE` rules are load-bearing (deleting an account
 ///   must take its mailboxes and messages with it).
 /// * `temp_store = MEMORY` — sorts and temporary indexes stay off the disk.
-/// * `mmap_size` — 256 MiB, so page reads for the message list come out of the
-///   page cache rather than through `read(2)`.
+///   Part of the threat model, not a tuning knob: an encrypted database whose
+///   sort scratch spills to disk in the clear has encrypted the wrong thing
+///   (ADR 0014).
 /// * `cache_size = -16000` — negative means KiB, not pages: 16 MiB regardless of
-///   page size.
+///   page size. This is the first lever if a bench trips, because under
+///   SQLCipher every page miss costs a decrypt rather than a `memcpy`.
 /// * `busy_timeout` — a writer waiting behind another writer retries for five
 ///   seconds instead of returning `SQLITE_BUSY` to the UI.
+///
+/// **`PRAGMA key` is not here.** It has to be the first statement on the
+/// connection, before anything reads a page, so [`configure`] issues it ahead
+/// of this batch — see there.
+///
+/// **`mmap_size` is gone.** It used to be 256 MiB. Memory-mapping is
+/// meaningless over encrypted pages: SQLCipher has to decrypt each page into
+/// the page cache, so there is no version of "the file is the buffer". ADR
+/// 0014 priced this as a known casualty and the README's memory numbers were
+/// re-measured rather than adjusted.
 pub const PRAGMAS: &str = "\
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA temp_store = MEMORY;
-PRAGMA mmap_size = 268435456;
 PRAGMA cache_size = -16000;
 PRAGMA busy_timeout = 5000;
 ";
 
-/// Applies [`PRAGMAS`] to a connection.
+/// Unlocks a connection with `key` and applies [`PRAGMAS`] to it.
 ///
 /// The pool does this for every connection it opens; call it directly only for
 /// a connection opened outside the pool.
-pub fn configure(connection: &Connection) -> Result<()> {
+///
+/// # The order is the contract
+///
+/// `PRAGMA key` goes first, before any other statement, because SQLCipher
+/// derives the page cipher from it and every subsequent statement reads a
+/// page. A connection that runs anything at all before being keyed is a
+/// connection that has already failed.
+///
+/// The raw `x'…'` form, not a passphrase. `key` is high-entropy material out
+/// of the keyring already, so SQLCipher's passphrase KDF would be a quarter of
+/// a million iterations of nothing (ADR 0014 Q1).
+///
+/// # `cipher_memory_security = OFF`, and why it is not optional
+///
+/// ADR 0014 lists this as the *second* performance lever, after `cache_size`,
+/// on the grounds that its memory-wiping defence is not part of the threat
+/// model — an attacker who can read this process's memory has already won, and
+/// full-disk encryption is what covers swap and hibernation.
+///
+/// It turns out not to be a tuning question at all. With it on, this crashes:
+///
+/// ```text
+/// sqlcipher_shield -> sqlcipher_page_cipher -> sqlite3Codec
+///   -> walWriteOneFrame -> sqlite3PagerCommitPhaseOne
+/// ```
+///
+/// The feature `mprotect`s SQLCipher's internal buffers `PROT_NONE` between
+/// uses, and Postio has several pooled connections writing at once — the sync
+/// engine committing a pass while the UI writes a flag is the ordinary state,
+/// and the whole reason `WriteGate` exists. One connection shields a page
+/// another is mid-cipher on, and the process takes SIGSEGV inside a WAL write.
+/// It reproduced about half the time across `postio-runtime`'s engine tests,
+/// and would have done the same to somebody's mail.
+///
+/// So: off, deliberately and permanently, and issued here rather than in
+/// [`PRAGMAS`] because SQLCipher wants it *before* the key rather than after.
+///
+/// # Why it reads something afterwards
+///
+/// `PRAGMA key` cannot fail: SQLCipher accepts any key and only discovers a
+/// wrong one when a page will not decrypt. Left alone, that surfaces later and
+/// somewhere else, as `SQLITE_NOTADB` — "file is not a database" — which tells
+/// a user their mail is corrupt when it is intact and merely locked. So this
+/// touches one page immediately and turns the failure into
+/// [`Error::WrongStoreKey`], which says what is actually wrong.
+///
+/// # Errors
+///
+/// [`Error::WrongStoreKey`] if the database will not decrypt under `key`, and
+/// [`Error::Sqlite`] if a pragma is refused.
+pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
+    // Before the key, which is what SQLCipher requires of this one.
+    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
+
+    // Zeroized on drop, and the only place the database subkey is rendered.
+    let hex = key.to_hex();
+    connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
+    drop(hex);
+
+    // The probe. `sqlite_schema` lives on page 1, so this is the cheapest read
+    // that proves the key: one page, already in cache for everything after it.
+    // A brand-new database has no page 1 yet and answers 0 rows, which is a
+    // successful read and not a wrong key.
+    connection
+        .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|_| Error::WrongStoreKey)?;
+
     // `execute_batch` rather than `pragma_update`: several of these return the
     // value they were set to, which `pragma_update` treats as an error.
     connection.execute_batch(PRAGMAS)?;
@@ -158,7 +240,7 @@ impl Location {
         ))
     }
 
-    fn open(&self) -> Result<Connection> {
+    fn open(&self, key: &Subkey) -> Result<Connection> {
         let connection = match self {
             Self::File(path) => Connection::open(path)?,
             Self::Memory(uri) => Connection::open_with_flags(
@@ -169,7 +251,7 @@ impl Location {
                     | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?,
         };
-        configure(&connection)?;
+        configure(&connection, key)?;
         Ok(connection)
     }
 
@@ -368,6 +450,18 @@ pub struct Pool {
 
 struct Inner {
     location: Location,
+    /// The database subkey every connection is unlocked with.
+    ///
+    /// Held for the pool's whole life because connections open *lazily*: the
+    /// pool grows to `max_connections` on demand, and the eighth checkout an
+    /// hour from now needs the key exactly as much as the first did. There is
+    /// nowhere else to keep it — a callback back into `postio-session` would
+    /// mean this crate depending on the keyring, which ADR 0014 puts the other
+    /// way round.
+    ///
+    /// [`Subkey`] zeroizes on drop and refuses to render itself, so it is not
+    /// in a log or a `Debug` line by accident.
+    key: Subkey,
     max_connections: usize,
     state: Mutex<State>,
     returned: Condvar,
@@ -409,6 +503,7 @@ struct State {
 impl Pool {
     fn new(
         location: Location,
+        key: Subkey,
         max_connections: usize,
         guard: Option<Box<dyn std::any::Any + Send + Sync>>,
     ) -> Result<Self> {
@@ -416,12 +511,13 @@ impl Pool {
 
         let keeper = match location {
             Location::File(_) => None,
-            Location::Memory(_) => Some(location.open()?),
+            Location::Memory(_) => Some(location.open(&key)?),
         };
 
         Ok(Self {
             inner: Arc::new(Inner {
                 location,
+                key,
                 max_connections,
                 state: Mutex::new(State {
                     idle: Vec::new(),
@@ -453,7 +549,7 @@ impl Pool {
                 // cannot both decide there is room for one more.
                 state.live += 1;
                 drop(state);
-                return match self.inner.location.open() {
+                return match self.inner.location.open(&self.inner.key) {
                     Ok(connection) => Ok(self.guard(connection)),
                     Err(error) => {
                         self.lock().live -= 1;
@@ -617,12 +713,16 @@ impl Database {
     ///
     /// [`Error::Io`](crate::error::Error::Io) if the parent directory cannot be created, or any error
     /// [`migrate`](crate::migrate) can return.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with(path, DEFAULT_MAX_CONNECTIONS)
+    /// `key` is the database subkey — `StoreKey::derive(Purpose::Database)` —
+    /// and it is not optional. ADR 0014 rules out a plaintext fallback, so
+    /// there is no constructor that opens an unencrypted store, and a locked
+    /// keyring means the mail does not open rather than opening in the clear.
+    pub fn open(path: impl AsRef<Path>, key: &Subkey) -> Result<Self> {
+        Self::open_with(path, key, DEFAULT_MAX_CONNECTIONS)
     }
 
     /// [`Database::open`], with an explicit pool size.
-    pub fn open_with(path: impl AsRef<Path>, max_connections: usize) -> Result<Self> {
+    pub fn open_with(path: impl AsRef<Path>, key: &Subkey, max_connections: usize) -> Result<Self> {
         let path = path.as_ref();
         if let Some(parent) = path
             .parent()
@@ -630,7 +730,8 @@ impl Database {
         {
             crate::perm::ensure_private_dir(parent)?;
         }
-        let database = Self::from_location(Location::File(path.to_path_buf()), max_connections)?;
+        let database =
+            Self::from_location(Location::File(path.to_path_buf()), key, max_connections)?;
         // After from_location: that call is what actually creates the file
         // (SQLite opens it lazily, on the pool's first checkout), so there is
         // nothing to tighten before it exists.
@@ -653,13 +754,13 @@ impl Database {
     /// single-connection caller and wrong for anything that overlaps a
     /// reader and a writer — which is why `test_support::memory` is
     /// file-backed rather than built on this (#204).
-    pub fn open_in_memory() -> Result<Self> {
-        Self::open_in_memory_with(DEFAULT_MAX_CONNECTIONS)
+    pub fn open_in_memory(key: &Subkey) -> Result<Self> {
+        Self::open_in_memory_with(key, DEFAULT_MAX_CONNECTIONS)
     }
 
     /// [`Database::open_in_memory`], with an explicit pool size.
-    pub fn open_in_memory_with(max_connections: usize) -> Result<Self> {
-        Self::from_location(Location::memory(), max_connections)
+    pub fn open_in_memory_with(key: &Subkey, max_connections: usize) -> Result<Self> {
+        Self::from_location(Location::memory(), key, max_connections)
     }
 
     /// [`Database::open`] for a scratch database whose backing storage is
@@ -674,6 +775,7 @@ impl Database {
     #[cfg(feature = "test-support")]
     pub(crate) fn open_file_with_guard(
         path: &Path,
+        key: &Subkey,
         guard: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Self> {
         if let Some(parent) = path
@@ -684,6 +786,7 @@ impl Database {
         }
         let database = Self::from_location_with_guard(
             Location::File(path.to_path_buf()),
+            key,
             DEFAULT_MAX_CONNECTIONS,
             Some(guard),
         )?;
@@ -691,16 +794,17 @@ impl Database {
         Ok(database)
     }
 
-    fn from_location(location: Location, max_connections: usize) -> Result<Self> {
-        Self::from_location_with_guard(location, max_connections, None)
+    fn from_location(location: Location, key: &Subkey, max_connections: usize) -> Result<Self> {
+        Self::from_location_with_guard(location, key, max_connections, None)
     }
 
     fn from_location_with_guard(
         location: Location,
+        key: &Subkey,
         max_connections: usize,
         guard: Option<Box<dyn std::any::Any + Send + Sync>>,
     ) -> Result<Self> {
-        let pool = Pool::new(location, max_connections, guard)?;
+        let pool = Pool::new(location, key.clone(), max_connections, guard)?;
         let mut connection = pool.get()?;
         migrations::migrate(&mut connection)?;
         drop(connection);

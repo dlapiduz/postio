@@ -43,7 +43,6 @@ use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_session::{Wiring, ensure_search_index};
-use postio_storage::{BlobStore, Database};
 
 /// Where the store is. Absent means "skip", not "fail".
 const STORE: &str = "POSTIO_TEST_STORE";
@@ -83,13 +82,21 @@ fn a_real_account_answers_a_real_query() {
     style::install(&display);
     app::install_icons(&display);
 
-    // Opened exactly the way `open_store` opens it, including the index: if
-    // the FTS schema is missing on a real database, that is the bug, and
-    // creating it here is what proves the application creates it.
-    let database = Database::open(&path).expect("the store opens");
+    // Opened exactly the way `open_store` opens it, including the index and
+    // the key: if the FTS schema is missing on a real database, that is the
+    // bug, and creating it here is what proves the application creates it.
+    //
+    // The key comes from the real keyring, because a real store is encrypted
+    // under a real key (ADR 0014) and there is no other way in. A locked
+    // keyring is a skip and not a failure — this test is about search.
+    let secrets = postio_imap::secret::KeyringSecretStore::default();
+    let Ok(store_key) = postio_session::store_key_blocking(&secrets) else {
+        eprintln!("skipping: the store key is not readable (is the keyring unlocked?)");
+        return;
+    };
+    let (database, blobs) =
+        postio_session::open_store_at(&path, &store_key).expect("the store opens");
     ensure_search_index(&database).expect("the index is part of opening the store");
-    let blobs = BlobStore::open(std::path::Path::new(&path).with_file_name("blobs"))
-        .expect("the blob store opens");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
