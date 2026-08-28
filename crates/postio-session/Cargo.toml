@@ -25,6 +25,9 @@ postio-runtime.workspace = true
 postio-search.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
+# `reader::Absent` and `reader::parts::BlobSource`: the frontend-independent
+# half of the reader. Toolkit-free, so no cycle and no widget reaches in.
+postio-ui.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-journald = "0.3"

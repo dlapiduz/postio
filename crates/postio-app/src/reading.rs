@@ -34,7 +34,7 @@ use gtk::prelude::*;
 use postio_core::ConnectionState;
 use postio_core::bridge::EventSink;
 use postio_gtk::feed::Feeds;
-use postio_gtk::reader::{Absent, BlobSource};
+use postio_gtk::reader::Absent;
 use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::window::Window;
 use postio_model::address::EmailAddress;
@@ -1195,45 +1195,10 @@ pub(crate) fn read_message(
         .ok_or_else(|| "That message is no longer here".into())
 }
 
-/// Where a rendered message resolves its `cid:` parts from.
-///
-/// # Scoped to one message on purpose
-///
-/// A `Content-ID` is only meaningful inside the message that declares it, so
-/// resolving one globally would let a sender address another sender's parts.
-/// [`BlobSource`] carries no message, so the caller supplies `showing` and
-/// this asks it at the moment the scheme handler runs — which is also what
-/// makes it correct while the pane is changing.
-///
-/// # A part that is not here does not draw
-///
-/// The hardened view has network access off, so a part whose bytes are not
-/// already on this machine resolves to nothing. That is the privacy
-/// commitment working rather than a failure to handle: a remote fetch here
-/// would be the tracking pixel the reader spent so much effort blocking,
-/// arriving through the back door.
-///
-/// Shared with the search preview, which has the same problem with a
-/// different notion of "the message on screen" — hence the closure rather
-/// than a widget.
-pub(crate) fn cid_source(
-    showing: impl Fn() -> Option<MessageId> + 'static,
-    database: Database,
-    blobs: BlobStore,
-) -> Rc<dyn BlobSource> {
-    Rc::new(move |content_id: &str| {
-        let message = showing()?;
-        let connection = database.connection().ok()?;
-        let part = MessageRepository::new(&connection)
-            .get(message)
-            .ok()??
-            .attachments
-            .into_iter()
-            .find(|part| part.content_id.as_deref() == Some(content_id))?;
-        let bytes = blobs.get(&part.blob_id?).ok()?;
-        Some((bytes, part.mime_type))
-    })
-}
+// `cid_source` moved to `postio_session::reading` (#608). What a `Content-ID`
+// may resolve to is a security property both frontends have to agree on, not
+// a fact about this one.
+pub(crate) use postio_session::reading::cid_source;
 
 #[cfg(test)]
 mod tests {
