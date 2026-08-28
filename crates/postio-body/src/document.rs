@@ -270,6 +270,54 @@ impl Document {
         Document { blocks }
     }
 
+    /// The document `format=flowed` (RFC 3676) text means — the inverse of
+    /// [`to_flowed_text`](Self::to_flowed_text): every soft-wrapped run of
+    /// physical lines becomes the one logical line it was wrapped from, and
+    /// every *fixed* line (RFC 3676's term for one with no trailing space,
+    /// so no more than one per [`Inline::Break`]-delimited span) stays its
+    /// own line.
+    ///
+    /// Unlike [`from_text`](Self::from_text), which treats every `\n` as a
+    /// break the user typed on purpose — correct for the composer's own
+    /// buffer, wrong for text a `format=flowed` sender wrapped for the
+    /// terminal. Use this one only when the source actually declared
+    /// `format=flowed`; anything else, including ordinary short lines with
+    /// no such header, must go through `from_text` instead, or a real break
+    /// the writer meant gets silently joined onto its neighbour (#456).
+    pub fn from_flowed_text(text: &str) -> Self {
+        let blocks = text
+            .replace("\r\n", "\n")
+            .split("\n\n")
+            .map(|para| {
+                let mut inlines = Vec::new();
+                let mut span: Vec<&str> = Vec::new();
+                // Whether a span has ended yet -- not `inlines.is_empty()`,
+                // which a span that unwrapped to nothing (a leading hard
+                // break with no text before it) would leave empty too,
+                // silently dropping that break instead of counting it.
+                let mut first_span = true;
+                for line in para.split('\n') {
+                    let fixed = !line.ends_with(' ');
+                    span.push(line);
+                    if fixed {
+                        if !first_span {
+                            inlines.push(Inline::Break);
+                        }
+                        first_span = false;
+                        let joined = span.join("\n");
+                        let unwrapped = flowed::unwrap(&joined, "");
+                        if !unwrapped.is_empty() {
+                            inlines.push(Inline::Text(unwrapped));
+                        }
+                        span.clear();
+                    }
+                }
+                Block::Paragraph(inlines)
+            })
+            .collect();
+        Document { blocks }
+    }
+
     /// Whether there is anything to send.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()

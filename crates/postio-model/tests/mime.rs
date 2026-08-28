@@ -414,6 +414,41 @@ fn multipart_alternative_keeps_both_forms_and_drops_the_preamble() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Acceptance: a text/plain part's own format=flowed is recorded (#456)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_format_flowed_text_part_is_recorded_as_such() {
+    let parsed = parse("plain-text-flowed-reply");
+    assert!(
+        parsed.text_is_flowed,
+        "the fixture's Content-Type declares format=flowed"
+    );
+}
+
+#[test]
+fn an_ordinary_text_part_with_no_format_parameter_is_not_flowed() {
+    let parsed = parse("plain-text-simple");
+    assert!(
+        !parsed.text_is_flowed,
+        "nothing here declared format=flowed, so short lines must stay short lines"
+    );
+}
+
+#[test]
+fn text_is_flowed_survives_into_message() {
+    let message = parse("plain-text-flowed-reply").into_message(
+        AccountId::new(1),
+        MailboxId::new(1),
+        received_at(),
+    );
+    assert!(
+        message.text_is_flowed,
+        "into_message must not drop the flag `ParsedMessage` recorded"
+    );
+}
+
 #[test]
 fn a_newsletter_has_a_body_and_no_attachments() {
     let parsed = parse("html-newsletter");

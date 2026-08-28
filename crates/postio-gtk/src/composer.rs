@@ -455,9 +455,22 @@ fn quoted_body(source: &Message, forward: bool) -> MessageBody {
 
 /// The document `source`'s body means — the markup the reader showed when
 /// there is markup, the plain text otherwise.
+///
+/// The plain-text fallback goes through [`Document::from_flowed_text`]
+/// rather than [`Document::from_text`] exactly when `source` itself
+/// declared `format=flowed` (#456): unwrapping unconditionally would take
+/// an ordinary sender's own short lines as soft breaks and join them, and
+/// never unwrapping would show a `format=flowed` sender's wrapped sentence
+/// — including this app's own past sends — as line breaks nobody typed.
+///
+/// [`Document::from_flowed_text`]: postio_body::Document::from_flowed_text
+/// [`Document::from_text`]: postio_body::Document::from_text
 fn source_document(source: &Message) -> postio_body::Document {
     match (&source.body.html, &source.body.text) {
         (Some(html), _) => postio_body::parse(html),
+        (None, Some(text)) if source.text_is_flowed => {
+            postio_body::Document::from_flowed_text(text)
+        }
         (None, Some(text)) => postio_body::Document::from_text(text),
         (None, None) => postio_body::Document::new(),
     }
@@ -905,17 +918,10 @@ impl Composer {
     /// filed as *and* what actually gets sent, so wrapping happens exactly
     /// once, before either.
     ///
-    /// One consequence worth knowing about rather than discovering:
-    /// [`source_document`] falls back to [`postio_body::Document::from_text`]
-    /// for a plain-text message with no HTML part, and `from_text` does not
-    /// unwrap soft breaks. Replying to (or reopening) a plain-text message
-    /// this composer itself sent will show the wrapped line breaks as if
-    /// they were typed that way. Fixing that safely needs to know whether a
-    /// message's *own* `Content-Type` actually said `format=flowed` —
-    /// information `MessageBody` does not carry today, and doing this
-    /// generally enough to be safe for mail from other senders is exactly
-    /// what issue #333 scoped out. Filed as #456 rather than guessed at
-    /// here.
+    /// [`source_document`] undoes exactly this wrapping when it reads a
+    /// message back — including one this composer sent — through
+    /// `Message::text_is_flowed`, the fact `#333` could not check yet and
+    /// `#456` added.
     fn body(&self) -> MessageBody {
         let document = self.document();
         // `html`'s half of `render` costs a real `to_html` and a `harden`
@@ -3626,6 +3632,103 @@ mod tests {
         let text = draft.body.text.expect("a text half");
         assert!(text.contains("> The lamp"), "{text}");
         assert!(text.contains("wrote:"), "{text}");
+    }
+
+    #[test]
+    fn replying_to_your_own_flowed_plain_text_message_unwraps_the_soft_breaks() {
+        // #456: a message this app sent as plain text only, format=flowed,
+        // whose sentence happened to wrap across three physical lines --
+        // exactly `plain-text-flowed-reply.eml`'s shape. Quoting it must
+        // read as the one sentence the sender wrote, not three lines they
+        // never typed.
+        let mut source = Message::new(
+            AccountId::new(1),
+            postio_model::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        source.from = vec![EmailAddress::new(
+            Some("Quinn Abara"),
+            "quinn.abara@example.net",
+        )];
+        let sentence = "That order works for me, though I would rather take the \
+                         sign-off question first while everyone is still in the room \
+                         and awake, because the layout argument tends to eat the \
+                         whole hour once it starts.";
+        source.body = MessageBody {
+            text: Some(
+                "That order works for me, though I would rather take the sign-off \n\
+                 question first while everyone is still in the room and awake, because \n\
+                 the layout argument tends to eat the whole hour once it starts."
+                    .to_owned(),
+            ),
+            html: None,
+        };
+        source.text_is_flowed = true;
+
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
+
+        let document = document_of(&draft.body);
+        let quoted_paragraph_is_one_unbroken_sentence = document.blocks.iter().any(|block| {
+            matches!(
+                block,
+                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
+                    inner,
+                    postio_body::Block::Paragraph(inlines)
+                        if inlines.as_slice() == [postio_body::Inline::Text(sentence.to_owned())]
+                ))
+            )
+        });
+        assert!(
+            quoted_paragraph_is_one_unbroken_sentence,
+            "the quote must be the sender's one sentence, not their soft \
+             wrap read back as typed line breaks: {document:?}"
+        );
+    }
+
+    #[test]
+    fn replying_to_an_ordinary_senders_short_lines_leaves_them_as_typed() {
+        // The other half of #456's acceptance: a message from someone else
+        // that merely has short lines, and no format=flowed parameter at
+        // all, must not be reflowed -- real intentional line breaks would
+        // get eaten.
+        let mut source = Message::new(
+            AccountId::new(1),
+            postio_model::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        source.from = vec![EmailAddress::new(
+            Some("Ada Norwood"),
+            "ada.norwood@example.com",
+        )];
+        source.body = MessageBody {
+            text: Some("Short note before the walkthrough.\nSee you then.".to_owned()),
+            html: None,
+        };
+        source.text_is_flowed = false;
+
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
+
+        let document = document_of(&draft.body);
+        let quote_keeps_both_typed_lines = document.blocks.iter().any(|block| {
+            matches!(
+                block,
+                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
+                    inner,
+                    postio_body::Block::Paragraph(inlines) if inlines.as_slice() == [
+                        postio_body::Inline::Text("Short note before the walkthrough.".to_owned()),
+                        postio_body::Inline::Break,
+                        postio_body::Inline::Text("See you then.".to_owned()),
+                    ]
+                ))
+            )
+        });
+        assert!(
+            quote_keeps_both_typed_lines,
+            "an ordinary sender's own line break must survive as a break, \
+             not be joined onto its neighbour: {document:?}"
+        );
     }
 
     #[test]

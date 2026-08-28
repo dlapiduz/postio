@@ -85,11 +85,18 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 1] = [Migration {
-    version: 1,
-    name: "initial_schema",
-    sql: include_str!("0001_initial_schema.sql"),
-}];
+static MIGRATIONS: [Migration; 2] = [
+    Migration {
+        version: 1,
+        name: "initial_schema",
+        sql: include_str!("0001_initial_schema.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "text_is_flowed",
+        sql: include_str!("0002_text_is_flowed.sql"),
+    },
+];
 
 /// What [`migrate`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

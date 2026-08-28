@@ -141,6 +141,40 @@ fn a_message_with_no_content_type_recorded_reads_back_as_none() {
 }
 
 #[test]
+fn a_message_s_text_is_flowed_flag_round_trips() {
+    // #456: a reply built from a message loaded back out of storage needs
+    // this to survive the round trip, or every message a user actually
+    // replies to (loaded from the database, never straight off the parser)
+    // would silently lose it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 202);
+    message.text_is_flowed = true;
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert!(stored.text_is_flowed);
+}
+
+#[test]
+fn a_message_with_no_flag_recorded_reads_back_as_not_flowed() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = a_message(inbox, account.id, 203);
+    assert!(!message.text_is_flowed);
+    let id = messages.create(&mut message).expect("create");
+
+    let stored = messages.get(id).expect("get").expect("the message");
+    assert!(!stored.text_is_flowed);
+}
+
+#[test]
 fn a_message_s_list_id_round_trips() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
