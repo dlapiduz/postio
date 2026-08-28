@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The unsigned, build-it-yourself posture (ADR 0019 Q8). Library
+	     validation refuses to load code signed by a different team than the
+	     main binary; with an ad-hoc signature there is no team, so it refuses
+	     things a contributor's own build legitimately contains.
+
+	     This is the only exception, and it exists so that building Postio
+	     needs no Apple Developer account. The signed configuration above does
+	     not have it. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

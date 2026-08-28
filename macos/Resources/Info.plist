@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Postio</string>
+	<key>CFBundleDisplayName</key>
+	<string>Postio</string>
+	<key>CFBundleExecutable</key>
+	<string>Postio</string>
+	<!-- The same identifier the Keychain files items under, and deliberately
+	     stable: an unsigned build's code identity changes on every rebuild,
+	     and a changing bundle id on top of that would make every launch look
+	     like a different application to the Keychain. -->
+	<key>CFBundleIdentifier</key>
+	<string>dev.postio.Postio</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- Not an agent: Postio is a window, not a menu-bar item. -->
+	<key>LSUIElement</key>
+	<false/>
+</dict>
+</plist>
