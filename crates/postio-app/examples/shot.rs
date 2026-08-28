@@ -423,12 +423,143 @@ fn settle(window: &impl IsA<gtk::Widget>) {
     heartbeat.remove();
 }
 
+/// Every literal mode word `flag` checks for below, so an argument matching
+/// none of them can be caught rather than silently ignored (#599).
+const KNOWN_FLAGS: &[&str] = &[
+    "dark",
+    "hc",
+    "demo",
+    "accounts",
+    "backfill",
+    "locked",
+    "comfortable",
+    "compact",
+    "command",
+    "folder",
+    "contact",
+    "search",
+    "syncing",
+    "settings",
+    "compose",
+    "detached",
+    "selected",
+    "thread",
+    "open",
+];
+
+/// Every argument (after the output path) that matches none of
+/// [`KNOWN_FLAGS`], no `WxH` size and no `text` scale prefix.
+///
+/// #599's actual cause: consecutive shots looked broken, and the working
+/// hypothesis was a compositor that had stopped delivering frame callbacks
+/// to the second window and later. It had not -- every `settle` still saw
+/// its full run of frames -- and the real fault reproduces on the very
+/// first shot, not the second: `for m in "demo" "demo thread"; do shot
+/// out.png $m; done` passes `$m` unquoted, and zsh (unlike bash) does not
+/// word-split that by default. "demo thread" then arrives as one argument
+/// that matches no flag `flag()` checks for, nothing this tool recognizes
+/// runs, and the window renders exactly the state it was in before any mode
+/// flag took effect -- for a first render, the pre-populate placeholder:
+/// empty sidebar, "offline · never synced". A confident, wrong picture,
+/// with nothing on screen saying why.
+fn unrecognized_arguments(args: &[String]) -> Vec<&str> {
+    args.iter()
+        .skip(1)
+        .filter(|token| {
+            !KNOWN_FLAGS.contains(&token.as_str())
+                && token
+                    .split_once('x')
+                    .is_none_or(|(w, h)| w.parse::<i32>().is_err() || h.parse::<i32>().is_err())
+                && !token.starts_with("text")
+        })
+        .map(String::as_str)
+        .collect()
+}
+
+fn warn_about_unrecognized_arguments(args: &[String]) {
+    for token in unrecognized_arguments(args) {
+        eprintln!(
+            "shot: '{token}' is not a mode this tool recognizes, and was silently \
+             ignored -- the picture below is whatever the window looked like before \
+             any mode flag took effect, not a picture of '{token}'. If this came from \
+             a shell variable holding more than one word (say, `demo thread`), check \
+             that it was word-split: zsh does not split an unquoted `$var` the way \
+             bash does, so `for m in \"demo thread\"; do shot out.png $m; done` passes \
+             \"demo thread\" as one argument under zsh and two under bash. See #599."
+        );
+    }
+}
+
+#[cfg(test)]
+mod unrecognized_argument_tests {
+    use super::*;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        // `args[0]` is always the output path, and `unrecognized_arguments`
+        // (like `flag`, `size` and the `text` scan in `main`) skips it.
+        std::iter::once("out.png".to_owned())
+            .chain(words.iter().map(|w| w.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn every_known_flag_is_recognized() {
+        for name in KNOWN_FLAGS {
+            assert_eq!(
+                unrecognized_arguments(&args(&[name])),
+                Vec::<&str>::new(),
+                "{name} is in KNOWN_FLAGS but was flagged as unrecognized"
+            );
+        }
+    }
+
+    #[test]
+    fn a_size_argument_is_recognized() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["1400x800"])),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn a_text_scale_argument_is_recognized() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["text150"])),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn two_words_collapsed_into_one_shell_argument_is_flagged() {
+        // #599: exactly what an unquoted `$mode` set to "demo thread"
+        // becomes under a shell that does not word-split it.
+        assert_eq!(
+            unrecognized_arguments(&args(&["demo thread"])),
+            vec!["demo thread"]
+        );
+    }
+
+    #[test]
+    fn a_plain_typo_is_flagged() {
+        assert_eq!(unrecognized_arguments(&args(&["dmeo"])), vec!["dmeo"]);
+    }
+
+    #[test]
+    fn a_normally_split_pair_is_not_flagged() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["demo", "thread", "1400x800"])),
+            Vec::<&str>::new()
+        );
+    }
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
         .first()
         .cloned()
         .unwrap_or_else(|| "postio.png".to_string());
+    warn_about_unrecognized_arguments(&args);
     let flag = |name: &str| args.iter().skip(1).any(|a| a == name);
     // A `WxH` argument forces the window size, which is how the adaptive
     // modes get rendered without a compositor in the loop.
