@@ -47,6 +47,23 @@ pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
 pub use session::{Session, SessionError, SessionOptions};
 
+/// Every command the registry knows, in cheat-sheet order.
+///
+/// A free function because the registry is a `const` table: it is not session
+/// state, and requiring a session to read it would be an accident of where the
+/// method happens to live.
+///
+/// That matters more on macOS than it looks. Opening a session reads the
+/// store's key from the OS keyring (ADR 0014), and an unsigned build has a new
+/// code identity on every rebuild — so anything that needed a session to show
+/// a command list would raise a Keychain prompt to draw a menu. The frontend
+/// builds its palette, cheat sheet and menu bar from this, before it has a
+/// store or a single secret.
+#[uniffi::export]
+pub fn commands() -> Vec<CommandSpecFfi> {
+    registry::commands()
+}
+
 uniffi::setup_scaffolding!();
 
 /// Answers with the name of this application.
