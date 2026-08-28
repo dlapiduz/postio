@@ -18,7 +18,6 @@
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::composer::{self, Field};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
