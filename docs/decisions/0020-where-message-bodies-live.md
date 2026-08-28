@@ -126,14 +126,36 @@ zstd is already a dependency. There is no library-shaped hole here.
 - **The id is the hash of the plaintext** for everything still in the blob
   store, which ADR 0014's keyed-BLAKE3 id depends on.
 
+## No migration: the schema is rewritten
+
+**Decided by the maintainer, 2026-08-27.** There is exactly one installation of
+Postio and it belongs to the person making this decision. Existing stores are
+expendable, and so is migration history.
+
+So this does **not** land as migration 0026 moving blobs into rows. The 25
+migrations collapse into a single `0001_initial_schema.sql` that describes the
+schema as it should be, with bodies in rows from the start. That is worth
+taking deliberately rather than by default:
+
+- The migration chain is 25 files of accumulated correction — `search_documents`
+  gaining and losing a `body` column, `idx_messages_body_state` being redefined,
+  the shared-addresses split. Every one is a fact about a past mistake and none
+  is a fact about the schema. A reader learning the store today reads all 25 to
+  find out what is true.
+- A body-migrating step would be the most dangerous code in the project — it
+  moves every message's text between two storage systems — and it would exist
+  to serve zero users.
+- The version number stays; `migrate` and its report stay. What is discarded is
+  the history, not the mechanism. The moment anybody else installs Postio, the
+  chain starts again from this new 0001.
+
+**This is a one-time licence, not a policy.** It is available because the user
+count is one and it should be spent here rather than saved.
+
 ## Consequences
 
-- A migration moves existing body blobs into rows, and the blob store loses its
-  text tenants. It is not a flag day: bodies can be read from either place
-  during the move.
-- **Migration 0001's rule and `PRODUCT.md` §6 need amending.** "SQLite holds
-  the blob key and the metadata needed to list and search" stops being true of
-  bodies, and the sentence has been quoted enough that leaving it would mislead.
+- **`PRODUCT.md` §6 amended.** "The blob store holds the text" stops being
+  true, and the sentence has been quoted enough that leaving it would mislead.
 - **#399 as specified is no longer needed.** The blob container's dictionary id
   was for compressing text blobs; with the text gone, blobs are attachments,
   which are incompressible and want no dictionary. The format work already on
