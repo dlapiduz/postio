@@ -566,6 +566,10 @@ fn main() -> glib::ExitCode {
                     hits: 14,
                     capped: false,
                     elapsed: Duration::from_millis(11),
+                    // `syncing` shows the corpus caveat (#352). Default is a
+                    // settled account, which is where every account ends up
+                    // under ADR 0016 and so is the honest default for a shot.
+                    corpus_complete: !flag("syncing"),
                 },
             );
         }

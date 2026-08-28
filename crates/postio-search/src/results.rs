@@ -94,6 +94,22 @@ pub struct SearchResults {
     pub total_hits_capped: bool,
     /// How long the search took, start to finish.
     pub elapsed: Duration,
+    /// Whether every message in the searched scope has its body indexed.
+    ///
+    /// `false` means the hits are drawn from a corpus that is still filling:
+    /// headers sync long before bodies, so a message whose body has not
+    /// arrived cannot match on anything it says. The count is then a floor
+    /// for the same reason [`total_hits_capped`] makes it one, and the
+    /// surface has to say so — a result set that reads as "this is what your
+    /// mailbox contains" when it is not is the quiet kind of wrong (#352).
+    ///
+    /// Transient by design. ADR 0016 backfills every folder to completion by
+    /// default, so this becomes `true` on its own and the caveat goes away —
+    /// which is why the surface says *still syncing* rather than anything
+    /// that reads as a permanent limitation.
+    ///
+    /// [`total_hits_capped`]: Self::total_hits_capped
+    pub corpus_complete: bool,
 }
 
 /// The most `total_hits` will ever count exactly. See

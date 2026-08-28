@@ -82,6 +82,7 @@ pub fn run_search_opens_the_box_and_answers_immediately() {
             hits: 3,
             capped: false,
             elapsed: std::time::Duration::from_millis(2),
+            corpus_complete: true,
         }
     ));
 

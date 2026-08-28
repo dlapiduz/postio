@@ -957,3 +957,162 @@ fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         "Newest means date order, exactly as a mailbox is ordered"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Saying so when the corpus is still filling (#352)
+// ---------------------------------------------------------------------------
+//
+// Headers sync long before bodies, so between a first sync and the end of
+// backfill a free-text query answers from a subset of the mailbox and says
+// nothing about it. The result count reads as "this is what your mailbox
+// contains" either way, which is the quiet kind of wrong.
+//
+// Transient, under ADR 0016: every folder backfills to completion by default,
+// so this is a state that ends — which is why it is a boolean rather than the
+// count #352 originally asked for, and why the surface says "still syncing".
+
+/// Puts `message` in the state a downloaded body leaves it in.
+///
+/// `Message::new` starts at `not_fetched`, and indexing text does not move it
+/// — the backfill lane sets it when it stores the blob. So a test that wants
+/// "this body is here" has to say so, the same way sync does.
+fn body_here(connection: &Connection, message: &Message) {
+    connection
+        .execute(
+            "UPDATE messages SET body_state = 'full' WHERE id = ?1",
+            [message.id.get()],
+        )
+        .expect("mark the body present");
+}
+
+/// Puts `message` in the state a body that has not arrived yet is in.
+fn body_not_here(connection: &Connection, message: &Message) {
+    connection
+        .execute(
+            "UPDATE messages SET body_state = 'headers_only' WHERE id = ?1",
+            [message.id.get()],
+        )
+        .expect("mark the body missing");
+}
+
+fn search_for(
+    connection: &Connection,
+    account: &postio_model::Account,
+    query: &str,
+) -> postio_search::SearchResults {
+    let parsed = parse(query, at(12).date_naive());
+    let request = SearchRequest {
+        account: postio_model::AccountScope::Account(account.id),
+        query: &parsed,
+        scope: Scope::AllMail,
+        order: postio_search::ResultOrder::Relevance,
+        limit: 10,
+    };
+    search(connection, &request, at(12)).expect("search")
+}
+
+#[test]
+fn a_search_over_a_corpus_still_filling_reports_it() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let here = message(&connection, &account, mailbox, "ada", "Quarterly", at(9));
+    postio_index::index::index_body(&connection, here.id.get(), Some("the figures"))
+        .expect("index");
+    body_here(&connection, &here);
+
+    assert!(
+        search_for(&connection, &account, "quarterly").corpus_complete,
+        "every message here has a body, so there is nothing to caveat"
+    );
+
+    // A second message whose body has not been fetched. It cannot match on
+    // anything it says, and the count is a floor because of it.
+    let absent = message(&connection, &account, mailbox, "bob", "Quarterly", at(8));
+    body_not_here(&connection, &absent);
+
+    let results = search_for(&connection, &account, "quarterly");
+    assert!(
+        !results.corpus_complete,
+        "a message whose body has not arrived is unsearchable and unmentioned, \
+         so the hit count reads as the whole mailbox when it is not (#352)"
+    );
+
+    // And the caveat is about the corpus, not about this query: a search that
+    // matches nothing is just as incomplete as one that matches everything.
+    assert!(!search_for(&connection, &account, "nothingmatchesthis").corpus_complete);
+}
+
+#[test]
+fn the_caveat_goes_away_when_the_bodies_arrive() {
+    // The acceptance criterion that keeps this from becoming permanent
+    // furniture. Under ADR 0016 every account ends up here.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let message = message(&connection, &account, mailbox, "ada", "Quarterly", at(9));
+    body_not_here(&connection, &message);
+    assert!(!search_for(&connection, &account, "quarterly").corpus_complete);
+
+    connection
+        .execute(
+            "UPDATE messages SET body_state = 'full' WHERE id = ?1",
+            [message.id.get()],
+        )
+        .expect("the body arrives");
+
+    assert!(
+        search_for(&connection, &account, "quarterly").corpus_complete,
+        "a fully backfilled account must not carry a permanent caveat"
+    );
+}
+
+#[test]
+fn the_caveat_is_about_the_scope_that_was_searched() {
+    // "Complete" has to mean complete *here*. An inbox whose bodies are all
+    // local must not inherit a caveat earned by an archive nobody searched --
+    // the claim on screen is about the search that was just run.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+
+    let read = message(&connection, &account, inbox, "ada", "Quarterly", at(9));
+    postio_index::index::index_body(&connection, read.id.get(), Some("the figures"))
+        .expect("index");
+    body_here(&connection, &read);
+    let unread = message(&connection, &account, archive, "bob", "Quarterly", at(8));
+    body_not_here(&connection, &unread);
+
+    let parsed = parse("quarterly", at(12).date_naive());
+    let inbox_only = SearchRequest {
+        account: postio_model::AccountScope::Account(account.id),
+        query: &parsed,
+        scope: Scope::Inbox,
+        order: postio_search::ResultOrder::Relevance,
+        limit: 10,
+    };
+    assert!(
+        search(&connection, &inbox_only, at(12))
+            .expect("search")
+            .corpus_complete,
+        "the inbox is complete; the archive's outstanding body is not this \
+         search's business"
+    );
+
+    let everything = SearchRequest {
+        scope: Scope::AllMail,
+        ..inbox_only
+    };
+    assert!(
+        !search(&connection, &everything, at(12))
+            .expect("search")
+            .corpus_complete,
+        "and widening the scope to include it brings the caveat back"
+    );
+}
