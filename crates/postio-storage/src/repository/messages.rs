@@ -596,7 +596,7 @@ id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_id
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
 raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
-html_part_id, html_part_headers, snoozed_until";
+html_part_id, html_part_headers, snoozed_until, text_is_flowed";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -1706,7 +1706,7 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
                 flags_dirty = ?26, has_pending_operations = ?27, deleted_locally = ?28,
                 last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31, list_id = ?32,
                 text_part_id = ?33, text_part_headers = ?34,
-                html_part_id = ?35, html_part_headers = ?36
+                html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37
           WHERE id = ?1",
         params_from_iter(row_values(id, message)),
     )?;
@@ -1733,10 +1733,10 @@ fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
                                remote_id, body_state, flags_dirty, has_pending_operations,
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
                                list_id, text_part_id, text_part_headers,
-                               html_part_id, html_part_headers)
+                               html_part_id, html_part_headers, text_is_flowed)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34, ?35, ?36)",
+                 ?32, ?33, ?34, ?35, ?36, ?37)",
         params_from_iter(row_values(0, message)),
     )?;
     Ok(MessageId::new(connection.last_insert_rowid()))
@@ -1820,6 +1820,7 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
         maybe_text(message.text_part_headers.clone()),
         maybe_text(message.html_part_id.clone()),
         maybe_text(message.html_part_headers.clone()),
+        boolean(message.text_is_flowed),
     ]
 }
 
@@ -2024,6 +2025,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         html_part_id: row.get(28)?,
         html_part_headers: row.get(29)?,
         snoozed_until: row.get::<_, Option<i64>>(30)?.map(from_millis),
+        text_is_flowed: row.get(31)?,
     })
 }
 
