@@ -2527,12 +2527,18 @@ mod tests {
     /// `EngineParts` over `database`, with the receiving end of its own
     /// event channel — kept, not discarded, so a test can see what got
     /// announced.
-    fn parts_over(database: Database) -> (EngineParts, postio_core::bridge::EventStream) {
+    fn parts_over(
+        database: Database,
+    ) -> (
+        EngineParts,
+        postio_core::bridge::EventStream,
+        tempfile::TempDir,
+    ) {
         let connection = database.connection().expect("checkout");
         let account = postio_storage::test_support::account(&connection);
         drop(connection);
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
         let (sink, events) = postio_core::bridge::event_channel();
         let parts = EngineParts {
             account: account.id,
@@ -2552,7 +2558,7 @@ mod tests {
             mailbox_roles: Default::default(),
             clock: Arc::new(SystemClock),
         };
-        (parts, events)
+        (parts, events, directory)
     }
 
     /// postio-0d9.6: a 37,699-message Archive was queued ahead of an
@@ -2564,7 +2570,7 @@ mod tests {
     #[test]
     fn queueing_every_mailbox_puts_inbox_first_and_orders_the_rest_by_role() {
         let database = postio_storage::test_support::memory();
-        let (parts, _events) = parts_over(database.clone());
+        let (parts, _events, _directory) = parts_over(database.clone());
         let connection = database.connection().expect("checkout");
 
         // Created deliberately out of role order, archive first, so a queue
@@ -2672,7 +2678,7 @@ mod tests {
     #[test]
     fn a_second_announcement_inside_the_floor_is_throttled() {
         let database = postio_storage::test_support::memory();
-        let (parts, events) = parts_over(database);
+        let (parts, events, _directory) = parts_over(database);
         let mut state = empty_state();
         let t0 = Instant::now();
 
@@ -2696,7 +2702,7 @@ mod tests {
     #[test]
     fn announce_backfill_now_is_never_throttled() {
         let database = postio_storage::test_support::memory();
-        let (parts, events) = parts_over(database);
+        let (parts, events, _directory) = parts_over(database);
         let mut state = empty_state();
         let t0 = Instant::now();
 
@@ -2742,7 +2748,7 @@ mod tests {
     #[test]
     fn backfill_progress_carries_what_the_mail_weighs() {
         let database = postio_storage::test_support::memory();
-        let (parts, events) = parts_over(database.clone());
+        let (parts, events, _directory) = parts_over(database.clone());
         let connection = database.connection().expect("checkout");
         let inbox =
             postio_storage::test_support::mailbox(&connection, &account_of(&parts), "INBOX");
@@ -2788,7 +2794,7 @@ mod tests {
     #[test]
     fn a_drained_queue_resets_the_throttle_clock() {
         let database = postio_storage::test_support::memory();
-        let (parts, events) = parts_over(database);
+        let (parts, events, _directory) = parts_over(database);
         let mut state = empty_state();
         let t0 = Instant::now();
 

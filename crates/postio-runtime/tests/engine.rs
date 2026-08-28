@@ -24,9 +24,10 @@ fn engine() -> (
     postio_storage::Database,
     postio_storage::seed::SeedReport,
     EventStream,
+    tempfile::TempDir,
 ) {
-    let (engine, database, report, events, _backend) = engine_with_backend();
-    (engine, database, report, events)
+    let (engine, database, report, events, _backend, directory) = engine_with_backend();
+    (engine, database, report, events, directory)
 }
 
 /// As [`engine`], keeping the mock so a test can make it fail.
@@ -36,6 +37,7 @@ fn engine_with_backend() -> (
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
+    tempfile::TempDir,
 ) {
     engine_with(|_| {})
 }
@@ -56,11 +58,12 @@ fn engine_with(
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
+    tempfile::TempDir,
 ) {
     let database = test_support::memory();
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, events) = event_channel();
 
     let backend = Arc::new(server());
@@ -87,12 +90,12 @@ fn engine_with(
     })
     .expect("the engine starts");
 
-    (engine, database, report, events, backend)
+    (engine, database, report, events, backend, directory)
 }
 
 #[tokio::test]
 async fn an_empty_queue_drains_to_nothing() {
-    let (engine, _database, _report, _events) = engine();
+    let (engine, _database, _report, _events, _directory) = engine();
 
     let summary = engine
         .drain()
@@ -115,7 +118,7 @@ async fn a_drain_settles_the_rows_it_finds() {
     // `postio-sync`'s to test and it does; the mock here holds no matching
     // message, so this row settles as obsolete rather than applied, which is
     // still the drain doing its job.
-    let (engine, database, report, _events) = engine();
+    let (engine, database, report, _events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
     let message = queue_a_flag_change(&database, &report, inbox.id);
@@ -140,7 +143,7 @@ async fn a_drain_settles_the_rows_it_finds() {
 async fn seeding_the_backfill_finds_bodies_worth_having() {
     // postio-26c: `seed` existed and nothing called it, so no body was ever
     // fetched for a message the user had not opened.
-    let (engine, _database, report, _events) = engine();
+    let (engine, _database, report, _events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
     let queued = engine
@@ -160,7 +163,7 @@ async fn a_seeded_body_is_actually_fetched() {
     // one, so every message stayed headers-only for ever. The loop has to
     // take a claim, fetch it, and report what became of it — otherwise the
     // queue grows and the reading pane shows nothing.
-    let (engine, database, report, _events) = engine();
+    let (engine, database, report, _events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
     give_the_inbox_uids(&database, inbox.id);
@@ -205,7 +208,7 @@ async fn a_backfill_says_how_far_it_has_got_without_being_asked() {
     // bodies, not the list -- reached the frontend as no event at all. The
     // sidebar drew `idle`, which is worse than silence: a user watching
     // `idle` while the log fetches bodies concludes it is stuck.
-    let (engine, database, report, events) = engine();
+    let (engine, database, report, events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
     give_the_inbox_uids(&database, inbox.id);
@@ -301,7 +304,7 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
             .expect("the folder is created");
         mailbox
     };
-    let (engine, events) = engine_over(&database, account.id, server());
+    let (engine, events, _directory) = engine_over(&database, account.id, server());
 
     let summary = engine.sync(mailbox.id).await.expect("a sync pass");
     assert!(
@@ -353,7 +356,7 @@ async fn a_resync_that_finds_new_mail_announces_it() {
         mailbox
     };
     let backend = Arc::new(server());
-    let (engine, events) = engine_over_arc(&database, account.id, backend.clone());
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
 
     engine.sync(mailbox.id).await.expect("a first sync");
     // The bootstrap pass's own events are not what this test is about.
@@ -410,7 +413,7 @@ async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
         mailbox
     };
     let backend = Arc::new(server());
-    let (engine, events) = engine_over_arc(&database, account.id, backend.clone());
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
 
     engine.sync(mailbox.id).await.expect("a first sync");
     // The bootstrap pass reloads on purpose -- see the test above. What this
@@ -462,7 +465,7 @@ async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
             .expect("the folder is created");
         mailbox
     };
-    let (engine, _events) = engine_over(&database, account.id, server());
+    let (engine, _events, _directory) = engine_over(&database, account.id, server());
 
     // Nothing is queued before the mail exists.
     assert_eq!(
@@ -514,7 +517,7 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
         mailbox
     };
     let backend = Arc::new(server());
-    let (engine, _events) = engine_over_arc(&database, account.id, backend.clone());
+    let (engine, _events, _directory) = engine_over_arc(&database, account.id, backend.clone());
 
     // A first pass, so the mailbox has sync state and the watcher is on it.
     engine.sync(mailbox.id).await.expect("a first sync");
@@ -553,7 +556,7 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
 
 #[tokio::test]
 async fn a_message_nobody_has_is_nothing_to_fetch() {
-    let (engine, _database, _report, _events) = engine();
+    let (engine, _database, _report, _events, _directory) = engine();
 
     let wanted = engine
         .request_body(postio_model::ids::MessageId::new(987_654))
@@ -567,7 +570,7 @@ async fn a_message_nobody_has_is_nothing_to_fetch() {
 async fn the_engine_answers_after_the_handle_is_cloned() {
     // Cloning gives another handle to the same thread; both have to work, or
     // the composition root cannot hand one to each surface that needs it.
-    let (engine, _database, _report, _events) = engine();
+    let (engine, _database, _report, _events, _directory) = engine();
     let second = engine.clone();
 
     let (first, second) = tokio::join!(engine.drain(), second.drain());
@@ -586,7 +589,7 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
     // call under load (#210); and pre-spawn, because a fault installed after
     // it races the supervisor's first connection (#330). A server refusing
     // credentials refuses everyone, from the first dial.
-    let (engine, database, report, events, _backend) =
+    let (engine, database, report, events, _backend, _directory) =
         engine_with(|backend| backend.fail_all(Fault::AuthFailed));
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     let message = queue_a_flag_change(&database, &report, inbox.id);
@@ -634,7 +637,7 @@ async fn a_refused_password_blocks_and_a_new_one_unblocks() {
     // races the supervisor's first connection, and a drain that finds a
     // cached healthy session and an empty queue makes no backend call at
     // all -- Ok(empty) where this test expects Err (#330).
-    let (engine, _database, _report, events, backend) =
+    let (engine, _database, _report, events, backend, _directory) =
         engine_with(|backend| backend.fail_all(Fault::AuthFailed));
 
     engine
@@ -675,7 +678,7 @@ async fn a_connection_that_dies_mid_drain_parks_the_link_at_once() {
     // already cost the user one action; waiting for the next poll to admit it
     // costs another. Whatever hit the broken connection tells the supervisor
     // directly.
-    let (engine, database, report, _events, backend) = engine_with_backend();
+    let (engine, database, report, _events, backend, _directory) = engine_with_backend();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     queue_a_flag_change(&database, &report, inbox.id);
 
@@ -704,7 +707,7 @@ async fn no_network_is_not_a_backoff() {
     // there is nothing to retry against, so attempts are not spent and the
     // status line says "offline" rather than counting down to a reconnection
     // that cannot succeed.
-    let (engine, _database, _report, events, _backend) = engine_with_backend();
+    let (engine, _database, _report, events, _backend, _directory) = engine_with_backend();
 
     let link = engine
         .set_network(NetworkState::Down)
@@ -807,7 +810,7 @@ fn engine_over(
     database: &postio_storage::Database,
     account: postio_model::ids::AccountId,
     backend: MockBackend,
-) -> (Engine, EventStream) {
+) -> (Engine, EventStream, tempfile::TempDir) {
     engine_over_arc(database, account, Arc::new(backend))
 }
 
@@ -817,9 +820,9 @@ fn engine_over_arc(
     database: &postio_storage::Database,
     account: postio_model::ids::AccountId,
     backend: Arc<MockBackend>,
-) -> (Engine, EventStream) {
+) -> (Engine, EventStream, tempfile::TempDir) {
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, events) = event_channel();
     let engine = Engine::spawn(EngineParts {
         account,
@@ -840,7 +843,7 @@ fn engine_over_arc(
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
-    (engine, events)
+    (engine, events, directory)
 }
 
 /// A mock server holding an INBOX with mail in it.
@@ -955,7 +958,7 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     }
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
     let backend = Arc::new(
@@ -1057,7 +1060,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
         account
     };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
     let backend = Arc::new(
@@ -1129,7 +1132,7 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
     // sent first exactly the way production does, has to finish well under
     // that -- 2s is generous against the ~20-40ms this takes once the
     // connection is not gated behind an unrelated tick.
-    let (engine, database, report, _events) = engine();
+    let (engine, database, report, _events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     give_the_inbox_uids(&database, inbox.id);
 
@@ -1187,7 +1190,7 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
 /// that claim is actually testable rather than trusting the shared call.
 #[tokio::test]
 async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
-    let (engine, database, report, _events) = engine();
+    let (engine, database, report, _events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     give_the_inbox_uids(&database, inbox.id);
 
@@ -1278,6 +1281,7 @@ fn engine_seeding_in_batches(
     postio_storage::Database,
     postio_model::ids::MailboxId,
     Arc<MockBackend>,
+    tempfile::TempDir,
 ) {
     let database = test_support::memory();
     let connection = database.connection().expect("a connection");
@@ -1286,7 +1290,7 @@ fn engine_seeding_in_batches(
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
     let mut mailbox = MockMailbox::new("INBOX");
@@ -1332,7 +1336,7 @@ fn engine_seeding_in_batches(
     })
     .expect("the engine starts");
 
-    (engine, database, inbox.id, backend)
+    (engine, database, inbox.id, backend, directory)
 }
 
 /// Wait until `done`, or give up and answer what it saw last.
@@ -1388,7 +1392,8 @@ fn bodies_local(database: &postio_storage::Database, mailbox: postio_model::ids:
 async fn a_mailbox_larger_than_one_seed_is_covered_without_anyone_opening_it() {
     const MESSAGES: u32 = 10;
     const BATCH: u32 = 3;
-    let (engine, database, inbox, _backend) = engine_seeding_in_batches(MESSAGES, BATCH);
+    let (engine, database, inbox, _backend, _directory) =
+        engine_seeding_in_batches(MESSAGES, BATCH);
 
     // The engine syncs and backfills on its own initiative once the link is
     // up; nothing here asks it to, which is the point.
@@ -1420,7 +1425,7 @@ async fn a_mailbox_larger_than_one_seed_is_covered_without_anyone_opening_it() {
 #[tokio::test]
 async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
     const MESSAGES: u32 = 4;
-    let (engine, database, inbox, backend) = engine_seeding_in_batches(MESSAGES, 2);
+    let (engine, database, inbox, backend, _directory) = engine_seeding_in_batches(MESSAGES, 2);
 
     assert!(
         until(|| bodies_local(&database, inbox) == i64::from(MESSAGES)).await,
@@ -1478,7 +1483,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
     let mut mailbox = MockMailbox::new("INBOX");
@@ -1640,14 +1645,20 @@ fn server_with_an_attachment() -> MockBackend {
 /// test reads was written by the engine doing what it does in the app.
 fn engine_over_a_real_sync(
     backfill: postio_sync::BackfillPolicy,
-) -> (Engine, postio_storage::Database, postio_model::AccountId) {
+) -> (
+    Engine,
+    postio_storage::Database,
+    postio_model::AccountId,
+    tempfile::TempDir,
+    test_support::TempDatabase,
+) {
     let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("checkout");
         test_support::account(&connection)
     };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
     let engine = Engine::spawn(EngineParts {
         account: account.id,
@@ -1669,10 +1680,13 @@ fn engine_over_a_real_sync(
     })
     .expect("the engine starts");
     let id = account.id;
-    // The `TempDatabase` guard has to outlive the engine, so it is leaked
-    // rather than returned alongside a `Database` that also borrows it.
-    let database = Box::leak(Box::new(database));
-    (engine, (**database).clone(), id)
+    // `Database` is `Clone` (an `Arc`-backed handle), so a clone for the
+    // caller does not borrow from `database` in the Rust-lifetime sense --
+    // but the temp directory it points at still has to stay on disk for as
+    // long as either clone is used, so `database` itself goes back too
+    // (#605), instead of the `Box::leak` this used to reach for.
+    let cloned = (*database).clone();
+    (engine, cloned, id, directory, database)
 }
 
 /// Waits for `look` to answer `Some`, or gives up saying what it was after.
@@ -1737,7 +1751,7 @@ async fn the_default_policy_syncs_the_words_and_leaves_the_payload_on_the_server
     // ADR 0017's whole reason for existing, at the level a person meets it:
     // the engine runs, the mailbox lands, search has the words, and the
     // eleven-twelfths of the mailbox that is payload bytes stays where it is.
-    let (engine, database, account) =
+    let (engine, database, account, _directory, _temp_database) =
         engine_over_a_real_sync(postio_sync::BackfillPolicy::default());
     let message = the_synced_message(&database, account).await;
 
@@ -1767,7 +1781,7 @@ async fn opening_an_attachment_asks_the_engine_for_that_one_section() {
     // The job the reading pane sends when somebody clicks a chip. Nothing
     // else in this test touches the network, so the bytes arriving are the
     // request having gone all the way out and back.
-    let (engine, database, account) =
+    let (engine, database, account, _directory, _temp_database) =
         engine_over_a_real_sync(postio_sync::BackfillPolicy::default());
     let message = the_synced_message(&database, account).await;
 
@@ -1815,10 +1829,11 @@ async fn eager_drains_the_payloads_with_nobody_asking() {
     // The archive setting. Nothing here calls the engine at all: the same
     // top-up that covers a folder's bodies covers its payloads once the words
     // are all local.
-    let (engine, database, account) = engine_over_a_real_sync(postio_sync::BackfillPolicy {
-        attachments: postio_sync::AttachmentPolicy::Eager,
-        ..Default::default()
-    });
+    let (engine, database, account, _directory, _temp_database) =
+        engine_over_a_real_sync(postio_sync::BackfillPolicy {
+            attachments: postio_sync::AttachmentPolicy::Eager,
+            ..Default::default()
+        });
     let message = the_synced_message(&database, account).await;
 
     // Wait for the state this asserts, not for the blob that precedes it.

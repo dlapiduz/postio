@@ -107,14 +107,14 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// records: an in-memory database uses SQLite's shared cache, whose
 /// table-level locking is a different model from the WAL one Postio runs on
 /// and the one this file is about.
-fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
+fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::TempDir) {
     let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("a connection");
         test_support::account(&connection)
     };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
     let engine = Engine::spawn(EngineParts {
@@ -136,7 +136,7 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
-    (database, engine)
+    (database, engine, directory)
 }
 
 /// The mailbox the store knows at `path`, once discovery has found it.
@@ -197,7 +197,7 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone());
 
     // The keystroke needs somewhere to act: a message in INBOX, and an
     // Archive folder to file it into. Both come from the sync, which is also
