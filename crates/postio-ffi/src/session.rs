@@ -191,6 +191,9 @@ pub struct Session {
     /// undo by asking again behind its back.
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     reads: Arc<std::sync::atomic::AtomicUsize>,
+    /// How many reconnects this session has asked for, so a test can see the
+    /// nudge without needing a server to connect to.
+    reconnects: Arc<std::sync::atomic::AtomicUsize>,
     /// Whether the engine currently has no connection at all.
     ///
     /// Pushed down by the frontend rather than observed here: reachability is
@@ -319,6 +322,12 @@ impl Session {
         self.set_offline(offline);
     }
 
+    /// Whether the platform has told us there is no connection.
+    #[uniffi::method(name = "isOffline")]
+    pub fn is_offline_ffi(&self) -> bool {
+        self.is_offline()
+    }
+
     /// Start syncing every configured account; answers how many started.
     ///
     /// Zero is not an error — a store with no account configured is the
@@ -434,6 +443,7 @@ impl Session {
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
+                reconnects: Arc::default(),
                 offline: Arc::default(),
                 engines: Mutex::new(Vec::new()),
                 reads: Arc::default(),
@@ -472,6 +482,7 @@ impl Session {
             scope: Mutex::new(None),
             in_flight: Arc::default(),
             reads: Arc::default(),
+            reconnects: Arc::default(),
             offline: Arc::default(),
             local: async_channel::unbounded(),
             events,
@@ -827,8 +838,72 @@ impl Session {
 
     /// Tell the engine whether the machine currently has a connection.
     pub fn set_offline(&self, offline: bool) {
-        self.offline
-            .store(offline, std::sync::atomic::Ordering::SeqCst);
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+        let was = self.offline.swap(offline, ordering);
+
+        // Only the transition back, and only when it really is one.
+        //
+        // `NWPathMonitor` repeats itself -- an interface changing while the
+        // path stays satisfied is a fresh callback with the same answer -- and
+        // reconnecting on each of those would hammer a server through exactly
+        // the flapping connection backoff exists to protect it from.
+        if was && !offline {
+            self.reconnect();
+        }
+    }
+
+    /// Whether the platform has told us there is no connection.
+    pub fn is_offline(&self) -> bool {
+        self.offline.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Ask every engine to try the folder in view again, now.
+    ///
+    /// The engine reconnects with backoff on its own and works with no
+    /// reachability signal at all, which is why this is a nudge rather than a
+    /// mechanism: all knowing buys is *promptness*. Waking a laptop syncs
+    /// immediately instead of at whatever backoff step the engine had reached,
+    /// which can be minutes.
+    ///
+    /// Failures are the engine's to report. It announces connection state and
+    /// progress as it goes, so a nudge that could not connect has already been
+    /// said once and must not be said twice.
+    fn reconnect(&self) {
+        self.reconnects
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let Some(mailbox) = self.open_mailbox() else {
+            // Nothing in view to refresh. The engines' own reconnect loops
+            // still run; this is the opportunistic half.
+            return;
+        };
+        let Some((_, runtime)) = self.reader() else {
+            return;
+        };
+        let engines = self.engines.lock().expect("engines lock").clone();
+        for engine in engines {
+            let engine = engine.clone();
+            runtime.spawn(async move {
+                let _ = engine.sync(mailbox).await;
+            });
+        }
+    }
+
+    /// The folder the window currently has open, if it is a folder.
+    ///
+    /// A search has no mailbox to refresh: its results came from the local
+    /// index, and re-running the query is the frontend's call, not a
+    /// reconnection's.
+    fn open_mailbox(&self) -> Option<postio_model::MailboxId> {
+        match *self.scope.lock().expect("scope lock") {
+            Some(postio_runtime::store::ListScope::Mailbox(mailbox)) => Some(mailbox),
+            _ => None,
+        }
+    }
+
+    /// How many reconnects have been asked for. Test-only.
+    #[cfg(feature = "testing")]
+    pub fn reconnects_for_test(&self) -> usize {
+        self.reconnects.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The database and blob store, while the session is open.

@@ -45,6 +45,13 @@ final class Engine {
                 self?.open(mailbox: mailbox)
             }
             consumeEvents(from: session)
+            // The platform observes and the engine is told. Callbacks arrive
+            // on a background queue and may repeat the same answer; the
+            // boundary absorbs that, nudging a reconnect only on a real
+            // transition back, so there is nothing to debounce here.
+            reachability.start { [weak self] offline in
+                Task { @MainActor in self?.session?.setOffline(offline) }
+            }
         } catch {
             // The message the boundary wrote, not one invented here: a locked
             // keychain says how to unlock it, and a broken store says what
@@ -71,6 +78,7 @@ final class Engine {
     private(set) var requestedToken = 0
 
     private let notifications = MailNotifications()
+    private let reachability = Reachability()
 
     /// Folders with no parent, in the order the store returned them.
     var folderRoots: [MailboxFfi] {
@@ -163,6 +171,7 @@ final class Engine {
     /// process exit is exactly when libcrypto goes away underneath a thread
     /// still encrypting a page.
     func shutdown() {
+        reachability.stop()
         session?.shutdown()
         session = nil
     }
