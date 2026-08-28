@@ -1424,3 +1424,60 @@ fn cancelling_a_send_already_being_submitted_says_it_is_in_flight() {
         "and it stays where it was",
     );
 }
+
+#[test]
+fn moving_a_draft_back_to_editing_gives_the_reservation_back_too() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    drafts
+        .set_state(draft.id, DraftState::Editing)
+        .expect("set_state");
+
+    let back = drafts.get(draft.id).expect("get").expect("the draft");
+    assert_eq!(
+        back.rfc_message_id, None,
+        "the invariant holds on every write path or it is not an invariant: \
+         `save` is not the only way a draft becomes editable again"
+    );
+    assert_eq!(
+        drafts.get(draft.id).expect("get").expect("the draft").state,
+        DraftState::Editing,
+    );
+}
+
+#[test]
+fn set_state_leaves_the_reservation_alone_for_every_other_state() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+    let reserved = draft.rfc_message_id.clone().expect("reserved");
+
+    for state in [DraftState::Sending, DraftState::Sent, DraftState::Failed] {
+        drafts.set_state(draft.id, state).expect("set_state");
+        assert_eq!(
+            drafts
+                .get(draft.id)
+                .expect("get")
+                .expect("the draft")
+                .rfc_message_id,
+            Some(reserved.clone()),
+            "{state:?} is still the same attempt series",
+        );
+    }
+}
