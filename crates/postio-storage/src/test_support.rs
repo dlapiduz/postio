@@ -38,7 +38,23 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::Database;
+use crate::key::{Purpose, StoreKey, Subkey};
 use crate::repository::{AccountRepository, MailboxRepository};
+
+/// The key every scratch database is encrypted under.
+///
+/// Fixed, and that is the point: ADR 0014 Q3 says the suite must exercise the
+/// *encrypted* path, because a plaintext configuration that no longer ships is
+/// not worth testing. Every helper here goes through SQLCipher exactly as a
+/// real store does — so a repository that would break under page encryption
+/// breaks in the ordinary test run rather than on somebody's mail.
+///
+/// Fixed rather than random so a test can close a store and reopen it. It is
+/// not a secret and must never be used by anything that ships; nothing outside
+/// the `test-support` feature can reach it.
+pub fn key() -> Subkey {
+    StoreKey::from_bytes([0x5a; crate::key::KEY_BYTES]).derive(Purpose::Database)
+}
 
 /// A migrated scratch database, shared by every connection its pool opens.
 ///
@@ -65,7 +81,7 @@ pub fn memory() -> Database {
     }
     .expect("a scratch directory must always open");
     let path = directory.path().join("postio.db");
-    Database::open_file_with_guard(&path, Box::new(directory))
+    Database::open_file_with_guard(&path, &key(), Box::new(directory))
         .expect("a scratch database must always open")
 }
 
@@ -80,7 +96,7 @@ pub fn memory() -> Database {
 /// If the temporary directory or the database cannot be created.
 pub fn temp() -> TempDatabase {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let database = Database::open(directory.path().join("postio.db"))
+    let database = Database::open(directory.path().join("postio.db"), &key())
         .expect("a temporary database must always open");
     TempDatabase {
         database,

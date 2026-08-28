@@ -797,12 +797,13 @@ mod tests {
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
-        let account = seed_account(&Database::open(&db_path).unwrap());
+        let account =
+            seed_account(&Database::open(&db_path, &postio_storage::test_support::key()).unwrap());
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
         // ── Run one: type, park the draft with Esc, exit cleanly ─────────
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();
@@ -833,7 +834,7 @@ mod tests {
 
         // ── Run two: the draft is parked, not in the way ─────────────────
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();
@@ -887,7 +888,8 @@ mod tests {
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
-        let account = seed_account(&Database::open(&db_path).unwrap());
+        let account =
+            seed_account(&Database::open(&db_path, &postio_storage::test_support::key()).unwrap());
         // Only `install_attach` ever spawns onto this; nothing in this test
         // attaches a file, so it exists purely to give `install` a handle.
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -899,7 +901,7 @@ mod tests {
         // block is the whole simulation: the transaction `save()` already
         // committed is what has to survive it, not an orderly exit.
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();
@@ -926,7 +928,7 @@ mod tests {
 
         // ── Run two: a fresh window, a fresh database handle, same file ──
         {
-            let database = Database::open(&db_path).unwrap();
+            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
             let blobs = BlobStore::open(&blobs_path).unwrap();
             let window = Window::default();
             window.present();

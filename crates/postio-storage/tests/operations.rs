@@ -523,8 +523,11 @@ fn the_queue_survives_a_restart_in_enqueue_order() {
     }
 
     // A new pool, and for a file-backed database a genuinely new connection.
-    let reopened =
-        postio_storage::Database::open(database.directory().join("postio.db")).expect("reopen");
+    let reopened = postio_storage::Database::open(
+        database.directory().join("postio.db"),
+        &postio_storage::test_support::key(),
+    )
+    .expect("reopen");
     let connection = reopened.connection().expect("checkout");
     let drained: Vec<Operation> = OperationQueueRepository::new(&connection)
         .pending(account_id, at(20))

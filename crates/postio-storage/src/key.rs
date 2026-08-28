@@ -32,6 +32,24 @@
 
 use zeroize::{Zeroize, Zeroizing};
 
+/// The keyring entry the master key is kept under.
+///
+/// Here rather than in `postio-session` — which owns the `SecretStore` seam
+/// and does the actual fetching — because the *name* is part of the on-disk
+/// format in the same way [`Purpose::context`] is: change it and every
+/// existing installation looks like a first run, mints a second key, and
+/// leaves the store it can no longer open sitting on disk. It has more than
+/// one reader now, and a magic string with two copies has a way of acquiring
+/// a third that differs.
+///
+/// Not an address, and it cannot become one: there is no `@` in it, so it can
+/// never collide with an account's own entry however many accounts an
+/// installation grows. Written out rather than derived from the store path
+/// because the key has to be findable by a person in `seahorse` when they
+/// want to know what Postio keeps — the label reads
+/// "Postio (local store encryption key)".
+pub const STORE_KEY_ENTRY: &str = "local store encryption key";
+
 /// How long a key is, in bytes. Both the master key and every subkey.
 pub const KEY_BYTES: usize = 32;
 
