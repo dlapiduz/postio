@@ -12,7 +12,6 @@
 //! opened can be searched", which is the sentence that was false.
 
 use chrono::Utc;
-use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
