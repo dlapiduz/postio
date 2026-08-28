@@ -42,6 +42,23 @@ public final class PostioSession {
     /// reaches this application without anybody editing it.
     public var commands: [CommandSpecFfi] { inner.commands() }
 
+    /// Show `scope`, and answer the generation the window is now on.
+    @discardableResult
+    public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }
+
+    /// How many rows the current scope has.
+    ///
+    /// A `COUNT` on the other side, not the length of anything: a hundred
+    /// thousand rows are a number here, never a hundred thousand structs.
+    public var rowCount: UInt32 { inner.rowCount() }
+
+    /// The row at `position`, or `nil` while its page is on its way.
+    ///
+    /// Synchronous and does no I/O. A `nil` means draw a placeholder — the
+    /// fetch is already running by the time this returns, and
+    /// `UiEvent.pageReady` says when to ask again.
+    public func row(at position: UInt32) -> RowFfi? { inner.rowAt(position: position) }
+
     /// Drops the store and ends the event drain.
     public func shutdown() { inner.shutdown() }
 
