@@ -1356,7 +1356,7 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Sets `body_state` on its own, without touching the body blob keys.
+    /// Sets `body_state` on its own, without touching the stored body.
     ///
     /// The one write [`set_body_blobs`](Self::set_body_blobs) cannot do: a
     /// payload landing changes how much of the message is local without

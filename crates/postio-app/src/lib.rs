@@ -521,9 +521,41 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
+    train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
     Some(Wired { feeds, search })
+}
+
+/// Train a body-compression dictionary from the mail already here.
+///
+/// The other half of ADR 0020's disk saving, and the half that is worth about
+/// a further 28% of the store. Compression itself needs no pass — the
+/// repository does it on every write — but the dictionary has to be learned
+/// from a corpus that only exists once mail has arrived.
+///
+/// `spawn_blocking` and once per start, for the same two reasons
+/// [`catch_up_the_body_index`] is: it is synchronous SQLite that decompresses
+/// a few thousand bodies, and nothing on screen waits for it.
+/// `postio_session::train_body_dictionary` is what decides it is not worth
+/// running, which is the ordinary answer on a store that already has one.
+///
+/// After the index catch-up rather than before: that pass is what makes local
+/// mail searchable, which somebody is waiting to do, and this one only makes
+/// the *next* mail smaller.
+fn train_the_body_dictionary(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn_blocking(move || {
+        match postio_session::train_body_dictionary(&database) {
+            Ok(_) => {}
+            // Recoverable, like every other idle pass here: mail written
+            // without a dictionary is mail that reads perfectly and takes a
+            // little more disk, and the next start tries again.
+            Err(error) => {
+                tracing::warn!(%error, "could not train a body compression dictionary");
+            }
+        }
+    });
 }
 
 /// Give back the disk nothing is using any more, out of the way.

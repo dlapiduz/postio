@@ -1063,8 +1063,8 @@ pub async fn fetch_body(
     // The ingest boundary of #277. `mime::parse` contains the panic itself, so
     // this is not what keeps sync alive -- it is what keeps the failure
     // visible. Without it a message whose bytes defeat the parser stores no
-    // body blobs and is indistinguishable, in a log, from one that genuinely
-    // had none.
+    // body and is indistinguishable, in a log, from one that genuinely had
+    // none.
     //
     // Ids and sizes only: the bytes that caused this are somebody's mail.
     let parsed = mime::try_parse(&raw).unwrap_or_else(|_| {

@@ -13,7 +13,7 @@
 //! triggers — is dropped and rebuilt from the mail tables, which it is
 //! entirely derived from. `message_bodies_fts` has its own version and is
 //! never dropped for a metadata change, because refilling *it* means
-//! re-reading every body blob.
+//! re-reading and decompressing every body in the store.
 
 use postio_index::index::ensure_schema;
 use postio_model::{AccountScope, Message};
