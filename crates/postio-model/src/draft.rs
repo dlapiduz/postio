@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::account::Identity;
 use crate::address::EmailAddress;
 use crate::attachment::Attachment;
-use crate::ids::{AccountId, DraftId, IdentityId, MessageId, ThreadId};
+use crate::ids::{AccountId, DraftId, IdentityId, MessageId, RfcMessageId, ThreadId};
 use crate::message::{MessageBody, ServerIdentifiers};
 
 /// What the user was doing when the draft was started.
@@ -126,6 +126,24 @@ pub struct Draft {
     pub attachments: Vec<Attachment>,
     /// Life-cycle state.
     pub state: DraftState,
+    /// The `Message-ID` reserved for this send attempt series, once one has
+    /// been reserved (ADR 0021).
+    ///
+    /// `None` while the draft is being edited. `DraftRepository::queue_send`
+    /// mints one in the same write that enqueues `Operation::Send`, and
+    /// [`outgoing::build`](crate::outgoing::build) uses it instead of
+    /// generating one — so every attempt at a queued draft is the *same*
+    /// message rather than a fresh one that happens to say the same thing.
+    ///
+    /// # Why it is cleared when the draft returns to `Editing`
+    ///
+    /// A person told a send could not be confirmed, who then opens the draft,
+    /// changes it and sends again, is composing a **different** message. A
+    /// receiver that deduplicates on `Message-ID` would drop the corrected
+    /// version in favour of the one that may already have arrived, which is
+    /// worse than having no id at all. The id belongs to one attempt series
+    /// at one piece of text, not to the row.
+    pub rfc_message_id: Option<RfcMessageId>,
     /// Server identifiers, once the draft has been appended remotely.
     pub server: ServerIdentifiers,
     /// When composition started.
@@ -152,6 +170,7 @@ impl Draft {
             body: MessageBody::default(),
             attachments: Vec::new(),
             state: DraftState::Editing,
+            rfc_message_id: None,
             server: ServerIdentifiers::default(),
             created_at: now,
             updated_at: now,
