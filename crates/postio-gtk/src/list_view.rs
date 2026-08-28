@@ -1238,6 +1238,26 @@ impl MessageListView {
         imp.view.add_controller(motion);
     }
 
+    /// A plain primary click on the row at `position`, without a pointer.
+    ///
+    /// The seam `handle_key` is for the keyboard: a click is two halves —
+    /// this pane's gesture handler, and `GtkListView` moving its own cursor
+    /// afterwards because [`press`](Self::press) returns `false` for a plain
+    /// click — and a test that drove only the first half would not be
+    /// clicking. Both halves run here, in that order.
+    ///
+    /// Hit testing is deliberately not part of it: `row_at` needs a realized,
+    /// laid-out list and a real pointer position, and what this exercises is
+    /// what the press *means*, not where it landed.
+    pub fn click_row(&self, position: u32) {
+        let Some(id) = self.imp().model.peek(position) else {
+            return;
+        };
+        self.act_on_press(Press::Plain, position, id);
+        // What `GtkListView` does with the press this pane did not claim.
+        self.imp().cursor.set_selected(position);
+    }
+
     /// Acts on a press, and says whether the pane took it.
     fn press(&self, state: gdk::ModifierType, x: f64, y: f64) -> bool {
         let Some((view, position)) = self.row_at(x, y) else {
@@ -1246,7 +1266,6 @@ impl MessageListView {
         let Some(id) = view.row().map(|row| row.id) else {
             return false;
         };
-        let imp = self.imp();
 
         let local = self
             .imp()
@@ -1267,7 +1286,14 @@ impl MessageListView {
         let in_check =
             local.is_some_and(|local| view.is_in_check(local.x() as f64, local.y() as f64));
 
-        match press_kind(state, in_check) {
+        self.act_on_press(press_kind(state, in_check), position, id)
+    }
+
+    /// What a press *means*, once hit testing has said which row and which
+    /// kind it is. Split out so a click can be exercised without a pointer.
+    fn act_on_press(&self, kind: Press, position: u32, id: MessageId) -> bool {
+        let imp = self.imp();
+        match kind {
             Press::Extend => {
                 let from = imp.anchor.get().unwrap_or(position);
                 let rows: Vec<Option<MessageId>> = (0..imp.model.n_items())
@@ -1309,9 +1335,36 @@ impl MessageListView {
         // only when the user asks for it.
         //
         // `GtkListView` is left to move the cursor and to notice a second
-        // click as an activation.
+        // click as an activation. Claiming the press here would move the
+        // cursor a frame earlier and cost the double click that opens the
+        // message, which is a worse trade than letting the view do it.
+        //
+        // `landed` is still this pane's to set, and #70 came back because it
+        // was not: a plain click is the one path to the cursor that does not
+        // go through `move_cursor_to`, so the flag that says "a person put
+        // the cursor here" stayed false, `report_cursor` returned early, and
+        // the reader was never told — no body, and not even an `Absent`
+        // plate. A click is a person choosing a row, which is exactly what
+        // the flag means.
+        imp.landed.set(true);
         imp.anchor.set(Some(position));
         imp.selected.clear();
+        // Clicking the row the cursor is already on changes no position and
+        // so emits no `notify::selected` — the same gap `move_cursor_to`
+        // closes by reporting explicitly. `report_cursor` deduplicates, so
+        // the click that *does* move the cursor cannot double-fire.
+        //
+        // The dedup has to be cleared first, and this is the startup case
+        // rather than an exotic one: `SingleSelection` autoselects row 0 and
+        // the `!landed` branch of `report_cursor` records it as reported
+        // without telling anyone. Clicking that row is then a position that
+        // has not changed *and* an id already in `reported` — so without
+        // this the commonest first thing anyone does with a mouse, clicking
+        // the top message, leaves the pane blank.
+        if imp.cursor.selected() == position {
+            imp.reported.set(None);
+            self.report_cursor();
+        }
         false
     }
 
