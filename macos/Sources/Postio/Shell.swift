@@ -17,6 +17,15 @@ struct Shell: View {
     @State private var engine: Engine
     @State private var selectedFolder: Int64?
     @State private var showing: Int64?
+    /// The folder that was open. Application state rather than window state —
+    /// it is about the account, not the window — but stored with the scene
+    /// because that is where a scene's restoration lives.
+    ///
+    /// `Int` rather than `Int64`: `SceneStorage` has no overload for the
+    /// latter, and a mailbox id fits either on every platform Postio builds
+    /// for. The conversion is at the two edges rather than in the type, so
+    /// nothing else has to know.
+    @SceneStorage("openFolder") private var openFolder: Int?
 
     init(engine: Engine) {
         _engine = State(initialValue: engine)
@@ -41,8 +50,15 @@ struct Shell: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
             .onChange(of: selectedFolder) { _, folder in
-                if let folder { engine.open(mailbox: folder) }
+                guard let folder else { return }
+                engine.open(mailbox: folder)
+                openFolder = Int(folder)
             }
+            // The folder list arrives after the session opens, so the folder
+            // to reopen can only be chosen once there is something to choose
+            // among -- and it has to survive the list arriving empty first.
+            .onChange(of: engine.mailboxes.count) { _, _ in restoreFolder() }
+            .onAppear { restoreFolder() }
         } content: {
             messages
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 560)
@@ -61,6 +77,15 @@ struct Shell: View {
             // own selection puts it.
             if let message = requested.message { showing = message }
         }
+    }
+
+    /// Reopen the folder that was open, or the inbox if it is gone.
+    private func restoreFolder() {
+        guard selectedFolder == nil, !engine.mailboxes.isEmpty else { return }
+        selectedFolder = WindowState.folderToOpen(
+            remembered: openFolder.map(Int64.init),
+            among: engine.mailboxes
+        )
     }
 
     @ViewBuilder
