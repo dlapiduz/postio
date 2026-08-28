@@ -437,6 +437,24 @@ impl<'a> OperationQueueRepository<'a> {
         rows.collect()
     }
 
+    /// The unsettled row against `target`, if there is one.
+    ///
+    /// A target has at most one row in `pending`/`in_flight` at a time in
+    /// practice — the caller that would enqueue a second one guards against
+    /// it — so the earliest by id (there is only ever the one) is what this
+    /// returns. Used by [`super::DraftRepository::cancel_send`] to find the
+    /// `Send` a queued draft is waiting on.
+    pub fn pending_for(&self, target: OperationTarget) -> Result<Option<QueuedOperation>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {COLUMNS} FROM operation_queue
+              WHERE target_kind = ?1 AND target_id = ?2 AND state IN ('pending', 'in_flight')
+              ORDER BY id
+              LIMIT 1"
+        ))?;
+        let mut rows = statement.query(params![target.kind(), target.id()])?;
+        rows.next()?.map(read_queued).transpose()
+    }
+
     /// Whether anything unsettled is queued against `target`.
     pub fn has_pending(&self, target: OperationTarget) -> Result<bool> {
         let count: i64 = self.connection.query_row(

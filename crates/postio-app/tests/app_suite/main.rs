@@ -27,6 +27,7 @@ mod reclaim_wiring;
 mod reply_identity;
 mod reply_source;
 mod resume_draft;
+mod resume_queued_draft;
 mod search_index;
 mod search_results;
 mod search_wiring;
@@ -126,6 +127,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "resume_draft::return_on_a_draft_row_opens_the_composer_on_that_draft",
         resume_draft::return_on_a_draft_row_opens_the_composer_on_that_draft as fn(),
+    ),
+    (
+        "resume_queued_draft::return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing",
+        resume_queued_draft::return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing
+            as fn(),
     ),
     (
         "search_index::a_store_the_application_opened_can_be_searched",

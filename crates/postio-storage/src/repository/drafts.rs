@@ -39,6 +39,20 @@ pub struct ServerCopyLocation {
 }
 
 use super::{OperationQueueRepository, QueuedOperation};
+
+/// What [`DraftRepository::cancel_send`] found when it was asked to take a
+/// draft's send back off the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelSendOutcome {
+    /// The queued `Send` was removed and the draft is `Editing` again.
+    Cancelled,
+    /// There was nothing queued to cancel: the draft is not [`DraftState::Queued`],
+    /// or it no longer exists.
+    NotQueued,
+    /// The send is no longer safely cancellable — the drainer has already
+    /// started it, or it settled between the caller's read and this call.
+    AlreadyInFlight,
+}
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
 
@@ -276,6 +290,64 @@ impl<'a> DraftRepository<'a> {
 
         scope.commit()?;
         Ok(queued)
+    }
+
+    /// Cancels a draft's pending send and hands it back for editing (#433).
+    ///
+    /// A queued draft's row stayed in the Drafts folder the whole time it sat
+    /// in the queue, and opening it from there reopened the composer on live
+    /// state that could be edited — while the drainer might build the
+    /// outgoing bytes from that same row at any moment. Whether an edit made
+    /// it into the message the server received depended on nothing but
+    /// timing.
+    ///
+    /// This is what makes it safe to open again: [`Operation::Send`] has no
+    /// [`Operation::inverse`] — there is nothing to *replay* against a
+    /// server that has not seen it — but [`OperationQueueRepository::delete`]
+    /// documents the real answer for a row that has not drained yet, taking
+    /// it off the queue outright. That is exactly this call, and it costs
+    /// nothing because nothing has left the machine: `Composer::send`'s
+    /// local-first write means the operation is still sitting in SQLite,
+    /// never in flight to SMTP, right up until the drainer marks it so.
+    ///
+    /// Returns [`CancelSendOutcome::AlreadyInFlight`] rather than touching
+    /// anything once the drainer has: at that point a submission may already
+    /// be on the wire, and reopening the draft as editable would risk a
+    /// second, different message going out behind it.
+    pub fn cancel_send(&self, id: DraftId, at: DateTime<Utc>) -> Result<CancelSendOutcome> {
+        let scope = super::Scope::open(self.connection)?;
+        let drafts = DraftRepository::new(&scope);
+
+        let Some(mut draft) = drafts.get(id)? else {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::NotQueued);
+        };
+        if draft.state != DraftState::Queued {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::NotQueued);
+        }
+
+        let queue = OperationQueueRepository::new(&scope);
+        let target = OperationTarget::Draft(id);
+        let Some(pending) = queue.pending_for(target)? else {
+            // The row says `Queued` but the operation is already gone --
+            // settled between the caller's read and this one. Too late to
+            // pretend otherwise.
+            scope.commit()?;
+            return Ok(CancelSendOutcome::AlreadyInFlight);
+        };
+        if pending.state != postio_model::OperationState::Pending {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::AlreadyInFlight);
+        }
+
+        queue.delete(pending.id)?;
+        draft.state = DraftState::Editing;
+        draft.updated_at = at;
+        drafts.save(&mut draft)?;
+
+        scope.commit()?;
+        Ok(CancelSendOutcome::Cancelled)
     }
 
     /// Deletes a draft and queues the removal of its server copy.

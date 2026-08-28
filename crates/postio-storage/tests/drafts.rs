@@ -9,7 +9,9 @@ use postio_model::{
     Attachment, Draft, DraftId, DraftKind, DraftState, EmailAddress, Message, MessageBody,
     MessageId, Operation, OperationTarget, ThreadId,
 };
-use postio_storage::repository::{DraftRepository, MessageRepository, OperationQueueRepository};
+use postio_storage::repository::{
+    CancelSendOutcome, DraftRepository, MessageRepository, OperationQueueRepository,
+};
 use postio_storage::test_support;
 
 fn at(minutes: i64) -> DateTime<Utc> {
@@ -625,6 +627,116 @@ fn a_queued_send_does_not_need_a_drafts_mailbox() {
 
     assert_eq!(queued.operation, Operation::Send { draft: draft.id });
     assert!(queued.mailbox_id.is_none());
+}
+
+#[test]
+fn cancelling_a_queued_send_takes_the_operation_off_the_queue_and_reopens_the_draft() {
+    // #433: a queued draft could still be opened and edited from the Drafts
+    // folder, and the edits landed or did not depending purely on timing
+    // against the drainer. `OperationQueueRepository::delete`'s own doc
+    // already names the fix -- "an operation that has not drained yet can
+    // simply be taken off the queue" -- this is that, wired to the draft
+    // that owns it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    let outcome = drafts
+        .cancel_send(draft.id, at(2))
+        .expect("cancel the send");
+
+    assert_eq!(outcome, CancelSendOutcome::Cancelled);
+    let reopened = drafts
+        .get(draft.id)
+        .expect("get")
+        .expect("the draft is still here");
+    assert_eq!(
+        reopened.state,
+        DraftState::Editing,
+        "cancelling a send must hand the draft back for editing"
+    );
+
+    let queue = OperationQueueRepository::new(&connection);
+    assert!(
+        queue.get(queued.id).expect("get").is_none(),
+        "the pending Send operation must be gone, or the drainer could still \
+         pick it up and send whatever was in the row when it drains"
+    );
+}
+
+#[test]
+fn cancelling_the_send_of_a_draft_that_is_not_queued_does_nothing() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+
+    let outcome = drafts
+        .cancel_send(draft.id, at(2))
+        .expect("cancel the send");
+
+    assert_eq!(outcome, CancelSendOutcome::NotQueued);
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("still here")
+            .state,
+        DraftState::Editing,
+        "a draft that was never queued must not change state"
+    );
+}
+
+#[test]
+fn cancelling_a_send_that_is_already_in_flight_is_too_late() {
+    // The drainer marks the operation in_flight the moment it starts talking
+    // to the submission server. From then on the row leaving the queue
+    // cannot take back a message that may already be on the wire, so this
+    // must refuse rather than pretend the send never happened.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    let queue = OperationQueueRepository::new(&connection);
+    queue
+        .mark_in_flight(queued.id, at(2))
+        .expect("mark in flight");
+
+    let outcome = drafts
+        .cancel_send(draft.id, at(3))
+        .expect("cancel the send");
+
+    assert_eq!(outcome, CancelSendOutcome::AlreadyInFlight);
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("still here")
+            .state,
+        DraftState::Queued,
+        "an in-flight send must not be disturbed"
+    );
+    assert!(
+        queue.get(queued.id).expect("get").is_some(),
+        "the operation must stay on the queue"
+    );
 }
 
 // ---------------------------------------------------------------------------
