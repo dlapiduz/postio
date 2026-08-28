@@ -342,7 +342,6 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     });
 
     let database = wiring.database.clone();
-    let blobs = wiring.blobs.clone();
     let runtime = wiring.runtime.clone();
     // One filler, two ways in.
     //
@@ -361,7 +360,6 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     let showing_for_conversation = showing.clone();
     let parts = Rc::new(Fill {
         database,
-        blobs,
         runtime,
         showing,
         opened,
@@ -511,7 +509,6 @@ fn is_offline(status: &SyncStatus) -> bool {
 /// can share one implementation rather than two that drift.
 struct Fill {
     database: Database,
-    blobs: BlobStore,
     runtime: tokio::runtime::Handle,
     /// What the pane is showing, or is waiting to show.
     showing: Showing,
@@ -577,10 +574,8 @@ impl Fill {
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
         let offline = self.offline.get();
         let answer = crate::search::ask(&self.database, &self.runtime, {
-            let blobs = self.blobs.clone();
             move |connection| {
-                let body =
-                    crate::compose::load_body_or_reason(connection, &blobs, message, offline);
+                let body = crate::compose::load_body_or_reason(connection, message, offline);
                 let fetched = MessageRepository::new(connection)
                     .get(message)
                     .ok()
@@ -648,13 +643,11 @@ impl Fill {
         let offline = self.offline.get();
 
         let answer = crate::search::ask(&self.database, &self.runtime, {
-            let blobs = self.blobs.clone();
             move |connection| {
                 // One crossing for both. The parts are metadata the sync
                 // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
                 // for them costs a row read and never a fetch.
-                let body =
-                    crate::compose::load_body_or_reason(connection, &blobs, message, offline);
+                let body = crate::compose::load_body_or_reason(connection, message, offline);
                 let fetched = MessageRepository::new(connection)
                     .get(message)
                     .ok()

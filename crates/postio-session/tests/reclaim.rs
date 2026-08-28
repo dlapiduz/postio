@@ -2,9 +2,14 @@
 //!
 //! `collect_garbage` and `purge_temporary` were written, tested and
 //! documented, and nothing in a running Postio ever called either. So a
-//! deleted message's body stayed on disk for ever, and a mailbox whose
+//! deleted message's bytes stayed on disk for ever, and a mailbox whose
 //! `UIDVALIDITY` reset orphaned every blob in it with no way to get the
 //! space back.
+//!
+//! What is in the blob store is the raw `.eml` and the attachment payloads;
+//! since ADR 0020 the body text is a column on the row and goes when the row
+//! goes, without a sweep. So these drive the raw source, which is the blob
+//! every synced message has.
 
 use std::time::Duration;
 
@@ -12,7 +17,8 @@ use postio_storage::BlobStore;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// A store, a blob directory beside it, and one message holding one blob.
+/// A store, a blob directory beside it, and one message holding one blob —
+/// its raw RFC 5322 source.
 fn store_with_a_message() -> (
     test_support::TempDatabase,
     BlobStore,
@@ -24,24 +30,14 @@ fn store_with_a_message() -> (
     let (account, inbox) = test_support::account_with_inbox(&connection);
 
     let blob = blobs
-        .put(b"the body of a message somebody will delete")
+        .put(b"the raw source of a message somebody will delete")
         .expect("put");
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     message.server.uid = Some(postio_model::Uid::new(1));
     message.server.uid_validity = Some(postio_model::UidValidity::new(1));
+    message.raw_blob_id = Some(blob);
     let messages = MessageRepository::new(&connection);
     let id = messages.create(&mut message).expect("create");
-    messages
-        .set_body_blobs(
-            id,
-            &postio_storage::repository::BodyBlobs {
-                text: Some(blob),
-                html: None,
-                headers: None,
-            },
-            postio_model::BodyState::Full,
-        )
-        .expect("attach the body");
     drop(connection);
     (database, blobs, id)
 }
@@ -77,7 +73,7 @@ fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
-fn a_deleted_message_s_body_is_reclaimed_by_a_later_sweep() {
+fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
     // The headline. `MessageRepository::delete` removes the row and never
     // touches blobs -- deliberately, because the schema delegates that to this
     // sweep. Nothing called the sweep, so deleting mail freed nothing, for

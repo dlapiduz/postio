@@ -657,9 +657,9 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
     let stored = messages.get(id).expect("get").expect("row");
 
     // The words came through the wire and the parser intact.
-    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
-    let text = blobs.text.expect("the message's own text");
-    let fetched = String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8");
+    let body = messages.body(id).expect("body").expect("the row");
+    let text = body.text.expect("the message's own text");
+    let fetched = text;
     let expected =
         postio_model::mime::parse(postio_model::test_corpus::load("attachment-pdf").bytes());
     assert_eq!(

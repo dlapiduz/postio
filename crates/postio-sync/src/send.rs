@@ -46,14 +46,14 @@ use postio_smtp::settings::ConnectionSettings;
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::BlobStore;
 use postio_storage::repository::{
-    AccountRepository, BodyBlobs, DraftRepository, MailboxRepository, MessageRepository,
+    AccountRepository, DraftRepository, MailboxRepository, MessageRepository, StoredBody,
     ThreadingRepository,
 };
 use rusqlite::Connection;
 use secrecy::SecretString;
 use std::collections::BTreeSet;
 
-use crate::backfill::put_text;
+use crate::backfill::stored_text;
 use crate::drain::{Outcome, Result};
 
 /// What sending needs beyond the [`MailBackend`] every other operation
@@ -338,17 +338,17 @@ async fn file_sent_copy(
         return;
     }
     let _ = ThreadingRepository::new(connection, job.account).thread(&message);
-    // No recount needed here: migration 0003's `messages_count_insert`
-    // trigger already updated Sent's cached counts the instant `create`
-    // inserted the row. A call here would only redo what the trigger just
-    // did -- see `MailboxRepository::recount`'s own docs. postio-qhz.8.
+    // No recount needed here: the schema's `messages_count_insert` trigger
+    // already updated Sent's cached counts the instant `create` inserted the
+    // row. A call here would only redo what the trigger just did -- see
+    // `MailboxRepository::recount`'s own docs. postio-qhz.8.
 
-    let blobs = BodyBlobs {
-        text: put_text(smtp.blobs, message.body.text.as_deref()).unwrap_or_default(),
-        html: put_text(smtp.blobs, message.body.html.as_deref()).unwrap_or_default(),
+    let body = StoredBody {
+        text: stored_text(message.body.text.as_deref()),
+        html: stored_text(message.body.html.as_deref()),
         headers: None,
     };
-    let _ = messages.set_body_blobs(message.id, &blobs, postio_model::BodyState::Full);
+    let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
 
     let _ = DraftRepository::new(connection).delete(job.draft);
     remove_drafts_copy(backend, resync, job).await;

@@ -560,7 +560,10 @@ impl Session {
         use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
 
         let remote = postio_body::RemoteImages::from(remote);
-        let Some((database, blobs)) = self.store_and_blobs() else {
+        // The blob store is not consulted: a body is a compressed column on
+        // the message's row since ADR 0020. Inline parts still come from it,
+        // which is why `store_and_blobs` is the accessor either way.
+        let Some((database, _blobs)) = self.store_and_blobs() else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
@@ -573,12 +576,7 @@ impl Session {
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        match postio_session::reading::load_body_or_reason(
-            &connection,
-            &blobs,
-            message.into(),
-            offline,
-        ) {
+        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline) {
             postio_session::reading::Body::Ready(body) => {
                 let (content, _held_back) = body_html(&body, remote);
                 document_for(&content, remote)
