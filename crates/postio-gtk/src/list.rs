@@ -196,6 +196,16 @@ impl MessageRow {
 }
 
 impl ListRow for MessageRow {
+    fn thread(&self) -> Option<ThreadId> {
+        // Both conditions, and they are the ones `commands::aim_at_the_
+        // conversation` used to apply by hand: a row that does not stand for
+        // a conversation is not one, and a row that does but carries no
+        // thread id is not one the verbs can name. `postio_core::aim` reads
+        // this through `postio_ui`'s blanket `RowFacts`.
+        let row = self.row()?;
+        row.is_thread().then_some(row.thread).flatten()
+    }
+
     fn id(&self) -> Option<MessageId> {
         // Not recursion: an inherent method always wins method resolution
         // over a trait method for a concrete receiver, and `Self::id` here

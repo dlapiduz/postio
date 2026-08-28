@@ -6,7 +6,7 @@
 //! across an FFI, where handing the caller a vector would be the obvious and
 //! wrong thing to do.
 
-use postio_model::MessageId;
+use postio_model::{MessageId, ThreadId};
 use postio_runtime::store::{ListPage, ListScope, MessageSummary, ThreadSummary};
 use postio_ui::list::ListRow;
 
@@ -57,8 +57,24 @@ impl From<ScopeFfi> for ListScope {
 pub struct RowFfi {
     /// The message this row opens. For a conversation row, its representative.
     pub id: i64,
-    /// The conversation, when the row stands for one.
+    /// The conversation this row belongs to, if the store knows one.
+    ///
+    /// Set for a message that is part of a thread as well as for a row that
+    /// *stands for* one, so it is not on its own the answer to "is this a
+    /// conversation row" — see [`is_thread`](Self::is_thread).
     pub thread: Option<i64>,
+    /// Whether this row stands for a whole conversation rather than one
+    /// message.
+    ///
+    /// The discriminator the verbs need: a thread row's `id` is its newest
+    /// message, so without this a marked set of conversation rows and a
+    /// marked set of messages that happen to have threads are the same value
+    /// (#468). GTK answers the same question with a non-empty participant
+    /// list, which is a drawing detail and does not belong on a boundary
+    /// type; both reach `postio_core::aim::RowKind` through
+    /// [`ListRow::thread`], so the two frontends cannot disagree about what a
+    /// thread row is.
+    pub is_thread: bool,
     /// Who it is from, already rendered for display.
     pub from: Option<String>,
     /// The subject: the conversation's when there is one, else the message's.
@@ -85,6 +101,16 @@ impl ListRow for RowFfi {
     fn id(&self) -> Option<MessageId> {
         Some(self.id.into())
     }
+
+    fn thread(&self) -> Option<ThreadId> {
+        // Both conditions, exactly as the GTK row applies them: a row that
+        // stands for a conversation but carries no thread id is not one the
+        // verbs can name, and a message row that belongs to a thread is not
+        // standing for it.
+        self.is_thread
+            .then(|| self.thread.map(Into::into))
+            .flatten()
+    }
 }
 
 impl From<MessageSummary> for RowFfi {
@@ -102,6 +128,7 @@ impl From<MessageSummary> for RowFfi {
             draft: row.draft,
             has_attachments: row.has_attachments,
             thread_count: row.thread_count,
+            is_thread: false,
         }
     }
 }
@@ -124,6 +151,7 @@ impl From<ThreadSummary> for RowFfi {
         // elsewhere reads as handled here.
         base.seen = row.unread_count == 0;
         base.thread_count = row.message_count;
+        base.is_thread = true;
         base
     }
 }
