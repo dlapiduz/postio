@@ -25,13 +25,17 @@
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
 //! ```
 //!
-//! `demo` fills the panes from `postio_storage::seed` — a migrated in-memory
-//! database with a real folder tree, corpus-derived messages, flags and
-//! threading — read back through the same `SqliteStore` the running
-//! application reads through. A shot of hand-written rows can only prove that
-//! the *drawing* is right; this one is also about the content the store
-//! actually produces. `settings` opens the canvas 3f panel over a sample
-//! `config.toml` written to a scratch directory for the shot.
+//! `demo` fills the panes by calling `feed_the_window` over a real `Wiring` —
+//! the same call `run` makes — on a migrated in-memory database with a real
+//! folder tree, corpus-derived messages, flags, threading and the fixtures'
+//! own bodies in a blob store. A shot of hand-written rows can only prove
+//! that the *drawing* is right, and one that reads the rows itself can only
+//! prove that the drawing is right about content the store produces. This one
+//! goes through the wiring, so it is also about the panes actually being fed:
+//! `demo open` renders a body the reader loaded out of the blob store, and a
+//! break anywhere between SQLite and the pane shows up as an empty shot
+//! (#596, and #70 is what it cost to learn that). `settings` opens the canvas
+//! 3f panel over a sample `config.toml` written to a scratch directory.
 //!
 //! # Why this lives in `postio-app`
 //!
@@ -58,191 +62,123 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::{gdk, glib, graphene};
+use postio_app::feed_the_window;
 use postio_core::ConnectionState;
-use postio_gtk::feed::{
-    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
-};
+use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::{app, fonts, style, window::Window};
 use postio_model::ids::{AccountId, MailboxId};
-use postio_model::mailbox::{Mailbox, MailboxRole};
+use postio_session::Wiring;
+use postio_storage::repository::MailboxRepository;
+use postio_storage::seed::SeedReport;
 
-/// A seeded account, fed through the seams the application uses.
+/// A seeded account, fed through the wiring the application uses.
 ///
-/// Not set on the widgets directly: `Window::install_feeds` is the whole of
-/// the wiring a running Postio does, so the shot goes through it too. What
-/// this renders is therefore what the application renders.
+/// **`feed_the_window`, not a stand-in for it.** This is the same call `run`
+/// makes, over a real `Wiring` built on a migrated in-memory store, its own
+/// blob store, and the runtime the reads are polled on. Everything between
+/// SQLite and the panes is therefore in the picture, which is the whole
+/// difference between a shot that can catch a wiring break and one that
+/// cannot: #596 was filed because this used to hand the panes rows it had
+/// read itself, so `shot ... demo open` drew a perfect reading pane through
+/// the entire span of #70, when every real click left it blank.
 ///
-/// The content is `postio_storage::seed`'s — a migrated in-memory database
-/// with a real folder tree, corpus-derived messages, flags and threading, read
-/// back through the same `SqliteStore` the running application reads through.
-/// That is the point of it: a shot of hand-written rows can only ever prove
-/// that the *drawing* is right, and this lane keeps finding that the drawing
-/// was right about content the store does not actually produce.
+/// The content is `postio_storage::seed`'s — corpus-derived messages with a
+/// real folder tree, flags and threading — and `seed_small_with_bodies`
+/// writes the fixtures' own bodies into the blob store, so the reader renders
+/// mail rather than the "still downloading" plate.
+///
+/// # It dials nothing
+///
+/// `feed_the_window` reads the local store. `start_syncing` is the half that
+/// opens a socket, and this never calls it.
 fn populate(window: &Window) {
-    let sample = Rc::new(Sample::from_seed());
-    let (account, address) = (sample.account, sample.address.clone());
+    let database = postio_storage::test_support::memory();
+    let directory = tempfile::tempdir().expect("a blob directory for the shot");
+    let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
+    let report = postio_storage::seed::seed_small_with_bodies(&database, &blobs, 11);
+    let account = report.account.id;
+    stamp_as_just_synced(&database, &report);
 
-    let feeds = window.install_feeds(account, &address, sample.clone(), sample);
+    // A no-op command handler: a shot renders a window, it does not act on
+    // one. The reads the panes make are polled on this runtime all the same.
+    let (bridge, replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, events) = event_channel();
+    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+    // Leaked on purpose, all of it: the shot renders one window and exits, and
+    // a `Wiring` or a `Bridge` dropped here would stop answering before the
+    // first page arrived.
+    let wiring: &'static Wiring = Box::leak(Box::new(wiring));
+    let wired = feed_the_window(window, wiring).expect("the seeded store has an account");
+
     // A connection that is up and has just finished a sync, so the status
     // line reads `idle · imap` / `last sync 12s` as the canvas draws it.
-    feeds.apply(&postio_core::Event::ConnectionChanged {
+    wired.feeds.apply(&postio_core::Event::ConnectionChanged {
         account,
         state: ConnectionState::Online,
     });
 
-    // Leaked on purpose: the shot renders one window and exits, and feeds
-    // dropped here would stop answering before the first page arrived.
-    Box::leak(Box::new(feeds));
+    Box::leak(Box::new(wired));
+    Box::leak(Box::new(bridge));
+    Box::leak(Box::new(replies));
+    Box::leak(Box::new(events));
+
+    wait_for_first_page(window);
 }
 
-/// A seeded account's folders and the newest page of its inbox, answering the
-/// two source traits the runtime answers.
+/// Stamp every seeded folder as synced twelve seconds ago.
 ///
-/// Read once, up front, rather than kept as a live store: the shot renders one
-/// window and exits, and a source that answered from SQLite on every page
-/// request would make the example own a connection for the length of a render
-/// it does not otherwise need one for.
-struct Sample {
-    account: AccountId,
-    /// What the sidebar puts above the folder list.
-    address: String,
-    mailboxes: Vec<Mailbox>,
-    rows: Vec<postio_gtk::list::Row>,
+/// The seed has never talked to a server, and says so: `last_synced_at` is
+/// `None` on every folder it writes. That is honest and it is the wrong
+/// picture — the status line would read `never synced`, which is a shot of
+/// the empty state rather than of the folder list the canvas draws. The old
+/// hand-rolled source stamped this on the way past; now that the folders come
+/// out of the store, the store is where it has to be stamped.
+fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport) {
+    let connection = database.connection().expect("a checked-out connection");
+    let repository = MailboxRepository::new(&connection);
+    let synced = chrono::Utc::now() - chrono::Duration::seconds(12);
+    for mailbox in &report.mailboxes {
+        let mut mailbox = mailbox.clone();
+        mailbox.last_synced_at = Some(synced);
+        repository.update(&mailbox).expect("stamp a seeded folder");
+    }
 }
 
-/// How many rows the demo reads. More than fills the pane at any density, and
-/// far less than the mailbox holds.
-const DEMO_ROWS: u32 = 60;
-
-impl Sample {
-    /// Seed a throwaway database and read it back through `SqliteStore`.
-    fn from_seed() -> Self {
-        use postio_runtime::store::MailStore;
-
-        let database = postio_storage::test_support::memory();
-        let report = postio_storage::seed::seed_small(&database, 11);
-        let store = postio_runtime::store::SqliteStore::new(&database);
-
-        // The store's reads are async because the application's are — they
-        // cross onto a worker so the GTK thread never waits on a scan. Here
-        // there is no GTK thread yet and nothing else to do, so they are
-        // simply run to completion.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("a runtime to read the seeded store with");
-
-        let account = report.account.id;
-        let inbox = report
-            .mailbox(MailboxRole::Inbox)
-            .expect("the seed has an inbox")
-            .id;
-
-        let mailboxes = runtime
-            .block_on(store.mailboxes(account))
-            .expect("the seeded folders");
-        // `list_page`, not `message_page`: a folder shows one row per
-        // conversation (ADR 0015) and the store is what decides that, so a
-        // render that asked for the message window would be a picture of a
-        // list the application does not draw.
-        let page = runtime
-            .block_on(store.list_page(postio_runtime::store::PageRequest {
-                scope: postio_runtime::store::ListScope::Mailbox(inbox),
-                offset: 0,
-                limit: DEMO_ROWS,
-            }))
-            .expect("the seeded inbox");
-
-        Sample {
-            account,
-            address: report.account.address.address.clone(),
-            mailboxes,
-            rows: match page {
-                postio_runtime::store::ListPage::Threads(page) => {
-                    page.rows.into_iter().map(thread_row).collect()
-                }
-                postio_runtime::store::ListPage::Messages(page) => {
-                    page.rows.into_iter().map(row).collect()
-                }
-            },
+/// Block until the list actually holds its first page of mail.
+///
+/// Every mode after `populate` reads the list back: `selected` picks rows out
+/// of it, `thread` drills into the first one, `open` clicks it. The
+/// hand-rolled source this replaced answered out of a `Vec` and was ready the
+/// instant it was installed; a real `Wiring` crosses to the runtime and
+/// answers on a later turn of the main loop, so without this a mode found an
+/// empty list and drew the offline plate over a store with mail in it.
+///
+/// `peek`, not `n_items`: the count arrives with the page, but a row is only
+/// resident once its page has been delivered, and a mode reading `item(0)`
+/// while it was still a placeholder gets nothing back.
+///
+/// Pumped with `iteration(false)` and a sleep rather than blocking on
+/// `iteration(true)`: this runs before the window is presented, and blocking
+/// the main context here starves the frame clock every later `settle` counts
+/// on — which surfaces as a blank render, or as "no frame after 5000ms",
+/// rather than as a wait. The same shape the wiring tests use.
+fn wait_for_first_page(window: &Window) {
+    let list = window.list();
+    let ready = || list.model().n_items() > 0 && list.model().peek(0).is_some();
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + Duration::from_millis(SETTLE_MS);
+    while Instant::now() < deadline {
+        while context.iteration(false) {}
+        if ready() {
+            return;
         }
+        std::thread::sleep(Duration::from_millis(10));
     }
-}
-
-/// One conversation, as the list draws it.
-///
-/// The same conversion `postio-app`'s own `feed` module makes, repeated for
-/// the same reason [`row`] is.
-fn thread_row(summary: postio_runtime::store::ThreadSummary) -> postio_gtk::list::Row {
-    let seen = !summary.has_unread();
-    postio_gtk::list::Row {
-        id: summary.representative.id,
-        thread: summary.id,
-        from: summary.representative.from,
-        subject: summary.subject,
-        preview: summary.representative.preview,
-        received_at: summary.last_at,
-        seen,
-        flagged: summary.flagged,
-        answered: summary.representative.answered,
-        draft: summary.representative.draft,
-        has_attachments: summary.has_attachments,
-        thread_count: summary.message_count,
-        participants: summary.participants,
-    }
-}
-
-/// One row, as the list draws it.
-///
-/// Field for field, the same conversion `postio-app`'s own `feed` module
-/// makes. It is repeated here rather than shared because `postio-app` is a
-/// binary crate with no library target, so an example cannot link against its
-/// modules — see the note in `compose`'s tests.
-fn row(summary: postio_runtime::store::MessageSummary) -> postio_gtk::list::Row {
-    postio_gtk::list::Row {
-        id: summary.id,
-        thread: summary.thread,
-        from: summary.from,
-        subject: summary.subject,
-        preview: summary.preview,
-        received_at: summary.received_at,
-        seen: summary.seen,
-        flagged: summary.flagged,
-        answered: summary.answered,
-        draft: summary.draft,
-        has_attachments: summary.has_attachments,
-        thread_count: summary.thread_count,
-        participants: Vec::new(),
-    }
-}
-
-impl MailboxSource for Sample {
-    fn mailboxes(&self, _account: AccountId) -> MailboxFuture {
-        // Stamped as just-synced so the status line reads `last sync 12s` the
-        // way the canvas draws it. The seed writes no sync state — it has
-        // never talked to a server — and a sidebar saying "never synced" would
-        // be a shot of the empty state rather than of the folder list.
-        let synced = chrono::Utc::now() - chrono::Duration::seconds(12);
-        let folders = self
-            .mailboxes
-            .iter()
-            .cloned()
-            .map(|mut mailbox| {
-                mailbox.last_synced_at = Some(synced);
-                mailbox
-            })
-            .collect();
-        Box::pin(async move { Ok(folders) })
-    }
-}
-
-impl MessageSource for Sample {
-    fn fetch(&self, request: PageRequest) -> PageFuture {
-        let total = self.rows.len() as u32;
-        let start = (request.offset as usize).min(self.rows.len());
-        let end = (start + request.limit as usize).min(self.rows.len());
-        let rows = self.rows[start..end].to_vec();
-        Box::pin(async move { Ok(Page { total, rows }) })
-    }
+    eprintln!(
+        "shot: the seeded store's first page never arrived, so the panes are \
+         empty. Nothing rendered below this is a picture of anything."
+    );
 }
 
 /// Correspondents for the `@` mode, in the canvas' own cast.
@@ -618,10 +554,6 @@ fn main() -> glib::ExitCode {
 
     // The canvas draws its key hints on the first row, which means the list
     // has the keyboard — and a shot without them is a shot of a different
-    // state. Focused here rather than in `populate` because the rows
-    // arrive a frame or two later and an empty list has no row to focus.
-    // The canvas draws its key hints on the first row, which means the list
-    // has the keyboard — and a shot without them is a shot of a different
     // state. Focused here rather than in `populate` because the rows arrive
     // a frame or two later and an empty list has no row to focus.
     if flag("demo") {
@@ -712,35 +644,25 @@ fn main() -> glib::ExitCode {
     // `Window::show_message` the running application calls, so a shot can
     // show the reader as something other than an empty pane.
     if flag("open") {
-        // The envelope strip (#319), so the shot shows the header the running
-        // application draws rather than a body floating under nothing.
-        window.reader().set_message_header(
-            &[postio_model::EmailAddress::new(
-                Some("Lena Tomlin"),
-                "lena@example.com",
-            )],
-            &[postio_model::EmailAddress::new(
-                Some("Ada Norwood"),
-                "ada@example.net",
-            )],
-            &[],
-            Some("Re: maildir index rebuild is O(n²)"),
-            chrono::Utc::now(),
-        );
+        // A click on the top row, through the same seam a pointer reaches:
+        // the reader then loads the body out of the blob store by itself, the
+        // way it does in the running application. Handing it a body here --
+        // which is what this did before #596 -- meant the shot could not fail
+        // when the path from the store to the pane was broken, and for the
+        // whole of #70 it did not.
+        //
+        // The envelope strip (#319) comes with it: the header is the real
+        // message's, drawn from the store, so there is nothing left to stage
+        // for the picture.
+        window.list().click_row(0);
         // Which account it arrived in (#185). Drawn only with more than one
         // account configured, so `accounts` is what a shot uses to see it --
         // without the flag this is exactly what a single-account install
-        // shows, which is nothing.
+        // shows, which is nothing. After the click, not before: rendering a
+        // message is what would otherwise overwrite it.
         if flag("accounts") {
             window.reader().set_account(Some("Work"), 2);
         }
-        window.show_message(
-            &postio_model::MessageBody {
-                text: None,
-                html: Some("<p>A message, for a shot that wants one.</p>".to_string()),
-            },
-            None,
-        );
         // WebKit's load is async, on its own clock the frame-counting
         // `settle` above does not wait on -- wall time instead of frames.
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -750,6 +672,21 @@ fn main() -> glib::ExitCode {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+
+    // One last pump before the picture is taken. The modes above leave work
+    // outstanding -- a page request a selection triggered, a relayout, a
+    // reader still loading -- and `settle` counts frames, which a window the
+    // compositor has stopped animating does not produce. Pumping the context
+    // on wall time lets that work land, and without it a mode that changed
+    // little enough to generate no frames rendered the state the window was
+    // in *before* it was fed.
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        while context.iteration(false) {}
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    settle(&window);
 
     let (width, height) = (target.width(), target.height());
     let paintable = gtk::WidgetPaintable::new(Some(&target));
