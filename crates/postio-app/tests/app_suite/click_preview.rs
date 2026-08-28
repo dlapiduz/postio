@@ -1,0 +1,129 @@
+//! Issue #70, come back for the pointer.
+//!
+//! `0.1.0` shipped a blank reading pane; #70 fixed it for the keyboard by
+//! making the preview follow the cursor. The pointer kept the bug. Every
+//! path to the cursor except one goes through `move_cursor_to`, which sets
+//! the `landed` flag that `report_cursor` gates on — and the one that does
+//! not is an ordinary single click. `GtkListView` moved its own cursor,
+//! `report_cursor` found `landed` still false, and returned without telling
+//! the reader anything: no body, no header, no action bar, and not even one
+//! of the `Absent` plates that #70 exists to show.
+//!
+//! It survived because nothing drove a click at the list. `cursor_preview`
+//! and the rest of this suite move with `j`, which sets the flag, and the
+//! assertions are about what the reader was *told* rather than what a person
+//! would see. A mouse user got a blank pane for the whole session, until
+//! they happened to press a key.
+//!
+//! # It does not dial anything
+//!
+//! `feed_the_window` reads the local store; `start_syncing` is the half that
+//! opens a socket and this never calls it. `seed_small` marks every message
+//! `BodyState::NotFetched`, so the pane here fills with the "Downloading this
+//! message" plate rather than a body — which is the right assertion anyway:
+//! what #70 is about is the pane saying *something*.
+
+#![allow(unsafe_code)]
+// Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
+// the environment. These tests set it before the app under test starts, which
+// is the one moment it is sound. The crate's library code forbids `unsafe`.
+
+use gtk::prelude::*;
+use gtk::{gdk, glib};
+use postio_app::feed_the_window;
+use postio_core::bridge::{Bridge, event_channel, handler_fn};
+use postio_gtk::window::Window;
+use postio_gtk::{app, fonts, style};
+use postio_session::Wiring;
+use postio_storage::seed::seed_small;
+use postio_storage::{BlobStore, test_support};
+
+fn settle_until(done: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        while glib::MainContext::default().iteration(false) {}
+        if done() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    done()
+}
+
+pub fn clicking_a_message_fills_the_reading_pane() {
+    let state_dir = std::env::temp_dir().join(format!("postio-click-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let database = test_support::memory();
+    let report = seed_small(&database, 11);
+    assert!(report.message_count > 2, "need rows to click");
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+
+    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, _events) = event_channel();
+    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+    let window = Window::default();
+    window.present();
+    while glib::MainContext::default().iteration(false) {}
+
+    // ── the same call `run` makes ────────────────────────────────────────
+    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let _ = &wired;
+
+    let list = window.list();
+    assert!(
+        settle_until(|| list.model().n_items() > 0),
+        "the list is empty, so there is nothing to click"
+    );
+
+    // ── the autoselect is not somebody reading ───────────────────────────
+    assert!(
+        !window.reading(),
+        "an untouched window shows the pane's empty state, not a message"
+    );
+
+    // ── clicking the row the autoselect is already on ────────────────────
+    // The first thing a mouse user does: open the top message. The cursor is
+    // already there, so the position does not change and no
+    // `notify::selected` is emitted — and the autoselect has already put that
+    // id in `reported`. Both have to be got past for the pane to fill.
+    assert_eq!(list.cursor().selected(), 0, "the autoselect lands on row 0");
+    list.click_row(0);
+    assert!(
+        settle_until(|| window.reading()),
+        "clicking the top message left the reading pane empty. The row is \
+         under the cursor and the store has the message; what is missing is \
+         the pane being told about it at all — not even an `Absent` plate. \
+         That is #70 again, for the pointer: every other path to the cursor \
+         goes through `move_cursor_to`, and a plain click is the one that \
+         does not."
+    );
+
+    // ── and a click that does move the cursor ────────────────────────────
+    let first = list.cursor_id().expect("the cursor is on a row");
+    list.click_row(2);
+    assert!(
+        settle_until(|| window.reading()),
+        "clicking a different row left the reading pane empty"
+    );
+    assert_ne!(
+        list.cursor_id().expect("the cursor is on a row"),
+        first,
+        "the click did not move the cursor"
+    );
+
+    bridge.shutdown();
+}

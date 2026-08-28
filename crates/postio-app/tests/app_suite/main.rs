@@ -10,6 +10,7 @@
 mod add_account_wiring;
 mod attach_account;
 mod bulk_keystroke;
+mod click_preview;
 mod compose_detach;
 mod conversation_recipients;
 mod cursor_preview;
@@ -58,6 +59,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read",
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
+    ),
+    (
+        "click_preview::clicking_a_message_fills_the_reading_pane",
+        click_preview::clicking_a_message_fills_the_reading_pane as fn(),
     ),
     (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application",
