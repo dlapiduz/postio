@@ -161,6 +161,14 @@ command_ids! {
     PrevFolder => "prev_folder",
     /// Expand or collapse the focused folder's children.
     ToggleFolder => "toggle_folder",
+    /// Rename the focused saved search.
+    RenameSavedSearch => "rename_saved_search",
+    /// Move the focused saved search up one place.
+    MoveSavedSearchUp => "move_saved_search_up",
+    /// Move the focused saved search down one place.
+    MoveSavedSearchDown => "move_saved_search_down",
+    /// Delete the focused saved search.
+    DeleteSavedSearch => "delete_saved_search",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -534,6 +542,14 @@ pub enum Command {
     PrevFolder,
     /// Expand or collapse the focused folder's children.
     ToggleFolder,
+    /// Rename the focused saved search.
+    RenameSavedSearch,
+    /// Move the focused saved search up one place.
+    MoveSavedSearchUp,
+    /// Move the focused saved search down one place.
+    MoveSavedSearchDown,
+    /// Delete the focused saved search.
+    DeleteSavedSearch,
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -676,6 +692,10 @@ impl Command {
             Command::NextFolder => CommandId::NextFolder,
             Command::PrevFolder => CommandId::PrevFolder,
             Command::ToggleFolder => CommandId::ToggleFolder,
+            Command::RenameSavedSearch => CommandId::RenameSavedSearch,
+            Command::MoveSavedSearchUp => CommandId::MoveSavedSearchUp,
+            Command::MoveSavedSearchDown => CommandId::MoveSavedSearchDown,
+            Command::DeleteSavedSearch => CommandId::DeleteSavedSearch,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -771,6 +791,10 @@ impl Command {
             CommandId::NextFolder => Command::NextFolder,
             CommandId::PrevFolder => Command::PrevFolder,
             CommandId::ToggleFolder => Command::ToggleFolder,
+            CommandId::RenameSavedSearch => Command::RenameSavedSearch,
+            CommandId::MoveSavedSearchUp => Command::MoveSavedSearchUp,
+            CommandId::MoveSavedSearchDown => Command::MoveSavedSearchDown,
+            CommandId::DeleteSavedSearch => Command::DeleteSavedSearch,
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,

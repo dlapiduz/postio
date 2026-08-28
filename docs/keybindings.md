@@ -89,6 +89,10 @@ command from inside a text field.
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |
 | `k` or `Up` | Previous folder | Folder list |  | `prev_folder` |
 | `space` | Expand or collapse folder | Folder list |  | `toggle_folder` |
+| `r` | Rename saved search | Folder list |  | `rename_saved_search` |
+| `shift+Up` | Move saved search up | Folder list |  | `move_saved_search_up` |
+| `shift+Down` | Move saved search down | Folder list |  | `move_saved_search_down` |
+| `d` | Delete saved search | Folder list | Asks first | `delete_saved_search` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |

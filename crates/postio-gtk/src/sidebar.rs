@@ -774,11 +774,13 @@ impl Sidebar {
             }
         ));
 
-        // Rename, reorder, delete (#292): a saved search has no keyboard
-        // path into it yet -- see the doc on `connect_saved_search_action`
-        // for why this stays mouse-only for now -- so this is the one way
-        // in, the same right-click-a-row idiom `list_view.rs`'s message
-        // context menu already uses.
+        // Rename, reorder, delete (#292): the right-click menu, the same
+        // right-click-a-row idiom `list_view.rs`'s message context menu
+        // already uses. `r`/`shift+Up`/`shift+Down`/`d` reach the same four
+        // verbs once a saved search has the keyboard (#455,
+        // `focused_saved_search`) -- this stays besides that path rather
+        // than being generated from it, for the reason
+        // `open_saved_search_menu`'s own doc gives.
         let menu = gtk::GestureClick::new();
         menu.set_button(gtk::gdk::BUTTON_SECONDARY);
         menu.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -848,15 +850,15 @@ impl Sidebar {
     /// there to open one for.
     ///
     /// Not generated from the command registry the way the message list's
-    /// context menu is (`list_view.rs::open_context_menu`): these verbs
-    /// have no keyboard path yet, since saved searches do not participate
-    /// in `step`/`rows` keyboard navigation the way ordinary folders do --
-    /// `postio_core::Context::Sidebar`'s existing model is keyed to
-    /// `MailboxId`, and a saved search does not have one. A menu entry with
-    /// no binding and no cheat-sheet line would be a lie about what the
-    /// registry promises, so this is deliberately its own small, fixed
-    /// menu rather than a registry-generated one -- see the issue for the
-    /// keyboard-reachability gap this leaves, tracked separately.
+    /// context menu is (`list_view.rs::open_context_menu`), even though the
+    /// four verbs are registry commands now too (#455): a mouse click here
+    /// has a row under the pointer that may not be the keyboard's focused
+    /// row at all, so this menu's `is_first`/`is_last` gating is answered
+    /// from the clicked row directly rather than from whatever
+    /// `focused_saved_search` would say. Generating it from the registry
+    /// would mean first answering "which command are we drawing menu items
+    /// for" with the keyboard's row, which is precisely the row the click
+    /// might not agree with.
     fn open_saved_search_menu(&self, x: f64, y: f64) {
         let imp = self.imp();
         if let Some(previous) = imp.saved_search_menu.take() {
@@ -1336,16 +1338,31 @@ impl Sidebar {
         imp.echoing.set(false);
     }
 
-    /// Every folder row, both sections, in the order they are drawn.
+    /// Whichever row is currently selected, in any of the three lists —
+    /// folders in either section, or a saved search. At most one list ever
+    /// has a selected row: selecting in one clears the other two (see
+    /// `constructed`'s three `connect_row_selected` handlers).
+    fn selected_row(&self) -> Option<gtk::ListBoxRow> {
+        let imp = self.imp();
+        for list in [&imp.special, &imp.ordinary, &imp.saved] {
+            if let Some(row) = list.selected_row() {
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    /// Every row the keyboard can land on, in the order they are drawn:
+    /// special-use folders, ordinary folders, then saved searches (#455).
     ///
-    /// The two `GtkListBox`es are a *visual* split — special-use folders,
-    /// then a rule, then the rest — and the keyboard must not know about it.
-    /// `j` at the bottom of the first section goes to the top of the second,
-    /// because that is the next folder on screen.
+    /// Three `GtkListBox`es are a *visual* split, and the keyboard must not
+    /// know about it. `j` at the bottom of one section goes to the top of
+    /// the next, because that is the next row on screen — a folder there or
+    /// a saved search makes no difference to how far `j` reaches.
     fn rows(&self) -> Vec<gtk::ListBoxRow> {
         let imp = self.imp();
         let mut rows = Vec::new();
-        for list in [&imp.special, &imp.ordinary] {
+        for list in [&imp.special, &imp.ordinary, &imp.saved] {
             let mut index = 0;
             while let Some(row) = list.row_at_index(index) {
                 rows.push(row);
@@ -1355,18 +1372,35 @@ impl Sidebar {
         rows
     }
 
+    /// Whether `row` is a saved search rather than a folder — which of the
+    /// two [`step`](Self::step) landed on, and so which report to fire.
+    fn is_saved_search_row(&self, row: &gtk::ListBoxRow) -> bool {
+        row.parent().as_ref() == Some(self.imp().saved.upcast_ref::<gtk::Widget>())
+    }
+
+    /// The focused saved search's `[filters.<key>]` key, if the keyboard is
+    /// currently on one — what `postio-gtk::config`'s `RenameSavedSearch`/
+    /// `MoveSavedSearchUp`/`MoveSavedSearchDown`/`DeleteSavedSearch` handlers
+    /// resolve their target from (#455): the same key the mouse's context
+    /// menu already acts on, just reached from wherever `step` left the
+    /// keyboard instead of a click.
+    pub fn focused_saved_search(&self) -> Option<String> {
+        let row = self.selected_row()?;
+        self.is_saved_search_row(&row).then(|| row_search_key(&row))
+    }
+
     /// Put the keyboard in the folder list.
     ///
-    /// On the selected folder, or the first one when nothing is selected —
-    /// never nowhere. Returns whether there was a folder to land on, so the
+    /// On the selected row, or the first one when nothing is selected —
+    /// never nowhere. Returns whether there was a row to land on, so the
     /// caller can leave the keyboard where it was rather than sending it into
     /// an empty pane on a first run.
     pub fn focus_folders(&self) -> bool {
         let rows = self.rows();
         let landing = self
-            .selected()
-            .and_then(|id| rows.iter().find(|row| MailboxId::new(row_id(row)) == id))
-            .or_else(|| rows.first());
+            .selected_row()
+            .and_then(|selected| rows.iter().find(|row| **row == selected).cloned())
+            .or_else(|| rows.first().cloned());
         match landing {
             Some(row) => {
                 row.grab_focus();
@@ -1376,33 +1410,48 @@ impl Sidebar {
         }
     }
 
-    /// Move the selection `delta` rows and report the folder landed on.
+    /// Move the selection `delta` rows and report the folder landed on, or
+    /// run the saved search landed on.
     ///
-    /// Selection *is* the open folder here, exactly as it is for the mouse: a
-    /// click selects and opens, so `j` selects and opens. Making the keyboard
-    /// move a cursor that has to be confirmed would be a second idiom for
-    /// the same pane.
+    /// Selection *is* the open folder (or the run search) here, exactly as
+    /// it is for the mouse: a click selects and opens, so `j` selects and
+    /// opens. Making the keyboard move a cursor that has to be confirmed
+    /// would be a second idiom for the same pane -- and a saved search
+    /// followed that idiom already (#455): a click on one both selects it
+    /// and runs it, so stepping onto one does the same rather than leaving
+    /// the keyboard on a row that looks selected but did nothing.
     ///
     /// Stops at the ends rather than wrapping. Wrapping a short list is how
     /// you end up in Trash when you meant to stop at Inbox.
+    ///
+    /// Returns the folder landed on, or `None` for a saved search — there is
+    /// no `MailboxId` for one, and the two call sites in `Window::run`
+    /// already discard the result.
     pub fn step(&self, delta: i32) -> Option<MailboxId> {
         let rows = self.rows();
         if rows.is_empty() {
             return None;
         }
-        let current = self.selected().and_then(|id| {
-            rows.iter()
-                .position(|row| MailboxId::new(row_id(row)) == id)
-        });
+        let current = self
+            .selected_row()
+            .and_then(|selected| rows.iter().position(|row| *row == selected));
         let next = match current {
             Some(index) => (index as i32 + delta).clamp(0, rows.len() as i32 - 1) as usize,
             // Nothing selected: `j` starts at the top and `k` at the bottom,
-            // so both keys reach a folder from a standing start.
+            // so both keys reach a row from a standing start.
             None if delta > 0 => 0,
             None => rows.len() - 1,
         };
         let row = &rows[next];
         row.grab_focus();
+        if self.is_saved_search_row(row) {
+            // `imp.saved`'s own `connect_row_selected` (see `constructed`)
+            // does the rest: clears the folder sections and fires
+            // `search_selected` with this row's query -- the same handler a
+            // click already goes through, so this is not a second path.
+            self.imp().saved.select_row(Some(row));
+            return None;
+        }
         let id = MailboxId::new(row_id(row));
         self.select(id);
         // A `\Noselect` container has nothing to open: stepping onto it

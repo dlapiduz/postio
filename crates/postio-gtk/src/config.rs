@@ -148,6 +148,25 @@ pub fn install_at(window: &Window, path: &Path) {
                 && let Some(window) = window.upgrade()
             {
                 save_current_search(&window, &path);
+            } else if let Some(action) = saved_search_action_for(id)
+                && let Some(window) = window.upgrade()
+                && let Some(key) = window.sidebar().focused_saved_search()
+            {
+                // The registry keeps these four to `Context::Sidebar` (#455),
+                // so a stray invocation with no saved search focused -- the
+                // palette, say, over a folder row -- is defended against
+                // rather than relied on not to happen, the same guard
+                // `Window::run`'s `ToggleThreadUnread` arm uses.
+                match action {
+                    SavedSearchAction::Rename => request_rename(&window, &path, &key),
+                    SavedSearchAction::MoveUp => {
+                        move_saved_search(&window, &path, &key, Reorder::Up)
+                    }
+                    SavedSearchAction::MoveDown => {
+                        move_saved_search(&window, &path, &key, Reorder::Down)
+                    }
+                    SavedSearchAction::Delete => request_delete(&window, &path, &key),
+                }
             }
         }
     });
@@ -236,6 +255,25 @@ fn saved_searches(config: &Config) -> Vec<SavedSearch> {
             })
         })
         .collect()
+}
+
+/// Which [`SavedSearchAction`] a registry command id asks for, when it asks
+/// for one at all (#455).
+///
+/// The same four verbs [`Sidebar::connect_saved_search_action`] already
+/// reports from the mouse's context menu -- a keystroke is a second way to
+/// name one, not a second thing to act on, so both paths end at the exact
+/// functions below.
+///
+/// [`Sidebar::connect_saved_search_action`]: crate::sidebar::Sidebar::connect_saved_search_action
+fn saved_search_action_for(id: CommandId) -> Option<SavedSearchAction> {
+    match id {
+        CommandId::RenameSavedSearch => Some(SavedSearchAction::Rename),
+        CommandId::MoveSavedSearchUp => Some(SavedSearchAction::MoveUp),
+        CommandId::MoveSavedSearchDown => Some(SavedSearchAction::MoveDown),
+        CommandId::DeleteSavedSearch => Some(SavedSearchAction::Delete),
+        _ => None,
+    }
 }
 
 /// `Ctrl+S`: save whatever the search box currently holds as a new pinned

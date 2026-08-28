@@ -14,13 +14,18 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
+use postio_core::{CommandId, Context};
 use postio_gtk::finder::Mode;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
+use postio_model::ids::{AccountId, MailboxId};
+use postio_model::mailbox::{Mailbox, MailboxRole};
 
 const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -170,6 +175,189 @@ pub fn pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one() {
                 .to_vec()),
         "a hand edit to [filters] never reached the sidebar: got {:?}",
         saved_search_names(&window)
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
+    window.handle_key(gdk::Key::from_name(key).unwrap(), modifiers);
+    settle();
+}
+
+/// Saved-search names in the order the sidebar actually draws them --
+/// [`saved_search_names`] sorts, which would hide a reorder.
+fn saved_search_names_in_order(window: &Window) -> Vec<String> {
+    fn collect(widget: &gtk::Widget, out: &mut Vec<String>) {
+        if widget.has_css_class("postio-saved-search")
+            && let Some(row) = widget.clone().downcast::<gtk::ListBoxRow>().ok()
+            && let Some(label) = row.child().and_then(|c| c.downcast::<gtk::Label>().ok())
+        {
+            out.push(label.text().to_string());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            collect(&current, out);
+            child = current.next_sibling();
+        }
+    }
+    let mut out = Vec::new();
+    collect(window.sidebar().upcast_ref::<gtk::Widget>(), &mut out);
+    out
+}
+
+/// #455: `j`/`k` used to stop at the last folder -- a saved search had no
+/// keyboard path into it at all, so its rename/move/delete verbs had
+/// nowhere to bind a key to either. This is the round trip a keyboard user
+/// now makes: cross into the saved searches the same way `gtk_sidebar_keys
+/// .rs` proves crossing between the two folder sections, run the one landed
+/// on the same way a click would, and reorder it without touching the
+/// mouse -- end to end, through the real `config.toml` `install_at` writes
+/// to and the sidebar it repaints from, the same shape
+/// `pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one` already uses.
+pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
+    let root =
+        std::env::temp_dir().join(format!("postio-saved-searches-keys-{}", std::process::id()));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    // Nothing pinned yet: a window presented with a saved search already on
+    // screen and no mail list to focus instead can land its very first
+    // keyboard focus on that row and auto-select it -- a real quirk,
+    // independent of #455, that a hand-added pin below sidesteps rather
+    // than fights.
+    std::fs::write(&path, "").unwrap();
+
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+
+    // One folder, so there is somewhere for `j` to cross from -- the same
+    // gap #455 names: without it, the folder list and the saved searches
+    // could never be proven to share one `j`/`k` idiom.
+    let account = AccountId::new(1);
+    let mut inbox = Mailbox::new(account, "INBOX", Some('/'));
+    inbox.id = MailboxId::new(1);
+    inbox.role = MailboxRole::Inbox;
+    window.sidebar().set_mailboxes(&[inbox]);
+    settle();
+
+    // Pin both searches by editing the file underneath the running window,
+    // the same live path `pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one`
+    // proves -- by now the window's initial focus has already settled on
+    // the one folder, so populating the searches afterward cannot steal it.
+    std::fs::write(
+        &path,
+        "[filters.alpha]\nquery = \"subject:alpha\"\npinned = true\n\n\
+         [filters.beta]\nquery = \"subject:beta\"\npinned = true\n",
+    )
+    .unwrap();
+    assert!(
+        wait_until(
+            || saved_search_names_in_order(&window) == ["alpha".to_string(), "beta".to_string()]
+        ),
+        "the pinned searches never reached the sidebar: got {:?}",
+        saved_search_names_in_order(&window)
+    );
+
+    // Every command the window actually ran, so the guard below can prove a
+    // negative (nothing fired) as well as the positive.
+    let commands: Rc<RefCell<Vec<CommandId>>> = Rc::new(RefCell::new(Vec::new()));
+    window.connect_command({
+        let commands = commands.clone();
+        move |id| commands.borrow_mut().push(id)
+    });
+
+    // ── `g f`, then `j` crosses from the one folder into the searches ─────
+    press(&window, "g", gdk::ModifierType::empty());
+    press(&window, "f", gdk::ModifierType::empty());
+    assert_eq!(window.context(), Context::Sidebar);
+    press(&window, "j", gdk::ModifierType::empty()); // onto INBOX
+    press(&window, "j", gdk::ModifierType::empty()); // onto alpha
+
+    let finder = window.finder();
+    assert!(
+        finder.is_open(),
+        "stepping onto a saved search should run it, exactly as a click does"
+    );
+    assert_eq!(
+        finder.query().text,
+        "subject:alpha",
+        "`j` landed on the wrong row, or did not run it"
+    );
+    // `window.close_finder()`, not `finder.close()`: the latter only closes
+    // the widget, while the former also gives the keyboard back to
+    // `Context::Sidebar` -- the same restoration `Esc` does, and what the
+    // shift+Up/Down presses below need to still resolve in.
+    window.close_finder();
+    settle();
+    assert_eq!(window.context(), Context::Sidebar);
+    // `close_finder` restores `Context::Sidebar` (asserted above) but not
+    // real keyboard focus onto the row that was on: `before_finder`'s own
+    // notion of "pane" predates the sidebar being a keyboard context at all
+    // (`postio-cfd.2`) and does not know to name one of its rows. A second,
+    // pre-existing gap, independent of #455 -- `focus_folders` is the same
+    // repair `enter_sidebar` already leans on.
+    window.sidebar().focus_folders();
+    settle();
+
+    // ── `shift+Down` moves the focused saved search down, on disk and on
+    //    screen, with no dialog to answer -- unlike rename/delete, which
+    //    this test leaves to the mouse-driven
+    //    `the_context_menu_reaches_the_action_handler_with_the_right_key`
+    //    since routing the same four verbs through the registry, proved
+    //    here, is what was actually missing (#455) ────────────────────────
+    press(&window, "Down", gdk::ModifierType::SHIFT_MASK);
+    assert!(
+        commands.borrow().contains(&CommandId::MoveSavedSearchDown),
+        "shift+Down should have resolved to move_saved_search_down in Context::Sidebar"
+    );
+    assert_eq!(
+        saved_search_names_in_order(&window),
+        ["beta".to_string(), "alpha".to_string()],
+        "moving the focused saved search down should reorder it on screen"
+    );
+    // Persisted order lives in each filter's own `order` field, not in the
+    // TOML's textual section order (`toml`'s writer emits tables
+    // alphabetically regardless) -- `ordered_filter_keys` is the same read
+    // `saved_searches` uses, so this is the reorder surviving a restart,
+    // not just staying on screen for the rest of this process.
+    let reloaded =
+        postio_config::Config::load_from_path(&path).expect("the reordered file should parse");
+    assert_eq!(
+        reloaded.ordered_filter_keys(),
+        vec!["beta".to_string(), "alpha".to_string()],
+        "the reorder must reach disk, or it would not survive a restart"
+    );
+
+    // ── the same key over a folder does nothing: the guard holds (#455) ────
+    // `Context::Sidebar` covers folder rows and saved-search rows alike, so
+    // `MoveSavedSearchDown` still *resolves* here -- it is
+    // `Sidebar::focused_saved_search` returning `None` for a folder row,
+    // not the registry, that has to stop it from acting on one.
+    let before_guard = saved_search_names_in_order(&window);
+    press(&window, "k", gdk::ModifierType::empty()); // back onto INBOX
+    press(&window, "Down", gdk::ModifierType::SHIFT_MASK);
+    assert_eq!(
+        saved_search_names_in_order(&window),
+        before_guard,
+        "a folder was focused, not a saved search -- this must not touch the file"
     );
 
     window.close();

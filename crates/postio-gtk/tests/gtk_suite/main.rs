@@ -215,6 +215,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one as fn(),
     ),
     (
+        "gtk_saved_searches_live::keyboard_reaches_saved_searches_and_their_move_verbs",
+        gtk_saved_searches_live::keyboard_reaches_saved_searches_and_their_move_verbs as fn(),
+    ),
+    (
         "gtk_result_order::the_sort_control_tells_the_truth_over_results",
         gtk_result_order::the_sort_control_tells_the_truth_over_results as fn(),
     ),
