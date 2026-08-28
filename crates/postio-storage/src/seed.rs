@@ -49,9 +49,10 @@ use postio_model::{
 };
 use rusqlite::Connection;
 
+use crate::blob::BlobStore;
 use crate::db::Database;
 use crate::repository::{
-    ContactRepository, MailboxRepository, MessageRepository, Scope, ThreadingRepository,
+    BodyBlobs, ContactRepository, MailboxRepository, MessageRepository, Scope, ThreadingRepository,
 };
 use crate::test_support;
 
@@ -122,6 +123,31 @@ fn anchor() -> DateTime<Utc> {
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
 pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
+    seed_small_into(database, None, seed)
+}
+
+/// [`seed_small`], plus the corpus' own bodies written into `blobs`.
+///
+/// The difference matters to anything that renders a message rather than
+/// listing one. `seed_small` writes only the database and says so honestly
+/// with [`BodyState::NotFetched`], which is the state a real account is in
+/// before its first backfill — so a reader fed from it draws the "still
+/// downloading" plate, never mail. That is right for a test about the plate
+/// and wrong for a screenshot of the reading pane, which was reduced to
+/// handing the reader a body of its own invention and so could not fail when
+/// the path from the store was broken (#596).
+///
+/// The bodies are the fixtures', decoded by the same `mime::parse` the sync
+/// path uses, so what is rendered is what the corpus holds.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub fn seed_small_with_bodies(database: &Database, blobs: &BlobStore, seed: u64) -> SeedReport {
+    seed_small_into(database, Some(blobs), seed)
+}
+
+fn seed_small_into(database: &Database, blobs: Option<&BlobStore>, seed: u64) -> SeedReport {
     let connection = database.connection().expect("a checked-out connection");
     let account = test_support::account(&connection);
     let folders = create_folders(&connection, &account);
@@ -130,15 +156,21 @@ pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
     let mut message_count = 0;
     for fixture in test_corpus::all() {
         let mailbox = weighted_mailbox(&folders, &mut rng);
-        let mut message = fixture.parse();
+        let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
+        let parsed = postio_model::mime::parse(fixture.bytes());
+        let body = parsed.body.clone();
+        let mut message = parsed.into_message(account.id, mailbox.id, received_at);
         message.account_id = account.id;
         message.mailbox_id = mailbox.id;
-        message.received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
+        message.received_at = received_at;
         message.date = Some(message.received_at);
         message.flags = assign_flags(&mut rng, mailbox.role);
         message.sync.body_state = BodyState::NotFetched;
 
-        file_message(&connection, account.id, message);
+        let id = file_message(&connection, account.id, message);
+        if let Some(blobs) = blobs {
+            write_body(&connection, blobs, id, &body);
+        }
         message_count += 1;
     }
 
@@ -304,11 +336,48 @@ pub fn thread_seeded_messages(
 }
 
 /// Inserts `message`, files it into a thread, and remembers who wrote it.
+/// Write `body` into `blobs` and point `id` at it.
+///
+/// Content-addressed, so two fixtures with identical bodies share one blob —
+/// which is what the real store does too.
+fn write_body(
+    connection: &Connection,
+    blobs: &BlobStore,
+    id: MessageId,
+    body: &postio_model::MessageBody,
+) {
+    let put = |content: &Option<String>| {
+        content.as_ref().map(|text| {
+            blobs
+                .put(text.as_bytes())
+                .expect("write a seeded message body")
+        })
+    };
+    let text = put(&body.text);
+    let html = put(&body.html);
+    if text.is_none() && html.is_none() {
+        // Nothing to point at. The row keeps `NotFetched`, which is true:
+        // this fixture has no body to have fetched.
+        return;
+    }
+    MessageRepository::new(connection)
+        .set_body_blobs(
+            id,
+            &BodyBlobs {
+                text,
+                html,
+                headers: None,
+            },
+            BodyState::Full,
+        )
+        .expect("record a seeded body's blobs");
+}
+
 fn file_message(
     connection: &Connection,
     account_id: postio_model::AccountId,
     mut message: Message,
-) {
+) -> MessageId {
     MessageRepository::new(connection)
         .create(&mut message)
         .expect("insert a seeded message");
@@ -316,6 +385,7 @@ fn file_message(
         .thread(&message)
         .expect("thread a seeded message");
     record_correspondents(connection, &message);
+    message.id
 }
 
 /// Remember everyone on `message`, the way a sync pass would.
@@ -553,6 +623,40 @@ mod tests {
                 .expect("looking up the reply's thread must not fail"),
             Some(thread_id),
             "a reply fixture must land in its root's thread"
+        );
+    }
+
+    #[test]
+    fn seeding_with_bodies_writes_mail_the_reader_can_actually_read() {
+        let database = test_support::memory();
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+        let report = seed_small_with_bodies(&database, &blobs, 11);
+
+        let connection = database.connection().expect("a connection");
+        let repository = MessageRepository::new(&connection);
+        let page = repository
+            .page(&crate::repository::ListQuery::account(report.account.id).limit(u32::MAX))
+            .expect("the seeded messages");
+
+        let mut readable = 0;
+        for row in &page {
+            let Some(body) = repository.body_blobs(row.id).expect("a body record") else {
+                continue;
+            };
+            for id in [body.text, body.html].into_iter().flatten() {
+                let bytes = blobs.get(&id).expect("the blob the row points at");
+                assert!(!bytes.is_empty(), "a body blob was written empty");
+                readable += 1;
+            }
+        }
+        // Not merely "some row has a blob id": the point of this seed is that
+        // the bytes are there to be read back, because a reader fed from it
+        // renders mail rather than the "still downloading" plate.
+        assert!(
+            readable > 0,
+            "seeded {} messages and not one had a body that read back",
+            report.message_count
         );
     }
 
