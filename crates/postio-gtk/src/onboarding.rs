@@ -91,6 +91,10 @@ pub struct Settings {
 pub struct Submission {
     /// The address mail arrives at.
     pub address: String,
+    /// What to show instead of the bare address — in the `From` header and
+    /// the sidebar. Empty means unset, and the composition root falls back
+    /// to the address exactly as it did before this field existed.
+    pub name: String,
     /// The password, on its way to the keyring and nowhere else. Empty on
     /// an OAuth submission.
     pub password: String,
@@ -198,6 +202,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct Onboarding {
+        pub(super) name: gtk::Entry,
         pub(super) address: gtk::Entry,
         pub(super) password: gtk::PasswordEntry,
         /// The password field's whole row, so the OAuth mode can swap it out.
@@ -285,6 +290,12 @@ impl Onboarding {
         Self::default()
     }
 
+    /// The name as typed, for the `From` header and the sidebar label.
+    /// Empty means the user left it blank.
+    pub fn name(&self) -> String {
+        self.imp().name.text().trim().to_owned()
+    }
+
     /// The address as typed.
     pub fn address(&self) -> String {
         self.imp().address.text().trim().to_owned()
@@ -294,6 +305,11 @@ impl Onboarding {
     /// rendering the screen for review.
     pub fn set_address(&self, address: &str) {
         self.imp().address.set_text(address);
+    }
+
+    /// Put a name in the field, as [`set_address`](Self::set_address) does.
+    pub fn set_name(&self, name: &str) {
+        self.imp().name.set_text(name);
     }
 
     /// The password as typed. Read once, on submit, and never stored here.
@@ -477,6 +493,7 @@ impl Onboarding {
         });
         let submission = Submission {
             address: self.address(),
+            name: self.name(),
             password: self.password(),
             settings: self.settings(),
             oauth_client,
@@ -671,6 +688,7 @@ impl Onboarding {
         }
 
         let busy = status.is_busy();
+        imp.name.set_sensitive(!busy);
         imp.address.set_sensitive(!busy);
         imp.password.set_sensitive(!busy);
         imp.connect.set_sensitive(self.can_submit());
@@ -709,6 +727,9 @@ impl Onboarding {
         header.add_css_class("postio-onboarding-header");
         header.append(&kicker);
         header.append(&step);
+
+        imp.name.set_placeholder_text(Some("Ada Lovelace"));
+        imp.name.set_hexpand(true);
 
         imp.address.set_placeholder_text(Some("you@example.com"));
         imp.address.set_input_purpose(gtk::InputPurpose::Email);
@@ -927,6 +948,7 @@ impl Onboarding {
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 16);
         body.add_css_class("postio-onboarding-body");
+        body.append(&field("Your name", &imp.name));
         body.append(&field("Email address", &imp.address));
         let password_row = field("Password", &imp.password);
         body.append(&password_row);

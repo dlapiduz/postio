@@ -896,8 +896,11 @@ fn save(
                 .map_err(|error| format!("Postio could not update the account: {error}"))
         }
         None => {
-            let email = EmailAddress::new(None::<String>, submission.address.clone());
-            let mut account = Account::new(submission.address.clone(), email.clone());
+            let name =
+                (!submission.name.trim().is_empty()).then(|| submission.name.trim().to_owned());
+            let email = EmailAddress::new(name.clone(), submission.address.clone());
+            let display_name = name.unwrap_or_else(|| submission.address.clone());
+            let mut account = Account::new(display_name, email.clone());
             configure(&mut account, submission);
             account.backend = backend;
             let mut identity = Identity::new(AccountId::UNASSIGNED, email);
@@ -1161,6 +1164,7 @@ mod tests {
     fn submission(host: &str, security: TransportSecurity) -> Submission {
         Submission {
             address: "lena@example.com".to_owned(),
+            name: String::new(),
             password: "hunter2".to_owned(),
             oauth_client: None,
             settings: Settings {
@@ -1299,6 +1303,50 @@ mod tests {
                 .expose(),
             "hunter2"
         );
+    }
+
+    #[tokio::test]
+    async fn a_name_at_onboarding_becomes_the_from_name_and_the_sidebar_label() {
+        let database = postio_storage::test_support::memory();
+        let secrets = MemorySecretStore::new();
+        let mut named = submission("imap.example.com", TransportSecurity::Tls);
+        named.name = "Lena Lovelace".to_owned();
+
+        persist(
+            &database,
+            &secrets,
+            &named,
+            postio_model::account::Backend::Imap,
+        )
+        .await
+        .expect("both writes should land");
+
+        let account = stored(&database).expect("an account row");
+        assert_eq!(account.display_name, "Lena Lovelace");
+        assert_eq!(account.address.name.as_deref(), Some("Lena Lovelace"));
+        assert_eq!(
+            account.identities[0].display_name, "Lena Lovelace",
+            "the From header reads this, per EmailAddress::display"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blank_name_leaves_the_address_as_the_label_exactly_as_before() {
+        let database = postio_storage::test_support::memory();
+        let secrets = MemorySecretStore::new();
+
+        persist(
+            &database,
+            &secrets,
+            &submission("imap.example.com", TransportSecurity::Tls),
+            postio_model::account::Backend::Imap,
+        )
+        .await
+        .expect("both writes should land");
+
+        let account = stored(&database).expect("an account row");
+        assert_eq!(account.display_name, "lena@example.com");
+        assert_eq!(account.address.name, None);
     }
 
     #[tokio::test]
