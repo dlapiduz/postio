@@ -181,6 +181,58 @@ fn seed_small_into(database: &Database, blobs: Option<&BlobStore>, seed: u64) ->
     }
 }
 
+/// Add a second account, with its own folder tree and a share of the corpus.
+///
+/// [`seed_small`] seeds one account, which is the shape almost everything
+/// wants. The sidebar's per-account sections and the unified scope cannot be
+/// looked at or tested with one, and a fixture that fakes the second account
+/// at the widget instead cannot fail when the wiring is broken (#185).
+///
+/// The messages are the corpus's again, filed into this account's folders, so
+/// a unified list has two accounts' mail in it and the rows have somewhere to
+/// get an account from.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub fn seed_extra_account(
+    database: &Database,
+    display: &str,
+    address: &str,
+    seed: u64,
+) -> SeedReport {
+    let connection = database.connection().expect("a checked-out connection");
+    let mut account = Account::new(display, EmailAddress::new(Some(display), address));
+    account.incoming.host = "imap.example.net".to_owned();
+    account.outgoing.host = "smtp.example.net".to_owned();
+    crate::repository::AccountRepository::new(&connection)
+        .create(&mut account)
+        .expect("create a seeded account");
+
+    let folders = create_folders(&connection, &account);
+    let mut rng = Rng::new(seed);
+    let mut message_count = 0;
+    for fixture in test_corpus::all() {
+        let mailbox = weighted_mailbox(&folders, &mut rng);
+        let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
+        let mut message = fixture.parse();
+        message.account_id = account.id;
+        message.mailbox_id = mailbox.id;
+        message.received_at = received_at;
+        message.date = Some(received_at);
+        message.flags = assign_flags(&mut rng, mailbox.role);
+        message.sync.body_state = BodyState::NotFetched;
+        file_message(&connection, account.id, message);
+        message_count += 1;
+    }
+
+    SeedReport {
+        mailboxes: load_folders(&connection, &account),
+        account,
+        message_count,
+    }
+}
+
 /// Seeds `database` with `message_count` synthetic messages, for the paging
 /// and search benchmarks — 100k+ is the range those are meant to exercise.
 ///

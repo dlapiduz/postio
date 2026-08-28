@@ -91,13 +91,22 @@ use postio_storage::seed::SeedReport;
 ///
 /// `feed_the_window` reads the local store. `start_syncing` is the half that
 /// opens a socket, and this never calls it.
-fn populate(window: &Window) {
+fn populate(window: &Window, two_accounts: bool) {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
     let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
     let report = postio_storage::seed::seed_small_with_bodies(&database, &blobs, 11);
     let account = report.account.id;
     stamp_as_just_synced(&database, &report);
+    // A real second account, in the store, rather than a pair of names handed
+    // to the sidebar: the per-account sections are drawn from the folders the
+    // feed reads, so a faked strip would draw headers over an empty tree and
+    // could not fail when the wiring broke (#185).
+    if two_accounts {
+        let second =
+            postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12);
+        stamp_as_just_synced(&database, &second);
+    }
 
     // A no-op command handler: a shot renders a window, it does not act on
     // one. The reads the panes make are polled on this runtime all the same.
@@ -447,21 +456,7 @@ fn main() -> glib::ExitCode {
         window.set_default_size(width, height);
     }
     if flag("demo") {
-        populate(&window);
-    }
-    // The accounts strip (#185), which needs two accounts to exist at all.
-    // Driven directly like every other surface here: the point of a shot is
-    // to make something lookable, and seeding a second account through the
-    // store would be seeding a whole second mailbox to draw four rows.
-    if flag("accounts") {
-        window.sidebar().set_accounts(
-            &[
-                (AccountId::new(1), "Work".to_owned()),
-                (AccountId::new(2), "Home".to_owned()),
-            ],
-            postio_model::AccountScope::Unified,
-            true,
-        );
+        populate(&window, flag("accounts"));
     }
     // The screen a store that will not open puts up instead of the mail
     // (#404). Rendered from the same words `SecretError::Locked` writes, so
