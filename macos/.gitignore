@@ -6,3 +6,6 @@
 /.build/
 /build/
 *.xcframework
+
+# Emitted from the design system on every build (#661).
+/Sources/PostioKit/Generated/

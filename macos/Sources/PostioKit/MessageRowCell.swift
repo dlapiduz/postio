@@ -27,14 +27,18 @@ public final class MessageRowCell: NSTableCellView {
     private func build() {
         unreadDot.wantsLayer = true
         unreadDot.layer?.cornerRadius = 4
-        unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        // Postio's accent, from the design system, not the system's — the
+        // canvas is the visual truth and a row that followed the user's
+        // accent colour would stop matching it.
+        unreadDot.layer?.backgroundColor = PostioTokens.colorAccent.cgColor
         unreadDot.translatesAutoresizingMaskIntoConstraints = false
         unreadDot.widthAnchor.constraint(equalToConstant: 8).isActive = true
         unreadDot.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
-        sender.font = .systemFont(ofSize: 13, weight: .semibold)
+        sender.font = NSFont(name: PostioTokens.fontBody, size: 13)
+            ?? .systemFont(ofSize: 13, weight: .semibold)
         sender.lineBreakMode = .byTruncatingTail
-        subject.font = .systemFont(ofSize: 13)
+        subject.font = NSFont(name: PostioTokens.fontBody, size: 13) ?? .systemFont(ofSize: 13)
         subject.lineBreakMode = .byTruncatingTail
         preview.font = .systemFont(ofSize: 12)
         preview.textColor = .secondaryLabelColor
@@ -48,20 +52,21 @@ public final class MessageRowCell: NSTableCellView {
 
         let top = NSStackView(views: [unreadDot, sender, badge, flag])
         top.orientation = .horizontal
-        top.spacing = 6
+        top.spacing = PostioTokens.space2
         top.alignment = .centerY
 
         let stack = NSStackView(views: [top, subject, preview])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 2
+        stack.spacing = PostioTokens.space1
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6),
+            // Spacing from the design system rather than numbers chosen here.
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space3),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space3),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: PostioTokens.space2),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PostioTokens.space2),
         ])
     }
 
