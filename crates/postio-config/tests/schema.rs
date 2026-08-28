@@ -419,21 +419,29 @@ fn loads_from_a_real_file_and_saves_back() {
 
 #[test]
 fn the_default_path_is_the_xdg_one() {
-    let dir = postio_config::paths::config_dir_from(|k| match k {
-        "XDG_CONFIG_HOME" => Some("/home/x/.conf".into()),
-        _ => None,
-    })
+    use postio_config::paths::Platform;
+
+    let dir = postio_config::paths::config_dir_from(
+        |k| match k {
+            "XDG_CONFIG_HOME" => Some("/home/x/.conf".into()),
+            _ => None,
+        },
+        Platform::Freedesktop,
+    )
     .unwrap();
     assert_eq!(dir, Path::new("/home/x/.conf/postio"));
 
-    let dir = postio_config::paths::config_dir_from(|k| match k {
-        "HOME" => Some("/home/x".into()),
-        _ => None,
-    })
+    let dir = postio_config::paths::config_dir_from(
+        |k| match k {
+            "HOME" => Some("/home/x".into()),
+            _ => None,
+        },
+        Platform::Freedesktop,
+    )
     .unwrap();
     assert_eq!(dir, Path::new("/home/x/.config/postio"));
 
-    assert!(postio_config::paths::config_dir_from(|_| None).is_err());
+    assert!(postio_config::paths::config_dir_from(|_| None, Platform::Freedesktop).is_err());
 }
 
 // ------------------------------------------------------------- mailboxes --

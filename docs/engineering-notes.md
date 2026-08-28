@@ -2886,6 +2886,24 @@ enforces this, and names the three scripts that are Linux-only *by nature*
 the XDG hicolor layout) so that exemption is a decision on the record rather
 than a script that happened to fail.
 
+**A platform difference is a parameter, not a `#[cfg]` (2026-08-27, #556).**
+The store, the config directory and the drag-out cache answer differently on
+Apple — `~/Library/Application Support/Postio`, `~/Library/Caches/Postio` — and
+the obvious way to write that is `#[cfg(target_os = "macos")]`. Don't. **With a
+`cfg`, each machine can only ever prove half of it**, and the half nobody runs
+is the half that rots — which here would be the macOS answer, the one most
+sessions cannot check. So `Platform { Freedesktop, Apple }` is an argument:
+`store_path_from(env, Platform::Apple)` is asserted on Linux and
+`Platform::Freedesktop` on a Mac, and only the public wrapper calls
+`Platform::host()`. The same argument applies to anything else that will differ
+per platform; reach for the parameter first.
+
+Two things that must stay true, because every fixture depends on them:
+`$POSTIO_STORE`, `$POSTIO_CONFIG` and `$POSTIO_EXPORT_DIR` still win on either
+platform, and so does a **deliberately set** `$XDG_*`. Someone who exported one
+meant it, the platform default has no business overruling that, and it is what
+lets a store be shared with a Linux VM on the same machine.
+
 **A second claim queue is a label, not a convention (2026-08-27, #552).** The
 macOS frontend initiative (#15) is the first work an ordinary Linux session
 must not pick up — most of it cannot even be built there. Its issues carry
