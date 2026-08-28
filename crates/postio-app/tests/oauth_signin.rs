@@ -195,9 +195,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 
 #[test]
 fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
-    let scratch = std::env::temp_dir().join(format!("postio-oauth-e2e-{}", std::process::id()));
-    let state_dir = scratch.join("state");
-    let config_dir = scratch.join("config");
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let state_dir = scratch.path().join("state");
+    let config_dir = scratch.path().join("config");
     std::fs::create_dir_all(&state_dir).unwrap();
     std::fs::create_dir_all(config_dir.join("postio")).unwrap();
     // SAFETY: first statements of a single-threaded test binary — set before

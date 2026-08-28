@@ -33,10 +33,9 @@ fn status(state: ConnectionState) -> SyncStatus {
 
 #[test]
 fn offline_becomes_a_banner_over_rows_and_a_full_plate_over_none() {
-    let state_dir = std::env::temp_dir().join(format!("postio-list-state-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

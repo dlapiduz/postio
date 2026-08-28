@@ -34,13 +34,10 @@ fn settle() {
 
 #[test]
 fn attaching_shows_the_row_and_removing_cleans_it_up() {
-    let state_dir = std::env::temp_dir().join(format!(
-        "postio-composer-attachments-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir_guard = tempfile::tempdir().expect("a state directory");
+    let state_dir = state_dir_guard.path();
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
