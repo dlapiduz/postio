@@ -4,7 +4,8 @@
   **Q5 answered from measurement 2026-08-26**
   ([#435](https://github.com/dlapiduz/postio/issues/435)), **Q5b decided
   2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186)),
-  **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464))
+  **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464)),
+  **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470))
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -503,6 +504,72 @@ new engine: same account, same connection, only the credential changes. The
 dialog host these two share is ADR 0012 Q1's decision, already made and
 already the right shape for both; building it once for the narrower case
 here does not decide anything #64 still has to.
+
+### Q6b — `config.toml` stops describing accounts (#470)
+
+**Decided 2026-08-28.** Q6a named the gap and explicitly declined to close it:
+either a reconciler that writes `[accounts.<id>]` changes into the SQLite row,
+or retiring the TOML schema outright. **Retire it.**
+
+Three things in the tree decide this, and none of them is visible from the
+schema alone.
+
+**The panel already has two account UIs stacked on one screen.** #464 put a
+real `accounts_list` of widget rows — enable/disable, update credential,
+remove — directly above the nav-and-text body in `settings.rs`, and #151 added
+an egress list beside it. Below them, the `[accounts]` nav item scrolls the
+raw TOML to a section that parses, validates, round-trips and reaches nothing.
+This is not a missing feature. It is a duplicate of a working one, and the
+duplicate is the one that silently does nothing.
+
+**The schema is stale, not merely unwired.** `postio-config`'s `AuthMethod` is
+`Plain | Login`. The model's `AuthMethod` — the one every real code path uses
+— is `Password | AppPassword | OAuth2 | XOAuth2`. `MailSecurity` is a second
+spelling of `TransportSecurity`. The config crate's copies are used by nothing
+outside their own tests, and they cannot express an OAuth account at all, which
+[ADR 0006](0006-oauth-and-provider-presets.md) put in scope. A user editing
+`[accounts.personal].auth` today is choosing between two mechanisms, neither of
+which is what their account uses. Wiring that up would mean first rebuilding
+it to say what the model says — at which point it is a second spelling of the
+domain vocabulary, kept in sync by hand, which is the thing the one-registry
+rule exists to prevent.
+
+**An account is state, not preference.** Every other section of `config.toml`
+solely owns what it describes: `[ui]`, `[keys]`, `[sync]`, `[filters]`,
+`[mailboxes]`, `[logging]`, `[storage]`, `[compose]`. An account owns
+mailboxes, messages, threads, sync state and an operation queue by
+`ON DELETE CASCADE`; it is created by a flow that probes servers and writes a
+keyring entry; its identity is a database id, not a TOML key. A reconciler
+would be a second writer to that row, racing sync, and would have to answer —
+in a raw text editor whose only validation is that the file parses — what
+renaming a key means, what deleting a section means, and whether typing a new
+one creates an account with no probe and no credential. Every one of those has
+a wrong answer that loses mail or manufactures a broken account.
+
+What retiring means, concretely:
+
+- `Config::accounts`, `AccountConfig`, `ImapConfig`, `SmtpConfig`,
+  `MailSecurity`, `AuthMethod` and `ConfigChanged::accounts` come out of
+  `postio-config`.
+- An existing file's `[accounts.*]` table lands in `Config::extra` and
+  round-trips verbatim — nothing is rewritten under the user, which is the
+  rule for a file they own. **But it must not look live.** The footer's
+  validity line is where the panel already reports things it parsed and did
+  not honour (the keymap problems line), so it says so there:
+  *"[accounts] is ignored — accounts are managed in the list above"*.
+  A preserved section that says nothing is the bug this issue reports, wearing
+  a different hat.
+- The `[accounts]` nav item **stays** and moves focus to the account list
+  instead of scrolling the text. The nav is the panel's table of contents; a
+  person who clicks it wants accounts, and should land where accounts are.
+  Canvas 3f's five sections survive; only what the fifth one points at changes.
+
+**This does not make accounts less editable — it makes the editable thing the
+only one.** Host, port and security remain unreachable after onboarding, which
+is exactly where Q6a left them and is a separate gap; the difference is that
+it now *looks* unreachable instead of looking editable and lying. Whoever
+closes that gap should do it in the account row, beside the three affordances
+Q6a already put there, not in a text file.
 
 ---
 
