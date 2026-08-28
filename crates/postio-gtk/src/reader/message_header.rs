@@ -3,10 +3,10 @@
 //! in view.
 //!
 //! Native GTK, not markup inside the `WebView`'s document, for the same
-//! reason the banner is (see [`super::view`]'s `contain_body` doc comment):
-//! Postio's own chrome stays outside anything a sender's markup could
-//! imitate, and it is what lets the header stay fixed while the body scrolls
-//! underneath it rather than carrying it away.
+//! reason the banner is (see [`postio_ui::reader::document::contain_body`]'s
+//! doc comment): Postio's own chrome stays outside anything a sender's
+//! markup could imitate, and it is what lets the header stay fixed while
+//! the body scrolls underneath it rather than carrying it away.
 
 use adw::prelude::*;
 use chrono::{DateTime, Local, Utc};
