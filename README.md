@@ -86,6 +86,14 @@ Rust is pinned by [`rust-toolchain.toml`](rust-toolchain.toml) — with
 [rustup](https://rustup.rs), the right compiler arrives on the first `cargo`
 command.
 
+The tools the gates run on — Python, `gh`, `jq`, `sccache` — are pinned by
+[`mise.toml`](mise.toml), because `scripts/checks/` is 54 Python scripts and
+nothing said which Python. It is optional: `mise install` once if you use
+[mise](https://mise.jdx.dev), and everything resolves off `PATH` as before if
+you do not. It deliberately does not pin Rust (`rust-toolchain.toml` owns
+that, and a second place to say it is the bug that pin exists to prevent) or
+the system libraries above, which are distro packages rather than tooling.
+
 ```bash
 cargo run -p postio-app        # build and run
 cargo test --workspace         # never touches the network
