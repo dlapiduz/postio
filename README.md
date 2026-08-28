@@ -168,13 +168,24 @@ Performance is a functional requirement, enforced by `cargo bench`:
 
 | Budget | Target | Measured |
 |---|---|---|
-| Startup to usable UI (populated DB) | < 500 ms | **147 ms** |
-| Ordinary UI interaction | < 16 ms | **~2 ms** |
-| Local search | < 100 ms | **27 ms** |
-| Memory, 100,000 messages | no full-mailbox load | **47 MiB**, flat |
+| Startup to usable UI (populated DB) | < 500 ms | **427 ms** |
+| Ordinary UI interaction | < 16 ms | **0.3 ms** typical |
+| Local search | < 100 ms | **42 ms** worst shape |
+| Memory, 100,000 messages | no full-mailbox load | **55 MiB**, flat past 100k |
 
-The full baseline — what was measured, on what, and how to reproduce every
-number — is [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+Measured against an **encrypted** store — the database is SQLCipher (ADR 0014)
+and there is no unencrypted configuration in normal use, so each figure already
+carries the cost of decrypting every page on the way in.
+
+The full baseline — what was measured, on what, which numbers are floors
+rather than means, and how to reproduce every one — is
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). Two cases are outside budget
+today and tracked as their own issues rather than smoothed over here: a
+unified thread page across two accounts ([#619]), and startup against its
+recorded baseline ([#636]).
+
+[#619]: https://github.com/dlapiduz/postio/issues/619
+[#636]: https://github.com/dlapiduz/postio/issues/636
 
 ## Configuration
 
