@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The signed posture: hardened runtime, no exceptions. Deliberately
+	     empty rather than absent, so adding a Developer ID later is a
+	     signing flag rather than a new file nobody remembers to write. -->
+</dict>
+</plist>
