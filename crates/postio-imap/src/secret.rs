@@ -35,8 +35,18 @@ const SCHEMA: &str = "org.postio.Account";
 /// What to tell a user whose keyring will not open. Every locked-keyring
 /// error ends with this; it is the only path forward, because Postio has no
 /// plaintext fallback to offer.
+/// What to tell someone whose keyring will not open.
+///
+/// Names the application they would actually go looking for, which is a
+/// different one per platform — "Passwords and Keys" means nothing on a Mac,
+/// and pointing someone at software they do not have is worse than saying
+/// nothing.
+#[cfg(not(target_os = "macos"))]
 const UNLOCK_HINT: &str = "Unlock it (log in again, or open Passwords and Keys \
                            and unlock the Login keyring) and retry.";
+#[cfg(target_os = "macos")]
+const UNLOCK_HINT: &str = "Unlock it (log in again, or open Keychain Access \
+                           and unlock the login keychain) and retry.";
 
 // ---------------------------------------------------------------------------
 // Password
@@ -336,9 +346,31 @@ impl SecretSource {
     /// Builds the store this source describes.
     pub fn build(&self) -> Arc<dyn SecretStore> {
         match self {
-            Self::Keyring => Arc::new(KeyringSecretStore::new()),
+            Self::Keyring => platform_keyring(),
             Self::Command { argv } => Arc::new(CommandSecretStore::new(argv.clone())),
         }
+    }
+}
+
+/// The OS keyring this host actually has.
+///
+/// `SecretSource::Keyring` in `config.toml` means "wherever this system keeps
+/// secrets", not "the Secret Service" — so the choice belongs here rather than
+/// at each call site, where it would be four chances to get it wrong and four
+/// places to change when a third platform appears.
+///
+/// A `cfg` rather than a parameter, unlike the path resolution in
+/// `postio-session`: there the *answer* differs per platform and both answers
+/// are worth asserting from either host, but here the *type* differs and there
+/// is nothing for a Linux machine to check about `SecItem`.
+pub fn platform_keyring() -> Arc<dyn SecretStore> {
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(KeychainSecretStore::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(KeyringSecretStore::new())
     }
 }
 
@@ -368,6 +400,17 @@ async fn with_timeout<T>(
             })
         })
 }
+
+/// The Keychain-backed store, on macOS.
+///
+/// A fourth implementation of the same trait rather than a branch inside the
+/// third: which keyring an installation uses is a choice about *that*
+/// installation, and the seam that already carries `command` and `memory`
+/// carries this too (ADR 0019).
+#[cfg(target_os = "macos")]
+pub mod keychain;
+#[cfg(target_os = "macos")]
+pub use keychain::KeychainSecretStore;
 
 /// Secret Service / Flatpak portal backed store. The default.
 #[derive(Clone, Debug, Default)]
