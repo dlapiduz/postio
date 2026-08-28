@@ -425,3 +425,85 @@ async fn live_server_sends_a_message_to_self() {
 
     session.quit().await.expect("quit");
 }
+
+// ---------------------------------------------------------------------------
+// Whether the payload may already have gone (ADR 0021)
+// ---------------------------------------------------------------------------
+
+/// The distinction `is_transient` cannot make and a send has to have.
+///
+/// A `4xx` is a *reply*: the server was still talking and did not accept the
+/// message, so the transaction ended in a refusal the client witnessed and
+/// the send is safely retryable. That it is also transient is a different
+/// fact about a different question.
+#[tokio::test]
+async fn a_rate_limited_data_command_did_not_deliver_anything() {
+    let script = script_overriding("DATA", "421 4.7.0 too many messages, slow down");
+    let (mut session, _connector) = open(script).await;
+
+    let error = session
+        .send_message(
+            "ada@example.com",
+            &["grace@example.com".to_owned()],
+            MESSAGE,
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.is_transient());
+    assert!(
+        !error.submission_is_indeterminate(),
+        "the server answered, so the client knows the message was not taken"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_recipient_did_not_deliver_anything_either() {
+    let script = script_overriding("RCPT TO", "550 5.1.1 no such user");
+    let (mut session, _connector) = open(script).await;
+
+    let error = session
+        .send_message(
+            "ada@example.com",
+            &["grace@example.com".to_owned()],
+            MESSAGE,
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!error.submission_is_indeterminate());
+}
+
+/// A server that stops answering is the case nothing can resolve: the reply
+/// to the terminating `.` is exactly what is missing, so "it never arrived"
+/// and "it arrived and the acknowledgement did not" look identical.
+///
+/// Asserted on the classification rather than driven through a transport,
+/// because a connector that accepts a payload and then vanishes is the
+/// fixture #673 exists to build. Conservative by variant for now — #673
+/// narrows this to failures raised once the payload had begun being written.
+#[test]
+fn a_transport_that_stops_answering_leaves_the_outcome_unknowable() {
+    for error in [
+        SmtpError::Disconnected {
+            context: "the message body".to_owned(),
+            reason: "connection reset".to_owned(),
+        },
+        SmtpError::TimedOut {
+            context: "the message body".to_owned(),
+            after: std::time::Duration::from_secs(30),
+        },
+        SmtpError::Io {
+            context: "the message body".to_owned(),
+            reason: "broken pipe".to_owned(),
+        },
+        SmtpError::Cancelled,
+    ] {
+        assert!(
+            error.submission_is_indeterminate(),
+            "a send must not be retried on this: {error}"
+        );
+    }
+}
