@@ -15,6 +15,7 @@ struct PostioApp: App {
     var body: some Scene {
         WindowGroup("Postio") {
             Shell(engine: engine)
+                .background(WindowConfigurator())
         }
         .onChange(of: phase) { _, now in
             // Orderly rather than at process exit: the store is SQLCipher, and
@@ -24,5 +25,10 @@ struct PostioApp: App {
         }
         .defaultSize(width: 1100, height: 700)
         .windowToolbarStyle(.unified)
+        // Size and position across launches. `SceneStorage` handles the split
+        // widths; the frame is `NSWindow`'s own autosave, which is the only
+        // thing that survives a window being closed and reopened rather than
+        // the app being quit.
+        .windowResizability(.contentSize)
     }
 }
