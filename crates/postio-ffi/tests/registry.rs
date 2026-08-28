@@ -91,3 +91,24 @@ fn ids_are_the_strings_config_uses() {
     }
     session.shutdown();
 }
+
+#[test]
+fn the_registry_needs_no_session() {
+    // Deliberately constructs nothing. On macOS opening a session reads the
+    // store's key from the login Keychain (ADR 0014), and an unsigned build
+    // has a new code identity on every rebuild — so a session here would
+    // raise a modal prompt on a developer's machine and hang a headless run.
+    // The registry is a `const` table; asking for it should cost nothing.
+    let crossed = postio_ffi::commands();
+    assert_eq!(crossed.len(), postio_core::registry::all().count());
+    assert!(crossed.iter().any(|spec| spec.id == "archive"));
+}
+
+#[test]
+fn the_free_function_and_the_session_method_agree() {
+    // One implementation behind both, so a frontend that reaches for either
+    // sees the same vocabulary.
+    let session = session();
+    assert_eq!(session.commands(), postio_ffi::commands());
+    session.shutdown();
+}
