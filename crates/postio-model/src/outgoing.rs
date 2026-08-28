@@ -272,6 +272,17 @@ fn mb_address(address: &EmailAddress) -> MbAddress<'static> {
     MbAddress::new_address(address.name.clone(), address.address.clone())
 }
 
+/// Mints the `Message-ID` a draft will send under, to be stored on
+/// [`Draft::rfc_message_id`] before the first attempt (ADR 0021).
+///
+/// The same generator [`build`] falls back to, exposed so that whoever
+/// *reserves* an id and whoever *writes the header* cannot produce ids of two
+/// different shapes. `domain` is the sending identity's domain;
+/// [`FALLBACK_DOMAIN`] is the answer when it has none.
+pub fn reserve_message_id(domain: Option<&str>) -> RfcMessageId {
+    generate_message_id(domain.unwrap_or(FALLBACK_DOMAIN))
+}
+
 /// A fresh, unique `Message-ID` under `domain`.
 ///
 /// Built from [`make_boundary`], the same pseudo-unique token mail-builder
