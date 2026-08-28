@@ -193,12 +193,7 @@ pub(crate) fn resolve(
     // draft, because "failed" claims more than is known. The reason below is
     // written so that what the user reads is true under either.
     if draft.state == DraftState::Sending {
-        return Ok(ResolvedSend::Impossible(
-            "this send was interrupted while it was being submitted, so it \
-             may or may not have arrived — Postio will not send it again on \
-             its own"
-                .to_owned(),
-        ));
+        return Ok(ResolvedSend::Impossible(INDETERMINATE.to_owned()));
     }
     if !draft.has_recipients() {
         return Ok(ResolvedSend::Impossible(
@@ -366,6 +361,20 @@ pub(crate) async fn send(
         .send_message(&job.from, &job.recipients, &job.raw, &cancel)
         .await
     {
+        if error.submission_is_indeterminate() {
+            // The client stopped hearing from the server somewhere inside the
+            // transaction. Leave the mark exactly where it is: this is the
+            // one failure that must not become a retry, because "try again"
+            // and "you already sent it" are indistinguishable from here.
+            return Outcome::Failed {
+                reason: INDETERMINATE.to_owned(),
+            };
+        }
+        // The server answered and refused, so nothing was accepted and the
+        // mark has to come back off — otherwise `resolve` would refuse the
+        // retry the ordinary backoff is about to schedule, and a 4xx from a
+        // rate-limited server would end the message's life.
+        release(connection, job);
         return outcome_from_smtp_error(error);
     }
 
@@ -384,13 +393,35 @@ pub(crate) async fn send(
     Outcome::Applied
 }
 
+/// What the user is told about a send whose outcome nobody can determine.
+///
+/// One string, used by [`send`] when it witnesses the failure and by
+/// [`resolve`] when a later process finds the mark a dead one left behind, so
+/// the two cannot describe the same situation differently. Worded to leave
+/// the question open: this is not a failure, and saying it failed would be a
+/// claim nothing supports.
+pub(crate) const INDETERMINATE: &str = "this send was interrupted while it was being submitted, \
+     so it may or may not have arrived — Postio will not send it again on its own";
+
 /// Commits `state` onto the draft this job is sending.
 ///
-/// Its own function because the two calls in [`send`] are the whole of ADR
-/// 0021's second decision, and they are the only two writes in this module
-/// whose *ordering* — not merely their success — is the guarantee.
+/// Its own function because the calls in [`send`] are the whole of ADR 0021's
+/// second decision, and they are the only writes in this module whose
+/// *ordering* — not merely their success — is the guarantee.
 fn mark(connection: &Connection, job: &SendJob, state: DraftState) -> postio_storage::Result<()> {
     DraftRepository::new(connection).set_state(job.draft, state)
+}
+
+/// Puts the draft back to `Queued` after a refusal the client witnessed.
+///
+/// Best-effort, and safe as such in the one direction that matters: a release
+/// that fails leaves the draft `Sending`, which [`resolve`] refuses rather
+/// than resends. The cost of losing this write is a message that needs asking
+/// about, never one that goes twice.
+fn release(connection: &Connection, job: &SendJob) {
+    if let Err(error) = mark(connection, job, DraftState::Queued) {
+        tracing::warn!(%error, "could not return an unsent draft to the queue");
+    }
 }
 
 /// Records the send locally: appends to the server's Sent folder, writes the
