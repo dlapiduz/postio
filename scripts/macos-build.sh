@@ -69,6 +69,18 @@ if [ "$LIB_ONLY" = 1 ]; then
     exit 0
 fi
 
+# The design tokens, emitted from the same parsed source the GTK frontend uses
+# (#661). Generated rather than typed: a Swift file with `#5980a6` in it is a
+# copy that is right on the day it is written.
+echo "--- tokens ---"
+DESIGN=${POSTIO_DESIGN_SYSTEM:-$(ls -d Design/_ds/industry-*/styles.css 2>/dev/null | head -1)}
+if [ -n "$DESIGN" ] && [ -f "$DESIGN" ]; then
+    cargo run -q -p postio-ui --bin postio-tokens -- \
+        "$DESIGN" macos/Sources/PostioKit/Generated/Tokens.swift
+else
+    echo "  no design system found; skipping (the application will not build)" >&2
+fi
+
 echo "--- swift build ---"
 # The library search path lives here rather than in Package.swift: putting it
 # in the manifest would need `.unsafeFlags`, which pins an absolute path and
