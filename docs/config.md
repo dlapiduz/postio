@@ -66,7 +66,12 @@ Overrides a command's binding, keyed by the command id. See the
 [keys]
 archive = "y"
 first_message = "g g"
+command_palette = "mod+p"
 ```
+
+`mod` is the primary accelerator -- Control on Linux, Command on macOS --
+so one file means the same thing on both. Write `ctrl` when you mean the
+Control key specifically; it stays literal everywhere.
 
 ## `[accounts.<id>]`
 

@@ -1,5 +1,6 @@
 //! Opening a session, draining its events, and shutting it down.
 
+use postio_config::paths::Platform;
 use std::sync::{Arc, Mutex};
 
 use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, handler_fn};
@@ -717,8 +718,14 @@ impl Session {
     /// directly: drawing the default for a command somebody rebound is
     /// confidently wrong, which is worse for a menu item than showing no key
     /// at all.
+    ///
+    /// Resolved for the running platform, so a Mac gets `cmd+k` for the
+    /// palette rather than the `mod+k` the table stores. Swift renders a
+    /// `KeyboardShortcut` from this and must never see the token: it has no
+    /// way to know which key `mod` means, and that decision belongs to the
+    /// core anyway.
     pub fn binding_for(&self, command: String) -> Option<String> {
-        self.keys.binding(&command).map(str::to_owned)
+        self.keys.binding_on(&command, Platform::host())
     }
 
     /// How many accounts are configured and enabled.

@@ -5,6 +5,7 @@
 //! expressible only as 100,000 ids. It is a predicate instead, and the storage
 //! layer resolves it in one statement when an action finally lands.
 
+use postio_config::paths::Platform;
 use postio_core::state::Selection;
 use postio_core::{AppState, CommandId, Context, Event, registry};
 use postio_model::MessageId;
@@ -136,9 +137,14 @@ fn the_four_selection_keys_are_in_the_registry_and_overridable() {
         (CommandId::SelectAll, "ctrl+a"),
     ] {
         let spec = registry::get(id);
-        assert_eq!(spec.default_binding, binding, "`{id}`");
         assert_eq!(
-            registry::lookup_binding(Context::List, binding).map(|spec| spec.id),
+            postio_config::keys::expand_mod(spec.default_binding, Platform::Freedesktop),
+            binding,
+            "`{id}`"
+        );
+        assert_eq!(
+            registry::lookup_binding_on(Context::List, binding, Platform::Freedesktop)
+                .map(|spec| spec.id),
             Some(id),
             "`{binding}` should resolve to `{id}` in the message list"
         );

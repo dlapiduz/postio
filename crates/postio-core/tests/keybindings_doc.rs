@@ -8,6 +8,7 @@
 //! The `?` cheat sheet renders the same table at runtime; this is the copy
 //! somebody reads before they have installed anything.
 
+use postio_config::paths::Platform;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -86,6 +87,11 @@ fn render() -> String {
          with a key already taken in the same place, is reported in the settings\n\
          panel and the command keeps its default.\n\
          \n\
+         `mod` is the primary accelerator: Control here, Command on macOS.\n\
+         Every default above uses it, which is why the same `config.toml`\n\
+         means the same thing on both. Writing `ctrl` instead pins the\n\
+         binding to Control everywhere.\n\
+         \n\
          While you are typing, single-key bindings do not fire. Only `Escape`,\n\
          the function keys, and chords holding `Ctrl`, `Alt` or `Super` reach a\n\
          command from inside a text field.\n\
@@ -97,7 +103,15 @@ fn render() -> String {
     );
 
     for spec in registry::all() {
-        let bindings = spec.bindings().map(keys).collect::<Vec<_>>().join(" or ");
+        // Expanded first: the registry stores `mod+k`, the reader presses
+        // Ctrl+K. This file documents Linux, so it renders the freedesktop
+        // spelling and reads exactly as it did before #669.
+        let bindings = spec
+            .bindings()
+            .map(|binding| postio_config::keys::expand_mod(binding, Platform::Freedesktop))
+            .map(|binding| keys(&binding))
+            .collect::<Vec<_>>()
+            .join(" or ");
         let recovery = match spec.recovery {
             Recovery::None => "",
             Recovery::Undo => "Undoable",

@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::paths::Platform;
+
 /// The built-in bindings, taken from the design canvas.
 pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("next_message", "j"),
@@ -27,25 +29,27 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("reply_all", "E"),
     ("forward", "f"),
     ("compose", "c"),
-    ("bold", "ctrl+b"),
-    ("italic", "ctrl+i"),
-    ("bullet_list", "ctrl+shift+8"),
-    ("numbered_list", "ctrl+shift+7"),
-    ("insert_link", "ctrl+shift+k"),
-    ("quote_block", "ctrl+shift+9"),
+    ("bold", "mod+b"),
+    ("italic", "mod+i"),
+    ("bullet_list", "mod+shift+8"),
+    ("numbered_list", "mod+shift+7"),
+    ("insert_link", "mod+shift+k"),
+    ("quote_block", "mod+shift+9"),
     ("search", "/"),
-    ("command_palette", "ctrl+k"),
+    ("command_palette", "mod+k"),
     ("cheat_sheet", "?"),
-    ("settings", "ctrl+comma"),
-    ("add_account", "ctrl+shift+n"),
-    ("edit_config", "ctrl+e"),
+    ("settings", "mod+comma"),
+    ("add_account", "mod+shift+n"),
+    ("edit_config", "mod+e"),
 ];
 
 /// Modifiers a binding may combine with a key.
 ///
 /// GTK spells the last two `Super`/`Meta`; both are accepted so a binding
 /// copied out of another application's docs still works.
-pub const MODIFIERS: &[&str] = &["ctrl", "control", "alt", "shift", "super", "meta"];
+pub const MODIFIERS: &[&str] = &[
+    "mod", "ctrl", "control", "cmd", "command", "alt", "shift", "super", "meta",
+];
 
 /// Multi-character key names Postio understands, beyond single characters.
 ///
@@ -143,7 +147,7 @@ fn chord_problem(chord: &str) -> Option<String> {
         }
         if !MODIFIERS.contains(&modifier.to_ascii_lowercase().as_str()) {
             return Some(format!(
-                "`{modifier}` is not a modifier; use ctrl, alt, shift or super"
+                "`{modifier}` is not a modifier; use mod, ctrl, alt, shift or super"
             ));
         }
     }
@@ -172,6 +176,46 @@ pub struct KeyBindings {
     overrides: BTreeMap<String, String>,
 }
 
+/// The primary accelerator, spelled for a platform.
+///
+/// `mod` is Postio's platform-neutral modifier: Control on freedesktop,
+/// Command on macOS. It exists because the command vocabulary is one table
+/// across both frontends (#586) while the *accelerator* genuinely differs —
+/// every `ctrl+…` default would be wrong on a Mac, where Control is a
+/// different key that means something else.
+///
+/// The two answers this replaces both fail. **Forking the table per platform**
+/// gives two vocabularies that drift, and breaks `[keys]` portability: a
+/// `config.toml` synced between a desktop and a laptop would mean different
+/// things. **Translating at render time** would draw ⌘K while the resolver
+/// still matched Control — the menu saying one thing and the keyboard doing
+/// another.
+///
+/// So it is resolved once, when the bindings are read, and everything
+/// downstream sees a concrete accelerator.
+///
+/// `ctrl` stays literal on both. Somebody who writes it means Control, macOS
+/// genuinely uses it, and quietly turning their binding into Command would be
+/// Postio overriding a stated choice.
+pub fn expand_mod(binding: &str, platform: Platform) -> String {
+    let primary = match platform {
+        Platform::Apple => "cmd",
+        Platform::Freedesktop => "ctrl",
+    };
+    // Chord by chord: a sequence like `g mod+k` has to expand in place.
+    binding
+        .split(' ')
+        .map(|chord| {
+            chord
+                .split('+')
+                .map(|part| if part == "mod" { primary } else { part })
+                .collect::<Vec<_>>()
+                .join("+")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl KeyBindings {
     /// The binding for a command: the user's override if present, otherwise the
     /// built-in default, otherwise `None`.
@@ -183,6 +227,16 @@ impl KeyBindings {
             .iter()
             .find(|(id, _)| *id == command)
             .map(|(_, key)| *key)
+    }
+
+    /// The binding in force, with `mod` resolved for `platform`.
+    ///
+    /// What a menu draws and what the resolver matches. [`binding`](Self::binding)
+    /// answers what is *written*, which is what the file round-trips; this
+    /// answers what it *means* here.
+    pub fn binding_on(&self, command: &str, platform: Platform) -> Option<String> {
+        self.binding(command)
+            .map(|binding| expand_mod(binding, platform))
     }
 
     /// Only what the config file set, in file order-independent key order.
@@ -284,5 +338,150 @@ mod tests {
     #[test]
     fn unknown_commands_have_no_binding() {
         assert_eq!(KeyBindings::default().binding("teleport"), None);
+    }
+}
+
+#[cfg(test)]
+mod mod_token_tests {
+    use super::*;
+    use crate::paths::Platform;
+
+    #[test]
+    fn mod_is_control_on_freedesktop_and_command_on_apple() {
+        // The whole point. `mod` is "the primary accelerator", which is a
+        // different physical key on each platform — and Control on macOS is
+        // not it, it means something else there.
+        assert_eq!(
+            expand_mod("mod+k", Platform::Freedesktop),
+            "ctrl+k".to_string()
+        );
+        assert_eq!(expand_mod("mod+k", Platform::Apple), "cmd+k".to_string());
+    }
+
+    #[test]
+    fn ctrl_stays_literal_on_both() {
+        // A user who writes `ctrl` means Control. macOS genuinely uses it, and
+        // silently turning their binding into Command would be Postio
+        // overriding a stated choice.
+        assert_eq!(expand_mod("ctrl+b", Platform::Apple), "ctrl+b".to_string());
+        assert_eq!(
+            expand_mod("ctrl+b", Platform::Freedesktop),
+            "ctrl+b".to_string()
+        );
+    }
+
+    #[test]
+    fn mod_composes_with_other_modifiers() {
+        assert_eq!(
+            expand_mod("mod+shift+n", Platform::Apple),
+            "cmd+shift+n".to_string()
+        );
+        assert_eq!(
+            expand_mod("mod+shift+n", Platform::Freedesktop),
+            "ctrl+shift+n".to_string()
+        );
+    }
+
+    #[test]
+    fn a_binding_with_no_mod_is_untouched() {
+        for binding in ["a", "A", "g g", "shift+Tab", "Return"] {
+            assert_eq!(expand_mod(binding, Platform::Apple), binding.to_string());
+        }
+    }
+
+    #[test]
+    fn every_default_resolves_to_what_linux_has_today() {
+        // The argument for doing this now rather than when macOS ships
+        // bindings: on freedesktop the new table resolves to exactly the old
+        // one, so nothing a Linux user sees changes.
+        let expected: &[(&str, &str)] = &[
+            ("command_palette", "ctrl+k"),
+            ("settings", "ctrl+comma"),
+            ("add_account", "ctrl+shift+n"),
+            ("bold", "ctrl+b"),
+            ("insert_link", "ctrl+shift+k"),
+        ];
+        for (command, want) in expected {
+            let bindings = KeyBindings::default();
+            assert_eq!(
+                bindings
+                    .binding_on(command, Platform::Freedesktop)
+                    .as_deref(),
+                Some(*want),
+                "{command} changed for Linux users"
+            );
+        }
+    }
+
+    #[test]
+    fn the_same_defaults_are_command_on_apple() {
+        let bindings = KeyBindings::default();
+        assert_eq!(
+            bindings
+                .binding_on("command_palette", Platform::Apple)
+                .as_deref(),
+            Some("cmd+k")
+        );
+    }
+
+    #[test]
+    fn an_override_is_expanded_too() {
+        // A `config.toml` synced between a Linux desktop and a Mac has to mean
+        // the same thing on both, which is why `mod` is a *config* token
+        // rather than a rendering trick.
+        let mut bindings = KeyBindings::default();
+        bindings
+            .overrides_mut()
+            .insert("archive".to_string(), "mod+shift+a".to_string());
+
+        assert_eq!(
+            bindings.binding_on("archive", Platform::Apple).as_deref(),
+            Some("cmd+shift+a")
+        );
+        assert_eq!(
+            bindings
+                .binding_on("archive", Platform::Freedesktop)
+                .as_deref(),
+            Some("ctrl+shift+a")
+        );
+    }
+
+    #[test]
+    fn the_file_keeps_what_the_user_wrote() {
+        // Round-tripping must not rewrite `mod+` into whichever platform saved
+        // it, or syncing the file between machines would fight itself.
+        let mut bindings = KeyBindings::default();
+        bindings
+            .overrides_mut()
+            .insert("archive".to_string(), "mod+shift+a".to_string());
+        assert_eq!(bindings.binding("archive"), Some("mod+shift+a"));
+    }
+}
+
+#[cfg(test)]
+mod mod_token_validity_tests {
+    use super::*;
+    use crate::paths::Platform;
+
+    #[test]
+    fn expansion_always_produces_a_binding_the_validator_accepts() {
+        // `cmd` only ever appears as expansion output, so nothing else would
+        // catch it being absent from MODIFIERS -- and the failure would be a
+        // Mac where every default is rejected as invalid.
+        for platform in [Platform::Freedesktop, Platform::Apple] {
+            for (command, binding) in DEFAULT_BINDINGS {
+                let expanded = expand_mod(binding, platform);
+                assert_eq!(
+                    binding_problem(&expanded),
+                    None,
+                    "{command} expands to `{expanded}`, which the validator rejects"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mod_is_spellable_in_a_config_file() {
+        assert_eq!(binding_problem("mod+shift+a"), None);
     }
 }
