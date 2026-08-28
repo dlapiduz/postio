@@ -412,9 +412,23 @@ struct State {
     /// The largest [`State::in_flight`] ever reached.
     peak_in_flight: usize,
     chunk_size: usize,
-    /// Which mailbox each served `FETCH` (headers) call was for, in the
-    /// order the server handled them. See [`MockBackend::header_fetches`].
-    header_fetches: Vec<String>,
+    /// Which mailbox each served `FETCH` (headers) call was for, tagged with
+    /// [`State::calls`] at the moment it was recorded so header and body
+    /// fetches can be merged into one chronological order — see
+    /// [`MockBackend::header_fetches`] and [`MockBackend::fetch_order`].
+    header_fetches: Vec<(u64, String)>,
+    /// [`State::header_fetches`]'s counterpart for `FETCH BODY` (part/text)
+    /// calls. See [`MockBackend::body_fetches`].
+    body_fetches: Vec<(u64, String)>,
+}
+
+/// One served fetch, in [`MockBackend::fetch_order`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchEvent {
+    /// A header `FETCH`, for the named mailbox.
+    Header(String),
+    /// A body/part `FETCH`, for the named mailbox.
+    Body(String),
 }
 
 impl State {
@@ -608,7 +622,50 @@ impl MockBackend {
     /// Only *served* fetches are recorded: a call that a fault failed or that
     /// never got past connect does not appear.
     pub fn header_fetches(&self) -> Vec<String> {
-        self.state().header_fetches.clone()
+        self.state()
+            .header_fetches
+            .iter()
+            .map(|(_, mailbox)| mailbox.clone())
+            .collect()
+    }
+
+    /// Which mailbox each served body/part `FETCH` was for, oldest first —
+    /// [`Self::header_fetches`]'s counterpart for the backfill lane, used
+    /// the same way: order here is causal (#631), not a stopwatch.
+    pub fn body_fetches(&self) -> Vec<String> {
+        self.state()
+            .body_fetches
+            .iter()
+            .map(|(_, mailbox)| mailbox.clone())
+            .collect()
+    }
+
+    /// Every served header and body/part `FETCH`, merged into the one
+    /// chronological order the server actually saw them in.
+    ///
+    /// [`Self::header_fetches`] and [`Self::body_fetches`] are each causal
+    /// *within* their own kind, but two separate logs cannot say whether a
+    /// given header fetch happened before or after a given body fetch — and
+    /// that is exactly the question #631's "bodies must not queue behind an
+    /// unrelated folder's headers" asks. Both logs are tagged with
+    /// [`State::calls`] as it stood at the moment each was recorded, which
+    /// is monotonic across every kind of call the mock serves, so merging by
+    /// that tag reconstructs one true order.
+    pub fn fetch_order(&self) -> Vec<FetchEvent> {
+        let state = self.state();
+        let mut merged: Vec<(u64, FetchEvent)> = state
+            .header_fetches
+            .iter()
+            .map(|(seq, mailbox)| (*seq, FetchEvent::Header(mailbox.clone())))
+            .chain(
+                state
+                    .body_fetches
+                    .iter()
+                    .map(|(seq, mailbox)| (*seq, FetchEvent::Body(mailbox.clone()))),
+            )
+            .collect();
+        merged.sort_by_key(|(seq, _)| *seq);
+        merged.into_iter().map(|(_, event)| event).collect()
     }
 
     /// The most calls that were on the wire at once.
@@ -826,6 +883,7 @@ impl MockBackendBuilder {
                 in_flight: 0,
                 peak_in_flight: 0,
                 header_fetches: Vec::new(),
+                body_fetches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
             notify: Arc::new(Notify::new()),
@@ -918,7 +976,8 @@ impl MailBackend for MockBackend {
         }
 
         let mut state = self.state();
-        state.header_fetches.push(mailbox.to_owned());
+        let seq = state.calls;
+        state.header_fetches.push((seq, mailbox.to_owned()));
         let state = state;
         let index = self.locate(&state, mailbox, "FETCH")?;
         let condstore = state.condstore();
@@ -961,7 +1020,10 @@ impl MailBackend for MockBackend {
         }
 
         let (bytes, chunk_size) = {
-            let state = self.state();
+            let mut state = self.state();
+            let seq = state.calls;
+            state.body_fetches.push((seq, mailbox.to_owned()));
+            let state = state;
             let index = self.locate(&state, mailbox, "FETCH BODY")?;
             let folder = &state.mailboxes[index];
             let uid = identity::wire_uid(mailbox, folder.uid_validity, id)?;

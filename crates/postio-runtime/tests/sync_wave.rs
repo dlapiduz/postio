@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use postio_core::bridge::event_channel;
-use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
+use postio_imap::backend::{FetchEvent, MockBackend, MockMailbox, MockMessage};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
@@ -326,5 +326,61 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
          ({fetches_at_answer} of {fetches_in_the_end} archive fetches had \
          already happened)"
     );
+    drop(engine);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
+    // #631: INBOX and the archive share a wave here (both fit inside
+    // `sync_lanes`), so the property this asks for is stronger than
+    // "INBOX's own headers are not queued behind the archive's" — that part
+    // was already true. The bug was that INBOX's *bodies* still waited for
+    // the archive's headers to finish enumerating, because a wave used to
+    // settle every lane's outcome only once every lane in it had completed,
+    // and the outer loop did not fetch a single body until the whole
+    // account's header queue was empty.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 2_000))
+            .build(),
+    );
+    backend.set_latency(LATENCY);
+
+    let (database, engine) = engine_over(backend.clone());
+
+    until("both folders to finish their first sync", || {
+        stored(&database, "INBOX") == Some(10) && stored(&database, "Archive") == Some(2_000)
+    })
+    .await;
+
+    // Give the backfill lane a moment to fetch what it seeded -- the wave
+    // above only guarantees headers are in; bodies are a separate queue this
+    // waits for the same way `until` waits for anything else.
+    until("INBOX to have at least one body fetched", || {
+        backend
+            .body_fetches()
+            .iter()
+            .any(|mailbox| mailbox == "INBOX")
+    })
+    .await;
+
+    let order = backend.fetch_order();
+    let last_archive_header = order
+        .iter()
+        .rposition(|event| matches!(event, FetchEvent::Header(mailbox) if mailbox == "Archive"));
+    let first_inbox_body = order
+        .iter()
+        .position(|event| matches!(event, FetchEvent::Body(mailbox) if mailbox == "INBOX"));
+
+    match (first_inbox_body, last_archive_header) {
+        (Some(body), Some(header)) => assert!(
+            body < header,
+            "INBOX's first body fetch came after the archive's last header \
+             fetch, so INBOX's own bodies waited out the archive's headers: \
+             {order:?}"
+        ),
+        _ => panic!("the log never saw one of the two calls it needs: {order:?}"),
+    }
     drop(engine);
 }
