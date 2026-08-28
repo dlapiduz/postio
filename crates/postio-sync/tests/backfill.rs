@@ -535,13 +535,10 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
          re-read them"
     );
 
-    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
-    let text = blobs.text.expect("a text/plain body");
-    assert_eq!(
-        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
-        format!("The body of note {uid}.\r\n")
-    );
-    assert!(blobs.html.is_none(), "this message has no HTML alternative");
+    let body = messages.body(id).expect("body").expect("the row");
+    let text = body.text.expect("a text/plain body");
+    assert_eq!(text, format!("The body of note {uid}.\r\n"));
+    assert!(body.html.is_none(), "this message has no HTML alternative");
 }
 
 #[tokio::test]
@@ -845,12 +842,9 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
     let messages = MessageRepository::new(&local.connection);
     let stored = messages.get(id).expect("get").expect("row");
 
-    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
-    let text = blobs.text.expect("a text/plain body");
-    assert_eq!(
-        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
-        "Your statement is attached."
-    );
+    let body = messages.body(id).expect("body").expect("the row");
+    let text = body.text.expect("a text/plain body");
+    assert_eq!(text, "Your statement is attached.");
 
     assert!(
         stored.raw_blob_id.is_none(),
@@ -935,12 +929,9 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
     .expect("fetch");
 
     let stored = messages.get(id).expect("get").expect("row");
-    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
-    let text = blobs.text.expect("a text/plain body");
-    assert_eq!(
-        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
-        "The body of note 1.\r\n"
-    );
+    let body = messages.body(id).expect("body").expect("the row");
+    let text = body.text.expect("a text/plain body");
+    assert_eq!(text, "The body of note 1.\r\n");
     assert!(
         stored.raw_blob_id.is_some(),
         "the fallback fetched the whole message, so it keeps it"
@@ -1074,18 +1065,12 @@ async fn text_that_is_not_part_one_is_still_found() {
     .expect("fetch");
 
     let messages = MessageRepository::new(&local.connection);
-    let blobs = messages.body_blobs(id).expect("blobs").expect("the row");
+    let body = messages.body(id).expect("body").expect("the row");
 
-    let text = blobs.text.expect("the plain-text part at 2.1");
-    assert_eq!(
-        String::from_utf8(local.blobs.get(&text).expect("read")).expect("utf-8"),
-        "Scan attached."
-    );
-    let html = blobs.html.expect("the HTML alternative at 2.2");
-    assert_eq!(
-        String::from_utf8(local.blobs.get(&html).expect("read")).expect("utf-8"),
-        "<p>Scan attached.</p>"
-    );
+    let text = body.text.expect("the plain-text part at 2.1");
+    assert_eq!(text, "Scan attached.");
+    let html = body.html.expect("the HTML alternative at 2.2");
+    assert_eq!(html, "<p>Scan attached.</p>");
     assert_eq!(
         messages.get(id).expect("get").expect("row").sync.body_state,
         BodyState::Partial,

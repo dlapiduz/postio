@@ -611,12 +611,12 @@ fn reclaim_disk(wiring: &Wiring) {
 /// disk and should still become searchable.
 ///
 /// `spawn_blocking`, not `spawn`: this is synchronous SQLite and synchronous
-/// blob reads from beginning to end, and a blocking call inside a tokio task
-/// stalls whatever else that worker was meant to poll.
+/// decompression from beginning to end, and a blocking call inside a tokio
+/// task stalls whatever else that worker was meant to poll.
 fn catch_up_the_body_index(wiring: &Wiring) {
-    let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    let database = wiring.database.clone();
     wiring.runtime.spawn_blocking(move || {
-        if let Err(error) = postio_session::index_local_bodies(&database, &blobs) {
+        if let Err(error) = postio_session::index_local_bodies(&database) {
             // Recoverable, and the same judgement `ensure_search_index`
             // makes: a mail client whose body search is behind still reads
             // mail, and the next start tries again.

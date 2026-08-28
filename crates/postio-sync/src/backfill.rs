@@ -50,7 +50,7 @@ use postio_imap::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
-    BackfillCandidate, BodyBlobs, MailboxRepository, MessageRepository,
+    BackfillCandidate, MailboxRepository, MessageRepository, StoredBody,
 };
 use rusqlite::Connection;
 
@@ -1030,7 +1030,7 @@ pub async fn fetch_body(
         // must still take this path, or the fallback would fetch the payload this
         // exists to avoid.
         Want::Text if message.content_type.is_some() => {
-            return fetch_text_parts(connection, blobs, backend, request, message, cancel).await;
+            return fetch_text_parts(connection, backend, request, message, cancel).await;
         }
         // Every byte: asked for, or the only answer left for a row whose
         // structure was never recorded.
@@ -1076,9 +1076,9 @@ pub async fn fetch_body(
         mime::parse(&raw)
     });
 
-    let stored = BodyBlobs {
-        text: put_text(blobs, parsed.body.text.as_deref())?,
-        html: put_text(blobs, parsed.body.html.as_deref())?,
+    let stored = StoredBody {
+        text: stored_text(parsed.body.text.as_deref()),
+        html: stored_text(parsed.body.html.as_deref()),
         // The header block has no reader of its own yet: everything that wants
         // headers has the row, and everything that wants all of them has the
         // raw blob. A copy nobody reads is a copy that can go stale.
@@ -1111,7 +1111,7 @@ pub async fn fetch_body(
     // The commit point. `Full` unconditionally, and honestly: whatever the
     // parse could not match to a row is still in the raw blob, which is what
     // `postio_app::reading::part_bytes` falls back to.
-    messages.set_body_blobs(request.message, &stored, BodyState::Full)?;
+    messages.set_body(request.message, &stored, BodyState::Full)?;
 
     // And into the search index, *after* the commit point.
     //
@@ -1156,15 +1156,16 @@ pub async fn fetch_body(
 /// section back into a self-contained entity the parser can decode — without
 /// spending a second round trip on `BODY[1.1.MIME]`.
 ///
-/// # No raw blob
+/// # No blob store at all
 ///
-/// There is nothing to keep: the whole message was never fetched. That is the
-/// point, and it is also what retires the 1.3x duplication of storing the raw
+/// There is no raw blob to keep — the whole message was never fetched, which
+/// is the point, and is what retires the 1.3x duplication of storing the raw
 /// bytes and their decoded forms side by side. "View source" and
-/// forward-as-`message/rfc822` refetch on demand.
+/// forward-as-`message/rfc822` refetch on demand. And since ADR 0020 the
+/// decoded text is a column rather than a file, so this path touches the blob
+/// store nowhere: it is text in, row out.
 async fn fetch_text_parts(
     connection: &Connection,
-    blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
     mut message: postio_model::Message,
@@ -1229,9 +1230,9 @@ async fn fetch_text_parts(
         preview = preview.or(parsed.preview);
     }
 
-    let stored = BodyBlobs {
-        text: put_text(blobs, body.text.as_deref())?,
-        html: put_text(blobs, body.html.as_deref())?,
+    let stored = StoredBody {
+        text: stored_text(body.text.as_deref()),
+        html: stored_text(body.html.as_deref()),
         headers: None,
     };
 
@@ -1240,14 +1241,14 @@ async fn fetch_text_parts(
     }
     messages.update(&mut message)?;
 
-    // `partial` means text local, payloads not — the variant migration 0001
+    // `partial` means text local, payloads not — the variant the schema
     // declared and nothing had ever written until ADR 0017 gave it a meaning.
     // It is what tells the reader to offer "download" rather than "open".
     let state = state_for(&message.attachments);
 
     // The commit point, after which the body is local as far as anything else
     // is concerned. See `fetch_body` for why it is last.
-    messages.set_body_blobs(request.message, &stored, state)?;
+    messages.set_body(request.message, &stored, state)?;
 
     if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &body)
     {
@@ -1394,15 +1395,17 @@ fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
     }
 }
 
-/// Stores one decoded body form, skipping an empty one so a message with no
-/// HTML alternative does not get a blob saying so.
-pub(crate) fn put_text(
-    blobs: &BlobStore,
-    text: Option<&str>,
-) -> Result<Option<postio_model::BlobId>> {
+/// One decoded body form as it goes into the row, folding an empty one to
+/// absent.
+///
+/// `Some("")` and `None` are different facts to `StoredBody`, and here they
+/// are not: a `text/plain`-only message parses to an HTML part of zero length,
+/// and storing that would tell the reading pane the message has an HTML
+/// alternative that renders to nothing.
+pub(crate) fn stored_text(text: Option<&str>) -> Option<String> {
     match text {
-        Some(text) if !text.is_empty() => Ok(Some(blobs.put(text.as_bytes())?)),
-        _ => Ok(None),
+        Some(text) if !text.is_empty() => Some(text.to_owned()),
+        _ => None,
     }
 }
 
@@ -1467,16 +1470,13 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_body_form_stores_no_blob() {
-        let directory =
-            std::env::temp_dir().join(format!("postio-backfill-{}", std::process::id()));
-        let blobs = BlobStore::open(&directory).expect("a blob store");
-
-        assert_eq!(put_text(&blobs, None).expect("none"), None);
-        assert_eq!(put_text(&blobs, Some("")).expect("empty"), None);
-        assert!(put_text(&blobs, Some("hello")).expect("some").is_some());
-
-        std::fs::remove_dir_all(&directory).ok();
+    fn an_empty_body_form_is_stored_as_absent() {
+        // A `text/plain`-only message parses to an HTML part of zero length.
+        // Storing that would tell the reading pane there is an HTML
+        // alternative which renders to nothing.
+        assert_eq!(stored_text(None), None);
+        assert_eq!(stored_text(Some("")), None);
+        assert_eq!(stored_text(Some("hello")).as_deref(), Some("hello"));
     }
 
     #[test]

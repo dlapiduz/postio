@@ -28,18 +28,17 @@ fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
         let mut message = Message::new(account.id, inbox, Utc::now());
         let id = repository.create(&mut message).expect("a message");
 
-        let blob = blobs.put(html.as_bytes()).expect("a body blob");
         repository
-            .set_body_blobs(
+            .set_body(
                 id,
-                &postio_storage::repository::BodyBlobs {
+                &postio_storage::repository::StoredBody {
                     text: None,
-                    html: Some(blob),
+                    html: Some(html.to_owned()),
                     headers: None,
                 },
                 postio_model::message::BodyState::Full,
             )
-            .expect("the body is recorded");
+            .expect("the body is stored");
         id
     };
 

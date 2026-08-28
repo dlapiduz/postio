@@ -54,7 +54,7 @@ use postio_model::ids::AccountId;
 use postio_search::facets::{Facets, Scope};
 use postio_search::{ParsedQuery, SearchResults};
 use postio_storage::repository::ContactRepository;
-use postio_storage::{BlobStore, Database, PooledConnection};
+use postio_storage::{Database, PooledConnection};
 
 use crate::Wiring;
 
@@ -182,7 +182,6 @@ fn install_run(
     };
 
     let database = wiring.database.clone();
-    let blobs = wiring.blobs.clone();
     let runtime = wiring.runtime.clone();
     let events = wiring.events.clone();
     let view = view.clone();
@@ -199,15 +198,13 @@ fn install_run(
             let order = order.get();
             let hits = ask(&database, &runtime, {
                 let query = query.clone();
-                let blobs = blobs.clone();
-                move |connection| run(connection, &blobs, account, &query, scope, order)
+                move |connection| run(connection, account, &query, scope, order)
             });
 
             glib::spawn_future_local({
                 let live = live.clone();
                 let view = view.clone();
                 let database = database.clone();
-                let blobs = blobs.clone();
                 let runtime = runtime.clone();
                 let events = events.clone();
                 let held = held.clone();
@@ -245,7 +242,7 @@ fn install_run(
                     // the list, which moves the cursor, which looks them up
                     // here. Announcing first would race the cursor against the
                     // results it is a cursor into.
-                    focus(&view, &results, &database, &blobs, &runtime);
+                    focus(&view, &results, &database, &runtime);
                     held.replace(Some(results));
                     // Scoped, so the borrow is gone before `facets` runs:
                     // nothing downstream needs `held` today, and a borrow
@@ -275,7 +272,6 @@ const SNIPPET_HITS: usize = 50;
 /// One search against the index, with an excerpt cut for each hit.
 fn run(
     connection: &PooledConnection,
-    blobs: &BlobStore,
     account: AccountId,
     query: &ParsedQuery,
     scope: Scope,
@@ -301,7 +297,7 @@ fn run(
     )
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
     .ok()?;
-    snippet_hits(connection, blobs, query, &mut results);
+    snippet_hits(connection, query, &mut results);
     Some(results)
 }
 
@@ -325,12 +321,7 @@ fn run(
 /// the string highlighted is the string that was indexed, rather than a
 /// second guess at it, and `postio_search::highlight`'s token rule is FTS5's
 /// own. A message with no local body gets no excerpt rather than a wrong one.
-fn snippet_hits(
-    connection: &PooledConnection,
-    blobs: &BlobStore,
-    query: &ParsedQuery,
-    results: &mut SearchResults,
-) {
+fn snippet_hits(connection: &PooledConnection, query: &ParsedQuery, results: &mut SearchResults) {
     let terms = postio_search::highlight::terms(query);
     if terms.is_empty() {
         // A structured-only query — `is:unread`, `in:archive` — has nothing to
@@ -339,7 +330,7 @@ fn snippet_hits(
         return;
     }
     for hit in results.hits.iter_mut().take(SNIPPET_HITS) {
-        let body = crate::compose::load_body(connection, blobs, hit.message_id);
+        let body = crate::compose::load_body(connection, hit.message_id);
         if let Some(text) = postio_index::index::indexable_text(&body) {
             hit.snippet = postio_search::highlight::snippet(&text, &terms);
         }
@@ -431,14 +422,13 @@ fn focus(
     view: &View,
     results: &SearchResults,
     database: &Database,
-    blobs: &BlobStore,
     runtime: &tokio::runtime::Handle,
 ) {
     view.set_focused(results.hits.first());
     let Some(hit) = results.hits.first() else {
         return;
     };
-    preview(view, hit, database, blobs, runtime);
+    preview(view, hit, database, runtime);
 }
 
 /// Draw `hit`'s body into the preview.
@@ -446,17 +436,15 @@ fn preview(
     view: &View,
     hit: &postio_search::SearchHit,
     database: &Database,
-    blobs: &BlobStore,
     runtime: &tokio::runtime::Handle,
 ) {
     // The snippet is already on screen — highlighted, from the index — so this
-    // is the body arriving under it rather than the pane waiting on a blob
-    // read to show anything at all.
+    // is the body arriving under it rather than the pane waiting on a read to
+    // show anything at all.
     let message = hit.message_id;
     let sender = hit.from.as_ref().map(|from| from.address.clone());
-    let answer = ask(database, runtime, {
-        let blobs = blobs.clone();
-        move |connection| Some(crate::compose::load_body(connection, &blobs, message))
+    let answer = ask(database, runtime, move |connection| {
+        Some(crate::compose::load_body(connection, message))
     });
     glib::spawn_future_local({
         let view = view.clone();
@@ -465,9 +453,9 @@ fn preview(
                 return;
             };
             let preview = view.preview();
-            // The focus may have moved on while the blob was read. Painting a
-            // body into a preview showing a different message would be worse
-            // than leaving the snippet alone.
+            // The focus may have moved on while the body was read. Painting
+            // a body into a preview showing a different message would be
+            // worse than leaving the snippet alone.
             if preview.focused() != Some(message) {
                 return;
             }
@@ -553,7 +541,6 @@ fn install_results(
         let view = view.clone();
         let feeds = feeds.clone();
         let database = wiring.database.clone();
-        let blobs = wiring.blobs.clone();
         let runtime = wiring.runtime.clone();
         move |_| {
             if !feeds.messages.showing_results() {
@@ -570,7 +557,7 @@ fn install_results(
                 return;
             };
             view.set_focused(Some(hit));
-            preview(&view, hit, &database, &blobs, &runtime);
+            preview(&view, hit, &database, &runtime);
         }
     });
 
@@ -696,13 +683,8 @@ mod tests {
     /// backfill indexes it.
     fn a_message_with_a_body(
         body: &str,
-    ) -> (
-        postio_storage::test_support::TempDatabase,
-        BlobStore,
-        AccountId,
-    ) {
+    ) -> (postio_storage::test_support::TempDatabase, AccountId) {
         let database = test_support::temp();
-        let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
         let connection = database.connection().expect("checkout");
         postio_index::index::ensure_schema(&connection).expect("schema");
         let (account, mailbox) = test_support::account_with_inbox(&connection);
@@ -713,27 +695,25 @@ mod tests {
         let messages = MessageRepository::new(&connection);
         messages.create(&mut message).expect("create");
 
-        let text = blobs.put(body.as_bytes()).expect("store the body");
         messages
-            .set_body_blobs(
+            .set_body(
                 message.id,
-                &postio_storage::repository::BodyBlobs {
-                    text: Some(text),
+                &postio_storage::repository::StoredBody {
+                    text: Some(body.to_owned()),
                     html: None,
                     headers: None,
                 },
                 postio_model::BodyState::Full,
             )
-            .expect("record it");
+            .expect("store the body");
         postio_index::index::index_body(&connection, message.id.get(), Some(body))
             .expect("index it");
         drop(connection);
-        (database, blobs, account.id)
+        (database, account.id)
     }
 
     fn search_for(
         database: &postio_storage::test_support::TempDatabase,
-        blobs: &BlobStore,
         account: AccountId,
         text: &str,
     ) -> SearchResults {
@@ -741,7 +721,6 @@ mod tests {
         let query = postio_search::parse(text, chrono::Utc::now().date_naive());
         run(
             &connection,
-            blobs,
             account,
             &query,
             Scope::AllMail,
@@ -754,9 +733,9 @@ mod tests {
     fn a_hit_gets_an_excerpt_cut_from_the_body_it_matched_in() {
         let body = "Dear Ada,\n\nThe difference engine's seventh column is \
                     finished and the drawings are with the printer.\n";
-        let (database, blobs, account) = a_message_with_a_body(body);
+        let (database, account) = a_message_with_a_body(body);
 
-        let results = search_for(&database, &blobs, account, "printer");
+        let results = search_for(&database, account, "printer");
 
         assert_eq!(results.hits.len(), 1);
         let marked = postio_search::highlight::from_snippet(&results.hits[0].snippet);
@@ -782,16 +761,14 @@ mod tests {
         // substrings would paint it — for a query that did not match this
         // message on that word at all, because FTS5 tokenizes `maildir` as
         // one token.
-        let (database, blobs, account) = a_message_with_a_body("the maildir is rebuilt nightly");
+        let (database, account) = a_message_with_a_body("the maildir is rebuilt nightly");
 
         assert!(
-            search_for(&database, &blobs, account, "mail")
-                .hits
-                .is_empty(),
+            search_for(&database, account, "mail").hits.is_empty(),
             "the query does not match, so there is nothing to highlight"
         );
 
-        let results = search_for(&database, &blobs, account, "maildir");
+        let results = search_for(&database, account, "maildir");
         let marked = postio_search::highlight::from_snippet(&results.hits[0].snippet);
         assert_eq!(
             marked
@@ -808,9 +785,9 @@ mod tests {
         // A structured-only query — `is:unread`, `in:archive` — has no term
         // to mark, and every hit's snippet stays empty exactly as it did when
         // SQLite was cutting them.
-        let (database, blobs, account) = a_message_with_a_body("anything at all");
+        let (database, account) = a_message_with_a_body("anything at all");
 
-        let results = search_for(&database, &blobs, account, "is:unread");
+        let results = search_for(&database, account, "is:unread");
 
         assert_eq!(results.hits.len(), 1);
         assert!(results.hits[0].snippet.is_empty());
@@ -822,7 +799,6 @@ mod tests {
         // server. An excerpt cut from nothing would be an empty line that
         // looks like a body with no match in it.
         let database = test_support::temp();
-        let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
         let connection = database.connection().expect("checkout");
         postio_index::index::ensure_schema(&connection).expect("schema");
         let (account, mailbox) = test_support::account_with_inbox(&connection);
@@ -833,7 +809,7 @@ mod tests {
             .expect("create");
         drop(connection);
 
-        let results = search_for(&database, &blobs, account.id, "printer");
+        let results = search_for(&database, account.id, "printer");
 
         assert_eq!(results.hits.len(), 1, "the subject still matched");
         assert!(results.hits[0].snippet.is_empty());
