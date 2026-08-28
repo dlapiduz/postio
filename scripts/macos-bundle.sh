@@ -40,6 +40,26 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Postio"
 cp macos/Resources/Info.plist "$APP/Contents/Info.plist"
 
+# The icon, rendered from the SVG the GTK frontend already ships rather than
+# from a set of PNGs checked in beside it -- the rule the design tokens follow,
+# for the same reason: a copy is correct on the day it is made.
+#
+# AppKit reads that SVG as a vector, so each size is a real render rather than
+# an upscale of the 128px PNG, and `swift` and `iconutil` are on every Mac. A
+# rasterizer from Homebrew would be a build dependency contributors do not have.
+ICON_SVG=crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg
+ICONSET=$(mktemp -d)/Postio.iconset
+if swift scripts/macos-icon.swift "$ICON_SVG" "$ICONSET" \
+    && iconutil -c icns -o "$APP/Contents/Resources/Postio.icns" "$ICONSET"; then
+    :
+else
+    # Not fatal. An application with no icon is worse-looking and entirely
+    # usable, and failing the whole bundle over artwork would be the wrong
+    # trade for someone trying to run the thing.
+    echo "could not build the icon; the bundle has none." >&2
+fi
+rm -rf "$(dirname "$ICONSET")"
+
 # `-s -` is an ad-hoc signature: no identity, no team, no account. The
 # entitlements are the local ones, which disable library validation -- with no
 # team to compare against, validation refuses code a contributor's own build
