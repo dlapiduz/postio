@@ -185,7 +185,71 @@ pub fn search(
         total_hits,
         total_hits_capped,
         elapsed,
+        corpus_complete: corpus_complete(connection, request)?,
     })
+}
+
+/// Whether every message in the searched scope has a body to search.
+///
+/// # Why this is not a count, and why it is cheap
+///
+/// #352 asked for a count of what is missing. Under ADR 0016 that number is a
+/// draining queue — every folder backfills to completion by default — so a
+/// figure would be alarming about something that needs no action and will be
+/// zero on its own. What the surface needs is the boolean.
+///
+/// Which is also the only version that fits the `<100 ms` budget.
+/// `idx_messages_body_state` is a **partial** index over exactly
+/// `body_state IN ('not_fetched', 'headers_only')`, so this is a seek into an
+/// index that holds only the outstanding messages: it stops at the first row
+/// when the corpus is incomplete, and when it is complete the index is empty
+/// for this scope and there is nothing to scan. Both answers cost the same
+/// nothing, which is what lets it run per query rather than per session.
+///
+/// Scoped, deliberately: the claim on screen is about the search that was
+/// just run, so "complete" has to mean complete *here* — a fully backfilled
+/// inbox must not carry a caveat earned by an archive nobody searched.
+///
+/// # What it asks, and the one case it does not cover
+///
+/// It asks *does backfill still owe bodies here*, not *is every local body in
+/// the index*. Those differ for a message whose body has arrived but whose
+/// text has not been indexed yet — the window `catch_up_the_body_index`
+/// closes at startup for a store that predates #327.
+///
+/// Answering the second question exactly would mean `NOT EXISTS (SELECT 1
+/// FROM message_bodies_fts WHERE rowid = m.id)`, which has no partial index
+/// behind it: proving *absence* would scan every message in scope, and it
+/// would do so precisely when the corpus is complete, which is the common
+/// case. That is the full-corpus scan per keystroke the budget forbids.
+///
+/// So this takes the dominant and durable term. Undownloaded bodies are the
+/// overwhelming majority of what search cannot see, and they persist for as
+/// long as backfill runs; an unindexed local body is a brief startup state
+/// that heals itself. Under-reporting the caveat for a few seconds after
+/// launch is the right way to be wrong here — the alternative is a caveat
+/// that costs the query its budget forever.
+fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Result<bool> {
+    let mut conditions = vec![
+        "m.deleted_locally = 0".to_string(),
+        "m.body_state IN ('not_fetched', 'headers_only')".to_string(),
+    ];
+    let mut params: Vec<Value> = Vec::new();
+    if let Some(id) = request.account.account() {
+        conditions.push("m.account_id = ?".to_string());
+        params.push(Value::Integer(id.get()));
+    }
+    if let Some((sql, values)) = scope_condition(request.scope, request.account) {
+        conditions.push(sql);
+        params.extend(values);
+    }
+
+    let sql = format!(
+        "SELECT NOT EXISTS (SELECT 1 FROM messages m WHERE {})",
+        conditions.join(" AND ")
+    );
+    let complete = connection.query_row(&sql, params_from_iter(&params), |row| row.get(0))?;
+    Ok(complete)
 }
 
 /// The size `larger:` is offered at, when a result set has anything that big.

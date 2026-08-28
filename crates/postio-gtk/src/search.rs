@@ -179,9 +179,28 @@ pub const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// The slot the readout reserves, in characters.
 ///
-/// Wide enough for the longest thing it can say — `10000+ hits · 100 ms` —
-/// so the number never has to be truncated and the slot never has to resize.
+/// The slot the readout reserves, in characters.
+///
+/// Wide enough for the longest thing it can say — `10000+ hits · 100 ms` — so
+/// the number never has to be truncated and the slot never has to resize
+/// while somebody is typing.
 const READOUT_CHARS: i32 = 20;
+
+/// The slot while the corpus caveat is showing (#352).
+///
+/// Sized separately rather than making [`READOUT_CHARS`] wide enough for both.
+/// The label is hidden at rest and takes its space only *during* a search —
+/// canvas 2b draws the field wider while it is working — so a slot big enough
+/// for the caveat would cost the field that width on every search, including
+/// on the settled account that is the common case and the end state ADR 0016
+/// guarantees. At the narrow breakpoint that is room the entry needs.
+///
+/// The reason a fixed slot exists at all is that the *number* changes per
+/// keystroke and a field that breathed on every character would be the most
+/// distracting thing on screen. The caveat does not do that: it changes when
+/// backfill finishes, once. So the field resizes exactly once in an account's
+/// life, which is not a twitch.
+const READOUT_CHARS_SYNCING: i32 = 36;
 
 /// What one search turned out to be.
 ///
@@ -198,6 +217,11 @@ pub struct Outcome {
     pub capped: bool,
     /// How long the search took.
     pub elapsed: Duration,
+    /// Whether every message in the searched scope had a body to search.
+    ///
+    /// `false` adds the caveat: the hits come from a corpus that is still
+    /// filling, so the count is a floor for a second reason (#352).
+    pub corpus_complete: bool,
 }
 
 impl Outcome {
@@ -207,6 +231,7 @@ impl Outcome {
             hits: results.total_hits,
             capped: results.total_hits_capped,
             elapsed: results.elapsed,
+            corpus_complete: results.corpus_complete,
         }
     }
 }
@@ -217,8 +242,22 @@ impl Outcome {
 /// `4291` and two number formats in one column would read as two kinds of
 /// number. A capped count is written `10000+ hits` rather than a bare figure,
 /// so a floor never passes for a total.
+/// A corpus still filling adds `· still syncing`, and nothing otherwise.
+///
+/// The wording is a *state that ends*, which is the whole of #352's design
+/// call. ADR 0016 backfills every folder to completion by default, so "you do
+/// not have this mail" would be false — the honest thing is that the answer is
+/// not final yet. A count was rejected for the same reason: it would be a
+/// draining queue reported as an alarm.
+///
+/// It says so once, here, rather than per result: a caveat repeated down a
+/// list of hits stops being read by the third one.
 pub fn readout(outcome: &Outcome) -> String {
-    format!("{} · {}", hits(outcome), elapsed(outcome.elapsed))
+    let base = format!("{} · {}", hits(outcome), elapsed(outcome.elapsed));
+    match outcome.corpus_complete {
+        true => base,
+        false => format!("{base} · still syncing"),
+    }
 }
 
 /// The readout as a screen reader should hear it — the same facts, in words,
@@ -226,10 +265,21 @@ pub fn readout(outcome: &Outcome) -> String {
 /// something to read aloud.
 pub fn spoken_readout(outcome: &Outcome) -> String {
     let elapsed = outcome.elapsed.as_millis();
-    match elapsed {
+    let counted = match elapsed {
         0 => format!("{}, in under a millisecond", hits(outcome)),
         1 => format!("{}, in 1 millisecond", hits(outcome)),
         _ => format!("{}, in {elapsed} milliseconds", hits(outcome)),
+    };
+    // The spoken form carries the sentence the visible one has no room for.
+    // Three words are enough to *flag* a state beside a number; they are not
+    // enough to explain one to somebody who cannot see the rest of the
+    // window.
+    match outcome.corpus_complete {
+        true => counted,
+        false => format!(
+            "{counted}. This account is still syncing, so messages whose text \
+             has not arrived yet could not be searched."
+        ),
     }
 }
 
@@ -551,6 +601,12 @@ impl Live {
         let inner = &self.inner;
         match inner.outcome.get() {
             Some(outcome) => {
+                // Only as wide as this outcome needs. See
+                // `READOUT_CHARS_SYNCING`.
+                inner.label.set_width_chars(match outcome.corpus_complete {
+                    true => READOUT_CHARS,
+                    false => READOUT_CHARS_SYNCING,
+                });
                 inner.label.set_text(&readout(&outcome));
                 inner
                     .label
@@ -1952,12 +2008,82 @@ mod tests {
             hits,
             capped,
             elapsed: Duration::from_millis(millis),
+            // The end state, and the one every other test here is about:
+            // ADR 0016 backfills to completion, so a settled account carries
+            // no caveat.
+            corpus_complete: true,
         }
     }
 
     #[test]
     fn the_readout_is_written_the_way_the_canvas_writes_it() {
         assert_eq!(readout(&outcome(14, false, 11)), "14 hits · 11 ms");
+    }
+
+    // -- the corpus caveat (#352) ----------------------------------------
+
+    #[test]
+    fn a_corpus_still_filling_says_so_once_beside_the_count() {
+        let filling = Outcome {
+            corpus_complete: false,
+            ..outcome(14, false, 11)
+        };
+        assert_eq!(readout(&filling), "14 hits · 11 ms · still syncing");
+    }
+
+    #[test]
+    fn the_settled_slot_still_fits_the_longest_thing_without_the_caveat() {
+        // The common case keeps the width it has always had: a settled
+        // account must not pay for a caveat it does not carry.
+        let longest = outcome(10_000, true, 90);
+        assert_eq!(readout(&longest), "10000+ hits · 90 ms");
+        assert!(readout(&longest).chars().count() <= READOUT_CHARS as usize);
+    }
+
+    #[test]
+    fn a_complete_corpus_carries_no_caveat_at_all() {
+        // The acceptance criterion that stops this becoming permanent
+        // furniture: under ADR 0016 every account converges here, so this is
+        // the state the readout spends most of its life in.
+        assert_eq!(readout(&outcome(14, false, 11)), "14 hits · 11 ms");
+        assert!(!readout(&outcome(0, false, 3)).contains("syncing"));
+    }
+
+    #[test]
+    fn the_caveat_composes_with_a_capped_count() {
+        // Two different reasons the number is a floor, and they are allowed to
+        // be true at once: a term common enough to cap the count, asked of a
+        // corpus that is not all here.
+        let both = Outcome {
+            corpus_complete: false,
+            ..outcome(10_000, true, 90)
+        };
+        assert_eq!(readout(&both), "10000+ hits · 90 ms · still syncing");
+        assert!(
+            readout(&both).chars().count() <= READOUT_CHARS_SYNCING as usize,
+            "the longest thing the readout can say must fit the slot it \
+             reserves, or the field twitches when the caveat goes away: {:?}",
+            readout(&both)
+        );
+    }
+
+    #[test]
+    fn the_spoken_form_explains_what_three_words_only_flag() {
+        let filling = Outcome {
+            corpus_complete: false,
+            ..outcome(14, false, 11)
+        };
+        let spoken = spoken_readout(&filling);
+        assert!(spoken.starts_with("14 hits, in 11 milliseconds"));
+        assert!(
+            spoken.contains("still syncing"),
+            "somebody who cannot see the window gets the flag and no way to \
+             find out what it means: {spoken:?}"
+        );
+        assert!(
+            !spoken_readout(&outcome(14, false, 11)).contains("syncing"),
+            "and a settled account is not told about a state it is not in"
+        );
     }
 
     #[test]
@@ -1990,6 +2116,7 @@ mod tests {
             hits: 2,
             capped: false,
             elapsed: Duration::from_millis(12_400),
+            corpus_complete: true,
         };
         assert_eq!(readout(&slow), "2 hits · 12.4 s");
     }
@@ -2017,8 +2144,17 @@ mod tests {
             total_hits: 14,
             total_hits_capped: false,
             elapsed: Duration::from_millis(11),
+            corpus_complete: true,
         };
         assert_eq!(Outcome::of(&results), outcome(14, false, 11));
+
+        // And the caveat is carried across rather than re-derived: the
+        // executor is what knows the scope it searched (#352).
+        let filling = postio_search::SearchResults {
+            corpus_complete: false,
+            ..results
+        };
+        assert!(!Outcome::of(&filling).corpus_complete);
     }
 
     // -- pacing -----------------------------------------------------------
