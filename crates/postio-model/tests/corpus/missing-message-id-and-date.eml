@@ -9,5 +9,5 @@ with no Message-ID at all. Storage has to synthesize a stable local
 identity for this message, threading has to cope with having nothing to
 link on, and the message list has to sort it without a Date. Delivering
 the same body twice must not produce two rows with the same synthesized
-id, or one row when two were delivered — whichever rule we pick, this
+id, or one row when two were delivered -- whichever rule we pick, this
 fixture is where it gets pinned down.
