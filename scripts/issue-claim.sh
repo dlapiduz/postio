@@ -20,17 +20,23 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/ready-labels.sh"
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
-# Which label marks an issue as claimable. `ready` for ordinary work; the
-# macOS frontend initiative (#15) uses `ready-mac`, so that an ordinary Linux
-# session skips its issues for free rather than by remembering to. Sessions run
-# on several machines and the claim locks below are per-machine, so the label is
-# the only thing keeping two hosts off the same work. #552.
-READY_LABEL="${POSTIO_READY_LABEL:-ready}"
+# Which label marks an issue as claimable. `${READY_LABELS[0]}` (`ready`) for
+# ordinary work; the macOS frontend initiative (#15) uses `ready-mac`, so
+# that an ordinary Linux session skips its issues for free rather than by
+# remembering to. Sessions run on several machines and the claim locks below
+# are per-machine, so the label is the only thing keeping two hosts off the
+# same work. #552. The default comes from `lib/ready-labels.sh`, the same
+# list `issue-release.sh` strips on landing, so the two cannot disagree
+# about which queues exist (#621) -- `--ready-label`/`$POSTIO_READY_LABEL`
+# can still name anything, on purpose: a one-off queue nobody has
+# bureaucratized yet is still claimable.
+READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
 WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"
 while [ $# -gt 0 ]; do
