@@ -154,8 +154,9 @@ Search is FTS5 over that database, in `postio-index`. Tantivy and hybrid
 lexical/vector retrieval were considered; the vector half is now
 [ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks FTS5 results rather
 than replacing them. **The index stores no second copy of a body**: SQLite holds
-the inverted index, the blob store holds the text, and result highlighting is
-generated from the blob.
+the inverted index, the message row holds the text (compressed — ADR 0020),
+and result highlighting is generated from that. The blob store holds
+attachment payloads and raw `.eml`.
 
 **The store is a complete replica, and it has a budget.** Under §14's backfill
 every message's text ends up local, so the database and blob store together hold
