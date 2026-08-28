@@ -11,6 +11,10 @@ import SwiftUI
 struct PostioApp: App {
     @State private var engine = Engine()
     @Environment(\.scenePhase) private var phase
+    // SwiftUI's `onOpenURL` only fires for a scene that already exists, and a
+    // `mailto:` click is the ordinary way Postio gets launched in the first
+    // place. The delegate sees both.
+    @NSApplicationDelegateAdaptor(URLHandler.self) private var urls
 
     var body: some Scene {
         WindowGroup("Postio") {
