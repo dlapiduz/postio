@@ -15,7 +15,7 @@ import SwiftUI
 /// `docs/PRODUCT.md` §9 says so, not because the widgets happen to match.
 struct Shell: View {
     @State private var engine: Engine
-    @State private var selectedFolder: String? = "Inbox"
+    @State private var selectedFolder: Int64?
     @State private var showing: Int64?
 
     init(engine: Engine) {
@@ -25,12 +25,24 @@ struct Shell: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selectedFolder) {
-                Section("Postio") {
-                    Label("Inbox", systemImage: "tray").tag("Inbox")
-                    Label("Flagged", systemImage: "flag").tag("Flagged")
+                if engine.mailboxes.isEmpty {
+                    Text("No folders yet")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                } else {
+                    // Roots first, each with its children under it. The tree
+                    // is rebuilt here from the flat list's parent ids —
+                    // flattening it for display would turn a tidy account into
+                    // slash-separated strings.
+                    ForEach(engine.folderRoots, id: \.id) { folder in
+                        FolderRow(folder: folder, children: engine.children(of: folder.id))
+                    }
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+            .onChange(of: selectedFolder) { _, folder in
+                if let folder { engine.open(mailbox: folder) }
+            }
         } content: {
             messages
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 560)
