@@ -10,6 +10,7 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/ready-labels.sh"
 
 REPO_ROOT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
@@ -109,9 +110,17 @@ if [ "$ABANDON" = 1 ]; then
     gh issue comment "$NUM" --body "Unclaimed by an agent session. Any pushed branch is still on origin."
     echo "#$NUM released and available again."
 else
-    # `ready` too: a closed issue wearing `ready` reads as claimable work on
-    # every board and label query that does not also check the state. #328.
-    gh issue edit "$NUM" --remove-label in-progress --remove-label ready \
-        >/dev/null 2>&1 || true
+    # Every queue label, not just `ready`: a closed issue wearing one reads
+    # as claimable work on every board and label query that does not also
+    # check the state (#328) -- `ready-mac` fell through this exact gap
+    # until #621 gave it one shared list with `issue-claim.sh` to read from.
+    # `gh issue edit --remove-label` on a label the issue never had is a
+    # harmless no-op, so trying every known queue needs no lookup first.
+    remove_args=(--remove-label in-progress)
+    for label in "${READY_LABELS[@]}"; do
+        remove_args+=(--remove-label "$label")
+    done
+    gh issue edit "$NUM" "${remove_args[@]}" >/dev/null 2>&1 || true
     echo "#$NUM cleaned up."
+    echo "(Work not actually landed? Release with --abandon instead -- this path assumes it did.)"
 fi
