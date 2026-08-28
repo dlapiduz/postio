@@ -433,8 +433,19 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         postio_core::state::Scope::Account(account.id),
         false,
     );
+    // With more than one account the sidebar draws a section each, so the feed
+    // has to read every tree rather than the current one (#185). `install_feeds`
+    // has already opened the current account's; this re-points it, and only
+    // when there is a second account to be worth the extra read.
+    if named.len() > 1 {
+        let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();
+        feeds
+            .folders
+            .open_sections(&ids, account.id, &account.address.address);
+    }
     window.sidebar().connect_scope_selected({
         let feeds = feeds.clone();
+        let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();
         let addresses: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
             .into_iter()
             .map(|account| (account.id, account.address.address))
@@ -452,7 +463,17 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
             else {
                 return;
             };
-            feeds.folders.open(id, address);
+            // `open_sections` and not `open` once there is more than one
+            // account: `open` clears the sections, so switching scope would
+            // redraw the sidebar as a single tree and every other account's
+            // folders would vanish. What changes here is which account is
+            // *current*, not which are *drawn* -- the two are separate
+            // arguments for exactly this reason (#185).
+            if ids.len() > 1 {
+                feeds.folders.open_sections(&ids, id, address);
+            } else {
+                feeds.folders.open(id, address);
+            }
         }
     });
 

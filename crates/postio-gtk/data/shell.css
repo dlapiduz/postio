@@ -175,6 +175,50 @@ button.postio-compose {
   background-color: var(--postio-hairline);
 }
 
+/* One collapsible group per account (#185), drawn only when there is more
+ * than one -- a single-account install sees the folder list it always has.
+ *
+ * The header is a button rather than a row in one of the folder boxes:
+ * `sync_folder_rows` updates a box's rows by index, so a header among them
+ * would be updated as though it were a folder. It reads as a heading and
+ * behaves as a control, which is what folding needs it to be. */
+.postio-account-section {
+  margin-bottom: var(--postio-space-2);
+}
+
+.postio-account-header {
+  padding: var(--postio-space-1) 18px;
+  margin: 0;
+  min-height: 0;
+  background: none;
+  box-shadow: none;
+  border: none;
+}
+
+.postio-account-header:hover {
+  background: var(--postio-hover-bg);
+}
+
+/* Condensed and quiet: this names a group, it is not a row you land on. The
+ * folders below carry the weight, and a heading competing with them would
+ * make the sidebar read as two lists of equal standing. */
+.postio-account-heading {
+  font-family: var(--postio-font-heading);
+  font-size: 0.9rem;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-account-disclosure {
+  color: var(--postio-dim);
+  -gtk-icon-size: 12px;
+}
+
+/* The hue is a second signal beside the name, never the only one -- the same
+ * rule the strip and the reading pane's account line follow. */
+.postio-account-header .postio-account-swatch {
+  min-height: 10px;
+}
+
 .postio-folders {
   background: none;
   padding: 0;

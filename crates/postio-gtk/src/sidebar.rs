@@ -532,6 +532,19 @@ mod imp {
         pub mailboxes: RefCell<Vec<Mailbox>>,
         /// Folders the ordinary tree is showing collapsed (#324).
         pub collapsed: RefCell<HashSet<MailboxId>>,
+        /// One collapsible group per account, when there is more than one.
+        pub sections: gtk::Box,
+        /// The accounts to draw sections for, in the order the strip lists
+        /// them -- which is also the order their hues come from.
+        pub account_names: RefCell<Vec<(AccountId, String)>>,
+        /// Accounts whose folders are folded away. Mirrors `collapsed` for
+        /// mailboxes: the same mechanism, keyed by account instead (#185).
+        pub collapsed_accounts: RefCell<HashSet<AccountId>>,
+        /// The boxes each account's group owns, kept across renders so rows
+        /// are reused rather than rebuilt -- `sync_folder_rows` updates by
+        /// index, and a box replaced under it takes the selection and the
+        /// keyboard with it.
+        pub account_boxes: RefCell<Vec<(AccountId, gtk::ListBox, gtk::ListBox)>>,
         /// Every folder `GtkListBox`, in the order it is drawn.
         ///
         /// Two of them today -- special-use, then the ordinary tree -- and one
@@ -607,6 +620,12 @@ impl Sidebar {
         // 12s` is the answer to "is anything happening", and an answer you
         // have to scroll for is one you will not look at.
         let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // The per-account groups, above the single-account boxes because with
+        // more than one account they replace them: exactly one of the two
+        // shapes is ever visible.
+        imp.sections.set_orientation(gtk::Orientation::Vertical);
+        imp.sections.set_visible(false);
+        folders.append(&imp.sections);
         folders.append(&folder_list(&imp.special));
 
         let heading = gtk::Label::new(Some("Folders"));
@@ -760,19 +779,7 @@ impl Sidebar {
         // ordinary tree — ADR 0016's own motivating example, Junk, is a
         // special-use folder and lives in `special`, not `ordinary`.
         for list in [&imp.special, &imp.ordinary] {
-            let folder_menu = gtk::GestureClick::new();
-            folder_menu.set_button(gtk::gdk::BUTTON_SECONDARY);
-            folder_menu.set_propagation_phase(gtk::PropagationPhase::Capture);
-            folder_menu.connect_pressed(glib::clone!(
-                #[weak(rename_to = sidebar)]
-                self,
-                #[weak]
-                list,
-                move |_, _, x, y| {
-                    sidebar.open_folder_menu(&list, x, y);
-                }
-            ));
-            list.add_controller(folder_menu);
+            self.connect_folder_menu(list);
         }
 
         self.set_child(Some(&column));
@@ -1096,9 +1103,12 @@ impl Sidebar {
         if accounts.len() < 2 {
             imp.accounts_section.set_visible(false);
             imp.account.set_visible(true);
+            *imp.account_names.borrow_mut() = accounts.to_vec();
+            self.render_folders();
             return;
         }
 
+        *self.imp().account_names.borrow_mut() = accounts.to_vec();
         let mut scopes = Vec::new();
         if offer_unified {
             scopes.push(AccountScope::Unified);
@@ -1114,6 +1124,7 @@ impl Sidebar {
         // one of them repeated -- and, worse, the *wrong* one to read as a
         // heading once there is more than one.
         imp.account.set_visible(false);
+        self.render_folders();
         self.set_scope(scope);
     }
 
@@ -1169,11 +1180,12 @@ impl Sidebar {
     pub fn set_mailboxes(&self, mailboxes: &[Mailbox]) {
         let imp = self.imp();
         *imp.mailboxes.borrow_mut() = mailboxes.to_vec();
-        let (special, _) = sections(mailboxes);
         let selected = self.selected();
 
-        sync_rows(&imp.special, &special, self);
-        self.render_ordinary();
+        // `render_folders` owns both shapes, and syncing the single-account
+        // box here as well would fill it with every account's folders on the
+        // way past -- the flat list a section is drawn *instead of*.
+        self.render_folders();
 
         if let Some(id) = selected {
             self.select(id);
@@ -1184,10 +1196,209 @@ impl Sidebar {
     /// current collapse state (#324). Called after `set_mailboxes`, and
     /// after anything that changes what is collapsed.
     fn render_ordinary(&self) {
+        self.render_folders();
+    }
+
+    /// Draw the folders in whichever of the two shapes applies.
+    ///
+    /// One account is the shape Postio has always had: a special-use box and
+    /// an ordinary tree, no headers, no noise for the people who will never
+    /// have a second account. More than one draws a collapsible group each,
+    /// so every account's tree is visible at once rather than one at a time
+    /// with a strip switching between them (#185).
+    ///
+    /// Exactly one shape is ever visible, and the registry is rebuilt to
+    /// match, so the keyboard and the selection walk what is on screen.
+    fn render_folders(&self) {
+        let accounts = self.imp().account_names.borrow().clone();
+        if accounts.len() < 2 {
+            self.render_one_account();
+        } else {
+            self.render_account_sections(&accounts);
+        }
+    }
+
+    /// The single-account shape: the fixed boxes, exactly as before.
+    fn render_one_account(&self) {
         let imp = self.imp();
-        let rows = folder_rows(&imp.mailboxes.borrow(), &imp.collapsed.borrow());
+        imp.sections.set_visible(false);
+        while let Some(child) = imp.sections.first_child() {
+            imp.sections.remove(&child);
+        }
+        imp.account_boxes.borrow_mut().clear();
+        imp.special.set_visible(true);
+
+        let mailboxes = imp.mailboxes.borrow().clone();
+        let (special, _) = sections(&mailboxes);
+        sync_rows(&imp.special, &special, self);
+        let rows = folder_rows(&mailboxes, &imp.collapsed.borrow());
         sync_folder_rows(&imp.ordinary, &rows, self);
         imp.ordinary_section.set_visible(!rows.is_empty());
+
+        *imp.folder_lists.borrow_mut() = vec![imp.special.clone(), imp.ordinary.clone()];
+    }
+
+    /// One collapsible group per account.
+    ///
+    /// The boxes are cached by account and reused, because `sync_folder_rows`
+    /// updates rows by index: a box rebuilt under the selection would take it,
+    /// and the keyboard with it, every time a count changed.
+    fn render_account_sections(&self, accounts: &[(AccountId, String)]) {
+        let imp = self.imp();
+        imp.special.set_visible(false);
+        imp.ordinary_section.set_visible(false);
+        imp.sections.set_visible(true);
+
+        let known: Vec<AccountId> = imp
+            .account_boxes
+            .borrow()
+            .iter()
+            .map(|(id, ..)| *id)
+            .collect();
+        let wanted: Vec<AccountId> = accounts.iter().map(|(id, _)| *id).collect();
+        if known != wanted {
+            self.rebuild_account_sections(accounts);
+        }
+
+        let mailboxes = imp.mailboxes.borrow().clone();
+        let collapsed_mailboxes = imp.collapsed.borrow().clone();
+        let folded = imp.collapsed_accounts.borrow().clone();
+        let mut registry = Vec::new();
+        for (id, special_box, ordinary_box) in imp.account_boxes.borrow().iter() {
+            let mine: Vec<Mailbox> = mailboxes
+                .iter()
+                .filter(|mailbox| mailbox.account_id == *id)
+                .cloned()
+                .collect();
+            let (special, _) = sections(&mine);
+            sync_rows(special_box, &special, self);
+            let rows = folder_rows(&mine, &collapsed_mailboxes);
+            sync_folder_rows(ordinary_box, &rows, self);
+
+            let open = !folded.contains(id);
+            special_box.set_visible(open && !special.is_empty());
+            ordinary_box.set_visible(open && !rows.is_empty());
+            // Only what is on screen is registered. A folded box still holds
+            // its rows -- hiding a widget does not empty it -- and `rows`
+            // walks the registry, so registering one would let `j` step into
+            // folders nobody can see.
+            if open {
+                registry.push(special_box.clone());
+                registry.push(ordinary_box.clone());
+            }
+        }
+        *imp.folder_lists.borrow_mut() = registry;
+    }
+
+    /// Build one group per account: a header, then that account's two boxes.
+    ///
+    /// Only when the set of accounts changes. Everything else -- counts, new
+    /// folders, folding -- is a sync into the boxes this leaves behind.
+    fn rebuild_account_sections(&self, accounts: &[(AccountId, String)]) {
+        let imp = self.imp();
+        while let Some(child) = imp.sections.first_child() {
+            imp.sections.remove(&child);
+        }
+        let mut built = Vec::new();
+        for (hue, (id, name)) in accounts.iter().enumerate() {
+            let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            group.add_css_class("postio-account-section");
+            group.append(&self.account_header(*id, name, hue));
+
+            let special = gtk::ListBox::new();
+            let ordinary = gtk::ListBox::new();
+            group.append(&folder_list(&special));
+            group.append(&folder_list(&ordinary));
+            self.connect_folder_list(&special);
+            self.connect_folder_list(&ordinary);
+            self.connect_folder_menu(&special);
+            self.connect_folder_menu(&ordinary);
+
+            imp.sections.append(&group);
+            built.push((*id, special, ordinary));
+        }
+        *imp.account_boxes.borrow_mut() = built;
+    }
+
+    /// An account's header: disclosure, hue, name. The thing that folds the
+    /// account away.
+    ///
+    /// A `GtkButton` rather than a row in one of the boxes, and that is the
+    /// point: `sync_folder_rows` updates a box's rows by index, so a header
+    /// living among them would be updated as though it were a folder. Outside
+    /// the boxes it is also its own tab stop, which is what makes folding
+    /// reachable without a pointer.
+    fn account_header(&self, id: AccountId, name: &str, hue: usize) -> gtk::Button {
+        let folded = self.imp().collapsed_accounts.borrow().contains(&id);
+
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let disclosure = gtk::Image::from_icon_name(if folded {
+            "pan-end-symbolic"
+        } else {
+            "pan-down-symbolic"
+        });
+        disclosure.add_css_class("postio-account-disclosure");
+        content.append(&disclosure);
+
+        let swatch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        swatch.add_css_class("postio-account-swatch");
+        swatch.add_css_class(&format!(
+            "postio-account-{}",
+            hue % postio_ui::tokens::ACCOUNT_HUES
+        ));
+        content.append(&swatch);
+
+        let label = gtk::Label::new(Some(name));
+        label.add_css_class("postio-account-heading");
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_ellipsize(pango::EllipsizeMode::Middle);
+        content.append(&label);
+
+        let button = gtk::Button::new();
+        button.set_child(Some(&content));
+        button.add_css_class("flat");
+        button.add_css_class("postio-account-header");
+        // The name alone would not say what pressing it does, and the state is
+        // not readable from an icon by anyone using a screen reader.
+        button.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{name} folders, {}",
+            if folded { "collapsed" } else { "expanded" }
+        ))]);
+        button.connect_clicked(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |_| sidebar.toggle_account(id)
+        ));
+        button
+    }
+
+    /// Fold an account's folders away, or bring them back.
+    pub fn toggle_account(&self, id: AccountId) {
+        {
+            let mut folded = self.imp().collapsed_accounts.borrow_mut();
+            if !folded.remove(&id) {
+                folded.insert(id);
+            }
+        }
+        // The header's own arrow and accessible label are built from the
+        // state, so the group is rebuilt rather than only re-synced.
+        let accounts = self.imp().account_names.borrow().clone();
+        self.rebuild_account_sections(&accounts);
+        self.render_folders();
+    }
+
+    /// Which accounts are folded away, for the window to persist.
+    pub fn collapsed_accounts(&self) -> HashSet<AccountId> {
+        self.imp().collapsed_accounts.borrow().clone()
+    }
+
+    /// Restore folded accounts from a previous session.
+    pub fn set_collapsed_accounts(&self, folded: HashSet<AccountId>) {
+        *self.imp().collapsed_accounts.borrow_mut() = folded;
+        let accounts = self.imp().account_names.borrow().clone();
+        self.rebuild_account_sections(&accounts);
+        self.render_folders();
     }
 
     /// Expand or collapse `id`'s children. A harmless no-op if `id` has none
@@ -1256,8 +1467,10 @@ impl Sidebar {
 
     /// The selected folder, if any.
     pub fn selected(&self) -> Option<MailboxId> {
-        let imp = self.imp();
-        for list in [&imp.special, &imp.ordinary] {
+        // The registry, not the two fixed boxes: in section mode those are
+        // empty and hidden, so naming them here answered `None` however
+        // plainly a folder was selected.
+        for list in self.imp().folder_lists.borrow().iter() {
             if let Some(row) = list.selected_row() {
                 return Some(MailboxId::new(row_id(&row)));
             }
@@ -1287,6 +1500,23 @@ impl Sidebar {
         if opened {
             self.render_ordinary();
             self.notify_collapsed_changed();
+        }
+
+        // A folded account hides its rows, so selecting one has to bring it
+        // back -- the same reason an ancestor folder is opened above. Without
+        // this, `select` would silently land nowhere.
+        let account = imp
+            .mailboxes
+            .borrow()
+            .iter()
+            .find(|mailbox| mailbox.id == id)
+            .map(|mailbox| mailbox.account_id);
+        if let Some(account) = account
+            && imp.collapsed_accounts.borrow_mut().remove(&account)
+        {
+            let accounts = imp.account_names.borrow().clone();
+            self.rebuild_account_sections(&accounts);
+            self.render_folders();
         }
 
         imp.echoing.set(true);
@@ -1354,6 +1584,28 @@ impl Sidebar {
                 }
             }
         ));
+    }
+
+    /// Give `list` the folder context menu: skip/resume background backfill
+    /// (ADR 0016, #350), the same right-click-a-row idiom the saved searches
+    /// use.
+    ///
+    /// Every folder box gets it, not only the ordinary tree: ADR 0016's own
+    /// motivating example, Junk, is special-use.
+    fn connect_folder_menu(&self, list: &gtk::ListBox) {
+        let folder_menu = gtk::GestureClick::new();
+        folder_menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+        folder_menu.set_propagation_phase(gtk::PropagationPhase::Capture);
+        folder_menu.connect_pressed(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            #[weak]
+            list,
+            move |_, _, x, y| {
+                sidebar.open_folder_menu(&list, x, y);
+            }
+        ));
+        list.add_controller(folder_menu);
     }
 
     fn selected_row(&self) -> Option<gtk::ListBoxRow> {
