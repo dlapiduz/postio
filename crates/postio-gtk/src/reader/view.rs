@@ -38,15 +38,14 @@ use super::allowlist::RemoteImageAllowList;
 use super::banner::RemoteImageBanner;
 use super::message_header::MessageHeader;
 use super::scheme::{self, BlobSource};
-use postio_body::quote;
-use postio_body::sanitize::{self, RemoteImages};
-// The document itself — CSP, wrapper, fonts, markers, absent states — is
-// postio-ui's (#567, ADR 0019 Q6): one implementation for every frontend,
-// re-exported here so existing paths keep resolving. What remains in this
-// file is webkit6 glue.
+use postio_body::sanitize::RemoteImages;
+// The document itself — CSP, wrapper, fonts, markers, absent states,
+// sanitizing and containing the body — is postio-ui's (#567, #590, ADR 0019
+// Q6): one implementation for every frontend, re-exported here so existing
+// paths keep resolving. What remains in this file is webkit6 glue.
 pub use postio_ui::reader::document::{
-    Absent, DOCUMENT_BASE_URI, SCROLL_MARKERS, absent_html, content_security_policy,
-    scroll_markers, wrap_document,
+    Absent, DOCUMENT_BASE_URI, HeldBack, SCROLL_MARKERS, absent_html, body_html, contain_body,
+    content_security_policy, scroll_markers, wrap_document,
 };
 
 /// The message currently on screen, kept so the banner's two actions can ask
@@ -59,29 +58,6 @@ struct Open {
 /// Called with how many remote references the pane is currently holding
 /// back, every time a render decides that count anew.
 type RenderedHandler = Box<dyn Fn(HeldBack)>;
-
-/// What a render is holding back, split by kind.
-///
-/// Two numbers rather than one because the parts panel says them separately
-/// ("3 remote images and 1 likely tracker"), and a single total could not.
-/// The split comes from [`postio_body::Sanitized`]; see its `trackers` field
-/// for what the heuristic claims, which is less than the name suggests.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct HeldBack {
-    /// Ordinary remote pictures that were stripped.
-    pub remote_images: u32,
-    /// Stripped references whose declared size makes them likely beacons.
-    pub trackers: u32,
-}
-
-impl HeldBack {
-    /// Everything held back, whatever kind it was.
-    ///
-    /// What the banner asks: whether it has anything at all to offer.
-    pub fn total(self) -> u32 {
-        self.remote_images + self.trackers
-    }
-}
 
 /// The reading pane: a hardened `WebView`, and the remote-image banner
 /// (`postio-xxz`) that sits above it.
@@ -577,40 +553,6 @@ fn render_open(
     }
 }
 
-/// The body markup: sanitized and quote-folded, but not yet wrapped in the
-/// document template [`wrap_document`] adds, plus what was held back to
-/// produce it — see [`sanitize::Sanitized`].
-fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, HeldBack) {
-    if let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) {
-        let sanitized = sanitize::sanitize_body(html, remote);
-        return (
-            quote::fold_html_quotes(&sanitized.html),
-            HeldBack {
-                remote_images: sanitized.remote_blocked,
-                trackers: sanitized.trackers,
-            },
-        );
-    }
-    if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        return (quote::text_to_html(text), HeldBack::default());
-    }
-    (String::new(), HeldBack::default())
-}
-
-/// Give a sender's content a bounded surface of its own (#323): a visible
-/// edge between what Postio wrote and what arrived in the message, so a
-/// sender styling their markup to imitate application chrome has a harder
-/// time — the boundary is a security affordance as much as a visual one.
-///
-/// Only ever wraps a real body. [`Reader::show_absent`] and [`Reader::clear`]
-/// bypass this and call [`wrap_document`] directly, so Postio's own words —
-/// the "downloading" placeholder among them — stay outside the container,
-/// same as the banner and the header do by already being native GTK widgets
-/// stacked around the `WebView` rather than markup inside its document.
-fn contain_body(content: &str) -> String {
-    format!(r#"<div class="postio-body">{content}</div>"#)
-}
-
 /// Every scripting-adjacent `WebKitSettings` flag, turned off.
 ///
 /// JavaScript is the headline, but each of these is a surface JavaScript
@@ -769,49 +711,6 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_body_produces_empty_content() {
-        let (content, held_back) = body_html(&MessageBody::default(), RemoteImages::Blocked);
-        assert_eq!(content, "");
-        assert_eq!(held_back, HeldBack::default());
-    }
-
-    #[test]
-    fn html_is_preferred_over_text_when_both_are_present() {
-        let body = MessageBody {
-            text: Some("plain fallback".to_owned()),
-            html: Some("<p>rich</p>".to_owned()),
-        };
-        assert_eq!(body_html(&body, RemoteImages::Blocked).0, "<p>rich</p>");
-    }
-
-    #[test]
-    fn text_only_bodies_still_render() {
-        let body = MessageBody {
-            text: Some("hello".to_owned()),
-            html: None,
-        };
-        assert!(body_html(&body, RemoteImages::Blocked).0.contains("hello"));
-    }
-
-    #[test]
-    fn a_remote_image_in_the_body_is_reported_as_blocked() {
-        let body = MessageBody {
-            text: None,
-            html: Some(r#"<img src="https://tracker.example.org/o.gif">"#.to_owned()),
-        };
-        // No declared size, so the size heuristic reads it as an ordinary
-        // picture whatever the host is called -- nothing here is domain-based
-        // (#174). Blocked identically either way.
-        assert_eq!(
-            body_html(&body, RemoteImages::Blocked).1,
-            HeldBack {
-                remote_images: 1,
-                trackers: 0
-            }
-        );
-    }
-
-    #[test]
     fn the_csp_only_allows_remote_images_when_asked() {
         assert!(!content_security_policy(RemoteImages::Blocked).contains("https:"));
         assert!(content_security_policy(RemoteImages::Allowed).contains("https:"));
@@ -823,18 +722,5 @@ mod tests {
         assert!(doc.contains("<style>"));
         assert!(doc.contains("<p>hi</p>"));
         assert!(doc.contains("Content-Security-Policy"));
-    }
-
-    /// #323: a sender's content sits inside a bounded container, distinct
-    /// from Postio's own words — this is the seam `render_open` uses, so
-    /// proving it here proves the container actually reaches what a real
-    /// render produces, not just that the CSS rule exists unused.
-    #[test]
-    fn a_rendered_body_sits_inside_its_own_container() {
-        let document = wrap_document(&contain_body("<p>hi</p>"), RemoteImages::Blocked);
-        assert!(
-            document.contains(r#"<div class="postio-body"><p>hi</p></div>"#),
-            "{document}"
-        );
     }
 }
