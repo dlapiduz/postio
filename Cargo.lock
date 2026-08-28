@@ -2646,6 +2646,7 @@ dependencies = [
  "postio-model",
  "postio-runtime",
  "postio-session",
+ "postio-smtp",
  "postio-storage",
  "postio-ui",
  "tempfile",

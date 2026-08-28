@@ -41,7 +41,7 @@ mod reader;
 mod registry;
 mod session;
 
-pub use event::UiEvent;
+pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
 pub use list::{RowFfi, ScopeFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
