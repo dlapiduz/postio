@@ -93,11 +93,15 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
         "the list is empty, so there is nothing to open"
     );
 
-    // ── nothing is being read yet ───────────────────────────────────────
+    // ── the pane starts on the autoselected row (#601) ──────────────────
+    // Cleared here so what follows is about *opening* a message rather than
+    // about the row the window happened to open on.
     assert!(
-        !window.reading(),
-        "an untouched window shows the pane's empty state, not a message"
+        settle_until(|| window.reading()),
+        "the window opened with a row under the cursor and an empty pane"
     );
+    window.clear_reader();
+    assert!(!window.reading(), "the pane was just cleared");
 
     // ── open the first row, the way a double click or `Enter` does ──────
     activate_first_row(&window);

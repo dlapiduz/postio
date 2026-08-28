@@ -104,14 +104,20 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
         "the list is empty, so there is no cursor to move"
     );
 
-    // ── an untouched window keeps the pane's empty state ─────────────────
-    // The cursor is autoselected onto row 0 the moment the list has rows,
-    // and that is not somebody reading. `reading.rs`'s own test asserts the
-    // same thing; filling here would also, once #71's dwell timer lands,
-    // mark the newest message read merely because Postio was opened.
+    // ── an untouched window shows the row it selected ────────────────────
+    // The cursor is autoselected onto row 0 the moment the list has rows.
+    // That is not somebody *choosing* a message, but the pane fills for it
+    // all the same (#601): a window that opens with a row selected and
+    // nothing beside it reads as a broken app, which is #70's complaint
+    // wearing a different hat.
+    //
+    // What the autoselect must not do is start #71's dwell clock — that
+    // would mark the newest message read for no reason but that Postio was
+    // opened. `dwell_wiring` is where that is asserted, over the real timer.
     assert!(
-        !window.reading(),
-        "an untouched window shows the pane's empty state, not a message"
+        settle_until(|| window.reading()),
+        "the window opened with a row under the cursor and an empty pane \
+         beside it"
     );
 
     // ── `j` moves the cursor, and the pane follows it ────────────────────
