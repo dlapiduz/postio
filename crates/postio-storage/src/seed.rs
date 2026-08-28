@@ -49,10 +49,9 @@ use postio_model::{
 };
 use rusqlite::Connection;
 
-use crate::blob::BlobStore;
 use crate::db::Database;
 use crate::repository::{
-    BodyBlobs, ContactRepository, MailboxRepository, MessageRepository, Scope, ThreadingRepository,
+    ContactRepository, MailboxRepository, MessageRepository, Scope, StoredBody, ThreadingRepository,
 };
 use crate::test_support;
 
@@ -123,7 +122,7 @@ fn anchor() -> DateTime<Utc> {
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
 pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
-    seed_small_into(database, None, seed)
+    seed_small_into(database, false, seed)
 }
 
 /// [`seed_small`], plus the corpus' own bodies written into `blobs`.
@@ -143,11 +142,11 @@ pub fn seed_small(database: &Database, seed: u64) -> SeedReport {
 /// # Panics
 ///
 /// If a write fails, as [`seed_small`] does.
-pub fn seed_small_with_bodies(database: &Database, blobs: &BlobStore, seed: u64) -> SeedReport {
-    seed_small_into(database, Some(blobs), seed)
+pub fn seed_small_with_bodies(database: &Database, seed: u64) -> SeedReport {
+    seed_small_into(database, true, seed)
 }
 
-fn seed_small_into(database: &Database, blobs: Option<&BlobStore>, seed: u64) -> SeedReport {
+fn seed_small_into(database: &Database, with_bodies: bool, seed: u64) -> SeedReport {
     let connection = database.connection().expect("a checked-out connection");
     let account = test_support::account(&connection);
     let folders = create_folders(&connection, &account);
@@ -168,8 +167,8 @@ fn seed_small_into(database: &Database, blobs: Option<&BlobStore>, seed: u64) ->
         message.sync.body_state = BodyState::NotFetched;
 
         let id = file_message(&connection, account.id, message);
-        if let Some(blobs) = blobs {
-            write_body(&connection, blobs, id, &body);
+        if with_bodies {
+            write_body(&connection, id, &body);
         }
         message_count += 1;
     }
@@ -390,39 +389,25 @@ pub fn thread_seeded_messages(
 /// Inserts `message`, files it into a thread, and remembers who wrote it.
 /// Write `body` into `blobs` and point `id` at it.
 ///
-/// Content-addressed, so two fixtures with identical bodies share one blob —
-/// which is what the real store does too.
-fn write_body(
-    connection: &Connection,
-    blobs: &BlobStore,
-    id: MessageId,
-    body: &postio_model::MessageBody,
-) {
-    let put = |content: &Option<String>| {
-        content.as_ref().map(|text| {
-            blobs
-                .put(text.as_bytes())
-                .expect("write a seeded message body")
-        })
-    };
-    let text = put(&body.text);
-    let html = put(&body.html);
-    if text.is_none() && html.is_none() {
-        // Nothing to point at. The row keeps `NotFetched`, which is true:
-        // this fixture has no body to have fetched.
+/// Compressed into the row by the repository, the same path real mail takes
+/// (ADR 0020).
+fn write_body(connection: &Connection, id: MessageId, body: &postio_model::MessageBody) {
+    if body.text.is_none() && body.html.is_none() {
+        // Nothing to store. The row keeps `NotFetched`, which is true: this
+        // fixture has no body to have fetched.
         return;
     }
     MessageRepository::new(connection)
-        .set_body_blobs(
+        .set_body(
             id,
-            &BodyBlobs {
-                text,
-                html,
+            &StoredBody {
+                text: body.text.clone(),
+                html: body.html.clone(),
                 headers: None,
             },
             BodyState::Full,
         )
-        .expect("record a seeded body's blobs");
+        .expect("store a seeded body");
 }
 
 fn file_message(
@@ -681,9 +666,7 @@ mod tests {
     #[test]
     fn seeding_with_bodies_writes_mail_the_reader_can_actually_read() {
         let database = test_support::memory();
-        let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
-        let report = seed_small_with_bodies(&database, &blobs, 11);
+        let report = seed_small_with_bodies(&database, 11);
 
         let connection = database.connection().expect("a connection");
         let repository = MessageRepository::new(&connection);
@@ -693,12 +676,11 @@ mod tests {
 
         let mut readable = 0;
         for row in &page {
-            let Some(body) = repository.body_blobs(row.id).expect("a body record") else {
+            let Some(body) = repository.body(row.id).expect("a body record") else {
                 continue;
             };
-            for id in [body.text, body.html].into_iter().flatten() {
-                let bytes = blobs.get(&id).expect("the blob the row points at");
-                assert!(!bytes.is_empty(), "a body blob was written empty");
+            for text in [body.text, body.html].into_iter().flatten() {
+                assert!(!text.is_empty(), "a body was stored empty");
                 readable += 1;
             }
         }

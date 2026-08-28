@@ -105,6 +105,19 @@ pub enum Error {
         reason: String,
     },
 
+    /// A stored message body could not be compressed or read back.
+    ///
+    /// The row and this build disagree about what is in the column: a frame
+    /// that will not decode, a dictionary the database does not have, or bytes
+    /// that are not UTF-8. Deliberately loud rather than an empty body — a
+    /// reading pane that renders nothing looks the same as a message that had
+    /// nothing in it, and those are opposite facts (#70).
+    #[error("a stored message body could not be decoded: {reason}")]
+    UnreadableBody {
+        /// What about it could not be decoded.
+        reason: String,
+    },
+
     /// The blob store has no blob under this key.
     #[error("no blob stored under `{id}`")]
     BlobNotFound {
