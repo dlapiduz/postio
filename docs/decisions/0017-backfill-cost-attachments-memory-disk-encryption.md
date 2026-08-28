@@ -176,9 +176,9 @@ Message text compresses 5–8x with zstd, and mail text compresses far better th
 that in aggregate because every reply quotes its parent and every message carries
 the same signature. **Blobs are stored zstd-compressed**, level 3, with a
 dictionary trained on the store's own text corpus and versioned in the blob
-header. **The dictionary half is deferred — see the amendment below**, which
-does the arithmetic this sentence skipped: it is worth 2.2% of the reference
-account, against a permanent invariant.
+header. **Superseded by ADR 0020**: text bodies move into SQLite rows and are
+compressed there, so the blob store's dictionary is not needed — what remains
+in it is attachments, which are incompressible.
 
 Three constraints on how:
 
@@ -310,6 +310,20 @@ land rather than discovered by them.
    before spending it.
 
 ## Amendment — blobs rather than compressed rows, and what the dictionary is worth
+
+> **Superseded by [ADR 0020](0020-where-message-bodies-live.md) (2026-08-27),
+> and wrong in a way worth leaving visible.** The reasoning below computes the
+> dictionary's value as 2.2% of the store by dividing into a 12.43 GB mailbox —
+> but this ADR's own decision line says the payload axis "defaults to
+> on-demand", so those 11 GB are not on disk unless the user asks. Against the
+> default store, compression of bodies is worth 36% and the dictionary a
+> further 28%. The section's own table has the correct row in it, labelled as
+> a mailing-list edge case; it is the default configuration.
+>
+> The argument against putting the *blob store* in rows is sound and survives.
+> The argument it was used for — that bodies belong in the blob store — does
+> not: every load-bearing reason (streaming, dedup, 11 GB) is a reason about
+> attachments.
 
 Asked directly: *why hand-roll any of this instead of using something that
 compresses SQLite?* The question is a good one and it has two halves. The first
