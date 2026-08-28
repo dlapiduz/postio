@@ -278,7 +278,16 @@ fn a_secret_source_builds_its_store() {
     .build();
     assert_eq!(store.describe(), "command");
 
-    assert_eq!(SecretSource::default().build().describe(), "keyring");
+    // `SecretSource::Keyring` means "wherever this system keeps secrets", so
+    // what it builds is per-platform: the Secret Service on freedesktop, the
+    // Keychain on macOS. Asserting the *name* rather than skipping keeps both
+    // arms real — a build that quietly fell back to the wrong one would fail
+    // here rather than at the first D-Bus call on a machine with no D-Bus.
+    let default = SecretSource::default().build();
+    #[cfg(target_os = "macos")]
+    assert_eq!(default.describe(), "keychain");
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(default.describe(), "keyring");
 }
 
 // --- live keyring (needs a real Secret Service session) -----------------

@@ -314,7 +314,7 @@ impl Wiring {
             events,
             commands,
             engine: refresh::EngineSlot::default(),
-            secrets: Arc::new(postio_imap::secret::KeyringSecretStore::default()),
+            secrets: postio_imap::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
         }

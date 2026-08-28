@@ -73,6 +73,12 @@ io-pim-discovery = { version = "0.7", default-features = false, features = ["aut
 io-sasl = { version = "=0.1.0", default-features = false, optional = true }
 log = { version = "0.4", features = ["std"], optional = true }
 oo7 = "0.6.0-alpha"
+
+# The Keychain store (ADR 0019). Already in `Cargo.lock` via
+# `rustls-platform-verifier`, so this adds no new dependency class -- only a
+# direct edge to something the graph already contains.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"
 pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
 postio-config.workspace = true
 postio-model.workspace = true
@@ -103,6 +109,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
 
 [dev-dependencies]
+tempfile = "3.27.0"
 # The protocol crate, for the handful of commands `postio-imap` does not wrap
 # yet — QRESYNC SELECT, ENABLE, STORE, COPY, APPEND — which `tests/imap_loopback.rs`
 # drives against the in-process server directly. Same exact pin as above, so
