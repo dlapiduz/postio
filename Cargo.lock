@@ -2800,6 +2800,7 @@ dependencies = [
  "postio-smtp",
  "postio-storage",
  "postio-sync",
+ "rusqlite",
  "tempfile",
  "tokio",
  "tracing",

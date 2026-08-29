@@ -39,9 +39,16 @@ pub const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 ///
 /// The value comes from measurement rather than from a specification — see
 /// `postio-runtime`'s `sync_writes` bench (#726), which sweeps store size
-/// because #78 also saw this cost *grow* as the store filled, and a single
-/// number at one size would have missed that.
-pub const SYNC_WRITE_BUDGET: Duration = Duration::from_micros(1_500);
+/// because #78 also saw this cost *grow* as the store filled.
+///
+/// Measured there at 0.34–0.39 ms per message, flat across a store from empty
+/// to 131 MB. This is roughly twice the worst of that: tight enough that a
+/// doubling trips it, loose enough to survive a slower disk than the one it
+/// was measured on. It is deliberately not the 0.88–2.80 ms #78 recorded
+/// against a live account — that run had two sync lanes contending for
+/// SQLite's write lock on a machine that was also building, and a budget set
+/// from a contended measurement would ratify the contention.
+pub const SYNC_WRITE_BUDGET: Duration = Duration::from_micros(750);
 
 /// A measurement exceeded its budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
