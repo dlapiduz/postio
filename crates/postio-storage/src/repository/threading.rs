@@ -152,13 +152,17 @@ impl<'a> ThreadingRepository<'a> {
     /// merged, or when a message is re-filed, and in both cases the newer
     /// answer is the right one.
     fn claim(&self, connection: &Connection, id: &RfcMessageId, thread_id: ThreadId) -> Result<()> {
-        connection.execute(
-            "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
+        // Cached: a sync pass runs this once per id every message claims, so
+        // it is one of the handful of statements a first sync compiles
+        // hundreds of thousands of times (#728).
+        connection
+            .prepare_cached(
+                "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
              VALUES (?1, ?2, ?3)
              ON CONFLICT (account_id, rfc_message_id) DO UPDATE
                 SET thread_id = excluded.thread_id",
-            params![self.account_id.get(), id.as_str(), thread_id.get()],
-        )?;
+            )?
+            .execute(params![self.account_id.get(), id.as_str(), thread_id.get()])?;
         Ok(())
     }
 
@@ -293,22 +297,26 @@ impl ThreadIndex for SqlIndex<'_> {
         // treating one as the other is a thread that does not merge — which the
         // next message on the chain will fix. A broken database announces
         // itself on the write that follows.
+        // Cached: the hottest read in the write path -- once per reference on
+        // every message a sync pass files (#728).
         self.connection
-            .query_row(
+            .prepare_cached(
                 "SELECT thread_id FROM thread_links
                   WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE",
-                params![self.account_id.get(), id.as_str()],
-                |row| row.get::<_, i64>(0),
             )
+            .and_then(|mut statement| {
+                statement.query_row(params![self.account_id.get(), id.as_str()], |row| {
+                    row.get::<_, i64>(0)
+                })
+            })
             .ok()
             .map(ThreadId::new)
     }
 
     fn threads_with_subject(&self, subject: &str) -> Vec<ThreadId> {
-        let Ok(mut statement) = self
-            .connection
-            .prepare("SELECT id FROM threads WHERE account_id = ?1 AND subject = ?2 ORDER BY id")
-        else {
+        let Ok(mut statement) = self.connection.prepare_cached(
+            "SELECT id FROM threads WHERE account_id = ?1 AND subject = ?2 ORDER BY id",
+        ) else {
             return Vec::new();
         };
         let Ok(rows) = statement.query_map(params![self.account_id.get(), subject], |row| {
