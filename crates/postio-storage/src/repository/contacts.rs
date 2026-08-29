@@ -303,33 +303,40 @@ fn record_in(
 ) -> Result<ContactId> {
     let normalized = address.normalized();
 
-    let mut arguments = account_argument(account_id);
-    arguments.push(Value::Text(normalized.clone()));
-    let existing: Option<i64> = connection
-        .query_row(
-            &format!(
-                "SELECT id FROM contacts WHERE {} AND address_normalized = ?{}",
-                account_filter(account_id),
-                first_free(account_id)
-            ),
-            params_from_iter(arguments),
-            |row| row.get(0),
-        )
-        .map(Some)
-        .or_else(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })?;
+    // Two literal statements rather than one built by `format!`. The filter
+    // has exactly two forms (see `account_filter`), and a cached statement is
+    // keyed by its SQL text -- so interpolating here would mean caching a
+    // string that varies, which is the one way this change can quietly do
+    // nothing. This runs once per correspondent on every message a sync pass
+    // writes, which makes it the hottest read in the contact path (#728).
+    let existing: Option<i64> = match account_id {
+        Some(id) => connection
+            .prepare_cached(
+                "SELECT id FROM contacts WHERE account_id = ?1 AND address_normalized = ?2",
+            )?
+            .query_row(params![id.get(), &normalized], |row| row.get(0)),
+        None => connection
+            .prepare_cached(
+                "SELECT id FROM contacts WHERE account_id IS NULL AND address_normalized = ?1",
+            )?
+            .query_row(params![&normalized], |row| row.get(0)),
+    }
+    .map(Some)
+    .or_else(|error| match error {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other),
+    })?;
 
     match existing {
         Some(id) => {
-            connection.execute(
-                "UPDATE contacts
+            connection
+                .prepare_cached(
+                    "UPDATE contacts
                     SET address = ?2, address_name = ?3, times_seen = times_seen + 1,
                         last_seen_at = max(coalesce(last_seen_at, ?4), ?4)
                   WHERE id = ?1",
-                params![id, address.address, address.name, to_millis(at)],
-            )?;
+                )?
+                .execute(params![id, address.address, address.name, to_millis(at)])?;
             Ok(ContactId::new(id))
         }
         None => {
