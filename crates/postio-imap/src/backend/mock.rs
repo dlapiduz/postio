@@ -420,6 +420,9 @@ struct State {
     /// [`State::header_fetches`]'s counterpart for `FETCH BODY` (part/text)
     /// calls. See [`MockBackend::body_fetches`].
     body_fetches: Vec<(u64, String)>,
+    /// Whether `existing_uids` refuses. See
+    /// [`MockBackend::refuse_uid_listing`].
+    refuse_uid_listing: bool,
 }
 
 /// One served fetch, in [`MockBackend::fetch_order`].
@@ -589,6 +592,17 @@ impl MockBackend {
     /// [`inject_after`]: Self::inject_after
     pub fn fail_all(&self, fault: Fault) {
         self.state().persistent_fault = Some(fault);
+    }
+
+    /// Makes [`MailBackend::existing_uids`] refuse, as a server without a
+    /// usable `SEARCH` would.
+    ///
+    /// Narrower than a [`Fault`] on purpose: a fault fails *every* call, and
+    /// the case worth testing here is the awkward one where the UID listing
+    /// is refused and everything else works perfectly. A sync must still
+    /// complete then, by walking the UID space as it did before #727.
+    pub fn refuse_uid_listing(&self) {
+        self.state().refuse_uid_listing = true;
     }
 
     /// Clears [`fail_all`](Self::fail_all)'s fault and any scheduled ones —
@@ -878,6 +892,7 @@ impl MockBackendBuilder {
                 mailboxes: self.mailboxes.into_iter().map(MailboxState::seed).collect(),
                 faults: Vec::new(),
                 persistent_fault: None,
+                refuse_uid_listing: false,
                 latency: Duration::ZERO,
                 calls: 0,
                 in_flight: 0,
@@ -1190,6 +1205,37 @@ impl MailBackend for MockBackend {
                     .is_some_and(|id| id.as_str() == message_id)
             })
             .map(|message| identity::remote_id(folder.uid_validity, Uid::new(message.uid))))
+    }
+
+    /// The mock can always say which UIDs it holds — it *is* the mailbox.
+    ///
+    /// Counted as a call like any other, so a test can see that it was made,
+    /// but deliberately not recorded as a *header fetch*: it carries no
+    /// message data, and the tests that count header fetches are counting
+    /// round trips that return mail.
+    async fn existing_uids(
+        &self,
+        mailbox: &str,
+        cancel: &CancelToken,
+    ) -> BackendResult<Option<Vec<Uid>>> {
+        self.enter("SEARCH").await?;
+        if cancel.is_cancelled() {
+            return Err(BackendError::Cancelled);
+        }
+        let state = self.state();
+        if state.refuse_uid_listing {
+            return Err(BackendError::Protocol {
+                reason: "SEARCH is not available".to_owned(),
+            });
+        }
+        let index = self.locate(&state, mailbox, "SEARCH")?;
+        Ok(Some(
+            state.mailboxes[index]
+                .messages
+                .iter()
+                .map(|message| Uid::new(message.uid))
+                .collect(),
+        ))
     }
 
     async fn append(

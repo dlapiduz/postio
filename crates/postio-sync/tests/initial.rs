@@ -379,3 +379,89 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
         "read-ahead must not put two fetches on the wire at once"
     );
 }
+
+/// A folder whose UID space is mostly gaps must not be walked chunk by chunk.
+///
+/// `enumerate` builds its work list from `1..=UIDNEXT-1` minus what is known,
+/// so a chunk whose UIDs were all expunged still costs a full round trip —
+/// and returns nothing, so it does not even leave a log line. The cost scales
+/// with `UIDNEXT` rather than with how many messages the folder holds.
+///
+/// That is not hypothetical. #78 measured a real first sync spending 160.8 s
+/// of its 347 s — 46% — in two stretches that committed no batch at all, and
+/// this is the only thing a pass does silently. `Progress::target`'s own doc
+/// note records the same sparseness from the other side: an inbox of
+/// ninety-two messages reporting `61 / 63022`.
+///
+/// One message left at UID 50,000, everything below it expunged years ago,
+/// is the ordinary state of a long-lived folder. Asserted on the number of
+/// fetches the server actually served, not on a stopwatch.
+#[tokio::test]
+async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
+    let mailbox = MockMailbox::new(INBOX)
+        .starting_uid(50_000)
+        .message(MockMessage::new(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             Subject: The only survivor\r\n\r\nBody.\r\n"
+                .as_bytes()
+                .to_vec(),
+        ));
+    let backend = MockBackend::builder().mailbox(mailbox).build();
+    backend.connect().await.expect("connect");
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+
+    sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("sync");
+
+    let fetches = backend.header_fetches().len();
+    assert!(
+        fetches <= 2,
+        "a folder holding one message cost {fetches} header fetches: the pass \
+         is walking the UID space (50,000 UIDs / 200 = 250 chunks) rather than \
+         asking the server which UIDs exist"
+    );
+
+    // Still correct, not merely cheap: the one message that exists is stored.
+    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1));
+    assert_eq!(
+        stored.iter().copied().collect::<Vec<u32>>(),
+        vec![50_000],
+        "the surviving message is synced"
+    );
+}
+
+/// A server that will not list its UIDs still syncs, by the old path.
+///
+/// `existing_uids` is an optimisation, and a first sync that could not happen
+/// because an optimisation failed would be a worse bug than the slowness it
+/// removes. So a refusal is a downgrade, not an error: the pass falls back to
+/// walking the UID space exactly as it did before #727.
+///
+/// The refusal is narrower than a `Fault` on purpose — a fault fails every
+/// call, and the case worth pinning is the awkward one where only the UID
+/// listing is refused and every fetch works perfectly.
+#[tokio::test]
+async fn a_server_that_refuses_to_list_uids_still_syncs() {
+    let backend = server_with_messages(5).await;
+    backend.refuse_uid_listing();
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+
+    let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("a refused UID listing must not fail the pass");
+
+    assert_eq!(report.inserted, 5, "every message still synced");
+    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1));
+    assert_eq!(
+        stored.iter().copied().collect::<Vec<u32>>(),
+        vec![1, 2, 3, 4, 5],
+        "the fallback walk found the same mail"
+    );
+}

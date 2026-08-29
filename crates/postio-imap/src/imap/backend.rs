@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use postio_model::{ModSeq, RemoteId};
+use postio_model::{ModSeq, RemoteId, Uid};
 
 use crate::backend::{
     AppendMessage, BackendResult, BodyPart, BodySink, Capabilities, FetchedBody, FetchedMessage,
@@ -216,6 +216,14 @@ impl MailBackend for ImapBackend {
         message_id: &str,
     ) -> BackendResult<Option<RemoteId>> {
         super::mutate::find_by_message_id(&self.pool, mailbox, message_id, self.priority).await
+    }
+
+    async fn existing_uids(
+        &self,
+        mailbox: &str,
+        cancel: &CancelToken,
+    ) -> BackendResult<Option<Vec<Uid>>> {
+        super::fetch::existing_uids(&self.pool, mailbox, self.priority, cancel).await
     }
 
     async fn idle(
