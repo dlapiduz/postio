@@ -53,5 +53,9 @@ harness = false
 name = "sync_writes"
 harness = false
 
+[[bench]]
+name = "sync_lanes"
+harness = false
+
 [lints]
 workspace = true
