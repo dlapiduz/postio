@@ -920,14 +920,28 @@ pub(crate) async fn part_bytes(
             // and returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
             // engine's own loop claims the job, so the wait is ours.
-            if !engine
+            if engine
                 .request_payloads(message, vec![part_id.clone()])
                 .await
                 .map_err(|error| error.message().to_string())?
             {
-                return Err("There is nothing to fetch for that part".into());
+                wait_for_part(database, message, &part_id).await?
+            } else {
+                // "Nothing to fetch" has two readings, and the queue cannot
+                // tell them apart: there is truly nothing (the message is
+                // gone, or AttachmentPolicy::Never), or the background lane
+                // fetched this very message between the look above and the
+                // queue's answer -- ADR 0016 backfills every mailbox, so
+                // both lanes chase the same messages, and the open that
+                // races the backfill is an ordinary open, not a corner
+                // (#109, four observed failures; a5735a3 is the same race
+                // in the runtime's own test). One re-read settles it: a
+                // committed write that made the answer `false` is visible
+                // to this read, so no wait is needed -- absent here means
+                // absent, and the sentence below is then the truth.
+                locate_part(database, message, &part_id)?
+                    .ok_or("There is nothing to fetch for that part")?
             }
-            wait_for_part(database, message, &part_id).await?
         }
     };
 
@@ -1628,6 +1642,27 @@ mod tests {
         );
     }
 
+    /// The attachment row currently carrying `part_id`, resolved fresh.
+    ///
+    /// What a repainted panel holds: `MessageRepository::update` replaces a
+    /// message's attachment rows wholesale, so an `AttachmentId` resolved
+    /// before any concurrent update — the background lane finishing a fetch,
+    /// say — names a row that no longer exists. The MIME path is the name
+    /// that survives, which is the same reason `part_bytes` converts to it
+    /// first thing.
+    fn the_part_as_stored(database: &Database, message: MessageId, part_id: &str) -> AttachmentId {
+        let connection = database.connection().expect("a connection");
+        MessageRepository::new(&connection)
+            .get(message)
+            .expect("a read")
+            .expect("the message")
+            .attachments
+            .iter()
+            .find(|part| part.part_id.as_deref() == Some(part_id))
+            .expect("the part is still in the message")
+            .id
+    }
+
     #[tokio::test]
     async fn a_part_already_on_this_machine_is_read_without_an_engine_at_all() {
         // The second open. Passing `None` for the engine is the strongest
@@ -1640,6 +1675,15 @@ mod tests {
             .await
             .expect("the first open fetches it");
 
+        // Resolved again, not reused. `MessageRepository::update` REPLACES a
+        // message's attachment rows — part_bytes's own doc is built on it —
+        // and `world()`'s engine backfills this very message in the
+        // background (ADR 0016), so the id resolved before the first open is
+        // dead by now whenever that fetch won the race: 8 of 180 hammered
+        // runs failed here holding the old id (#109). The panel a person
+        // clicks re-reads the row on the store's events, so resolving from
+        // the store as it is *now* is what the second open actually does.
+        let part = the_part_as_stored(&database, message, "2");
         let bytes = part_bytes(&database, &blobs, None, message, part)
             .await
             .expect("the second open must not need a server");
