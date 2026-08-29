@@ -544,6 +544,53 @@ fn disposition_from(kind: &str) -> Disposition {
     }
 }
 
+/// Every UID that exists in `mailbox`, via `UID SEARCH ALL`.
+///
+/// The cheap answer to "what is actually here", and what stops a first sync
+/// walking a UID space that is mostly gaps. See
+/// [`MailBackend::existing_uids`](crate::backend::MailBackend::existing_uids)
+/// for why that matters and #727 for what it cost.
+///
+/// `SEARCH` is in RFC 3501 — it is not an extension and there is no
+/// capability to check — but a server may still refuse a given one, and the
+/// caller treats any failure as "walk instead" rather than as a failed sync.
+/// Returning `Ok(None)` is therefore reserved for a server that answered and
+/// said nothing useful; a refusal comes back as `Err` and is downgraded one
+/// layer up, where the decision to fall back belongs.
+pub async fn existing_uids(
+    pool: &ConnectionPool,
+    mailbox: &str,
+    priority: Priority,
+    cancel: &CancelToken,
+) -> BackendResult<Option<Vec<Uid>>> {
+    use io_imap::rfc3501::search::ImapMessageSearchOptions;
+    use io_imap::types::core::Vec1;
+    use io_imap::types::search::SearchKey;
+
+    if cancel.is_cancelled() {
+        return Err(BackendError::Cancelled);
+    }
+    let mailbox = mailbox.to_owned();
+
+    pool.execute(priority, async |session| {
+        session.ensure_selected(&mailbox, false).await?;
+        if cancel.is_cancelled() {
+            return Err(BackendError::Cancelled);
+        }
+        let found = session
+            .search(
+                Vec1::from(SearchKey::All),
+                ImapMessageSearchOptions { uid: true },
+            )
+            .await
+            .map_err(|error| session.command_error("SEARCH", error))?;
+        Ok(Some(
+            found.into_iter().map(|uid| Uid::new(uid.get())).collect(),
+        ))
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use io_imap::types::body::{BasicFields, MultiPartExtensionData};
@@ -838,51 +885,4 @@ mod tests {
     fn an_unparseable_date_is_none_not_an_error() {
         assert_eq!(parse_rfc2822("not a date"), None);
     }
-}
-
-/// Every UID that exists in `mailbox`, via `UID SEARCH ALL`.
-///
-/// The cheap answer to "what is actually here", and what stops a first sync
-/// walking a UID space that is mostly gaps. See
-/// [`MailBackend::existing_uids`](crate::backend::MailBackend::existing_uids)
-/// for why that matters and #727 for what it cost.
-///
-/// `SEARCH` is in RFC 3501 — it is not an extension and there is no
-/// capability to check — but a server may still refuse a given one, and the
-/// caller treats any failure as "walk instead" rather than as a failed sync.
-/// Returning `Ok(None)` is therefore reserved for a server that answered and
-/// said nothing useful; a refusal comes back as `Err` and is downgraded one
-/// layer up, where the decision to fall back belongs.
-pub async fn existing_uids(
-    pool: &ConnectionPool,
-    mailbox: &str,
-    priority: Priority,
-    cancel: &CancelToken,
-) -> BackendResult<Option<Vec<Uid>>> {
-    use io_imap::rfc3501::search::ImapMessageSearchOptions;
-    use io_imap::types::core::Vec1;
-    use io_imap::types::search::SearchKey;
-
-    if cancel.is_cancelled() {
-        return Err(BackendError::Cancelled);
-    }
-    let mailbox = mailbox.to_owned();
-
-    pool.execute(priority, async |session| {
-        session.ensure_selected(&mailbox, false).await?;
-        if cancel.is_cancelled() {
-            return Err(BackendError::Cancelled);
-        }
-        let found = session
-            .search(
-                Vec1::from(SearchKey::All),
-                ImapMessageSearchOptions { uid: true },
-            )
-            .await
-            .map_err(|error| session.command_error("SEARCH", error))?;
-        Ok(Some(
-            found.into_iter().map(|uid| Uid::new(uid.get())).collect(),
-        ))
-    })
-    .await
 }
