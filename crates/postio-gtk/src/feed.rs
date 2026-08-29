@@ -1015,13 +1015,48 @@ pub struct Feeds {
     pub messages: Feed,
     /// The folders and the status line.
     pub folders: Folders,
+    /// Whatever else the composition root put on screen — see
+    /// [`Feeds::connect_event`]. Shared, so a clone of these feeds delivers
+    /// to the same consumers rather than to a copy that nobody registered
+    /// with.
+    others: Rc<RefCell<Vec<EventHandler>>>,
 }
 
+/// What [`Feeds::connect_event`] holds.
+type EventHandler = Box<dyn Fn(&Event)>;
+
 impl Feeds {
+    /// The two panes this crate builds, plus room for the ones it does not.
+    pub fn new(messages: Feed, folders: Folders) -> Self {
+        Feeds {
+            messages,
+            folders,
+            others: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Take another consumer of the event stream.
+    ///
+    /// The sidebar and the list are fed from inside this crate because their
+    /// contents *are* this crate's. The reading pane is not: what a body is
+    /// and how one is read from the store live in `postio-app`, which is why
+    /// [`Event::BodyLoaded`] had no consumer for as long as it did (#396) —
+    /// it is addressed to a surface this file cannot name.
+    ///
+    /// So the seam is left open rather than the dependency inverted: whoever
+    /// assembles the application still hands [`apply`](Self::apply) every
+    /// event, and everything on screen is still fed by that one call.
+    pub fn connect_event(&self, handler: impl Fn(&Event) + 'static) {
+        self.others.borrow_mut().push(Box::new(handler));
+    }
+
     /// Apply one event to everything that cares about it.
     pub fn apply(&self, event: &Event) {
         self.messages.apply(event);
         self.folders.apply(event);
+        for handler in self.others.borrow().iter() {
+            handler(event);
+        }
     }
 }
 

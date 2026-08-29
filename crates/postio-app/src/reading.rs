@@ -24,6 +24,13 @@
 //! message to the front of that queue — and the pane fills in when it lands.
 //! Waiting on a socket to paint would put the UI on the network, which is the
 //! one thing the whole local-first shape exists to prevent.
+//!
+//! "Fills in when it lands" is [`Fill::body_arrived`], and it was the missing
+//! half of that sentence until #396: the engine announced every body it
+//! committed and nothing in the workspace listened, so a pane left showing
+//! "Downloading this message" stayed that way until an unrelated redraw
+//! corrected it. The arrival is pushed, never polled — the same rule the rest
+//! of this file follows.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -365,6 +372,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         opened,
         named_accounts,
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
+        queued: Cell::new(false),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -481,6 +489,29 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         move |message| window.act(postio_core::Command::MarkReadOnDwell { message })
     ));
 
+    // A body -- or an attachment's bytes -- arriving for the message on
+    // screen (#396).
+    //
+    // The engine has emitted `BodyLoaded` since it was written, and until
+    // this line nothing in the workspace acted on it: the pane a person was
+    // watching went on showing "Downloading this message" after the bytes
+    // were local, until some unrelated redraw happened to correct it. The
+    // reading pane is fed from the same one call every other pane is
+    // (`Feeds::apply`); what it could not be is fed from inside `postio-gtk`,
+    // which may not read a body. See `Feeds::connect_event`.
+    feeds.connect_event({
+        let parts = Rc::clone(&parts);
+        let window = window.downgrade();
+        move |event| {
+            let postio_core::Event::BodyLoaded { message, .. } = event else {
+                return;
+            };
+            if let Some(window) = window.upgrade() {
+                parts.body_arrived(&window, *message);
+            }
+        }
+    });
+
     // Reconnecting (or losing the connection) has to repaint a pane that is
     // already showing a wait, not leave stale words on screen until the
     // cursor happens to move next -- see issue #117.
@@ -523,6 +554,9 @@ struct Fill {
     /// Shared, because a fill reads it twice: once to ask the store, and
     /// again when the answer comes back. See [`Fill::waiting_reason`].
     offline: Rc<Cell<bool>>,
+    /// Whether a repaint is already queued for this turn of the main loop —
+    /// see [`Fill::body_arrived`].
+    queued: Cell<bool>,
 }
 
 impl Fill {
@@ -571,10 +605,19 @@ impl Fill {
         }
     }
 
-    fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
+    /// Everything the pane needs about one message, read in a single
+    /// crossing.
+    ///
+    /// One read serves the three callers — the pane following the cursor, a
+    /// conversation entry, and a repaint when a body lands — so none of them
+    /// can drift on what a message is.
+    fn read(&self, message: MessageId) -> async_channel::Receiver<Option<Loaded>> {
         let offline = self.offline.get();
-        let answer = crate::search::ask(&self.database, &self.runtime, {
+        crate::search::ask(&self.database, &self.runtime, {
             move |connection| {
+                // One crossing for all of it. The parts are metadata the sync
+                // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
+                // for them costs a row read and never a fetch.
                 let body = crate::compose::load_body_or_reason(connection, message, offline);
                 let fetched = MessageRepository::new(connection)
                     .get(message)
@@ -588,15 +631,24 @@ impl Fill {
                     .as_ref()
                     .and_then(|message| message.from.first().map(|from| from.address.clone()));
                 let envelope = fetched.map(Envelope::from);
-                Some((body, content_type, parts, envelope, sender))
+                Some(Loaded {
+                    body,
+                    content_type,
+                    parts,
+                    envelope,
+                    sender,
+                })
             }
-        });
+        })
+    }
+
+    fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
+        let answer = self.read(message);
         glib::spawn_future_local({
             let reader = reader.clone();
             let offline_now = self.offline.clone();
             async move {
-                let Ok(Some((body, content_type, parts, envelope, sender))) = answer.recv().await
-                else {
+                let Ok(Some(loaded)) = answer.recv().await else {
                     return;
                 };
                 // `set_message_header` is still called here, unlike before
@@ -605,7 +657,7 @@ impl Fill {
                 // stay hidden (`set_identity_visible(false)`, set once when
                 // this reader was built) — but recipients have nowhere else
                 // to go, and the header is the only place that draws To/Cc.
-                if let Some(envelope) = &envelope {
+                if let Some(envelope) = &loaded.envelope {
                     reader.set_message_header(
                         &envelope.from,
                         &envelope.to,
@@ -614,19 +666,19 @@ impl Fill {
                         envelope.date,
                     );
                 }
-                match body {
+                match loaded.body {
                     crate::compose::Body::Ready(body) => {
-                        let root = root_type(content_type.as_deref(), &body, &parts);
-                        reader.set_attachments(&root, &parts);
-                        reader.render(&body, sender.as_deref());
+                        let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
+                        reader.set_attachments(&root, &loaded.parts);
+                        reader.render(&body, loaded.sender.as_deref());
                     }
                     crate::compose::Body::Absent(reason) => {
                         let root = root_type(
-                            content_type.as_deref(),
+                            loaded.content_type.as_deref(),
                             &postio_model::MessageBody::default(),
-                            &parts,
+                            &loaded.parts,
                         );
-                        reader.set_attachments(&root, &parts);
+                        reader.set_attachments(&root, &loaded.parts);
                         reader.show_absent(Self::waiting_reason(&offline_now, reason));
                     }
                 }
@@ -638,28 +690,9 @@ impl Fill {
     /// Put `row`'s message in the pane, or say why it cannot be.
     fn fill(&self, window: &Window, row: postio_gtk::list::Row) {
         let message = row.id;
-        let sender = row.from.as_ref().map(|from| from.address.clone());
         self.showing.set(Some(message));
-        let offline = self.offline.get();
 
-        let answer = crate::search::ask(&self.database, &self.runtime, {
-            move |connection| {
-                // One crossing for both. The parts are metadata the sync
-                // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
-                // for them costs a row read and never a fetch.
-                let body = crate::compose::load_body_or_reason(connection, message, offline);
-                let fetched = MessageRepository::new(connection)
-                    .get(message)
-                    .ok()
-                    .flatten();
-                let (content_type, parts) = fetched
-                    .as_ref()
-                    .map(|message| (message.content_type.clone(), message.attachments.clone()))
-                    .unwrap_or_default();
-                let envelope = fetched.map(Envelope::from);
-                Some((body, content_type, parts, envelope))
-            }
-        });
+        let answer = self.read(message);
         glib::spawn_future_local({
             let showing = self.showing.clone();
             let opened = self.opened.clone();
@@ -667,7 +700,7 @@ impl Fill {
             let offline_now = Rc::clone(&self.offline);
             let window = window.clone();
             async move {
-                let Ok(Some((body, content_type, parts, envelope))) = answer.recv().await else {
+                let Ok(Some(loaded)) = answer.recv().await else {
                     return;
                 };
                 // Late. The cursor moved while the blob was read, and the
@@ -677,60 +710,83 @@ impl Fill {
                 if showing.get() != Some(message) {
                     return;
                 }
-                // The envelope is known as soon as headers have synced --
-                // well before a body necessarily is -- so the header goes on
-                // screen regardless of which arm below the body takes (#319).
-                if let Some(envelope) = &envelope {
-                    window.reader().set_message_header(
-                        &envelope.from,
-                        &envelope.to,
-                        &envelope.cc,
-                        envelope.subject.as_deref(),
-                        envelope.date,
-                    );
-                    // Whose mail this is. Silent with one account, because
-                    // `named_accounts` is empty then and there is nothing to
-                    // say (#185).
-                    let named = self_accounts
-                        .iter()
-                        .position(|(id, _)| *id == envelope.account)
-                        .map(|hue| (hue, self_accounts[hue].1.as_str()));
-                    window
-                        .reader()
-                        .set_account(named.map(|(_, name)| name), named.map_or(0, |(h, _)| h));
+                paint(&window, &opened, &self_accounts, &offline_now, loaded);
+            }
+        });
+    }
+
+    /// A body or a payload for `message` is now on this machine (#396).
+    ///
+    /// Two things decide whether this repaints anything.
+    ///
+    /// **Who it is for.** The engine emits [`Event::BodyLoaded`] for every
+    /// body it commits, and a backfill commits thousands the user is not
+    /// looking at. Only an arrival for the message the pane is *showing*
+    /// changes anything on screen, so that is the whole of the guard — and it
+    /// is checked here, before a read is even queued, rather than after one.
+    ///
+    /// **How often.** A backfill emits these in bursts, so the repaint is
+    /// coalesced onto the next turn of the main loop: twenty arrivals for the
+    /// message on screen are one store read and one repaint, not twenty of
+    /// each. `Folders::reload` coalesces a resync's `MessagesChanged` the
+    /// same way and for the same reason.
+    ///
+    /// [`Event::BodyLoaded`]: postio_core::Event::BodyLoaded
+    fn body_arrived(self: &Rc<Self>, window: &Window, message: MessageId) {
+        if self.showing.get() != Some(message) || self.queued.replace(true) {
+            return;
+        }
+        let parts = Rc::clone(self);
+        let window = window.downgrade();
+        glib::idle_add_local_once(move || {
+            parts.queued.set(false);
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            parts.repaint(&window);
+        });
+    }
+
+    /// Read whatever the pane is showing again and draw it.
+    ///
+    /// No `Row` and no cursor movement: this is the same message it was
+    /// already showing, with more of it local than there was.
+    fn repaint(&self, window: &Window) {
+        let Some(message) = self.showing.get() else {
+            return;
+        };
+        let answer = self.read(message);
+        glib::spawn_future_local({
+            let showing = self.showing.clone();
+            let opened = self.opened.clone();
+            let self_accounts = Rc::clone(&self.named_accounts);
+            let offline_now = Rc::clone(&self.offline);
+            let window = window.clone();
+            async move {
+                let Ok(Some(loaded)) = answer.recv().await else {
+                    return;
+                };
+                // The cursor can still have moved between queueing this and
+                // the store answering — the same race `fill` guards, reached
+                // by a different road.
+                if showing.get() != Some(message) {
+                    return;
                 }
-                match body {
-                    crate::compose::Body::Ready(body) => {
-                        let root = root_type(content_type.as_deref(), &body, &parts);
-                        window.reader().set_attachments(&root, &parts);
-                        *opened.borrow_mut() = Some(Opened {
-                            root,
-                            parts,
-                            absent: None,
-                        });
-                        window.show_message(&body, sender.as_deref());
-                    }
-                    crate::compose::Body::Absent(reason) => {
-                        // The chips still go on. They are drawn from
-                        // `BODYSTRUCTURE` metadata the sync already stored,
-                        // so a message nothing has been fetched for can
-                        // still say what came with it -- which is worth more
-                        // than a blank pane, and is the one part of this
-                        // state that is not a wait.
-                        let root = root_type(
-                            content_type.as_deref(),
-                            &postio_model::MessageBody::default(),
-                            &parts,
-                        );
-                        let reason = Self::waiting_reason(&offline_now, reason);
-                        window.reader().set_attachments(&root, &parts);
-                        *opened.borrow_mut() = Some(Opened {
-                            root,
-                            parts,
-                            absent: Some(reason),
-                        });
-                        window.show_absent(reason);
-                    }
+                paint(&window, &opened, &self_accounts, &offline_now, loaded);
+
+                // And the panel, when it is open. Its chips are drawn from
+                // the same attachment rows the reader's are, and
+                // `Node::downloaded` genuinely changes at runtime now (#377),
+                // so a chip that said "download" has to stop saying it.
+                //
+                // Whatever `opened` holds is the right tree: the panel owns
+                // the keyboard while it is up (`Context::Parts`), so the
+                // cursor cannot have moved to another message underneath it.
+                let panel = window.parts();
+                if panel.is_visible()
+                    && let Some(opened) = opened.borrow().as_ref()
+                {
+                    panel.update_parts(&opened.root, &opened.parts);
                 }
             }
         });
@@ -763,6 +819,93 @@ impl Fill {
         }
         drop(opened);
         window.show_absent(reason);
+    }
+}
+
+/// Everything the reading pane needs about one message, as [`Fill::read`]
+/// hands it back across the channel.
+struct Loaded {
+    /// The words, or which kind of "no body" this is.
+    body: crate::compose::Body,
+    /// The message's own content type — the parts tree's root row.
+    content_type: Option<String>,
+    /// Its parts, as `BODYSTRUCTURE` described them. Bytes not included.
+    parts: Vec<Attachment>,
+    /// The header fields, once they have synced (#319).
+    envelope: Option<Envelope>,
+    /// The allow-list key for remote images: the sender's address.
+    ///
+    /// Read from the message row rather than from the list row it was opened
+    /// through, because a repaint has no list row — and one answer that all
+    /// three callers share cannot disagree with itself.
+    sender: Option<String>,
+}
+
+/// Draw `loaded` into the window's single reading pane.
+///
+/// Free rather than a method on [`Fill`]: every caller is an `async` block
+/// that has already crossed to the store and back, and holding a borrow of
+/// `Fill` across that await is exactly the shape of the reentrancy this
+/// module cannot afford. What it needs is the four things it writes.
+fn paint(
+    window: &Window,
+    opened: &RefCell<Option<Opened>>,
+    named_accounts: &[(postio_model::AccountId, String)],
+    offline: &Cell<bool>,
+    loaded: Loaded,
+) {
+    // The envelope is known as soon as headers have synced -- well before a
+    // body necessarily is -- so the header goes on screen regardless of which
+    // arm below the body takes (#319).
+    if let Some(envelope) = &loaded.envelope {
+        window.reader().set_message_header(
+            &envelope.from,
+            &envelope.to,
+            &envelope.cc,
+            envelope.subject.as_deref(),
+            envelope.date,
+        );
+        // Whose mail this is. Silent with one account, because
+        // `named_accounts` is empty then and there is nothing to say (#185).
+        let named = named_accounts
+            .iter()
+            .position(|(id, _)| *id == envelope.account)
+            .map(|hue| (hue, named_accounts[hue].1.as_str()));
+        window
+            .reader()
+            .set_account(named.map(|(_, name)| name), named.map_or(0, |(h, _)| h));
+    }
+    match loaded.body {
+        crate::compose::Body::Ready(body) => {
+            let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
+            window.reader().set_attachments(&root, &loaded.parts);
+            *opened.borrow_mut() = Some(Opened {
+                root,
+                parts: loaded.parts,
+                absent: None,
+            });
+            window.show_message(&body, loaded.sender.as_deref());
+        }
+        crate::compose::Body::Absent(reason) => {
+            // The chips still go on. They are drawn from `BODYSTRUCTURE`
+            // metadata the sync already stored, so a message nothing has been
+            // fetched for can still say what came with it -- which is worth
+            // more than a blank pane, and is the one part of this state that
+            // is not a wait.
+            let root = root_type(
+                loaded.content_type.as_deref(),
+                &postio_model::MessageBody::default(),
+                &loaded.parts,
+            );
+            let reason = Fill::waiting_reason(offline, reason);
+            window.reader().set_attachments(&root, &loaded.parts);
+            *opened.borrow_mut() = Some(Opened {
+                root,
+                parts: loaded.parts,
+                absent: Some(reason),
+            });
+            window.show_absent(reason);
+        }
     }
 }
 

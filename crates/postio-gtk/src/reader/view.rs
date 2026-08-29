@@ -96,6 +96,8 @@ pub struct Reader {
     /// Which of [`SCROLL_MARKERS`]' invisible anchors the pane is currently
     /// at — see [`Reader::page_down`].
     page: Rc<std::cell::Cell<u32>>,
+    /// How many times the pane has been drawn — see [`Reader::paints`].
+    paints: Rc<std::cell::Cell<u32>>,
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -172,6 +174,7 @@ impl Reader {
             rendered: Rc::new(RefCell::new(Vec::new())),
             on_parts_requested: Rc::new(RefCell::new(Vec::new())),
             page: Rc::new(std::cell::Cell::new(0)),
+            paints: Rc::new(std::cell::Cell::new(0)),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -321,6 +324,7 @@ impl Reader {
     /// allow" is used — both re-render through this same [`Open`] state, so
     /// a caller never has to.
     pub fn render(&self, body: &MessageBody, sender: Option<&str>) {
+        self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
@@ -432,6 +436,7 @@ impl Reader {
     /// same [`wrap_document`] with remote images blocked, so a state plate
     /// can no more reach the network than a message can.
     pub fn show_absent(&self, state: Absent) {
+        self.paints.set(self.paints.get() + 1);
         *self.open.borrow_mut() = None;
         self.absent.set(Some(state));
         // A message is still open here — headers arrived, only the body has
@@ -451,6 +456,19 @@ impl Reader {
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());
         }
+    }
+
+    /// How many times this pane has been asked to draw a message — a body
+    /// through [`render`](Self::render), or a plate through
+    /// [`show_absent`](Self::show_absent).
+    ///
+    /// Test-facing, and the only way to tell a repaint that was coalesced
+    /// from one that was merely idempotent: twenty arrivals for the message
+    /// on screen and twenty repaints look identical in every other
+    /// observable, and the difference is a sync spent redrawing (#396).
+    #[doc(hidden)]
+    pub fn paints(&self) -> u32 {
+        self.paints.get()
     }
 
     /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
