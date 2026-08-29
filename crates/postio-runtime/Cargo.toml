@@ -41,5 +41,9 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 name = "store_reads"
 harness = false
 
+[[bench]]
+name = "sync_writes"
+harness = false
+
 [lints]
 workspace = true
