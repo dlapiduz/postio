@@ -259,7 +259,12 @@ fn render() -> String {
          [keys]\n\
          archive = \"y\"\n\
          first_message = \"g g\"\n\
+         command_palette = \"mod+p\"\n\
          ```\n\
+         \n\
+         `mod` is the primary accelerator -- Control on Linux, Command on macOS --\n\
+         so one file means the same thing on both. Write `ctrl` when you mean the\n\
+         Control key specifically; it stays literal everywhere.\n\
          \n\
          ## `[accounts.<id>]`\n\
          \n\
