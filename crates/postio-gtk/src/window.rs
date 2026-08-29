@@ -1078,10 +1078,7 @@ impl Window {
 
         folders.open(account, address);
         *self.imp().messages.borrow_mut() = Some(messages);
-        Feeds {
-            messages: feed,
-            folders,
-        }
+        Feeds::new(feed, folders)
     }
 
     /// Re-derive the list pane's named state from `status`.
