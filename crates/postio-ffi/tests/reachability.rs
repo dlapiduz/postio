@@ -83,3 +83,24 @@ fn going_offline_is_never_a_nudge() {
     );
     session.shutdown();
 }
+
+#[test]
+fn a_reconnect_while_searching_refreshes_no_folder() {
+    // Search results came from the local index, so there is nothing about them
+    // for a reconnection to go and fetch — re-running the query is the
+    // frontend's call, not the network's. The nudge is still counted: the
+    // engines' own reconnect loops are what actually reconnect, and this only
+    // decides whether to ask for a folder sync on top.
+    let session = session();
+    session.set_offline(true);
+    session.search("anything".to_string());
+    let before = session.reconnects_for_test();
+
+    session.set_offline(false);
+    assert_eq!(
+        session.reconnects_for_test(),
+        before + 1,
+        "coming back online is still a reconnect"
+    );
+    session.shutdown();
+}

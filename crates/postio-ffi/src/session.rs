@@ -1116,8 +1116,8 @@ impl Session {
     /// index, and re-running the query is the frontend's call, not a
     /// reconnection's.
     fn open_mailbox(&self) -> Option<postio_model::MailboxId> {
-        match *self.scope.lock().expect("scope lock") {
-            Some(postio_runtime::store::ListScope::Mailbox(mailbox)) => Some(mailbox),
+        match &*self.source.lock().expect("source lock") {
+            Source::Scope(postio_runtime::store::ListScope::Mailbox(mailbox)) => Some(*mailbox),
             _ => None,
         }
     }
