@@ -257,11 +257,15 @@ impl<'a> ThreadRepository<'a> {
     /// messages are added, because every mutation here recomputes them.
     pub fn create(&self, thread: &mut Thread) -> Result<ThreadId> {
         let account_id = require_persisted(thread.account_id.get(), "account")?;
-        self.connection.execute(
-            "INSERT INTO threads (account_id, subject, message_count, unread_count,
+        // Cached: a first sync creates a thread for most messages it files, so
+        // this runs on the same order as the message insert itself (#728).
+        self.connection
+            .prepare_cached(
+                "INSERT INTO threads (account_id, subject, message_count, unread_count,
                                   has_attachments, is_flagged, first_at, last_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
+            )?
+            .execute(params![
                 account_id,
                 thread.subject,
                 thread.message_count,
@@ -270,8 +274,7 @@ impl<'a> ThreadRepository<'a> {
                 thread.is_flagged,
                 to_millis(thread.first_at),
                 to_millis(thread.last_at),
-            ],
-        )?;
+            ])?;
         thread.id = ThreadId::new(self.connection.last_insert_rowid());
         Ok(thread.id)
     }
@@ -351,10 +354,10 @@ impl<'a> ThreadRepository<'a> {
         let transaction = super::Scope::open(self.connection)?;
         let previous = thread_of(&transaction, message_id)?;
 
-        let changed = transaction.execute(
-            "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
-            params![message_id.get(), thread_id.get()],
-        )?;
+        // Cached: once per message filed (#728).
+        let changed = transaction
+            .prepare_cached("UPDATE messages SET thread_id = ?2 WHERE id = ?1")?
+            .execute(params![message_id.get(), thread_id.get()])?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",

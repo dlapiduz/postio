@@ -1712,8 +1712,11 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
 }
 
 fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
-    connection.execute(
-        "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
+    // Cached: the widest statement in the write path and the one a first sync
+    // runs most -- once per new message (#728).
+    connection
+        .prepare_cached(
+            "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
                                in_reply_to, reference_ids, subject, normalized_subject, date,
                                received_at, preview, size, flags, seen, flagged, answered,
                                draft, deleted, has_attachments, uid, uid_validity, mod_seq,
@@ -1724,8 +1727,8 @@ fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
                  ?32, ?33, ?34, ?35, ?36, ?37)",
-        params_from_iter(row_values(0, message)),
-    )?;
+        )?
+        .execute(params_from_iter(row_values(0, message)))?;
     Ok(MessageId::new(connection.last_insert_rowid()))
 }
 
@@ -1897,8 +1900,9 @@ fn find_by_remote_id(
     mailbox_id: MailboxId,
     remote_id: &RemoteId,
 ) -> Result<Option<MessageId>> {
-    let mut statement =
-        connection.prepare("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")?;
+    // Cached: once per message on every batch a sync pass writes (#728).
+    let mut statement = connection
+        .prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")?;
     let mut rows = statement.query(params![mailbox_id.get(), remote_id.as_str()])?;
     Ok(match rows.next()? {
         Some(row) => Some(MessageId::new(row.get(0)?)),
@@ -1914,7 +1918,9 @@ fn find_by_generation_uid(
     generation: Generation,
     uid: Uid,
 ) -> Result<Option<MessageId>> {
-    let mut statement = connection.prepare(
+    // Cached, for the same reason as `find_by_remote_id`: the fallback
+    // lookup runs per message for any row synced before `remote_id` existed.
+    let mut statement = connection.prepare_cached(
         "SELECT id FROM messages
           WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid = ?3",
     )?;
