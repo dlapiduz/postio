@@ -6,10 +6,16 @@
 //! nobody opens Postio to read the oldest one. CLAUDE.md's performance budget
 //! makes this structural rather than a nicety: the first screenful has to be
 //! visible in seconds, which means the *order* messages are fetched in is the
-//! whole of the perceived-speed story. So this module walks the mailbox's UID
-//! space from [`MailboxStatus::uid_next`](postio_imap::backend::MailboxStatus)
-//! downwards, in batches, committing and threading each batch before asking
+//! whole of the perceived-speed story. So this module takes the mailbox's UIDs
+//! newest first, in batches, committing and threading each batch before asking
 //! for the next.
+//!
+//! Which UIDs those are comes from the server when it will say
+//! ([`MailBackend::existing_uids`]), and otherwise from walking
+//! `1..=`[`uid_next`](postio_imap::backend::MailboxStatus::uid_next)`-1` as
+//! this always did. The difference matters more than it looks: a long-lived
+//! folder's UID space is mostly gaps, and walking it costs a round trip per
+//! chunk of *UIDs* rather than per chunk of mail (#727).
 //!
 //! # Resumability, for free
 //!
@@ -67,11 +73,19 @@ use postio_imap::cancel::CancelToken;
 /// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
 
-/// How many UIDs one `FETCH` asks for at a time.
+/// How many **messages** one `FETCH` asks for at a time.
 ///
 /// Small enough that the first batch — and therefore the first screenful —
 /// commits and is visible in well under a second; large enough that a
 /// ten-thousand-message inbox does not need ten thousand round trips.
+///
+/// Messages, not UIDs, and the distinction used to be invisible because the
+/// two were the same thing: the pass chunked the UID *space*, so this was
+/// "UIDs per round trip" and a folder whose UIDs were mostly expunged gaps
+/// paid for every empty chunk. Since #727 the pass asks the server which UIDs
+/// exist ([`MailBackend::existing_uids`]) and chunks that, so this number now
+/// governs only how much mail arrives per round trip — which is what its
+/// value was chosen for, and what #78 measured 200 as still being right for.
 pub const DEFAULT_BATCH_SIZE: usize = 200;
 
 /// How many messages one background write transaction covers.
@@ -113,8 +127,10 @@ pub struct Progress {
     /// `UIDNEXT - 1`: that is the width of the UID space, which counts every
     /// message ever expunged from the folder, and a long-lived inbox of
     /// ninety-two messages reported `61 / 63022` and rendered as `0%` for the
-    /// whole of a pass (`postio-qhz.9`). The enumeration still walks the UID
-    /// ceiling — it has to — but nobody has to look at it.
+    /// whole of a pass (`postio-qhz.9`). The enumeration no longer walks that
+    /// ceiling either — since #727 it asks the server which UIDs exist — but
+    /// this stays `EXISTS` regardless: the fraction a person reads should
+    /// count mail, not UID space, whichever the pass happens to enumerate.
     pub target: u32,
 }
 
