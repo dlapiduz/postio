@@ -179,7 +179,7 @@ fn batch(account: &Account, mailbox: &Mailbox, run: u32) -> Vec<Message> {
             message.subject = Some(format!("Bench note {}", uid / 4));
             message.from = vec![EmailAddress::new(
                 Some("Ada Lovelace"),
-                &format!("ada{}@example.com", uid % 64),
+                format!("ada{}@example.com", uid % 64),
             )];
             message.to = vec![EmailAddress::new(Some("Bob"), "bob@example.com")];
             message.server.uid = Some(Uid::new(uid));
