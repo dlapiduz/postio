@@ -245,9 +245,35 @@ pub(crate) async fn enumerate(
     // over a nicety.
     let account = AccountRepository::new(connection).get(mailbox.account_id)?;
 
-    let mut missing: Vec<u32> = (1..=highest_uid)
-        .filter(|uid| coverage == Coverage::Everything || !known.contains(uid))
-        .collect();
+    // What the server actually holds, when it will say — otherwise every UID
+    // below the ceiling, which is what this did for every backend before
+    // `existing_uids` existed.
+    //
+    // The difference is the whole of #727. A long-lived folder's UID space is
+    // mostly gaps: everything expunged over the years still counts toward
+    // `UIDNEXT`, so walking `1..=highest_uid` costs a round trip per
+    // `batch_size` *UIDs* whether or not any message lives among them. An
+    // empty chunk fetches nothing, commits nothing and logs nothing, so the
+    // cost is also invisible — #78 measured a real first sync spending 46% of
+    // its wall clock in exactly that silence, and `Progress::target`'s note
+    // records the same sparseness from the other side (an inbox of ninety-two
+    // messages whose UID ceiling was 63,022).
+    let present = existing_uids(backend, mailbox, cancel).await?;
+    let mut missing: Vec<u32> = match present {
+        Some(uids) => uids
+            .into_iter()
+            .map(Uid::get)
+            // A server is entitled to name a UID at or above the ceiling it
+            // just reported — it may have accepted a delivery between the
+            // SELECT and this call. Such a message is not this pass's job:
+            // the pass is resumable and the next one sees a higher ceiling.
+            .filter(|uid| *uid <= highest_uid)
+            .filter(|uid| coverage == Coverage::Everything || !known.contains(uid))
+            .collect(),
+        None => (1..=highest_uid)
+            .filter(|uid| coverage == Coverage::Everything || !known.contains(uid))
+            .collect(),
+    };
     // Descending: the newest UID in the mailbox is fetched, threaded and
     // visible before the oldest one is even asked for.
     missing.sort_unstable_by_key(|&uid| std::cmp::Reverse(uid));
@@ -337,6 +363,43 @@ pub(crate) async fn enumerate(
 
     SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
     Ok(report)
+}
+
+/// Asks the backend which UIDs exist, and treats a refusal as "it will not
+/// say" rather than as a failed pass.
+///
+/// Three ways to get nothing back, and all three mean the same thing to the
+/// caller — walk the UID space instead:
+///
+/// * the backend does not implement it (the trait default), which is every
+///   backend but IMAP today;
+/// * the server has no `SEARCH`, or refused this one;
+/// * the call failed outright.
+///
+/// The last is the interesting one. A first sync that cannot happen because
+/// an *optimisation* failed would be a worse bug than the slowness this
+/// exists to fix, and nothing is masked for long: a transport that is really
+/// broken fails again on the very next `FETCH`, which is not optional and
+/// does propagate. Cancellation is the one thing that must not be swallowed —
+/// a cancelled pass has to stop, not quietly fall back to the slow path it
+/// was cancelled out of.
+async fn existing_uids(
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    cancel: &CancelToken,
+) -> Result<Option<Vec<Uid>>> {
+    match backend.existing_uids(&mailbox.path, cancel).await {
+        Ok(uids) => Ok(uids),
+        Err(BackendError::Cancelled) => Err(SyncError::Backend(BackendError::Cancelled)),
+        Err(error) => {
+            tracing::debug!(
+                mailbox = mailbox.id.get(),
+                %error,
+                "the server would not list its UIDs; walking the UID space"
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// Writes one batch of headers to the store, the way a sync pass does.
