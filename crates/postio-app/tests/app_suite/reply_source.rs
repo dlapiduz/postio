@@ -102,11 +102,9 @@ fn next_message(window: &Window) -> MessageId {
 }
 
 pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-reply-source-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -121,7 +119,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let report = seed_small(&database, 23);
     assert!(report.message_count > 4, "not enough mail to walk through");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

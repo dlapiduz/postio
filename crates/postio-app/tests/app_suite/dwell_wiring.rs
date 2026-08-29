@@ -69,10 +69,9 @@ fn is_read(database: &Database, message: MessageId) -> bool {
 }
 
 pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
-    let state_dir = std::env::temp_dir().join(format!("postio-dwell-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under scripts/test-headless.sh)");
@@ -87,7 +86,7 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // Every message unread to begin with, or none of the assertions below
     // distinguish "the dwell marked it" from "it was already read".
@@ -181,7 +180,6 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     );
 
     bridge.shutdown();
-    let _ = std::fs::remove_dir_all(&state_dir);
 }
 
 /// The ids of the first page of `mailbox`, newest first.

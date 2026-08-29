@@ -58,11 +58,9 @@ fn unread_in(database: &Database, mailbox: MailboxId) -> u32 {
 }
 
 pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-bulk-keystroke-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -76,7 +74,7 @@ pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
     let database = test_support::memory();
     let report = seed_small(&database, 17);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let state = SharedState::default();
     let bus = actions::wire(

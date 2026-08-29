@@ -61,10 +61,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 pub fn a_window_over_a_populated_store_lists_its_mail() {
-    let state_dir = std::env::temp_dir().join(format!("postio-wiring-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -83,7 +82,7 @@ pub fn a_window_over_a_populated_store_lists_its_mail() {
         "the fixture seeded no mail, so this test could not fail"
     );
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // The runtime the reads are polled on. A no-op command handler: this
     // test is about the panes being fed, not about what a keystroke does.

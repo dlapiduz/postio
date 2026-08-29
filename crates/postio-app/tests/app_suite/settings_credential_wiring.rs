@@ -57,13 +57,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 pub fn update_credential_opens_a_prefilled_dialog_without_disturbing_the_window() {
-    let state_dir = std::env::temp_dir().join(format!(
-        "postio-settings-credential-wiring-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -91,7 +87,7 @@ pub fn update_credential_opens_a_prefilled_dialog_without_disturbing_the_window(
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

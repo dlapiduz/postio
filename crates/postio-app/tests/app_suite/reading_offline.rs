@@ -55,10 +55,9 @@ fn press_j(window: &Window) {
 }
 
 pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
-    let state_dir = std::env::temp_dir().join(format!("postio-offline-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -72,7 +71,7 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
     let database = test_support::memory();
     let report = seed_small(&database, 21);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
