@@ -24,7 +24,6 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::composer::{self, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -36,11 +35,9 @@ fn settle() {
 
 #[test]
 fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-composer-recipients-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

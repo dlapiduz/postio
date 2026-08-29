@@ -32,6 +32,7 @@
 //! ```
 
 use std::path::Path;
+use std::time::Duration;
 
 use postio_model::{Account, EmailAddress, Mailbox, MailboxId};
 use rusqlite::Connection;
@@ -75,7 +76,10 @@ pub fn key() -> Subkey {
 pub fn memory() -> Database {
     let shm = Path::new("/dev/shm");
     let directory = if shm.is_dir() {
-        tempfile::tempdir_in(shm)
+        sweep_orphaned_scratch_dirs(shm);
+        tempfile::Builder::new()
+            .prefix(SWEEP_PREFIX)
+            .tempdir_in(shm)
     } else {
         tempfile::tempdir()
     }
@@ -83,6 +87,95 @@ pub fn memory() -> Database {
     let path = directory.path().join("postio.db");
     Database::open_file_with_guard(&path, &key(), Box::new(directory))
         .expect("a scratch database must always open")
+}
+
+/// Every directory [`memory`] ever creates carries this prefix, and the
+/// sweep below never touches a `/dev/shm` entry without it — nothing else
+/// this crate puts there is its business to delete.
+const SWEEP_PREFIX: &str = "postio-test-";
+
+/// Below this age, a directory might still belong to a test binary that has
+/// not finished starting up. The sweep never touches it, however many
+/// directories there are — this is the one guard that must always hold.
+const SWEEP_GRACE: Duration = Duration::from_secs(60);
+
+/// A directory this old cannot belong to a test binary that is still
+/// running: nothing in this suite comes anywhere near this long, even
+/// loaded down (`docs/engineering-notes.md`). The sweep reclaims it
+/// unconditionally. 30 minutes because that is what the manual sweep during
+/// the #442 incident used, and it worked.
+const SWEEP_MIN_AGE: Duration = Duration::from_secs(30 * 60);
+
+/// However many scratch directories are allowed to accumulate before the
+/// sweep starts reclaiming ones that are past [`SWEEP_GRACE`] but not yet
+/// past [`SWEEP_MIN_AGE`]. An age-only sweep still lets one very busy day of
+/// leaks build up between sweeps; this bounds it outright. #442 found 1346
+/// live at once.
+const SWEEP_MAX_COUNT: usize = 200;
+
+/// Runs [`sweep_now`] against `dir` once per process.
+///
+/// Once, not once per call: `memory()` is called by every test in a binary,
+/// and a directory listing is not free enough to repeat per test. The first
+/// call in a process pays for the whole run.
+fn sweep_orphaned_scratch_dirs(dir: &Path) {
+    static SWEEP: std::sync::Once = std::sync::Once::new();
+    let dir = dir.to_path_buf();
+    SWEEP.call_once(|| sweep_now(&dir));
+}
+
+/// Removes orphaned scratch directories under `dir` — see [`SWEEP_PREFIX`],
+/// [`SWEEP_GRACE`], [`SWEEP_MIN_AGE`] and [`SWEEP_MAX_COUNT`] for exactly
+/// which ones and why.
+///
+/// Never panics: a directory this cannot list, or an entry it cannot remove
+/// (a race with another process, a permissions oddity), is skipped rather
+/// than treated as a failure. This runs inside every test binary that calls
+/// [`memory`], and cleaning up after other test runs must never be why this
+/// one fails.
+fn sweep_now(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    let now = std::time::SystemTime::now();
+    let mut candidates: Vec<(std::path::PathBuf, Duration)> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(SWEEP_PREFIX) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_dir() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified) else {
+            continue;
+        };
+        if age < SWEEP_GRACE {
+            continue;
+        }
+        candidates.push((entry.path(), age));
+    }
+
+    // Oldest first, so a count-cap reclamation below takes the
+    // longest-orphaned directories rather than an arbitrary subset.
+    candidates.sort_by_key(|(_, age)| std::cmp::Reverse(*age));
+    let over_cap = candidates.len().saturating_sub(SWEEP_MAX_COUNT);
+
+    for (index, (path, age)) in candidates.iter().enumerate() {
+        if *age >= SWEEP_MIN_AGE || index < over_cap {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
 }
 
 /// A migrated database in a temporary directory that deletes itself.
@@ -171,4 +264,115 @@ pub fn account_with_inbox(connection: &Connection) -> (Account, MailboxId) {
     let account = account(connection);
     let inbox = mailbox(connection, &account, "INBOX");
     (account, inbox.id)
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::*;
+
+    /// Creates a directory named `{SWEEP_PREFIX}{name}` under `root` and
+    /// backdates its mtime by `age`, so the sweep sees it exactly as it would
+    /// see a real orphaned scratch directory of that age.
+    fn scratch_dir(root: &Path, name: &str, age: Duration) -> std::path::PathBuf {
+        let path = root.join(format!("{SWEEP_PREFIX}{name}"));
+        std::fs::create_dir(&path).expect("create scratch dir");
+        let stamp = SystemTime::now()
+            .checked_sub(age)
+            .expect("age fits before now");
+        let file = std::fs::File::open(&path).expect("open dir for its metadata");
+        file.set_modified(stamp).expect("backdate mtime");
+        path
+    }
+
+    #[test]
+    fn a_directory_inside_the_grace_period_is_never_touched() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // Enough old directories to blow through the count cap on their own,
+        // so only the grace period can be protecting the young one below.
+        for i in 0..SWEEP_MAX_COUNT + 5 {
+            scratch_dir(root.path(), &format!("old-{i}"), SWEEP_MIN_AGE * 2);
+        }
+        let young = scratch_dir(root.path(), "young", Duration::from_secs(1));
+
+        sweep_now(root.path());
+
+        assert!(
+            young.is_dir(),
+            "a directory inside the grace period must survive regardless of the count cap"
+        );
+    }
+
+    #[test]
+    fn a_directory_past_the_minimum_age_is_reclaimed() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let stale = scratch_dir(root.path(), "stale", SWEEP_MIN_AGE + Duration::from_secs(1));
+
+        sweep_now(root.path());
+
+        assert!(
+            !stale.exists(),
+            "a directory past the minimum age must be reclaimed"
+        );
+    }
+
+    #[test]
+    fn a_directory_without_the_scratch_prefix_is_left_alone() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let other = root.path().join("not-ours");
+        std::fs::create_dir(&other).expect("create dir");
+        let stamp = SystemTime::now()
+            .checked_sub(SWEEP_MIN_AGE + Duration::from_secs(1))
+            .expect("age fits before now");
+        std::fs::File::open(&other)
+            .expect("open dir")
+            .set_modified(stamp)
+            .expect("backdate mtime");
+
+        sweep_now(root.path());
+
+        assert!(
+            other.is_dir(),
+            "the sweep must only ever touch directories carrying its own prefix"
+        );
+    }
+
+    #[test]
+    fn the_count_cap_reclaims_the_oldest_first_once_past_the_grace_period() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // All past the grace period, none past `SWEEP_MIN_AGE` -- only the
+        // count cap should trigger any reclamation in this test. Age grows
+        // with `i`, so `paths[0]` is the youngest of the set and
+        // `paths.last()` is the oldest.
+        let mut paths = Vec::new();
+        for i in 0..SWEEP_MAX_COUNT + 3 {
+            let age = SWEEP_GRACE + Duration::from_secs(60 + i as u64);
+            paths.push(scratch_dir(root.path(), &format!("n-{i:04}"), age));
+        }
+
+        sweep_now(root.path());
+
+        let remaining = std::fs::read_dir(root.path()).expect("read root").count();
+        assert!(
+            remaining <= SWEEP_MAX_COUNT,
+            "the count cap must bound accumulation even when nothing is past \
+             the minimum age, got {remaining} remaining"
+        );
+        assert!(
+            !paths.last().unwrap().exists(),
+            "the oldest directory over the cap should be reclaimed first"
+        );
+        assert!(
+            paths[0].is_dir(),
+            "the youngest directories should survive while the total is over \
+             the cap but shrinking toward it"
+        );
+    }
+
+    #[test]
+    fn sweeping_a_directory_with_no_leaks_does_not_panic() {
+        let root = tempfile::tempdir().expect("tempdir");
+        sweep_now(root.path());
+    }
 }

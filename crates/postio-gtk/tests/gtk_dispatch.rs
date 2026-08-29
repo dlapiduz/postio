@@ -26,7 +26,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -38,10 +37,9 @@ fn settle() {
 
 #[test]
 fn every_gesture_reaches_the_bus_exactly_once() {
-    let state_dir = std::env::temp_dir().join(format!("postio-dispatch-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

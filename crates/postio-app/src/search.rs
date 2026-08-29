@@ -42,6 +42,7 @@
 use std::rc::Rc;
 
 use gtk::glib;
+use gtk::prelude::WidgetExt;
 use postio_core::bridge::CommandSender;
 use postio_core::{Command, Event};
 use postio_gtk::feed::Feeds;
@@ -91,6 +92,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     // rows are actually in.
     let order: Order = Rc::new(std::cell::Cell::new(postio_search::ResultOrder::default()));
 
+    install_leave_to_list(window, &finder);
     install_preview(&view, wiring);
     install_run(
         &view,
@@ -105,6 +107,31 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     load_contacts(&finder, account.id, wiring);
 
     Some(view)
+}
+
+/// Once a search runs, or `Tab` has nothing to refine, the keyboard moves to
+/// the message list rather than staying in the field or falling through to
+/// an unpredictable GTK focus-chain destination (#693).
+///
+/// The `Tab` handler is registered after [`View::attach`]'s own
+/// `connect_tab` (canvas 2b's `Tab refine`), which is what lets this run
+/// only when that one did not: `Finder::press_tab`'s handlers try in
+/// registration order and stop at the first one that claims the keyboard, so
+/// a refine chip still wins when there is one to move to.
+fn install_leave_to_list(window: &Window, finder: &Finder) {
+    finder.connect_search({
+        let window = window.clone();
+        move |_parsed| {
+            window.list().grab_focus();
+        }
+    });
+    finder.connect_tab({
+        let window = window.clone();
+        move || {
+            window.list().grab_focus();
+            true
+        }
+    });
 }
 
 /// The order the current result set is in. See [`install`].

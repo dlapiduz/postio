@@ -205,6 +205,10 @@ fn sample_draft() -> Draft {
         },
         attachments: vec![],
         state: DraftState::Editing,
+        // Populated rather than `None`: this test exists to prove a field
+        // survives a round trip, and a `None` proves nothing about the
+        // `Some` arm — which is the one carrying ADR 0021's guarantee.
+        rfc_message_id: Some(postio_model::RfcMessageId::new("reserved@example.com")),
         server: ServerIdentifiers::default(),
         created_at: at(3_200),
         updated_at: at(3_300),

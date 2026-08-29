@@ -33,13 +33,9 @@ fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
 
 #[test]
 fn ctrl_shift_return_opens_the_schedule_send_picker() {
-    let state_dir = std::env::temp_dir().join(format!(
-        "postio-composer-schedule-send-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");

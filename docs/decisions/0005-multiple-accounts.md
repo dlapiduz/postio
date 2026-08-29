@@ -4,7 +4,9 @@
   **Q5 answered from measurement 2026-08-26**
   ([#435](https://github.com/dlapiduz/postio/issues/435)), **Q5b decided
   2026-08-26** ([#186](https://github.com/dlapiduz/postio/issues/186)),
-  **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464))
+  **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464)),
+  **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470)),
+  **Q6c decided 2026-08-28** ([#471](https://github.com/dlapiduz/postio/issues/471))
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account
@@ -503,6 +505,144 @@ new engine: same account, same connection, only the credential changes. The
 dialog host these two share is ADR 0012 Q1's decision, already made and
 already the right shape for both; building it once for the narrower case
 here does not decide anything #64 still has to.
+
+### Q6b — `config.toml` stops describing accounts (#470)
+
+**Decided 2026-08-28.** Q6a named the gap and explicitly declined to close it:
+either a reconciler that writes `[accounts.<id>]` changes into the SQLite row,
+or retiring the TOML schema outright. **Retire it.**
+
+Three things in the tree decide this, and none of them is visible from the
+schema alone.
+
+**The panel already has two account UIs stacked on one screen.** #464 put a
+real `accounts_list` of widget rows — enable/disable, update credential,
+remove — directly above the nav-and-text body in `settings.rs`, and #151 added
+an egress list beside it. Below them, the `[accounts]` nav item scrolls the
+raw TOML to a section that parses, validates, round-trips and reaches nothing.
+This is not a missing feature. It is a duplicate of a working one, and the
+duplicate is the one that silently does nothing.
+
+**The schema is stale, not merely unwired.** `postio-config`'s `AuthMethod` is
+`Plain | Login`. The model's `AuthMethod` — the one every real code path uses
+— is `Password | AppPassword | OAuth2 | XOAuth2`. `MailSecurity` is a second
+spelling of `TransportSecurity`. The config crate's copies are used by nothing
+outside their own tests, and they cannot express an OAuth account at all, which
+[ADR 0006](0006-oauth-and-provider-presets.md) put in scope. A user editing
+`[accounts.personal].auth` today is choosing between two mechanisms, neither of
+which is what their account uses. Wiring that up would mean first rebuilding
+it to say what the model says — at which point it is a second spelling of the
+domain vocabulary, kept in sync by hand, which is the thing the one-registry
+rule exists to prevent.
+
+**An account is state, not preference.** Every other section of `config.toml`
+solely owns what it describes: `[ui]`, `[keys]`, `[sync]`, `[filters]`,
+`[mailboxes]`, `[logging]`, `[storage]`, `[compose]`. An account owns
+mailboxes, messages, threads, sync state and an operation queue by
+`ON DELETE CASCADE`; it is created by a flow that probes servers and writes a
+keyring entry; its identity is a database id, not a TOML key. A reconciler
+would be a second writer to that row, racing sync, and would have to answer —
+in a raw text editor whose only validation is that the file parses — what
+renaming a key means, what deleting a section means, and whether typing a new
+one creates an account with no probe and no credential. Every one of those has
+a wrong answer that loses mail or manufactures a broken account.
+
+What retiring means, concretely:
+
+- `Config::accounts`, `AccountConfig`, `ImapConfig`, `SmtpConfig`,
+  `MailSecurity`, `AuthMethod` and `ConfigChanged::accounts` come out of
+  `postio-config`.
+- An existing file's `[accounts.*]` table lands in `Config::extra` and
+  round-trips verbatim — nothing is rewritten under the user, which is the
+  rule for a file they own. **But it must not look live.** The footer's
+  validity line is where the panel already reports things it parsed and did
+  not honour (the keymap problems line), so it says so there:
+  *"[accounts] is ignored — accounts are managed in the list above"*.
+  A preserved section that says nothing is the bug this issue reports, wearing
+  a different hat.
+- The `[accounts]` nav item **stays** and moves focus to the account list
+  instead of scrolling the text. The nav is the panel's table of contents; a
+  person who clicks it wants accounts, and should land where accounts are.
+  Canvas 3f's five sections survive; only what the fifth one points at changes.
+
+**This does not make accounts less editable — it makes the editable thing the
+only one.** Host, port and security remain unreachable after onboarding, which
+is exactly where Q6a left them and is a separate gap; the difference is that
+it now *looks* unreachable instead of looking editable and lying. Whoever
+closes that gap should do it in the account row, beside the three affordances
+Q6a already put there, not in a text file.
+
+### Q6c — The account list is a keyboard context, and it is not the settings panel (#471)
+
+**Decided 2026-08-28.** Q6a put three affordances on each account row as a
+`gio::SimpleActionGroup` and filed #471 for the keyboard path it deliberately
+did not build, naming the open question as *"does the settings panel become a
+real `Context`?"*. **A context, yes — but `Context::Accounts`, not
+`Context::Settings`, and the difference is the decision.**
+
+**The precedent is #455, and it is exact.** Saved searches had the same shape:
+widget-scoped context-menu verbs (`savedsearch.rename` et al.), no keyboard
+path, no registry entries, and the same worry about whether registering them
+needed a new navigation model. b05192f resolved it by making the rows
+reachable from the keyboard and the verbs real `CommandId`s scoped to a
+context that already existed. Nothing here needs a different answer; the only
+reason a context has to be *added* is that no existing one covers this widget.
+
+**Why the widget and not the panel.** The settings panel is a nav, an account
+list, an egress list and a `GtkTextView` holding the literal `config.toml`. A
+`Context::Settings` spanning all of that would put bare-letter bindings live
+while the user is typing TOML — `d` removing an account instead of inserting a
+`d`. That is not a bug to be careful about; it is a bug the name invites,
+because the next person to add a binding will scope it to the context whose
+name says "the settings panel". `Context::Accounts` covers exactly the
+`accounts_list` widget, the way `Sidebar` and `Parts` are named for theirs, and
+the mechanism follows from the name: an `EventControllerFocus` on the list
+flips the context on enter and restores the previous on leave, which is
+verbatim what `window.rs` already does for `Context::Sidebar`. The `TextView`
+never enters it, so the trap is closed by construction rather than by
+remembering.
+
+**There is no account-picker problem, and that is Q6a's second open question
+dissolved rather than answered.** #471 asked what these commands do in the
+palette with no natural target, pointing at `Move` and `AddLabel`, which open a
+picker when invoked with `None`. They need one because they are invoked from a
+list of mail, where the target is not an account. These are only ever offered
+while `Context::Accounts` is active, which means an account row has focus,
+which means the target is that row — exactly as `Archive`'s target is the
+current selection. Building a picker so that `Ctrl+K → Remove account` works
+from the message list would be a second way to do a thing whose first way is
+"open settings, land on the account, press the key", and it would put an
+account-scale deletion one fuzzy match away from somebody who was not looking
+at accounts.
+
+The three commands:
+
+| Command | Binding | Destructive | Recovery |
+|---|---|---|---|
+| `ToggleAccountEnabled` | `Return` | no | `None` — pressing it again is the reversal |
+| `RemoveAccount` | `d` | **yes** | `Undo` |
+| `UpdateCredential` | none; palette only | no | `None` |
+
+`d` matches `DeleteSavedSearch`'s spelling in `Context::Sidebar`, which is the
+neighbouring list and the same verb. `UpdateCredential` gets no default binding
+— ten commands already have none — because it opens a dialog, happens once
+every few months, and the palette is the right discoverability for exactly that
+shape of verb. Getting into the list needs no new key either: the account rows
+sit above the text in the focus chain, so `Tab` already reaches them.
+
+**`Recovery::Undo` on `RemoveAccount` has to become true.** Q6a built the
+removal as soft-delete plus a narrower toast wired straight to
+`AccountRepository::restore`, explicitly *not* through the global undo stack,
+and said so because `Remove` was not a command then. Registering it makes the
+recovery a declaration the registry enforces, and a declaration nothing backs
+from the keyboard is the thing this whole ADR keeps refusing to ship. So while
+that toast is up, `u` in `Context::Accounts` invokes it. Context-local state,
+context-local binding, no change to the global stack — which is what a context
+is for. After the next start the reap has run and there is nothing to undo,
+which is exactly why Q6a put the reap at a restart boundary.
+
+`Context::ALL` gains `Accounts` at the end, so the `?` sheet grows a section
+rather than reordering the ones people have learned.
 
 ---
 

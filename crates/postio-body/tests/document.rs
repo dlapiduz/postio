@@ -641,3 +641,94 @@ fn wrapping_and_unwrapping_a_paragraph_reconstructs_the_original_text() {
         assert_eq!(postio_body::flowed::unwrap(&wrapped, ""), text);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Acceptance: from_flowed_text undoes to_flowed_text's soft wraps (#456)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_soft_wrapped_paragraph_unwraps_back_to_one_line_of_text() {
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![Inline::Text(
+            "one two three four five six seven eight nine ten".to_owned(),
+        )])],
+    };
+    let flowed = document.to_flowed_text_at(20);
+    assert!(
+        flowed.contains('\n'),
+        "sanity: this should actually have wrapped: {flowed:?}"
+    );
+
+    assert_eq!(Document::from_flowed_text(&flowed), document);
+}
+
+#[test]
+fn a_hard_break_survives_the_round_trip_as_two_inlines_not_one() {
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![
+            Inline::Text("first line".to_owned()),
+            Inline::Break,
+            Inline::Text("second line".to_owned()),
+        ])],
+    };
+    let flowed = document.to_flowed_text();
+
+    assert_eq!(Document::from_flowed_text(&flowed), document);
+}
+
+#[test]
+fn a_leading_hard_break_with_nothing_typed_before_it_still_counts() {
+    // The one case where a span unwraps to no text at all -- a paragraph
+    // that opens with a break the user pressed before typing anything.
+    // Tracking "have we seen a span yet" by whether any text was pushed
+    // would confuse this empty span with never having started one, and
+    // drop the break silently.
+    let document = Document {
+        blocks: vec![Block::Paragraph(vec![
+            Inline::Break,
+            Inline::Text("second line".to_owned()),
+        ])],
+    };
+    let flowed = document.to_flowed_text();
+
+    assert_eq!(Document::from_flowed_text(&flowed), document);
+}
+
+#[test]
+fn two_paragraphs_stay_two_paragraphs_after_the_round_trip() {
+    let document = Document {
+        blocks: vec![
+            Block::Paragraph(vec![Inline::Text(
+                "one two three four five six seven eight nine ten eleven twelve".to_owned(),
+            )]),
+            Block::Paragraph(vec![Inline::Text("a short second paragraph".to_owned())]),
+        ],
+    };
+    let flowed = document.to_flowed_text_at(20);
+
+    assert_eq!(Document::from_flowed_text(&flowed), document);
+}
+
+#[test]
+fn a_flowed_reply_body_unwraps_to_the_sentence_the_sender_actually_wrote() {
+    // The exact shape of the corpus's plain-text-flowed-reply.eml: two
+    // soft-wrapped physical lines that are one sentence, and a trailing
+    // space on each wrapped line marking the soft break.
+    let flowed = "That order works for me, though I would rather take the sign-off \nquestion first while everyone is still in the room and awake, because \nthe layout argument tends to eat the whole hour once it starts.";
+
+    let document = Document::from_flowed_text(flowed);
+
+    assert_eq!(
+        document,
+        Document {
+            blocks: vec![Block::Paragraph(vec![Inline::Text(
+                "That order works for me, though I would rather take the sign-off \
+                 question first while everyone is still in the room and awake, because \
+                 the layout argument tends to eat the whole hour once it starts."
+                    .to_owned()
+            )])],
+        },
+        "a reply built from this must not show the sender's own sentence as \
+         three typed line breaks"
+    );
+}

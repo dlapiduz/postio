@@ -56,6 +56,7 @@ STUB_CHECKS = [
 # it printed. A banner can be wrong in either direction; an absent `pr create`
 # cannot.
 GH_STUB = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then echo '{"title":"stub"}'; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then exit 0; fi
@@ -138,6 +139,7 @@ def world(base: Path, *, have_gtk: bool, touch: str) -> tuple[Path, Path]:
     (root / "scripts" / "check.sh").chmod(0o755)
     shutil.copy(ISSUE_LAND, root / "scripts" / "issue-land.sh")
     (root / "scripts" / "issue-land.sh").chmod(0o755)
+    shutil.copytree(HERE / "lib", root / "scripts" / "lib")
     # The land script shells out to this after opening the PR. Stubbed rather
     # than copied: the real one polls `gh pr checks`, which is its own test's
     # business, and its absence would make every case here exit non-zero --

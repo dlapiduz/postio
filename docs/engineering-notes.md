@@ -3318,3 +3318,33 @@ two run on any developer's machine. When adding a platform-conditional
 anything, the question is not "can I test this here" — usually no — but "which
 of these three is the cheapest thing that would have caught me getting it
 wrong". For #642 it was the first, and it costs milliseconds.
+
+## Six types are called *Scope*, and they answer four questions (2026-08-28, #670)
+
+Before adding a seventh, or before reading a `scope` field and assuming you
+know what it holds: the word is heavily overloaded in this workspace, and the
+overloads are all legitimate — they are genuinely different questions that
+happen to want the same English word.
+
+| Type | Home | Question |
+|---|---|---|
+| `AccountScope` (re-exported as `postio_core::state::Scope`) | `postio-model` | **Which accounts?** `Unified` or one account. #186 moved it down here from `postio_core::state` so search and the list could not disagree; its doc comment is the best short argument in the tree for moving a type down a crate. |
+| `postio_search::facets::Scope` | `postio-search` | **Which slice does a search look at?** `AllMail` / `Inbox` / `Lists` — the canvas's standing, no-typing rescope. Not a mailbox id, deliberately. |
+| `ListScope` | `postio-model` (was `postio-runtime::store`) | **Which messages is this view showing?** `Mailbox` / `Account` / `Flagged` / `Snoozed` / `Thread`. What the message list is paged over. |
+| `ViewScope` | `postio-core::state` | **What is a whole-view selection relative to?** `Mailbox` / `Flagged` only, because `Ctrl+A` is not a gesture inside a thread and nothing needs a `Snoozed` predicate yet. |
+| `FeedScope` | *deleted by #670* | Was `postio-gtk`'s own spelling of `ListScope`. |
+| `ScopeFfi` | `postio-ffi` | Not a question — the uniffi ABI mirror of `ListScope`, with `i64` fields. A wire format, the way `ExtCommand` is the owned counterpart of `CommandSpec`. |
+
+**The pair worth understanding is `ListScope` and `ViewScope`**, because they
+look like one type spelled twice and are not. `ViewScope` is the *result of a
+rule* applied to a `ListScope` — `postio_core::aim::view_scope` — and its
+smaller variant set is the point: a `ViewScope` that cannot be constructed
+from a thread drill-in is what makes "no whole-view gesture inside a
+conversation" a compiler check rather than a conformance table two frontends
+have to keep passing. Collapsing them into one type with a predicate would be
+one type fewer and a strictly weaker guarantee.
+
+**The rule of thumb.** A new `*Scope` is warranted when it answers a question
+none of the above asks, and it belongs in the lowest crate that all its
+readers share — which #186 and #670 both discovered the same way, by finding
+a second crate that needed the same value and could not reach it.

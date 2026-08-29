@@ -27,8 +27,10 @@ mod reclaim_wiring;
 mod reply_identity;
 mod reply_source;
 mod resume_draft;
+mod resume_queued_draft;
 mod search_index;
 mod search_results;
+mod search_return_and_tab;
 mod search_wiring;
 mod second_activate_wiring;
 mod send_later_wiring;
@@ -128,6 +130,11 @@ const CASES: &[(&str, fn())] = &[
         resume_draft::return_on_a_draft_row_opens_the_composer_on_that_draft as fn(),
     ),
     (
+        "resume_queued_draft::return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing",
+        resume_queued_draft::return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing
+            as fn(),
+    ),
+    (
         "search_index::a_store_the_application_opened_can_be_searched",
         search_index::a_store_the_application_opened_can_be_searched as fn(),
     ),
@@ -146,6 +153,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_results::a_query_puts_the_matching_messages_in_the_list",
         search_results::a_query_puts_the_matching_messages_in_the_list as fn(),
+    ),
+    (
+        "search_return_and_tab::return_and_tab_move_the_keyboard_to_the_message_list",
+        search_return_and_tab::return_and_tab_move_the_keyboard_to_the_message_list as fn(),
     ),
     (
         "search_wiring::typing_in_the_box_searches_the_store_and_fills_every_search_surface",

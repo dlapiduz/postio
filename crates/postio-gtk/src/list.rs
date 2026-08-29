@@ -196,6 +196,16 @@ impl MessageRow {
 }
 
 impl ListRow for MessageRow {
+    fn thread(&self) -> Option<ThreadId> {
+        // Both conditions, and they are the ones `commands::aim_at_the_
+        // conversation` used to apply by hand: a row that does not stand for
+        // a conversation is not one, and a row that does but carries no
+        // thread id is not one the verbs can name. `postio_core::aim` reads
+        // this through `postio_ui`'s blanket `RowFacts`.
+        let row = self.row()?;
+        row.is_thread().then_some(row.thread).flatten()
+    }
+
     fn id(&self) -> Option<MessageId> {
         // Not recursion: an inherent method always wins method resolution
         // over a trait method for a concrete receiver, and `Self::id` here
@@ -563,5 +573,18 @@ impl MessageList {
         if let Some(source) = source {
             source.request(page);
         }
+    }
+}
+
+/// The list model is what `postio_core::aim` asks about rows.
+///
+/// Delegating to the `ListWindow` inside rather than reimplementing the rule:
+/// `postio_ui`'s blanket implementation is the shared answer, and the FFI
+/// boundary reaches the same one through the same window. All this adds is
+/// the borrow, taken and released per call so nothing holds it across a
+/// callback that might want the window itself.
+impl postio_core::aim::RowFacts for MessageList {
+    fn row_kind(&self, message: MessageId) -> postio_core::aim::RowKind {
+        self.imp().window.borrow().row_kind(message)
     }
 }

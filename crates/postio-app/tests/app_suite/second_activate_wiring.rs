@@ -65,11 +65,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 pub fn a_second_activate_does_not_double_wire_the_window() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-second-activate-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
@@ -134,7 +132,7 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
     );
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
     let (sink, events) = event_channel();
     let wiring = Wiring::new(

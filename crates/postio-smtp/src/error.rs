@@ -152,6 +152,36 @@ impl SmtpError {
         )
     }
 
+    /// Whether the message payload may already have reached the server.
+    ///
+    /// The question [`is_transient`](Self::is_transient) cannot answer and a
+    /// send has to ask first (ADR 0021). Retrying an archive is harmless;
+    /// retrying a send that was in fact accepted delivers a second copy to
+    /// somebody else's inbox, and nothing can recall it.
+    ///
+    /// **False means the server answered and did not accept.** A rejected
+    /// credential, sender, recipient or message, a configuration problem, a
+    /// TLS failure, an unreadable reply, and a `4xx` — which is a *reply*,
+    /// so the server was still talking — all mean the transaction ended in a
+    /// refusal the client witnessed. Those are safely retryable, and a caller
+    /// may undo whatever it did in anticipation of the send.
+    ///
+    /// **True means the client stopped hearing from the server**, and there
+    /// is no way from here to tell a connection lost before `MAIL FROM` from
+    /// one lost between the terminating `.` and the reply to it. This is
+    /// deliberately the conservative approximation:
+    /// [#673](https://github.com/dlapiduz/postio/issues/673) teaches `data`
+    /// where the payload boundary is and narrows it to failures raised once
+    /// the payload had begun being written. Until then every transport
+    /// failure is treated as though it might have been that one, because the
+    /// costs are not symmetric.
+    pub fn submission_is_indeterminate(&self) -> bool {
+        matches!(
+            self,
+            Self::Disconnected { .. } | Self::TimedOut { .. } | Self::Io { .. } | Self::Cancelled
+        )
+    }
+
     /// Whether the user has to supply a new password before anything will
     /// work.
     pub fn is_authentication_failure(&self) -> bool {

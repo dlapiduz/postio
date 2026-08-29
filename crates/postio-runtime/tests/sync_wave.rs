@@ -74,14 +74,14 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// wave this file is about stops overlapping — not because the engine stopped
 /// running passes concurrently, but because the store underneath it was one
 /// Postio never uses. See #79, where exactly this made three lanes serialise.
-fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
+fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::TempDir) {
     let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("a connection");
         test_support::account(&connection)
     };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
     let engine = Engine::spawn(EngineParts {
@@ -103,7 +103,7 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine) {
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
-    (database, engine)
+    (database, engine, directory)
 }
 
 /// How many messages the store holds under the mailbox at `path`, and `None`
@@ -220,7 +220,7 @@ async fn a_first_sync_asks_about_several_mailboxes_at_once() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone());
 
     until("every folder to finish its first sync", || {
         ["INBOX", "Sent Messages", "Archive", "Deleted Messages"]
@@ -253,7 +253,7 @@ async fn the_inbox_finishes_while_a_large_archive_is_still_going() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone());
 
     // Liveness only: wait for the whole wave, then judge the order the
     // server actually saw. Waiting for both is what makes the assertion
@@ -296,7 +296,7 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone());
 
     // Wait until the wave is demonstrably under way rather than guessing at a
     // sleep: one committed batch means a pass is running.
@@ -347,7 +347,7 @@ async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone());
 
     until("both folders to finish their first sync", || {
         stored(&database, "INBOX") == Some(10) && stored(&database, "Archive") == Some(2_000)

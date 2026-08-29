@@ -12,7 +12,6 @@
 //! opened can be searched", which is the sentence that was false.
 
 use chrono::Utc;
-use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -227,7 +226,7 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
     let database = test_support::memory();
     let report = seed_small(&database, 31);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let target = all_messages(&database)[0];
     give_body(

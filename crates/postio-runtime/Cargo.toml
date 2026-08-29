@@ -33,12 +33,24 @@ zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 criterion = "0.7.0"
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
+# The `sync_writes` bench only: the phase split has to wrap each phase in the
+# same kind of transaction `commit_batch` uses, or the numbers include a
+# commit apiece and stop being comparable to the whole they came from.
+# Features match `postio-storage`'s -- one `links = "sqlite3"` crate in the
+# graph, so the feature selecting SQLCipher has to agree everywhere (ADR 0014).
+rusqlite = { version = "0.40.2", features = [
+    "bundled-sqlcipher-vendored-openssl",
+] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [[bench]]
 name = "store_reads"
+harness = false
+
+[[bench]]
+name = "sync_writes"
 harness = false
 
 [lints]

@@ -49,7 +49,7 @@ use chrono::{DateTime, Utc};
 use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
-use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
+use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
@@ -82,44 +82,18 @@ pub struct Page {
 /// *scope*, not an id — otherwise a smart folder can be drawn and cannot be
 /// opened, which is a dead end wearing a folder's clothes.
 ///
-/// Mirrors `postio_runtime::store::ListScope` rather than being it: the view
-/// layer must not depend on the runtime, and this is the seam where the
-/// composition root translates between them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FeedScope {
-    /// One folder, as the server has it.
-    Mailbox(MailboxId),
-    /// Everything flagged in an account, wherever it is filed.
-    Flagged(AccountId),
-    /// Everything currently snoozed in an account, wherever it is filed.
-    Snoozed(AccountId),
-    /// One conversation, wherever its messages are filed.
-    ///
-    /// The drill-in reads this rather than filtering the message list's own
-    /// model, which only ever held the part of the thread that was in this
-    /// folder and had been paged in.
-    Thread(ThreadId),
-}
-
-impl FeedScope {
-    /// The folder this scope names, when it names one.
-    ///
-    /// `None` for a smart folder — which is load-bearing rather than
-    /// incidental. It is what `commands::mirror` reads to tell app state
-    /// which mailbox is open, and a smart folder must not claim to be one.
-    pub fn mailbox(self) -> Option<MailboxId> {
-        match self {
-            FeedScope::Mailbox(id) => Some(id),
-            FeedScope::Flagged(_) | FeedScope::Snoozed(_) | FeedScope::Thread(_) => None,
-        }
-    }
-}
+/// `postio_model::ListScope`, not a spelling of its own: the view layer
+/// already depends on `postio-model`, so there is no seam left to translate
+/// across (#670). [`ListScope::mailbox`] is what `commands::mirror` reads to
+/// tell app state which mailbox is open, and a smart folder must not claim
+/// to be one.
+pub use postio_model::ListScope;
 
 /// Which rows are wanted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageRequest {
     /// The messages being listed.
-    pub scope: FeedScope,
+    pub scope: ListScope,
     /// The page index, for the reply to be matched against.
     pub page: u32,
     /// The first row wanted, counted from the newest.
@@ -179,7 +153,7 @@ struct Inner {
     list: glib::WeakRef<MessageList>,
     source: Rc<dyn MessageSource>,
     /// What the list is showing: one folder, or a role-scoped query.
-    scope: Cell<Option<FeedScope>>,
+    scope: Cell<Option<ListScope>>,
     total: Cell<u32>,
     /// How long the *mailbox* was, last time one was read.
     ///
@@ -334,7 +308,7 @@ impl Inner {
     /// that does not match the query above one that does.
     fn showing(&self, mailbox: MailboxId) -> bool {
         self.results.borrow().is_none()
-            && self.scope.get().and_then(FeedScope::mailbox) == Some(mailbox)
+            && self.scope.get().and_then(ListScope::mailbox) == Some(mailbox)
     }
 }
 
@@ -367,7 +341,7 @@ impl Feed {
     /// the list is empty rather than wrong. There is no spinner, because a
     /// local read is not something to wait for — if this ever feels like a
     /// wait, the query is the bug.
-    pub fn open(&self, scope: FeedScope) {
+    pub fn open(&self, scope: ListScope) {
         let inner = &self.0;
         inner.scope.set(Some(scope));
         inner.total.set(0);
@@ -390,13 +364,13 @@ impl Feed {
     /// `None` in a smart folder as well as before anything is open. That is
     /// deliberate: `commands::mirror` feeds this to `AppState::open_mailbox`,
     /// and a role-scoped query is not a mailbox an action can be aimed at.
-    /// See [`FeedScope::mailbox`].
+    /// See [`ListScope::mailbox`].
     pub fn mailbox(&self) -> Option<MailboxId> {
-        self.0.scope.get().and_then(FeedScope::mailbox)
+        self.0.scope.get().and_then(ListScope::mailbox)
     }
 
     /// What the list is showing, folder or query.
-    pub fn scope(&self) -> Option<FeedScope> {
+    pub fn scope(&self) -> Option<ListScope> {
         self.0.scope.get()
     }
 
@@ -827,7 +801,7 @@ impl FolderInner {
 /// this can never collide with a real folder.
 ///
 /// It is contained to exactly one hop. The sidebar hands it back on a click,
-/// [`Folders::scope_of`] turns it into a [`FeedScope`], and from there the
+/// [`Folders::scope_of`] turns it into a [`ListScope`], and from there the
 /// list, the store and app state all deal in scopes. It must never reach a
 /// query — `MessageSet::InMailbox { mailbox: -1 }` matches nothing, silently
 /// — nor `Command::Move`, whose destination is a foreign key.
@@ -944,14 +918,14 @@ impl Folders {
     /// What picking the sidebar row `id` should show.
     ///
     /// The one place a sidebar row becomes a query. Everything downstream —
-    /// the list, the store, app state — deals in [`FeedScope`], so this is
+    /// the list, the store, app state — deals in [`ListScope`], so this is
     /// where [`FLAGGED_ROW`] stops being an id and starts being what it
     /// actually meant.
-    pub fn scope_of(&self, id: MailboxId) -> FeedScope {
+    pub fn scope_of(&self, id: MailboxId) -> ListScope {
         match self.0.account.get() {
-            Some(account) if id == FLAGGED_ROW => FeedScope::Flagged(account),
-            Some(account) if id == SNOOZED_ROW => FeedScope::Snoozed(account),
-            _ => FeedScope::Mailbox(id),
+            Some(account) if id == FLAGGED_ROW => ListScope::Flagged(account),
+            Some(account) if id == SNOOZED_ROW => ListScope::Snoozed(account),
+            _ => ListScope::Mailbox(id),
         }
     }
 

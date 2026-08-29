@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use postio_config::change::ConfigChanged;
 use postio_config::live::{LiveConfig, Reload};
+use postio_config::paths::Platform;
 use postio_config::validate::{Checked, Validation};
 use postio_config::watch::{ConfigWatcher, WatchOptions};
 use postio_config::{Config, ConfigError, KeyBindings, keys};
@@ -60,6 +61,22 @@ impl Keymap {
     /// warning and never a failure: the command keeps its default binding, or
     /// loses its key and stays reachable from the palette.
     pub fn resolve(overrides: &KeyBindings) -> Self {
+        Self::resolve_on(overrides, Platform::host())
+    }
+
+    /// [`resolve`](Self::resolve) for a named platform.
+    ///
+    /// `mod` is expanded here, once, so everything downstream — the resolver,
+    /// the conflict check, the cheat sheet, the key hints — sees a concrete
+    /// accelerator and no layer below needs to know the word. Conflict
+    /// detection in particular depends on it: `mod+k` and `ctrl+k` are the
+    /// same key on Linux, and comparing the unexpanded strings would let both
+    /// be claimed.
+    ///
+    /// Taking the platform as a parameter rather than reading a `cfg` is what
+    /// lets either host assert both answers, the same discipline the path
+    /// resolution uses.
+    pub fn resolve_on(overrides: &KeyBindings, platform: Platform) -> Self {
         let mut keymap = Keymap::default();
         for spec in registry::every_action() {
             keymap.bindings.insert(spec.id, Vec::new());
@@ -87,6 +104,7 @@ impl Keymap {
             let Some(binding) = overrides.overrides().get(spec.as_str()).cloned() else {
                 continue;
             };
+            let binding = keys::expand_mod(&binding, platform);
             let binding = binding.as_str();
             let contexts = keymap.contexts_of(spec);
             if let Some(problem) = keys::binding_problem(binding) {
@@ -109,7 +127,10 @@ impl Keymap {
             if keymap.binding(spec.id).is_some() {
                 continue;
             }
-            let Some(default) = spec.default_binding.map(str::to_string) else {
+            let Some(default) = spec
+                .default_binding
+                .map(|binding| keys::expand_mod(binding, platform))
+            else {
                 continue;
             };
             if let Some(taken) = keymap.holder_of(&default, spec.contexts) {
@@ -130,8 +151,9 @@ impl Keymap {
         // way to reach a command must never cost another command its first.
         for spec in registry::every_action() {
             for alternate in spec.alternate_bindings {
-                if keymap.holder_of(alternate, spec.contexts).is_none() {
-                    keymap.claim(spec.id, (*alternate).to_string());
+                let alternate = keys::expand_mod(alternate, platform);
+                if keymap.holder_of(&alternate, spec.contexts).is_none() {
+                    keymap.claim(spec.id, alternate);
                 }
             }
         }
@@ -421,7 +443,7 @@ mod tests {
         for spec in registry::all() {
             assert_eq!(
                 keymap.binding(spec.id),
-                Some(spec.default_binding),
+                Some(keys::expand_mod(spec.default_binding, Platform::host()).as_str()),
                 "`{}` did not keep its default",
                 spec.id
             );

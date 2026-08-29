@@ -6,6 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use postio_config::KeyBindings;
+use postio_config::paths::Platform;
+use postio_core::config::Keymap;
 use postio_core::{Command, CommandId, Context, MessageTarget, Recovery, Scope, registry};
 use postio_model::AccountId;
 
@@ -30,10 +33,10 @@ const CONFIG_BINDINGS: &[(&str, &str)] = &[
     ("forward", "f"),
     ("compose", "c"),
     ("search", "/"),
-    ("command_palette", "ctrl+k"),
+    ("command_palette", "mod+k"),
     ("cheat_sheet", "?"),
-    ("settings", "ctrl+comma"),
-    ("edit_config", "ctrl+e"),
+    ("settings", "mod+comma"),
+    ("edit_config", "mod+e"),
 ];
 
 #[test]
@@ -122,13 +125,13 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
         ("first_message", "g g"),
         ("last_message", "G"),
     ];
+    // Against the *resolved* table, not the registry literal: what the canvas
+    // settled on is the key a user presses, and since #669 the registry spells
+    // that `mod+k` so a Mac can render the same decision as Command.
+    let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in expected {
         let parsed: CommandId = id.parse().expect("known command id");
-        assert_eq!(
-            registry::get(parsed).default_binding,
-            key,
-            "binding for {id}"
-        );
+        assert_eq!(keymap.binding(parsed), Some(key), "binding for {id}");
     }
     // `l` opens, as the canvas navigation set requires, without displacing the
     // `Return` default that config.toml already documents.

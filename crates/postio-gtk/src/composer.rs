@@ -97,10 +97,16 @@ pub enum Field {
 }
 
 /// Where the keyboard goes when a composition of this kind opens.
+///
+/// Reply and reply-all come from `reply_draft` with the original sender or
+/// recipients already filled into `to`, so the keyboard can go straight to
+/// the body. Forward has no recipient at all -- there is nobody to forward
+/// to until the user picks one -- so it belongs with `New`, not with the
+/// replies (#690).
 pub fn first_field(kind: DraftKind) -> Field {
     match kind {
-        DraftKind::New => Field::To,
-        DraftKind::Reply | DraftKind::ReplyAll | DraftKind::Forward => Field::Body,
+        DraftKind::New | DraftKind::Forward => Field::To,
+        DraftKind::Reply | DraftKind::ReplyAll => Field::Body,
     }
 }
 
@@ -455,9 +461,22 @@ fn quoted_body(source: &Message, forward: bool) -> MessageBody {
 
 /// The document `source`'s body means — the markup the reader showed when
 /// there is markup, the plain text otherwise.
+///
+/// The plain-text fallback goes through [`Document::from_flowed_text`]
+/// rather than [`Document::from_text`] exactly when `source` itself
+/// declared `format=flowed` (#456): unwrapping unconditionally would take
+/// an ordinary sender's own short lines as soft breaks and join them, and
+/// never unwrapping would show a `format=flowed` sender's wrapped sentence
+/// — including this app's own past sends — as line breaks nobody typed.
+///
+/// [`Document::from_flowed_text`]: postio_body::Document::from_flowed_text
+/// [`Document::from_text`]: postio_body::Document::from_text
 fn source_document(source: &Message) -> postio_body::Document {
     match (&source.body.html, &source.body.text) {
         (Some(html), _) => postio_body::parse(html),
+        (None, Some(text)) if source.text_is_flowed => {
+            postio_body::Document::from_flowed_text(text)
+        }
         (None, Some(text)) => postio_body::Document::from_text(text),
         (None, None) => postio_body::Document::new(),
     }
@@ -516,6 +535,11 @@ mod imp {
         /// opens, not to when the composer itself was built.
         pub schedule_send: gtk::MenuButton,
         pub save: gtk::Button,
+        /// "Esc keeps the draft", trailing the action row. The least
+        /// essential of the four (#692): it ellipsizes under a narrow
+        /// allocation rather than the row overflowing the window with a
+        /// bare edge-clip, or a button's own label losing a word.
+        pub escape: gtk::Label,
         pub warning: gtk::Label,
         /// Issue #116: "this reply quotes a link to a domain other than the
         /// sender's own" — purely informational, next to `warning` but a
@@ -617,6 +641,7 @@ mod imp {
                 send: gtk::Button::new(),
                 schedule_send: gtk::MenuButton::new(),
                 save: gtk::Button::new(),
+                escape: gtk::Label::new(None),
                 warning: gtk::Label::new(None),
                 tracking_notice: gtk::Label::new(None),
                 attachments_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
@@ -905,17 +930,10 @@ impl Composer {
     /// filed as *and* what actually gets sent, so wrapping happens exactly
     /// once, before either.
     ///
-    /// One consequence worth knowing about rather than discovering:
-    /// [`source_document`] falls back to [`postio_body::Document::from_text`]
-    /// for a plain-text message with no HTML part, and `from_text` does not
-    /// unwrap soft breaks. Replying to (or reopening) a plain-text message
-    /// this composer itself sent will show the wrapped line breaks as if
-    /// they were typed that way. Fixing that safely needs to know whether a
-    /// message's *own* `Content-Type` actually said `format=flowed` —
-    /// information `MessageBody` does not carry today, and doing this
-    /// generally enough to be safe for mail from other senders is exactly
-    /// what issue #333 scoped out. Filed as #456 rather than guessed at
-    /// here.
+    /// [`source_document`] undoes exactly this wrapping when it reads a
+    /// message back — including one this composer sent — through
+    /// `Message::text_is_flowed`, the fact `#333` could not check yet and
+    /// `#456` added.
     fn body(&self) -> MessageBody {
         let document = self.document();
         // `html`'s half of `render` costs a real `to_html` and a `harden`
@@ -2671,15 +2689,21 @@ impl Composer {
             move |_| composer.save()
         ));
 
-        let escape = gtk::Label::new(Some("Esc keeps the draft"));
-        escape.add_css_class("postio-compose-escape");
-        escape.set_hexpand(true);
-        escape.set_xalign(1.0);
+        imp.escape.set_label("Esc keeps the draft");
+        imp.escape.add_css_class("postio-compose-escape");
+        imp.escape.set_hexpand(true);
+        imp.escape.set_xalign(1.0);
+        // #692: the least essential of the four, so it is the one that
+        // gives way under a narrow allocation. Without this, nothing here
+        // can shrink below its natural width, and the whole row overflows
+        // the window instead -- clipping this label against the window's
+        // own edge rather than showing anything legible.
+        imp.escape.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
         row.append(&imp.send);
         row.append(&imp.schedule_send);
         row.append(&imp.save);
-        row.append(&escape);
+        row.append(&imp.escape);
         row
     }
 
@@ -2739,6 +2763,15 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_schedule_send_button(&self) -> gtk::MenuButton {
         self.imp().schedule_send.clone()
+    }
+
+    /// Whether the action row's trailing hint is allowed to give way under a
+    /// narrow allocation (#692) -- the least essential of the row's four
+    /// elements, so it is the one that should, rather than a button's own
+    /// label losing a word or the row overflowing the window outright.
+    #[doc(hidden)]
+    pub fn test_escape_hint_ellipsizes(&self) -> bool {
+        self.imp().escape.ellipsize() == gtk::pango::EllipsizeMode::End
     }
 
     /// Types `text` into the body, the way a keystroke reaches the buffer.
@@ -2906,7 +2939,12 @@ fn style_toolbar_button(button: &gtk::Button, id: CommandId, icon: &str, class: 
     button.set_tooltip_text(Some(&format!(
         "{} ({})",
         spec.title,
-        pretty_binding(spec.default_binding)
+        // Expanded first: the registry stores `mod+shift+8` since #669, and a
+        // tooltip reading "Mod+Shift+8" would be nonsense on either platform.
+        pretty_binding(&postio_config::keys::expand_mod(
+            spec.default_binding,
+            postio_config::paths::Platform::host(),
+        ))
     )));
     button.update_property(&[gtk::accessible::Property::Label(spec.title)]);
     // The click acts on the editor's selection; taking the focus would
@@ -3380,8 +3418,10 @@ mod tests {
 
     #[test]
     fn a_reply_starts_in_the_body_and_new_mail_starts_in_to() {
-        assert_eq!(first_field(DraftKind::New), Field::To);
-        for kind in [DraftKind::Reply, DraftKind::ReplyAll, DraftKind::Forward] {
+        for kind in [DraftKind::New, DraftKind::Forward] {
+            assert_eq!(first_field(kind), Field::To, "{kind:?}");
+        }
+        for kind in [DraftKind::Reply, DraftKind::ReplyAll] {
             assert_eq!(first_field(kind), Field::Body, "{kind:?}");
         }
     }
@@ -3626,6 +3666,103 @@ mod tests {
         let text = draft.body.text.expect("a text half");
         assert!(text.contains("> The lamp"), "{text}");
         assert!(text.contains("wrote:"), "{text}");
+    }
+
+    #[test]
+    fn replying_to_your_own_flowed_plain_text_message_unwraps_the_soft_breaks() {
+        // #456: a message this app sent as plain text only, format=flowed,
+        // whose sentence happened to wrap across three physical lines --
+        // exactly `plain-text-flowed-reply.eml`'s shape. Quoting it must
+        // read as the one sentence the sender wrote, not three lines they
+        // never typed.
+        let mut source = Message::new(
+            AccountId::new(1),
+            postio_model::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        source.from = vec![EmailAddress::new(
+            Some("Quinn Abara"),
+            "quinn.abara@example.net",
+        )];
+        let sentence = "That order works for me, though I would rather take the \
+                         sign-off question first while everyone is still in the room \
+                         and awake, because the layout argument tends to eat the \
+                         whole hour once it starts.";
+        source.body = MessageBody {
+            text: Some(
+                "That order works for me, though I would rather take the sign-off \n\
+                 question first while everyone is still in the room and awake, because \n\
+                 the layout argument tends to eat the whole hour once it starts."
+                    .to_owned(),
+            ),
+            html: None,
+        };
+        source.text_is_flowed = true;
+
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
+
+        let document = document_of(&draft.body);
+        let quoted_paragraph_is_one_unbroken_sentence = document.blocks.iter().any(|block| {
+            matches!(
+                block,
+                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
+                    inner,
+                    postio_body::Block::Paragraph(inlines)
+                        if inlines.as_slice() == [postio_body::Inline::Text(sentence.to_owned())]
+                ))
+            )
+        });
+        assert!(
+            quoted_paragraph_is_one_unbroken_sentence,
+            "the quote must be the sender's one sentence, not their soft \
+             wrap read back as typed line breaks: {document:?}"
+        );
+    }
+
+    #[test]
+    fn replying_to_an_ordinary_senders_short_lines_leaves_them_as_typed() {
+        // The other half of #456's acceptance: a message from someone else
+        // that merely has short lines, and no format=flowed parameter at
+        // all, must not be reflowed -- real intentional line breaks would
+        // get eaten.
+        let mut source = Message::new(
+            AccountId::new(1),
+            postio_model::ids::MailboxId::new(1),
+            chrono::Utc::now(),
+        );
+        source.from = vec![EmailAddress::new(
+            Some("Ada Norwood"),
+            "ada.norwood@example.com",
+        )];
+        source.body = MessageBody {
+            text: Some("Short note before the walkthrough.\nSee you then.".to_owned()),
+            html: None,
+        };
+        source.text_is_flowed = false;
+
+        let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
+        let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
+
+        let document = document_of(&draft.body);
+        let quote_keeps_both_typed_lines = document.blocks.iter().any(|block| {
+            matches!(
+                block,
+                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
+                    inner,
+                    postio_body::Block::Paragraph(inlines) if inlines.as_slice() == [
+                        postio_body::Inline::Text("Short note before the walkthrough.".to_owned()),
+                        postio_body::Inline::Break,
+                        postio_body::Inline::Text("See you then.".to_owned()),
+                    ]
+                ))
+            )
+        });
+        assert!(
+            quote_keeps_both_typed_lines,
+            "an ordinary sender's own line break must survive as a break, \
+             not be joined onto its neighbour: {document:?}"
+        );
     }
 
     #[test]

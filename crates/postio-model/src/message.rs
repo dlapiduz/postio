@@ -178,6 +178,17 @@ pub struct Message {
 
     /// Body text and HTML, present once `sync.body_state.has_body()`.
     pub body: MessageBody,
+    /// Whether the text part's own `Content-Type` declared `format=flowed`
+    /// (RFC 3676): `body.text`'s lines are soft-wrapped prose, not breaks
+    /// the sender typed on purpose. `false` for a message with no text
+    /// part, same as any other fact nothing has parsed yet.
+    ///
+    /// A caller quoting `body.text` — replying, forwarding, reopening a
+    /// message this app sent as plain text only — reads this to choose
+    /// between undoing the wrap and taking every line at face value; taking
+    /// an ordinary sender's short lines as the same three typed breaks
+    /// would be exactly as wrong the other way (#456).
+    pub text_is_flowed: bool,
     /// A short plain-text snippet for the message list.
     pub preview: Option<String>,
     /// Attachment metadata; the bytes may not be local yet.
@@ -262,6 +273,7 @@ impl Message {
             date: None,
             received_at,
             body: MessageBody::default(),
+            text_is_flowed: false,
             preview: None,
             attachments: Vec::new(),
             content_type: None,

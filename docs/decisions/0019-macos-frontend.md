@@ -163,6 +163,20 @@ This replaces what the plan originally proposed — a `primary+key` spelling in
 `[keys]` resolving to Control on freedesktop and Command on Apple — which would
 have made the config file mean different things on different platforms.
 
+> **Amended 2026-08-28 (#669).** The paragraph above was half wrong and the
+> half it got wrong was the important one. Ghostty's arrangement removes the
+> need for a per-platform binding *table*; it does not remove the need for a
+> platform-aware *primary modifier*, because the defaults still have to be
+> spelled somehow and `ctrl+k` is simply the wrong key on a Mac. Nor does the
+> objection hold: a `mod` token makes the file mean **the same** thing on both
+> platforms — "the primary accelerator" — where a literal `ctrl+k` default
+> would be the thing that differed. `mod` now resolves when the keymap is
+> built, against a supplied `Platform`; `ctrl` stays literal so an explicit
+> choice is never overridden. Rendering-time translation was considered and
+> rejected: it would draw ⌘K in a menu while the resolver still matched
+> Control, and it would break the conflict check, which cannot see that `mod+k`
+> and `ctrl+k` are one key. The rest of this section stands unchanged.
+
 Ghostty's arrangement is better and costs less. The core owns the keycode
 table, the modifier semantics, the binding trie, sequences and leaders. Each
 frontend does three small things: send a reduced key event in; ask
@@ -170,8 +184,10 @@ frontend does three small things: send a reduced key event in; ask
 small renderer from that trigger into its platform's accelerator format —
 `<Ctrl>N` for GTK, `⌘N` for `NSMenuItem`.
 
-So `[keys]` and `docs/keybindings.md` do not change at all, and there is one
-binding table rather than two that agree until they do not.
+So there is one binding table rather than two that agree until they do not.
+`[keys]` gains exactly one word (`mod`, per the amendment above) and keeps
+every existing file working; `docs/keybindings.md` renders the freedesktop
+expansion, so its table is unchanged.
 
 Dispatch on macOS is a window-level `NSEvent` monitor, not SwiftUI's
 `.keyboardShortcut`. The latter is a menu-accelerator model: it cannot express

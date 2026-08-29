@@ -1,5 +1,6 @@
 //! Opening a session, draining its events, and shutting it down.
 
+use postio_config::paths::Platform;
 use std::sync::{Arc, Mutex};
 
 use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, handler_fn};
@@ -76,6 +77,8 @@ pub struct SessionOptions {
     seeded: Option<postio_storage::Database>,
     #[cfg(feature = "testing")]
     seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
+    #[cfg(feature = "testing")]
+    config_text: Option<String>,
 }
 
 impl SessionOptions {
@@ -91,6 +94,8 @@ impl SessionOptions {
             seeded: None,
             #[cfg(feature = "testing")]
             seeded_blobs: None,
+            #[cfg(feature = "testing")]
+            config_text: None,
         }
     }
 
@@ -152,6 +157,16 @@ impl SessionOptions {
         self
     }
 
+    /// Use this `config.toml` text rather than the one on disk.
+    ///
+    /// For tests. Reading the developer's own config would make a rebinding
+    /// on their machine fail a test on everyone else's.
+    #[cfg(feature = "testing")]
+    pub fn with_config_for_test(mut self, text: &str) -> Self {
+        self.config_text = Some(text.to_owned());
+        self
+    }
+
     /// An in-memory session on a runtime and command bus the caller owns.
     ///
     /// `postio-app` builds its own [`Bridge`] and hands the parts to
@@ -162,6 +177,26 @@ impl SessionOptions {
         Self {
             bridge: Some((runtime, commands)),
             ..Self::in_memory()
+        }
+    }
+}
+
+/// This installation's `[keys]`, or the built-in defaults.
+///
+/// A config that will not parse is a reason to use the defaults, not a reason
+/// the application cannot open: the store and the mail are not downstream of
+/// `[keys]`, and refusing to start over a mistyped binding would be a mail
+/// client held hostage by its own preferences file.
+fn load_key_bindings(text: Option<&str>) -> postio_config::keys::KeyBindings {
+    let config = match text {
+        Some(text) => postio_config::Config::from_toml_str(text).ok(),
+        None => postio_config::Config::load().ok(),
+    };
+    match config {
+        Some(config) => config.keys,
+        None => {
+            tracing::warn!("using the built-in key bindings: config.toml is absent or unreadable");
+            Default::default()
         }
     }
 }
@@ -208,6 +243,12 @@ pub struct Session {
     /// store is SQLCipher, and dropping an engine at process exit is exactly
     /// when libcrypto goes away underneath a thread still encrypting a page.
     engines: Mutex<Vec<postio_runtime::Engine>>,
+    /// `[keys]` as this installation has it.
+    ///
+    /// Read once at open. A menu accelerator has to reflect what the user
+    /// actually bound, and re-reading `config.toml` on every menu draw would
+    /// be a file read per repaint.
+    keys: postio_config::keys::KeyBindings,
     /// Events this boundary raises itself, merged into the drain alongside
     /// the engine's. `PageReady` lives here rather than in `postio-core`
     /// because paging is how this frontend reads a list, not something the
@@ -350,6 +391,12 @@ impl Session {
         self.mailboxes()
     }
 
+    /// The binding in force for a command, for drawing a native accelerator.
+    #[uniffi::method(name = "bindingFor")]
+    pub fn binding_for_ffi(&self, command: String) -> Option<String> {
+        self.binding_for(command)
+    }
+
     /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
@@ -440,6 +487,7 @@ impl Session {
             let wiring = Wiring::new(database, blobs, runtime, sink, commands);
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
+                keys: load_key_bindings(options.config_text.as_deref()),
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
@@ -474,9 +522,15 @@ impl Session {
         let (database, blobs) = postio_session::open_store_at(path, &key)
             .map_err(|message| SessionError::StoreUnavailable { message })?;
 
+        #[cfg(feature = "testing")]
+        let keys = load_key_bindings(options.config_text.as_deref());
+        #[cfg(not(feature = "testing"))]
+        let keys = load_key_bindings(None);
+
         let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
+            keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
             scope: Mutex::new(None),
@@ -701,6 +755,23 @@ impl Session {
             }
         }
         folders
+    }
+
+    /// The binding in force for a command, for drawing a native accelerator.
+    ///
+    /// The user's override if there is one, the built-in default otherwise.
+    /// A menu must ask rather than read `CommandSpec::default_binding`
+    /// directly: drawing the default for a command somebody rebound is
+    /// confidently wrong, which is worse for a menu item than showing no key
+    /// at all.
+    ///
+    /// Resolved for the running platform, so a Mac gets `cmd+k` for the
+    /// palette rather than the `mod+k` the table stores. Swift renders a
+    /// `KeyboardShortcut` from this and must never see the token: it has no
+    /// way to know which key `mod` means, and that decision belongs to the
+    /// core anyway.
+    pub fn binding_for(&self, command: String) -> Option<String> {
+        self.keys.binding_on(&command, Platform::host())
     }
 
     /// How many accounts are configured and enabled.

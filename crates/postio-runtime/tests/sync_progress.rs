@@ -87,7 +87,7 @@ async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
     };
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, events) = event_channel();
     let backend = Arc::new(server());
     backend.set_latency(LATENCY);

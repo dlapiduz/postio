@@ -22,7 +22,6 @@
 // the environment. Set before the app under test starts, which is the one
 // moment it is sound -- the same reasoning `wiring.rs` records.
 
-use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -51,10 +50,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 pub fn opening_a_store_reclaims_what_nothing_references() {
-    let state_dir = std::env::temp_dir().join(format!("postio-reclaim-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -70,7 +68,7 @@ pub fn opening_a_store_reclaims_what_nothing_references() {
     assert!(report.message_count > 0, "the fixture seeded no mail");
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // What a deleted message leaves behind: bytes on disk that no row names.
     // Written directly rather than by deleting a seeded message, so the test

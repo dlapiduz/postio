@@ -55,12 +55,16 @@ fn server() -> MockBackend {
         .build()
 }
 
-fn engine_for(database: &Database, account: AccountId, backend: Arc<MockBackend>) -> Engine {
+fn engine_for(
+    database: &Database,
+    account: AccountId,
+    backend: Arc<MockBackend>,
+) -> (Engine, tempfile::TempDir) {
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (sink, _events) = event_channel();
 
-    Engine::spawn(EngineParts {
+    let engine = Engine::spawn(EngineParts {
         account,
         database: database.clone(),
         blobs,
@@ -78,7 +82,8 @@ fn engine_for(database: &Database, account: AccountId, backend: Arc<MockBackend>
         mailbox_roles: Default::default(),
         clock: Arc::new(SystemClock),
     })
-    .expect("an engine per account")
+    .expect("an engine per account");
+    (engine, directory)
 }
 
 /// The ADR's own test: a slow account must not hold up a fast one.
@@ -117,8 +122,8 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
     slow_backend.set_latency(SLOW);
     let fast_backend = Arc::new(server());
 
-    let slow_engine = engine_for(&database, slow.0, Arc::clone(&slow_backend));
-    let fast_engine = engine_for(&database, fast.0, Arc::clone(&fast_backend));
+    let (slow_engine, _slow_directory) = engine_for(&database, slow.0, Arc::clone(&slow_backend));
+    let (fast_engine, _fast_directory) = engine_for(&database, fast.0, Arc::clone(&fast_backend));
 
     // The slow pass starts first, so anything serializing the two would have
     // to finish it before the fast one could begin.

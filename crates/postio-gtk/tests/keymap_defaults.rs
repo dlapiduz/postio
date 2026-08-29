@@ -10,7 +10,8 @@
 //! No display, no GTK main loop: every layer involved is pure.
 
 use postio_config::KeyBindings;
-use postio_config::keys::{DEFAULT_BINDINGS, binding_problem};
+use postio_config::keys::{DEFAULT_BINDINGS, binding_problem, expand_mod};
+use postio_config::paths::Platform;
 use postio_core::{CommandId, Context};
 use postio_gtk::keymap::{Binding, KeyContext, Keymap, Outcome, Resolver};
 
@@ -97,11 +98,28 @@ fn the_two_binding_parsers_agree() {
             "{binding} should be rejected by both"
         );
     }
+
+    // The one place the two parsers are *meant* to disagree. `mod` is valid in
+    // a config file and invalid in the resolver, because it is resolved in
+    // between: `Keymap::resolve` turns it into `ctrl` here and `cmd` on macOS.
+    // Written down so that making them agree reads as the regression it would
+    // be -- whichever side got "fixed" would break the other platform.
+    assert!(
+        binding_problem("mod+k").is_none(),
+        "`mod` is spellable in config.toml"
+    );
+    assert!(
+        "mod+k".parse::<Binding>().is_err(),
+        "`mod` must never reach the resolver unexpanded"
+    );
 }
 
 #[test]
 fn every_binding_the_config_crate_documents_parses() {
     for (command, binding) in DEFAULT_BINDINGS {
+        // Expanded, because the resolver refuses `mod` on purpose -- it is a
+        // config-file word, and `Keymap::resolve` is what turns it into a key.
+        let binding = expand_mod(binding, Platform::Freedesktop);
         binding
             .parse::<Binding>()
             .unwrap_or_else(|error| panic!("{command} = {binding}: {error}"));
@@ -244,6 +262,7 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
                 continue;
             }
             for binding in spec.bindings() {
+                let binding = &expand_mod(binding, Platform::Freedesktop);
                 let outcome = press(&mut resolver, binding, KeyContext::from(*context));
                 assert_eq!(
                     outcome,

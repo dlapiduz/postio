@@ -5,224 +5,32 @@
 //! what keeps `postio-gtk` free of SQL and `postio-core` free of GTK — so the
 //! join is here.
 //!
-//! # App state mirrors the window, and does it at send time
+//! # What is left here, and what moved
 //!
-//! Every message verb defaults to `MessageTarget::Selection`, and
-//! `AppState::resolve` is what turns that into rows. But the *selection* lives
-//! in the list widget: it is what the user built with `x`, Ctrl-click and
-//! `Ctrl+A`, and the list is the only thing that knows it.
+//! The *rules* — which rows a verb acts on, what app state is told about the
+//! selection, whether the bus owns a command at all — live in
+//! [`postio_core::aim`], because they are semantics and every frontend has to
+//! reach the same answer (#589, ADR 0019). What is left in this module is the
+//! **adapter**: read GTK's focus, scope, selection and cursor, hand them over
+//! as an [`Aim`](postio_core::aim::Aim), and send back what comes out. A
+//! second frontend writes the same three lines against its own list and gets
+//! the same behaviour by construction rather than by agreement.
 //!
-//! So app state is brought into step with the window in the instant before a
-//! command is sent, rather than being kept in step by a signal. Two reasons.
-//! A pull cannot drift: there is no ordering in which the bus resolves against
-//! a selection one gesture out of date. And a push would have to fire on every
-//! `j`, which is the interaction that happens most and the one with the
-//! tightest budget.
-//!
-//! # The quiet sink
-//!
-//! Mirroring emits [`Event::SelectionChanged`] like any other state change,
-//! and those events have nowhere to go: the window is where they came from,
-//! and telling it back would be a round trip to nowhere. They go into a sink
-//! whose reader was dropped on purpose.
+//! `view_scope` used to be the one rule still here, because `postio-core`
+//! had no scope type of its own for a `FeedScope` to convert into. #670 gave
+//! it one — `postio_model::ListScope`, which every reader of the list now
+//! shares — so `aim::view_scope` is where the rule lives, and this module is
+//! the adapter in full: nothing here decides anything.
 
-use postio_core::bridge::{CommandSender, EventSink, EventStream, event_channel};
-use postio_core::state::{Selection, SharedState, ViewScope};
-use postio_core::{Command, CommandId, Event, MessageTarget};
+use postio_core::aim::{self, Aim};
+use postio_core::bridge::{CommandSender, EventStream, event_channel};
+use postio_core::state::SharedState;
+use postio_core::{CommandId, Event};
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
-use postio_model::{MessageId, ThreadId};
 
 use adw::prelude::*;
 use gtk::glib;
-
-/// Point app state at what the user is looking at.
-///
-/// `focus` is the cursor — where the keyboard is — and it is load-bearing:
-/// `AppState::resolve` falls back to it when the selection is empty, which is
-/// the difference between "click a message, press `a`" archiving that message
-/// and archiving nothing at all. See `crates/postio-gtk/src/selection.rs`.
-pub fn mirror(
-    state: &SharedState,
-    quiet: &EventSink,
-    scope: Option<ViewScope>,
-    selection: &Selection,
-    focus: Option<MessageId>,
-) {
-    state.update(quiet, |app| {
-        let mut events = Vec::new();
-        if let Some(scope) = scope {
-            // Opening a different view drops the selection with it, on both
-            // sides — the list does the same. So this goes first, or it
-            // would throw away the selection just mirrored.
-            //
-            // The *scope*, not the mailbox it may or may not name: a smart
-            // folder has no mailbox, and telling app state only about
-            // mailboxes is what left `Ctrl+A` in Flagged with nothing to be
-            // relative to (#52).
-            events.extend(app.open_view(scope));
-        }
-        match selection {
-            Selection::These(messages) => events.extend(app.select(messages.clone(), focus)),
-            // "Everything" stays a predicate the whole way: the exceptions
-            // are re-applied one by one rather than the predicate being
-            // resolved into the ids it stands for, because resolving it is
-            // exactly the mailbox-sized read it exists to avoid.
-            Selection::Everything { except } => {
-                events.extend(app.select_all());
-                for message in except {
-                    events.extend(app.toggle_selection(*message));
-                }
-                events.extend(app.focus_on(focus));
-            }
-        }
-        events
-    });
-}
-
-/// A verb on a thread row acts on the conversation (ADR 0015 Q3).
-///
-/// A folder shows one row per thread, and "the row" is what a key means: `a`
-/// archives the conversation, not the one message the row happens to be drawn
-/// from. Acting on "the row" and acting on "one message of six" cannot both
-/// be what `a` means, and the row is what the user is looking at.
-///
-/// Three conditions, all of them narrowing:
-///
-/// * The verb must still be **aimed at the selection**. A hover action or a
-///   drop names its own rows and app state is explicitly told to take those
-///   at their word; re-aiming one would be second-guessing the user's point.
-/// * The rows it aims at must **be** thread rows. In a query view they are
-///   not, and the verb goes on meaning what it always meant.
-///
-/// With rows marked it is the same rule over the marked set: a selection of
-/// thread rows is a selection of *conversations*. That is the half #307 left
-/// and #468 was — a thread row's id is its newest message, so the verbs took
-/// a marked set at its word and archived six representatives out of six
-/// conversations, leaving the rest of every one of them in the folder after a
-/// gesture that looked like it worked.
-///
-/// `MessageTarget::Threads` carries it from here; `Actions::aim` expands the
-/// members store-side, which is where ADR 0015 Q3 says the expansion belongs.
-/// The frontend never enumerates a conversation to act on it — it names the
-/// conversations and stops.
-fn aim_at_the_conversation(
-    list: &postio_gtk::list_view::MessageListView,
-    command: Command,
-) -> Command {
-    if !matches!(command.target(), Some(MessageTarget::Selection)) {
-        return command;
-    }
-    match list.selection().selection() {
-        // Nothing marked: the gesture is about the cursor row.
-        Selection::These(marked) if marked.is_empty() => {
-            let Some(row) = list.cursor_row() else {
-                return command;
-            };
-            if !row.is_thread() {
-                return command;
-            }
-            let Some(thread) = row.thread else {
-                return command;
-            };
-            command.with_target(MessageTarget::Thread(thread))
-        }
-        // Rows marked: every one of them is a conversation (#468).
-        Selection::These(marked) => match threads_of(list, &marked) {
-            Some(threads) => command.with_target(MessageTarget::Threads(threads)),
-            // A set that is not all thread rows — a query view, or a folder
-            // mid-switch whose rows have not been replaced yet. Leaving it as
-            // `Selection` is today's meaning, and acting on the messages
-            // named is never *wrong*, only narrower than a conversation.
-            None => command,
-        },
-        // `Ctrl+A` is a predicate over the view, not a list of rows, and its
-        // exceptions are still message ids. Excepting a conversation rather
-        // than its representative is the rest of ADR 0015 Q3 and wants
-        // `MessageSet` to grow a members-of-these-threads variant, which is
-        // its own change — see #468.
-        Selection::Everything { .. } => command,
-    }
-}
-
-/// The conversations `marked` names, or `None` if any of them is not a thread
-/// row.
-///
-/// All-or-nothing on purpose. A half-converted target would archive some rows
-/// as conversations and some as single messages from one keystroke, which is
-/// a rule nobody could hold in their head — and in a threaded folder every
-/// row is a thread row, so the mixed case is a view that is not threaded at
-/// all rather than a set worth splitting.
-fn threads_of(
-    list: &postio_gtk::list_view::MessageListView,
-    marked: &[MessageId],
-) -> Option<Vec<ThreadId>> {
-    let model = list.model();
-    let mut by_id = std::collections::BTreeMap::new();
-    for index in 0..model.n_items() {
-        let Some(row) = model
-            .item(index)
-            .and_then(|item| item.downcast::<postio_gtk::list::MessageRow>().ok())
-            .and_then(|item| item.row())
-        else {
-            continue;
-        };
-        by_id.insert(row.id, row);
-    }
-
-    let mut threads = Vec::with_capacity(marked.len());
-    for id in marked {
-        // A marked row that is not resident any more cannot be checked, and
-        // guessing it is a thread would act on a conversation the user may
-        // not have marked. Fall back to the message ids instead.
-        let row = by_id.get(id)?;
-        if !row.is_thread() {
-            return None;
-        }
-        threads.push(row.thread?);
-    }
-    threads.sort_unstable();
-    threads.dedup();
-    Some(threads)
-}
-
-/// The app-state scope a feed scope stands for.
-///
-/// `None` for a thread drill-in: a conversation is a *destination for a
-/// verb*, not a view a whole-view selection is relative to — `Ctrl+A` inside
-/// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
-/// gets acted on instead.
-///
-/// Also `None` for Snoozed (#493): unlike Flagged, nothing here needs
-/// `Ctrl+A` to select every snoozed message at once yet, so it is not worth
-/// a `MessageSet::Snoozed` predicate of its own until something does. A
-/// person can still snooze, unsnooze, open and read individual rows in that
-/// view — this only means a whole-view bulk gesture there is a rejection
-/// rather than a no-op that silently claims to have done something.
-fn view_scope(scope: postio_gtk::feed::FeedScope) -> Option<ViewScope> {
-    match scope {
-        postio_gtk::feed::FeedScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
-        postio_gtk::feed::FeedScope::Flagged(account) => Some(ViewScope::Flagged(account)),
-        postio_gtk::feed::FeedScope::Snoozed(_) | postio_gtk::feed::FeedScope::Thread(_) => None,
-    }
-}
-
-/// Whether this invocation is the bus's business.
-///
-/// The bus is one consumer among several — the composer answers reply and
-/// compose, the config module answers `edit_config`, and the window answers
-/// `Esc` itself when there is something to close — and it sees every gesture,
-/// because [`Window::connect_action`] is the seam that carries whole
-/// invocations. Sending it commands it does not handle would answer a stray
-/// `Esc` with "`back` is not wired up in this build".
-///
-/// `wired` comes from [`Dispatcher::wired`], so this cannot drift from what
-/// the bus actually answers.
-///
-/// [`Dispatcher::wired`]: postio_core::dispatch::Dispatcher::wired
-fn is_for_the_bus(wired: &[CommandId], command: &Command) -> bool {
-    wired.contains(&command.id())
-}
 
 /// Send the invocations the bus owns to it, as the window produces them.
 pub fn install(
@@ -240,18 +48,24 @@ pub fn install(
         #[weak(rename_to = window)]
         window,
         move |command| {
-            if !is_for_the_bus(&wired, &command) {
+            if !aim::is_wired(&wired, &command) {
                 return;
             }
+            // The adapter, and the whole of it: everything below is a fact
+            // GTK already holds, handed over as one snapshot. Nothing here
+            // decides anything -- `postio_core::aim` does, so that this
+            // frontend and the next cannot answer differently.
             let list = window.list();
-            let command = aim_at_the_conversation(&list, command);
-            mirror(
-                &state,
-                &quiet,
-                feeds.messages.scope().and_then(view_scope),
-                &list.selection().selection(),
-                list.cursor_id(),
-            );
+            let rows = list.model();
+            let selection = list.selection().selection();
+            let aim = Aim {
+                scope: feeds.messages.scope().and_then(aim::view_scope),
+                selection: &selection,
+                cursor: list.cursor_id(),
+                rows: &rows,
+            };
+            let command = aim::refine(command, &aim);
+            aim::mirror(&state, &quiet, &aim);
             if commands.send(command).is_err() {
                 // Only ever during teardown: the bridge has stopped and there
                 // is nothing left to run the verb on.
@@ -330,182 +144,4 @@ pub fn drain(
             apply(&window, &feeds, &event, &notifier);
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use postio_core::MessageTarget;
-
-    fn quiet() -> EventSink {
-        let (sink, _) = event_channel();
-        sink
-    }
-
-    use postio_model::MailboxId;
-
-    fn mailbox() -> MailboxId {
-        MailboxId::new(4)
-    }
-
-    #[test]
-    fn only_the_verbs_the_bus_owns_are_sent_to_it() {
-        // The bus is one consumer among several: the composer answers reply
-        // and compose, the config module answers edit_config, and the window
-        // answers `Esc` itself when there is something to close. Sending it
-        // everything would put "`back` is not wired up in this build" on
-        // screen every time a stray `Esc` found nothing to close.
-        let wired = [CommandId::Archive, CommandId::Undo];
-
-        assert!(is_for_the_bus(
-            &wired,
-            &Command::Archive {
-                target: MessageTarget::Selection
-            }
-        ));
-        assert!(is_for_the_bus(&wired, &Command::Undo));
-        assert!(!is_for_the_bus(&wired, &Command::Back));
-        assert!(!is_for_the_bus(&wired, &Command::Reply { message: None }));
-    }
-
-    #[test]
-    fn a_bus_with_nothing_wired_is_told_nothing() {
-        // What an unopenable store leaves behind. Every key would otherwise
-        // answer with a rejection it can do nothing about.
-        assert!(!is_for_the_bus(
-            &[],
-            &Command::Archive {
-                target: MessageTarget::Selection
-            }
-        ));
-    }
-
-    #[test]
-    fn an_empty_selection_aims_a_verb_at_the_cursor() {
-        // The daily case, and the one that fails silently: click a message —
-        // which *clears* the selection in this list — and press `a`.
-        let state = SharedState::default();
-
-        mirror(
-            &state,
-            &quiet(),
-            Some(ViewScope::Mailbox(mailbox())),
-            &Selection::These(Vec::new()),
-            Some(MessageId::new(9)),
-        );
-
-        assert_eq!(
-            state.read(|app| app.resolve(&MessageTarget::Selection)),
-            Some(postio_core::state::Resolved::Messages(vec![
-                MessageId::new(9)
-            ]))
-        );
-    }
-
-    // -- aiming a verb at a conversation (ADR 0015 Q3, #307) -------------
-    //
-    // `aim_at_the_conversation` needs a real list widget, so the behaviour
-    // over a wired application is covered by
-    // `tests/app_suite/thread_keystroke.rs`. What is unit-testable here is
-    // the narrowing: which commands it may rewrite at all.
-
-    #[test]
-    fn only_a_verb_still_aimed_at_the_selection_can_be_re_aimed() {
-        // A hover action or a drop names its own rows, and app state takes
-        // those at their word on purpose. Re-aiming one at the cursor's
-        // conversation would act on mail the user did not point at.
-        let named = Command::Archive {
-            target: MessageTarget::Messages(vec![MessageId::new(42)]),
-        };
-        assert!(
-            !matches!(named.target(), Some(MessageTarget::Selection)),
-            "a named target is the guard `aim_at_the_conversation` checks first"
-        );
-
-        let from_a_key = Command::Archive {
-            target: MessageTarget::Selection,
-        };
-        assert!(matches!(
-            from_a_key.target(),
-            Some(MessageTarget::Selection)
-        ));
-    }
-
-    #[test]
-    fn a_verb_that_does_not_act_on_messages_has_nothing_to_re_aim() {
-        assert!(Command::Undo.target().is_none());
-    }
-
-    #[test]
-    fn a_deliberate_selection_survives_the_mirror() {
-        let state = SharedState::default();
-
-        mirror(
-            &state,
-            &quiet(),
-            Some(ViewScope::Mailbox(mailbox())),
-            &Selection::These(vec![MessageId::new(1), MessageId::new(2)]),
-            Some(MessageId::new(9)),
-        );
-
-        assert_eq!(
-            state.read(|app| app.resolve(&MessageTarget::Selection)),
-            Some(postio_core::state::Resolved::Messages(vec![
-                MessageId::new(1),
-                MessageId::new(2)
-            ])),
-            "what the user marked, not where they happen to be looking"
-        );
-    }
-
-    #[test]
-    fn select_all_arrives_as_a_predicate_and_keeps_its_exceptions() {
-        let state = SharedState::default();
-
-        mirror(
-            &state,
-            &quiet(),
-            Some(ViewScope::Mailbox(mailbox())),
-            &Selection::Everything {
-                except: vec![MessageId::new(7)],
-            },
-            Some(MessageId::new(7)),
-        );
-
-        assert_eq!(
-            state.read(|app| app.resolve(&MessageTarget::Selection)),
-            Some(postio_core::state::Resolved::Everything {
-                scope: ViewScope::Mailbox(mailbox()),
-                except: vec![MessageId::new(7)],
-            }),
-            "resolving it here would be the mailbox-sized read it exists to avoid"
-        );
-    }
-
-    #[test]
-    fn changing_mailbox_does_not_carry_the_old_selection_over() {
-        // An action landing on mail the user cannot see is the failure this
-        // prevents; the list drops its selection on the same boundary.
-        let state = SharedState::default();
-        mirror(
-            &state,
-            &quiet(),
-            Some(ViewScope::Mailbox(mailbox())),
-            &Selection::These(vec![MessageId::new(1)]),
-            Some(MessageId::new(1)),
-        );
-
-        mirror(
-            &state,
-            &quiet(),
-            Some(ViewScope::Mailbox(MailboxId::new(5))),
-            &Selection::These(Vec::new()),
-            None,
-        );
-
-        assert_eq!(
-            state.read(|app| app.resolve(&MessageTarget::Selection)),
-            None
-        );
-    }
 }

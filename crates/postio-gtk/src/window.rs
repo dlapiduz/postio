@@ -224,6 +224,37 @@ impl Window {
             .build()
     }
 
+    /// If nothing has claimed the keyboard yet, claims it for the message
+    /// list before presenting -- the widget [`Context::List`] (the default
+    /// context, set once in `constructed`) already claims.
+    ///
+    /// Order matters: GTK only picks its own initial-focus fallback *if
+    /// none is set yet* when the window maps, and that map happens
+    /// synchronously inside `present()` itself -- so claiming this
+    /// afterwards is already too late; whatever the fallback landed on has
+    /// had its side effects by the time control returns. Left to that
+    /// fallback, the window's very first real focus is whatever its
+    /// tab-order search finds, which has no notion of "the list is the
+    /// intended default". A still-syncing account has no folders yet, so
+    /// with a pinned saved search already on the sidebar (`app.rs` loads
+    /// `config.toml` before this runs) that row is the only focusable thing
+    /// in the window -- and focusing a row in a `GtkListBox` selects it in
+    /// `SelectionMode::Single`, which runs the search exactly as a click
+    /// would, before a single key is pressed (#614).
+    ///
+    /// Gated on nothing already having focus so this does not steal it back
+    /// from a caller that claimed something more specific first -- the
+    /// composer opening straight into its first field before the window is
+    /// ever mapped (`composer::focus_first`) being the one that exists
+    /// today. Shadows `GtkWindowExt::present` deliberately, so every call
+    /// site -- `app.rs` included -- gets this for free.
+    pub fn present(&self) {
+        if gtk::prelude::GtkWindowExt::focus(self).is_none() {
+            self.list().grab_focus();
+        }
+        gtk::prelude::GtkWindowExt::present(self);
+    }
+
     /// The three panes, for whoever is filling them.
     pub fn shell(&self) -> Shell {
         self.imp()
@@ -324,7 +355,7 @@ impl Window {
             row.thread_count,
         );
 
-        // Then the whole conversation. `FeedScope::Thread` is answered from
+        // Then the whole conversation. `ListScope::Thread` is answered from
         // `idx_messages_thread` with no mailbox or account restriction (#44):
         // a message filed in Archive, or on a page the list never scrolled
         // to, is not in what `thread_rows` gave the paint above, and is in
@@ -333,7 +364,7 @@ impl Window {
             return;
         };
         let future = source.fetch(crate::feed::PageRequest {
-            scope: crate::feed::FeedScope::Thread(id),
+            scope: crate::feed::ListScope::Thread(id),
             page: 0,
             offset: 0,
             limit: THREAD_PAGE,
@@ -1902,7 +1933,18 @@ impl Window {
             self.set_context(context);
             self.shell().set_focused_pane(pane);
         }
-        self.shell().grab_focus();
+        // `pane` only ever names List or Reader (`postio-cfd.2`): it
+        // predates the sidebar becoming a keyboard context at all, and has
+        // no shape to record which row on it had the keyboard. So a search
+        // opened by stepping onto a saved search (or by symptom 1 of #614)
+        // is restored the same way `enter_sidebar` reaches the sidebar in
+        // every other path, rather than trusted to whichever descendant
+        // `shell().grab_focus()`'s own memory happens to restore.
+        if self.context() == Context::Sidebar {
+            self.sidebar().focus_folders();
+        } else {
+            self.shell().grab_focus();
+        }
     }
 
     /// The `?` overlay.

@@ -74,12 +74,12 @@ fn press(window: &Window, key: gdk::Key) -> bool {
 }
 
 pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
-    let state_dir = std::env::temp_dir().join(format!("postio-parts-open-{}", std::process::id()));
+    let state_dir_guard = tempfile::tempdir().expect("a state directory");
+    let state_dir = state_dir_guard.path();
     let export_dir = state_dir.join("export");
-    std::fs::create_dir_all(&state_dir).unwrap();
     // SAFETY: first statements of a single-threaded test.
     unsafe {
-        std::env::set_var("XDG_STATE_HOME", &state_dir);
+        std::env::set_var("XDG_STATE_HOME", state_dir);
         std::env::set_var("POSTIO_EXPORT_DIR", &export_dir);
     }
 
@@ -95,7 +95,7 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     // ── a store with one account, one folder, and a real attached message ──
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     {
         let connection = database.connection().expect("a connection");
@@ -191,7 +191,6 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     );
 
     bridge.shutdown();
-    let _ = std::fs::remove_dir_all(&state_dir);
 }
 
 /// The one chip a message with a named attachment gets, once it appears.

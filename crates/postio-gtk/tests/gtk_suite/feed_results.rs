@@ -25,7 +25,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{
-    Feed, FeedScope, MessageSource, Page, PageFuture, PageRequest, ResultSource, RowsFuture,
+    Feed, ListScope, MessageSource, Page, PageFuture, PageRequest, ResultSource, RowsFuture,
 };
 use postio_gtk::list::{MessageList, MessageRow, PAGE_SIZE, Row};
 use postio_model::ids::{MailboxId, MessageId};
@@ -176,7 +176,7 @@ pub fn search_hits_reach_the_message_list() {
         let source = Fake::holding(4_000);
         let list = MessageList::new();
         let feed = Feed::new(&list, source.clone());
-        feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+        feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
         settle();
         source.drain_mailbox();
 
@@ -193,7 +193,7 @@ pub fn search_hits_reach_the_message_list() {
     let feed = Feed::new(&list, source.clone());
     feed.set_result_source(source.clone());
 
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
     settle();
     assert_eq!(list.n_items(), 4_000);
     source.drain_mailbox();

@@ -89,10 +89,9 @@ const ARCHIVE_PATH: &str = "Archive";
 
 #[test]
 fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
-    let state_dir = std::env::temp_dir().join(format!("postio-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     // Off unless asked for. There was no way to see inside this test at all,
     // and diagnosing #364 meant adding one — which is a thing the next person
@@ -150,7 +149,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         .expect("the memory store accepts a password");
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // ── the application, assembled the way `run` assembles it ─────────────
     let state = SharedState::default();

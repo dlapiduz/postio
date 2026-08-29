@@ -131,6 +131,19 @@ pub struct ParsedMessage {
     pub date: Option<DateTime<Utc>>,
     /// The body, decoded from its charset and transfer encoding.
     pub body: MessageBody,
+    /// Whether the `text/plain` part's own `Content-Type` declared
+    /// `format=flowed` (RFC 3676): its lines are soft-wrapped prose, not
+    /// breaks the sender typed on purpose. `false` for a message with no
+    /// text part at all, same as any other fact this parser cannot find.
+    ///
+    /// Recorded so a later reply or forward can tell `body.text` apart from
+    /// ordinary plain text and undo the wrapping instead of showing a
+    /// soft-wrapped sentence as three lines the sender never typed (#456).
+    /// `postio-model` cannot depend on `postio-body` (see that crate's
+    /// `outgoing` module docs), so the flag crosses the boundary as a
+    /// plain `bool` — the crate that does own `format=flowed` unwrapping
+    /// reads it from here.
+    pub text_is_flowed: bool,
     /// A flattened snippet of the body for the message list.
     pub preview: Option<String>,
     /// Attachments and inline parts, with their bytes.
@@ -179,6 +192,7 @@ impl ParsedMessage {
         message.subject = self.subject;
         message.date = self.date;
         message.body = self.body;
+        message.text_is_flowed = self.text_is_flowed;
         message.preview = self.preview;
         message.attachments = self
             .parts
@@ -446,11 +460,17 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         return message;
     }
 
+    let text_part = source.text_bodies().find_map(|part| match &part.body {
+        PartType::Text(text) => Some((part, text.to_string())),
+        _ => None,
+    });
+    message.text_is_flowed = text_part.as_ref().is_some_and(|(part, _)| {
+        part.content_type()
+            .and_then(|content_type| content_type.attribute("format"))
+            .is_some_and(|format| format.eq_ignore_ascii_case("flowed"))
+    });
     message.body = MessageBody {
-        text: source.text_bodies().find_map(|part| match &part.body {
-            PartType::Text(text) => Some(text.to_string()),
-            _ => None,
-        }),
+        text: text_part.map(|(_, text)| text),
         html: source.html_bodies().find_map(|part| match &part.body {
             PartType::Html(html) => Some(html.to_string()),
             _ => None,

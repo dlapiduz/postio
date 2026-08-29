@@ -90,10 +90,9 @@ fn started() -> Draft {
 
 #[test]
 fn the_composer_detaches_into_its_own_window_and_comes_back() {
-    let state_dir = std::env::temp_dir().join(format!("postio-detach-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -116,7 +115,11 @@ fn the_composer_detaches_into_its_own_window_and_comes_back() {
         "and it is in the palette and the cheat sheet, from that one entry"
     );
     assert_eq!(
-        spec.default_binding, "ctrl+shift+o",
+        postio_config::keys::expand_mod(
+            spec.default_binding,
+            postio_config::paths::Platform::Freedesktop,
+        ),
+        "ctrl+shift+o",
         "and it has a key of its own, so it is not pointer-only"
     );
 

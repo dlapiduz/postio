@@ -169,10 +169,12 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 /// A window with the onboarding screen installed over `transport`.
-fn onboard(transport: Arc<dyn DiscoveryTransport>) -> (Window, Onboarding, Bridge) {
+fn onboard(
+    transport: Arc<dyn DiscoveryTransport>,
+) -> (Window, Onboarding, Bridge, tempfile::TempDir) {
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();
@@ -205,15 +207,14 @@ fn onboard(transport: Arc<dyn DiscoveryTransport>) -> (Window, Onboarding, Bridg
         .content()
         .and_downcast::<Onboarding>()
         .expect("the onboarding screen");
-    (window, screen, bridge)
+    (window, screen, bridge, directory)
 }
 
 #[test]
 fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
-    let state_dir = std::env::temp_dir().join(format!("postio-probe-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
@@ -227,7 +228,7 @@ fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
     // ── a domain that publishes settings ────────────────────────────────
 
     let transport = Arc::new(MockTransport::publishing(&autoconfig_xml()));
-    let (_window, screen, bridge) = onboard(transport.clone());
+    let (_window, screen, bridge, _directory) = onboard(transport.clone());
 
     screen.set_address("ada@example.com");
     screen.probe();
@@ -289,7 +290,7 @@ fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
     // ── a domain that publishes nothing falls back to manual entry ──────
 
     let quiet = Arc::new(MockTransport::publishing_nothing());
-    let (_window, screen, bridge) = onboard(quiet.clone());
+    let (_window, screen, bridge, _directory) = onboard(quiet.clone());
 
     screen.set_address("ada@example.com");
     screen.probe();

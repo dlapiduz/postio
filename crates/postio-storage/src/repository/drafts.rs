@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, AttachmentId, BlobId, Disposition, Draft, DraftId, DraftKind,
     DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
-    OperationTarget, RemoteId, ServerIdentifiers, ThreadId, Uid, UidValidity,
+    OperationTarget, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -39,6 +39,20 @@ pub struct ServerCopyLocation {
 }
 
 use super::{OperationQueueRepository, QueuedOperation};
+
+/// What [`DraftRepository::cancel_send`] found when it was asked to take a
+/// draft's send back off the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelSendOutcome {
+    /// The queued `Send` was removed and the draft is `Editing` again.
+    Cancelled,
+    /// There was nothing queued to cancel: the draft is not [`DraftState::Queued`],
+    /// or it no longer exists.
+    NotQueued,
+    /// The send is no longer safely cancellable — the drainer has already
+    /// started it, or it settled between the caller's read and this call.
+    AlreadyInFlight,
+}
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
 
@@ -50,7 +64,8 @@ pub struct DraftRepository<'a> {
 
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
-body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at";
+body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
+rfc_message_id";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -87,7 +102,8 @@ impl<'a> DraftRepository<'a> {
                         uid_validity = coalesce(?12, uid_validity),
                         mod_seq = coalesce(?13, mod_seq),
                         remote_id = coalesce(?14, remote_id),
-                        updated_at = ?15
+                        updated_at = ?15,
+                        rfc_message_id = ?16
                   WHERE id = ?1",
                 params![
                     draft.id.get(),
@@ -112,6 +128,7 @@ impl<'a> DraftRepository<'a> {
                         .as_ref()
                         .map(|id| id.as_str().to_owned()),
                     to_millis(draft.updated_at),
+                    reservation_for(draft),
                 ],
             )?;
             if changed == 0 {
@@ -125,8 +142,10 @@ impl<'a> DraftRepository<'a> {
             transaction.execute(
                 "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
                                      thread_id, subject, body_text, body_html, state, uid,
-                                     uid_validity, mod_seq, remote_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                                     uid_validity, mod_seq, remote_id, created_at, updated_at,
+                                     rfc_message_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                         ?16)",
                 params![
                     account_id,
                     optional_identity(draft.identity_id),
@@ -150,6 +169,7 @@ impl<'a> DraftRepository<'a> {
                         .map(|id| id.as_str().to_owned()),
                     to_millis(draft.created_at),
                     to_millis(draft.updated_at),
+                    reservation_for(draft),
                 ],
             )?;
             draft.id = DraftId::new(transaction.last_insert_rowid());
@@ -232,6 +252,7 @@ impl<'a> DraftRepository<'a> {
     pub fn queue_send(&self, draft: &mut Draft, at: DateTime<Utc>) -> Result<QueuedOperation> {
         let scope = super::Scope::open(self.connection)?;
 
+        reserve_message_id(&scope, draft)?;
         draft.state = DraftState::Queued;
         draft.updated_at = at;
         DraftRepository::new(&scope).save(draft)?;
@@ -263,6 +284,7 @@ impl<'a> DraftRepository<'a> {
     ) -> Result<QueuedOperation> {
         let scope = super::Scope::open(self.connection)?;
 
+        reserve_message_id(&scope, draft)?;
         draft.state = DraftState::Queued;
         draft.updated_at = at;
         DraftRepository::new(&scope).save(draft)?;
@@ -276,6 +298,74 @@ impl<'a> DraftRepository<'a> {
 
         scope.commit()?;
         Ok(queued)
+    }
+
+    /// Cancels a draft's pending send and hands it back for editing (#433).
+    ///
+    /// A queued draft's row stayed in the Drafts folder the whole time it sat
+    /// in the queue, and opening it from there reopened the composer on live
+    /// state that could be edited — while the drainer might build the
+    /// outgoing bytes from that same row at any moment. Whether an edit made
+    /// it into the message the server received depended on nothing but
+    /// timing.
+    ///
+    /// This is what makes it safe to open again: [`Operation::Send`] has no
+    /// [`Operation::inverse`] — there is nothing to *replay* against a
+    /// server that has not seen it — but [`OperationQueueRepository::delete`]
+    /// documents the real answer for a row that has not drained yet, taking
+    /// it off the queue outright. That is exactly this call, and it costs
+    /// nothing because nothing has left the machine: `Composer::send`'s
+    /// local-first write means the operation is still sitting in SQLite,
+    /// never in flight to SMTP, right up until the drainer marks it so.
+    ///
+    /// Returns [`CancelSendOutcome::AlreadyInFlight`] rather than touching
+    /// anything once the drainer has: at that point a submission may already
+    /// be on the wire, and reopening the draft as editable would risk a
+    /// second, different message going out behind it.
+    pub fn cancel_send(&self, id: DraftId, at: DateTime<Utc>) -> Result<CancelSendOutcome> {
+        let scope = super::Scope::open(self.connection)?;
+        let drafts = DraftRepository::new(&scope);
+
+        let Some(mut draft) = drafts.get(id)? else {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::NotQueued);
+        };
+        // `Sending` and `Sent` are not "nothing to cancel" — they are "too
+        // late", and the two are opposite facts. `postio-sync::send` commits
+        // `Sending` immediately before it opens the SMTP transaction (ADR
+        // 0021), so a draft in either state may already have reached the
+        // recipient's server, and answering `NotQueued` here would let a
+        // caller report a message recalled while it was on the wire.
+        if matches!(draft.state, DraftState::Sending | DraftState::Sent) {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::AlreadyInFlight);
+        }
+        if draft.state != DraftState::Queued {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::NotQueued);
+        }
+
+        let queue = OperationQueueRepository::new(&scope);
+        let target = OperationTarget::Draft(id);
+        let Some(pending) = queue.pending_for(target)? else {
+            // The row says `Queued` but the operation is already gone --
+            // settled between the caller's read and this one. Too late to
+            // pretend otherwise.
+            scope.commit()?;
+            return Ok(CancelSendOutcome::AlreadyInFlight);
+        };
+        if pending.state != postio_model::OperationState::Pending {
+            scope.commit()?;
+            return Ok(CancelSendOutcome::AlreadyInFlight);
+        }
+
+        queue.delete(pending.id)?;
+        draft.state = DraftState::Editing;
+        draft.updated_at = at;
+        drafts.save(&mut draft)?;
+
+        scope.commit()?;
+        Ok(CancelSendOutcome::Cancelled)
     }
 
     /// Deletes a draft and queues the removal of its server copy.
@@ -463,9 +553,19 @@ impl<'a> DraftRepository<'a> {
     }
 
     /// Moves a draft through its life cycle.
+    ///
+    /// Returning it to `Editing` gives the reserved `Message-ID` back, the
+    /// same way [`save`](Self::save) does — the invariant is that no row can
+    /// be both editable and still named by a message a previous attempt may
+    /// have delivered, and it holds on every write path or it is not an
+    /// invariant. See [`reservation_for`] for why.
     pub fn set_state(&self, id: DraftId, state: DraftState) -> Result<()> {
         let changed = self.connection.execute(
-            "UPDATE drafts SET state = ?2 WHERE id = ?1",
+            "UPDATE drafts
+                SET state = ?2,
+                    rfc_message_id = CASE WHEN ?2 = 'editing'
+                                          THEN NULL ELSE rfc_message_id END
+              WHERE id = ?1",
             params![id.get(), state.as_str()],
         )?;
         if changed == 0 {
@@ -683,6 +783,28 @@ fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAddress>
     Ok(found.map(|(name, address)| EmailAddress::new(name, address)))
 }
 
+/// Mints the `Message-ID` this send attempt series will go out under, unless
+/// one is already reserved (ADR 0021).
+///
+/// Called from inside `queue_send`'s transaction, before the save that stores
+/// it, so the reservation and the `Operation::Send` row are written together
+/// or not at all — a queued send whose id was lost on the way would be a
+/// retry nothing downstream could recognise as one, which is the whole
+/// failure this exists to prevent.
+///
+/// Idempotent: a draft that already carries a reservation keeps it. Re-queuing
+/// is the same attempt series, and only a return to `Editing` gives the
+/// reservation back — see [`reservation_for`].
+fn reserve_message_id(connection: &Connection, draft: &mut Draft) -> Result<()> {
+    if draft.rfc_message_id.is_some() {
+        return Ok(());
+    }
+    let from = sender(connection, draft)?;
+    let domain = from.as_ref().and_then(EmailAddress::domain);
+    draft.rfc_message_id = Some(postio_model::outgoing::reserve_message_id(domain));
+    Ok(())
+}
+
 /// The snippet the list draws under the subject.
 ///
 /// The same shape `postio-model`'s MIME reader produces for a received
@@ -839,9 +961,29 @@ fn read_draft(row: &Row<'_>) -> rusqlite::Result<Draft> {
                 .map(|seq| ModSeq::new(seq as u64)),
             remote_id: row.get::<_, Option<String>>(13)?.map(RemoteId::new),
         },
+        rfc_message_id: row.get::<_, Option<String>>(16)?.map(RfcMessageId::new),
         created_at: from_millis(row.get(14)?),
         updated_at: from_millis(row.get(15)?),
     })
+}
+
+/// The `rfc_message_id` column's value for `draft`, **derived from its state
+/// rather than trusted from the struct**.
+///
+/// ADR 0021 says the reservation is given back when a draft becomes editable
+/// again, and a caller that sets `state` without also clearing the id would
+/// otherwise write a row that contradicts itself — one that says "editable"
+/// and still names the message a previous attempt may already have delivered.
+/// Deriving it here means that row cannot be written by any path, rather than
+/// by every path remembering.
+fn reservation_for(draft: &Draft) -> Option<String> {
+    if draft.state == DraftState::Editing {
+        return None;
+    }
+    draft
+        .rfc_message_id
+        .as_ref()
+        .map(|id| id.as_str().to_owned())
 }
 
 fn optional_identity(id: Option<IdentityId>) -> Option<i64> {

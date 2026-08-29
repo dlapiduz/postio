@@ -50,13 +50,9 @@ fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
 }
 
 pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
-    let state_dir = std::env::temp_dir().join(format!(
-        "postio-signature-default-wiring-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -70,7 +66,7 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
     let database = test_support::memory();
     let report = seed_small(&database, 31);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let connection = database.connection().expect("a connection");
     let mut account = AccountRepository::new(&connection)

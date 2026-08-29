@@ -78,8 +78,12 @@ pub struct BuiltMessage {
 /// no `Message-ID` of its own (the sender omitted one) contributes no
 /// `In-Reply-To`, but its chain still becomes `References` if it has one.
 ///
-/// A fresh `Message-ID` and the current time are generated on every build —
-/// a draft may be edited and resent, and each attempt is its own message.
+/// The `Message-ID` comes from [`Draft::rfc_message_id`] when the draft has
+/// reserved one, and is generated fresh otherwise. That is ADR 0021's first
+/// decision and it is not cosmetic: a `Send` is resolved — and therefore
+/// rebuilt — on every drain attempt, so generating one here unconditionally
+/// made a retried send a second *distinct* message rather than a duplicate
+/// anything downstream could recognise. The date is always the current time.
 pub fn build(
     draft: &Draft,
     identity: &Identity,
@@ -128,7 +132,9 @@ fn assemble(
     in_reply_to: Option<&Message>,
     bcc: Bcc,
 ) -> BuiltMessage {
-    let message_id = generate_message_id(identity.address.domain().unwrap_or(FALLBACK_DOMAIN));
+    let message_id = draft.rfc_message_id.clone().unwrap_or_else(|| {
+        generate_message_id(identity.address.domain().unwrap_or(FALLBACK_DOMAIN))
+    });
 
     let mut builder = MessageBuilder::new()
         .message_id(message_id.without_brackets().to_owned())
@@ -266,6 +272,17 @@ fn mb_address(address: &EmailAddress) -> MbAddress<'static> {
     MbAddress::new_address(address.name.clone(), address.address.clone())
 }
 
+/// Mints the `Message-ID` a draft will send under, to be stored on
+/// [`Draft::rfc_message_id`] before the first attempt (ADR 0021).
+///
+/// The same generator [`build`] falls back to, exposed so that whoever
+/// *reserves* an id and whoever *writes the header* cannot produce ids of two
+/// different shapes. `domain` is the sending identity's domain;
+/// [`FALLBACK_DOMAIN`] is the answer when it has none.
+pub fn reserve_message_id(domain: Option<&str>) -> RfcMessageId {
+    generate_message_id(domain.unwrap_or(FALLBACK_DOMAIN))
+}
+
 /// A fresh, unique `Message-ID` under `domain`.
 ///
 /// Built from [`make_boundary`], the same pseudo-unique token mail-builder
@@ -346,11 +363,55 @@ mod tests {
     }
 
     #[test]
-    fn each_build_gets_a_fresh_message_id() {
+    fn a_draft_with_no_reserved_id_gets_a_fresh_one_each_build() {
         let ada = identity("ada@example.com");
         let first = build(&draft(), &ada, &[], None);
         let second = build(&draft(), &ada, &[], None);
         assert_ne!(first.message_id, second.message_id);
+    }
+
+    /// The whole of ADR 0021's first decision, from this crate's side.
+    ///
+    /// A `Send` is resolved — and therefore rebuilt — on **every** drain
+    /// attempt, so a fresh id per build means a retried send is a second,
+    /// distinct message rather than a duplicate anything downstream could
+    /// recognise. Once the draft carries a reserved id, every build of it is
+    /// the same message.
+    #[test]
+    fn a_reserved_message_id_survives_every_rebuild() {
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.rfc_message_id = Some(RfcMessageId::new("reserved.once@example.com"));
+
+        let first = build(&draft, &ada, &[], None);
+        let second = build(&draft, &ada, &[], None);
+
+        assert_eq!(first.message_id, second.message_id, "same id, both builds");
+        assert_eq!(
+            first.message_id,
+            RfcMessageId::new("reserved.once@example.com"),
+            "and it is the reserved one, not a fresh id that happens to repeat"
+        );
+        // Not merely reported: it has to reach the bytes, because the
+        // receiving side reads the header and never the return value.
+        assert_eq!(
+            mime::parse(&first.raw).rfc_message_id,
+            Some(RfcMessageId::new("reserved.once@example.com")),
+        );
+    }
+
+    /// The Drafts-folder copy is the same message as the one that will be
+    /// sent, so it carries the same id once one is reserved.
+    #[test]
+    fn the_drafts_copy_carries_the_reserved_id_too() {
+        let ada = identity("ada@example.com");
+        let mut draft = draft();
+        draft.rfc_message_id = Some(RfcMessageId::new("reserved.once@example.com"));
+
+        assert_eq!(
+            build_draft(&draft, &ada, &[], None).message_id,
+            build(&draft, &ada, &[], None).message_id,
+        );
     }
 
     #[test]

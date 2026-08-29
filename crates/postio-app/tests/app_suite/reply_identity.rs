@@ -24,7 +24,6 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
-use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
@@ -79,11 +78,9 @@ fn account_with_identity(database: &Database, display_name: &str, address: &str)
 }
 
 pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-reply-identity-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -121,7 +118,8 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
     };
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs =
+        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

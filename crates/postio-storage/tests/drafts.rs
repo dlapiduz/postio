@@ -9,7 +9,9 @@ use postio_model::{
     Attachment, Draft, DraftId, DraftKind, DraftState, EmailAddress, Message, MessageBody,
     MessageId, Operation, OperationTarget, ThreadId,
 };
-use postio_storage::repository::{DraftRepository, MessageRepository, OperationQueueRepository};
+use postio_storage::repository::{
+    CancelSendOutcome, DraftRepository, MessageRepository, OperationQueueRepository,
+};
 use postio_storage::test_support;
 
 fn at(minutes: i64) -> DateTime<Utc> {
@@ -627,6 +629,116 @@ fn a_queued_send_does_not_need_a_drafts_mailbox() {
     assert!(queued.mailbox_id.is_none());
 }
 
+#[test]
+fn cancelling_a_queued_send_takes_the_operation_off_the_queue_and_reopens_the_draft() {
+    // #433: a queued draft could still be opened and edited from the Drafts
+    // folder, and the edits landed or did not depending purely on timing
+    // against the drainer. `OperationQueueRepository::delete`'s own doc
+    // already names the fix -- "an operation that has not drained yet can
+    // simply be taken off the queue" -- this is that, wired to the draft
+    // that owns it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    let outcome = drafts
+        .cancel_send(draft.id, at(2))
+        .expect("cancel the send");
+
+    assert_eq!(outcome, CancelSendOutcome::Cancelled);
+    let reopened = drafts
+        .get(draft.id)
+        .expect("get")
+        .expect("the draft is still here");
+    assert_eq!(
+        reopened.state,
+        DraftState::Editing,
+        "cancelling a send must hand the draft back for editing"
+    );
+
+    let queue = OperationQueueRepository::new(&connection);
+    assert!(
+        queue.get(queued.id).expect("get").is_none(),
+        "the pending Send operation must be gone, or the drainer could still \
+         pick it up and send whatever was in the row when it drains"
+    );
+}
+
+#[test]
+fn cancelling_the_send_of_a_draft_that_is_not_queued_does_nothing() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+
+    let outcome = drafts
+        .cancel_send(draft.id, at(2))
+        .expect("cancel the send");
+
+    assert_eq!(outcome, CancelSendOutcome::NotQueued);
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("still here")
+            .state,
+        DraftState::Editing,
+        "a draft that was never queued must not change state"
+    );
+}
+
+#[test]
+fn cancelling_a_send_that_is_already_in_flight_is_too_late() {
+    // The drainer marks the operation in_flight the moment it starts talking
+    // to the submission server. From then on the row leaving the queue
+    // cannot take back a message that may already be on the wire, so this
+    // must refuse rather than pretend the send never happened.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    let queue = OperationQueueRepository::new(&connection);
+    queue
+        .mark_in_flight(queued.id, at(2))
+        .expect("mark in flight");
+
+    let outcome = drafts
+        .cancel_send(draft.id, at(3))
+        .expect("cancel the send");
+
+    assert_eq!(outcome, CancelSendOutcome::AlreadyInFlight);
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("still here")
+            .state,
+        DraftState::Queued,
+        "an in-flight send must not be disturbed"
+    );
+    assert!(
+        queue.get(queued.id).expect("get").is_some(),
+        "the operation must stay on the queue"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The draft row and the message row are the same message
 // ---------------------------------------------------------------------------
@@ -1130,4 +1242,242 @@ fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
         .expect("a read")
         .expect("the draft");
     assert_eq!(mine.id, draft.id);
+}
+
+// ---------------------------------------------------------------------------
+// The reserved Message-ID (ADR 0021)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn queueing_a_send_reserves_the_message_id_it_will_go_out_under() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    assert_eq!(
+        draft.rfc_message_id, None,
+        "an editing draft has reserved nothing yet"
+    );
+
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    let reserved = draft
+        .rfc_message_id
+        .clone()
+        .expect("the caller's copy carries the reservation");
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("the draft")
+            .rfc_message_id,
+        Some(reserved.clone()),
+        "and so does the row the drainer will read"
+    );
+    assert!(
+        reserved.without_brackets().contains('@'),
+        "a Message-ID is addr-spec shaped: {reserved}"
+    );
+}
+
+#[test]
+fn a_scheduled_send_reserves_one_the_same_way() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send_at(&mut draft, at(1), at(120))
+        .expect("schedule the send");
+
+    assert!(
+        draft.rfc_message_id.is_some(),
+        "a send held until Tuesday is still one send attempt series"
+    );
+}
+
+/// The point of the whole reservation: it has to outlive every write that
+/// happens between queueing and draining, because a drain rebuilds the
+/// message from the row.
+#[test]
+fn the_reservation_survives_the_saves_that_happen_after_it() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+    let reserved = draft.rfc_message_id.clone().expect("reserved");
+
+    // A save from whoever still holds the draft -- the drainer writing the
+    // server copy's uid, say -- must not lose it.
+    let mut reloaded = drafts.get(draft.id).expect("get").expect("the draft");
+    reloaded.updated_at = at(2);
+    drafts.save(&mut reloaded).expect("save again");
+
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("the draft")
+            .rfc_message_id,
+        Some(reserved),
+    );
+}
+
+/// ADR 0021: the id belongs to one attempt series at one piece of text. A
+/// draft that is editable again is a different message, and reusing the id
+/// would make a receiver that deduplicates drop the *corrected* version in
+/// favour of the one that may already have arrived.
+#[test]
+fn cancelling_a_send_gives_the_reservation_back() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+    assert!(draft.rfc_message_id.is_some());
+
+    assert_eq!(
+        drafts.cancel_send(draft.id, at(2)).expect("cancel"),
+        CancelSendOutcome::Cancelled,
+    );
+
+    let back = drafts.get(draft.id).expect("get").expect("the draft");
+    assert_eq!(back.state, DraftState::Editing);
+    assert_eq!(
+        back.rfc_message_id, None,
+        "an editable draft holds no reservation: the next send is a new \
+         attempt series, at text that may no longer be the same text"
+    );
+}
+
+/// A row that says `editing` and still carries a reservation cannot be
+/// written at all, whichever way the caller asks for it — the column is
+/// derived from the state rather than trusted from the struct.
+#[test]
+fn an_editing_draft_cannot_be_saved_holding_a_reservation() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    draft.rfc_message_id = Some(postio_model::RfcMessageId::new("stale@example.com"));
+    drafts.save(&mut draft).expect("save");
+
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("get")
+            .expect("the draft")
+            .rfc_message_id,
+        None,
+    );
+}
+
+/// `Sending` and "there was never anything queued" are opposite facts and
+/// must not share an answer: one means nothing happened, the other means a
+/// submission may already be on the wire.
+#[test]
+fn cancelling_a_send_already_being_submitted_says_it_is_in_flight() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+    drafts
+        .set_state(draft.id, DraftState::Sending)
+        .expect("the drainer opens the transaction");
+
+    assert_eq!(
+        drafts.cancel_send(draft.id, at(2)).expect("cancel"),
+        CancelSendOutcome::AlreadyInFlight,
+        "telling the user a message was recalled while it is on the wire is \
+         worse than refusing"
+    );
+    assert_eq!(
+        drafts.get(draft.id).expect("get").expect("the draft").state,
+        DraftState::Sending,
+        "and it stays where it was",
+    );
+}
+
+#[test]
+fn moving_a_draft_back_to_editing_gives_the_reservation_back_too() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    drafts
+        .set_state(draft.id, DraftState::Editing)
+        .expect("set_state");
+
+    let back = drafts.get(draft.id).expect("get").expect("the draft");
+    assert_eq!(
+        back.rfc_message_id, None,
+        "the invariant holds on every write path or it is not an invariant: \
+         `save` is not the only way a draft becomes editable again"
+    );
+    assert_eq!(
+        drafts.get(draft.id).expect("get").expect("the draft").state,
+        DraftState::Editing,
+    );
+}
+
+#[test]
+fn set_state_leaves_the_reservation_alone_for_every_other_state() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+    let reserved = draft.rfc_message_id.clone().expect("reserved");
+
+    for state in [DraftState::Sending, DraftState::Sent, DraftState::Failed] {
+        drafts.set_state(draft.id, state).expect("set_state");
+        assert_eq!(
+            drafts
+                .get(draft.id)
+                .expect("get")
+                .expect("the draft")
+                .rfc_message_id,
+            Some(reserved.clone()),
+            "{state:?} is still the same attempt series",
+        );
+    }
 }

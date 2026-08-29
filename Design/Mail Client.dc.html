@@ -285,14 +285,44 @@ kbd{font:500 10.5px/1 "IBM Plex Mono",monospace;border:1px solid rgba(29,31,32,.
 </div>
 
 <div class="dv-opt" id="3f">
-<div class="dv-olabel"><a class="dv-oid" href="#3f">3f</a>Settings is the config file — the GUI edits the same TOML on disk, with a validity line instead of a dialog.</div>
+<div class="dv-olabel"><a class="dv-oid" href="#3f">3f</a>Settings is the config file — the GUI edits the same TOML on disk, with a validity line instead of a dialog. The account rows and the connection log are their own live views onto the running account, not TOML.</div>
 <div class="blueprint" style="width:640px;background:var(--color-bg)">
   <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
   <div style="display:flex;align-items:center;gap:12px;height:42px;padding:0 16px;border-bottom:1px solid var(--color-divider)">
-    <span style="font:400 11px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-700)">~/.config/postmark/config.toml</span>
+    <span style="font:400 11px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-700)">~/.config/postio/config.toml</span>
     <div style="flex:1"></div>
     <span class="tag tag-accent" style="white-space:nowrap;flex:none;font-family:'IBM Plex Mono',monospace;font-size:10.5px">valid</span>
     <span class="btn btn-ghost" style="white-space:nowrap;flex:none;font-size:11.5px;padding:5px 10px;color:var(--color-neutral-600)">$EDITOR <span style="font-family:'IBM Plex Mono',monospace;font-size:10px">C-e</span></span>
+  </div>
+  <!-- Accounts (#464, ADR 0005 Q6a): one row per account, a switch to enable
+       or disable, right-click for update-credential / remove. Not TOML —
+       postio-config's [accounts] section is unwired and being retired
+       (#470), which is why the nav still lists it below unchanged. -->
+  <div style="display:flex;flex-direction:column;border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 16px">
+      <span style="flex:1;font:400 12.5px/1 Barlow,sans-serif;color:var(--color-neutral-800);overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Lena Tomlin (lena@example.com)</span>
+      <span style="display:inline-flex;align-items:center;justify-content:flex-end;width:32px;height:18px;border-radius:9px;background:var(--color-accent);padding:2px;flex:none"><span style="width:14px;height:14px;border-radius:50%;background:#fff"></span></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 16px">
+      <span style="flex:1;font:400 12.5px/1 Barlow,sans-serif;color:var(--color-neutral-800);overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Work (lena@example.net)</span>
+      <span style="display:inline-flex;align-items:center;justify-content:flex-start;width:32px;height:18px;border-radius:9px;background:var(--color-neutral-300);padding:2px;flex:none"><span style="width:14px;height:14px;border-radius:50%;background:#fff"></span></span>
+    </div>
+  </div>
+  <!-- Connections (#151): every outbound connection Postio has opened,
+       newest first — the privacy claim in PRODUCT.md §21 made auditable.
+       Hidden entirely when empty, which is exactly the claim on a machine
+       that has never synced. -->
+  <div style="display:flex;flex-direction:column;border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:12px;padding:5px 16px;font:400 11px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">
+      <span style="flex:none">28 Aug 09:14</span>
+      <span style="flex:1;font-family:Barlow,sans-serif;font-size:12px;color:var(--color-neutral-700);overflow:hidden;white-space:nowrap;text-overflow:ellipsis">imap · imap.example.com:993</span>
+      <span style="flex:none">connected</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:5px 16px;font:400 11px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">
+      <span style="flex:none">28 Aug 09:14</span>
+      <span style="flex:1;font-family:Barlow,sans-serif;font-size:12px;color:var(--color-neutral-700);overflow:hidden;white-space:nowrap;text-overflow:ellipsis">smtp · smtp.example.com:587</span>
+      <span style="flex:none">connected</span>
+    </div>
   </div>
   <div style="display:flex;height:330px">
     <div style="width:150px;border-right:1px solid var(--color-divider);padding:12px 0;display:flex;flex-direction:column;gap:1px">
@@ -317,7 +347,7 @@ kbd{font:500 10.5px/1 "IBM Plex Mono",monospace;border:1px solid rgba(29,31,32,.
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:12px;padding:9px 16px;border-top:1px solid var(--color-divider)">
-    <span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">parsed in 2 ms · applied live · nothing to save</span>
+    <span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">valid · parsed in 2 ms · applied live · nothing to save</span>
     <div style="flex:1"></div>
     <span class="btn btn-secondary" style="white-space:nowrap;flex:none;font-size:11.5px;padding:5px 11px">Revert file</span>
   </div>

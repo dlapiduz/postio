@@ -20,7 +20,7 @@ use chrono::{TimeZone, Utc};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::feed::{
-    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    ListScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
@@ -77,10 +77,11 @@ fn message_id(mailbox: i64, position: u32) -> MessageId {
 impl MessageSource for Store {
     fn fetch(&self, request: PageRequest) -> PageFuture {
         let mailbox = match request.scope {
-            FeedScope::Mailbox(id) => id,
-            FeedScope::Flagged(_) | FeedScope::Snoozed(_) | FeedScope::Thread(_) => {
-                MailboxId::new(0)
-            }
+            ListScope::Mailbox(id) => id,
+            ListScope::Account(_)
+            | ListScope::Flagged(_)
+            | ListScope::Snoozed(_)
+            | ListScope::Thread(_) => MailboxId::new(0),
         };
         let total = 40;
         Box::pin(async move {

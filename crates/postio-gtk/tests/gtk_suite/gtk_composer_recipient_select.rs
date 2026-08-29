@@ -24,7 +24,6 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::composer::{self, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};

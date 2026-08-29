@@ -12,7 +12,7 @@
 //! mutated mid-call; `NSTableView` has no such rule, so that guard is
 //! `postio-gtk`'s alone to keep — see its own module docs).
 //!
-//! `FeedScope` — which mailbox, or which smart folder — deliberately does
+//! `ListScope` — which mailbox, or which smart folder — deliberately does
 //! **not** move here either. `ListWindow` has no idea what a scope is; it
 //! has [`reset`](ListWindow::reset), which bumps the generation and empties
 //! the cache, and the feed calls it when the scope changes. A model that
@@ -64,7 +64,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Range;
 
-use postio_model::ids::MessageId;
+use postio_core::aim::{RowFacts, RowKind};
+use postio_model::ids::{MessageId, ThreadId};
 
 /// Rows per page.
 ///
@@ -90,6 +91,21 @@ pub trait ListRow {
     /// in [`ListWindow`] ever constructs such a row itself, so this is a
     /// toolkit-side concern to expose, not one the model has to reason about.
     fn id(&self) -> Option<MessageId>;
+
+    /// The conversation this row stands for, when it stands for one.
+    ///
+    /// `None` means "a message row": a query view, an unthreaded list, or a
+    /// row that has not been loaded. That is the default because a plain
+    /// value row carries no threading of its own — a list that has threads
+    /// says so by overriding this.
+    ///
+    /// The one question `postio_core::aim` asks a frontend's list, reached
+    /// through the blanket [`RowFacts`](postio_core::aim::RowFacts)
+    /// implementation below. See that module for why the seam reports a fact
+    /// and never a decision.
+    fn thread(&self) -> Option<ThreadId> {
+        None
+    }
 
     /// A redelivered row for the same message.
     ///
@@ -403,6 +419,18 @@ impl<T: ListRow> ListWindow<T> {
                 .position(|row| row.id() == Some(message))
                 .map(|index| page * PAGE_SIZE + index as u32)
         })
+    }
+
+    /// The resident row for `message`, if the window still holds one.
+    ///
+    /// Resident-only, and that is the whole contract: a row that has been
+    /// paged out answers `None` rather than being fetched, because the
+    /// callers of this are answering a question about what the user can see
+    /// and a fetch would make a keystroke wait on the store.
+    pub fn row_of(&self, message: MessageId) -> Option<&T> {
+        self.pages
+            .values()
+            .find_map(|rows| rows.iter().find(|row| row.id() == Some(message)))
     }
 
     /// Which resident page holds `message`, if any.
@@ -898,5 +926,101 @@ mod tests {
         window.deliver(window.generation(), 0, vec![Plain(MessageId::new(1))]);
         let updated = window.update(Plain(MessageId::new(1)));
         assert_eq!(updated, Some(0));
+    }
+}
+
+/// Every [`ListWindow`] is a source of row facts for `postio_core::aim`.
+///
+/// Blanket, so neither frontend writes one: GTK drives a
+/// `ListWindow<MessageRow>` and the FFI boundary a `ListWindow<RowFfi>`, and
+/// both get the same answer to the same question by construction. The
+/// `Missing` arm is not an error case — it is what a marked row that has been
+/// paged out has to report, so that the shared rules can decline to guess
+/// what it was (#468).
+impl<T: ListRow> RowFacts for ListWindow<T> {
+    fn row_kind(&self, message: MessageId) -> RowKind {
+        match self.row_of(message) {
+            None => RowKind::Missing,
+            Some(row) => match row.thread() {
+                Some(thread) => RowKind::Thread(thread),
+                None => RowKind::Message,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod row_facts_tests {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct Row {
+        id: MessageId,
+        thread: Option<ThreadId>,
+    }
+
+    impl ListRow for Row {
+        fn id(&self) -> Option<MessageId> {
+            Some(self.id)
+        }
+
+        fn thread(&self) -> Option<ThreadId> {
+            self.thread
+        }
+    }
+
+    fn window_holding(rows: Vec<Row>) -> ListWindow<Row> {
+        let mut window: ListWindow<Row> = ListWindow::new();
+        window.reset(rows.len() as u32);
+        window.row_at(0);
+        let generation = window.generation();
+        window.deliver(generation, 0, rows);
+        window
+    }
+
+    #[test]
+    fn a_resident_conversation_row_reports_its_thread() {
+        let window = window_holding(vec![Row {
+            id: MessageId::new(7),
+            thread: Some(ThreadId::new(3)),
+        }]);
+
+        assert_eq!(
+            window.row_kind(MessageId::new(7)),
+            RowKind::Thread(ThreadId::new(3)),
+        );
+    }
+
+    #[test]
+    fn a_resident_message_row_reports_a_message() {
+        let window = window_holding(vec![Row {
+            id: MessageId::new(7),
+            thread: None,
+        }]);
+
+        assert_eq!(window.row_kind(MessageId::new(7)), RowKind::Message);
+    }
+
+    /// The arm #468 turns on: a marked row that has been paged out cannot be
+    /// checked, and the shared rules decline to guess rather than acting on
+    /// a conversation the user may never have marked.
+    #[test]
+    fn a_row_the_window_does_not_hold_is_missing_rather_than_a_message() {
+        let window = window_holding(vec![Row {
+            id: MessageId::new(7),
+            thread: Some(ThreadId::new(3)),
+        }]);
+
+        assert_eq!(window.row_kind(MessageId::new(99)), RowKind::Missing);
+    }
+
+    /// `row_of` must not reach past what is resident: answering from the
+    /// store would make a keystroke wait on it, and a mailbox is never
+    /// materialised (`PRODUCT.md` §18).
+    #[test]
+    fn an_empty_window_holds_no_rows_rather_than_fetching_any() {
+        let window: ListWindow<Row> = ListWindow::new();
+        assert_eq!(window.row_kind(MessageId::new(7)), RowKind::Missing);
+        assert!(window.row_of(MessageId::new(7)).is_none());
     }
 }

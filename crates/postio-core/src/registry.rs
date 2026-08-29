@@ -32,6 +32,7 @@ use crate::command::CommandId;
 use crate::context::{Context, ContextSet};
 use crate::state::Scope;
 
+use postio_config::paths::Platform;
 use serde::{Deserialize, Serialize};
 
 /// How the user gets back from a command that changed something.
@@ -253,7 +254,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::SelectAll,
         title: "Select all",
-        default_binding: "ctrl+a",
+        default_binding: "mod+a",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
         destructive: false,
@@ -478,7 +479,7 @@ static SPECS: &[CommandSpec] = &[
         // Shares a binding with `save_draft`, which is fine: the two
         // contexts do not overlap, and `ctrl+s` is the "save this" muscle
         // memory in both. See `postio-search`/canvas 2b's "save as folder".
-        default_binding: "ctrl+s",
+        default_binding: "mod+s",
         alternate_bindings: &[],
         // Only reachable with the search box open -- saving needs a query
         // to save, and `Context::Search` is where one exists.
@@ -501,7 +502,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Send,
         title: "Send",
-        default_binding: "ctrl+Return",
+        default_binding: "mod+Return",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         // Not destructive — but it is externally visible and irreversible once
@@ -519,7 +520,7 @@ static SPECS: &[CommandSpec] = &[
         // Beside `ctrl+Return`, not sharing it: this opens the picker rather
         // than sending, so it earns its own keystroke rather than a modifier
         // on Send's.
-        default_binding: "ctrl+shift+Return",
+        default_binding: "mod+shift+Return",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -531,7 +532,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::SaveDraft,
         title: "Save draft",
-        default_binding: "ctrl+s",
+        default_binding: "mod+s",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -541,7 +542,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::DiscardDraft,
         title: "Discard draft",
-        default_binding: "ctrl+d",
+        default_binding: "mod+d",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         // Typed prose has no other copy anywhere, so this one asks first.
@@ -552,7 +553,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::AttachFile,
         title: "Attach file…",
-        default_binding: "ctrl+shift+a",
+        default_binding: "mod+shift+a",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -569,7 +570,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Detach composer",
         // Not next to `ctrl+d`. Discard is the one composer verb that cannot
         // be undone, and a fat-fingered neighbour of it is a draft gone.
-        default_binding: "ctrl+shift+o",
+        default_binding: "mod+shift+o",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -579,7 +580,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Bold,
         title: "Bold",
-        default_binding: "ctrl+b",
+        default_binding: "mod+b",
         alternate_bindings: &[],
         // ctrl+b is the sidebar everywhere mail is read; the composer is not
         // a message surface, so the convention every editor shares wins here.
@@ -591,7 +592,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Italic,
         title: "Italic",
-        default_binding: "ctrl+i",
+        default_binding: "mod+i",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -603,7 +604,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Bulleted list",
         // The Docs/Gmail convention, and shift dodges nothing here — the
         // digits are free in the composer either way.
-        default_binding: "ctrl+shift+8",
+        default_binding: "mod+shift+8",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -613,7 +614,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::NumberedList,
         title: "Numbered list",
-        default_binding: "ctrl+shift+7",
+        default_binding: "mod+shift+7",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -625,7 +626,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Insert link…",
         // Everywhere else this is ctrl+k, and here ctrl+k is the palette —
         // which is universal or it is not a palette. Shift is the tax.
-        default_binding: "ctrl+shift+k",
+        default_binding: "mod+shift+k",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -635,7 +636,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::QuoteBlock,
         title: "Quote block",
-        default_binding: "ctrl+shift+9",
+        default_binding: "mod+shift+9",
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
@@ -656,7 +657,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::CommandPalette,
         title: "Command palette",
-        default_binding: "ctrl+k",
+        default_binding: "mod+k",
         alternate_bindings: &[],
         // Universal, or it is not a command palette.
         contexts: ContextSet::ANY,
@@ -678,7 +679,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Settings,
         title: "Settings",
-        default_binding: "ctrl+comma",
+        default_binding: "mod+comma",
         alternate_bindings: &[],
         // Universal, like the palette it is an alternative to reaching.
         contexts: ContextSet::ANY,
@@ -694,7 +695,7 @@ static SPECS: &[CommandSpec] = &[
         // of times a session. `n` for "new" is the idiom, and `Ctrl+Shift+N`
         // is where the desktop already puts "a new one of the thing this
         // application is about".
-        default_binding: "ctrl+shift+n",
+        default_binding: "mod+shift+n",
         alternate_bindings: &[],
         // The same reach `Settings` has, for the reason ADR 0012 Q1 gives:
         // adding an account is a setting, and the folder list is where the
@@ -707,7 +708,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::EditConfig,
         title: "Edit configuration",
-        default_binding: "ctrl+e",
+        default_binding: "mod+e",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -717,7 +718,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ToggleSidebar,
         title: "Toggle sidebar",
-        default_binding: "ctrl+b",
+        default_binding: "mod+b",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -1005,7 +1006,29 @@ pub fn get(id: CommandId) -> &'static CommandSpec {
 /// A convenience for the keymap resolver's *default* map; user overrides from
 /// `[keys]` are applied on top of this, not here.
 pub fn lookup_binding(context: Context, binding: &str) -> Option<&'static CommandSpec> {
-    for_context(context).find(|spec| spec.bindings().any(|candidate| candidate == binding))
+    lookup_binding_on(context, binding, Platform::host())
+}
+
+/// [`lookup_binding`] for a named platform.
+///
+/// `binding` is a concrete accelerator — it came from a key press — while the
+/// registry stores `mod+…` tokens, so the *candidates* are what get expanded.
+/// Doing it the other way round would be wrong: there is nothing to resolve on
+/// the pressed side, and `ctrl+k` on a Mac must not match a `mod+k` default.
+pub fn lookup_binding_on(
+    context: Context,
+    binding: &str,
+    platform: Platform,
+) -> Option<&'static CommandSpec> {
+    for_context(context).find(|spec| {
+        spec.bindings().any(|candidate| {
+            // Only the tokens allocate; most bindings are plain keys like `j`.
+            match candidate.contains("mod+") {
+                true => postio_config::keys::expand_mod(candidate, platform) == binding,
+                false => candidate == binding,
+            }
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------

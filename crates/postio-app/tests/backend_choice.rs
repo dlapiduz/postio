@@ -147,8 +147,8 @@ fn drive() {
     let jmap_refusing = session_server("nothing-ever-matches");
 
     // ── two overlay rows, both advertising jmap first ───────────────────
-    let config_dir =
-        std::env::temp_dir().join(format!("postio-backend-choice-{}", std::process::id()));
+    let config_dir_guard = tempfile::tempdir().expect("a config directory");
+    let config_dir = config_dir_guard.path();
     let provider_dir = config_dir.join("postio");
     std::fs::create_dir_all(&provider_dir).expect("a config dir");
     std::fs::write(
@@ -190,12 +190,12 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     )
     .expect("the overlay rows");
     // SAFETY: before anything touches the preset table's LazyLock.
-    unsafe { std::env::set_var("XDG_CONFIG_HOME", &config_dir) };
+    unsafe { std::env::set_var("XDG_CONFIG_HOME", config_dir) };
 
     // ── the app ─────────────────────────────────────────────────────────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();
     let wiring = Wiring::new(
@@ -305,11 +305,9 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
 
 #[test]
 fn the_add_stores_the_first_backend_whose_proof_succeeds() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-backend-choice-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test binary.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");

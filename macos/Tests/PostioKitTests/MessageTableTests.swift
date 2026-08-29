@@ -34,11 +34,18 @@ private func makeRow(
     preview: String? = "A preview",
     seen: Bool = true,
     flagged: Bool = false,
-    threadCount: UInt32 = 1
+    threadCount: UInt32 = 1,
+    isThread: Bool = false
 ) -> RowFfi {
     RowFfi(
         id: id,
         thread: nil,
+        // The discriminator the verbs need, added on `main` while the macOS
+        // branch was out: a thread row's `id` is its newest message, so
+        // `thread` being set is not on its own the answer to "is this a
+        // conversation row". Defaulted to a message row here because that is
+        // what these tests are about.
+        isThread: isThread,
         from: from,
         subject: subject,
         preview: preview,

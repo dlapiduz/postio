@@ -19,7 +19,6 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -40,11 +39,9 @@ fn a_draft(id: i64, subject: &str, to: &str) -> Draft {
 
 #[test]
 fn resuming_replaces_the_draft_the_composer_was_holding() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-composer-resume-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
