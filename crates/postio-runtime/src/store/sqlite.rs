@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use postio_storage::repository::{
-    ListCursor, ListQuery, ListScope as StorageScope, MailboxRepository, MessageListRow,
-    MessageRepository, ThreadCursor, ThreadListQuery, ThreadListRow, ThreadRepository,
+    ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository, ThreadCursor,
+    ThreadListQuery, ThreadListRow, ThreadRepository,
 };
 use postio_storage::{Database, Pool};
 
@@ -20,18 +20,6 @@ use crate::store::{
     ListPage, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
     ThreadPage, ThreadSummary,
 };
-
-impl From<ListScope> for StorageScope {
-    fn from(scope: ListScope) -> Self {
-        match scope {
-            ListScope::Mailbox(id) => StorageScope::Mailbox(id),
-            ListScope::Account(id) => StorageScope::Account(id),
-            ListScope::Flagged(id) => StorageScope::Flagged(id),
-            ListScope::Snoozed(id) => StorageScope::Snoozed(id),
-            ListScope::Thread(id) => StorageScope::Thread(id),
-        }
-    }
-}
 
 impl From<postio_storage::Error> for StoreError {
     fn from(error: postio_storage::Error) -> Self {
@@ -140,7 +128,7 @@ impl SqliteStore {
         self.read(move |connection| {
             let messages = MessageRepository::new(connection);
             let query = ListQuery {
-                scope: request.scope.into(),
+                scope: request.scope,
                 limit: request.limit,
                 after: None,
             };
@@ -294,7 +282,7 @@ impl SqliteStore {
                 connection,
                 scope,
                 &ListQuery {
-                    scope: scope.into(),
+                    scope,
                     limit: 0,
                     after: None,
                 },

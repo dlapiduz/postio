@@ -18,7 +18,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_gtk::feed::{
-    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    ListScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
@@ -94,10 +94,11 @@ impl MessageSource for Store {
         // you picked", and `gtk_flagged.rs` is about which scope was asked
         // for.
         let mailbox = match request.scope {
-            FeedScope::Mailbox(id) => id,
-            FeedScope::Flagged(_) | FeedScope::Snoozed(_) | FeedScope::Thread(_) => {
-                MailboxId::new(0)
-            }
+            ListScope::Mailbox(id) => id,
+            ListScope::Account(_)
+            | ListScope::Flagged(_)
+            | ListScope::Snoozed(_)
+            | ListScope::Thread(_) => MailboxId::new(0),
         };
         // Each mailbox holds a different amount of mail, so "the list shows
         // the folder you picked" is checkable by counting.

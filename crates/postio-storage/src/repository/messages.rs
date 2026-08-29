@@ -31,6 +31,13 @@ use postio_model::{
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
 
+/// Which messages a list shows.
+///
+/// `postio-model`'s, not this crate's own — every reader of the message
+/// list wants the same answer to the same question, and #670 is what
+/// stopped this being one of five spellings of it.
+pub use postio_model::ListScope;
+
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 use crate::error::{Error, Result};
 
@@ -92,26 +99,6 @@ pub struct ListCursor {
     /// The row's id, which breaks ties between messages received in the same
     /// millisecond and is what makes the order total.
     pub id: MessageId,
-}
-
-/// Which messages a list shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListScope {
-    /// One folder.
-    Mailbox(MailboxId),
-    /// Every folder in an account: the unified view.
-    Account(AccountId),
-    /// The sidebar's "Flagged" view.
-    Flagged(AccountId),
-    /// The sidebar's "Snoozed" view — the one scope every other one hides
-    /// a still-snoozed message from.
-    Snoozed(AccountId),
-    /// One conversation, wherever its messages are filed.
-    ///
-    /// Not a narrowing of a mailbox: a thread routinely spans folders, and
-    /// the drill-in used to show only the part of it the list happened to
-    /// have paged in. See `idx_messages_thread`.
-    Thread(ThreadId),
 }
 
 /// One window of the message list.

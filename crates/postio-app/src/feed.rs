@@ -23,12 +23,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use postio_gtk::feed::{
-    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
-    ResultSource, RowsFuture,
+    MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest, ResultSource,
+    RowsFuture,
 };
 use postio_gtk::list::Row;
+use postio_model::ListScope;
 use postio_model::ids::{AccountId, MessageId};
-use postio_runtime::store::{ListPage, ListScope, MailStore, PageRequest as StoreRequest};
+use postio_runtime::store::{ListPage, MailStore, PageRequest as StoreRequest};
 
 /// The frontend's two sources, over one store.
 pub struct Sources {
@@ -70,17 +71,8 @@ type SendRead<T> = std::pin::Pin<
 
 impl MessageSource for Sources {
     fn fetch(&self, request: PageRequest) -> PageFuture {
-        // The translation the whole seam exists for: `postio-gtk` may not
-        // depend on `postio-runtime`, so the two describe the same idea in
-        // their own vocabularies and this crate — which knows both halves
-        // exist — is where they meet.
         let wanted = StoreRequest {
-            scope: match request.scope {
-                FeedScope::Mailbox(id) => ListScope::Mailbox(id),
-                FeedScope::Flagged(account) => ListScope::Flagged(account),
-                FeedScope::Snoozed(account) => ListScope::Snoozed(account),
-                FeedScope::Thread(id) => ListScope::Thread(id),
-            },
+            scope: request.scope,
             offset: request.offset,
             limit: request.limit,
         };
@@ -171,12 +163,13 @@ impl MailboxSource for Sources {
 /// An id and a role, never a name: a folder's name is the user's, and
 /// `CLAUDE.md` puts mailbox names on the wrong side of the line that keeps
 /// logs free of anybody's mail.
-fn scope_name(scope: FeedScope) -> String {
+fn scope_name(scope: ListScope) -> String {
     match scope {
-        FeedScope::Mailbox(id) => format!("mailbox {}", id.get()),
-        FeedScope::Flagged(account) => format!("flagged in account {}", account.get()),
-        FeedScope::Snoozed(account) => format!("snoozed in account {}", account.get()),
-        FeedScope::Thread(id) => format!("thread {}", id.get()),
+        ListScope::Mailbox(id) => format!("mailbox {}", id.get()),
+        ListScope::Account(account) => format!("account {}", account.get()),
+        ListScope::Flagged(account) => format!("flagged in account {}", account.get()),
+        ListScope::Snoozed(account) => format!("snoozed in account {}", account.get()),
+        ListScope::Thread(id) => format!("thread {}", id.get()),
     }
 }
 

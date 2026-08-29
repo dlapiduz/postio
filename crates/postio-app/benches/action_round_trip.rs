@@ -62,7 +62,7 @@ use postio_core::bridge::{EventSink, EventStream, event_channel};
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_core::state::{AppState, SharedState};
 use postio_core::{Command, Event, MessageTarget};
-use postio_gtk::feed::{Feed, FeedScope, MessageSource, PageFuture, PageRequest};
+use postio_gtk::feed::{Feed, ListScope, MessageSource, PageFuture, PageRequest};
 use postio_gtk::list::MessageList;
 use postio_model::{Message, MessageId};
 use postio_storage::Database;
@@ -112,7 +112,7 @@ fn world() -> World {
 
     let list = MessageList::new();
     let feed = Feed::new(&list, std::rc::Rc::new(Never));
-    feed.open(FeedScope::Mailbox(inbox));
+    feed.open(ListScope::Mailbox(inbox));
 
     World {
         actions: Actions::new(database.clone(), state.clone()),
