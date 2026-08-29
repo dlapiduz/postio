@@ -115,12 +115,17 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 
 /// A running application over a seeded store: a window with mail in it, its
 /// panes fed, and the add-account command wired.
-fn running_application() -> (Window, Wiring, postio_core::bridge::Bridge) {
+fn running_application() -> (
+    Window,
+    Wiring,
+    postio_core::bridge::Bridge,
+    tempfile::TempDir,
+) {
     let database = test_support::memory();
     seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
@@ -133,7 +138,7 @@ fn running_application() -> (Window, Wiring, postio_core::bridge::Bridge) {
     window.present();
     settle();
     feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    (window, wiring, bridge)
+    (window, wiring, bridge, directory)
 }
 
 /// The onboarding screen open anywhere in `window`'s tree, dialogs included
@@ -156,31 +161,33 @@ fn find_onboarding(window: &Window) -> Option<Onboarding> {
 }
 
 /// Everything a display-needing case in this suite has to do first.
-fn display() -> bool {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-add-account-wiring-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+///
+/// `None` when there is no display; `Some` holds the state directory's
+/// cleanup guard, which the caller must keep bound for the rest of its own
+/// case body.
+fn display() -> Option<tempfile::TempDir> {
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: the suite runs its cases in sequence on one thread.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return false;
+        return None;
     }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
     app::install_icons(&display);
-    true
+    Some(state_dir)
 }
 
 // --- the cases ----------------------------------------------------------
 
 pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
-    if !display() {
+    let Some(_state_dir) = display() else {
         return;
-    }
-    let (window, wiring, bridge) = running_application();
+    };
+    let (window, wiring, bridge, _directory) = running_application();
     postio_app::add_account::install(&window, &wiring);
 
     assert!(
@@ -237,10 +244,10 @@ pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
 }
 
 pub fn closing_the_dialog_stops_the_probe_it_started() {
-    if !display() {
+    let Some(_state_dir) = display() else {
         return;
-    }
-    let (window, wiring, bridge) = running_application();
+    };
+    let (window, wiring, bridge, _directory) = running_application();
 
     let transport = Arc::new(HangingTransport::default());
     let dialog = postio_app::add_account::open(&window, &wiring, transport.clone());

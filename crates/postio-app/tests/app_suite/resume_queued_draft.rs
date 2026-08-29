@@ -49,11 +49,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-resume-queued-draft-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -72,7 +70,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         .expect("the fixture has a Drafts folder")
         .clone();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // A draft handed to the operation queue for sending -- exactly what
     // `Composer::send` leaves behind, and never drained, so it is still
