@@ -328,20 +328,26 @@ impl Location {
     }
 }
 
-/// Which kind of writer is asking for SQLite's write lock.
+/// Which kind of caller is asking — for SQLite's write lock ([`WriteGate`]),
+/// or for a connection out of the [`Pool`] itself (#672).
 ///
-/// See [`WriteGate`] for why the distinction has to exist at all.
+/// One enum for both: they are the same distinction — "is a person waiting
+/// on this, right now" — applied to two different contended resources, and a
+/// caller declares it once rather than choosing a name per resource. See
+/// [`WriteGate`] and [`Pool::get_interactive`] for why each has to exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePriority {
-    /// A write a person is waiting for: a flag, an archive, a draft autosave.
+    /// Work a person is waiting for: a flag, an archive, a draft autosave, a
+    /// reading-pane body.
     ///
     /// Always goes ahead of [`WritePriority::Background`], and waits only for
     /// a background unit already in progress.
     Interactive,
-    /// Bulk work nobody is watching: a sync pass writing a batch of headers.
+    /// Bulk work nobody is watching: a sync pass writing a batch of headers,
+    /// or reading one to sync it.
     ///
-    /// Yields to any interactive writer that is waiting, *before* taking the
-    /// lock rather than after — which is the whole point.
+    /// Yields to any interactive caller that is waiting, *before* taking the
+    /// lock or the connection rather than after — which is the whole point.
     Background,
 }
 
@@ -563,6 +569,12 @@ struct State {
     /// with the pool and never handed out.
     /// Never read: holding it open is the whole job.
     _keeper: Option<Connection>,
+    /// Callers blocked in [`Pool::get_interactive`] right now.
+    ///
+    /// Counted *before* waiting, mirroring [`GateState::interactive_waiting`]
+    /// — what lets a background checkout see them and stand aside rather than
+    /// taking a connection out from under them (#672).
+    interactive_waiting: usize,
 }
 
 impl Pool {
@@ -592,6 +604,7 @@ impl Pool {
                     idle: Vec::new(),
                     live: 0,
                     _keeper: keeper,
+                    interactive_waiting: 0,
                 }),
                 returned: Condvar::new(),
                 write_gate: WriteGate::new(),
@@ -602,31 +615,95 @@ impl Pool {
 
     /// Checks a connection out, waiting if every one is already in use.
     ///
-    /// The connection goes back to the pool when the guard is dropped.
+    /// The connection goes back to the pool when the guard is dropped. What
+    /// #425 found for SQLite's write lock is just as true of the pool itself:
+    /// this is background priority, so it stands aside for a queued
+    /// [`Pool::get_interactive`] caller rather than racing it for a slot —
+    /// see that method, and #672.
     ///
     /// # Errors
     ///
     /// Only if a *new* connection has to be opened and SQLite refuses.
     pub fn get(&self) -> Result<PooledConnection> {
+        self.checkout(WritePriority::Background)
+    }
+
+    /// [`Pool::get`], ahead of background work already queued for a
+    /// connection.
+    ///
+    /// # The problem this exists for (#672)
+    ///
+    /// [`WriteGate`] (#425) arbitrates who holds SQLite's write lock next, but
+    /// every caller still reaches it through the same undifferentiated
+    /// [`Pool::get`] first — including a first sync's lanes, held for as long
+    /// as each mailbox takes to backfill. A person clicking a message for its
+    /// body, or an interactive write taking its connection before its permit,
+    /// waited on the same first-come queue as that backfill with no priority
+    /// at all: exactly the "mechanism 1" #425's own investigation named and
+    /// then never actually ruled out, because the reproduction that settled
+    /// on the write lock happened to run with the pool almost idle.
+    ///
+    /// # What it guarantees
+    ///
+    /// A background checkout never *takes* an idle connection while an
+    /// interactive checkout is waiting for one — it stands aside until none
+    /// is, the same rule [`WriteGate::acquire`] applies to the lock. Opening a
+    /// *new* connection under `max_connections` is never gated: that costs
+    /// the interactive caller nothing, since it could open one the same way.
+    /// Interactive callers are human-paced, so — as with the write gate —
+    /// background work is not starved by them in any real workload.
+    ///
+    /// # Errors
+    ///
+    /// Only if a *new* connection has to be opened and SQLite refuses.
+    pub fn get_interactive(&self) -> Result<PooledConnection> {
+        self.checkout(WritePriority::Interactive)
+    }
+
+    /// Whether a [`Pool::get_interactive`] caller is waiting for a connection
+    /// right now — the pool's analogue of [`WriteGate::interactive_is_waiting`],
+    /// for a test to establish arrival order without a stopwatch.
+    pub fn interactive_is_waiting(&self) -> bool {
+        self.lock().interactive_waiting > 0
+    }
+
+    fn checkout(&self, priority: WritePriority) -> Result<PooledConnection> {
         let mut state = self.lock();
+        if priority == WritePriority::Interactive {
+            state.interactive_waiting += 1;
+        }
         loop {
-            if let Some(connection) = state.idle.pop() {
-                return Ok(self.guard(connection));
-            }
-            if state.live < self.inner.max_connections {
-                // Count it before releasing the lock, so two callers racing here
-                // cannot both decide there is room for one more.
-                state.live += 1;
-                drop(state);
-                return match self.inner.location.open(&self.inner.key) {
-                    Ok(connection) => Ok(self.guard(connection)),
-                    Err(error) => {
-                        self.lock().live -= 1;
-                        // Someone may be waiting on the slot this failure freed.
-                        self.inner.returned.notify_one();
-                        Err(error)
+            // A background caller yields an available connection to a queued
+            // interactive one rather than taking it — see `get_interactive`.
+            let yields_to_interactive =
+                priority == WritePriority::Background && state.interactive_waiting > 0;
+            if !yields_to_interactive {
+                if let Some(connection) = state.idle.pop() {
+                    if priority == WritePriority::Interactive {
+                        state.interactive_waiting -= 1;
                     }
-                };
+                    return Ok(self.guard(connection));
+                }
+                if state.live < self.inner.max_connections {
+                    // Count it before releasing the lock, so two callers
+                    // racing here cannot both decide there is room for one
+                    // more.
+                    state.live += 1;
+                    if priority == WritePriority::Interactive {
+                        state.interactive_waiting -= 1;
+                    }
+                    drop(state);
+                    return match self.inner.location.open(&self.inner.key) {
+                        Ok(connection) => Ok(self.guard(connection)),
+                        Err(error) => {
+                            self.lock().live -= 1;
+                            // Someone may be waiting on the slot this failure
+                            // freed.
+                            self.inner.returned.notify_all();
+                            Err(error)
+                        }
+                    };
+                }
             }
             state = self
                 .inner
@@ -755,7 +832,13 @@ impl Drop for PooledConnection {
         }
 
         drop(state);
-        self.inner.returned.notify_one();
+        // `notify_all`, not `notify_one`: a background waiter can wake, see an
+        // interactive one is queued, and go back to sleep without taking the
+        // connection (`Pool::checkout`) — the same reason `WritePermit::drop`
+        // does not use `notify_one` either. Waking only one arbitrary waiter
+        // can wake exactly that thread and leave the connection idle with the
+        // interactive caller still parked (#672).
+        self.inner.returned.notify_all();
     }
 }
 
@@ -885,6 +968,13 @@ impl Database {
         self.pool.get()
     }
 
+    /// [`Database::connection`], ahead of background work already queued for
+    /// one — see [`Pool::get_interactive`]. What a read a person is waiting
+    /// on (a reading-pane body, a search) should check out with.
+    pub fn connection_interactive(&self) -> Result<PooledConnection> {
+        self.pool.get_interactive()
+    }
+
     /// The connection pool, for handing to a worker.
     pub fn pool(&self) -> &Pool {
         &self.pool
@@ -899,9 +989,13 @@ impl Database {
     /// background work. What every user-initiated write should use.
     ///
     /// The connection is taken first and the permit second, which is the
-    /// ordering [`WriteGate`] requires of every caller.
+    /// ordering [`WriteGate`] requires of every caller. Taken via
+    /// [`Database::connection_interactive`] rather than [`Database::connection`]
+    /// so the checkout itself, not only the lock behind it, gets priority
+    /// (#672) — a permit held while still waiting on the ordinary pool queue
+    /// would be an interactive write that still stalls on plain exhaustion.
     pub fn interactive_write(&self) -> Result<(PooledConnection, WritePermit)> {
-        let connection = self.connection()?;
+        let connection = self.connection_interactive()?;
         let permit = self.write_gate().acquire(WritePriority::Interactive);
         Ok((connection, permit))
     }
