@@ -208,7 +208,20 @@ pub fn expand_mod(binding: &str, platform: Platform) -> String {
         .map(|chord| {
             chord
                 .split('+')
-                .map(|part| if part == "mod" { primary } else { part })
+                // Case-insensitive, like every other modifier in this
+                // syntax: `chord_problem` lowercases before checking
+                // `MODIFIERS` and the resolver lowercases before matching, so
+                // `Ctrl+k` already validates and resolves. Matching `mod`
+                // exactly made it the one spelling that passed validation and
+                // then failed to work.
+                //
+                // The *key* half is untouched, and must be: shift is written
+                // into the character, so lowercasing the whole chord would
+                // turn `mod+K` into a different binding.
+                .map(|part| match part.eq_ignore_ascii_case("mod") {
+                    true => primary,
+                    false => part,
+                })
                 .collect::<Vec<_>>()
                 .join("+")
         })
@@ -356,6 +369,50 @@ mod mod_token_tests {
             "ctrl+k".to_string()
         );
         assert_eq!(expand_mod("mod+k", Platform::Apple), "cmd+k".to_string());
+    }
+
+    #[test]
+    fn the_token_is_recognised_however_it_is_capitalised() {
+        // Every other modifier in this syntax already is. `chord_problem`
+        // lowercases before checking `MODIFIERS`, and the resolver lowercases
+        // before matching, so `Ctrl+k` validates *and* resolves. Leaving `mod`
+        // exact made it the one spelling that passes validation and then fails
+        // to work -- and a user has no way to predict that `Ctrl` is fine and
+        // `Mod` is not.
+        for spelling in ["mod+k", "Mod+k", "MOD+k", "mOd+k"] {
+            assert_eq!(
+                expand_mod(spelling, Platform::Freedesktop),
+                "ctrl+k".to_string(),
+                "`{spelling}` should expand like any other modifier"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_modifier_is_case_insensitive_never_the_key() {
+        // Shift is written into the character (`A` is what holding shift
+        // gives), so the key half is case-*sensitive* by design. Lowercasing
+        // the whole chord to fix the modifier would silently turn `mod+K` into
+        // a different binding.
+        assert_eq!(
+            expand_mod("Mod+K", Platform::Freedesktop),
+            "ctrl+K".to_string()
+        );
+        assert_eq!(
+            expand_mod("MOD+Return", Platform::Apple),
+            "cmd+Return".to_string()
+        );
+    }
+
+    #[test]
+    fn a_word_merely_containing_mod_is_not_the_token() {
+        // Matching on the whole `+`-separated part rather than a substring.
+        // `KEY_NAMES` has no `model` in it today, but a key or a future
+        // modifier that starts with these three letters must not be rewritten.
+        assert_eq!(
+            expand_mod("ctrl+model", Platform::Freedesktop),
+            "ctrl+model".to_string()
+        );
     }
 
     #[test]
