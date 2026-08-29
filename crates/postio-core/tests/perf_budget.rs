@@ -58,10 +58,9 @@ fn budgets_match_spec_md_section_18() {
 /// measured rather than what was promised.
 #[test]
 fn the_sync_write_budget_is_per_message() {
-    // Comfortably above the measured steady state and far below the point
-    // where a first sync of a large account stops being tolerable. See the
-    // bench for the measured curve.
-    assert_eq!(SYNC_WRITE_BUDGET, Duration::from_micros(1_500));
+    // Roughly twice the 0.34-0.39 ms the bench measures, so a doubling trips
+    // it and a slower disk does not. See the bench for the measured curve.
+    assert_eq!(SYNC_WRITE_BUDGET, Duration::from_micros(750));
     assert!(
         SYNC_WRITE_BUDGET < INTERACTION_BUDGET,
         "one message must cost less than a whole interaction"
