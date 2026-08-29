@@ -18,7 +18,7 @@ use chrono::{TimeZone, Utc};
 use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
-use postio_gtk::feed::{Feed, FeedScope, MessageSource, Page, PageFuture, PageRequest};
+use postio_gtk::feed::{Feed, ListScope, MessageSource, Page, PageFuture, PageRequest};
 use postio_gtk::list::{MessageList, MessageRow, PAGE_SIZE, Row};
 use postio_model::ids::{MailboxId, MessageId};
 
@@ -145,12 +145,12 @@ pub fn the_message_list_is_fed_from_the_runtime() {
 
     assert_eq!(list.n_items(), 0, "nothing is showing before a mailbox is");
 
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
     assert_eq!(feed.mailbox(), Some(MailboxId::new(INBOX)));
     assert_eq!(
         source.drain(),
         [PageRequest {
-            scope: FeedScope::Mailbox(MailboxId::new(INBOX)),
+            scope: ListScope::Mailbox(MailboxId::new(INBOX)),
             page: 0,
             offset: 0,
             limit: PAGE_SIZE,
@@ -193,8 +193,8 @@ pub fn the_message_list_is_fed_from_the_runtime() {
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
 
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
-    feed.open(FeedScope::Mailbox(MailboxId::new(ARCHIVE)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(ARCHIVE)));
     settle();
 
     assert_eq!(
@@ -212,7 +212,7 @@ pub fn the_message_list_is_fed_from_the_runtime() {
     let source = Fake::new().holding(INBOX, 200);
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
     settle();
 
     // Hold the object at a position the way a selection model does.
@@ -265,7 +265,7 @@ pub fn the_message_list_is_fed_from_the_runtime() {
     let source = Fake::new().holding(INBOX, 500);
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
     settle();
 
     // Reach into a second page so there is more than one to be wrong about.
@@ -299,7 +299,7 @@ pub fn the_message_list_is_fed_from_the_runtime() {
     let source = Fake::new().holding(INBOX, 120);
     let list = MessageList::new();
     let feed = Feed::new(&list, source.clone());
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
     settle();
     assert_eq!(list.n_items(), 120);
 
@@ -327,7 +327,7 @@ pub fn the_message_list_is_fed_from_the_runtime() {
         move |reason| reported.borrow_mut().push(reason)
     });
 
-    feed.open(FeedScope::Mailbox(MailboxId::new(INBOX)));
+    feed.open(ListScope::Mailbox(MailboxId::new(INBOX)));
     settle();
 
     assert_eq!(
