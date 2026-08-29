@@ -225,6 +225,13 @@ jobs:
         # have to make it, and both have to stay fail-open. #613.
         run: python3 scripts/tests/test-tmpdir-created.py
 
+      - name: Prove green gates are not re-run on an unchanged tree
+        # Killed land runs used to re-pay clippy and the full per-crate test
+        # suite on retries that changed nothing -- #109's landing paid its
+        # gates three times. The record is keyed on `git write-tree` plus
+        # the crate list, so any content change re-runs everything. #742.
+        run: python3 scripts/tests/test-issue-land-gate-cache.py
+
       - name: Prove issue-claim.sh never adopts an existing worktree
         # A claim lock can go missing while its session works; adopting the
         # worktree it protected puts two sessions in one tree. #328.

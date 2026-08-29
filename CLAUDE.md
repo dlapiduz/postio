@@ -89,7 +89,9 @@ format only files you changed, by name: `rustfmt --edition 2024 <paths>`.
 outlive a foreground tool call's 10-minute cap, and a run killed mid-gates
 commits nothing and leaks every live test's `/dev/shm` scratch. Launch it
 backgrounded, do something else or nothing, and act on the completion
-notification; never poll for it and never re-run it because it is quiet.
+notification; never poll for it and never re-run it because it is quiet. A
+run that *was* killed is cheap to retry: green gates are recorded against
+the exact tree, so an unchanged retry skips straight to the landing.
 
 - **Tests are headless automatically.** The cargo runner puts test binaries on
   a private mutter compositor; `cargo run -p postio-app` and examples reach

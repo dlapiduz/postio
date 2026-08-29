@@ -171,7 +171,9 @@ unset RUSTUP_TOOLCHAIN
 # shared checkout it would reach into files another session has open, which is
 # why CLAUDE.md forbids it there and permits it here.
 echo "--- rustfmt ---"
+PHASE_START=$(date +%s)
 cargo fmt --all
+echo "[timing] rustfmt: $(( $(date +%s) - PHASE_START ))s"
 
 # Stage now, before the invariants below rather than after them: this tree
 # is private, so staging is safe this early too. check-no-personal-data.py
@@ -182,18 +184,52 @@ cargo fmt --all
 # and would have done the same for a real leak. #270.
 git add -A
 
-for crate in $CRATES; do
-    [ -d "$TREE/crates/$crate" ] || continue
-    echo "--- clippy: $crate ---"
-    cargo clippy -p "$crate" --all-targets -- -D warnings
-    echo "--- test: $crate ---"
-    # Headless without asking: .cargo/config.toml's runner puts every test
-    # binary on a compositor of its own.
-    cargo test -p "$crate"
-done
+# Green gates are recorded against the exact content they proved, and a tree
+# that has not changed a byte since is not re-proven. Long commands on this
+# workstation get killed sometimes (docs/engineering-notes.md), and every
+# killed landing used to re-pay clippy and the full per-crate test suite on
+# a retry that changed nothing -- #109's landing paid its postio-app gates
+# three times that way. `git write-tree` hashes the staged tree, staging
+# just happened above, and rust-toolchain.toml is tracked: an edit, a
+# rebase, whatever `cargo fmt` just rewrote, or a toolchain bump all change
+# the key, so only a byte-identical tree with the same crate list skips.
+# The invariants (`check.sh`, seconds) still run every time. #742.
+GATES_STAMP="$(git rev-parse --git-dir)/postio-gates-green"
+GATES_KEY="$(git write-tree) crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
+GATES_GREEN=0
+if [ "$(cat "$GATES_STAMP" 2>/dev/null)" = "$GATES_KEY" ]; then
+    GATES_GREEN=1
+    echo "--- clippy and tests: already green for this exact tree ---"
+    echo "A previous run proved this staged content with this crate list"
+    echo "(recorded in $GATES_STAMP),"
+    echo "so clippy and the per-crate tests are not re-run. Any change to"
+    echo "the tree re-runs them; rm that file to force a re-run now."
+fi
+
+if [ "$GATES_GREEN" != 1 ]; then
+    for crate in $CRATES; do
+        [ -d "$TREE/crates/$crate" ] || continue
+        echo "--- clippy: $crate ---"
+        PHASE_START=$(date +%s)
+        cargo clippy -p "$crate" --all-targets -- -D warnings
+        echo "[timing] clippy $crate: $(( $(date +%s) - PHASE_START ))s"
+        echo "--- test: $crate ---"
+        # Headless without asking: .cargo/config.toml's runner puts every test
+        # binary on a compositor of its own.
+        PHASE_START=$(date +%s)
+        cargo test -p "$crate"
+        echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
+    done
+fi
 
 echo "--- repository invariants ---"
+PHASE_START=$(date +%s)
 "$TREE/scripts/check.sh"
+echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
+
+# Recorded only now, after every gate above has passed -- a failure exits
+# via set -e before this line, so a red run can never mark the tree green.
+printf '%s\n' "$GATES_KEY" > "$GATES_STAMP"
 
 # rust-toolchain.toml pins the compiler, so CI and this shell agree by
 # construction -- the gates above ran with RUSTUP_TOOLCHAIN cleared, so

@@ -3354,7 +3354,11 @@ of those regressions is invisible until someone times a fresh worktree.
 ever shows the Rust half. And the standing instruction that came out of the
 same incident: **run `issue-land.sh` in the background, always** (CLAUDE.md);
 the ten-minute cap belongs to the harness, not the script, and a run killed
-mid-gates commits nothing.
+mid-gates commits nothing. Since #742 a killed run's retry is also cheap:
+the script records `git write-tree` plus the crate list after the gates
+pass, and a retry on a byte-identical tree skips clippy and the per-crate
+tests (loudly), re-running only the invariants. The `[timing]` lines in its
+output are where "landing is slow" conversations should start.
 
 ## An event with no consumer is a feature that does not exist (2026-08-28, #396)
 
