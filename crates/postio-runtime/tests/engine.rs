@@ -60,6 +60,27 @@ fn engine_with(
     Arc<MockBackend>,
     tempfile::TempDir,
 ) {
+    engine_with_backfill(prepare, Default::default())
+}
+
+/// As [`engine_with`], with the backfill policy stated rather than defaulted.
+///
+/// A test about the *interactive* body path has to be able to turn the
+/// background lane off, because otherwise the two race for the same message
+/// and the interactive one can arrive to find nothing left to do. See
+/// `a_body_the_user_asked_for_is_indexed_as_well_as_stored`, which is where
+/// that race was observed.
+fn engine_with_backfill(
+    prepare: impl FnOnce(&MockBackend),
+    backfill: postio_sync::BackfillPolicy,
+) -> (
+    Engine,
+    postio_storage::Database,
+    postio_storage::seed::SeedReport,
+    EventStream,
+    Arc<MockBackend>,
+    tempfile::TempDir,
+) {
     let database = test_support::memory();
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -81,7 +102,7 @@ fn engine_with(
         ))),
         events: sink,
         retry: Default::default(),
-        backfill: Default::default(),
+        backfill,
         reconnect: Default::default(),
         watch: Default::default(),
         network: NetworkSource::Ignored,
@@ -1190,7 +1211,24 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
 /// that claim is actually testable rather than trusting the shared call.
 #[tokio::test]
 async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
-    let (engine, database, report, _events, _directory) = engine();
+    // The background lane is off, and that is load-bearing rather than tidy.
+    // A backfill is seeded per mailbox at startup, so with it running both
+    // lanes chase the same message: if the backfill stores that body first,
+    // `request_body` correctly reports there is nothing left to fetch and the
+    // assertion below fails on a test that was never about the backfill.
+    // Observed on a machine whose swap was exhausted, where the scheduling
+    // went the other way for once.
+    //
+    // Turning it off does not weaken what this proves — it sharpens it.
+    // #327 is about the body a *person* asked for reaching the index, and
+    // that is the only path left once the background lane cannot answer.
+    let (engine, database, report, _events, _backend, _directory) = engine_with_backfill(
+        |_| {},
+        postio_sync::BackfillPolicy {
+            background: false,
+            ..Default::default()
+        },
+    );
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     give_the_inbox_uids(&database, inbox.id);
 
