@@ -12,7 +12,7 @@
 //! mutated mid-call; `NSTableView` has no such rule, so that guard is
 //! `postio-gtk`'s alone to keep — see its own module docs).
 //!
-//! `FeedScope` — which mailbox, or which smart folder — deliberately does
+//! `ListScope` — which mailbox, or which smart folder — deliberately does
 //! **not** move here either. `ListWindow` has no idea what a scope is; it
 //! has [`reset`](ListWindow::reset), which bumps the generation and empties
 //! the cache, and the feed calls it when the scope changes. A model that

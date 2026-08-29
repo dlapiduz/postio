@@ -33,31 +33,14 @@ use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
 use postio_model::address::EmailAddress;
-use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
+use postio_model::ids::{AccountId, MessageId, ThreadId};
 use postio_model::mailbox::Mailbox;
 
 /// Which messages the list is showing.
 ///
-/// Core's own, rather than `postio-storage`'s: handing the frontend a storage
-/// type would put `rusqlite` in its dependency graph through the back door.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListScope {
-    /// One folder.
-    Mailbox(MailboxId),
-    /// Every folder in an account: the unified view.
-    Account(AccountId),
-    /// The sidebar's "Flagged" view.
-    Flagged(AccountId),
-    /// The sidebar's "Snoozed" view.
-    Snoozed(AccountId),
-    /// One conversation, wherever its messages are filed.
-    ///
-    /// The drill-in used to build the thread from the rows the message list
-    /// model already held, which is why it worked at all and why it was never
-    /// the whole thread: a message filed elsewhere is not in this folder's
-    /// model, and a page the list has not scrolled to is not resident.
-    Thread(ThreadId),
-}
+/// `postio-model`'s: every reader of the list, from `postio-storage`'s own
+/// queries to a frontend's feed, answers this the same way (#670).
+pub use postio_model::ListScope;
 
 /// Which rows are wanted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

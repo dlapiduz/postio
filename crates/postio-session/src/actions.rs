@@ -1923,7 +1923,7 @@ mod tests {
 
     #[test]
     fn snoozing_a_whole_mailbox_is_refused() {
-        // Not offered yet (`view_scope` never resolves `FeedScope::Snoozed`
+        // Not offered yet (`aim::view_scope` never resolves `ListScope::Snoozed`
         // into something `Ctrl+A` can select against either) -- see
         // `Actions::snooze`'s own doc comment for why.
         let world = world();

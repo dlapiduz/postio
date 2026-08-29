@@ -25,7 +25,7 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::feed::{
-    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    ListScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
@@ -40,7 +40,7 @@ const ARCHIVE: i64 = 5;
 /// Records what the list asked for, so "which scope" is checkable.
 #[derive(Default)]
 struct Store {
-    asked: RefCell<Vec<FeedScope>>,
+    asked: RefCell<Vec<ListScope>>,
 }
 
 impl Store {
@@ -79,12 +79,12 @@ impl MessageSource for Store {
         self.asked.borrow_mut().push(request.scope);
         // Seven flagged messages across the account; the inbox holds 940.
         let total = match request.scope {
-            FeedScope::Flagged(_) => 7,
-            FeedScope::Mailbox(id) if id.get() == INBOX => 940,
-            FeedScope::Mailbox(_) => 0,
+            ListScope::Flagged(_) => 7,
+            ListScope::Mailbox(id) if id.get() == INBOX => 940,
+            ListScope::Mailbox(_) => 0,
             // This store is about which scope the sidebar asked for; a
             // drill-in is `gtk_thread_scope.rs`.
-            FeedScope::Snoozed(_) | FeedScope::Thread(_) => 0,
+            ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
@@ -155,7 +155,7 @@ pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
 
     assert_eq!(
         store.asked.borrow().first(),
-        Some(&FeedScope::Flagged(AccountId::new(ACCOUNT))),
+        Some(&ListScope::Flagged(AccountId::new(ACCOUNT))),
         "the scope travels with the selection; a smart folder has no \
          MailboxId to send instead"
     );
@@ -182,7 +182,7 @@ pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
 
     assert_eq!(
         store.asked.borrow().first(),
-        Some(&FeedScope::Mailbox(MailboxId::new(INBOX)))
+        Some(&ListScope::Mailbox(MailboxId::new(INBOX)))
     );
     assert_eq!(
         feeds.messages.mailbox(),

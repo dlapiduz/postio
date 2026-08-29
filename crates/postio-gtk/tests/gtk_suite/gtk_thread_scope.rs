@@ -7,7 +7,7 @@
 //! header said so, reading `3 of 6 messages here`, but saying so is not
 //! showing it. That is #44.
 //!
-//! So the source is asked for `FeedScope::Thread`, which `postio-storage`
+//! So the source is asked for `ListScope::Thread`, which `postio-storage`
 //! answers from `idx_messages_thread` across every folder the thread touches.
 //! The fake source here refuses to serve the thread from the mailbox scope —
 //! it hands back only the two Inbox messages, exactly as the real store would
@@ -25,7 +25,7 @@ use chrono::{TimeZone, Utc};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::feed::{
-    FeedScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
+    ListScope, MailboxFuture, MailboxSource, MessageSource, Page, PageFuture, PageRequest,
 };
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
@@ -92,7 +92,7 @@ impl MessageSource for Split {
         // The Inbox holds two of the four. The other two are in Archive and
         // no mailbox-scoped read can see them, which is the whole point.
         let rows = match request.scope {
-            FeedScope::Thread(_) => {
+            ListScope::Thread(_) => {
                 self.thread_reads.set(self.thread_reads.get() + 1);
                 vec![row(1, 10), row(2, 20), row(3, 30), row(4, 40)]
             }

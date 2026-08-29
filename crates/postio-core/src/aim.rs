@@ -48,7 +48,7 @@
 //! [ADR 0015]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0015-threaded-list.md
 //! [ADR 0019]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0019-macos-frontend.md
 
-use postio_model::{MessageId, ThreadId};
+use postio_model::{ListScope, MessageId, ThreadId};
 
 use crate::bridge::EventSink;
 use crate::command::{Command, CommandId, MessageTarget};
@@ -98,8 +98,8 @@ pub struct Aim<'a> {
     ///
     /// `None` when a whole-view gesture is meaningless here — a thread
     /// drill-in, where `Ctrl+A` is not a gesture, or Snoozed, which has no
-    /// predicate of its own yet (#493). Each frontend derives this from its
-    /// own scope type today; #670 collapses that into one function here.
+    /// predicate of its own yet (#493). Built by calling [`view_scope`] on
+    /// whatever `ListScope` the frontend's list is actually showing.
     pub scope: Option<ViewScope>,
     /// What the user has marked.
     pub selection: &'a Selection,
@@ -111,6 +111,35 @@ pub struct Aim<'a> {
     pub cursor: Option<MessageId>,
     /// The frontend's list, as a source of facts about rows.
     pub rows: &'a dyn RowFacts,
+}
+
+/// The app-state scope a list's `ListScope` stands for, when a whole-view
+/// gesture means anything there.
+///
+/// `None` for a thread drill-in: a conversation is a *destination for a
+/// verb*, not a view a whole-view selection is relative to — `Ctrl+A` inside
+/// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
+/// gets acted on instead.
+///
+/// Also `None` for Snoozed (#493) and for the unified per-account view:
+/// unlike Flagged, nothing here needs `Ctrl+A` to select every snoozed or
+/// every account-wide message at once yet, so it is not worth a
+/// `MessageSet` predicate of its own until something does. A person can
+/// still act on individual rows in either view — this only means a
+/// whole-view bulk gesture there is a rejection rather than a no-op that
+/// silently claims to have done something.
+///
+/// The one rule every frontend has to reach the same answer to (#670): moved
+/// here from `postio-app` once `postio-model::ListScope` gave `postio-core`
+/// something to apply the rule to. `ViewScope`'s smaller variant set stays —
+/// see `docs/engineering-notes.md`'s "Six types are called *Scope*" — this
+/// is the function that produces it.
+pub fn view_scope(scope: ListScope) -> Option<ViewScope> {
+    match scope {
+        ListScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
+        ListScope::Flagged(account) => Some(ViewScope::Flagged(account)),
+        ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => None,
+    }
 }
 
 /// The invocation `id` means, given what the user is looking at.
@@ -305,6 +334,37 @@ mod tests {
 
     fn message(id: i64) -> MessageId {
         MessageId::new(id)
+    }
+
+    /// The five shapes a list can be showing, and whether a whole-view
+    /// gesture means anything in each.
+    #[test]
+    fn only_a_folder_and_flagged_are_something_ctrl_a_can_be_relative_to() {
+        use postio_model::{AccountId, MailboxId};
+
+        assert_eq!(
+            view_scope(ListScope::Mailbox(MailboxId::new(4))),
+            Some(ViewScope::Mailbox(MailboxId::new(4))),
+        );
+        assert_eq!(
+            view_scope(ListScope::Flagged(AccountId::new(1))),
+            Some(ViewScope::Flagged(AccountId::new(1))),
+        );
+        assert_eq!(
+            view_scope(ListScope::Account(AccountId::new(1))),
+            None,
+            "nothing needs an account-wide `MessageSet` predicate yet",
+        );
+        assert_eq!(
+            view_scope(ListScope::Snoozed(AccountId::new(1))),
+            None,
+            "nothing needs a `MessageSet::Snoozed` predicate yet (#493)",
+        );
+        assert_eq!(
+            view_scope(ListScope::Thread(ThreadId::new(3))),
+            None,
+            "`Ctrl+A` inside a conversation is not a gesture",
+        );
     }
 
     fn aim<'a>(selection: &'a Selection, cursor: Option<i64>, rows: &'a dyn RowFacts) -> Aim<'a> {

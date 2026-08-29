@@ -355,7 +355,7 @@ impl Window {
             row.thread_count,
         );
 
-        // Then the whole conversation. `FeedScope::Thread` is answered from
+        // Then the whole conversation. `ListScope::Thread` is answered from
         // `idx_messages_thread` with no mailbox or account restriction (#44):
         // a message filed in Archive, or on a page the list never scrolled
         // to, is not in what `thread_rows` gave the paint above, and is in
@@ -364,7 +364,7 @@ impl Window {
             return;
         };
         let future = source.fetch(crate::feed::PageRequest {
-            scope: crate::feed::FeedScope::Thread(id),
+            scope: crate::feed::ListScope::Thread(id),
             page: 0,
             offset: 0,
             limit: THREAD_PAGE,

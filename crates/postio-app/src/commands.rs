@@ -16,52 +16,21 @@
 //! second frontend writes the same three lines against its own list and gets
 //! the same behaviour by construction rather than by agreement.
 //!
-//! [`view_scope`] is the one rule still here, and only because it cannot move
-//! yet: `postio-core` sits below the runtime and cannot see the scope type the
-//! store speaks. #670 collapses it into `aim`.
+//! `view_scope` used to be the one rule still here, because `postio-core`
+//! had no scope type of its own for a `FeedScope` to convert into. #670 gave
+//! it one — `postio_model::ListScope`, which every reader of the list now
+//! shares — so `aim::view_scope` is where the rule lives, and this module is
+//! the adapter in full: nothing here decides anything.
 
 use postio_core::aim::{self, Aim};
 use postio_core::bridge::{CommandSender, EventStream, event_channel};
 use postio_core::state::SharedState;
-use postio_core::state::ViewScope;
 use postio_core::{CommandId, Event};
 use postio_gtk::feed::Feeds;
 use postio_gtk::window::Window;
 
 use adw::prelude::*;
 use gtk::glib;
-
-/// The app-state scope a feed scope stands for.
-///
-/// `None` for a thread drill-in: a conversation is a *destination for a
-/// verb*, not a view a whole-view selection is relative to — `Ctrl+A` inside
-/// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
-/// gets acted on instead.
-///
-/// Also `None` for Snoozed (#493): unlike Flagged, nothing here needs
-/// `Ctrl+A` to select every snoozed message at once yet, so it is not worth
-/// a `MessageSet::Snoozed` predicate of its own until something does. A
-/// person can still snooze, unsnooze, open and read individual rows in that
-/// view — this only means a whole-view bulk gesture there is a rejection
-/// rather than a no-op that silently claims to have done something.
-///
-/// # Why this one rule is still frontend-side
-///
-/// `ViewScope` has two variants, `FeedScope` four, `ScopeFfi` four different
-/// ones, and `postio_runtime::store::ListScope` is a fourth spelling that
-/// `postio-core` cannot see, because core sits below the runtime. Moving a
-/// shared scope type is a bigger change than this module — #670 — and doing
-/// it badly would put mailbox knowledge into `ListWindow`, which its own
-/// module doc refuses. Today there is exactly one such conversion in the
-/// workspace, so there is nothing for it to disagree with; the moment there
-/// are two, #670 is what stops them drifting.
-fn view_scope(scope: postio_gtk::feed::FeedScope) -> Option<ViewScope> {
-    match scope {
-        postio_gtk::feed::FeedScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
-        postio_gtk::feed::FeedScope::Flagged(account) => Some(ViewScope::Flagged(account)),
-        postio_gtk::feed::FeedScope::Snoozed(_) | postio_gtk::feed::FeedScope::Thread(_) => None,
-    }
-}
 
 /// Send the invocations the bus owns to it, as the window produces them.
 pub fn install(
@@ -90,7 +59,7 @@ pub fn install(
             let rows = list.model();
             let selection = list.selection().selection();
             let aim = Aim {
-                scope: feeds.messages.scope().and_then(view_scope),
+                scope: feeds.messages.scope().and_then(aim::view_scope),
                 selection: &selection,
                 cursor: list.cursor_id(),
                 rows: &rows,
@@ -175,37 +144,4 @@ pub fn drain(
             apply(&window, &feeds, &event, &notifier);
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use postio_core::state::ViewScope;
-    use postio_gtk::feed::FeedScope;
-    use postio_model::{AccountId, MailboxId, ThreadId};
-
-    /// The four shapes, and whether a whole-view gesture means anything in
-    /// each. The rule itself is `postio_core::aim`'s; what is asserted here
-    /// is this frontend's translation into it.
-    #[test]
-    fn only_a_folder_and_flagged_are_something_ctrl_a_can_be_relative_to() {
-        assert_eq!(
-            view_scope(FeedScope::Mailbox(MailboxId::new(4))),
-            Some(ViewScope::Mailbox(MailboxId::new(4))),
-        );
-        assert_eq!(
-            view_scope(FeedScope::Flagged(AccountId::new(1))),
-            Some(ViewScope::Flagged(AccountId::new(1))),
-        );
-        assert_eq!(
-            view_scope(FeedScope::Snoozed(AccountId::new(1))),
-            None,
-            "nothing needs a `MessageSet::Snoozed` predicate yet (#493)",
-        );
-        assert_eq!(
-            view_scope(FeedScope::Thread(ThreadId::new(3))),
-            None,
-            "`Ctrl+A` inside a conversation is not a gesture",
-        );
-    }
 }
