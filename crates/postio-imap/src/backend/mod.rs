@@ -57,7 +57,7 @@ use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use postio_model::{ModSeq, RemoteId};
+use postio_model::{ModSeq, RemoteId, Uid};
 
 use crate::cancel::CancelToken;
 
@@ -252,6 +252,34 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         message_id: &str,
     ) -> BackendResult<Option<RemoteId>> {
         let _ = (mailbox, message_id);
+        Ok(None)
+    }
+
+    /// Every UID that currently exists in `mailbox`, if the backend can say.
+    ///
+    /// What a first sync needs in order to ask only for messages that are
+    /// *there*. Without it the caller has nothing to go on but the UID
+    /// ceiling, so it walks `1..=UIDNEXT-1` in chunks and pays a round trip
+    /// for every chunk whose UIDs were all expunged — a cost proportional to
+    /// `UIDNEXT` rather than to how much mail the folder holds. Measured
+    /// against a real account, that was 46% of a first sync's wall clock
+    /// spent fetching nothing (#78, #727).
+    ///
+    /// The default answers `None` — "this backend cannot enumerate" — and the
+    /// caller falls back to that walk, which is what every backend did before
+    /// this existed. A protocol whose listing is already cheap has no reason
+    /// to implement it.
+    ///
+    /// Ordering is not promised; the caller sorts. Neither is freshness: this
+    /// is a snapshot, and a message may be expunged between this call and the
+    /// fetch that asks for it. That is ordinary and already handled — a
+    /// `FETCH` for a UID that has gone returns nothing rather than failing.
+    async fn existing_uids(
+        &self,
+        mailbox: &str,
+        cancel: &CancelToken,
+    ) -> BackendResult<Option<Vec<Uid>>> {
+        let _ = (mailbox, cancel);
         Ok(None)
     }
 
