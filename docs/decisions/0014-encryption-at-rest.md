@@ -142,7 +142,15 @@ the swap-last ordering is for.
   bench trips: `cache_size`, `cipher_memory_security = OFF` (its
   memory-wiping defence is not part of this threat model).
 - **Build cost:** vendored OpenSSL is the heaviest new compile in the
-  graph. sccache absorbs it machine-wide after the first build (#178).
+  graph. sccache absorbs it machine-wide after the first build (#178) —
+  *since #736*: as first landed, sccache was wired in as a rustc wrapper
+  only and never saw the C compiler inside the openssl-src and
+  libsqlite3-sys build scripts, so every fresh worktree recompiled OpenSSL
+  and SQLCipher from source (~4 minutes at the pinned `jobs = 2`, 77% of a
+  postio-storage build) — and sccache *cannot* absorb it, because
+  openssl-src builds inside each target dir and sccache does no C path
+  normalization. `scripts/cc-wrapper.sh`, wired in as `[env] CC` and
+  fronting **ccache**, is what makes this bullet true.
 
 ## What would falsify this
 

@@ -209,6 +209,15 @@ jobs:
         # issue-release.sh deletes that worktree. #359.
         run: python3 scripts/tests/test-rustc-wrapper-tmpdir.py
 
+      - name: Prove the C compiles reach the cache and fail open without it
+        # sccache as RUSTC_WRAPPER never sees the C compiler inside the
+        # openssl-src, libsqlite3-sys and zstd-sys build scripts — 77% of a
+        # fresh worktree's postio-storage build was uncached C. cc-wrapper.sh
+        # is the C half of the cache, through ccache, whose path
+        # normalization is the whole point: without it nothing hits across
+        # worktrees. #736.
+        run: python3 scripts/tests/test-cc-wrapper.py
+
       - name: Prove a fresh tree's TMPDIR is created before anything wants it
         # .cargo/config.toml points TMPDIR at target/tmp and nothing creates
         # it, so the first temp file in a fresh clone or worktree failed with
