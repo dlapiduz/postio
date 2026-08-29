@@ -9,6 +9,7 @@
 
 mod add_account_wiring;
 mod attach_account;
+mod body_arrives;
 mod bulk_keystroke;
 mod click_preview;
 mod compose_detach;
@@ -58,6 +59,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "attach_account::an_account_added_to_a_running_application_syncs_without_a_restart",
         attach_account::an_account_added_to_a_running_application_syncs_without_a_restart as fn(),
+    ),
+    (
+        "body_arrives::a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other",
+        body_arrives::a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other as fn(),
     ),
     (
         "bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read",

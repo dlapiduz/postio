@@ -392,6 +392,50 @@ impl PartsPanel {
     /// Metadata only: this neither fetches nor renders anything, and there is
     /// no path from here that could. See the module docs.
     pub fn show_parts(&self, root: &str, parts: &[Attachment]) {
+        self.draw(root, parts);
+        // The first *part*, not the message: the row the user came to look at
+        // is one of the things inside, and starting on the container would
+        // cost a keystroke every time.
+        self.select_index(if self.imp().nodes.borrow().len() > 1 {
+            1
+        } else {
+            0
+        });
+        self.refresh_detail();
+    }
+
+    /// Redraw the same message's tree, keeping the cursor where it is.
+    ///
+    /// What [`show_parts`](Self::show_parts) is for a message the user just
+    /// opened, this is for one whose parts *changed under them*:
+    /// `Node::downloaded` is written at runtime now (#377), so a chip that
+    /// said "download" has to start saying "open" the moment the bytes land
+    /// (#396).
+    ///
+    /// The cursor is what makes this a separate method. `show_parts` drops it
+    /// on the first part, which is right on the way in and wrong here: the
+    /// person who opened this panel is standing on the part they are waiting
+    /// for, and a payload arriving must not move them off it. It follows the
+    /// part id rather than the index, so a tree that gained or lost a row
+    /// still leaves the cursor on the same part.
+    pub fn update_parts(&self, root: &str, parts: &[Attachment]) {
+        let was = self.cursor().map(|node| node.part_id);
+        self.draw(root, parts);
+        let index = was
+            .and_then(|part_id| {
+                self.imp()
+                    .nodes
+                    .borrow()
+                    .iter()
+                    .position(|node| node.part_id == part_id)
+            })
+            .unwrap_or(0);
+        self.select_index(index);
+        self.refresh_detail();
+    }
+
+    /// Replace the rows with `parts`, saying nothing about the cursor.
+    fn draw(&self, root: &str, parts: &[Attachment]) {
         let imp = self.imp();
         let nodes = tree(root, parts);
         imp.summary.set_text(&summary(&nodes));
@@ -403,12 +447,6 @@ impl PartsPanel {
             imp.tree.append(&tree_row(node));
         }
         *imp.nodes.borrow_mut() = nodes;
-
-        // The first *part*, not the message: the row the user came to look at
-        // is one of the things inside, and starting on the container would
-        // cost a keystroke every time.
-        self.select_index(if imp.nodes.borrow().len() > 1 { 1 } else { 0 });
-        self.refresh_detail();
     }
 
     /// How much the reader held back on this message, for the canvas'
