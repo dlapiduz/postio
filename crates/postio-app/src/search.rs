@@ -165,8 +165,14 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
 
 /// Read the store on the runtime and answer over a channel.
 ///
-/// `work` runs on the blocking pool with a connection of its own. `None` from
-/// it — or a connection that could not be checked out — reaches the caller as
+/// `work` runs on the blocking pool with a connection of its own — checked
+/// out ahead of background work already queued for one
+/// (`Database::connection_interactive`), because every caller here is a
+/// person waiting on the answer: a search, a reading-pane body. Without that
+/// priority this queued behind a first sync's backfill on the same pool
+/// `Database::connection` draws from, which is #672 — #425 gave writes a
+/// queue with a priority in it and never touched this. `None` from `work` —
+/// or a connection that could not be checked out — reaches the caller as
 /// `None`, which every caller here treats as "draw nothing", because a search
 /// that could not run has no answer and must not invent one.
 pub(crate) fn ask<T, F>(database: &Database, runtime: &tokio::runtime::Handle, work: F) -> Answer<T>
@@ -178,7 +184,7 @@ where
     let database = database.clone();
     runtime.spawn_blocking(move || {
         let answer = database
-            .connection()
+            .connection_interactive()
             .map_err(|error| tracing::warn!(%error, "no connection to read the index with"))
             .ok()
             .and_then(|connection| work(&connection));
@@ -840,5 +846,312 @@ mod tests {
 
         assert_eq!(results.hits.len(), 1, "the subject still matched");
         assert!(results.hits[0].snippet.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod interactive_read {
+    //! `ask` does not queue behind a backfill on the same pool. #672.
+    //!
+    //! `postio-storage/tests/connection_priority.rs` proves the property
+    //! underneath this without an engine at all, the same way
+    //! `postio-storage/tests/write_gate.rs` underlies #425's
+    //! `postio-session/tests/interactive_write.rs`. This is that end-to-end
+    //! claim for the read side: the engine is real, its backend is
+    //! `postio_imap::backend::MockBackend` (the seam CLAUDE.md names for
+    //! exactly this), and the pool is left at its ordinary size — see
+    //! `engine_over` for why shrinking it is the wrong way to reproduce
+    //! exhaustion here.
+    //!
+    //! # Why the pool still ends up fully exhausted
+    //!
+    //! Two mailboxes and room for two sync lanes means the engine syncs both
+    //! at once, and its wave holds both connections until the whole wave —
+    //! not each mailbox — finishes; that is exactly
+    //! [`postio_runtime::engine`]'s own `RESERVED_FOR_ELSEWHERE`, the two
+    //! connections a sync wave leaves for "the UI thread's reads" and "the
+    //! engine's own housekeeping between waves". This test claims that
+    //! reserve for itself instead, to stand in for whatever else in a real
+    //! session would be reading with no particular urgency — an unrelated
+    //! mailbox open in the list, an idle poll. What #672 fixes is which of
+    //! the two waiters that then queue for the one connection that frees
+    //! goes first.
+
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use postio_core::bridge::event_channel;
+    use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
+    use postio_model::ids::MessageId;
+    use postio_runtime::Engine;
+    use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
+    use postio_storage::repository::{
+        AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
+    };
+    use postio_storage::{BlobStore, Database, test_support};
+
+    /// Long enough that a thread which has announced it is about to block
+    /// really is blocked by the time the next step runs.
+    const ENOUGH_TO_BLOCK: Duration = Duration::from_millis(50);
+
+    const BULK: &str = "Lists";
+    const BULK_MESSAGES: u32 = 2_000;
+
+    fn message(n: u32) -> Vec<u8> {
+        format!(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             To: Postio <postio@example.net>\r\n\
+             Subject: message {n}\r\n\
+             Message-ID: <m-{n}@example.com>\r\n\
+             Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+             \r\n\
+             Body {n}.\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn folder(path: &str, messages: u32) -> MockMailbox {
+        let mut mailbox = MockMailbox::new(path);
+        for n in 1..=messages {
+            mailbox = mailbox.message(MockMessage::new(message(n)));
+        }
+        mailbox
+    }
+
+    /// A database at the pool's ordinary size, an engine backfilling
+    /// `backend` over it, and the directories that have to outlive both.
+    ///
+    /// The default size rather than something smaller: the engine's own
+    /// discovery and housekeeping reads share this pool with its sync lanes,
+    /// and sizing it down to force exhaustion risks starving *that* instead
+    /// of exercising #672. The test creates its own exhaustion later, on
+    /// purpose, by holding connections itself.
+    fn engine_over(backend: Arc<MockBackend>) -> (Database, Engine, tempfile::TempDir) {
+        let directory = tempfile::tempdir().expect("a database directory");
+        let database = Database::open_with(
+            directory.path().join("postio.db"),
+            &test_support::key(),
+            postio_storage::db::DEFAULT_MAX_CONNECTIONS,
+        )
+        .expect("a database");
+        let account = {
+            let connection = database.connection().expect("a connection");
+            test_support::account(&connection)
+        };
+        let blobs_directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(blobs_directory.path().to_path_buf()).expect("a blob store");
+        let (sink, _events) = event_channel();
+
+        let engine = Engine::spawn(EngineParts {
+            account: account.id,
+            database: database.clone(),
+            blobs,
+            backend,
+            smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
+                postio_imap::secret::MemorySecretStore::default(),
+            ))),
+            events: sink,
+            retry: Default::default(),
+            backfill: Default::default(),
+            reconnect: Default::default(),
+            watch: Default::default(),
+            network: NetworkSource::Ignored,
+            mailbox_roles: Default::default(),
+            clock: Arc::new(SystemClock),
+        })
+        .expect("the engine starts");
+
+        (database, engine, directory)
+    }
+
+    /// How many messages the store holds under `path`, or `0` before the
+    /// mailbox itself has arrived.
+    fn stored(database: &Database, path: &str) -> u32 {
+        let Ok(connection) = database.connection() else {
+            return 0;
+        };
+        let Ok(accounts) = AccountRepository::new(&connection).list() else {
+            return 0;
+        };
+        let Some(account) = accounts.into_iter().next() else {
+            return 0;
+        };
+        let Ok(mailboxes) = MailboxRepository::new(&connection).list_for_account(account.id) else {
+            return 0;
+        };
+        let Some(mailbox) = mailboxes.into_iter().find(|mailbox| mailbox.path == path) else {
+            return 0;
+        };
+        MessageRepository::new(&connection)
+            .count(&ListQuery {
+                scope: ListScope::Mailbox(mailbox.id),
+                limit: 0,
+                after: None,
+            })
+            .unwrap_or(0)
+    }
+
+    /// The id of the first message under `path`, once there is one.
+    fn first_message(database: &Database, path: &str) -> Option<MessageId> {
+        let connection = database.connection().ok()?;
+        let accounts = AccountRepository::new(&connection).list().ok()?;
+        let account = accounts.into_iter().next()?;
+        let mailbox = MailboxRepository::new(&connection)
+            .list_for_account(account.id)
+            .ok()?
+            .into_iter()
+            .find(|mailbox| mailbox.path == path)?;
+        MessageRepository::new(&connection)
+            .page(&ListQuery {
+                scope: ListScope::Mailbox(mailbox.id),
+                limit: 1,
+                after: None,
+            })
+            .ok()?
+            .into_iter()
+            .next()
+            .map(|row| row.id)
+    }
+
+    /// Waits for `condition`, or gives up and says what was true when it did.
+    ///
+    /// A liveness bound and nothing else, deliberately enormous for the
+    /// reason `postio-runtime/tests/sync_wave.rs` sets out: a deadline small
+    /// enough to be a performance budget is a flake waiting for a loaded
+    /// machine.
+    async fn until(what: &str, mut condition: impl FnMut() -> bool) {
+        let waited = tokio::time::timeout(Duration::from_secs(180), async {
+            while !condition() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "timed out waiting for {what}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reading_pane_body_load_does_not_wait_for_the_backfill() {
+        let backend = Arc::new(
+            MockBackend::builder()
+                .mailbox(folder("INBOX", 3))
+                .mailbox(folder(BULK, BULK_MESSAGES))
+                .build(),
+        );
+        backend.set_latency(Duration::from_millis(20));
+
+        let (database, engine, _directory) = engine_over(backend);
+
+        until("INBOX to fully arrive", || stored(&database, "INBOX") >= 3).await;
+        let message = first_message(&database, "INBOX").expect("a message in the inbox");
+
+        // Mid-backfill, and demonstrably so: the bulk folder has begun
+        // arriving and is nowhere near done. Its lane now holds one of the
+        // pool's connections for as long as the whole folder takes — INBOX
+        // finished above and gave its own back.
+        until("the bulk backfill to be under way", || {
+            stored(&database, BULK) > 100
+        })
+        .await;
+
+        // Exhaust the pool the rest of the way. Two mailboxes with room for
+        // two lanes means the engine's own sync wave holds both INBOX's and
+        // BULK's connections until the *wave* finishes, not just until each
+        // mailbox does — so it is still holding two, not one, long after
+        // INBOX's three messages are in. What is left is exactly
+        // `postio_runtime::engine`'s own `RESERVED_FOR_ELSEWHERE`, and these
+        // two connections stand in for what it is reserved for: the "an
+        // unrelated mailbox open in the list, an idle poll" the module docs
+        // describe. Held on its own thread with a bound: each `get()` waits
+        // for whatever the engine has not claimed, and if that is somehow
+        // never enough this fails loudly rather than hanging the suite.
+        let (spare_sender, spare_receiver) = mpsc::channel();
+        let pool_for_spares = database.pool().clone();
+        let spare_count = 2;
+        std::thread::spawn(move || {
+            let held: Vec<_> = (0..spare_count)
+                .map(|_| pool_for_spares.get().expect("a connection eventually"))
+                .collect();
+            let _ = spare_sender.send(held);
+        });
+        let mut held = spare_receiver
+            .recv_timeout(Duration::from_secs(60))
+            .expect("could not exhaust the pool's spare capacity in time");
+        assert_eq!(
+            database.pool().idle_connections(),
+            0,
+            "the setup is supposed to leave nothing idle"
+        );
+
+        let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // A plain background read asks first...
+        let (announced, arrived) = mpsc::channel();
+        let pool = database.pool().clone();
+        let order_for_background = Arc::clone(&order);
+        let background = std::thread::spawn(move || {
+            announced.send(()).expect("the test is listening");
+            let _connection = pool.get().expect("a connection eventually");
+            order_for_background.lock().unwrap().push("background");
+        });
+        arrived.recv().expect("the background thread starts");
+        std::thread::sleep(ENOUGH_TO_BLOCK);
+
+        // ...and the reading pane's body load asks second.
+        let runtime = tokio::runtime::Handle::current();
+        let order_for_interactive = Arc::clone(&order);
+        let answer = crate::search::ask(&database, &runtime, move |connection| {
+            // Recorded here, the instant the connection is in hand, rather
+            // than after `answer.recv().await` below: that round trip adds a
+            // channel send and a task wake on top of the checkout itself, so
+            // timing the *order's* answer would measure that extra latency
+            // instead of which of the two actually got a connection first.
+            order_for_interactive.lock().unwrap().push("interactive");
+            MessageRepository::new(connection)
+                .get(message)
+                .ok()
+                .flatten()
+        });
+        // Observable rather than slept on: the interactive checkout counts
+        // itself as waiting before it blocks, which is exactly what the
+        // background checkout has to be able to see.
+        let interactive_wait = tokio::time::timeout(Duration::from_secs(10), async {
+            while !database.pool().interactive_is_waiting() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        assert!(
+            interactive_wait.is_ok(),
+            "the interactive checkout never registered as waiting"
+        );
+
+        // Only one: the rest stay held, so the connection that frees is the
+        // single contested slot the background thread and the interactive
+        // read are both already queued for — not one each.
+        drop(held.pop().expect("at least one spare was held"));
+        let result = tokio::time::timeout(Duration::from_secs(10), answer.recv())
+            .await
+            .expect("the interactive read did not complete in time")
+            .expect("an answer");
+        background.join().expect("the background checkout finishes");
+
+        assert!(
+            result.is_some(),
+            "the reading pane did not find the message it asked for"
+        );
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec!["interactive", "background"],
+            "the backfill was already holding one connection and a plain \
+             background read was already queued for the other, and the \
+             reading-pane load got it last anyway. That is #672: a read a \
+             person is waiting on has to overtake background work that got \
+             there first, or a first sync locks the reading pane out for as \
+             long as it holds every connection."
+        );
+
+        engine.stop();
     }
 }
