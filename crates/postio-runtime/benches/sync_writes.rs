@@ -23,13 +23,41 @@
 //! different problem from one that is simply too high, and only the sweep
 //! tells them apart.
 //!
-//! The leading hypothesis for the growth, which this bench exists to confirm
-//! or kill: `PRAGMA cache_size` is 16 MiB against a store measured at 172 MB,
-//! and `thread_links` is a `WITHOUT ROWID` b-tree keyed on a text
-//! `Message-ID` — so it takes inserts in effectively random key order, and
-//! every page miss pays an SQLCipher decrypt. If that is the mechanism, the
-//! per-message cost climbs with size and the threading phase is where it
-//! climbs. ADR 0014 names `cache_size` as the first lever if a bench trips.
+//! # What it found, and what that killed
+//!
+//! The hypothesis this was built to test: `PRAGMA cache_size` is 16 MiB
+//! against a store measured at 172 MB, and `thread_links` is a
+//! `WITHOUT ROWID` b-tree keyed on a text `Message-ID` — so it takes inserts
+//! in effectively random key order, and every page miss pays an SQLCipher
+//! decrypt. If that were the mechanism, per-message cost would climb with
+//! size and threading would be where it climbed. ADR 0014 names `cache_size`
+//! as the first lever if a bench trips.
+//!
+//! **It does not climb.** Measured on 2026-08-28:
+//!
+//! ```text
+//!    stored    on disk   per message      upsert   threading    contacts
+//!         0       9 MB      0.342 ms    0.104 ms    0.136 ms    0.018 ms
+//!     20000      25 MB      0.330 ms    0.115 ms    0.148 ms    0.018 ms
+//!     80000      88 MB      0.378 ms    0.117 ms    0.143 ms    0.022 ms
+//!    120000     131 MB      0.352 ms    0.112 ms    0.130 ms    0.021 ms
+//! ```
+//!
+//! 1.03x from empty to 131 MB, and 1.11x on a second run — the difference
+//! between those two runs is the noise floor, so the growth is nothing. And
+//! the hypothesis was genuinely exercised rather than merely missed: 131 MB
+//! is eight times `cache_size`, the same order of oversubscription as the
+//! real store that prompted the question. Raising `cache_size` is not the
+//! lever.
+//!
+//! That leaves #78's 0.88 → 2.80 ms unexplained by store size, and the gap is
+//! large: this writes a message in 0.35 ms where that run's *best* case was
+//! 0.88 ms and its worst 2.80 ms. What differs is contention — that run had
+//! two sync lanes queueing on SQLite's single write lock (its `write_ms`
+//! includes the write-gate and lock wait, and #78 measured the write path
+//! ~97% occupied across both lanes) on a machine that was also building.
+//! Whichever of those it is, it is not the size of the store, and the next
+//! measurement worth making is one lane against two.
 //!
 //! # What is measured
 //!
@@ -42,6 +70,14 @@
 //! phase that caused it rather than only the total. Those reach the same
 //! repository calls `commit_batch` makes; the budget below is asserted on
 //! `commit_batch` itself, and the phase split is diagnosis rather than gate.
+//!
+//! # Why this one does not use criterion
+//!
+//! Every other bench in this repository does. This workload is stateful and
+//! destructive — a measured batch writes two hundred messages that stay
+//! written — and criterion decides how often to run a closure by resampling
+//! until its statistics settle. That would sweep the very variable this bench
+//! holds fixed. See [`measure`].
 //!
 //! # Running
 //!
@@ -56,13 +92,12 @@
 //! loudly rather than only reporting.
 
 #![allow(missing_docs)]
-// `criterion_group!` expands to a `pub fn`, and the workspace lint floor
-// reaches bench targets. A bench is not public API.
+// A bench is not public API, and the workspace lint floor reaches bench
+// targets.
 
 use std::collections::BTreeSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use criterion::{Criterion, criterion_group, criterion_main};
 use postio_core::perf_budget::{SYNC_WRITE_BUDGET, check_budget};
 use postio_model::{
     Account, EmailAddress, Mailbox, MailboxRole, Message, RfcMessageId, Uid, UidValidity,
@@ -182,84 +217,152 @@ fn write_one(
     started.elapsed()
 }
 
-/// The headline: what a batch costs at each store size.
-fn bench_commit_batch(c: &mut Criterion) {
-    for &stored in SIZES {
-        let (database, account, inbox) = filled(stored);
-        let mut run = 0;
-        c.bench_function(&format!("commit_batch, {stored} already stored"), |b| {
-            b.iter(|| {
-                run += 1;
-                write_one(&database, &account, &inbox, run)
-            })
-        });
+/// How many batches are measured at each store size.
+///
+/// Ten batches is 2,000 messages: enough that one slow commit does not decide
+/// the answer, few enough that the store barely moves while being measured.
+/// See [`measure`] for why that second property is the whole design.
+const BATCHES: u32 = 10;
+
+/// One warm-up batch, not counted.
+///
+/// The first batch into a freshly opened store pays for a cold page cache and
+/// a cold statement cache. Both are real costs, and neither is the steady
+/// state a first sync spends its minutes in.
+const WARMUP: u32 = 1;
+
+/// What one store size cost, per message, split by phase.
+struct Measured {
+    stored: usize,
+    /// The database file's size once seeded, in bytes.
+    ///
+    /// Reported because the growth hypothesis this bench tests is about the
+    /// *page cache*, not about the row count: `PRAGMA cache_size` is 16 MiB,
+    /// and what matters is how far the file exceeds it. A flat curve measured
+    /// against a store that never grew past the cache would say nothing about
+    /// a real one that did, so the number a reader needs in order to know
+    /// which of those they are looking at is printed alongside.
+    on_disk: u64,
+    whole: Duration,
+    upsert: Duration,
+    threading: Duration,
+    contacts: Duration,
+}
+
+/// Measure one store size.
+///
+/// # Why this is not criterion
+///
+/// Every other bench here uses it, and this one deliberately does not. The
+/// workload is **stateful and destructive**: a measured batch writes 200
+/// messages that stay written. Criterion decides how many times to run a
+/// closure by resampling it until its statistics converge, so a measurement
+/// labelled "0 already stored" would run its body eighty-odd times and end up
+/// averaging over a store holding sixteen thousand — sweeping the exact
+/// variable this bench exists to hold fixed, and reporting the mean of a
+/// curve as though it were a point.
+///
+/// So the count is fixed instead: [`BATCHES`] batches after [`WARMUP`], timed
+/// with a real `Instant`. The store still grows by 2,000 messages while being
+/// measured, which is unavoidable when the operation under test is an insert
+/// — it is bounded, stated, and small against every size in [`SIZES`] except
+/// the empty control, where it is the point of the control anyway.
+///
+/// The phases are measured after the whole-path number, in the order the
+/// write path runs them: threading and contact recording both need the rows
+/// the upsert wrote, so neither can be measured before one.
+fn measure(stored: usize) -> Measured {
+    let (database, account, inbox) = filled(stored);
+    let connection = database.connection().expect("a checked-out connection");
+    let mut run = 0;
+
+    for _ in 0..WARMUP {
+        run += 1;
+        write_one(&database, &account, &inbox, run);
+    }
+
+    let mut whole = Duration::ZERO;
+    for _ in 0..BATCHES {
+        run += 1;
+        whole += write_one(&database, &account, &inbox, run);
+    }
+
+    let mut upsert = Duration::ZERO;
+    for _ in 0..BATCHES {
+        run += 1;
+        let mut messages = batch(&account, &inbox, run);
+        let started = Instant::now();
+        let unit = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
+            .expect("a transaction");
+        MessageRepository::new(&unit)
+            .upsert_batch(&mut messages)
+            .expect("upsert");
+        unit.commit().expect("commit");
+        upsert += started.elapsed();
+    }
+
+    let mut threading = Duration::ZERO;
+    for _ in 0..BATCHES {
+        run += 1;
+        let written = upserted(&connection, &account, &inbox, run);
+        let started = Instant::now();
+        let unit = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
+            .expect("a transaction");
+        let threads = ThreadingRepository::new(&unit, account.id);
+        for message in &written {
+            threads.thread(message).expect("thread");
+        }
+        unit.commit().expect("commit");
+        threading += started.elapsed();
+    }
+
+    let mut contacts = Duration::ZERO;
+    for _ in 0..BATCHES {
+        run += 1;
+        let written = upserted(&connection, &account, &inbox, run);
+        let started = Instant::now();
+        let unit = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
+            .expect("a transaction");
+        let recorder = ContactRepository::new(&unit);
+        for message in &written {
+            recorder.record_message(message).expect("record");
+        }
+        unit.commit().expect("commit");
+        contacts += started.elapsed();
+    }
+
+    let per_message = |total: Duration| total / (BATCHES * BATCH as u32);
+    Measured {
+        stored,
+        on_disk: on_disk(&database),
+        whole: per_message(whole),
+        upsert: per_message(upsert),
+        threading: per_message(threading),
+        contacts: per_message(contacts),
     }
 }
 
-/// Where inside a batch the time goes.
+/// How much of the disk the store occupies: the database plus its WAL.
 ///
-/// Not a gate — the budget is asserted on the whole path. This exists so that
-/// a regression in the total names the phase that caused it, which is the
-/// difference between "a first sync got slower" and "threading got slower as
-/// `thread_links` grew", and only the second is actionable.
-///
-/// Each phase is measured against a store that has already been filled, in
-/// the order the write path runs them: threading needs the message rows the
-/// upsert wrote, so it cannot be measured before one.
-fn bench_phases(c: &mut Criterion) {
-    for &stored in SIZES {
-        let (database, account, inbox) = filled(stored);
-        let connection = database.connection().expect("a checked-out connection");
-        let mut run = 10_000;
-
-        c.bench_function(&format!("phase: upsert, {stored} already stored"), |b| {
-            b.iter(|| {
-                run += 1;
-                let mut messages = batch(&account, &inbox, run);
-                let unit =
-                    Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
-                        .expect("a transaction");
-                MessageRepository::new(&unit)
-                    .upsert_batch(&mut messages)
-                    .expect("upsert");
-                unit.commit().expect("commit");
-            })
-        });
-
-        c.bench_function(&format!("phase: threading, {stored} already stored"), |b| {
-            b.iter(|| {
-                run += 1;
-                let written = upserted(&connection, &account, &inbox, run);
-                let unit =
-                    Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
-                        .expect("a transaction");
-                let threading = ThreadingRepository::new(&unit, account.id);
-                for message in &written {
-                    threading.thread(message).expect("thread");
-                }
-                unit.commit().expect("commit");
-            })
-        });
-
-        c.bench_function(&format!("phase: contacts, {stored} already stored"), |b| {
-            b.iter(|| {
-                run += 1;
-                let written = upserted(&connection, &account, &inbox, run);
-                let unit =
-                    Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
-                        .expect("a transaction");
-                let contacts = ContactRepository::new(&unit);
-                for message in &written {
-                    contacts.record_message(message).expect("record");
-                }
-                unit.commit().expect("commit");
-            })
-        });
-    }
+/// The WAL counts. During a long first sync it is where recent writes live,
+/// and a page read back out of it is as real as one read from the database.
+fn on_disk(database: &TempDatabase) -> u64 {
+    let file = database.directory().join("postio.db");
+    let wal = database.directory().join("postio.db-wal");
+    [file, wal]
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).ok())
+        .map(|meta| meta.len())
+        .sum()
 }
 
 /// A batch already written to the store, ready for a later phase to act on.
-fn upserted(connection: &Connection, account: &Account, mailbox: &Mailbox, run: u32) -> Vec<Message> {
+fn upserted(
+    connection: &Connection,
+    account: &Account,
+    mailbox: &Mailbox,
+    run: u32,
+) -> Vec<Message> {
     let mut messages = batch(account, mailbox, run);
     let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .expect("a transaction");
@@ -270,33 +373,55 @@ fn upserted(connection: &Connection, account: &Account, mailbox: &Mailbox, run: 
     messages
 }
 
-/// The gate. Criterion reports; this fails.
-///
-/// A budget nobody notices breaking is not a budget, which is why
-/// `postio-core`'s own benches assert as well as measure.
-///
-/// Asserted at the largest size in [`SIZES`], because that is the case that
-/// hurts: a first sync of a large account is the slowest thing Postio does,
-/// and the cost at the *end* of one is what decides when it finishes.
-fn bench_budget(c: &mut Criterion) {
-    let _ = c;
-    let largest = *SIZES.last().expect("at least one size");
-    let (database, account, inbox) = filled(largest);
+fn main() {
+    println!(
+        "\n{:>9}  {:>9}  {:>12}  {:>10}  {:>10}  {:>10}",
+        "stored", "on disk", "per message", "upsert", "threading", "contacts"
+    );
 
-    // Warm: the first batch into a freshly opened store pays for a cold page
-    // cache, which is a real cost but not the steady state a sync spends its
-    // time in.
-    write_one(&database, &account, &inbox, 1);
+    let mut results = Vec::new();
+    for &stored in SIZES {
+        let measured = measure(stored);
+        println!(
+            "{:>9}  {:>9}  {:>12}  {:>10}  {:>10}  {:>10}",
+            measured.stored,
+            format!("{} MB", measured.on_disk / 1_000_000),
+            format!("{:.3} ms", measured.whole.as_secs_f64() * 1000.0),
+            format!("{:.3} ms", measured.upsert.as_secs_f64() * 1000.0),
+            format!("{:.3} ms", measured.threading.as_secs_f64() * 1000.0),
+            format!("{:.3} ms", measured.contacts.as_secs_f64() * 1000.0),
+        );
+        results.push(measured);
+    }
 
-    let measured = write_one(&database, &account, &inbox, 2);
-    let per_message = measured / BATCH as u32;
-    if let Err(exceeded) = check_budget(per_message, SYNC_WRITE_BUDGET) {
-        panic!(
-            "writing a sync batch into a {largest}-message store costs \
-             {per_message:?} per message, over budget: {exceeded:?}"
+    // The shape, said out loud: a cost that grows with what is already stored
+    // is a different problem from one that is merely too high, and the ratio
+    // is what tells them apart at a glance.
+    if let (Some(first), Some(last)) = (results.first(), results.last()) {
+        let growth = last.whole.as_secs_f64() / first.whole.as_secs_f64();
+        println!(
+            "\ngrowth from {} to {} stored: {:.2}x per message",
+            first.stored, last.stored, growth
         );
     }
-}
 
-criterion_group!(benches, bench_commit_batch, bench_phases, bench_budget);
-criterion_main!(benches);
+    // The gate, at the largest size: that is the case that hurts, since a
+    // first sync of a large account is the slowest thing Postio does and the
+    // cost at the *end* of one decides when it finishes.
+    //
+    // Criterion reports; this fails. A budget nobody notices breaking is not a
+    // budget, which is why `postio-core`'s own benches assert as well as
+    // measure.
+    let largest = results.last().expect("at least one size");
+    match check_budget(largest.whole, SYNC_WRITE_BUDGET) {
+        Ok(()) => println!(
+            "\nwithin budget: {:?} per message at {} stored, budget {:?}",
+            largest.whole, largest.stored, SYNC_WRITE_BUDGET
+        ),
+        Err(exceeded) => panic!(
+            "writing a sync batch into a {}-message store costs {:?} per \
+             message, over budget: {exceeded:?}",
+            largest.stored, largest.whole
+        ),
+    }
+}
