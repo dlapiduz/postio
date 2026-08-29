@@ -85,6 +85,12 @@ anyway. `cargo fmt` is a formatter, not verification: inside your worktree
 `cargo fmt --all` is fine (the land script runs it); in the shared checkout
 format only files you changed, by name: `rustfmt --edition 2024 <paths>`.
 
+**Run `issue-land.sh` in the background, always** — a full gate chain can
+outlive a foreground tool call's 10-minute cap, and a run killed mid-gates
+commits nothing and leaks every live test's `/dev/shm` scratch. Launch it
+backgrounded, do something else or nothing, and act on the completion
+notification; never poll for it and never re-run it because it is quiet.
+
 - **Tests are headless automatically.** The cargo runner puts test binaries on
   a private mutter compositor; `cargo run -p postio-app` and examples reach
   the real display. `POSTIO_HEADLESS=0 cargo test` to watch a run;

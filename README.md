@@ -79,6 +79,12 @@ sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
 # @INC` inside a cargo build script, one module at a time.
 sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
                  perl-Text-Template perl-Time-Piece
+
+# Optional but strongly recommended on a machine with more than one checkout:
+# every fresh target directory rebuilds that OpenSSL from C source (~4 min),
+# and ccache is what lets the second one cost seconds. Wired in automatically
+# via scripts/cc-wrapper.sh; without ccache the build is unchanged. #736.
+sudo dnf install ccache
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):

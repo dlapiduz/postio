@@ -81,3 +81,15 @@ runner = "scripts/headless-runner.sh"
 # a box with no sccache, where cargo runs rustc directly.
 [env]
 TMPDIR = { value = "target/tmp", relative = true }
+# The C half of the compile cache. `rustc-wrapper` above covers only rustc;
+# the C compiler inside the openssl-src, libsqlite3-sys and zstd-sys build
+# scripts is invoked by make/cc directly and never saw a cache — 77% of a
+# fresh worktree's postio-storage build was uncached C (#736), which ADR 0014
+# had priced as "absorbed by sccache". The wrapper fronts **ccache**, not
+# sccache: openssl-src builds inside each target dir and sccache cannot
+# normalize the paths out of the hash, so it never hits across worktrees —
+# measured, see the wrapper. Same fail-open shape as the rustc wrapper: no
+# ccache on the box and the script is exactly `cc`. Cargo's [env] never
+# overrides an environment variable that is already set, so an exported CC
+# still wins, the way an exported RUSTC_WRAPPER does above.
+CC = { value = "scripts/cc-wrapper.sh", relative = true }
