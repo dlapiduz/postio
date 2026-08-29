@@ -54,7 +54,7 @@ use chrono::Utc;
 use postio_imap::backend::{
     BackendError, BackendResult, FetchedMessage, MailBackend, SelectMode, UidSet,
 };
-use postio_model::{Mailbox, MailboxId, MailboxStatus, Message, Uid};
+use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
@@ -309,84 +309,10 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        // One transaction per *write unit* — a slice of the batch, not the
-        // whole of it. See `WRITE_UNIT` for the second half of #425's fix, and
-        // the gate below for the first.
-        //
-        // Every repository call below opens a savepoint of its own and
-        // releases it, and a release is a real commit when nothing encloses
-        // it. Nothing did: a batch of two hundred messages committed once for
-        // the upserts and then once *per message* for threading and once more
-        // per message for the contact sighting, so it paid four hundred-odd
-        // fsyncs where it needed one. Measured on a real account, that was
-        // 2.25 ms of local write per message — the same order as the network
-        // transfer it was supposedly waiting on (`postio-0d9.7`).
-        //
-        // Enclosing them turns those savepoints into nested ones, which cost
-        // nothing to release, and leaves one commit per write unit. The
-        // durability story is unchanged: an interrupted pass resumes from
-        // `uids_in`, which counts whatever actually committed, so a unit
-        // smaller than a batch resumes at a finer grain rather than a worse
-        // one.
-        //
-        // IMMEDIATE, not DEFERRED, and this is the load-bearing part (#79).
-        // The first statement below is a SELECT, so a deferred transaction
-        // would be holding a *read* lock by the time it wrote and would have
-        // to promote — and SQLite refuses to make a promotion wait, because
-        // blocking a connection that already holds a read lock could deadlock
-        // against the writer it is waiting for. It returns SQLITE_BUSY without
-        // invoking the busy handler at all, so `busy_timeout` never gets a
-        // say. The other writer is not another sync pass (the engine is
-        // single-threaded and nothing awaits between BEGIN and COMMIT) but the
-        // UI thread, which writes local-first on every flag, archive and draft
-        // autosave through this same pool. Taking the write lock up front is
-        // what puts this back inside the five-second timeout.
-        for slice in messages.chunks_mut(WRITE_UNIT) {
-            // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
-            // stands this aside for a keystroke's write, and standing aside
-            // after taking SQLite's lock would be standing aside too late.
-            // Re-taken per unit rather than held across the batch, so a person
-            // waits for one unit at most (#425).
-            let permit = connection.write_gate().acquire(WritePriority::Background);
-
-            let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-                .map_err(postio_storage::Error::from)?;
-            let connection: &Connection = &unit;
-
-            let mut written: Vec<Message> = slice.to_vec();
-            let upsert = MessageRepository::new(connection).upsert_batch(&mut written)?;
-            report.inserted += upsert.inserted;
-            report.updated += upsert.updated;
-
-            let threading = ThreadingRepository::new(connection, mailbox.account_id);
-            for message in &written {
-                threading.thread(message)?;
-                report.threaded += 1;
-            }
-
-            // Only messages that were not already known before this pass: a
-            // `Coverage::Everything` re-enumeration re-fetches messages already
-            // stored (that is its whole point, refreshing what an untrustworthy
-            // incremental pull may have missed), and recording those again would
-            // count the same correspondent twice for one message.
-            if let Some(account) = &account {
-                for message in &written {
-                    let is_new = message
-                        .server
-                        .uid
-                        .is_some_and(|uid| !known.contains(&uid.get()));
-                    if is_new {
-                        crate::contacts::record(connection, account, message)?;
-                    }
-                }
-            }
-
-            unit.commit().map_err(postio_storage::Error::from)?;
-            // The ids `upsert_batch` assigned belong to the caller's messages,
-            // not to this unit's copy of them.
-            slice.clone_from_slice(&written);
-            drop(permit);
-        }
+        let batch = commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages)?;
+        report.inserted += batch.inserted;
+        report.updated += batch.updated;
+        report.threaded += batch.threaded;
 
         // Where a first sync's wall clock actually goes, per batch: waiting on
         // the server, or writing to SQLite. `postio-0d9.7` asks for several
@@ -410,6 +336,120 @@ pub(crate) async fn enumerate(
     }
 
     SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
+    Ok(report)
+}
+
+/// Writes one batch of headers to the store, the way a sync pass does.
+///
+/// Upsert, thread, record correspondents — one transaction per
+/// [`WRITE_UNIT`], with the write gate re-taken per unit. `known` is the set
+/// of UIDs the mailbox already held when the pass started, which decides
+/// which messages count as newly seen; `account` is the account
+/// correspondents are recorded against, and `None` (an orphaned mailbox row)
+/// simply records none.
+///
+/// `messages` is updated in place with the ids the upsert assigned, so the
+/// caller can go on using them.
+///
+/// # Why this is public
+///
+/// So that the write path a first sync runs can be *measured* rather than
+/// re-implemented. #78 established that a first sync is write-bound — a 1:12
+/// fetch-to-write ratio against a real account — which makes per-message
+/// write cost the number that decides how long one takes, and #726 is the
+/// bench that watches it. A bench that assembled its own upsert-thread-record
+/// sequence would measure a copy that drifts away from this one silently, and
+/// a budget over a copy guards nothing.
+///
+/// # One transaction per write unit
+///
+/// A slice of the batch, not the whole of it. See [`WRITE_UNIT`] for the
+/// second half of #425's fix, and the gate below for the first.
+///
+/// Every repository call below opens a savepoint of its own and releases it,
+/// and a release is a real commit when nothing encloses it. Nothing did: a
+/// batch of two hundred messages committed once for the upserts and then once
+/// *per message* for threading and once more per message for the contact
+/// sighting, so it paid four hundred-odd fsyncs where it needed one. Measured
+/// on a real account, that was 2.25 ms of local write per message — the same
+/// order as the network transfer it was supposedly waiting on
+/// (`postio-0d9.7`).
+///
+/// Enclosing them turns those savepoints into nested ones, which cost nothing
+/// to release, and leaves one commit per write unit. The durability story is
+/// unchanged: an interrupted pass resumes from `uids_in`, which counts
+/// whatever actually committed, so a unit smaller than a batch resumes at a
+/// finer grain rather than a worse one.
+///
+/// # Why IMMEDIATE
+///
+/// Not DEFERRED, and this is the load-bearing part (#79). The first statement
+/// below is a SELECT, so a deferred transaction would be holding a *read*
+/// lock by the time it wrote and would have to promote — and SQLite refuses
+/// to make a promotion wait, because blocking a connection that already holds
+/// a read lock could deadlock against the writer it is waiting for. It
+/// returns SQLITE_BUSY without invoking the busy handler at all, so
+/// `busy_timeout` never gets a say. The other writer is not another sync pass
+/// (the engine is single-threaded and nothing awaits between BEGIN and
+/// COMMIT) but the UI thread, which writes local-first on every flag, archive
+/// and draft autosave through this same pool. Taking the write lock up front
+/// is what puts this back inside the five-second timeout.
+pub fn commit_batch(
+    connection: &PooledConnection,
+    mailbox: &Mailbox,
+    account: Option<&Account>,
+    known: &BTreeSet<u32>,
+    messages: &mut [Message],
+) -> Result<Report> {
+    let mut report = Report::default();
+
+    for slice in messages.chunks_mut(WRITE_UNIT) {
+        // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what stands
+        // this aside for a keystroke's write, and standing aside after taking
+        // SQLite's lock would be standing aside too late. Re-taken per unit
+        // rather than held across the batch, so a person waits for one unit at
+        // most (#425).
+        let permit = connection.write_gate().acquire(WritePriority::Background);
+
+        let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+            .map_err(postio_storage::Error::from)?;
+        let connection: &Connection = &unit;
+
+        let mut written: Vec<Message> = slice.to_vec();
+        let upsert = MessageRepository::new(connection).upsert_batch(&mut written)?;
+        report.inserted += upsert.inserted;
+        report.updated += upsert.updated;
+
+        let threading = ThreadingRepository::new(connection, mailbox.account_id);
+        for message in &written {
+            threading.thread(message)?;
+            report.threaded += 1;
+        }
+
+        // Only messages that were not already known before this pass: a
+        // `Coverage::Everything` re-enumeration re-fetches messages already
+        // stored (that is its whole point, refreshing what an untrustworthy
+        // incremental pull may have missed), and recording those again would
+        // count the same correspondent twice for one message.
+        if let Some(account) = account {
+            for message in &written {
+                let is_new = message
+                    .server
+                    .uid
+                    .is_some_and(|uid| !known.contains(&uid.get()));
+                if is_new {
+                    crate::contacts::record(connection, account, message)?;
+                }
+            }
+        }
+
+        unit.commit().map_err(postio_storage::Error::from)?;
+        // The ids `upsert_batch` assigned belong to the caller's messages, not
+        // to this unit's copy of them.
+        slice.clone_from_slice(&written);
+        drop(permit);
+    }
+
     Ok(report)
 }
 
