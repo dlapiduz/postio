@@ -1816,20 +1816,28 @@ async fn drain(
     })
 }
 
-/// How many mailboxes the engine will sync at the same time.
+/// The most mailboxes a wave will ever sync at once, whatever the pool.
 ///
-/// Bounded by the *database* pool rather than the IMAP one, because that is
-/// the scarcer of the two here: each concurrent pass holds one SQLite
-/// connection for as long as it runs, and the UI thread reads through the
-/// same pool. Leaving [`RESERVED_FOR_ELSEWHERE`] behind is what keeps the
-/// message list answering while a first sync is working through an archive.
-///
-/// The ceiling is separate and lower: the IMAP pool defaults to four
-/// connections with one lane spoken for by `IDLE`, so a fourth concurrent
-/// mailbox would not get a connection of its own — it would take turns on
-/// somebody else's and pay a `SELECT` on every batch for the privilege (see
+/// This is the *IMAP* side's ceiling: that pool defaults to four connections
+/// with one spoken for by `IDLE`, so a fourth concurrent mailbox would not
+/// get a connection of its own — it would take turns on somebody else's and
+/// pay a `SELECT` on every batch for the privilege (see
 /// `postio_imap::imap::selection`). More lanes than the server will give
 /// connections is slower than fewer.
+///
+/// **It does not bind today, and that is worth knowing before touching it.**
+/// [`sync_lanes`] is bounded by the *database* pool, which is smaller:
+/// `DEFAULT_MAX_CONNECTIONS` is 4, so a shipped wave gets
+/// `4 - `[`RESERVED_FOR_ELSEWHERE`]` = 2` and this clamp never applies.
+/// `the_database_pool_is_what_bounds_the_lanes_not_the_imap_ceiling` pins
+/// that, because the two used to disagree with nothing to notice (#729).
+///
+/// Kept rather than deleted: raising the database pool is what would reach
+/// it, and #733 measured what reaching it buys — nothing at or below a 20 ms
+/// round trip, ~12% at 120 ms, on top of the ~30% the second lane is worth
+/// there. Whoever raises the pool should read that table and answer the
+/// question it does not: what a third lane costs the UI's own reads, which
+/// is what [`RESERVED_FOR_ELSEWHERE`] exists to protect.
 const MAX_SYNC_LANES: usize = 3;
 
 /// Database connections a sync wave will not touch.
@@ -1839,6 +1847,13 @@ const MAX_SYNC_LANES: usize = 3;
 const RESERVED_FOR_ELSEWHERE: usize = 2;
 
 /// How many mailboxes may be in flight at once, for this pool.
+///
+/// The *database* pool decides, because it is the scarcer of the two: each
+/// concurrent pass holds one SQLite connection for as long as it runs, and
+/// the UI thread reads through the same pool. Leaving
+/// [`RESERVED_FOR_ELSEWHERE`] behind is what keeps the message list answering
+/// while a first sync works through an archive. [`MAX_SYNC_LANES`] is the
+/// IMAP-side ceiling above that, and does not bind on the shipped pool.
 fn sync_lanes(pool: &Pool) -> usize {
     pool.max_connections()
         .saturating_sub(RESERVED_FOR_ELSEWHERE)
@@ -1849,13 +1864,29 @@ fn sync_lanes(pool: &Pool) -> usize {
 ///
 /// # Why concurrently
 ///
-/// A first sync of a real account is the slowest thing Postio does, and
-/// almost all of that wall clock is a round trip: measured against a live
-/// server, a batch of two hundred headers spent an order of magnitude longer
-/// waiting for the server than writing to SQLite. One mailbox at a time
-/// leaves every one of those waits unused. Running two or three passes
+/// A first sync of a real account is the slowest thing Postio does, and one
+/// mailbox at a time leaves every round trip unused. Running two passes
 /// together overlaps them, and costs nothing but connections the pool was
 /// already sized for (`postio-0d9.7`).
+///
+/// **The original justification no longer holds and is worth correcting
+/// rather than repeating.** It read: "almost all of that wall clock is a
+/// round trip — a batch of two hundred headers spent an order of magnitude
+/// longer waiting for the server than writing to SQLite." Measured against a
+/// real account since, it is an order of magnitude the *other* way: 13.8 s of
+/// fetch against 165.5 s of write, with the write path ~97% occupied across
+/// both lanes (#78). #77's read-ahead is most of the reason — the fetch now
+/// hides behind the previous write, so what is left in the open is the write.
+///
+/// The conclusion survives the premise, which is why this still runs passes
+/// concurrently. #733 measured lane counts directly against injected latency
+/// and found no crossover: extra lanes are neutral at and below a 20 ms round
+/// trip and a clear win above it — ~30% for the second lane at 120 ms.
+/// Serialising writes does not *add* work, it only fails to remove any, and a
+/// lane whose write is queued still overlaps its fetch. A real account's
+/// median batch sits in the range where lanes do nothing and its tail in the
+/// range where they do a great deal (#78 measured `fetch_ms` p50 22 ms, p90
+/// 118 ms), so the lanes earn their place on the tail.
 ///
 /// # Why INBOX still comes first
 ///
@@ -2468,6 +2499,61 @@ fn with_connection<T>(
 
 #[cfg(test)]
 mod tests {
+    /// What `sync_lanes` actually yields, pinned so the constants and the
+    /// prose cannot drift apart again.
+    ///
+    /// This is the whole of #729: `MAX_SYNC_LANES` reasoned carefully about
+    /// the *IMAP* pool, while `sync_lanes` is bounded by the *database* one,
+    /// which is smaller and binds first. The ceiling documented a number the
+    /// shipped configuration could not reach and nothing noticed, because
+    /// nothing asserted the relationship.
+    ///
+    /// Green when written -- the behaviour was always right; it was the
+    /// description that was wrong. Its job is to fail if
+    /// `DEFAULT_MAX_CONNECTIONS`, `RESERVED_FOR_ELSEWHERE` or
+    /// `MAX_SYNC_LANES` move without the doc comments moving with them.
+    #[test]
+    fn the_database_pool_is_what_bounds_the_lanes_not_the_imap_ceiling() {
+        let database = postio_storage::test_support::memory();
+        assert_eq!(
+            database.pool().max_connections(),
+            postio_storage::db::DEFAULT_MAX_CONNECTIONS,
+            "a default store opens the default pool"
+        );
+        assert_eq!(
+            sync_lanes(database.pool()),
+            postio_storage::db::DEFAULT_MAX_CONNECTIONS - RESERVED_FOR_ELSEWHERE,
+            "the reserve against the database pool decides, not MAX_SYNC_LANES"
+        );
+        // Asserted on what the pool actually yields rather than on the
+        // constants: clippy rejects an assertion whose operands are all
+        // constant, and reading it back off the pool is the honest form
+        // anyway -- the pool's answer is the thing that matters.
+        assert!(
+            sync_lanes(database.pool()) < MAX_SYNC_LANES,
+            "MAX_SYNC_LANES is a ceiling held in reserve: it does not bind on \
+             the shipped pool, and #733 measured what reaching it would buy"
+        );
+    }
+
+    /// A pool large enough that the IMAP-side ceiling is what stops it.
+    ///
+    /// The other half of the same rule: `MAX_SYNC_LANES` is not dead, it is
+    /// simply not reached today. Raising the database pool is what would
+    /// reach it, which is why the constant stays.
+    #[test]
+    fn a_larger_database_pool_runs_into_max_sync_lanes() {
+        let database = postio_storage::Database::open_in_memory_with(
+            &postio_storage::test_support::key(),
+            MAX_SYNC_LANES * 4,
+        )
+        .expect("a roomier database");
+        assert_eq!(
+            sync_lanes(database.pool()),
+            MAX_SYNC_LANES,
+            "with connections to spare the IMAP ceiling is what caps a wave"
+        );
+    }
 
     #[test]
     fn a_refused_credential_fails_as_auth_and_anything_else_as_config() {
