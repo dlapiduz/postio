@@ -67,10 +67,9 @@ fn thread_mailboxes(database: &Database, thread: ThreadId) -> Vec<(MessageId, i6
 }
 
 pub fn marking_two_thread_rows_archives_both_conversations() {
-    let state_dir = std::env::temp_dir().join(format!("postio-thread-bulk-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -89,7 +88,7 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
         .id
         .get();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let state = SharedState::default();
     let bus = actions::wire(

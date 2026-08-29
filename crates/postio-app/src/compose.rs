@@ -826,13 +826,12 @@ mod tests {
         // so recovery has to ask how the last session *ended*, not what the
         // drafts table holds. The crash test below is this test's twin: the
         // same two runs, with the clean shutdown removed.
-        let state_dir =
-            std::env::temp_dir().join(format!("postio-app-clean-exit-{}", std::process::id()));
-        std::fs::create_dir_all(&state_dir).unwrap();
+        let state_dir_guard = tempfile::tempdir().expect("a state directory");
+        let state_dir = state_dir_guard.path();
         // SAFETY: first statement of a single-threaded test.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("XDG_STATE_HOME", &state_dir)
+            std::env::set_var("XDG_STATE_HOME", state_dir)
         };
 
         if adw::init().is_err() || gdk::Display::default().is_none() {
@@ -917,13 +916,12 @@ mod tests {
 
     #[test]
     fn a_draft_saved_before_the_process_stops_is_open_again_on_the_next_start() {
-        let state_dir =
-            std::env::temp_dir().join(format!("postio-app-crash-recovery-{}", std::process::id()));
-        std::fs::create_dir_all(&state_dir).unwrap();
+        let state_dir_guard = tempfile::tempdir().expect("a state directory");
+        let state_dir = state_dir_guard.path();
         // SAFETY: first statement of a single-threaded test.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("XDG_STATE_HOME", &state_dir)
+            std::env::set_var("XDG_STATE_HOME", state_dir)
         };
 
         if adw::init().is_err() || gdk::Display::default().is_none() {

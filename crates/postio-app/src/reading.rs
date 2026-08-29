@@ -1265,12 +1265,18 @@ mod tests {
     /// test (`world` itself, and separately the read right after
     /// `part_bytes` returns). WAL is what production reads run under, so it
     /// is also the concurrency this test is supposed to be proving.
-    fn world() -> (TempDatabase, BlobStore, Engine, MessageId) {
+    fn world() -> (
+        TempDatabase,
+        BlobStore,
+        Engine,
+        MessageId,
+        tempfile::TempDir,
+    ) {
         let database = test_support::temp();
         let report = seed_small(&database, 11);
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
         let (sink, _events) = postio_core::bridge::event_channel();
 
         let mut mailbox = MockMailbox::new(&inbox.path);
@@ -1370,7 +1376,7 @@ mod tests {
         })
         .expect("an engine");
 
-        (database, blobs, engine, newest)
+        (database, blobs, engine, newest, directory)
     }
 
     /// As [`a_part_not_here`], but with the MIME headers `BODYSTRUCTURE` would
@@ -1461,7 +1467,7 @@ mod tests {
         // and the message has no raw blob until it does. A version of this
         // that called `request_body` itself first would prove only that bytes
         // already on disk can be read, which was never in doubt.
-        let (database, blobs, engine, message) = world();
+        let (database, blobs, engine, message, _directory) = world();
         let part = a_part_not_here(&database, message);
 
         let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
@@ -1489,7 +1495,7 @@ mod tests {
     async fn a_part_with_no_engine_says_so_rather_than_saving_nothing() {
         // The account is not syncing. Writing an empty file would look like a
         // successful save and would not be one.
-        let (database, blobs, _engine, message) = world();
+        let (database, blobs, _engine, message, _directory) = world();
 
         let part = a_part_not_here(&database, message);
 
@@ -1508,7 +1514,7 @@ mod tests {
         // Same shape as `a_part_nobody_has_is_fetched_before_it_is_saved`, but
         // through the `S` path: nothing here is downloaded yet, so `S` must
         // fetch before it writes.
-        let (database, blobs, engine, message) = world();
+        let (database, blobs, engine, message, _directory) = world();
         let attachment = a_part_not_here(&database, message);
         let node = postio_gtk::parts::Node {
             part_id: "2".to_owned(),
@@ -1546,7 +1552,7 @@ mod tests {
         // A container has no bytes -- `export_part` refuses it -- but the
         // batch must still reach the leaf that comes after it, and the
         // caller has to be told one part did not make it.
-        let (database, blobs, engine, message) = world();
+        let (database, blobs, engine, message, _directory) = world();
         let attachment = a_part_not_here(&database, message);
         let container = postio_gtk::parts::Node {
             part_id: String::new(),
@@ -1598,7 +1604,7 @@ mod tests {
         // one that matters: on the reference account the same fetch used to
         // drag the whole message, and ~90% of a mailbox by weight is
         // attachments FTS5 cannot index.
-        let (database, blobs, engine, message) = world();
+        let (database, blobs, engine, message, _directory) = world();
         let part = a_part_fetchable_by_section(&database, message);
 
         let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
@@ -1627,7 +1633,7 @@ mod tests {
         // The second open. Passing `None` for the engine is the strongest
         // form of "no network fetch" this seam can state: any path that
         // reached for the server would refuse instead of answering.
-        let (database, blobs, engine, message) = world();
+        let (database, blobs, engine, message, _directory) = world();
         let part = a_part_fetchable_by_section(&database, message);
 
         part_bytes(&database, &blobs, Some(engine), message, part)

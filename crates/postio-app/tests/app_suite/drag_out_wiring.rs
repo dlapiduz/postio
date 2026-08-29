@@ -42,12 +42,11 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
 }
 
 pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
-    let state_dir = std::env::temp_dir().join(format!("postio-dragout-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
-    let export_dir = state_dir.join("drag");
+    let state_dir = tempfile::tempdir().expect("a state directory");
+    let export_dir = state_dir.path().join("drag");
     // SAFETY: first statements of a single-threaded test.
     unsafe {
-        std::env::set_var("XDG_STATE_HOME", &state_dir);
+        std::env::set_var("XDG_STATE_HOME", state_dir.path());
         std::env::set_var("POSTIO_EXPORT_DIR", &export_dir);
     }
 
@@ -63,7 +62,7 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
     // ── a store with one account, one folder and one real message ───────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let message_id = {
         let connection = database.connection().expect("a connection");
@@ -155,7 +154,6 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
     a_part_in_the_reader_can_be_dragged_out(&window);
 
     bridge.shutdown();
-    let _ = std::fs::remove_dir_all(&state_dir);
 }
 
 /// The parts panel is a second surface with the same failure mode: fully

@@ -50,11 +50,9 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 }
 
 pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-resume-draft-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -73,7 +71,7 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
         .expect("the fixture has a Drafts folder")
         .clone();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // A draft, written and autosaved, exactly as the composer's own wiring
     // would have left it — and never uploaded, so nothing about this depends

@@ -91,11 +91,9 @@ fn labels_of(rows: Vec<gtk::Widget>) -> Vec<String> {
 }
 
 pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-attach-account-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: the suite runs its cases in sequence on one thread.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
@@ -124,7 +122,7 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     let report = seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let (bridge, _replies) =

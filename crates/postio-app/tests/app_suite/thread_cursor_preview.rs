@@ -81,11 +81,9 @@ fn threaded_message(
 }
 
 pub fn moving_the_thread_cursor_fills_the_reading_pane() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-thread-cursor-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
@@ -119,7 +117,8 @@ pub fn moving_the_thread_cursor_fills_the_reading_pane() {
     );
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs =
+        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
