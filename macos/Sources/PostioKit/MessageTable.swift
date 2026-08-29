@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import PostioFFI
 
 /// Drives an `NSTableView` from a ``MessageRowSource``.
@@ -46,6 +47,18 @@ public final class MessageTableController: NSObject {
     public func presentation(at position: UInt32) -> RowPresentation {
         guard let row = source.row(at: position) else { return .placeholder }
         return RowPresentation(row: row)
+    }
+
+    /// The excerpt to draw under `position`, already marked, or `nil`.
+    ///
+    /// Only a search has one. A folder row keeps the message's own preview,
+    /// which it already has and which does not change as you type.
+    public func excerpt(at position: UInt32) -> AttributedString? {
+        guard let row = source.row(at: position),
+              let snippet = source.snippet(for: row.id),
+              !snippet.text.isEmpty
+        else { return nil }
+        return SearchHighlight.attributed(snippet)
     }
 
     /// Called when the row under the cursor changes, with its message.
@@ -120,6 +133,7 @@ extension MessageTableController: NSTableViewDelegate {
         let existing = tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self)
         let cell = cell(reusing: existing)
         cell.show(presentation(at: UInt32(row)))
+        cell.markedExcerpt = excerpt(at: UInt32(row))
         return cell
     }
 }

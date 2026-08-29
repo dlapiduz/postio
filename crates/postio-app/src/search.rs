@@ -49,23 +49,21 @@ use postio_gtk::feed::Feeds;
 use postio_gtk::finder::Finder;
 use postio_gtk::search::{Outcome, View};
 use postio_gtk::window::Window;
-use postio_index::{SearchRequest, search};
+use postio_index::SearchRequest;
 use postio_model::AccountScope;
 use postio_model::ids::AccountId;
 use postio_search::facets::{Facets, Scope};
 use postio_search::{ParsedQuery, SearchResults};
+// `run`, `snippet_hits`, `HIT_LIMIT` and `SNIPPET_HITS` moved to
+// `postio_session::search` in #660, so the macOS frontend runs the same search
+// rather than a second one with its own hit limit and its own excerpt rule.
+// `facets` below still needs the limit, which is why it is imported and not
+// merely called through.
+use postio_session::search::{HIT_LIMIT, execute as run};
 use postio_storage::repository::ContactRepository;
 use postio_storage::{Database, PooledConnection};
 
 use crate::Wiring;
-
-/// How many hits one run brings back.
-///
-/// Not how many *matched* — that is `SearchResults::total_hits`, which the
-/// readout draws and which counts far past this. This is the page the preview
-/// and, once `postio-1ag`'s follow-up lands, the result list are drawn from,
-/// and nobody scrolls two hundred results looking for the one they meant.
-const HIT_LIMIT: u32 = 200;
 
 /// Wire the search surfaces to the store.
 ///
@@ -285,83 +283,6 @@ fn install_run(
             });
         }
     });
-}
-
-/// How many hits get an excerpt cut for them.
-///
-/// Several screens' worth, and short of [`HIT_LIMIT`] on purpose. Each one
-/// costs a blob read, and a person who scrolls past fifty results without
-/// refining the query is doing something a snippet was not going to help
-/// with. Past this the row falls back to the message's own preview, which it
-/// already has.
-const SNIPPET_HITS: usize = 50;
-
-/// One search against the index, with an excerpt cut for each hit.
-fn run(
-    connection: &PooledConnection,
-    account: AccountId,
-    query: &ParsedQuery,
-    scope: Scope,
-    order: postio_search::ResultOrder,
-) -> Option<SearchResults> {
-    let mut results = search(
-        connection,
-        &SearchRequest {
-            // `Account`, not `Unified`, and deliberately: the composition
-            // root still opens exactly one account (`first_account`), so
-            // searching every account and searching this one are the same
-            // set. #186 gave the executor the capability; #183 is what gives
-            // the application more than one account to point it at, and
-            // switching this to follow `AppState.scope` belongs there — where
-            // there is something to observe the difference.
-            account: AccountScope::Account(account),
-            query,
-            scope,
-            limit: HIT_LIMIT,
-            order,
-        },
-        chrono::Utc::now(),
-    )
-    .map_err(|error| tracing::warn!(%error, "the search did not run"))
-    .ok()?;
-    snippet_hits(connection, query, &mut results);
-    Some(results)
-}
-
-/// Cuts each hit's excerpt out of its own body text.
-///
-/// # Why this is here and not in the executor
-///
-/// The boundary #408 settled. `snippet()` was an FTS5 function over indexed
-/// content and the body index has none — `message_bodies_fts` is
-/// `content = ''`, which is the point of it (#407). Reconstructing an
-/// excerpt needs the body, the body is in the blob store, and `postio-index`
-/// is a rusqlite-only leaf that `check-crate-boundaries.py` keeps that way.
-/// So the excerpt is cut where both halves are already in hand: here, in the
-/// composition root, which is holding a connection and a blob store anyway.
-///
-/// # Why it agrees with what matched
-///
-/// `postio_index::index::indexable_text` is the function the *indexer* uses
-/// to decide what a message's searchable text is — `text/plain` when there is
-/// one, the HTML rendered to text otherwise. Calling the same function means
-/// the string highlighted is the string that was indexed, rather than a
-/// second guess at it, and `postio_search::highlight`'s token rule is FTS5's
-/// own. A message with no local body gets no excerpt rather than a wrong one.
-fn snippet_hits(connection: &PooledConnection, query: &ParsedQuery, results: &mut SearchResults) {
-    let terms = postio_search::highlight::terms(query);
-    if terms.is_empty() {
-        // A structured-only query — `is:unread`, `in:archive` — has nothing to
-        // point at, and every hit's snippet stays empty exactly as it did
-        // when SQLite was cutting them.
-        return;
-    }
-    for hit in results.hits.iter_mut().take(SNIPPET_HITS) {
-        let body = crate::compose::load_body(connection, hit.message_id);
-        if let Some(text) = postio_index::index::indexable_text(&body) {
-            hit.snippet = postio_search::highlight::snippet(&text, &terms);
-        }
-    }
 }
 
 /// The second round trip: what the columns say about this result set.

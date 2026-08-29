@@ -99,7 +99,36 @@ final class Engine {
     func open(mailbox: Int64) {
         guard let session, case let .open(controller) = state else { return }
         showingMailbox = mailbox
+        // Choosing a folder ends the search. Leaving results in the list under
+        // a folder the sidebar now shows as selected would be the list saying
+        // one thing and the sidebar another.
+        query = ""
         session.openScope(.mailbox(mailbox: mailbox))
+        controller.tableView?.reloadData()
+    }
+
+    /// What is currently typed in the search field. Empty means not searching.
+    private(set) var query: String = ""
+
+    /// Whether the list is showing results rather than a folder.
+    var isSearching: Bool { !query.isEmpty }
+
+    /// Run `query`, or restore the folder when it is empty.
+    ///
+    /// Called on every keystroke, and that is affordable because the index is
+    /// local: `PRODUCT.md` budgets local search under 100 ms, and the boundary
+    /// asserts it. If this ever has to debounce, the fix is the query being
+    /// slow rather than the typing being fast.
+    func search(_ query: String) {
+        guard let session, case let .open(controller) = state else { return }
+        self.query = query
+        // Empty is "not searching", not "search for nothing" -- the second
+        // would answer every message in the store and call it a result.
+        if query.isEmpty {
+            session.clearSearch()
+        } else {
+            session.search(query)
+        }
         controller.tableView?.reloadData()
     }
 

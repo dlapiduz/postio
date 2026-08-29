@@ -40,6 +40,7 @@ mod list;
 mod mailbox;
 mod reader;
 mod registry;
+mod search;
 mod session;
 
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
@@ -47,6 +48,7 @@ pub use list::{RowFfi, ScopeFfi};
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
+pub use search::{MatchRangeFfi, SnippetFfi};
 pub use session::{Session, SessionError, SessionOptions};
 
 /// Every command the registry knows, in cheat-sheet order.

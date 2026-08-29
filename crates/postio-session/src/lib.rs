@@ -47,6 +47,7 @@ pub mod logging;
 pub mod paths;
 pub mod reading;
 pub mod refresh;
+pub mod search;
 
 use std::path::Path;
 use std::sync::Arc;

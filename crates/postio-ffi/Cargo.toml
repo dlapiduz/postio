@@ -32,6 +32,11 @@ postio-imap.workspace = true
 postio-runtime.workspace = true
 postio-ui.workspace = true
 postio-model.workspace = true
+# The query language and the highlighter. Parsed and marked in one place for
+# both frontends: two parsers of one syntax accept different queries, and two
+# highlighters disagree about what matched.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+postio-search.workspace = true
 postio-session.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
@@ -49,6 +54,9 @@ postio-ffi = { path = ".", features = ["testing"] }
 # without going near the developer's own login keyring.
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+# The index schema and `index_body`, so a search test seeds a store the way
+# the indexer would rather than asserting against an empty index.
+postio-index.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"
 
