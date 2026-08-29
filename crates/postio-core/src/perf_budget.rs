@@ -25,6 +25,24 @@ pub const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
 /// A local search.
 pub const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 
+/// What one message costs to write during a sync, at the largest store size
+/// the bench sweeps.
+///
+/// Not one of §18's three. Those are about what a person waits for; this is
+/// about what a first sync costs per message, which nobody watches directly —
+/// they watch the mailbox fill. It is a budget because #78 measured a first
+/// sync against a real account and found it **write-bound**: 13.8 s of fetch
+/// against 165.5 s of write, a 1:12 ratio, with the write phase occupied ~97%
+/// of wall clock. Once read-ahead (#77) hid the fetch behind the previous
+/// write, per-message write cost became the number that decides when a first
+/// sync finishes.
+///
+/// The value comes from measurement rather than from a specification — see
+/// `postio-runtime`'s `sync_writes` bench (#726), which sweeps store size
+/// because #78 also saw this cost *grow* as the store filled, and a single
+/// number at one size would have missed that.
+pub const SYNC_WRITE_BUDGET: Duration = Duration::from_micros(1_500);
+
 /// A measurement exceeded its budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BudgetExceeded {
