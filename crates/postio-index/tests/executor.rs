@@ -1116,3 +1116,59 @@ fn the_caveat_is_about_the_scope_that_was_searched() {
         "and widening the scope to include it brings the caveat back"
     );
 }
+
+/// #746: `sender_times_seen` reaches the ranker from the `contacts` table.
+///
+/// The hydrate statement was rewritten to probe contacts by a hoisted
+/// column (see `hydrate_probes_contacts_by_address_key` for the plan); this
+/// pins the *semantics* of that rewrite: the value still correlates to the
+/// right message's sender. Bob's message is newer, so recency alone would
+/// rank it first — only ada's contact affinity flowing through can flip the
+/// order this asserts.
+#[test]
+fn sender_affinity_from_contacts_reaches_the_ranking() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let from_regular = message(
+        &connection,
+        &account,
+        mailbox,
+        "ada",
+        "Quarterly report",
+        at(9),
+    );
+    let _from_stranger = message(
+        &connection,
+        &account,
+        mailbox,
+        "bob",
+        "Quarterly report",
+        at(10),
+    );
+    connection
+        .execute(
+            "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
+             VALUES (?1, ?2, ?2, 80)",
+            rusqlite::params![account.id.get(), "ada@example.com"],
+        )
+        .expect("seed ada's contact");
+
+    let query = parse("report", at(12).date_naive());
+    let request = SearchRequest {
+        account: AccountScope::Account(account.id),
+        query: &query,
+        scope: Scope::AllMail,
+        limit: 10,
+        order: postio_search::ResultOrder::Relevance,
+    };
+    let results = search(&connection, &request, at(12)).expect("search");
+
+    assert_eq!(results.hits.len(), 2);
+    assert_eq!(
+        results.hits[0].message_id, from_regular.id,
+        "ada is the frequent sender; without affinity, bob's newer message wins"
+    );
+}
