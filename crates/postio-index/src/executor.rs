@@ -878,6 +878,51 @@ impl Plan {
     /// No FTS at all: the scores arrived with the ids. This is strictly less
     /// work than it was before the body index existed, when it re-computed
     /// `bm25` and cut a `snippet()` here.
+    /// The statement `hydrate` runs, with `placeholders` standing in for the
+    /// `IN` list. Its own function so a test can hold its query plan still.
+    fn hydrate_sql(&self, placeholders: &str) -> String {
+        // Sender affinity is per account, or shared when `account_id IS
+        // NULL`. Scoped to one account, only that account's sightings count;
+        // unified, every account's do — which is the right answer rather than
+        // a shortcut, since the question "how often do I hear from this
+        // person" is about the person and not about which inbox they landed
+        // in.
+        let affinity = match self.account.account() {
+            Some(_) => "AND (c.account_id = ? OR c.account_id IS NULL)",
+            None => "",
+        };
+        // The contacts probe compares against `sub.from_normalized` — a
+        // plain column of the row source — and never against a nested
+        // subquery. With the subquery as the comparand, SQLite cannot use it
+        // as an index key: the probe pinned only `account_id` and walked
+        // every contact of the account once per hydrated candidate,
+        // re-evaluating the inner recipients lookup per contact row.
+        // `O(candidates × contacts)` — measured at 4.5 s for a 320-match
+        // query against 18k contacts, 15 s for a full pool (#746). Hoisted,
+        // the same workload is single-digit milliseconds, and
+        // `hydrate_probes_contacts_by_address_key` pins the plan.
+        format!(
+            "SELECT
+                 sub.id, sub.thread_id, sub.mailbox_id, sub.subject, sub.received_at,
+                 sub.from_name, sub.from_address,
+                 (SELECT max(c.times_seen) FROM contacts c
+                    WHERE c.address_normalized = sub.from_normalized
+                      {affinity}) AS sender_times_seen,
+                 0 AS unused
+             FROM (SELECT
+                     m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
+                     (SELECT name FROM recipients WHERE message_id = m.id AND kind = 'from'
+                        ORDER BY position LIMIT 1) AS from_name,
+                     (SELECT a.address FROM recipients r JOIN addresses a ON a.id = r.address_id
+                        WHERE r.message_id = m.id AND r.kind = 'from'
+                        ORDER BY r.position LIMIT 1) AS from_address,
+                     (SELECT a.address_normalized FROM recipients r JOIN addresses a ON a.id = r.address_id
+                        WHERE r.message_id = m.id AND r.kind = 'from'
+                        ORDER BY r.position LIMIT 1) AS from_normalized
+                   FROM messages m WHERE m.id IN ({placeholders})) sub",
+        )
+    }
+
     fn hydrate(&self, connection: &Connection, scored: &[(i64, f64)]) -> Result<Vec<Candidate>> {
         if scored.is_empty() {
             return Ok(Vec::new());
@@ -894,34 +939,7 @@ impl Plan {
             .collect::<Vec<_>>()
             .join(", ");
 
-        // Sender affinity is per account, or shared when `account_id IS
-        // NULL`. Scoped to one account, only that account's sightings count;
-        // unified, every account's do — which is the right answer rather than
-        // a shortcut, since the question "how often do I hear from this
-        // person" is about the person and not about which inbox they landed
-        // in.
-        let affinity = match self.account.account() {
-            Some(_) => "AND (c.account_id = ? OR c.account_id IS NULL)",
-            None => "",
-        };
-        let sql = format!(
-            "SELECT
-                 m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
-                 (SELECT name FROM recipients WHERE message_id = m.id AND kind = 'from'
-                    ORDER BY position LIMIT 1) AS from_name,
-                 (SELECT a.address FROM recipients r JOIN addresses a ON a.id = r.address_id
-                    WHERE r.message_id = m.id AND r.kind = 'from'
-                    ORDER BY r.position LIMIT 1) AS from_address,
-                 (SELECT max(c.times_seen) FROM contacts c
-                    WHERE c.address_normalized = (SELECT a.address_normalized
-                                                    FROM recipients r
-                                                    JOIN addresses a ON a.id = r.address_id
-                                                   WHERE r.message_id = m.id AND r.kind = 'from'
-                                                   ORDER BY r.position LIMIT 1)
-                      {affinity}) AS sender_times_seen,
-                 0 AS unused
-             FROM messages m WHERE m.id IN ({placeholders})",
-        );
+        let sql = self.hydrate_sql(&placeholders);
 
         // Then one parameter per id in the `IN` list, after the affinity
         // subquery's own if it has one.
@@ -1145,6 +1163,53 @@ mod tests {
         let stranger = rank_score(-1.0, at(10), now, 0);
         let regular = rank_score(-1.0, at(10), now, 50);
         assert!(regular < stranger);
+    }
+
+    /// #746: hydrate's contacts probe must key on `address_normalized`, not
+    /// only `account_id`. When the comparand was a nested correlated
+    /// subquery, SQLite could not use it as an index key and fell back to
+    /// walking every contact of the account once per hydrated candidate —
+    /// `O(candidates × contacts)`, measured at ~14 ms per candidate against
+    /// 18k contacts, which is 4.5 s for a 320-match query. The plan is the
+    /// deterministic thing to pin: a timing assertion at that scale is a
+    /// bench's job (`search_budget.rs` seeds contacts for exactly that).
+    #[test]
+    fn hydrate_probes_contacts_by_address_key() {
+        let database = postio_storage::test_support::memory();
+        let connection = database.connection().expect("checkout");
+        crate::index::ensure_schema(&connection).expect("schema");
+
+        let query = postio_search::parse("invoice", at(0).date_naive());
+        let request = SearchRequest {
+            account: AccountScope::Account(postio_model::AccountId::new(1)),
+            query: &query,
+            scope: postio_search::facets::Scope::AllMail,
+            limit: 200,
+            order: postio_search::ResultOrder::Relevance,
+        };
+        let plan = Plan::build(&request);
+
+        let sql = plan.hydrate_sql("?, ?, ?");
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .expect("prepare the hydrate statement");
+        let steps: Vec<String> = statement
+            .query_map(rusqlite::params![1i64, 10i64, 11i64, 12i64], |row| {
+                row.get(3)
+            })
+            .expect("explain")
+            .flatten()
+            .collect();
+
+        assert!(
+            steps.iter().any(|step| step
+                .contains("idx_contacts_account_address (account_id=? AND address_normalized=?)")),
+            "the per-account contacts probe is not keyed on the address; plan:\n{steps:#?}"
+        );
+        assert!(
+            !steps.iter().any(|step| step.starts_with("SCAN c")),
+            "the contacts table is being scanned per candidate; plan:\n{steps:#?}"
+        );
     }
 
     #[test]
