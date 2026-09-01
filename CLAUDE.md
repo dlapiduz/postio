@@ -68,10 +68,26 @@ corpus in `crates/postio-model/tests/corpus/` (`/add-fixture` extends it).
 ## Build & test: verify what you touched, nothing more
 
 ```bash
-cargo test   -p <crate>                              # the inner loop
+scripts/test-fast.sh                                 # the inner loop: units only
+cargo test   -p <crate>                              # that crate, integration included
 cargo clippy -p <crate> --all-targets -- -D warnings # before landing
 scripts/check.sh                                     # every repository invariant
 ```
+
+**Iterate at the cheapest layer that can fail.** The tests are not what costs;
+compiling and linking is. On this workstation `postio-body`'s 49 unit tests run
+in 0.00s and `postio-gtk`'s 330 in 0.42s, while one `postio-app --test
+app_suite` run is eleven and a half minutes, nearly all of it link. TDD pays
+that twice — once for red, once for green — so a cycle through an integration
+binary costs twenty minutes for two minutes of thinking.
+
+`scripts/test-fast.sh` runs `--lib` for the crates you changed and links
+nothing else; use it between edits. Run the integration suites to *confirm*, at
+the end, not to iterate. This is also an argument about where logic lives: a
+rule expressed as a function in `postio-core`, `postio-ui` or `postio-body` can
+be proven red in a second, and the same rule buried in a widget cannot. It does
+not license asserting on what a layer was handed instead of what a person would
+see — that is what the integration suites and `issue-land.sh` are still for.
 
 **Test the crates you changed; the reconcile pass proves the rest.**
 `issue-land.sh` runs the full gate chain (fmt, clippy, tests, `check.sh`)

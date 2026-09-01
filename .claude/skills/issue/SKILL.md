@@ -134,6 +134,28 @@ That last row is the real gain. Work is isolated by *branch* now, not by crate,
 so an issue that spans `postio-storage` and `postio-gtk` is one piece of work
 rather than something you have to hand off.
 
+**Do not edit source while a build or test run is in flight.** A backgrounded
+`cargo test` is a tempting ten minutes to fill, and editing a file it has not
+compiled yet either wastes the run or — worse — produces a result for a tree
+that never existed, which you then reason about as if it were real. Cargo will
+not warn you. Wait for it, or work on something outside the workspace: the
+issue text, a commit message, a comment you owe somebody.
+
+Two cargo invocations in **one worktree** serialise on that worktree's target
+directory rather than running side by side. If a build seems to be taking far
+longer than it should, check whether you left an earlier one running:
+
+```bash
+cat /proc/loadavg                                   # idle box, busy build?
+ps -eo pid,etime,args | grep -E "cargo|rustc" | grep -v grep
+```
+
+An idle load average with two cargo processes minutes old is not a slow build,
+it is one waiting on the other's lock. Kill the stale one. (`jobs = 2` in
+`.cargo/config.toml` is per-session politeness for a shared box — when
+`/proc/loadavg` says you are actually alone, `cargo build -j8` is both allowed
+and much faster.)
+
 Tests are headless by default — `.cargo/config.toml` puts every test binary on
 a compositor of its own, so plain `cargo test` does not throw windows at
 whoever is at the keyboard. `POSTIO_HEADLESS=0` if you want to watch one.
@@ -147,6 +169,14 @@ the tree**: `git log`, `git diff` and anything comparing against `origin/main`
 read a snapshot that may be hours old. Rebase a long branch as you go rather
 than only at the end, and re-read the issue before you finish it in case
 someone decided something while you worked.
+
+**Iterate cheaply; confirm expensively.** `scripts/test-fast.sh` runs the unit
+tests of the crates you changed and links nothing else — seconds. One
+`cargo test -p postio-app --test app_suite` is eleven minutes, nearly all of it
+linking, and TDD pays it twice per fix. Use the fast loop between edits and the
+integration suites to confirm at the end. If a rule is hard to prove without
+linking the application, that is usually a sign it wants to be a function in a
+leaf crate rather than something buried in a widget.
 
 Still true, and not negotiable: **TDD** — write the failing test, watch it
 fail, make it pass, move on. The red run at the start is the proof the test
