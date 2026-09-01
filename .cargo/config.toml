@@ -29,9 +29,21 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # `--threads` recently, and widening this to a triple nobody here can build for
 # would trade a memory-pressure tuning for a link that fails outright. It is a
 # comfort setting for the machine this is developed on; the runner is a
-# correctness one.
+# correctness one. It still applies whichever linker actually runs — see
+# `linker` below — because it is forwarded as `-C link-arg`, not baked into a
+# choice of linker.
+#
+# `linker` prefers mold over the platform default (lld here) through
+# `scripts/linker-wrapper.sh`, fail-open like every other wrapper in this
+# file: no mold on the box and it is exactly `cc "$@"`. Measured on this
+# machine relinking postio-app (GTK+WebKit) after a one-line change: mold's
+# peak RSS at the link step ran 36-56% below lld's across two runs (497-723 MB
+# vs. a steady ~1.1 GB), wall-clock roughly a wash. Memory is the number that
+# matters for the scenario this whole file is tuned around — four sessions
+# each linking this binary at once. `sudo dnf install mold` on Fedora.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--threads=2"]
+linker = "scripts/linker-wrapper.sh"
 
 # Every test binary on **every Linux target** runs on a compositor of its own,
 # so `cargo test` is headless by default and nobody has to remember a wrapper.

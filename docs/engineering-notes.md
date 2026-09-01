@@ -3360,6 +3360,47 @@ pass, and a retry on a byte-identical tree skips clippy and the per-crate
 tests (loudly), re-running only the invariants. The `[timing]` lines in its
 output are where "landing is slow" conversations should start.
 
+## Switching the linker is a one-time full-graph rebuild, not a config toggle (2026-09-01)
+
+`.cargo/config.toml`'s `[target.x86_64-unknown-linux-gnu]` prefers mold over
+the platform default (lld here) through `scripts/linker-wrapper.sh`, because
+the memory it saves at the link step is the number that matters for the
+scenario the neighbouring `jobs = 2` and `-Wl,--threads=2` tuning already
+exist for: several sessions each linking `postio-app`'s GTK+WebKit binary at
+once. Measured relinking `postio-app` after a one-line change, holding
+everything else constant: mold's peak RSS at the link step ran 36-56% below
+lld's across two runs (497-723 MB vs. a steady ~1.1 GB); wall-clock was
+roughly a wash, not a win.
+
+**The cost of changing which linker is in effect is not scoped to the
+crate being linked.** Cargo fingerprints every unit — including every rlib
+that is never itself linked — on the flags that would apply to it, and
+`-C linker=…` is one of them. So toggling between the wrapper and the
+platform default, whether via the config file, `RUSTFLAGS`, or
+`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER`, invalidates cargo's
+fingerprint for the *entire* dependency graph, not just the final binary —
+confirmed by watching a single-file touch that should have recompiled only
+`postio-app` instead recompile ~400 crates. `sccache` fares no better: it
+hashes the literal rustc command line, and the extra `-C link-arg` shows up
+in that line even for a crate whose compiled output it does not affect, so
+the rebuild is mostly cache misses rather than fast cache hits — measured at
+6.15% on the switch (15 hits, 229 misses), and a full rebuild that would
+otherwise be minutes turned into 8-9. Worth knowing before landing any future
+change in this vein: it costs one genuinely slow build, once, for whoever
+lands it and for the next session whose worktree picks up the new config —
+after that, cargo's own fingerprints and sccache both stay warm against the
+new flags exactly as they did against the old ones.
+
+**A found-but-unrelated wrinkle while measuring this**: `postio-gtk`
+recompiled on *every* touch-and-rebuild of `postio-app` during this
+investigation, in both the lld and the mold condition, in a fresh worktree
+and in an already-built checkout alike — something is making its fingerprint
+unstable independent of the linker (its `build.rs` generates
+`data/tokens.css` from the design system source, which is the obvious first
+place to look). Not chased down here; flagged so the next session that hits
+"why is postio-gtk rebuilding when I didn't touch it" doesn't start from
+zero.
+
 ## An event with no consumer is a feature that does not exist (2026-08-28, #396)
 
 `postio_runtime::engine` had emitted `Event::BodyLoaded` since it was written.
