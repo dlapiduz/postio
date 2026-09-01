@@ -47,3 +47,7 @@ mail, search, and the keyboard come first. Rules, contacts management, and
 snooze/scheduled send are also out of v1, each with its own tracked issue.
 
 Ready to try it? See [Installing Postio](install.md).
+
+This is the reference documentation. The [Postio home page](../) is
+the wider tour: what it looks like, what it is for, and where the
+project stands.
