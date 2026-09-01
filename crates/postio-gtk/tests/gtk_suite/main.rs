@@ -162,6 +162,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_finder::at_finds_a_correspondent_and_searches_their_mail as fn(),
     ),
     (
+        "gtk_finder::typing_a_mode_prefix_does_not_warn_gtk",
+        gtk_finder::typing_a_mode_prefix_does_not_warn_gtk as fn(),
+    ),
+    (
         "gtk_focus_visible::taking_focus_changes_what_is_drawn",
         gtk_focus_visible::taking_focus_changes_what_is_drawn as fn(),
     ),

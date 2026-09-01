@@ -837,7 +837,13 @@ impl Finder {
         if self.mode() != Mode::Search {
             return false;
         }
-        match backspace(&self.imp().parsed.borrow(), self.caret()) {
+        // Bound to a name rather than matched on directly: a `match` keeps a
+        // scrutinee temporary borrowed for every arm's body, and the arm
+        // below calls `refresh`, which re-borrows `imp.parsed` mutably —
+        // matching on `self.imp().parsed.borrow()` in place panics on that
+        // reborrow the moment a chip actually pops.
+        let outcome = backspace(&self.imp().parsed.borrow(), self.caret());
+        match outcome {
             Backspace::Ordinary => false,
             Backspace::PopChip { query, caret, .. } => {
                 let imp = self.imp();
@@ -955,8 +961,24 @@ impl Finder {
         let absorbed = next.text != text;
         *self.imp().query.borrow_mut() = next.clone();
         if absorbed {
-            // The prefix left the text, so the entry has to be told.
-            self.set_query(next);
+            // The prefix left the text, so the entry has to be told — but not
+            // through `set_query`'s `set_text`. `retype` only ever runs from
+            // the field's own `changed` handler (`attach`, above), i.e.
+            // inside the GTK user action a real keystroke or paste just
+            // opened; `set_text` briefly opens its *own* "irreversible
+            // action" to replace the whole string, and GTK warns about that
+            // nesting (#758). `Query::typed` absorbs exactly the one prefix
+            // character, so `delete_text` — the primitive `set_text` uses
+            // internally, without the irreversible-action wrapping — removes
+            // precisely what changed, from inside the running action rather
+            // than trying to open a second one.
+            let imp = self.imp();
+            if let Some(field) = imp.field.borrow().as_ref() {
+                imp.echoing.set(true);
+                field.text.delete_text(0, 1);
+                imp.echoing.set(false);
+            }
+            self.refresh();
             return;
         }
         self.refresh();
