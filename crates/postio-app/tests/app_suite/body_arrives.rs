@@ -237,12 +237,18 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
         });
     }
     assert!(settle_while(|| window.reader().absent().is_none()));
+    // Zero, not one (#749). Coalescing is still what stops twenty events
+    // being twenty repaints — the assertion above proves the first arrival
+    // was exactly one — but the body is on screen now, so these twenty
+    // recompose the identical document and the pane must not be torn down
+    // and rebuilt for them at all. Every rebuild is a frame of unpainted
+    // WebView and a scroll position discarded, which is what a person reading
+    // a long message actually notices.
     assert_eq!(
         window.reader().paints() - once,
-        1,
-        "a backfill emits these in bursts, so twenty arrivals for the message \
-         on screen must coalesce into one repaint, not {} — `SidebarFeed::reload` \
-         is the pattern",
+        0,
+        "twenty arrivals that change nothing on screen repainted the pane {} \
+         time(s) — a repaint has to be worth its cost, not merely coalesced",
         window.reader().paints() - once
     );
 

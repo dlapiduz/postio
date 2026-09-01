@@ -373,6 +373,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         named_accounts,
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
+        aimed: Cell::new(None),
     });
     window.list().connect_cursor_moved(glib::clone!(
         #[weak]
@@ -557,6 +558,16 @@ struct Fill {
     /// Whether a repaint is already queued for this turn of the main loop —
     /// see [`Fill::body_arrived`].
     queued: Cell<bool>,
+    /// Which message the *single* reading pane was last aimed at, and so
+    /// which one asking again would be asking for twice — see [`Fill::fill`].
+    ///
+    /// Deliberately not [`Fill::showing`], which answers a different
+    /// question. `showing` is what the reply verbs aim at, and the
+    /// conversation pane writes into it whenever focus moves between the
+    /// messages of a thread; it is also never cleared, so after a folder
+    /// change it still names a message this pane is no longer displaying.
+    /// Either of those would make it the wrong thing to skip on.
+    aimed: Cell<Option<MessageId>>,
 }
 
 impl Fill {
@@ -688,8 +699,30 @@ impl Fill {
     }
 
     /// Put `row`'s message in the pane, or say why it cannot be.
+    ///
+    /// # Why this can be asked twice for one message
+    ///
+    /// The filler is wired to the cursor *and* to activation, deliberately:
+    /// the cursor reports only once the user has moved it, so on a window
+    /// nobody has touched the pane is empty and `Enter` still has to open
+    /// whatever the autoselect landed on. The overlap was documented as
+    /// harmless — "a store read and nothing else" — which was wrong. Every
+    /// fill ends in a document handed to WebKit, and every document handed to
+    /// WebKit is a teardown, a rebuild, a scroll position lost and a frame of
+    /// unpainted `WebView`: #749's black flash, twice for one keystroke.
+    ///
+    /// So the second ask is skipped when it would change nothing: the pane is
+    /// already aimed at this message *and* is currently displaying one.
+    /// `window.reading()` is the second half because it is false exactly when
+    /// the pane was emptied — a folder change, a message that went away, the
+    /// composer taking the pane over — which are the cases where re-asking
+    /// for the same message is the right thing to do rather than a repeat.
     fn fill(&self, window: &Window, row: postio_gtk::list::Row) {
         let message = row.id;
+        if self.aimed.get() == Some(message) && window.reading() {
+            return;
+        }
+        self.aimed.set(Some(message));
         self.showing.set(Some(message));
 
         let answer = self.read(message);
@@ -710,7 +743,14 @@ impl Fill {
                 if showing.get() != Some(message) {
                     return;
                 }
-                paint(&window, &opened, &self_accounts, &offline_now, loaded);
+                paint(
+                    &window,
+                    &opened,
+                    &self_accounts,
+                    &offline_now,
+                    message,
+                    loaded,
+                );
             }
         });
     }
@@ -772,7 +812,14 @@ impl Fill {
                 if showing.get() != Some(message) {
                     return;
                 }
-                paint(&window, &opened, &self_accounts, &offline_now, loaded);
+                paint(
+                    &window,
+                    &opened,
+                    &self_accounts,
+                    &offline_now,
+                    message,
+                    loaded,
+                );
 
                 // And the panel, when it is open. Its chips are drawn from
                 // the same attachment rows the reader's are, and
@@ -852,8 +899,34 @@ fn paint(
     opened: &RefCell<Option<Opened>>,
     named_accounts: &[(postio_model::AccountId, String)],
     offline: &Cell<bool>,
+    message: MessageId,
     loaded: Loaded,
 ) {
+    // Whether the pane already has this exact document up (#749).
+    //
+    // The header and the chips below are redrawn regardless: they are cheap,
+    // and a payload landing genuinely changes a chip. What is skipped is the
+    // document — which is a full WebKit teardown and reload, a frame of
+    // unpainted view, and the reader's scroll position discarded. A backfill
+    // emits `BodyLoaded` for every payload it commits, so for a message
+    // someone is reading that was happening repeatedly, and each time it
+    // yanked them back to the top of a body they were partway down.
+    let signature = (
+        message,
+        document_signature(&loaded.body, loaded.sender.as_deref(), offline.get()),
+    );
+    //
+    // `window.reading()` is half the question, and not a formality: the pane
+    // can be emptied without `opened` being touched — a folder change, a
+    // message that went away, the composer taking the pane over — and after
+    // that the last signature describes a document that is no longer on
+    // screen. Trusting it alone would leave the pane blank for a message the
+    // user had just clicked, which is #70 wearing a new hat.
+    let already_showing = window.reading()
+        && opened
+            .borrow()
+            .as_ref()
+            .is_some_and(|open| open.signature == signature);
     // The envelope is known as soon as headers have synced -- well before a
     // body necessarily is -- so the header goes on screen regardless of which
     // arm below the body takes (#319).
@@ -883,8 +956,11 @@ fn paint(
                 root,
                 parts: loaded.parts,
                 absent: None,
+                signature,
             });
-            window.show_message(&body, loaded.sender.as_deref());
+            if !already_showing {
+                window.show_message(&body, loaded.sender.as_deref());
+            }
         }
         crate::compose::Body::Absent(reason) => {
             // The chips still go on. They are drawn from `BODYSTRUCTURE`
@@ -903,8 +979,11 @@ fn paint(
                 root,
                 parts: loaded.parts,
                 absent: Some(reason),
+                signature,
             });
-            window.show_absent(reason);
+            if !already_showing {
+                window.show_absent(reason);
+            }
         }
     }
 }
@@ -922,6 +1001,43 @@ struct Opened {
     /// which one -- so [`Fill::repaint_if_waiting`] can tell a connectivity
     /// change worth repainting from one that is not.
     absent: Option<Absent>,
+    /// Which message the pane is drawing, and a digest of exactly what
+    /// `Reader::render` was given for it -- see [`document_signature`].
+    signature: (MessageId, u64),
+}
+
+/// A digest of everything the reading pane turns into a document: the body it
+/// would render and the sender the remote-image policy is keyed on, or the
+/// wait it would explain instead.
+///
+/// Paired with a [`MessageId`] by its caller, because bytes alone are not
+/// identity here. Two different messages can compose the identical document —
+/// `gtk_reader_scroll` renders one body under two senders precisely to check
+/// that opening the second still starts at the top — so a comparison that
+/// looked only at the document would leave the reader scrolled halfway down a
+/// message the user had just left. The message is what makes "the same thing
+/// is already on screen" true; the digest is what makes it *still* true.
+/// `offline` is part of it because it is part of what gets drawn: the same
+/// stored reason renders as "waiting on the network" or "you are offline"
+/// depending on it (see [`Fill::waiting_reason`]), so leaving it out would let
+/// a connectivity change be mistaken for nothing having changed.
+fn document_signature(body: &crate::compose::Body, sender: Option<&str>, offline: bool) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    offline.hash(&mut hasher);
+    match body {
+        crate::compose::Body::Ready(body) => {
+            0u8.hash(&mut hasher);
+            body.text.hash(&mut hasher);
+            body.html.hash(&mut hasher);
+        }
+        crate::compose::Body::Absent(reason) => {
+            1u8.hash(&mut hasher);
+            format!("{reason:?}").hash(&mut hasher);
+        }
+    }
+    sender.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The header fields the reading pane needs (#319), pulled out of a full
