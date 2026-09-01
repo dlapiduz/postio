@@ -1535,6 +1535,17 @@ impl Window {
                 self.close_thread();
                 None
             }
+            // `h`/`Left`: the keyboard-only sibling of `Back` (#765) --
+            // "step back to the previous view without leaving the
+            // keyboard," restricted to the message surfaces themselves
+            // rather than `Back`'s every overlay. The one view PrevView can
+            // step back out of today is a thread; a bare List has nowhere
+            // further to go, so it is a no-op there, same as `Back` with
+            // nothing to close.
+            postio_core::Command::PrevView if self.thread_open() => {
+                self.close_thread();
+                None
+            }
             _ => None,
         }
     }
@@ -1621,6 +1632,13 @@ impl Window {
                 self.sidebar().step(-1);
             }
             CommandId::ToggleFolder => self.sidebar().toggle_focused(),
+            // `g a`: cycle the strip's own account scope, unified then each
+            // account in turn (#765). Selecting the row is the whole of it
+            // -- the strip's `connect_row_selected` is what actually
+            // re-points the folder feed on a real click, and this walks the
+            // same rows the same way, so nothing downstream has to learn a
+            // second path exists.
+            CommandId::NextScope => self.sidebar().select_next_scope(),
 
             // The parts panel. Reached through `Context::Parts` for the same
             // reason the folders are — see `postio-14b`. Set and cleared by

@@ -1209,6 +1209,32 @@ impl Sidebar {
         }
     }
 
+    /// Move the strip's own selection to the next scope, wrapping — what
+    /// `g a` (`CommandId::NextScope`) does (#765).
+    ///
+    /// Selects the row a click would, rather than computing a scope and
+    /// handing it to `set_scope`: a real row selection is what
+    /// `connect_row_selected` — and so every `connect_scope_selected`
+    /// listener — already expects, so cycling from the keyboard reaches
+    /// exactly what clicking the next row down would.
+    pub fn select_next_scope(&self) {
+        let imp = self.imp();
+        let count = imp.scopes.borrow().len();
+        // Nothing to cycle: absent (one account) or a single row (offering
+        // Unified with no accounts, which set_accounts never builds).
+        if count < 2 {
+            return;
+        }
+        let current = imp.accounts.selected_row().map(|row| row.index());
+        let next = match current {
+            Some(index) if (index as usize) + 1 < count => index + 1,
+            _ => 0,
+        };
+        if let Some(row) = imp.accounts.row_at_index(next) {
+            imp.accounts.select_row(Some(&row));
+        }
+    }
+
     /// What to call when the user picks an account, or Unified, in the strip.
     pub fn connect_scope_selected(&self, callback: impl Fn(AccountScope) + 'static) {
         self.imp()
