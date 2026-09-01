@@ -196,6 +196,35 @@ fn reader_css() -> String {
     css
 }
 
+/// The reader's ground colour for the given scheme, as the generated palette
+/// spells it (`#rrggbb`).
+///
+/// A frontend needs this outside the document as well as inside it. The
+/// document paints `--r-ground` on `body`, but only once it has *parsed* —
+/// and a web view between one document and the next has no document to take
+/// a colour from, so it paints whatever its widget background is. Left
+/// unset, that is the engine default, which under the GTK4 GL path shows as
+/// a black frame on every message change (#749).
+///
+/// Read out of the same generated CSS the document inlines, rather than
+/// restated as a literal here: #296's rule is that a colour has one source,
+/// and a second copy would be one that could silently drift from the design
+/// system the first is regenerated from.
+pub fn reader_ground(dark: bool) -> &'static str {
+    const PALETTE: &str = include_str!("../../../postio-gtk/data/reader-tokens.css");
+    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+
+    let (light, dark_block) = PALETTE
+        .split_once(DARK_BLOCK)
+        .expect("the generated palette always emits a dark block");
+    let scope = if dark { dark_block } else { light };
+    scope
+        .split_once("--r-ground:")
+        .and_then(|(_, rest)| rest.split_once(';'))
+        .map(|(value, _)| value.trim())
+        .expect("the generated palette always defines --r-ground in both schemes")
+}
+
 /// `@font-face` rules embedding the vendored faces as `data:` URIs.
 ///
 /// A web view's rendering happens in its own web process, which never sees
@@ -460,6 +489,32 @@ mod tests {
         assert!(
             document.contains("--r-"),
             "the generated reader palette is inlined"
+        );
+    }
+
+    /// The colour a frontend paints behind the document has to be the one the
+    /// document paints on itself, or the seam shows on every message change
+    /// (#749). Both are read from the generated palette, so this asserts they
+    /// are the same string rather than restating either.
+    #[test]
+    fn the_ground_a_frontend_paints_is_the_one_the_document_paints() {
+        for dark in [false, true] {
+            let ground = reader_ground(dark);
+            assert!(
+                ground.starts_with('#'),
+                "the ground should be a hex literal the frontend can parse: {ground}"
+            );
+            let palette = include_str!("../../../postio-gtk/data/reader-tokens.css");
+            assert!(
+                palette.contains(&format!("--r-ground: {ground};")),
+                "reader_ground({dark}) returned {ground}, which the generated \
+                 palette does not define"
+            );
+        }
+        assert_ne!(
+            reader_ground(false),
+            reader_ground(true),
+            "the two schemes should not share a ground"
         );
     }
 

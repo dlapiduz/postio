@@ -45,7 +45,7 @@ use postio_body::sanitize::RemoteImages;
 // paths keep resolving. What remains in this file is webkit6 glue.
 pub use postio_ui::reader::document::{
     Absent, DOCUMENT_BASE_URI, HeldBack, SCROLL_MARKERS, absent_html, body_html,
-    content_security_policy, document_for, wrap_document,
+    content_security_policy, document_for, reader_ground, wrap_document,
 };
 
 /// The message currently on screen, kept so the banner's two actions can ask
@@ -98,6 +98,9 @@ pub struct Reader {
     page: Rc<std::cell::Cell<u32>>,
     /// How many times the pane has been drawn — see [`Reader::paints`].
     paints: Rc<std::cell::Cell<u32>>,
+    /// How many documents have actually been handed to WebKit — see
+    /// [`Reader::loads`].
+    loads: Rc<std::cell::Cell<u32>>,
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -142,6 +145,13 @@ impl Reader {
         view.add_css_class("postio-reader-view");
         view.set_accessible_role(gtk::AccessibleRole::Article);
         view.connect_decide_policy(handle_decide_policy);
+        paint_ground(&view);
+        // The scheme can change while the application runs, and the widget
+        // background is not a document, so no re-render fixes it.
+        adw::StyleManager::default().connect_dark_notify({
+            let view = view.clone();
+            move |_| paint_ground(&view)
+        });
 
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
@@ -175,6 +185,7 @@ impl Reader {
             on_parts_requested: Rc::new(RefCell::new(Vec::new())),
             page: Rc::new(std::cell::Cell::new(0)),
             paints: Rc::new(std::cell::Cell::new(0)),
+            loads: Rc::new(std::cell::Cell::new(0)),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -191,17 +202,21 @@ impl Reader {
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
             let page = Rc::clone(&reader.page);
+            let loads = Rc::clone(&reader.loads);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
                 if let Some(banner) = banner_weak.upgrade() {
                     render_open(
-                        &view,
+                        &Canvas {
+                            view: &view,
+                            page: &page,
+                            loads: &loads,
+                        },
                         &banner,
                         &open,
                         &highlight,
                         RemoteImages::Allowed,
                         &rendered,
-                        &page,
                     );
                 }
             });
@@ -213,6 +228,7 @@ impl Reader {
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
             let page = Rc::clone(&reader.page);
+            let loads = Rc::clone(&reader.loads);
             reader.banner.connect_always_allow(move || {
                 let sender = open.borrow().as_ref().and_then(|o| o.sender.clone());
                 if let Some(sender) = sender {
@@ -227,13 +243,16 @@ impl Reader {
                 }
                 if let Some(banner) = banner_weak.upgrade() {
                     render_open(
-                        &view,
+                        &Canvas {
+                            view: &view,
+                            page: &page,
+                            loads: &loads,
+                        },
                         &banner,
                         &open,
                         &highlight,
                         RemoteImages::Allowed,
                         &rendered,
-                        &page,
                     );
                 }
             });
@@ -338,14 +357,22 @@ impl Reader {
             RemoteImages::Blocked
         };
         render_open(
-            &self.view,
+            &self.canvas(),
             &self.banner,
             &self.open,
             &self.highlight,
             remote,
             &self.rendered,
-            &self.page,
         );
+    }
+
+    /// The `WebView` and its load bookkeeping, together — see [`Canvas`].
+    fn canvas(&self) -> Canvas<'_> {
+        Canvas {
+            view: &self.view,
+            page: &self.page,
+            loads: &self.loads,
+        }
     }
 
     /// Called every time a render settles how many remote references are
@@ -445,11 +472,10 @@ impl Reader {
         // yet. Only `clear()`'s "nothing selected at all" hides the bar.
         self.actions.set_visible(true);
         self.banner.set_visible(false);
-        self.view.load_html(
+        load_document(
+            &self.canvas(),
             &wrap_document(&absent_html(state), RemoteImages::Blocked),
-            Some(DOCUMENT_BASE_URI),
         );
-        self.page.set(0);
         // No body drawn, so nothing is being held back either — a caller
         // watching `connect_rendered` must not keep showing the previous
         // message's count.
@@ -471,6 +497,19 @@ impl Reader {
         self.paints.get()
     }
 
+    /// How many documents this pane has actually handed to WebKit.
+    ///
+    /// [`paints`](Self::paints) counts times the pane was *asked* to draw;
+    /// this counts the times that cost a document teardown and reload. The
+    /// two differ exactly where #749 lives: an arrival that recomposes the
+    /// document byte-for-byte identically is a paint that must not be a
+    /// load, because every load is a black frame's worth of unpainted
+    /// `WebView` and a scroll position thrown away.
+    #[doc(hidden)]
+    pub fn loads(&self) -> u32 {
+        self.loads.get()
+    }
+
     /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
     ///
     /// The seam the wiring tests assert on: proving the *application* stopped
@@ -487,11 +526,7 @@ impl Reader {
         self.header.clear();
         self.actions.set_visible(false);
         self.banner.set_visible(false);
-        self.view.load_html(
-            &wrap_document("", RemoteImages::Blocked),
-            Some(DOCUMENT_BASE_URI),
-        );
-        self.page.set(0);
+        load_document(&self.canvas(), &wrap_document("", RemoteImages::Blocked));
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());
         }
@@ -525,6 +560,72 @@ impl Reader {
     }
 }
 
+/// Give the `WebView` an opaque background of its own, matching the ground
+/// the document will paint.
+///
+/// **Why a widget needs a colour when its document already has one.** Every
+/// message change here is a full document teardown and reload — JavaScript
+/// is off, so there is no incremental path — and `reader.css`'s
+/// `body { background: var(--r-ground) }` cannot apply until the *new*
+/// document has parsed. In between, the view paints its own background, and
+/// WebKit's default under the GTK4 GL/DMA-BUF path shows as black. That is
+/// the flash #749 reported: not a state Postio draws, but the absence of one.
+///
+/// Setting it does not make the reload free — the fix for that is not
+/// reloading when nothing changed, which [`load_document`] does — but it
+/// makes the gap invisible instead of a black frame.
+fn paint_ground(view: &webkit6::WebView) {
+    let dark = adw::StyleManager::default().is_dark();
+    match reader_ground(dark).parse::<gtk::gdk::RGBA>() {
+        Ok(ground) => view.set_background_color(&ground),
+        // Not fatal: an unpainted view is the state this improves on, not one
+        // it depends on. Worth saying out loud, though — it means the
+        // generated palette stopped being something gdk can parse.
+        Err(error) => glib::g_warning!(
+            "postio",
+            "could not parse the reader ground colour: {error}"
+        ),
+    }
+}
+
+/// The `WebView` and the bookkeeping that decides whether it needs a new
+/// document at all.
+///
+/// Bundled rather than passed as four more arguments because every caller
+/// needs all four together: loading a document is exactly the moment the
+/// scroll anchor resets, the tally moves, and the hash of what is on screen
+/// changes. Splitting them has already gone wrong once — `render_open` reset
+/// `page` whether or not the load was worth doing.
+struct Canvas<'a> {
+    view: &'a webkit6::WebView,
+    /// Which of [`SCROLL_MARKERS`]' anchors the pane is at.
+    page: &'a Rc<std::cell::Cell<u32>>,
+    /// Documents actually handed to WebKit — [`Reader::loads`].
+    loads: &'a Rc<std::cell::Cell<u32>>,
+}
+
+/// Hand `document` to WebKit, and count it.
+///
+/// Every call here is a full document teardown and reload: JavaScript is off,
+/// so there is no incremental path, and the page cache is off too. Between
+/// the old document being discarded and the new one's first paint the
+/// `WebView` has nothing of its own to draw — the black frame #749 reported,
+/// which [`paint_ground`] covers — and the reader's scroll position is gone.
+///
+/// So a load is a cost, and the tally is the observable a test can hold it to.
+/// Deciding whether a load is *needed* is deliberately not done here: this
+/// pane is handed a body and a sender, not a message, so it cannot tell a
+/// second message that happens to compose an identical document from the same
+/// message arriving twice — and those two want opposite answers. That
+/// judgement belongs where message identity exists, in `postio_app::reading`.
+fn load_document(canvas: &Canvas<'_>, document: &str) {
+    canvas.loads.set(canvas.loads.get() + 1);
+    canvas.view.load_html(document, Some(DOCUMENT_BASE_URI));
+    // `load_html` always starts a document at the top, whatever `page` said
+    // before this call -- see `Reader::page_down`.
+    canvas.page.set(0);
+}
+
 /// Re-render whatever is in `open` at `remote`'s policy, and put the banner
 /// in step with the result.
 ///
@@ -533,13 +634,12 @@ impl Reader {
 /// would capture `container` — and so the banner and the button doing the
 /// capturing — in a reference cycle nothing would ever free).
 fn render_open(
-    view: &webkit6::WebView,
+    canvas: &Canvas<'_>,
     banner: &RemoteImageBanner,
     open: &Rc<RefCell<Option<Open>>>,
     highlight: &Rc<RefCell<Vec<String>>>,
     remote: RemoteImages,
     rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
-    page: &Rc<std::cell::Cell<u32>>,
 ) {
     let (body, sender) = {
         let guard = open.borrow();
@@ -557,11 +657,7 @@ fn render_open(
     banner.set_sender(sender.as_deref());
     banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
 
-    let document = document_for(&content, remote);
-    view.load_html(&document, Some(DOCUMENT_BASE_URI));
-    // `load_html` always starts a document at the top, whatever `page` said
-    // before this call -- see `Reader::page_down`.
-    page.set(0);
+    load_document(canvas, &document_for(&content, remote));
 
     for handler in rendered.borrow().iter() {
         handler(held_back);

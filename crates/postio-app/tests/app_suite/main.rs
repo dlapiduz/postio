@@ -22,6 +22,7 @@ mod dwell_wiring;
 mod egress_wiring;
 mod keystroke;
 mod parts_open_wiring;
+mod reader_loads;
 mod reading;
 mod reading_offline;
 mod reclaim_wiring;
@@ -108,6 +109,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop",
         parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop as fn(),
+    ),
+    (
+        "reader_loads::moving_and_reopening_a_message_costs_one_document_load_each",
+        reader_loads::moving_and_reopening_a_message_costs_one_document_load_each as fn(),
     ),
     (
         "reading::opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree",
