@@ -26,16 +26,7 @@ thiserror = "2.0.20"
 tracing = "0.1"
 
 [dev-dependencies]
-criterion = "0.7.0"
 postio-storage = { workspace = true, features = ["test-support"] }
-
-[[bench]]
-name = "search_budget"
-harness = false
-
-[[bench]]
-name = "search_under_load"
-harness = false
 
 [lints]
 workspace = true

@@ -25,7 +25,7 @@
 //! wall-clock or OS randomness), so a run is reproducible byte-for-byte
 //! across machines modulo timing. CI compiles this bench
 //! (`cargo bench --workspace --no-run`) but does not time it — see
-//! `postio-core/benches/perf_budgets.rs` for why a shared runner is not
+//! `perf_budgets.rs` for why a shared runner is not
 //! trusted for millisecond budgets there either. Each `bench_*` function
 //! below still asserts its own budget against a real `Instant` measurement,
 //! so a genuine regression fails loudly here even outside CI.

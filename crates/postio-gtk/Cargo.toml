@@ -28,7 +28,6 @@ tracing = "0.1.44"
 webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
-criterion = "0.7.0"
 gtk4-sys = "0.10.3"
 postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
@@ -37,14 +36,6 @@ tempfile = "3.27.0"
 [build-dependencies]
 glib-build-tools = "0.21.0"
 postio-ui.workspace = true
-
-[[bench]]
-name = "list_scroll"
-harness = false
-
-[[bench]]
-name = "thread_drill"
-harness = false
 
 # The consolidated GTK suite: a custom harness, because GTK initializes on
 # exactly one thread and libtest runs tests on a pool — see

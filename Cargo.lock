@@ -2569,7 +2569,6 @@ dependencies = [
  "async-channel",
  "async-trait",
  "chrono",
- "criterion",
  "gtk4",
  "libadwaita",
  "postio-config",
@@ -2592,6 +2591,31 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "postio-bench"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "futures-util",
+ "gtk4",
+ "libadwaita",
+ "postio-config",
+ "postio-core",
+ "postio-gtk",
+ "postio-imap",
+ "postio-index",
+ "postio-model",
+ "postio-runtime",
+ "postio-search",
+ "postio-session",
+ "postio-storage",
+ "postio-sync",
+ "rusqlite",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2621,7 +2645,6 @@ name = "postio-core"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "criterion",
  "postio-config",
  "postio-model",
  "serde",
@@ -2680,7 +2703,6 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "chrono",
- "criterion",
  "gio",
  "glib",
  "glib-build-tools",
@@ -2744,7 +2766,6 @@ name = "postio-index"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "criterion",
  "postio-body",
  "postio-model",
  "postio-search",
@@ -2790,7 +2811,6 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "chrono",
- "criterion",
  "futures-util",
  "postio-core",
  "postio-imap",
