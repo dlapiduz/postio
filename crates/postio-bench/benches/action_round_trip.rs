@@ -57,7 +57,10 @@ use std::time::Instant;
 
 use chrono::Utc;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use postio_app::actions::Actions;
+// `postio_app::actions` was only ever a re-export of this (#82): what the
+// round trip below exercises is postio-session's, and naming it directly is
+// what lets this bench live outside the application crate.
+use postio_session::actions::Actions;
 use postio_core::bridge::{EventSink, EventStream, event_channel};
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
 use postio_core::state::{AppState, SharedState};

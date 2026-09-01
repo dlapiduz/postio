@@ -65,7 +65,7 @@ pub const DEFAULT_SIZE: (i32, i32) = (1120, 700);
 ///
 /// One request rather than a paged feed: a thread is a conversation, and the
 /// column already holds every message it is given in memory to sort and
-/// filter them. `benches/thread_drill.rs` measures the drill-in against a
+/// filter them. `postio-bench`'s `thread_drill.rs` measures the drill-in against a
 /// 200-message thread, which is the size this is chosen to clear comfortably;
 /// a conversation past it is pathological rather than long, and the header's
 /// `n of m` says so honestly.

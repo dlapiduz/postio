@@ -19,6 +19,7 @@ members = [
     "crates/postio-gtk",
     "crates/postio-app",
     "crates/postio-ffi",
+    "crates/postio-bench",
 ]
 
 [workspace.package]

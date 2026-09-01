@@ -1822,7 +1822,7 @@ assert wall-clock budgets in `postio-gtk` tests. This box runs several
 concurrent build/test sessions; measured at load average 18 on 8 cores, the
 same thread drill-in measured 14ms, 23ms, 63ms, 89ms and 180ms across runs of
 identical code. Best-of-N filters most of it but is still a ceiling, not a
-number. Perf budgets belong in benches (`postio-core/benches/perf_budgets.rs`),
+number. Perf budgets belong in benches (`postio-bench/benches/perf_budgets.rs`),
 which already notes this about shared runners. Check `uptime` before
 believing any timing measured interactively.
 
