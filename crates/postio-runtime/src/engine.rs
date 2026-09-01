@@ -310,8 +310,16 @@ pub fn stop_retained() {
         return;
     }
     tracing::debug!(count = engines.len(), "stopping the sync engines");
+    // Close every channel before joining anything, so the engines wind down
+    // concurrently — and give the joins one shared deadline: a machine with
+    // N accounts owes the user one grace on the way out, not N of them
+    // (#759).
     for engine in &engines {
-        engine.stop();
+        engine.jobs.close();
+    }
+    let deadline = Instant::now() + SHUTDOWN_GRACE;
+    for engine in &engines {
+        engine.thread.join_until(deadline);
     }
 }
 
@@ -366,6 +374,38 @@ pub struct Engine {
 #[derive(Debug)]
 struct EngineThread {
     handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// What the thread was last seen doing, for the warning when it outstays
+    /// the grace.
+    busy: Busy,
+}
+
+/// What the engine's thread was last seen doing.
+///
+/// Written by the engine's thread as it moves between phases and read by
+/// [`EngineThread::join_until`] when the grace expires, so the warning can
+/// name what was still running instead of leaving the reader to guess which
+/// of a dozen awaits went long (#759).
+#[derive(Clone, Debug)]
+struct Busy(Arc<Mutex<String>>);
+
+impl Busy {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new("starting up".to_owned())))
+    }
+
+    fn set(&self, what: impl Into<String>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = what.into();
+    }
+
+    fn what(&self) -> String {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 /// How long dropping the last [`Engine`] waits for its thread to stop.
@@ -385,6 +425,13 @@ impl EngineThread {
     /// The caller must have closed the job channel first, or there is nothing
     /// telling the thread to finish and this simply spends the grace period.
     fn join_bounded(&self) {
+        self.join_until(Instant::now() + SHUTDOWN_GRACE);
+    }
+
+    /// As [`join_bounded`](Self::join_bounded), against a deadline the caller
+    /// chose — which is what lets [`stop_retained`] give N engines one shared
+    /// grace on the way out instead of N graces in a row (#759).
+    fn join_until(&self, deadline: Instant) {
         let Some(handle) = self
             .handle
             .lock()
@@ -400,7 +447,6 @@ impl EngineThread {
             return;
         }
 
-        let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
         while !handle.is_finished() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -411,6 +457,7 @@ impl EngineThread {
             // window shut. This is the state everything was in before the
             // handle was kept, so the risk is the one that was always there.
             tracing::warn!(
+                busy = %self.busy.what(),
                 "the sync engine did not stop within {SHUTDOWN_GRACE:?}; leaving it running"
             );
         }
@@ -459,18 +506,23 @@ impl Engine {
         // the engine. What arrives is a handful of small jobs, not a stream.
         let (jobs, inbox) = async_channel::unbounded::<Job>();
         let pool = parts.database.pool().clone();
+        let busy = Busy::new();
 
         // The handle is kept, not dropped. See `EngineThread` for the
         // coredump that came of dropping it.
         let handle = std::thread::Builder::new()
             .name("postio-sync".to_string())
-            .spawn(move || run(parts, pool, inbox))
+            .spawn({
+                let busy = busy.clone();
+                move || run(parts, pool, inbox, busy)
+            })
             .map_err(|error| EngineError::new(format!("the sync engine did not start: {error}")))?;
 
         Ok(Engine {
             jobs,
             thread: Arc::new(EngineThread {
                 handle: Mutex::new(Some(handle)),
+                busy,
             }),
         })
     }
@@ -646,7 +698,7 @@ impl Engine {
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The engine's thread: a current-thread runtime and a connection of its own.
-fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
+fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>, busy: Busy) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -669,6 +721,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
     runtime.block_on(tracing::Instrument::instrument(
         async move {
             let mut state = State {
+                busy,
                 backfill: Backfill::new(parts.backfill),
                 backfill_announced: None,
                 footprint: None,
@@ -710,7 +763,10 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             loop {
                 tokio::select! {
                     job = inbox.recv() => match job {
-                        Ok(job) => serve(job, &parts, &pool, &mut state).await,
+                        Ok(job) => {
+                            state.busy.set(format!("serving {job:?}"));
+                            serve(job, &parts, &pool, &mut state).await;
+                        }
                         // Every handle dropped: nothing more will be asked.
                         Err(_) => break,
                     },
@@ -746,10 +802,11 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // job arrives rather than waiting to be noticed here, which is
                 // what keeps that true now that a wave is more than one
                 // mailbox long. See `sync_wave`.
-                while inbox.is_empty()
+                while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !state.to_sync.is_empty()
                 {
+                    state.busy.set("a sync wave");
                     sync_wave(&parts, &pool, &mut state, &inbox).await;
                 }
 
@@ -763,10 +820,10 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // want next, and a queued operation is something they have already
                 // done. Speculation must not outrank it — a first sync of a large
                 // mailbox is thousands of bodies long.
-                while inbox.is_empty()
+                while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !has_queued_work(&parts, &pool)
-                    && pump_body(&parts, &pool, &mut state).await
+                    && pump_body(&parts, &pool, &mut state, &inbox).await
                 {}
 
                 // Then queue the next batch, and fetch that too. `seed` takes
@@ -780,16 +837,16 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // or the user is doing something), and topping up then would
                 // pull an entire archive into memory that policy has just said
                 // not to fetch.
-                while inbox.is_empty()
+                while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !has_queued_work(&parts, &pool)
                     && state.backfill.is_idle()
                     && top_up_backfill(&parts, &pool, &mut state) > 0
                 {
-                    while inbox.is_empty()
+                    while nothing_asked(&inbox)
                         && state.supervisor.link().is_online()
                         && !has_queued_work(&parts, &pool)
-                        && pump_body(&parts, &pool, &mut state).await
+                        && pump_body(&parts, &pool, &mut state, &inbox).await
                     {}
                 }
 
@@ -797,6 +854,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // so it goes last and races the inbox: a job arriving while an
                 // `IDLE` is held must not wait out the timeout.
                 if inbox.is_empty() && state.to_sync.is_empty() {
+                    state.busy.set("idle");
                     tokio::select! {
                         biased;
                         // Peeking rather than taking: whichever branch loses is
@@ -820,6 +878,9 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
 
 /// What the engine's thread keeps between jobs.
 struct State {
+    /// What this thread is doing right now, shared with the handle that will
+    /// one day wait for it. See [`Busy`].
+    busy: Busy,
     backfill: Backfill,
     /// When the body queue last said how far it had got.
     ///
@@ -967,7 +1028,27 @@ async fn handle_link_transition(parts: &EngineParts, pool: &Pool, state: &mut St
 /// `recv` would take the job and then be cancelled by the other branch of the
 /// `select!`, losing it. This only ever observes.
 async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
-    while inbox.is_empty() && !inbox.is_closed() {
+    while nothing_asked(inbox) {
+        tokio::time::sleep(WATCH_FLOOR).await;
+    }
+}
+
+/// Whether the engine may start — or keep doing — unattended work.
+///
+/// The guard every background loop shares: nothing is waiting in the inbox,
+/// and nobody has closed it. The second half is not implied by the first —
+/// a **closed** channel is also empty, so a loop gating on `is_empty` alone
+/// reads shutdown as leisure and drains a queue nobody is staying for
+/// (#759).
+fn nothing_asked(inbox: &async_channel::Receiver<Job>) -> bool {
+    inbox.is_empty() && !inbox.is_closed()
+}
+
+/// Resolve once every [`Engine`] handle is gone and the channel is closed —
+/// never otherwise. Polled, like [`wait_for_job`], and like it only ever
+/// observes.
+async fn wait_for_close(inbox: &async_channel::Receiver<Job>) {
+    while !inbox.is_closed() {
         tokio::time::sleep(WATCH_FLOOR).await;
     }
 }
@@ -1482,11 +1563,19 @@ impl Committed<'_> {
 /// queue is empty. One body per call on purpose: `Backfill::next_body` hands
 /// out one at a time and holds it until `finished` reports it, which is what
 /// bounds how long anything else can be stuck behind the backfill.
-async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool {
+async fn pump_body(
+    parts: &EngineParts,
+    pool: &Pool,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+) -> bool {
     let Some(claim) = state.backfill.next_body() else {
         return false;
     };
     let message = claim.request.message;
+    state
+        .busy
+        .set(format!("the body backfill (message {message})"));
 
     let connection = match pool.get() {
         Ok(connection) => connection,
@@ -1503,15 +1592,29 @@ async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool 
         }
     };
 
-    let outcome = backfill::fetch_body(
+    let fetch = backfill::fetch_body(
         &connection,
         &parts.blobs,
         parts.backend.as_ref(),
         &claim.request,
         &claim.cancel,
-    )
-    .await
-    .unwrap_or_else(|error| {
+    );
+    tokio::pin!(fetch);
+    // Shutdown must not wait for the wire: when the channel closes mid-fetch,
+    // fire the claim's token — the one [`Backfill::cancel`] would fire — so
+    // the fetch unwinds cooperatively instead of running to the command
+    // timeout, which is twelve times the shutdown grace (#759). Nothing is
+    // lost: what a cancelled fetch leaves unfetched stays `body_state <>
+    // 'full'`, and the next seed derives the queue from that.
+    let result = tokio::select! {
+        biased;
+        result = &mut fetch => result,
+        () = wait_for_close(inbox) => {
+            claim.cancel.cancel();
+            fetch.await
+        }
+    };
+    let outcome = result.unwrap_or_else(|error| {
         if let SyncError::Backend(backend) = &error {
             let moved = state.supervisor.observe(backend, Utc::now());
             announce_link(parts, state, moved);
@@ -1997,11 +2100,13 @@ async fn sync_wave(
                         message: error.message().to_string(),
                     });
                 }
-                // Not once a job is waiting: draining the backfill queue
+                // Not once a job is waiting — draining the backfill queue
                 // here is exactly the extra work a waiting job must not
-                // queue behind.
+                // queue behind — and re-checked between bodies, because a
+                // job (or the shutdown's close) can land mid-drain and this
+                // queue is the whole account's backlog (#759).
                 if !asked_to_stop {
-                    while pump_body(parts, pool, state).await {}
+                    while nothing_asked(inbox) && pump_body(parts, pool, state, inbox).await {}
                 }
             }
             _ = wait_for_job(inbox), if !asked_to_stop => {
@@ -2499,6 +2604,63 @@ fn with_connection<T>(
 
 #[cfg(test)]
 mod tests {
+    /// The warning for a thread that outstays the grace names what the
+    /// thread was doing, because "it did not stop" without *what* leaves a
+    /// bug report with nothing to chase (#759).
+    #[test]
+    fn the_stall_warning_names_what_the_engine_was_doing() {
+        use std::io::Write;
+
+        #[derive(Clone, Default)]
+        struct Captured(Arc<Mutex<Vec<u8>>>);
+        impl Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("not poisoned").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+            type Writer = Captured;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let busy = Busy::new();
+        busy.set("the body backfill (message 7)");
+        let thread = EngineThread {
+            handle: Mutex::new(Some(
+                std::thread::Builder::new()
+                    .spawn(|| std::thread::sleep(Duration::from_millis(200)))
+                    .expect("a sleeper thread"),
+            )),
+            busy,
+        };
+
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .finish();
+        // A deadline already in the past: the sleeper cannot have finished,
+        // so this warns immediately rather than costing the test a grace.
+        tracing::subscriber::with_default(subscriber, || thread.join_until(Instant::now()));
+
+        let log = String::from_utf8_lossy(&captured.0.lock().expect("not poisoned")).into_owned();
+        assert!(
+            log.contains("did not stop within"),
+            "the expired deadline logged no warning at all:\n{log}"
+        );
+        assert!(
+            log.contains("the body backfill (message 7)"),
+            "the warning does not say what was still running:\n{log}"
+        );
+    }
+
     /// What `sync_lanes` actually yields, pinned so the constants and the
     /// prose cannot drift apart again.
     ///
@@ -2598,6 +2760,7 @@ mod tests {
     /// [`queue_every_mailbox`]'s effect on `to_sync`.
     fn empty_state() -> State {
         State {
+            busy: Busy::new(),
             backfill: Backfill::new(BackfillPolicy::default()),
             backfill_announced: None,
             footprint: None,
