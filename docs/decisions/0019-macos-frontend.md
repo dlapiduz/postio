@@ -1,7 +1,9 @@
 # ADR 0019 — A native macOS frontend over `postio-session`
 
 - **Status:** Accepted — maintainer-directed (2026-08-27), **Q5a added
-  2026-08-27** ([#570](https://github.com/dlapiduz/postio/issues/570))
+  2026-08-27** ([#570](https://github.com/dlapiduz/postio/issues/570)),
+  **Q6 amended 2026-09-01** by ADR 0023
+  ([#768](https://github.com/dlapiduz/postio/issues/768))
 - **Date:** 2026-08-27
 - **Issue:** [#557](https://github.com/dlapiduz/postio/issues/557), under
   [#15](https://github.com/dlapiduz/postio/issues/15) and epic
@@ -382,10 +384,20 @@ and none is.
 This is the highest risk in the whole undertaking: two readers, two content
 security policies, two link policies, and the drift is invisible until somebody's
 mail phones home. The structural answer is that the CSP string, the document
-wrapper, the `@font-face` data URIs, the scroll markers and the absent-state
+wrapper, the `@font-face` rules, the scroll markers and the absent-state
 HTML all move into `postio-ui`, and both frontends call them. The CSP is
 asserted byte-for-byte, for blocked and allowed remote images, in `postio-ui`'s
 own tests.
+
+> **Amended 2026-09-01 (ADR 0023, [#768](https://github.com/dlapiduz/postio/issues/768)):**
+> this sentence said "the `@font-face` **data URIs**", and inlining a megabyte
+> of base64 into every document turned out to cost more than the interaction
+> budget allows. The faces are now served over a `postio-font:` custom scheme,
+> sibling to `postio-cid:`, and `font-src` is `postio-font:` rather than
+> `data:`. What moves into `postio-ui` is the faces and the handler that
+> resolves them; what Q6 claims is unchanged and is the reason that shape was
+> chosen over a GTK-only user stylesheet. **Swift's reader registers two
+> scheme handlers, not one.**
 
 Swift's entire responsibility for the reader is: build a hardened
 `WKWebViewConfiguration`, hand it a string, and refuse navigations. Every
