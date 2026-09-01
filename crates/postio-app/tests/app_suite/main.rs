@@ -12,6 +12,7 @@ mod attach_account;
 mod body_arrives;
 mod bulk_keystroke;
 mod click_preview;
+mod command_wiring;
 mod compose_detach;
 mod compose_typing;
 mod conversation_recipients;
@@ -72,6 +73,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "click_preview::clicking_a_message_fills_the_reading_pane",
         click_preview::clicking_a_message_fills_the_reading_pane as fn(),
+    ),
+    (
+        "command_wiring::every_command_id_is_handled_locally_or_wired_to_the_bus",
+        command_wiring::every_command_id_is_handled_locally_or_wired_to_the_bus as fn(),
     ),
     (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application",

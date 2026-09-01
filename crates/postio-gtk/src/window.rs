@@ -1550,6 +1550,14 @@ impl Window {
             CommandId::CheatSheet => self.toggle_cheatsheet(),
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
+            // The header button already flips this property directly
+            // (`window.rs`, `sidebar_toggle.connect_toggled`); this is the
+            // same call from the palette and `Ctrl+B`, which had no arm here
+            // at all — see #756.
+            CommandId::ToggleSidebar => {
+                let shell = self.shell();
+                shell.set_sidebar_visible(!shell.sidebar_visible());
+            }
             // One `Esc` closes one overlay, nearest first — and a selection
             // is the nearest thing of all once every overlay is shut. It is
             // also the only way out of one that does not require picking a
