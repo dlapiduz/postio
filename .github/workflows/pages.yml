@@ -58,6 +58,7 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Cache the mdbook binary
+        id: mdbook-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/mdbook
@@ -66,7 +67,14 @@ jobs:
       # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
       # floating latest, so a new mdbook release cannot change the deployed
       # site's rendering out from under a commit that touched nothing.
+      #
+      # Skipped outright on a cache hit: `cargo install` refuses to overwrite
+      # an existing binary ("binary `mdbook` already exists in destination")
+      # and exits 101, so restoring the cache and then installing over it
+      # fails the job. The key pins the version, so a hit is by construction
+      # the binary this step would have built (#760).
       - name: Install mdbook
+        if: steps.mdbook-cache.outputs.cache-hit != 'true'
         run: cargo install mdbook --locked --version 0.5.4
 
       - name: Build the book

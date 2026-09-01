@@ -68,6 +68,12 @@ const COMMON_WORD: &str = "regarding";
 /// How many distinct senders the corpus spreads its messages across.
 const SENDER_COUNT: u64 = 500;
 
+/// How many contacts the address book carries — the corpus' senders plus the
+/// long tail. Sized like a real mailbox's (#746 shipped against 18k), because
+/// sender affinity's cost multiplies by it and a near-empty table hid a
+/// per-candidate scan of the whole thing.
+const CONTACT_COUNT: u64 = 20_000;
+
 struct Corpus {
     database: Database,
     account_id: AccountId,
@@ -146,6 +152,34 @@ fn build_corpus() -> Corpus {
         }
         postio_index::index::index_body(&connection, message.id.get(), Some(&body))
             .expect("index body");
+    }
+    // #746: a contacts table at real-mailbox scale. Sender affinity's cost
+    // scales with `candidates × contacts`, and an empty table multiplies the
+    // pathological shape by zero — the store this bug shipped to had 18k
+    // contacts and every search took seconds while this bench stayed green.
+    // The corpus' own senders get affinity to exercise the probe's hit path;
+    // the rest is the long tail every real address book carries.
+    {
+        let mut insert = connection
+            .prepare(
+                "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
+                 VALUES (?1, ?2, ?2, ?3)",
+            )
+            .expect("prepare contact insert");
+        for i in 0..CONTACT_COUNT {
+            let address = if i < SENDER_COUNT {
+                format!("sender{i}@example.com")
+            } else {
+                format!("correspondent{i}@example.com")
+            };
+            insert
+                .execute(rusqlite::params![
+                    account.id.get(),
+                    address,
+                    rng.below(100) as i64
+                ])
+                .expect("seed contact");
+        }
     }
     connection
         .execute_batch("COMMIT")
