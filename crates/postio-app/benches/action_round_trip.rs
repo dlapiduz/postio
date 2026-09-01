@@ -192,10 +192,21 @@ fn bench_archive_round_trip(c: &mut Criterion) {
 
     for n in SIZES {
         c.bench_function(&format!("archive round trip, {n} selected"), |b| {
+            // `PerIteration`, not `SmallInput` (#622): `seeded` doesn't just
+            // build a value to hand `archive_and_apply` — it also overwrites
+            // `world.state`'s selection, which `archive_and_apply` reads back
+            // through `MessageTarget::Selection`, the same route a real `a`
+            // keypress takes. `SmallInput` collects a whole batch of `seeded`
+            // calls before running any routine, so only the batch's *last*
+            // selection survives to be read; every routine call after the
+            // first then finds its target already archived and is rejected.
+            // `PerIteration` runs one `seeded` immediately before each
+            // `archive_and_apply`, which is what this setup's side effect
+            // requires.
             b.iter_batched(
                 || world.seeded(n),
                 |_ids| world.archive_and_apply(),
-                BatchSize::SmallInput,
+                BatchSize::PerIteration,
             )
         });
     }
