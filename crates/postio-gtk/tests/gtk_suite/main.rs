@@ -70,6 +70,7 @@ mod gtk_sidebar_tree;
 mod gtk_style;
 mod gtk_thread;
 mod gtk_thread_scope;
+mod gtk_toggle_sidebar;
 mod gtk_window;
 mod gtk_window_run_search;
 mod no_stray_prints;
@@ -317,6 +318,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it",
         gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it
+            as fn(),
+    ),
+    (
+        "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
+        gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
     ),
     (
