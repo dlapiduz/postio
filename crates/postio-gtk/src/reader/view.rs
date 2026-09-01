@@ -702,6 +702,24 @@ fn hardened_settings() -> webkit6::Settings {
 /// impossible by stripping `<form>`, a redirect nothing here ever issues —
 /// is left to WebKit's normal handling, which for content with nowhere to go
 /// is to do nothing.
+/// Whether a navigation is one the pane hands to the desktop rather than
+/// following itself.
+///
+/// Exactly one kind is: a link the person reading deliberately clicked.
+/// Everything else — our own `load_html` (which arrives as
+/// [`NavigationType::Other`]), a fragment jump from `Reader::page_down`, a
+/// form submission, a reload — either is the pane doing its own job or is
+/// something a message must not be able to start. A predicate rather than an
+/// inline condition because it is the whole of the rule, and because the two
+/// enums are plain values: this is checkable without driving WebKit to a
+/// navigation, which nothing else here can do with JavaScript off.
+///
+/// [`NavigationType::Other`]: webkit6::NavigationType::Other
+fn leaves_the_pane(kind: webkit6::PolicyDecisionType, navigation: webkit6::NavigationType) -> bool {
+    kind != webkit6::PolicyDecisionType::Response
+        && navigation == webkit6::NavigationType::LinkClicked
+}
+
 fn handle_decide_policy(
     view: &webkit6::WebView,
     decision: &webkit6::PolicyDecision,
@@ -716,7 +734,7 @@ fn handle_decide_policy(
     let Some(mut action) = navigation.navigation_action() else {
         return false;
     };
-    if action.navigation_type() != webkit6::NavigationType::LinkClicked {
+    if !leaves_the_pane(kind, action.navigation_type()) {
         return false;
     }
     let Some(uri) = action.request().and_then(|request| request.uri()) else {
@@ -744,6 +762,41 @@ fn handle_decide_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #752: a clicked link goes to the desktop, and nothing else does.
+    ///
+    /// The second half is the load-bearing one. The pane renders by calling
+    /// `load_html`, which comes back through this same signal — so a rule
+    /// that intercepted more than `LinkClicked` would take the reader's own
+    /// documents away from it, and one that intercepted less would let a
+    /// message navigate the pane out from under the person reading it.
+    #[test]
+    fn only_a_clicked_link_leaves_the_reading_pane() {
+        assert!(leaves_the_pane(
+            webkit6::PolicyDecisionType::NavigationAction,
+            webkit6::NavigationType::LinkClicked,
+        ));
+        for navigation in [
+            // Our own `load_html`, and a `page_down` fragment jump.
+            webkit6::NavigationType::Other,
+            webkit6::NavigationType::FormSubmitted,
+            webkit6::NavigationType::BackForward,
+            webkit6::NavigationType::Reload,
+            webkit6::NavigationType::FormResubmitted,
+        ] {
+            assert!(
+                !leaves_the_pane(webkit6::PolicyDecisionType::NavigationAction, navigation),
+                "{navigation:?} is the pane's own business, not the desktop's"
+            );
+        }
+        assert!(
+            !leaves_the_pane(
+                webkit6::PolicyDecisionType::Response,
+                webkit6::NavigationType::LinkClicked,
+            ),
+            "a response decision is not a navigation to hand off"
+        );
+    }
 
     /// Issue #70, Cause A. Every one of these used to be the same thing on
     /// screen -- a blank pane -- and the pane following the cursor turned
