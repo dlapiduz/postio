@@ -19,8 +19,31 @@ use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 
-fn settle(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(120);
+/// Issue #741: a gate run once burned 120.59s here before failing, on a box
+/// that was building elsewhere at the time; the same test passed in 0.60s
+/// run alone minutes later. 120s was sized to never be reached, which made
+/// it free to spend in full whenever something really was wrong. Twenty
+/// seconds is still 20x what a bridge round trip costs in practice (see
+/// `bridge_latency`), so a genuine stall still has generous room, but a gate
+/// run can no longer lose two minutes finding out.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(20);
+
+/// The wall-clock cost, measured now, of a trivial round trip through the
+/// same WebKit bridge every reflection in this test depends on.
+///
+/// This is what turns a timeout into a diagnosis instead of a shrug: slow
+/// here means the machine was contended and the wait above was racing load,
+/// not a real regression; fast here means the report `settle` was waiting on
+/// was never going to arrive at all, which is the failure this test exists
+/// to catch.
+fn bridge_latency(composer: &composer::Composer) -> Duration {
+    let start = Instant::now();
+    composer.test_body_eval("'ping'");
+    start.elapsed()
+}
+
+fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + SETTLE_DEADLINE;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
@@ -28,7 +51,23 @@ fn settle(what: &str, done: impl Fn() -> bool) {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(done(), "timed out waiting for {what}");
+    if done() {
+        return;
+    }
+    let bridge = bridge_latency(composer);
+    if bridge > Duration::from_secs(1) {
+        panic!(
+            "timed out waiting for {what} after {SETTLE_DEADLINE:?} -- but a trivial \
+             bridge round trip alone just took {bridge:?}, so this machine is \
+             contended and the wait above was racing load, not a real regression; \
+             re-run somewhere quieter"
+        );
+    }
+    panic!(
+        "timed out waiting for {what} after {SETTLE_DEADLINE:?} -- the bridge itself \
+         just answered a trivial round trip in {bridge:?}, so the report this test \
+         was waiting on was never going to arrive"
+    );
 }
 
 fn pump() {
@@ -128,7 +167,7 @@ fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     composer.test_set_body("make this strong");
     composer.test_select_body(0, 5, 9);
     bold.emit_clicked();
-    settle("bold from the toolbar to land as Strong", || {
+    settle(&composer, "bold from the toolbar to land as Strong", || {
         matches!(
             composer.document().blocks.first(),
             Some(Block::Paragraph(inlines))
@@ -146,31 +185,32 @@ fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     // only the editor's format report can change the button.
     composer.test_select_body(0, 0, 2);
     settle(
+        &composer,
         "the bold toggle to clear once the caret leaves Strong",
         || !bold.is_active(),
     );
     // Bolding split the paragraph's text into three nodes; the Strong run
     // is the second. Back inside it, the report lights the toggle again.
     composer.test_select_body(1, 1, 3);
-    settle("the bold toggle to light inside Strong", || {
+    settle(&composer, "the bold toggle to light inside Strong", || {
         bold.is_active()
     });
 
     // ── clicking again toggles it off, in the document and the button ─────
     composer.test_select_body(1, 0, 4);
     bold.emit_clicked();
-    settle("bold to toggle back off", || {
+    settle(&composer, "bold to toggle back off", || {
         matches!(
             composer.document().blocks.first(),
             Some(Block::Paragraph(inlines))
                 if !inlines.iter().any(|inline| matches!(inline, Inline::Strong(_)))
         )
     });
-    settle("the toggle to follow", || !bold.is_active());
+    settle(&composer, "the toggle to follow", || !bold.is_active());
 
     // ── the quote button walks the same path as its command ──────────────
     quote.emit_clicked();
-    settle("the quote block to land", || {
+    settle(&composer, "the quote block to land", || {
         matches!(composer.document().blocks.first(), Some(Block::Quote(_)))
     });
 }
