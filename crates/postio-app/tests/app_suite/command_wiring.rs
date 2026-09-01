@@ -31,12 +31,14 @@
 //! `search_wiring.rs` already have, so those ids are named below instead,
 //! each with where its real answer lives.
 //!
-//! Sweeping for real also turned up ids that answer to nothing at all --
+//! Sweeping for real also turned up ids that answered to nothing at all --
 //! `PrevView`, `NextScope`, `AddLabel`, and (needing runtime confirmation)
-//! `OpenMessage`'s search-preview path. Those are #756's bug, not #756's
-//! fix: filed as #765, #766 and #767, and named below so this test stays
-//! green until each is actually wired, at which point removing it from the
-//! list is how a session confirms the fix.
+//! `OpenMessage`'s search-preview path. Those were #756's bug, not #756's
+//! fix: filed as #765, #766 and #767. `PrevView` and `NextScope` are wired
+//! now (`gtk_prev_view.rs`, `gtk_next_scope.rs` prove it for real, through
+//! `Window::act`); `AddLabel` and `OpenMessage` are still named below so
+//! this test stays green until each is actually wired, at which point
+//! removing it from the list is how a session confirms the fix.
 //!
 //! No real dispatcher subscriber besides the spy is ever installed
 //! (`commands::install` is never called, and neither is
@@ -86,7 +88,12 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
 /// invocation, not because nothing answers them -- `Back` with nothing to
 /// back out of, or `Thread` with no row under the cursor, is a no-op by
 /// design.
-const FOLLOW_DRILL_IN_OWNED: &[CommandId] = &[CommandId::Back, CommandId::Thread];
+const FOLLOW_DRILL_IN_OWNED: &[CommandId] = &[
+    CommandId::Back,
+    CommandId::Thread,
+    // #765: the keyboard-only sibling of `Back`, same split, same reason.
+    CommandId::PrevView,
+];
 
 /// Answered by `Composer::dispatch`, a `connect_command` subscriber this
 /// sweep does not install (`postio_gtk::composer::install` is never
@@ -138,8 +145,6 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 /// entry once its issue lands a real handler; the sweep will fail the same
 /// way it did for `ToggleSidebar` if one is removed too early.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    (CommandId::PrevView, "#765"),
-    (CommandId::NextScope, "#765"),
     (CommandId::AddLabel, "#766"),
     (CommandId::OpenMessage, "#767"),
 ];

@@ -49,7 +49,9 @@ mod gtk_list_focus_return;
 mod gtk_list_recycling;
 mod gtk_list_reload;
 mod gtk_move_picker;
+mod gtk_next_scope;
 mod gtk_parts;
+mod gtk_prev_view;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
 mod gtk_reading_pane;
@@ -196,8 +198,16 @@ const CASES: &[(&str, fn())] = &[
         gtk_move_picker::m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move as fn(),
     ),
     (
+        "gtk_next_scope::g_a_cycles_the_strip_the_same_way_clicking_its_rows_does",
+        gtk_next_scope::g_a_cycles_the_strip_the_same_way_clicking_its_rows_does as fn(),
+    ),
+    (
         "gtk_parts::the_parts_panel_walks_a_message_without_fetching_any_of_it",
         gtk_parts::the_parts_panel_walks_a_message_without_fetching_any_of_it as fn(),
+    ),
+    (
+        "gtk_prev_view::h_steps_back_out_of_a_thread_the_same_way_escape_does",
+        gtk_prev_view::h_steps_back_out_of_a_thread_the_same_way_escape_does as fn(),
     ),
     (
         "gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time",
