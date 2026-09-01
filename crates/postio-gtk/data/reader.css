@@ -80,8 +80,28 @@ p {
   margin: 0 0 1em 0;
 }
 
+/* Links look like links (#752). Colour alone was doing the whole job, which
+ * left the reader relying on the engine's default underline for the only
+ * other cue — and said nothing at all about hover or keyboard focus. The
+ * underline is stated here so it is Postio's decision rather than WebKit's,
+ * and offset so it does not cut through descenders at body size. */
 a {
   color: var(--r-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* `:focus-visible`, not `:focus`: a link the keyboard reached should say so,
+ * one the pointer clicked should not keep a ring afterwards. */
+a:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-radius);
 }
 
 img {
