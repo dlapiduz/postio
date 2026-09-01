@@ -85,6 +85,13 @@ sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
 # and ccache is what lets the second one cost seconds. Wired in automatically
 # via scripts/cc-wrapper.sh; without ccache the build is unchanged. #736.
 sudo dnf install ccache
+
+# Optional but recommended for linking postio-app (GTK+WebKit): measured
+# 36-56% lower peak RSS at the link step than the default lld, with
+# wall-clock roughly a wash. Wired in automatically via
+# scripts/linker-wrapper.sh; without mold the build links with whatever `cc`
+# resolves to by default.
+sudo dnf install mold
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
