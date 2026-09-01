@@ -8,8 +8,10 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use gtk::gdk;
+use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ActionId, CommandId, Context};
 use postio_gtk::finder::{Mode, Query};
@@ -166,6 +168,98 @@ pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
     assert_eq!(finder.query(), Query::new(), "and leaves nothing behind");
 
     window.destroy();
+}
+
+/// Typing a mode prefix must not warn GTK (#758).
+///
+/// `type_into`, below, drives the field with `set_text`, which never opens a
+/// GTK "user action" — that is exactly why the existing prefix-absorption
+/// assertions above cannot see this bug. `insert-at-cursor` is the signal
+/// GTK's own input-method commit path emits for a real keystroke (wrapped in
+/// `begin_user_action`/`end_user_action`), so emitting it here reproduces
+/// the nesting a real keystroke causes.
+pub fn typing_a_mode_prefix_does_not_warn_gtk() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let finder = window.finder();
+
+    let warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let handler_id =
+        glib::log_set_handler(Some("Gtk"), glib::LogLevels::LEVEL_WARNING, false, false, {
+            let warnings = warnings.clone();
+            move |domain, _level, message| {
+                warnings
+                    .lock()
+                    .unwrap()
+                    .push(format!("{}: {message}", domain.unwrap_or("?")));
+            }
+        });
+    let _guard = LogHandlerGuard(Some(handler_id));
+
+    // ── typing each mode prefix as the first character ───────────────────
+    for prefix in ["#", "@", ">"] {
+        window.close_finder();
+        window.open_finder(Mode::Search);
+        pump();
+        field(&window).emit_by_name::<()>("insert-at-cursor", &[&prefix]);
+        pump();
+        assert_eq!(
+            finder.query().text,
+            "",
+            "`{prefix}` should still be absorbed, not left in the text"
+        );
+    }
+    assert!(
+        warnings.lock().unwrap().is_empty(),
+        "typing a mode prefix should not warn GTK: {:?}",
+        warnings.lock().unwrap()
+    );
+
+    // ── press_backspace's PopChip branch, audited under the same watch ───
+    // (finder.rs:827-857): it runs from a capture-phase key controller, so
+    // it never nests inside GTK's own user action — but nothing proved that
+    // until now.
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "from:ada@example.com report".into(),
+    });
+    pump();
+    field(&window).set_position("from:ada@example.com".len() as i32);
+    assert!(
+        finder.press_backspace(),
+        "the caret sits at the chip's edge"
+    );
+    pump();
+    assert_eq!(finder.query().text, "report");
+    assert!(
+        warnings.lock().unwrap().is_empty(),
+        "popping a chip should not warn GTK either: {:?}",
+        warnings.lock().unwrap()
+    );
+
+    window.destroy();
+}
+
+/// Removes the log handler on the way out, panic or not, so a failing case
+/// cannot leave a dangling handler for whichever case the harness runs next.
+struct LogHandlerGuard(Option<glib::LogHandlerId>);
+
+impl Drop for LogHandlerGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.0.take() {
+            glib::log_remove_handler(Some("Gtk"), id);
+        }
+    }
 }
 
 /// Canvas 1b's folders, for `#` to find.
