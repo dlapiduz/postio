@@ -198,6 +198,14 @@ it does and does not do.
 Move an issue out of a milestone the moment it stops earning its place.
 A milestone that only grows is a wish list.
 
+**Cut releases frequently rather than accumulating one big next release.**
+Once v1 (everything docs/PRODUCT.md §23 promises) is done, the next
+milestone is v0.2, not a second v1-sized bucket. Once a milestone's
+sentence is true, tag and ship it, open the next one, and move issues into
+it as they earn their place — don't let post-v1 work pile up nameless while
+everyone waits for a bigger release to feel ready. A thin v0.2 that ships is
+worth more than a fat one that doesn't.
+
 ## Your report
 
 The maintainer runs you on a loop and reads the report. This is the one
