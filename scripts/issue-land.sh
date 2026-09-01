@@ -167,6 +167,14 @@ fi
 HOST_RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-}"
 unset RUSTUP_TOOLCHAIN
 
+# Whether the session had committed everything before this script touched the
+# tree. Captured here because `cargo fmt` is about to make that unknowable:
+# after it runs, "there are uncommitted changes" no longer distinguishes work
+# the session forgot to commit from whitespace this script just rewrote. See
+# the amend below.
+WORK_WAS_COMMITTED=0
+[ -z "$(git status --porcelain)" ] && WORK_WAS_COMMITTED=1
+
 # This worktree is private, so formatting the whole thing is safe here. In the
 # shared checkout it would reach into files another session has open, which is
 # why CLAUDE.md forbids it there and permits it here.
@@ -183,6 +191,42 @@ echo "[timing] rustfmt: $(( $(date +%s) - PHASE_START ))s"
 # already on `main`. That is exactly how #269's PNG got through unscanned,
 # and would have done the same for a real leak. #270.
 git add -A
+
+# Settle who owns the staged changes *now*, before the gates rather than after
+# them. Two failure shapes, and the old ordering handled both badly by leaving
+# this until after clippy and the per-crate suites had run:
+#
+#   * A session that committed its work and then ran this script had `cargo
+#     fmt` rewrite whitespace underneath it, and was told "Uncommitted
+#     changes: pass -m" -- asked for a commit message for changes it did not
+#     make, about work it had already committed. The formatter's output
+#     belongs to the commit it reformats, so it is amended into HEAD.
+#   * A session that genuinely forgot to commit still has to say what the
+#     commit is called, and finding that out is worth ten seconds, not the
+#     ten-plus minutes of gates it used to run first.
+#
+# `git write-tree` below hashes the staged tree, and committing does not
+# change it, so the gates cache key is the same either way.
+# `--gates-only` is exempt: it promises to check without committing, and an
+# amend is a commit. It leaves rustfmt's changes staged, as it always did.
+if [ "$GATES_ONLY" != 1 ] && [ -n "$(git status --porcelain)" ] && [ -z "$MSG" ]; then
+    OWN_COMMITS=$(git rev-list --count "origin/$BASE..HEAD" 2>/dev/null || echo 0)
+    if [ "$WORK_WAS_COMMITTED" = 1 ] && [ "$OWN_COMMITS" -gt 0 ]; then
+        echo "--- rustfmt touched a committed tree; amending ---"
+        echo "Your work was committed before this run and the only changes are"
+        echo "the ones cargo fmt just made, so they go into the commit they"
+        echo "reformat rather than asking you for a message:"
+        echo "    $(git log -1 --format=%s)"
+        git commit -q --amend --no-edit
+    else
+        echo "Uncommitted changes: pass -m \"<type>(<scope>): <summary>\"," >&2
+        echo "or commit them yourself first." >&2
+        echo >&2
+        echo "Checked before the gates deliberately: they take minutes, and" >&2
+        echo "this answer does not change once they pass." >&2
+        exit 2
+    fi
+fi
 
 # Green gates are recorded against the exact content they proved, and a tree
 # that has not changed a byte since is not re-proven. Long commands on this
@@ -247,11 +291,12 @@ fi
 [ "$GATES_ONLY" = 1 ] && { echo; echo "gates passed; nothing committed."; exit 0; }
 
 if [ -n "$(git status --porcelain)" ]; then
-    if [ -z "$MSG" ]; then
-        echo "Uncommitted changes: pass -m \"<type>(<scope>): <summary>\"," >&2
-        echo "or commit them yourself first." >&2
-        exit 2
-    fi
+    # Only reachable with a message. The no-message case was settled before
+    # the gates ran -- amended into HEAD when the changes were rustfmt's own,
+    # refused there otherwise -- so nobody is asked for a commit message after
+    # sitting through ten minutes of clippy for an answer that was knowable
+    # before it started.
+    #
     # Already staged, above -- before the invariants ran rather than here.
     git commit -m "$MSG
 
@@ -490,23 +535,59 @@ while :; do
     sleep "$LANDED_POLL"
 done
 
+# Out of patience is not out of options. The deadline above is a guess at how
+# long replication takes; the PR's own state is a fact about whether the merge
+# happened. MERGED means GitHub completed it and the only thing outstanding is
+# the new tip becoming visible here -- so keep waiting rather than hand back a
+# failure for work that is already on the base branch. #749's landing spent
+# its 120s, reported "MERGE DID NOT LAND", and the commits were there a minute
+# later; the session then had to verify by hand what this loop existed to
+# answer.
+#
+# This does not weaken #312's guard, which is the case this whole block is
+# for: success is still only ever declared by *seeing the subjects arrive*.
+# A PR that says MERGED while its commits never appear still fails, just
+# later and with the extra waiting spent on the one state where waiting is
+# known to be the right move.
+if [ -n "$MISSING" ]; then
+    STATE=$(gh pr view --json state --jq .state 2>/dev/null || echo "unknown")
+    if [ "$STATE" = "MERGED" ]; then
+        echo
+        echo "GitHub says the PR is MERGED but origin/$BASE has not shown the"
+        echo "commits yet after ${LANDED_TIMEOUT}s. That is replication lag, not a"
+        echo "failed merge, so this waits rather than giving up."
+        # 300s, not longer: the lag this exists for resolves in seconds to a
+        # couple of minutes, while the state it must not hide -- #312's merge
+        # that put nothing anywhere -- is permanent, and making a session wait
+        # ten minutes to be told so is its own cost. The branch is preserved
+        # either way, so the price of the wait is patience, not safety.
+        MERGED_DEADLINE=$(( $(date +%s) + ${POSTIO_MERGED_TIMEOUT:-300} ))
+        while [ -n "$MISSING" ]; do
+            [ "$(date +%s)" -lt "$MERGED_DEADLINE" ] || break
+            sleep "$LANDED_POLL"
+            git fetch -q origin "$BASE"
+            MISSING=$(missing_from "$(git log "origin/$BASE" --format=%s)")
+        done
+        [ -n "$MISSING" ] || echo "the commits are on origin/$BASE now."
+    fi
+fi
+
 if [ -n "$MISSING" ]; then
     printf '%s\n' "$MISSING" | while IFS= read -r subject; do
         echo "not on origin/$BASE: $subject" >&2
     done
-    # What the PR itself says, because it is the one fact that tells "your
-    # work is unlanded" from "the ref never arrived": a MERGED state here
-    # means something went wrong with this check rather than with the merge,
-    # and the instructions below would be the wrong thing to follow.
-    STATE=$(gh pr view --json state --jq .state 2>/dev/null || echo "unknown")
     echo >&2
-    echo "MERGE DID NOT LAND after ${LANDED_TIMEOUT}s. gh reported success and" >&2
-    echo "origin/$BASE does not carry the commits above. The PR itself says:" >&2
+    echo "MERGE DID NOT LAND. gh reported success and origin/$BASE does not" >&2
+    echo "carry the commits above. The PR itself says:" >&2
     echo "    state: $STATE" >&2
     if [ "$STATE" = "MERGED" ]; then
-        echo "which disagrees with $BASE. Fetch again before doing anything --" >&2
-        echo "if the commits are there, the work landed and only this check" >&2
-        echo "was wrong; release the worktree as usual." >&2
+        echo "which disagrees with $BASE, and waiting the extra" >&2
+        echo "${POSTIO_MERGED_TIMEOUT:-300}s did not resolve it -- so this is no longer" >&2
+        echo "the replication lag that wait is for. Fetch again before doing" >&2
+        echo "anything; if the commits are there under different hashes the" >&2
+        echo "work landed and release the worktree as usual. If they are not," >&2
+        echo "the PR merged something other than this branch -- check what it" >&2
+        echo "points at before re-landing." >&2
         exit 1
     fi
     echo "The remote branch $BRANCH is deliberately NOT deleted -- with the PR" >&2
