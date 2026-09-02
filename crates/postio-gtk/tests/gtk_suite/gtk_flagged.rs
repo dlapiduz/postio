@@ -193,6 +193,159 @@ pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     window.destroy();
 }
 
+/// A store whose Flagged/Snoozed membership can shrink mid-test, the way
+/// unflagging or waking a snooze does on a live one — #773.
+#[derive(Default)]
+struct LiveStore {
+    flagged: RefCell<u32>,
+    snoozed: RefCell<u32>,
+}
+
+impl MailboxSource for LiveStore {
+    fn mailboxes(&self, account: AccountId) -> MailboxFuture {
+        let mut inbox = Mailbox::new(account, "INBOX", Some('/'));
+        inbox.id = MailboxId::new(INBOX);
+        inbox.role = MailboxRole::Inbox;
+        inbox.counts = MailboxCounts {
+            total: 10,
+            unread: 0,
+            flagged: *self.flagged.borrow(),
+            snoozed: *self.snoozed.borrow(),
+        };
+        Box::pin(async move { Ok(vec![inbox]) })
+    }
+}
+
+impl MessageSource for LiveStore {
+    fn fetch(&self, request: PageRequest) -> PageFuture {
+        let total = match request.scope {
+            ListScope::Flagged(_) => *self.flagged.borrow(),
+            ListScope::Snoozed(_) => *self.snoozed.borrow(),
+            ListScope::Mailbox(id) if id.get() == INBOX => 10,
+            ListScope::Mailbox(_) | ListScope::Account(_) | ListScope::Thread(_) => 0,
+        };
+        Box::pin(async move {
+            let end = (request.offset + request.limit).min(total);
+            let rows = (request.offset..end)
+                .map(|position| Row {
+                    id: MessageId::new(position as i64 + 1),
+                    thread: None,
+                    from: None,
+                    subject: Some(format!("message {position}")),
+                    preview: None,
+                    received_at: Utc
+                        .timestamp_opt(1_700_000_000 - position as i64, 0)
+                        .unwrap(),
+                    seen: false,
+                    flagged: true,
+                    answered: false,
+                    draft: false,
+                    has_attachments: false,
+                    thread_count: 1,
+                    participants: Vec::new(),
+                })
+                .collect();
+            Ok(Page { total, rows })
+        })
+    }
+}
+
+pub fn flagged_and_snoozed_update_live_on_a_membership_change() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let account = AccountId::new(ACCOUNT);
+    let other_account = AccountId::new(ACCOUNT + 1);
+    let window = Window::default();
+    window.present();
+    let store = Rc::new(LiveStore {
+        flagged: RefCell::new(3),
+        snoozed: RefCell::new(2),
+    });
+    let feeds = window.install_feeds(account, "lena@example.com", store.clone(), store.clone());
+    pump_until(|| labels(&window).len() == 5);
+
+    // ── Flagged: unflagging a message live removes its row ────────────────
+    click_folder(&window, "Flagged");
+    pump_until(|| window.list().model().n_items() == 3);
+
+    *store.flagged.borrow_mut() = 2;
+    feeds.messages.apply(&postio_core::Event::MessagesChanged {
+        account,
+        messages: vec![MessageId::new(3)],
+    });
+    pump_until(|| window.list().model().n_items() == 2);
+    assert_eq!(
+        window.list().model().n_items(),
+        2,
+        "unflagging removed a row live, with the count correct afterwards"
+    );
+
+    // ── new mail changes nothing while Flagged is in view ──────────────────
+    feeds.messages.apply(&postio_core::Event::NewMail {
+        account,
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(99)],
+    });
+    pump();
+    assert_eq!(
+        window.list().model().n_items(),
+        2,
+        "a delivery is neither flagged nor snoozed; it must not appear here"
+    );
+
+    // ── a different account's membership change reloads nothing ───────────
+    feeds.messages.apply(&postio_core::Event::MessagesChanged {
+        account: other_account,
+        messages: vec![MessageId::new(1)],
+    });
+    pump();
+    assert_eq!(
+        window.list().model().n_items(),
+        2,
+        "another account's flag change cannot affect this one's Flagged list"
+    );
+
+    // ── Snoozed: the same three properties, on the other smart folder ─────
+    click_folder(&window, "Snoozed");
+    pump_until(|| window.list().model().n_items() == 2);
+
+    *store.snoozed.borrow_mut() = 1;
+    feeds.messages.apply(&postio_core::Event::MessagesChanged {
+        account,
+        messages: vec![MessageId::new(2)],
+    });
+    pump_until(|| window.list().model().n_items() == 1);
+    assert_eq!(
+        window.list().model().n_items(),
+        1,
+        "waking a snooze removed a row live, with the count correct afterwards"
+    );
+
+    feeds.messages.apply(&postio_core::Event::NewMail {
+        account,
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(100)],
+    });
+    pump();
+    assert_eq!(
+        window.list().model().n_items(),
+        1,
+        "a delivery is not snoozed either"
+    );
+
+    window.destroy();
+}
+
+fn pump() {
+    while glib::MainContext::default().iteration(false) {}
+}
+
 /// Select a folder the way a click does: through the row widget, not through
 /// an id. The synthetic row's stand-in id is deliberately private, and a test
 /// that reached for it would be testing something no user can do.
