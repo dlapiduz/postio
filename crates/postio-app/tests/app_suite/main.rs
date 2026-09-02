@@ -20,6 +20,7 @@ mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_recipients;
 mod cursor_preview;
+mod degraded_unified;
 mod drag_out_portal;
 mod drag_out_wiring;
 mod dwell_wiring;
@@ -123,6 +124,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "drag_out_wiring::a_message_in_the_list_can_be_dragged_out_as_a_file",
         drag_out_wiring::a_message_in_the_list_can_be_dragged_out_as_a_file as fn(),
+    ),
+    (
+        "degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it",
+        degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it
+            as fn(),
     ),
     (
         "dwell_wiring::resting_on_a_message_marks_it_read_and_sweeping_past_does_not",

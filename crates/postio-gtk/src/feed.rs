@@ -191,6 +191,14 @@ struct Inner {
     /// search wired to it, which is the only reason this is an `Option`.
     hits: RefCell<Option<Rc<dyn ResultSource>>>,
     errors: RefCell<Vec<ErrorHandler>>,
+    /// Told whenever the list is pointed at a different scope.
+    ///
+    /// What the pane says about the rows depends on *which* scope they came
+    /// from — an aggregate view answers ADR 0005 Q10's rule and a folder does
+    /// not — so a scope change has to re-derive it. Nothing else did: the
+    /// pane was refreshed on a status change and on rows arriving, and
+    /// switching from a folder to the unified list is neither.
+    opened: RefCell<Vec<Box<dyn Fn()>>>,
     /// Told when a result set takes the list, with how many hits it holds.
     ///
     /// The `Feed` is what changes mode, so it is what says so. Anything that
@@ -371,6 +379,7 @@ impl Feed {
             results: RefCell::new(None),
             hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
+            opened: RefCell::new(Vec::new()),
             on_results: RefCell::new(Vec::new()),
         }))
     }
@@ -397,6 +406,19 @@ impl Feed {
         // for a page. The reply caches page 0, so the view's own first
         // request finds it already there.
         inner.clone().request(0);
+        for handler in inner.opened.borrow().iter() {
+            handler();
+        }
+    }
+
+    /// Called whenever the list is pointed at a different scope.
+    ///
+    /// Separate from [`connect_results`](Self::connect_results): that one is
+    /// about a result set arriving, this one about the list being aimed
+    /// somewhere else, and a pane that reads the scope has to hear about the
+    /// second even when the first never happens.
+    pub fn connect_opened(&self, handler: impl Fn() + 'static) {
+        self.0.opened.borrow_mut().push(Box::new(handler));
     }
 
     /// The mailbox in view, if the list is showing one.

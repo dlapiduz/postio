@@ -563,21 +563,37 @@ impl ListStateView {
 
     /// The state currently on screen, if any.
     pub fn state(&self) -> Option<State> {
-        let (status, item_count, stored, queued, searching) = self.imp().inputs.borrow().clone();
-        derive(&status, item_count, stored, queued, searching.as_deref())
+        self.derived()
+    }
+
+    /// The one place the choice between the single-account states and the
+    /// aggregate ones is made.
+    ///
+    /// Shared by [`state`](Self::state) and [`render`](Self::render) because
+    /// they answered separately once and disagreed: `render` learned about
+    /// aggregate views and `state` did not, so the pane drew the right thing
+    /// and every reader of the accessor -- the tests, and the screen reader
+    /// label that follows them -- was told the old answer. A widget whose
+    /// picture and whose description of itself come from different code is a
+    /// widget that can be wrong in exactly the way nothing catches.
+    fn derived(&self) -> Option<State> {
+        let imp = self.imp();
+        let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
+        let aggregate = imp.accounts.borrow().clone();
+        match &aggregate {
+            Some(accounts) => derive_aggregate(accounts, item_count, stored, searching.as_deref()),
+            None => derive(&status, item_count, stored, queued, searching.as_deref()),
+        }
     }
 
     fn render(&self) {
         let imp = self.imp();
         let now = Instant::now();
-        let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
-        let aggregate = imp.accounts.borrow().clone();
-        let state = match &aggregate {
-            Some(accounts) => {
-                derive_aggregate(accounts, item_count, stored, searching.as_deref())
-            }
-            None => derive(&status, item_count, stored, queued, searching.as_deref()),
+        let (status, item_count) = {
+            let inputs = imp.inputs.borrow();
+            (inputs.0.clone(), inputs.1)
         };
+        let state = self.derived();
 
         self.set_visible(state.is_some());
         if let Some(state) = &state {
