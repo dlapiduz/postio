@@ -168,6 +168,24 @@ pub enum Error {
         known: u32,
     },
 
+    /// A migration left a row pointing at something that is not there.
+    ///
+    /// Foreign keys are enforced everywhere else, but they have to be off
+    /// while a migration rebuilds a table — a `DROP TABLE` with them on fires
+    /// `ON DELETE CASCADE` on the children of the table being replaced. This
+    /// is the check that runs afterwards, so a rebuild that dropped a
+    /// reference fails the migration instead of leaving a database that looks
+    /// right and is not.
+    #[error("migrating left {rows} row(s) in `{table}` pointing at a `{parent}` that is not there")]
+    MigrationBrokeReferences {
+        /// The table holding the dangling rows.
+        table: String,
+        /// The table they point at.
+        parent: String,
+        /// How many rows are dangling.
+        rows: usize,
+    },
+
     /// An already-applied migration no longer matches the one that ran.
     /// Migrations are forward-only: add a new one rather than editing history.
     #[error("migration {version} ({name}) no longer matches the database: {detail}")]

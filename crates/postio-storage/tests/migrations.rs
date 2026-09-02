@@ -873,3 +873,137 @@ fn looking_up_a_message_by_remote_id_uses_an_index() {
         "plan was:\n{plan}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A rebuilt table keeps what hangs off it — #674
+// ---------------------------------------------------------------------------
+
+/// The rows a draft owns, so a rebuild that loses them is visible.
+fn draft_recipient_count(connection: &Connection) -> i64 {
+    connection
+        .query_row(
+            "SELECT count(*) FROM recipients WHERE draft_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count recipients")
+}
+
+#[test]
+fn rebuilding_the_drafts_table_does_not_cascade_its_children_away() {
+    // SQLite cannot widen a `CHECK`, so 0004 rebuilds `drafts` -- and a
+    // `DROP TABLE` prepared with foreign keys enabled performs an implicit
+    // `DELETE FROM` that *does* fire `ON DELETE CASCADE`. `recipients` and
+    // `operation_queue` both reference `drafts(id)` that way, so a rebuild run
+    // with foreign keys on silently deletes every draft's recipients and every
+    // queued send: the schema survives, the mail does not.
+    //
+    // The runner therefore turns foreign keys off around the migrations and
+    // checks referential integrity before declaring success. This is the test
+    // that says so, because the failure is silent by construction -- the
+    // migration reports success either way. `recipients` and `attachments`
+    // are the two tables that cascade from `drafts`; `operation_queue` names
+    // its target by `(target_kind, target_id)` rather than by a foreign key,
+    // so a queued send survives regardless.
+    let mut connection = empty();
+
+    // A database at the version *before* the rebuild, with a draft that owns
+    // rows in both tables that cascade from it.
+    migrations::migrate_with(&mut connection, &migrations::all()[..3]).expect("migrate to 3");
+    connection
+        .execute_batch(
+            "INSERT INTO accounts
+                    (id, display_name, address, incoming_host, incoming_port,
+                     incoming_username, outgoing_host, outgoing_port,
+                     outgoing_username, created_at)
+                  VALUES (1, 'Ada', 'ada@example.com', 'imap.example.com', 993,
+                          'ada@example.com', 'smtp.example.com', 465,
+                          'ada@example.com', 0);
+             INSERT INTO drafts (id, account_id, subject, state, created_at, updated_at)
+                  VALUES (1, 1, 'Half-written', 'queued', 0, 0);
+             INSERT INTO addresses (id, address, address_normalized)
+                  VALUES (1, 'grace@example.net', 'grace@example.net');
+             INSERT INTO recipients (draft_id, kind, position, address_id)
+                  VALUES (1, 'to', 0, 1);
+             INSERT INTO attachments (draft_id, filename, mime_type, size)
+                  VALUES (1, 'contract.pdf', 'application/pdf', 4096);",
+        )
+        .expect("seed a draft with children");
+    assert_eq!(
+        draft_recipient_count(&connection),
+        1,
+        "the fixture is wrong"
+    );
+
+    migrations::migrate_with(&mut connection, migrations::all()).expect("migrate to head");
+
+    assert_eq!(
+        draft_recipient_count(&connection),
+        1,
+        "the rebuild cascaded the draft's recipients away -- the address it \
+         was going to is gone and the draft is unsendable"
+    );
+    let attached: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM attachments WHERE draft_id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count the draft's attachments");
+    assert_eq!(
+        attached, 1,
+        "the file the user attached was cascaded away with the table"
+    );
+
+    let draft: (i64, String) = connection
+        .query_row("SELECT id, subject FROM drafts", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("the draft itself");
+    assert_eq!(draft, (1, "Half-written".to_owned()), "ids must not move");
+}
+
+#[test]
+fn a_migrated_database_still_enforces_foreign_keys() {
+    // Turning them off for the rebuild must not leave them off: the pragma is
+    // per-connection, and a connection that comes back from `migrate` without
+    // it would let every later write break referential integrity.
+    let connection = migrated();
+
+    let on: i64 = connection
+        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+        .expect("read the pragma");
+    assert_eq!(on, 1, "migrate left foreign keys disabled");
+}
+
+#[test]
+fn the_drafts_table_accepts_unconfirmed_and_still_refuses_nonsense() {
+    let connection = migrated();
+    connection
+        .execute_batch(
+            "INSERT INTO accounts
+                    (id, display_name, address, incoming_host, incoming_port,
+                     incoming_username, outgoing_host, outgoing_port,
+                     outgoing_username, created_at)
+                  VALUES (1, 'Ada', 'ada@example.com', 'imap.example.com', 993,
+                          'ada@example.com', 'smtp.example.com', 465,
+                          'ada@example.com', 0);",
+        )
+        .expect("an account");
+
+    connection
+        .execute(
+            "INSERT INTO drafts (account_id, subject, state, created_at, updated_at)
+                  VALUES (1, 'May have gone', 'unconfirmed', 0, 0)",
+            [],
+        )
+        .expect("`unconfirmed` is a state the schema knows");
+
+    connection
+        .execute(
+            "INSERT INTO drafts (account_id, subject, state, created_at, updated_at)
+                  VALUES (1, 'Nonsense', 'uncertain', 0, 0)",
+            [],
+        )
+        .expect_err("the CHECK is still a CHECK");
+}
