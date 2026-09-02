@@ -213,6 +213,35 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
     );
     assert_eq!(kept.to.len(), 1, "including the recipient");
 
+    // ── …but a forward asked for next is the forward, not the kept draft ─
+    // #691, reported by a user: close a draft with anything in it, then ask
+    // for a reply or a forward, and the retained draft won — the composer
+    // reopened on the old composition and the forward was thrown away
+    // without a word. `c` means "show me the draft I kept"; naming a
+    // specific message does not.
+    press(&window, "Escape", gdk::ModifierType::empty());
+    settle();
+    let mut forward = Draft::new(AccountId::UNASSIGNED);
+    forward.kind = DraftKind::Forward;
+    forward.subject = "Fwd: the tide gate interlock".to_owned();
+    forward.body = MessageBody {
+        text: Some("> the message being forwarded".to_owned()),
+        html: None,
+    };
+    composer.open(forward);
+    settle();
+    let showing = composer.draft();
+    assert_eq!(
+        showing.subject, "Fwd: the tide gate interlock",
+        "the forward the user asked for was discarded and the kept draft \
+         shown instead"
+    );
+    assert_eq!(
+        showing.kind,
+        DraftKind::Forward,
+        "and it is still a forward, not a composition wearing its subject"
+    );
+
     // ── A reply starts in the body ───────────────────────────────────────
     composer.discard();
     settle();
