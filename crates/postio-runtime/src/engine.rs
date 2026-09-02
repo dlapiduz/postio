@@ -850,24 +850,29 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>, busy
                     {}
                 }
 
-                // Then wait to be told about mail. This is the branch that idles,
-                // so it goes last and races the inbox: a job arriving while an
-                // `IDLE` is held must not wait out the timeout.
+                // Then wait to be told about mail. This is the branch that
+                // idles, so it goes last — and `keep_watch` itself watches
+                // the inbox and the queue, so a job arriving while an `IDLE`
+                // is held does not wait out the timeout.
+                //
+                // It used to be a `select!` here that *dropped* `keep_watch`
+                // when a job arrived, and that drop is a wedge twice over: a
+                // step the watcher handed out is outstanding until reported,
+                // so the dropped future left its mailbox unwatched for the
+                // rest of the session — never idled, never polled — and the
+                // pool got a session back that was still inside `IDLE`,
+                // poisoning the next checkout. A delivery then sat unseen
+                // until reconnect. #755 is where that surfaced; the wedge
+                // itself predates the conversation pane.
                 if inbox.is_empty() && state.to_sync.is_empty() {
                     state.busy.set("idle");
-                    tokio::select! {
-                        biased;
-                        // Peeking rather than taking: whichever branch loses is
-                        // cancelled, and a job taken off the queue by a branch
-                        // that is then dropped is a job nobody serves.
-                        _ = wait_for_job(&inbox) => {}
-                        // A local mutation is not a job — nobody tells this thread
-                        // that a row was written — and an `IDLE` is held for
-                        // minutes. Without this branch, a flag set or a draft
-                        // autosaved while connected would wait out the whole watch
-                        // before going anywhere.
-                        _ = wait_for_queued_work(&parts, &pool) => {}
-                        _ = keep_watch(&parts, &mut state) => {}
+                    keep_watch(&parts, &pool, &mut state, &inbox).await;
+                    // Defence in depth: `keep_watch` now runs its step to
+                    // completion and always reports it, but a step that ever
+                    // again vanishes unreported must not leave its mailbox
+                    // treated as covered for ever.
+                    if let Some(watcher) = state.watcher.as_mut() {
+                        watcher.interrupted(Utc::now());
                     }
                 }
             }
@@ -1127,11 +1132,36 @@ async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
     state.watcher = Some(watcher);
 }
 
+/// Resolve once something needs the engine's attention: a job in the inbox,
+/// or the account's queue holding something due.
+///
+/// What lets [`keep_watch`] end a held `IDLE` early without being dropped
+/// mid-command. Both halves only ever observe.
+async fn interruption(parts: &EngineParts, pool: &Pool, inbox: &async_channel::Receiver<Job>) {
+    tokio::select! {
+        _ = wait_for_job(inbox) => {}
+        // A local mutation is not a job — nobody tells this thread that a
+        // row was written — and an `IDLE` is held for minutes. Without this
+        // half, a flag set or a draft autosaved while connected would wait
+        // out the whole watch before going anywhere.
+        _ = wait_for_queued_work(parts, pool) => {}
+    }
+}
+
 /// Do whatever the watcher says is due, and queue a sync if anything moved.
 ///
-/// Returns when there is something to report or the step ends. The caller
-/// races this against the inbox, so an `IDLE` being held never delays a job.
-async fn keep_watch(parts: &EngineParts, state: &mut State) {
+/// Returns when there is something to report, the step ends, or something
+/// else needs the engine — a job, queued work. The interruption is
+/// **cooperative**: the step's own cancel token is fired and the command
+/// awaited to completion, never dropped. A dropped command is a wedge twice
+/// over — the watcher never hears about its step, and the pool gets back a
+/// session still inside `IDLE` that poisons the next checkout (#755).
+async fn keep_watch(
+    parts: &EngineParts,
+    pool: &Pool,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+) {
     if !state.supervisor.link().is_online() {
         // Nothing to watch over. Wait rather than spin.
         //
@@ -1144,11 +1174,21 @@ async fn keep_watch(parts: &EngineParts, state: &mut State) {
             link = %postio_model::address::redact_addresses(&format!("{:?}", state.supervisor.link())),
             "not connected; nothing to watch"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        // Dropping a sleep is harmless, so the plain race is fine here.
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            _ = interruption(parts, pool, inbox) => {}
+        }
+        return;
+    }
+    if state.watcher.is_none() {
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            _ = interruption(parts, pool, inbox) => {}
+        }
         return;
     }
     let Some(watcher) = state.watcher.as_mut() else {
-        tokio::time::sleep(POLL_INTERVAL).await;
         return;
     };
 
@@ -1168,15 +1208,35 @@ async fn keep_watch(parts: &EngineParts, state: &mut State) {
             path,
             timeout,
             cancel,
-        } => match parts.backend.idle(&path, timeout, &cancel).await {
-            Ok(events) => watcher.woke(mailbox, &events, Utc::now()),
-            Err(error) => {
-                watcher.failed(mailbox, Utc::now());
-                let moved = state.supervisor.observe(&error, Utc::now());
-                announce_link(parts, state, moved);
-                return;
+        } => {
+            // Run to completion, whatever else happens: an interruption
+            // fires the token and *waits* — `round_of_idle` observes it
+            // mid-read, winds down with `DONE`, and the session goes back
+            // to the pool usable. Dropping this future instead returns a
+            // session still inside `IDLE`, and the next checkout hangs on
+            // it (#755).
+            let command = parts.backend.idle(&path, timeout, &cancel);
+            tokio::pin!(command);
+            let result = tokio::select! {
+                biased;
+                result = &mut command => result,
+                () = interruption(parts, pool, inbox) => {
+                    cancel.cancel();
+                    command.await
+                }
+            };
+            match result {
+                Ok(events) => watcher.woke(mailbox, &events, Utc::now()),
+                Err(error) => {
+                    watcher.failed(mailbox, Utc::now());
+                    let moved = state.supervisor.observe(&error, Utc::now());
+                    announce_link(parts, state, moved);
+                    return;
+                }
             }
-        },
+        }
+        // A `STATUS` is one round trip; an interruption waits it out rather
+        // than dropping a half-read reply back into the pool.
         Watch::Poll { mailbox, path } => match parts.backend.status(&path).await {
             Ok(status) => watcher.observed(mailbox, &status, Utc::now()),
             Err(error) => {
@@ -1192,7 +1252,10 @@ async fn keep_watch(parts: &EngineParts, state: &mut State) {
             let delay = until
                 .map(|at| (at - Utc::now()).to_std().unwrap_or_default())
                 .unwrap_or(POLL_INTERVAL);
-            tokio::time::sleep(delay.clamp(WATCH_FLOOR, POLL_INTERVAL)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(delay.clamp(WATCH_FLOOR, POLL_INTERVAL)) => {}
+                _ = interruption(parts, pool, inbox) => {}
+            }
             return;
         }
     };
