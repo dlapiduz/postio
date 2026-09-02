@@ -219,6 +219,26 @@ fn shutdown_finishes_the_queued_work_and_joins() {
 }
 
 #[test]
+fn a_handler_slower_than_the_shutdown_timeout_does_not_panic_the_caller() {
+    // #817: a handler that is merely slow -- not stuck -- must not turn an
+    // ordinary scheduling delay into a torn-down caller. `shutdown_timeout`
+    // governs how long `stop` waits for the pump to drain, but missing that
+    // window once is not proof of a hang: `Runtime::shutdown_timeout`, called
+    // right after, gives the still-running pump a second, equal-length
+    // chance regardless of what the first wait concluded.
+    let (bridge, _events) = Bridge::builder()
+        .worker_threads(1)
+        .shutdown_timeout(Duration::from_millis(20))
+        .build(handler_fn(|_command: Command, _events| async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }))
+        .expect("the runtime starts");
+
+    bridge.commands().send(Command::Refresh).expect("running");
+    bridge.shutdown();
+}
+
+#[test]
 fn shutdown_does_not_wait_for_detached_background_work() {
     // A stuck sync task must not hold the application open at quit.
     let (bridge, _events) = Bridge::new(handler_fn(|_command: Command, _events| async move {
