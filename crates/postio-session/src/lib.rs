@@ -114,6 +114,11 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
             postio_config::AttachmentFetch::Eager => postio_runtime::AttachmentPolicy::Eager,
             postio_config::AttachmentFetch::Never => postio_runtime::AttachmentPolicy::Never,
         },
+        // `0` is how a config file says "no inline rule at all", which the
+        // policy spells `None` — the difference between a cap of zero and no
+        // cap matters nowhere else, and a cap of zero would mean the same
+        // thing anyway.
+        max_inline_bytes: (sync.max_inline_bytes > 0).then_some(sync.max_inline_bytes),
         ..postio_runtime::BackfillPolicy::default()
     }
 }

@@ -2852,6 +2852,7 @@ dependencies = [
  "postio-search",
  "postio-smtp",
  "postio-storage",
+ "postio-sync",
  "postio-ui",
  "tempfile",
  "tokio",

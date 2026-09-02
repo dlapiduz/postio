@@ -69,3 +69,32 @@ fn a_file_that_will_not_parse_leaves_the_defaults_standing() {
         AttachmentPolicy::OnOpen
     );
 }
+
+#[test]
+fn the_inline_cap_on_disk_reaches_the_policy() {
+    // #751: `max_inline_bytes` was ADR 0017's rule and nothing read it. The
+    // same shape of gap `body_fetch` had — a field with a docstring, wired to
+    // nothing — so it is worth one assertion that the file reaches the engine.
+    let file = config_file("[sync]\nmax_inline_bytes = 4096\n");
+    assert_eq!(
+        backfill_policy_at(file.path()).max_inline_bytes,
+        Some(4_096)
+    );
+}
+
+#[test]
+fn a_zero_inline_cap_turns_the_rule_off_rather_than_capping_at_nothing() {
+    let file = config_file("[sync]\nmax_inline_bytes = 0\n");
+    assert_eq!(backfill_policy_at(file.path()).max_inline_bytes, None);
+}
+
+#[test]
+fn a_file_that_says_nothing_still_carries_inline_images_with_the_text() {
+    let file = config_file("");
+    assert_eq!(
+        backfill_policy_at(file.path()).max_inline_bytes,
+        Some(256 * 1024),
+        "the default has to be the one ADR 0017 named, or an untouched \
+         install reads HTML mail with broken boxes in it"
+    );
+}
