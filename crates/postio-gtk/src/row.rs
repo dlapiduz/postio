@@ -1564,16 +1564,34 @@ fn participants_line(participants: &[EmailAddress]) -> String {
         let display = address.display().to_string();
         // A display name is "Ada Norwood"; an address falls back to its local
         // part, which is what a sender without a name has to identify them.
+        // Trailing punctuation goes with the quotes. "Bergstrom, Tove" is
+        // what Exchange and most directories write, and its first token is
+        // `Bergstrom,` -- which the join below then turns into
+        // "Bergstrom,, Jonas" (#826). Trimmed rather than split on, because
+        // the comma is the only part that is noise: the surname before it is
+        // exactly the short name this wants.
         let name = display
             .split_whitespace()
             .next()
             .unwrap_or_default()
             .trim_matches(|c: char| c == '"' || c == '\'')
+            .trim_end_matches([',', ';'])
             .to_string();
         if name.contains('@') {
             return name.split('@').next().unwrap_or(&name).to_string();
         }
-        if name.is_empty() { display } else { name }
+        if !name.is_empty() {
+            return name;
+        }
+        // Nothing usable was left -- a display name that is only punctuation,
+        // or none at all. The local part is what identifies a sender who has
+        // not given a name, which is the same answer the `@` branch above
+        // reaches for; falling back to the raw display here would put the
+        // punctuation straight back into the row.
+        address
+            .local_part()
+            .map(str::to_owned)
+            .unwrap_or_else(|| display.clone())
     };
 
     // Distinct first, on the full name: one person writing five times is one
@@ -1651,6 +1669,53 @@ mod tests {
         assert_eq!(
             participants_line(&people(&[("Site Office", "site@example.com")])),
             "Site Office"
+        );
+    }
+
+    #[test]
+    fn a_last_first_display_name_does_not_leave_its_comma_behind() {
+        // "Bergstrom, Tove" is what Exchange and most directories put in a
+        // display name, and shortening it to the first whitespace token kept
+        // the comma -- so joining the names produced "Bergstrom,, Jonas",
+        // which reads as a rendering fault rather than as two people (#826).
+        assert_eq!(
+            participants_line(&people(&[
+                ("Quinn Abara", "quinn@example.net"),
+                ("Bergstrom, Tove", "tove@example.com"),
+                ("Jonas Vek", "jonas@example.org"),
+            ])),
+            "Quinn, Bergstrom, Jonas"
+        );
+    }
+
+    #[test]
+    fn a_last_first_name_survives_the_elision_too() {
+        // The elided branch joins with ", " as well, so it has the same
+        // problem and needs the same proof -- this is the shape the shot in
+        // #826 actually showed.
+        assert_eq!(
+            participants_line(&people(&[
+                ("Quinn Abara", "quinn@example.net"),
+                ("Ada Norwood", "ada@example.com"),
+                ("Priya Raman", "priya@example.org"),
+                ("Bergstrom, Tove", "tove@example.com"),
+                ("Jonas Vek", "jonas@example.org"),
+            ])),
+            "Quinn .. Bergstrom, Jonas"
+        );
+    }
+
+    #[test]
+    fn a_trailing_comma_is_not_mistaken_for_the_whole_name() {
+        // The trim must not eat a name that is only punctuation, or a sender
+        // whose display name is a stray comma would vanish from the row
+        // rather than being named by their address.
+        assert_eq!(
+            participants_line(&people(&[
+                (",", "odd@example.com"),
+                ("Jonas Vek", "jonas@example.org"),
+            ])),
+            "odd, Jonas"
         );
     }
 
