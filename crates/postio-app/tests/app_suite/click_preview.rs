@@ -22,6 +22,11 @@
 //! `BodyState::NotFetched`, so the pane here fills with the "Downloading this
 //! message" plate rather than a body — which is the right assertion anyway:
 //! what #70 is about is the pane saying *something*.
+//!
+//! Runs in the Flagged view since #755, for `cursor_preview.rs`'s reason: a
+//! folder row is a conversation now and opens the conversation pane, and
+//! what this file constrains is the single-message reader answering a
+//! click. The fixture flags every message so the view holds them all.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
@@ -70,9 +75,39 @@ pub fn clicking_a_message_fills_the_reading_pane() {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
+    // Every message but the newest flagged, before anything is wired: the
+    // Flagged view is where rows are genuinely single messages (see the
+    // module comment). The newest is left out because the folder view the
+    // window opens on has already reported it — its row *is* that message —
+    // and the cursor's dedup would then swallow the Flagged view's own
+    // first report, leaving the pane unfilled.
+    let flagged_total: u32 = {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                [],
+            )
+            .expect("the fixture writes");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count")
+    };
+
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+    let wiring = Wiring::new(
+        database.clone(),
+        blobs,
+        bridge.handle(),
+        sink,
+        bridge.commands(),
+    );
 
     let window = Window::default();
     window.present();
@@ -80,12 +115,25 @@ pub fn clicking_a_message_fills_the_reading_pane() {
 
     // ── the same call `run` makes ────────────────────────────────────────
     let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let _ = &wired;
 
+    // Into the Flagged view, the way the sidebar's row would take it — but
+    // only after the sidebar's own default pick has landed: the folder list
+    // loads asynchronously and picking the default folder is what it does
+    // on arrival, which would stomp a scope opened before it. Then wait for
+    // the swap itself, because the model keeps the folder's rows until the
+    // Flagged page answers.
     let list = window.list();
     assert!(
         settle_until(|| list.model().n_items() > 0),
-        "the list is empty, so there is nothing to click"
+        "the opening folder never filled, so no scope can be left"
+    );
+    wired
+        .feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled, so there is nothing to click"
     );
 
     // The autoselect fills the pane now (#601), so `window.reading()` is no

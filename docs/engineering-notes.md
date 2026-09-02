@@ -2777,6 +2777,22 @@ absence made every `tempfile::tempdir()` in a fresh worktree fail with
 NotFound — three sessions hit that in one day. The interim tell above stays
 true for anyone still on the shared directory.
 
+**The daemon can also wedge outright: every build on the box stalls at once,
+and the tell is idle CPU under minutes-old `rustc` processes** (2026-09-01,
+observed once). Three sessions' compiles — trivial, metadata-only crates
+among them — sat at 0% CPU for ten minutes while `sccache --show-stats`
+still answered; the proof it was wedged rather than slow was the stats
+themselves: `Compile requests executed` did not advance over a full minute
+on an idle machine. The cache was at its 10 GiB cap at the time, which may
+or may not be the cause. The remedy is the same as the stale-`TMPDIR` case
+above — `sccache --stop-server`, and the next `cargo` starts a fresh one —
+with the same caveat that other sessions' in-flight compiles die with it;
+when they are the stalled ones, that is a mercy, and cargo restarts them
+against the new daemon on its own. Diagnose before reaching for it:
+`cat /proc/loadavg` low, `ps -eo pid,stat,etime,%cpu,args | grep rustc`
+old and idle, and the executed count frozen between two
+`sccache --show-stats` reads a minute apart.
+
 ## Working in a shared git tree
 
 These matter regardless of where work is tracked

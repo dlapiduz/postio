@@ -681,6 +681,17 @@ impl MessageListView {
         self.move_cursor_to(0);
     }
 
+    /// Whether a person has ever chosen a row here, as opposed to the
+    /// autoselect landing on one.
+    ///
+    /// The flag #71's dwell gates on, readable so the conversation pane can
+    /// gate its own opening dwell on the same rule (#755): showing mail for
+    /// the autoselect is right, and starting a read-clock for it is the
+    /// unread signal destroying itself.
+    pub fn landed(&self) -> bool {
+        self.imp().landed.get()
+    }
+
     /// Move the keyboard to the last row — `G`.
     pub fn last_row(&self) {
         match self.imp().model.n_items() {

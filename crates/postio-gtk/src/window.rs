@@ -447,16 +447,11 @@ impl Window {
         // column beside it is now an *index* into this rather than a second
         // copy of it, so both are filled from the same rows and the pane's
         // own policy decides where focus opens.
-        let pane = self.conversation();
-        pane.open(view.rows());
-        pane.widget().set_visible(true);
-        if let Some(reader) = self.imp().reader.get() {
-            reader.widget().set_visible(false);
-        }
+        self.show_conversation(view.rows());
         // The column follows the pane rather than the other way round on
         // open: the pane knows which message is the first unread, and the
         // index has to point at whatever the content opened on.
-        if let Some(focused) = pane.focused() {
+        if let Some(focused) = self.conversation().focused() {
             view.focus_message(focused);
         }
 
@@ -472,18 +467,13 @@ impl Window {
         let thread = self.thread();
         thread.set_visible(false);
         thread.close();
-        // Hand the reading pane back to the single-message reader. The
-        // conversation keeps its widgets rather than tearing them down: the
-        // next drill-in refills it, and rebuilding a stack of readers for a
-        // round trip would make the cheap direction the expensive one.
-        if let Some(pane) = self.imp().conversation.get() {
-            pane.widget().set_visible(false);
-        }
-        if let Some(reader) = self.imp().reader.get()
-            && self.imp().reading.get()
-        {
-            reader.widget().set_visible(true);
-        }
+        // The column goes; the conversation stays (#755). The pane is the
+        // conversation (ADR 0015 Q4) and the list cursor is still on the row
+        // that opened it, so swapping a single-message reader in on the way
+        // out would answer `Esc` with a surface nobody asked for. The swap
+        // back to the reader lives in [`Window::show_message`] and
+        // [`Window::show_absent`] now, and runs when the cursor lands on a
+        // row that is not a conversation.
         if let Some(pane) = self.imp().list_pane.get() {
             pane.set_visible(true);
         }
@@ -551,6 +541,137 @@ impl Window {
             }
         }
         rows
+    }
+
+    /// Show `row`'s whole conversation in the reading pane (ADR 0015 Q4).
+    ///
+    /// The half of [`Window::open_thread`] that is about content rather than
+    /// the index column: landing on a thread row — the cursor, a click,
+    /// `Enter` — opens the conversation here, and `t`'s own job is only ever
+    /// the column (#755). Same local-first shape too: what the list already
+    /// holds goes up synchronously, and the whole conversation — cross-folder,
+    /// pages the list never scrolled to — supersedes it when the
+    /// `ListScope::Thread` read answers.
+    pub fn open_conversation(&self, row: &crate::list::Row) {
+        let Some(id) = row.thread else { return };
+        // The list holds one row per conversation, so this first paint is
+        // usually one entry. It is still worth doing: the pane answers the
+        // cursor inside the interaction budget, and the rest of the
+        // conversation arrives under it.
+        // Whether a person chose this row. The autoselect routes here too —
+        // a window must not open beside an empty pane (#601) — but only a
+        // chosen landing may start the read-clock, which is #71's rule on
+        // the list applied to the pane it now feeds.
+        let chosen = self.list().landed();
+        self.show_conversation(crate::thread::arrange(
+            &self.thread_rows(id),
+            crate::thread::Order::Oldest,
+            false,
+        ));
+        if !chosen {
+            self.conversation().cancel_dwell();
+        }
+        // What the *subset* open chose to focus. The read below completes
+        // the opening, so its policy runs again over the whole conversation
+        // — the real first unread may be a message the list never held —
+        // unless focus has already moved, which makes it the user's.
+        let opened_on = self.conversation().focused();
+
+        let Some(source) = self.imp().messages.borrow().clone() else {
+            return;
+        };
+        let future = source.fetch(crate::feed::PageRequest {
+            scope: crate::feed::ListScope::Thread(id),
+            page: 0,
+            offset: 0,
+            limit: THREAD_PAGE,
+        });
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method,
+                // and the trait's contract is that what it returns is pollable
+                // on the main context -- `postio-app` implements it by
+                // spawning the runtime work and handing back a channel
+                // receive.
+                match future.await {
+                    Ok(page) => window.fill_conversation(id, page.rows, opened_on, chosen),
+                    // The pane keeps what the list gave it — a subset rather
+                    // than nothing. Worth a line, not a banner.
+                    Err(message) => tracing::debug!(message, "the thread could not be read"),
+                }
+            }
+        ));
+    }
+
+    /// Put a conversation in the reading pane, and the reader aside.
+    ///
+    /// The tail of [`Window::show_thread`] that is not about the column, so
+    /// [`Window::open_conversation`] can raise the pane without one. Expects
+    /// `rows` oldest first — [`crate::thread::arrange`]'s order — because
+    /// that is how the pane numbers them.
+    pub fn show_conversation(&self, rows: Vec<crate::list::Row>) {
+        let pane = self.conversation();
+        pane.open(rows);
+        pane.widget().set_visible(true);
+        if let Some(reader) = self.imp().reader.get() {
+            reader.widget().set_visible(false);
+        }
+    }
+
+    /// Whether the conversation pane is up and showing `thread`.
+    ///
+    /// What lets a caller skip re-opening a conversation the pane already
+    /// has — re-running the opening policy would move focus out from under
+    /// somebody who had already walked away from the first unread.
+    pub fn conversation_on(&self, thread: postio_model::ids::ThreadId) -> bool {
+        self.imp().conversation.get().is_some_and(|pane| {
+            pane.widget().is_visible()
+                && pane
+                    .rows()
+                    .first()
+                    .is_some_and(|row| row.thread == Some(thread))
+        })
+    }
+
+    /// Put the whole conversation's rows into the pane, if it is still
+    /// showing `thread`.
+    ///
+    /// Focus is the user's if they have moved it since the subset opened —
+    /// restored, same contract as [`Window::refill_conversation`] — and the
+    /// opening policy's otherwise: this read *completes* the opening, and
+    /// the first unread of the whole conversation may be a message the
+    /// subset never held.
+    fn fill_conversation(
+        &self,
+        thread: postio_model::ids::ThreadId,
+        rows: Vec<crate::list::Row>,
+        opened_on: Option<postio_model::ids::MessageId>,
+        chosen: bool,
+    ) {
+        if !self.conversation_on(thread) {
+            return;
+        }
+        let pane = self.conversation();
+        let focused = pane.focused();
+        pane.open(crate::thread::arrange(
+            &rows,
+            crate::thread::Order::Oldest,
+            false,
+        ));
+        if let Some(focused) = focused
+            && opened_on.is_some_and(|opened_on| opened_on != focused)
+            && pane.rows().iter().any(|row| row.id == focused)
+        {
+            // The user moved focus since the subset opened, so this is their
+            // gesture continuing — the dwell the restore starts is theirs.
+            pane.focus_message(focused);
+        } else if !chosen {
+            // Still the autoselect's opening: the policy's focus stands, and
+            // the read-clock stays off exactly as it did the first time.
+            pane.cancel_dwell();
+        }
     }
 
     /// The composer, installing it into the reading pane the first time
@@ -797,6 +918,10 @@ impl Window {
     pub fn show_message(&self, body: &postio_model::MessageBody, sender: Option<&str>) {
         let reader = self.reader();
         reader.render(body, sender);
+        // A single message takes the pane back from a conversation (#755):
+        // the cursor moved to a row that is not one, so the stack would be
+        // showing mail the user has left.
+        self.take_pane_from_conversation();
         self.imp().reading.set(true);
         // A claim, not a sync: opening a message is the gesture that takes
         // the pane — over the search preview when `Enter` opens a result —
@@ -816,9 +941,23 @@ impl Window {
     /// [`show_message`]: Self::show_message
     pub fn show_absent(&self, state: crate::reader::Absent) {
         self.reader().show_absent(state);
+        // As [`show_message`]: a wait plate is still a single message.
+        self.take_pane_from_conversation();
         self.imp().reading.set(true);
         self.shell().claim_reading();
         self.sync_reading_pane();
+    }
+
+    /// Hide the conversation pane so the reader can have its place.
+    ///
+    /// Only the manual half of [`Window::show_conversation`]'s swap is
+    /// undone here: the reader's own widget is the arbiter's to show, and
+    /// `claim_reading` follows every call to this — putting it back by hand
+    /// would also put it back while the composer holds the pane.
+    fn take_pane_from_conversation(&self) {
+        if let Some(pane) = self.imp().conversation.get() {
+            pane.widget().set_visible(false);
+        }
     }
 
     /// Empty the reading pane — the folder changed, or the message went away.

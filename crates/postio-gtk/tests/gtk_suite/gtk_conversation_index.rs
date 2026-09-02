@@ -111,12 +111,17 @@ pub fn the_column_and_the_conversation_share_one_current_message() {
          leaves the column pointing somewhere else"
     );
 
-    // ── leaving hands the pane back ─────────────────────────────────────
+    // ── leaving closes the column, and only the column ──────────────────
+    // #755: the pane is the conversation (ADR 0015 Q4) and the list cursor
+    // is still on the row that opened it, so `Esc` must not swap a
+    // single-message reader in on the way out. The pane leaves when the
+    // cursor lands on a row that is not a conversation — `show_message`'s
+    // job now, not this one's.
     window.close_thread();
     while gtk::glib::MainContext::default().iteration(false) {}
     assert!(
-        !pane.widget().is_visible(),
-        "the conversation gives the reading pane back on the way out"
+        pane.widget().is_visible(),
+        "closing the index column must not take the conversation with it"
     );
 
     window.close();
