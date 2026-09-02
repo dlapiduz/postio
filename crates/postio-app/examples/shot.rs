@@ -748,6 +748,10 @@ fn main() -> glib::ExitCode {
             move |_message| {
                 let reader = window.new_reader();
                 reader.header().widget().set_visible(false);
+                // Same reason `reading::install`'s real factory hides it
+                // (#822): the entry already draws its own Reply/Reply
+                // all/Forward row.
+                reader.set_actions_visible(false);
                 reader.render(
                     &postio_model::MessageBody {
                         text: None,

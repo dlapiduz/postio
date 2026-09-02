@@ -153,6 +153,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader as fn(),
     ),
     (
+        "gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar",
+        gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar as fn(),
+    ),
+    (
         "gtk_conversation_index::the_column_and_the_conversation_share_one_current_message",
         gtk_conversation_index::the_column_and_the_conversation_share_one_current_message as fn(),
     ),

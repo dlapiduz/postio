@@ -310,6 +310,73 @@ pub fn reader_for_finds_only_an_expanded_entrys_own_reader() {
     window.close();
 }
 
+/// An expanded entry's own reader does not draw its own action bar (#822).
+///
+/// The entry already carries a Reply/Reply all/Forward row of its own
+/// (`build_entry`'s `conversation-actions`, deliberately without Archive —
+/// every other verb is the conversation's, not one message in the stack's).
+/// A factory that hands back a reader with its action bar still showing
+/// draws that a second time, in a different style, with a fourth button
+/// (Archive) nothing in this pane should offer per-message. This is what a
+/// real factory (`postio_app::reading`'s `set_reader_factory` closure) must
+/// suppress the same way it already hides the reader's own identity line.
+pub fn an_expanded_entrys_reader_does_not_draw_its_own_action_bar() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(move |_message| {
+        let reader = stub_reader();
+        // What `postio_app::reading`'s real factory must do too.
+        reader.set_actions_visible(false);
+        reader
+    });
+
+    window.set_child(Some(&pane.widget()));
+    window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let messages: Vec<Row> = (0..4).map(|id| message(id, id < 2)).collect();
+    pane.open(messages);
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let expanded = MessageId::new(2);
+    assert!(
+        pane.is_expanded(expanded),
+        "the setup for this test changed"
+    );
+    let reader = pane
+        .reader_for(expanded)
+        .expect("an expanded entry has a reader");
+
+    assert!(
+        !reader.actions_visible(),
+        "the factory suppressed the bar before handing the reader back"
+    );
+
+    // A body landing later re-renders into the same reader (#739) — the bar
+    // must stay suppressed, not come back the moment something draws.
+    reader.render(
+        &postio_model::MessageBody {
+            text: Some("a body that landed".into()),
+            html: None,
+        },
+        None,
+    );
+    assert!(
+        !reader.actions_visible(),
+        "render() must not undo a suppression set before it"
+    );
+
+    window.close();
+}
+
 /// Pump the main loop for `how_long`, so a timer can fire.
 fn settle_for(how_long: std::time::Duration) {
     let deadline = std::time::Instant::now() + how_long;
