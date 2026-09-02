@@ -783,9 +783,10 @@ async fn a_draft_already_accepted_is_never_submitted_again() {
 /// duplicating. It settles loudly instead, and the wording deliberately does
 /// not claim the message failed to go.
 ///
-/// This is the interim ADR 0021 names: #674 replaces the outcome with
-/// `Outcome::Uncertain` and a visible `Unconfirmed` draft. What must not
-/// change with it is that no second submission happens.
+/// The outcome is `uncertain` rather than `failed` (#674): "failed" means
+/// *did not happen*, and the runtime turns that straight into an error the
+/// user reads. What has not changed, and must not, is that no second
+/// submission happens.
 #[tokio::test]
 async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back() {
     let database = test_support::memory();
@@ -830,12 +831,26 @@ async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back(
         report.deferred, 0,
         "and it is not queued to try later either"
     );
-    assert_eq!(report.failed.len(), 1, "{report:?}");
-    let reason = &report.failed[0].reason;
+    assert!(
+        report.failed.is_empty(),
+        "a send that may have gone must not travel as a failure: {report:?}"
+    );
+    assert_eq!(report.uncertain.len(), 1, "{report:?}");
+    let reason = &report.uncertain[0].reason;
     assert!(
         reason.contains("may"),
         "the reason has to leave the question open rather than claim it did \
          not go: {reason}"
+    );
+    assert_eq!(
+        drafts
+            .get(draft_id)
+            .expect("read")
+            .expect("the draft is still there")
+            .state,
+        postio_model::DraftState::Unconfirmed,
+        "and the durable half says so too -- the queue row is settled and \
+         gone, so the draft is the only place this question survives"
     );
 }
 
@@ -1033,7 +1048,13 @@ async fn a_send_interrupted_once_the_payload_was_on_the_wire_is_not_retried() {
         "a deferral is a retry with a timer on it, which is the one thing \
          this must not be: {report:?}"
     );
-    assert_eq!(report.failed.len(), 1, "{report:?}");
+    assert!(
+        report.failed.is_empty(),
+        "a send that may have arrived must not travel as a failure -- the \
+         runtime turns `failed` straight into an error the user reads \
+         (#674): {report:?}"
+    );
+    assert_eq!(report.uncertain.len(), 1, "{report:?}");
 
     let draft = DraftRepository::new(&connection)
         .get(draft_id)
@@ -1041,9 +1062,10 @@ async fn a_send_interrupted_once_the_payload_was_on_the_wire_is_not_retried() {
         .expect("a draft that may have been sent is not deleted");
     assert_eq!(
         draft.state,
-        postio_model::DraftState::Sending,
-        "the mark stays exactly where it is, so `resolve` refuses to submit \
-         this again on the next process too"
+        postio_model::DraftState::Unconfirmed,
+        "the draft carries the question durably: the queue row is settled \
+         and gone, and this is where the user finds it again (#674). \
+         `resolve` still refuses to submit it on the next process."
     );
     assert!(
         connector.log().written.ends_with(b"\r\n.\r\n"),
