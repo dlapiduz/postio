@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -148,6 +149,38 @@ def main() -> int:
                 "POSTIO_HEADLESS=0 still bypasses everything",
                 out == "<unset>",
                 f"WAYLAND_DISPLAY was {out!r}",
+            )
+
+            # ── a socket with nothing behind it (#794) ────────────────────
+            #
+            # mutter can bind the socket and then exit -- on a machine with no
+            # DRM device, which is every GitHub-hosted runner. `-S` still
+            # passes, and committing to that display is worse than never
+            # starting one: the runner unsets DISPLAY and forces
+            # GDK_BACKEND=wayland, so the *working* fallback display is thrown
+            # away too and every GTK test skips itself for want of a display
+            # it actually had. #781 spent a day on that symptom.
+            #
+            # A fresh runtime dir, so the marker and socket from the cases
+            # above cannot decide this one.
+            stale_runtime = base / "stale"
+            stale_runtime.mkdir()
+            stale = stale_runtime / DISPLAY
+            sock = socket.socket(socket.AF_UNIX)
+            sock.bind(str(stale))
+            sock.close()  # a socket file with no listener behind it
+            out = run(test_bin, stub_dir, stale_runtime)
+            case(
+                "a socket with no compositor behind it falls back",
+                out == "<unset>",
+                f"WAYLAND_DISPLAY was {out!r}: the runner committed to a dead "
+                "compositor and took the session's display with it",
+            )
+            case(
+                "and says so once, so the next binary does not re-pay for it",
+                (stale_runtime / f"{DISPLAY}.unavailable").exists(),
+                "no marker was left; twenty binaries would each wait for the "
+                "compositor to fail to start",
             )
         finally:
             pids = base / "stubs" / "mutter.pids"
