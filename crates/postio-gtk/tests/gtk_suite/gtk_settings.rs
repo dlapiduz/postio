@@ -19,7 +19,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
-use std::time::{Duration, Instant};
+use crate::wait_until;
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -38,20 +38,6 @@ use postio_gtk::{app, fonts, style};
 /// `main` checkout under nothing more than ordinary shared-box contention
 /// (#838). See `docs/engineering-notes.md`'s "tests that fail under load"
 /// doctrine -- "liveness deadlines are minutes, not budgets."
-const PATIENCE: Duration = Duration::from_secs(120);
-
-/// Runs the main loop until `condition` holds, or gives up.
-fn wait_until(condition: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + PATIENCE;
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if condition() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    false
-}
 
 /// The binding the window currently has for a command, as the cheat sheet
 /// would print it — which is the live keymap, not the registry default.

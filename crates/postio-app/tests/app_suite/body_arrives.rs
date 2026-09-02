@@ -37,6 +37,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle_until;
+use crate::settle_while;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{Wiring, feed_the_window};
@@ -69,22 +70,20 @@ Content-Disposition: attachment; filename=\"figures.csv\"\r\n\
 one,two\r\n\
 --edge--\r\n";
 
-/// Give the application every chance to repaint, and answer whether it left
-/// `held` true throughout.
+/// The first attachment chip to appear, or `None` within the deadline.
 ///
-/// The mirror of [`settle_until`], for the criterion that is about something
-/// *not* happening: a repaint that should never have been queued cannot be
-/// waited for, only ruled out.
-fn settle_while(held: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+/// Stays module-local on purpose: it calls this module's own `chips()`,
+/// so hoisting it to the suite root would drag that with it (#842).
+fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if !held() {
-            return false;
+        if let Some(chip) = chips(window).into_iter().next() {
+            return Some(chip);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    held()
+    None
 }
 
 pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
@@ -304,19 +303,6 @@ fn store_body(database: &Database, message: MessageId, text: &str) {
             BodyState::Full,
         )
         .expect("the body is stored");
-}
-
-/// The one chip a message with a named attachment gets, once it appears.
-fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if let Some(chip) = chips(window).into_iter().next() {
-            return Some(chip);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    None
 }
 
 fn chips(window: &Window) -> Vec<gtk::Button> {

@@ -15,9 +15,9 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
+use crate::wait_until;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -39,19 +39,6 @@ use postio_model::mailbox::{Mailbox, MailboxRole};
 /// `main` checkout under nothing more than ordinary shared-box contention
 /// (#838). See `docs/engineering-notes.md`'s "tests that fail under load"
 /// doctrine -- "liveness deadlines are minutes, not budgets."
-const PATIENCE: Duration = Duration::from_secs(120);
-
-fn wait_until(condition: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + PATIENCE;
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if condition() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    false
-}
 
 fn saved_search_names(window: &Window) -> Vec<String> {
     fn collect(widget: &gtk::Widget, out: &mut Vec<String>) {

@@ -7,6 +7,7 @@
 //! example, Junk, is a special-use folder and lives in the section next to
 //! Inbox and Sent, not in the ordinary tree with everything else.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -16,12 +17,6 @@ use postio_gtk::sidebar::Sidebar;
 use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
-}
 
 fn two_folders() -> Vec<Mailbox> {
     let account = AccountId::new(1);

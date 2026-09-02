@@ -25,6 +25,7 @@
 // the environment. This sets it before the app under test starts, which is the
 // one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use std::time::Duration;
 
 use gtk::prelude::*;
@@ -54,19 +55,6 @@ use postio_storage::{BlobStore, Database, test_support};
 // property is "moving cancels the clock", not any particular number of
 // milliseconds -- the same lesson as postio-config's watch debounce (#781).
 const DWELL: Duration = Duration::from_millis(500);
-
-/// Drive the main loop until `done`, or give up.
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    done()
-}
 
 /// Whether the store says `message` carries `\Seen`.
 fn is_read(database: &Database, message: MessageId) -> bool {

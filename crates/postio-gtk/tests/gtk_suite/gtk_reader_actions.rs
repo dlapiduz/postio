@@ -12,6 +12,7 @@
 //! One test function: GTK is single-threaded and initialised once per
 //! process. Skips without a display.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -20,12 +21,6 @@ use gtk::prelude::*;
 use postio_core::{Command, CommandId, Keymap};
 use postio_gtk::reader::{Absent, BlobSource, Reader, RemoteImageAllowList};
 use postio_model::message::MessageBody;
-
-fn pump() {
-    for _ in 0..40 {
-        glib::MainContext::default().iteration(false);
-    }
-}
 
 fn scratch_path(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(

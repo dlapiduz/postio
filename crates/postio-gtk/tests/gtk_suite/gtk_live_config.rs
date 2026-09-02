@@ -15,6 +15,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
+use crate::wait_until;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
@@ -27,20 +28,6 @@ use postio_gtk::{app, fonts, style};
 /// How long to give the watcher. Its debounce is 120ms and `notify` adds the
 /// kernel's own latency; this is a ceiling, not an expectation — the loop below
 /// leaves as soon as the change lands.
-const PATIENCE: Duration = Duration::from_secs(5);
-
-/// Runs the main loop until `condition` holds, or gives up.
-fn wait_until(condition: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + PATIENCE;
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if condition() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    false
-}
 
 /// Pumps the main loop for `grace`, for an assertion that nothing happens.
 ///

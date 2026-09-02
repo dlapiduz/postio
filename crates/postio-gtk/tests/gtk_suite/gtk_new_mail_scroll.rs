@@ -17,6 +17,7 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -220,19 +221,6 @@ pub fn new_mail_reveals_itself_at_the_top_and_nowhere_else() {
     );
 
     window.destroy();
-}
-
-/// Run the main loop until it has nothing left to do.
-///
-/// The feeds answer on the thread-default main context, so nothing a page
-/// request set in motion has happened until this returns.
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..200 {
-        while context.pending() {
-            context.iteration(false);
-        }
-    }
 }
 
 /// Pump until `done`, or give up after a deadline.

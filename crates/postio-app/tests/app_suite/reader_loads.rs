@@ -39,6 +39,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle_until;
+use crate::settle_while;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{Wiring, feed_the_window};
@@ -50,21 +51,6 @@ use postio_model::ids::MessageId;
 use postio_model::{BodyState, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::{BlobStore, Database, test_support};
-
-/// Give the application every chance to load a document, and answer whether
-/// it left `held` true throughout — the mirror of [`settle_until`], for the
-/// criteria that are about something *not* happening.
-fn settle_while(held: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if !held() {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    held()
-}
 
 /// `j`, through the keymap the application actually runs.
 fn press_j(window: &Window) {

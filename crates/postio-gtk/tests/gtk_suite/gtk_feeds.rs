@@ -9,12 +9,12 @@
 //! replies are awaited on the thread-default main context, which the test
 //! harness would otherwise drive from two threads at once.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_gtk::feed::{
@@ -425,11 +425,4 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..80 {
-        while context.iteration(false) {}
-    }
 }

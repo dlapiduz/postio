@@ -7,6 +7,7 @@
 //! skips and says so; run it in a session, or under a compositor, for the real
 //! thing. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -137,10 +138,4 @@ fn find_header_bar(widget: &gtk::Widget) -> Option<adw::HeaderBar> {
 
 fn luma(c: gdk::RGBA) -> f32 {
     0.2126 * c.red() + 0.7152 * c.green() + 0.0722 * c.blue()
-}
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
 }

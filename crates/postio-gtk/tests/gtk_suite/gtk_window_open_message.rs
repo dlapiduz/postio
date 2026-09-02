@@ -13,6 +13,7 @@
 //! realise, and GTK may be initialised once per process (#41). Skips
 //! without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -108,13 +109,6 @@ impl MessageSource for Store {
                 .collect();
             Ok(Page { total, rows })
         })
-    }
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
     }
 }
 

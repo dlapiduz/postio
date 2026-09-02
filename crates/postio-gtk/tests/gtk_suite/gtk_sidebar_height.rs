@@ -20,6 +20,7 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::time::Instant;
 
 use gtk::gdk;
@@ -162,10 +163,4 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
-}
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
 }

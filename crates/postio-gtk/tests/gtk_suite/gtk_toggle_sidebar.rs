@@ -11,18 +11,12 @@
 //! One test function: GTK is single-threaded and initialised once per
 //! process. Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::finder::Mode;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..80 {
-        while context.iteration(false) {}
-    }
-}
 
 fn press(window: &Window, key: &str, state: gdk::ModifierType) {
     window.handle_key(gdk::Key::from_name(key).unwrap(), state);

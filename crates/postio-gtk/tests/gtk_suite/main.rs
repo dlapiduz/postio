@@ -761,6 +761,47 @@ pub fn settle_until(what: &str, done: impl Fn() -> bool) {
     );
 }
 
+/// Turn the main loop a fixed number of times, draining it each time.
+///
+/// There were 26 copies of this across the suite in nine variants: 40, 50,
+/// 64, 80 and 200 turns, some draining (`while iteration(false) {}`) and some
+/// taking a single iteration. This is the largest of them, and taking the
+/// largest is safe by construction -- 200 drains is a superset of every
+/// variant it replaces, so no caller settles for less than it used to.
+///
+/// It is nearly free when there is nothing to do: a drain of an idle loop
+/// returns immediately, so the count only costs anything when there is
+/// actually work to run, which is when a caller wanted it.
+///
+/// **A count is still a guess.** Where a test knows what it is waiting for,
+/// `settle_until` says so and stops as soon as it is true -- and reports
+/// what it wanted if it never comes. `pump()` is for the cases that have no
+/// condition to name, and #851 is what happens when one that did have a
+/// condition used a count instead.
+pub fn pump() {
+    let context = glib::MainContext::default();
+    for _ in 0..200 {
+        while context.iteration(false) {}
+    }
+}
+
+/// Poll `condition` until it holds, or give up after the shared deadline.
+///
+/// Returns whether it happened; three modules had this verbatim. Prefer
+/// `settle_until`, which says what it was waiting for when it times out --
+/// this exists because its call sites already assert on the `bool`.
+pub fn wait_until(condition: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + postio_test_support::patience();
+    while std::time::Instant::now() < deadline {
+        settle();
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    condition()
+}
+
 pub fn settle() {
     while glib::MainContext::default().iteration(false) {}
 }

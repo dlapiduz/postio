@@ -32,6 +32,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
+use crate::settle_until;
 use std::sync::{Arc, Mutex};
 
 use adw::prelude::*;
@@ -97,18 +98,6 @@ impl DiscoveryTransport for HangingTransport {
 }
 
 // --- harness ------------------------------------------------------------
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// A running application over a seeded store: a window with mail in it, its
 /// panes fed, and the add-account command wired.
