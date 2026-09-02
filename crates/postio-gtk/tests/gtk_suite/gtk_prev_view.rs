@@ -95,7 +95,7 @@ fn settle(window: &Window, what: &str, done: impl Fn() -> bool) {
 
 pub fn h_steps_back_out_of_a_thread_the_same_way_escape_does() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

@@ -68,7 +68,7 @@ fn hint_text(root: &gtk::Widget, class: &str) -> Option<String> {
 #[test]
 fn the_action_bar_follows_the_pane_carries_the_keymap_and_runs_registry_commands() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
 

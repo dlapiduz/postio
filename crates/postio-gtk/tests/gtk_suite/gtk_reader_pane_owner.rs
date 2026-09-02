@@ -29,7 +29,7 @@ use postio_search::SearchHit;
 
 pub fn the_reading_pane_has_one_visible_occupant_at_a_time() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

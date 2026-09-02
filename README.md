@@ -191,11 +191,10 @@ you actually have against the floors in
 [`docs/PRODUCT.md`](docs/PRODUCT.md) §2.
 
 **The window fails to open, or opens with no decorations / broken
-rendering**: Postio is a GTK4/libadwaita app and only Wayland is verified —
-X11 sessions are expected to work but aren't part of the tested path. If
-you're on X11 and hit a rendering issue, running under a Wayland session
-(or, as a fallback, forcing the X11 backend with `GDK_BACKEND=x11 cargo run
--p postio-app`) is the first thing to try before filing an issue.
+rendering**: Postio is a GTK4/libadwaita app and targets Wayland. X11 is not
+a supported configuration — nothing tests it and there is no plan to support
+it — so running under a Wayland session is the first thing to try before
+filing an issue.
 
 **Onboarding can't save the account, or every launch reopens onboarding**:
 Postio stores credentials in the OS keyring over the Secret Service D-Bus

@@ -148,7 +148,7 @@ fn fill_the_window(row: &ThreadRowView, from: i64) {
 
 fn bench_thread_drill_in(c: &mut Criterion) {
     let Some(row) = mounted() else {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     };
 

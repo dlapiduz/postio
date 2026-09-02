@@ -845,7 +845,7 @@ mod tests {
     #[test]
     fn recovery_reopens_a_crashed_draft_and_leaves_a_parked_one_alone() {
         if !gui_ready() {
-            eprintln!("skipping: no display (run under a compositor to exercise this)");
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
             return;
         }
 

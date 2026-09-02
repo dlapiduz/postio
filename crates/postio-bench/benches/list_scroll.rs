@@ -115,7 +115,7 @@ fn scroll_a_screenful(row: &MessageRowView, from: i64) {
 
 fn bench_message_list_scroll(c: &mut Criterion) {
     let Some(row) = mounted() else {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     };
 

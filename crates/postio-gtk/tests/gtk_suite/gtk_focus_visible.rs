@@ -251,7 +251,7 @@ pub fn taking_focus_changes_what_is_drawn() {
     std::fs::create_dir_all(&state_dir).unwrap();
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

@@ -18,7 +18,7 @@ use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 
 pub fn the_sidebar_lists_folders_and_says_where_sync_stands() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -273,7 +273,7 @@ fn pump() {
 /// default would have passed throughout the bug.
 pub fn a_manual_sync_is_reachable_in_every_connection_state() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

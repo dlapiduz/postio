@@ -34,7 +34,7 @@ fn the_strip_names_every_account_and_is_absent_with_one() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

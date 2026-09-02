@@ -4,7 +4,7 @@
 //!
 //! GTK is single-threaded and single-init, so — as in `gtk_style.rs` — this is
 //! one test function running the whole suite in order. Without a display it
-//! skips and says so; run it in a session, or under `xvfb-run`, for the real
+//! skips and says so; run it in a session, or under a compositor, for the real
 //! thing. Nothing here touches the network.
 
 use std::cell::Cell;
@@ -17,7 +17,7 @@ use postio_gtk::{app, fonts, style, window::Window};
 
 pub fn the_window_opens_and_wears_the_design() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

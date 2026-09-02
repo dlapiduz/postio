@@ -23,7 +23,7 @@ use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 
 pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -180,7 +180,7 @@ pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
 /// the nesting a real keystroke causes.
 pub fn typing_a_mode_prefix_does_not_warn_gtk() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -321,7 +321,7 @@ fn pump() {
 
 pub fn at_finds_a_correspondent_and_searches_their_mail() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

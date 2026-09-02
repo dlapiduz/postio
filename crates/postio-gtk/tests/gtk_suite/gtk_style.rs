@@ -5,7 +5,7 @@
 //! GTK is single-threaded and single-init, so this is deliberately *one* test
 //! function running the whole suite in order. If there is no display — a
 //! headless CI runner without `xvfb` — it skips rather than failing, and says
-//! so; run it locally, or under `xvfb-run`, to exercise the real thing.
+//! so; run it locally, or under a compositor, to exercise the real thing.
 //!
 //! Nothing here touches the network: the stylesheet and the fonts both come
 //! out of the binary's own GResource bundle.
@@ -29,7 +29,7 @@ const DERIVED: [&str; 1] = ["--accent-color"];
 
 pub fn the_generated_stylesheet_works_in_gtk() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

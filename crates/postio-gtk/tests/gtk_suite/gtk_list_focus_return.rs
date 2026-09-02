@@ -115,7 +115,7 @@ fn a_list_with_neighbours_and_a_mid_list_cursor() -> Option<(
     MessageId,
 )> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();

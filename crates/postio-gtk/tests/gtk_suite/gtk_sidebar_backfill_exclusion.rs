@@ -67,7 +67,7 @@ fn tree_rows(sidebar: &Sidebar) -> Vec<gtk::ListBoxRow> {
 
 pub fn the_menu_offers_one_entry_worded_for_the_current_state() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

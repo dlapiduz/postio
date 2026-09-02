@@ -63,7 +63,7 @@ fn fragment(window: &Window) -> Option<String> {
 
 pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -158,7 +158,7 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
 
 pub fn a_new_message_resets_the_scroll_position() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -203,7 +203,7 @@ pub fn a_new_message_resets_the_scroll_position() {
 
 pub fn paging_with_nothing_open_does_nothing() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

@@ -33,7 +33,7 @@ const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
 
 pub fn the_preview_follows_the_focus_and_answers_the_query_on_screen() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

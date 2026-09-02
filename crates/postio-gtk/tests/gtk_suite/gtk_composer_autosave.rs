@@ -53,7 +53,7 @@ pub fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() 
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -130,7 +130,7 @@ pub fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

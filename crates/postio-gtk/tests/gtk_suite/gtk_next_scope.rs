@@ -28,7 +28,7 @@ fn pump() {
 
 pub fn g_a_cycles_the_strip_the_same_way_clicking_its_rows_does() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

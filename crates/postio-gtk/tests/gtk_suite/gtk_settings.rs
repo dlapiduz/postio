@@ -67,7 +67,7 @@ pub fn the_settings_panel_edits_the_file_in_place() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -244,7 +244,7 @@ pub fn a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

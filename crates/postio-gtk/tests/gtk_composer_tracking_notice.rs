@@ -85,7 +85,7 @@ fn notice(composer: &postio_gtk::composer::Composer) -> gtk::Label {
 #[test]
 fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_not() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

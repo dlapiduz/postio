@@ -45,7 +45,7 @@ fn message(id: i64, seen: bool) -> Row {
 
 pub fn the_column_and_the_conversation_share_one_current_message() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
