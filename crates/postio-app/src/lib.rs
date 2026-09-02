@@ -455,6 +455,15 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
             .folders
             .open_sections(&ids, account.id, &account.address.address);
     }
+    // The status line's manual sync (#495). Through `Window::act`, so the
+    // pointer and `F5`/`R` reach one verb rather than two implementations of
+    // it -- and so the command's own filters, the palette and the cheat
+    // sheet all go on describing the same thing.
+    window.sidebar().connect_refresh_requested(glib::clone!(
+        #[weak]
+        window,
+        move || window.act(postio_core::Command::Refresh)
+    ));
     window.sidebar().connect_scope_selected({
         let feeds = feeds.clone();
         let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();

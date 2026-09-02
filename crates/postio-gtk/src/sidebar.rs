@@ -563,6 +563,9 @@ mod imp {
         pub saved_section: gtk::Box,
         pub status_state: gtk::Label,
         pub status_detail: gtk::Label,
+        /// The manual sync trigger, beside the status text (#495).
+        pub status_refresh: gtk::Button,
+        pub refresh_requested: RefCell<Vec<Box<dyn Fn()>>>,
         pub status: RefCell<SyncStatus>,
         pub tick: RefCell<Option<glib::SourceId>>,
         pub selected: RefCell<Vec<SelectionHandler>>,
@@ -752,10 +755,48 @@ impl Sidebar {
             label.set_xalign(0.0);
             label.set_ellipsize(pango::EllipsizeMode::End);
         }
-        let status = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        lines.set_hexpand(true);
+        lines.append(&imp.status_state);
+        lines.append(&imp.status_detail);
+
+        // A manual sync, always here (#495). `Refresh` was always wired and
+        // always keyboard-reachable; what it had was no *persistent*
+        // surface, and the one hint that existed lived in a banner drawn
+        // only while offline or failing. So it disappeared the moment the
+        // account connected -- which is exactly when a long backfill is
+        // running and somebody wants to nudge a folder that looks stuck.
+        //
+        // Never disabled, and never hidden: "busy" is the state this exists
+        // for, and `refresh()` is happy to start another pass. A control
+        // that greyed itself out while syncing would reproduce the bug with
+        // better manners.
+        imp.status_refresh.add_css_class("postio-status-refresh");
+        imp.status_refresh.add_css_class("flat");
+        imp.status_refresh.set_icon_name("view-refresh-symbolic");
+        imp.status_refresh.set_valign(gtk::Align::Center);
+        // The key that does the same thing, named the way every other
+        // affordance here names one.
+        imp.status_refresh
+            .set_tooltip_text(Some("Check for new mail (F5 or R)"));
+        imp.status_refresh
+            .set_accessible_role(gtk::AccessibleRole::Button);
+        imp.status_refresh
+            .update_property(&[gtk::accessible::Property::Label("Check for new mail")]);
+        imp.status_refresh.connect_clicked(glib::clone!(
+            #[weak(rename_to = sidebar)]
+            self,
+            move |_| {
+                for handler in sidebar.imp().refresh_requested.borrow().iter() {
+                    handler();
+                }
+            }
+        ));
+
+        let status = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         status.add_css_class("postio-status-line");
-        status.append(&imp.status_state);
-        status.append(&imp.status_detail);
+        status.append(&lines);
+        status.append(&imp.status_refresh);
         // The byte clause is kept or shed by measurement, so the line has to
         // be redrawn when the width it was measured against changes -- a
         // density change moves the type scale under it, and the narrow
@@ -1862,6 +1903,18 @@ impl Sidebar {
         callback: impl Fn(crate::list_view::Dragged, MailboxId) + 'static,
     ) {
         self.imp().dropped.borrow_mut().push(Box::new(callback));
+    }
+
+    /// What to call when the user asks for a sync by hand (#495).
+    ///
+    /// The caller runs `CommandId::Refresh`; this only reports the ask, the
+    /// same way the folder rows only report a selection. One verb, reached
+    /// by pointer here and by `F5`/`R` from the keymap.
+    pub fn connect_refresh_requested(&self, callback: impl Fn() + 'static) {
+        self.imp()
+            .refresh_requested
+            .borrow_mut()
+            .push(Box::new(callback));
     }
 
     pub fn connect_selected(&self, callback: impl Fn(MailboxId) + 'static) {

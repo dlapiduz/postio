@@ -367,6 +367,35 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* The manual sync, beside the status text rather than inside the banner
+   that hides itself the moment a sync starts (#495).
+   As quiet as the line it sits on: this is an affordance that has to be
+   *findable*, not one that competes with the mail. It takes the accent on
+   hover and focus, the way every other quiet control here does. */
+.postio-status-refresh {
+  padding: 2px;
+  min-width: 24px;
+  min-height: 24px;
+  color: var(--postio-faint);
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.postio-status-refresh:hover {
+  color: var(--postio-accent);
+  background: var(--postio-hover-bg);
+}
+
+.postio-status-refresh:active {
+  background: var(--postio-active-bg);
+}
+
+.postio-status-refresh:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
 /* A failing connection is the one thing in this sidebar that shouts. */
 .postio-status.error {
   color: var(--postio-accent-text);

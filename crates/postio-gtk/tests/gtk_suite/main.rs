@@ -300,6 +300,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands as fn(),
     ),
     (
+        "gtk_sidebar::a_manual_sync_is_reachable_in_every_connection_state",
+        gtk_sidebar::a_manual_sync_is_reachable_in_every_connection_state as fn(),
+    ),
+    (
         "gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state",
         gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state
             as fn(),
