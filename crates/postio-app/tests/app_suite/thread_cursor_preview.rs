@@ -20,6 +20,7 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
+use crate::settle_until;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_app::feed_the_window;
@@ -30,18 +31,6 @@ use postio_model::{EmailAddress, Message, Thread};
 use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_storage::{Database, test_support};
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 fn press(window: &Window, key: gdk::Key) {
     window.handle_key(key, gdk::ModifierType::empty());

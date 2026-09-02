@@ -22,18 +22,12 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use gtk::gdk;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::MessageBody;
 use webkit6::prelude::WebViewExt;
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..40 {
-        while context.iteration(false) {}
-    }
-}
 
 fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop

@@ -5,6 +5,7 @@
 //! One test function, for the reason `gtk_style.rs` gives. Skips without a
 //! display. Nothing here touches the network.
 
+use crate::pump;
 use chrono::{TimeZone, Utc};
 
 use gtk::gdk;
@@ -592,10 +593,4 @@ fn render(window: &gtk::Window) -> Option<Vec<u8>> {
             .save_to_png_bytes()
             .to_vec(),
     )
-}
-
-fn pump() {
-    for _ in 0..200 {
-        gtk::glib::MainContext::default().iteration(false);
-    }
 }

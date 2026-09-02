@@ -297,6 +297,24 @@ pub fn settle() {
 ///
 /// Returns whether it happened, because every call site is already inside an
 /// `assert!` that says what was expected.
+/// Turn the loop while `held` stays true, for a bounded time.
+///
+/// The inverse of `settle_until`, and it needs a duration rather than a
+/// condition: proving something does *not* stop happening cannot be polled
+/// for. Three copies, now one.
+pub fn settle_while(held: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_millis(500));
+    while std::time::Instant::now() < deadline {
+        settle();
+        if !held() {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    held()
+}
+
 pub fn settle_until(done: impl Fn() -> bool) -> bool {
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));

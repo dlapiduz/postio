@@ -22,6 +22,7 @@
 //! display. Nothing here touches the network: `postio-font:` is answered
 //! in-process from compiled-in bytes.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -180,12 +181,6 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(*flag.borrow(), "the WebView never finished loading");
-}
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
 }
 
 fn pump_for(duration: Duration) {

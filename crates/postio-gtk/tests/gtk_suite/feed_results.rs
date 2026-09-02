@@ -17,11 +17,11 @@
 //! awaited on the thread-default main context, and two test threads driving
 //! one context is a thing glib refuses loudly and only sometimes.
 
+use crate::pump as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{
@@ -145,14 +145,6 @@ fn results(messages: Vec<MessageId>) -> Event {
         query: "from:ada invoice".to_string(),
         messages,
         took: std::time::Duration::from_millis(3),
-    }
-}
-
-/// Let every future that is ready to finish, finish.
-fn settle() {
-    let context = glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
     }
 }
 

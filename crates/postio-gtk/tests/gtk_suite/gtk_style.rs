@@ -10,6 +10,7 @@
 //! Nothing here touches the network: the stylesheet and the fonts both come
 //! out of the binary's own GResource bundle.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -313,12 +314,6 @@ fn is_colour_token(name: &str) -> bool {
         || name.starts_with("--postio-radius-")
         || name.starts_with("--postio-shadow-")
         || name.starts_with("--postio-font-"))
-}
-
-fn pump() {
-    for _ in 0..50 {
-        glib::MainContext::default().iteration(false);
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

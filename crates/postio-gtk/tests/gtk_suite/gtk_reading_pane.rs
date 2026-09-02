@@ -39,8 +39,8 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::pump;
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::reader::RemoteImageAllowList;
 use postio_gtk::window::Window;
@@ -215,11 +215,4 @@ fn find(widget: &gtk::Widget, wanted: &dyn Fn(&gtk::Widget) -> bool) -> Option<g
         child = current.next_sibling();
     }
     None
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..40 {
-        while context.iteration(false) {}
-    }
 }

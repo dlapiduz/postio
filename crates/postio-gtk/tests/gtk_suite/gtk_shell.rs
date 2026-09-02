@@ -10,6 +10,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::pump;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::shell::{self, Mode, Pane};
@@ -269,10 +270,4 @@ fn blocks<'a>(css: &'a str, selector: &str) -> Vec<&'a str> {
         rest = &tail[close + 1..];
     }
     out
-}
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
 }

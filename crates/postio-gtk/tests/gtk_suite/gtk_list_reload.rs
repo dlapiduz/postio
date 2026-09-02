@@ -17,12 +17,12 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{
@@ -187,19 +187,6 @@ pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     assert_eq!(list.model().n_items(), 1_320);
     assert_eq!(list.cursor_id(), Some(cursor), "drifted over six batches");
     assert_eq!(list.selection().selection(), selection);
-}
-
-/// Run the main loop until it has nothing left to do.
-///
-/// The feeds answer on the thread-default main context, so nothing a page
-/// request set in motion has happened until this returns.
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..200 {
-        while context.pending() {
-            context.iteration(false);
-        }
-    }
 }
 
 /// Pump until `done`, or give up after a deadline.

@@ -18,6 +18,8 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
+use crate::settle_until;
+use crate::settle_while;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_app::{Wiring, feed_the_window};
@@ -29,33 +31,6 @@ use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::{BodyState, Flag, Message};
 use postio_storage::repository::{MessageRepository, StoredBody, ThreadRepository};
 use postio_storage::{Database, test_support};
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
-
-/// The mirror of [`settle_until`], for a criterion about something *not*
-/// happening: a repaint that should never have been queued cannot be waited
-/// for, only ruled out.
-fn settle_while(held: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if !held() {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    held()
-}
 
 /// One message, headers-only, joined to `thread`.
 fn threaded_message(

@@ -18,6 +18,7 @@
 //! property under test lives entirely inside `MessageListView`. Skips
 //! without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
@@ -58,13 +59,6 @@ fn row(position: u32) -> Row {
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
-    }
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
     }
 }
 

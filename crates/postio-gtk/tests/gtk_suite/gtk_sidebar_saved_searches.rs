@@ -5,6 +5,7 @@
 //! it is `Window::run_search`'s job (`gtk_window_run_search.rs`), not this
 //! widget's. Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -341,10 +342,4 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
-}
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
 }

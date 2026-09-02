@@ -17,6 +17,7 @@
 // Rust 2024 made `std::env::set_var` unsafe; set before the app starts.
 
 use crate::settle;
+use crate::settle_until;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_app::feed_the_window;
@@ -27,18 +28,6 @@ use postio_session::Wiring;
 use postio_storage::repository::EgressLogRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
     let state_dir = tempfile::tempdir().expect("a state directory");

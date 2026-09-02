@@ -29,6 +29,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
@@ -38,10 +39,6 @@ use postio_gtk::{app, fonts, style};
 use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    settle_for(std::time::Duration::from_secs(10), done)
-}
 
 /// As [`settle_until`], with a deadline of your own.
 ///

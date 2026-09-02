@@ -20,6 +20,7 @@
 //! One `#[test]`, like the rest of `gtk_*`: GTK may be initialised once per
 //! process (#41).
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -65,13 +66,6 @@ fn row(position: u32) -> Row {
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
-    }
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
     }
 }
 

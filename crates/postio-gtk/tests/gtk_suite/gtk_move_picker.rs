@@ -11,11 +11,11 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{Command, MessageTarget};
 use postio_gtk::feed::{
@@ -193,11 +193,4 @@ fn field(window: &Window) -> gtk::Text {
         None
     }
     find(window.upcast_ref::<gtk::Widget>()).expect("the header has a field")
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..40 {
-        while context.iteration(false) {}
-    }
 }

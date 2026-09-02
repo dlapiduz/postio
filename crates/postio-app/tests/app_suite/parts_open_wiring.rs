@@ -62,6 +62,22 @@ fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
 }
 
+/// The first attachment chip to appear, or `None` within the deadline.
+///
+/// Stays module-local on purpose: it calls this module's own `chips()`,
+/// so hoisting it to the suite root would drag that with it (#842).
+fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        while glib::MainContext::default().iteration(false) {}
+        if let Some(chip) = chips(window).into_iter().next() {
+            return Some(chip);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    None
+}
+
 pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     let state_dir_guard = tempfile::tempdir().expect("a state directory");
     let state_dir = state_dir_guard.path();
@@ -180,19 +196,6 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     );
 
     bridge.shutdown();
-}
-
-/// The one chip a message with a named attachment gets, once it appears.
-fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if let Some(chip) = chips(window).into_iter().next() {
-            return Some(chip);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    None
 }
 
 fn chips(window: &Window) -> Vec<gtk::Button> {

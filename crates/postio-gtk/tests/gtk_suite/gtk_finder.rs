@@ -6,6 +6,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -310,13 +311,6 @@ fn field(window: &Window) -> gtk::Text {
         None
     }
     find(window.upcast_ref::<gtk::Widget>()).expect("the header's one box")
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..80 {
-        while context.iteration(false) {}
-    }
 }
 
 pub fn at_finds_a_correspondent_and_searches_their_mail() {
