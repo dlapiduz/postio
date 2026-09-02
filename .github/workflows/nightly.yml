@@ -1,6 +1,10 @@
-name: Coverage floors
+name: Nightly
 
-# On a timer, not on every pull request.
+# The work that is worth doing daily and not worth doing on the merge path.
+#
+# The test each job here had to pass: **is anyone blocked on learning this
+# within the hour?** If the answer is no, it costs every contributor on every
+# push to ask it, and the timer is where it belongs.
 #
 # Coverage drift is a trend, not a per-commit fact: a floor breached at 09:00
 # is just as breached at 23:00, and nothing about the next pull request
@@ -14,8 +18,21 @@ name: Coverage floors
 # meaningless both surfaced here, and both would have failed pull requests
 # that had nothing to do with either.
 #
+# `doc` is here for a different reason and passes the test less comfortably,
+# which is worth being honest about (#833). A broken intra-doc link IS a
+# per-commit fact, and the pull request that introduced it is the cheapest
+# place to fix it -- cheaper than a nightly failure someone bisects back to
+# yesterday. What decided it was measuring the actual loss: clippy already
+# denies `missing_docs` on every pull request (it runs rustc's lints, and
+# `-D warnings` promotes it), so the only thing that moved here is broken
+# link detection, which rustdoc alone catches. 23m35s off every pull request
+# -- it was the longest job by nearly double -- against link rot found a few
+# hours later.
+#
 # `workflow_dispatch` for when you have just written tests and want the number
-# now, which is the case the per-push run was really serving.
+# now, or have just rewritten a module's docs and would rather not find the
+# broken links in the morning. That is the case the per-push runs were really
+# serving, and it is one button away.
 on:
   schedule:
     # Offset from bench.yml (06:00) and audit.yml (06:30) so three scheduled
@@ -112,3 +129,29 @@ jobs:
       # would be actively misleading across crates this different.
       - name: cargo llvm-cov (gated crates)
         run: scripts/coverage.sh
+
+  doc:
+    name: Docs
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+
+      # Denying warnings is what makes rustdoc's link checking mean anything:
+      # broken intra-doc links are invisible until somebody browses the docs,
+      # and there were 41 of them the first time this ran (#96).
+      #
+      # `missing_docs` is denied on the pull-request path by the clippy job,
+      # not here -- it is a rustc lint, so `cargo clippy -- -D warnings`
+      # reports it. Measured, because the comment this replaces claimed the
+      # attribute "failed nothing, because no job ever built the docs", which
+      # predates the clippy job and is no longer true.
+      #
+      # `private_intra_doc_links` is allowed on purpose. These docs are
+      # written for contributors and cross-reference internals deliberately;
+      # the build passes --document-private-items, so those links do resolve.
+      # The lint exists for published crate docs, which this is not.
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: -D warnings -A rustdoc::private_intra_doc_links
+        run: cargo doc --workspace --no-deps --document-private-items
