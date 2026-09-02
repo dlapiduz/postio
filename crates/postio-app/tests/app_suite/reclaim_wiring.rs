@@ -22,6 +22,7 @@
 // the environment. Set before the app under test starts, which is the one
 // moment it is sound -- the same reasoning `wiring.rs` records.
 
+use crate::settle_until;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -32,22 +33,7 @@ use postio_storage::{BlobStore, test_support};
 
 use postio_gtk::{app, fonts, style};
 
-/// Run the main loop until `done` or the budget runs out.
-///
-/// The sweep is spawned on a blocking worker — it walks the blob tree, which
-/// must not happen on the startup path — so it has not finished the instant
-/// `feed_the_window` returns.
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
+
 
 pub fn opening_a_store_reclaims_what_nothing_references() {
     let state_dir = tempfile::tempdir().expect("a state directory");

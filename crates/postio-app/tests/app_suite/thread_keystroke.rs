@@ -23,6 +23,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window};
@@ -37,17 +38,7 @@ use postio_session::{Wiring, actions};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
+
 
 /// Every message of `thread`, and which mailbox each is in right now.
 fn thread_mailboxes(database: &Database, thread: ThreadId) -> Vec<(MessageId, i64)> {

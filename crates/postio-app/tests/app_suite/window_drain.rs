@@ -24,6 +24,7 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window, notifications};
@@ -35,17 +36,7 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
+
 
 pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
     let state_dir = tempfile::tempdir().expect("a state directory");

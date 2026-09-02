@@ -83,6 +83,25 @@ pub fn patience_from(raw: Option<&str>) -> Duration {
     }
 }
 
+/// `base`, scaled by `POSTIO_TEST_PATIENCE`.
+///
+/// For a suite whose deadline is deliberately not [`patience`]'s. Several
+/// were written with their own base -- `app_suite` waits 10s for the engine
+/// to settle, which is a considered number and not the same question as "how
+/// long before a wait is a failure". Those keep their base and still answer
+/// to the dial, instead of being rounded to this crate's default and either
+/// halving a deadline somebody chose or doubling one they did not.
+///
+/// A nonsense multiplier is ignored, exactly as in [`patience`].
+pub fn scaled(base: Duration) -> Duration {
+    let factor = std::env::var(PATIENCE_VAR)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f64>().ok())
+        .filter(|f| f.is_finite() && *f > 0.0)
+        .unwrap_or(1.0);
+    base.mul_f64(factor)
+}
+
 /// How long to sleep between polls.
 ///
 /// Small enough that a wait resolving quickly is not held up by the backoff,

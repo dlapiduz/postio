@@ -29,8 +29,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use adw::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
 use postio_app::feed_the_window;
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
@@ -40,9 +41,7 @@ use postio_storage::repository::IdentityRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
+
 
 fn settle_until(done: impl Fn() -> bool) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
