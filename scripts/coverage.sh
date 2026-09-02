@@ -50,6 +50,27 @@ for name in floors:
 ")
 fi
 
+# Measure against this tree, not against whatever is left in target/.
+#
+# cargo-llvm-cov derives coverage from instrumented artifacts and the .profraw
+# files a run leaves behind. Reuse a target directory that was built from a
+# different commit -- which is exactly what a CI cache with `restore-keys`
+# hands you, since a prefix match restores an older key's directory -- and the
+# measurement mixes stale region maps and stale profiles with current ones.
+#
+# It is not a small effect and it does not look like an error. The same branch
+# measured postio-model at 94.25% on a run that missed the cache and 91.56% on
+# the next run that hit it, with every test passing both times (#781). Floors
+# compared against a number like that are measuring the cache, and the answer
+# to a failure is to re-baseline, which ratchets the floor down to whatever
+# the last restore happened to contain.
+#
+# Workspace artifacts only: the dependency graph is untouched, so this costs a
+# rebuild of our own crates rather than of GTK and WebKit, and the cache goes
+# on earning its keep for the part that is safe to reuse.
+echo "clearing stale coverage artifacts for this workspace..."
+env -u RUSTUP_TOOLCHAIN cargo llvm-cov clean --workspace
+
 FAILED=0
 for crate in "${CRATES[@]}"; do
     floor=$(python3 -c "
