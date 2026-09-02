@@ -85,7 +85,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 3] = [
+static MIGRATIONS: [Migration; 4] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -100,6 +100,11 @@ static MIGRATIONS: [Migration; 3] = [
         version: 3,
         name: "draft_message_id",
         sql: include_str!("0003_draft_message_id.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "draft_unconfirmed",
+        sql: include_str!("0004_draft_unconfirmed.sql"),
     },
 ];
 
@@ -319,6 +324,111 @@ mod tests {
     fn the_shipped_migrations_are_numbered_from_one() {
         check_ordering(all()).expect("the shipped list must be well formed");
         assert_eq!(latest_version(), all().len() as u32);
+    }
+
+    /// #674 widened the `drafts` CHECK, and SQLite cannot do that in place:
+    /// 0004 rebuilds the table. A rebuild is the one migration shape that can
+    /// silently lose a user's unsent mail — a forgotten column, a positional
+    /// `SELECT *`, a dropped index — so it is checked rather than reviewed.
+    #[test]
+    fn rebuilding_drafts_keeps_every_row_column_and_index() {
+        let mut connection = Connection::open_in_memory().expect("sqlite");
+        // Up to 0003: the schema as it stood before this rebuild.
+        migrate_with(&mut connection, &all()[..3]).expect("migrate to 0003");
+        connection
+            .execute_batch(
+                "INSERT INTO accounts (
+                     id, display_name, address, incoming_host, incoming_port,
+                     incoming_username, outgoing_host, outgoing_port,
+                     outgoing_username, created_at
+                 ) VALUES (
+                     1, 'Ada', 'ada@example.com', 'imap.example.com', 993,
+                     'ada', 'smtp.example.com', 587, 'ada', 0
+                 );
+                 INSERT INTO drafts (
+                     id, account_id, kind, subject, body_text, state,
+                     created_at, updated_at, rfc_message_id
+                 ) VALUES (
+                     7, 1, 'reply', 'the tide gate interlock', 'Looking now.',
+                     'sending', 111, 222, '<reserved@example.com>'
+                 );",
+            )
+            .expect("a draft mid-send, of the kind this migration exists for");
+
+        migrate_with(&mut connection, all()).expect("migrate to head");
+
+        let (account, kind, subject, body, state, created, updated, reserved): (
+            i64,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+        ) = connection
+            .query_row(
+                "SELECT account_id, kind, subject, body_text, state, created_at,
+                        updated_at, rfc_message_id
+                   FROM drafts WHERE id = 7",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .expect("the draft survived the rebuild");
+
+        assert_eq!(account, 1);
+        assert_eq!(kind, "reply");
+        assert_eq!(subject, "the tide gate interlock");
+        assert_eq!(body, "Looking now.");
+        assert_eq!(state, "sending");
+        assert_eq!((created, updated), (111, 222));
+        assert_eq!(
+            reserved, "<reserved@example.com>",
+            "0003's reserved Message-ID has to survive, or every in-flight \
+             retry becomes a second, distinct message (#461)"
+        );
+
+        // The new state is accepted, and a nonsense one still is not.
+        connection
+            .execute("UPDATE drafts SET state = 'unconfirmed' WHERE id = 7", [])
+            .expect("the widened CHECK admits the new state");
+        assert!(
+            connection
+                .execute("UPDATE drafts SET state = 'posted' WHERE id = 7", [])
+                .is_err(),
+            "the rebuild must not have dropped the CHECK altogether"
+        );
+
+        // And the indexes `DROP TABLE` took with it are back.
+        let indexes: Vec<String> = connection
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'drafts'")
+            .expect("a statement")
+            .query_map([], |row| row.get(0))
+            .expect("a query")
+            .collect::<Result<_, _>>()
+            .expect("index names");
+        for expected in [
+            "idx_drafts_account_updated",
+            "idx_drafts_state",
+            "idx_drafts_thread",
+            "idx_drafts_message",
+        ] {
+            assert!(
+                indexes.iter().any(|name| name == expected),
+                "{expected} did not survive the rebuild: {indexes:?}"
+            );
+        }
     }
 
     #[test]
