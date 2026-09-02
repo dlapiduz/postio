@@ -1242,6 +1242,34 @@ mod tests {
         assert!(!nodes[2].downloaded, "described, not fetched");
     }
 
+    #[test]
+    fn an_inline_image_too_big_for_the_text_axis_is_a_part_the_panel_explains() {
+        // #751's last acceptance criterion. An inline part over
+        // `[sync] max_inline_bytes` stays on the payload axis, so the `cid:`
+        // request 404s and the pane draws a broken box. What stops that being
+        // *silent* is this panel: the part is listed, sized, and said to be
+        // undownloaded, so there is somewhere to go and find out why.
+        let mut banner = part("2", "image/png", 4 * 1024 * 1024);
+        banner.content_id = Some("banner@example.com".to_owned());
+        banner.disposition = postio_model::Disposition::Inline;
+
+        let nodes = tree("multipart/related", &[part("1", "text/html", 900), banner]);
+        let node = &nodes[2];
+
+        assert!(
+            node.is_leaf(),
+            "an inline part is a part like any other: it gets a row and a chip"
+        );
+        assert!(!node.downloaded);
+        assert_eq!(detail(node), "image/png · 4.0 MB");
+        assert_eq!(spoken(node), "image/png, 4.0 MB, not downloaded");
+        assert_eq!(
+            NOT_FETCHED,
+            "Described by the server, not downloaded. Nothing here has touched the network.",
+            "the sentence the detail pane shows for it -- changing it is fine,              leaving the user with an unexplained broken box is not"
+        );
+    }
+
     // -- the box drawing ---------------------------------------------------
 
     #[test]
