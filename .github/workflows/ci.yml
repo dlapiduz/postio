@@ -394,3 +394,31 @@ jobs:
       # display for a green run to have quietly meant instead.
       - name: cargo test
         run: dbus-run-session -- cargo test --workspace
+
+      # Keep the ~400 third-party crates; drop our own, which every commit
+      # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
+      # is housekeeping rather than a speed-up -- the win is that a restored
+      # cache never carries a stale artifact of ours for cargo to reason
+      # about. Deliberately conservative: it names only files this workspace
+      # produces, because deleting a third-party rlib by accident would make
+      # every later build slower, not faster.
+      #
+      # Runs as a normal step, which is what makes it take effect: post steps
+      # run after all normal ones, so actions/cache saves what is left here.
+      #
+      # It belongs in whichever job SAVES the cache, which is this one -- see
+      # the `save-cache: "true"` above. #818 split the old `build` job into
+      # three and left this step behind with it, so `main` spent a day caching
+      # stale workspace artifacts under a comment describing a step that was
+      # no longer there.
+      - name: Drop workspace artifacts before caching
+        if: always()
+        run: |
+          before=$(du -sm target 2>/dev/null | cut -f1 || echo 0)
+          rm -rf target/*/incremental
+          rm -f  target/*/deps/libpostio_*.rlib \
+                 target/*/deps/libpostio_*.rmeta \
+                 target/*/deps/postio_*.d \
+                 target/*/deps/libpostio_*.d
+          rm -rf target/*/.fingerprint/postio-*
+          echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
