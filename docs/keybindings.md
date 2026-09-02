@@ -74,7 +74,7 @@ command from inside a text field.
 | `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
-| `ctrl+shift+s` | Mark as sent | List, composer |  | `mark_sent` |
+| `ctrl+shift+m` | Mark as sent | List, composer |  | `mark_sent` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
 | `ctrl+b` | Bold | Composer |  | `bold` |

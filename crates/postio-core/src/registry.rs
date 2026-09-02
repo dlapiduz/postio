@@ -545,10 +545,15 @@ static SPECS: &[CommandSpec] = &[
         title: "Mark as sent",
         // #674 called for palette-only, and this table cannot: PRODUCT.md §8
         // says every command is reachable by keyboard, and
-        // `command_registry.rs` asserts it. So it gets a real binding, and
-        // one that reads: `mod+shift+s` beside `mod+shift+Return`'s send,
-        // for the rarer act of settling a send that already happened.
-        default_binding: "mod+shift+s",
+        // `command_registry.rs` asserts it. So it gets a real binding.
+        //
+        // `mod+shift+m` for "mark", not the `mod+shift+s` this first took:
+        // that one is spoken for in the List context by an extension in
+        // `gtk_extension_commands.rs`, and a built-in quietly winning a key
+        // an extension asked for is a conflict that shows up as the
+        // extension's binding vanishing from the palette rather than as an
+        // error. #495's landing caught it.
+        default_binding: "mod+shift+m",
         alternate_bindings: &[],
         contexts: ctx(&[Context::List, Context::Composer]),
         // It settles a question rather than destroying anything: the mail is
