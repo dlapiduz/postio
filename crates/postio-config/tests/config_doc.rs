@@ -108,6 +108,12 @@ const ENTRIES: &[Entry] = &[
         description: "When an attachment's bytes are downloaded: `on_open`, `eager`, or `never`.",
     },
     Entry {
+        path: "sync.max_inline_bytes",
+        kind: "integer",
+        default: "262144",
+        description: "The largest inline part fetched with the message's text rather than left on the payload axis. A `cid:` image under this size arrives with the body, so HTML mail reads correctly offline; `0` turns the rule off.",
+    },
+    Entry {
         path: "sync.initial_sync_messages",
         kind: "integer",
         default: "5000",
