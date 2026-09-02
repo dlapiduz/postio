@@ -615,6 +615,86 @@ pub struct SyncTracker {
     reason: Option<String>,
 }
 
+/// One [`SyncTracker`] per account, so no account's server speaks for another.
+///
+/// Every status-bearing event names the account it is about, and a single
+/// tracker threw that away: with two accounts configured, the status line
+/// showed whichever server reported most recently. That is invisible with one
+/// account, which is why it survived — and it is load-bearing for ADR 0005
+/// Q10, whose whole subject is *which* account is not answering.
+///
+/// [`Event::Error`] is the exception, because it carries no account. It goes
+/// to the account whose line is on screen, which is exactly what the single
+/// tracker did with it; writing it down here makes it a decision rather than
+/// an accident of which arm ran first.
+#[derive(Clone, Debug, Default)]
+pub struct Trackers {
+    per_account: std::collections::BTreeMap<AccountId, SyncTracker>,
+}
+
+impl Trackers {
+    /// Fold `event` in, routed to the account it names.
+    ///
+    /// `current` is the account whose status line is on screen, used only
+    /// for the events that name none. Returns whether anything changed.
+    pub fn apply(&mut self, event: &Event, current: Option<AccountId>) -> bool {
+        let account = match event {
+            Event::ConnectionChanged { account, .. }
+            | Event::SyncProgress { account, .. }
+            | Event::BackfillProgress { account, .. } => Some(*account),
+            _ => current,
+        };
+        let Some(account) = account else {
+            return false;
+        };
+        self.per_account.entry(account).or_default().apply(event)
+    }
+
+    /// What `account`'s line should say.
+    ///
+    /// An account nothing has been heard about is offline — the same default
+    /// [`postio_core::AppState::connection`] gives, and for the same reason:
+    /// silence is not a claim that the server is reachable.
+    pub fn status(&self, account: AccountId) -> SyncStatus {
+        self.per_account
+            .get(&account)
+            .map(|tracker| tracker.status().clone())
+            .unwrap_or_default()
+    }
+
+    /// Fold `account`'s own folders' last-sync time into its tracker.
+    ///
+    /// Per account and not over the whole flat list: in section mode the
+    /// sidebar reads every account's tree into one vector, and the newest
+    /// `last_synced_at` in it belongs to whichever account synced most
+    /// recently — which is exactly the cross-account confusion this type
+    /// exists to end.
+    pub fn note_last_sync(&mut self, account: AccountId, mailboxes: &[Mailbox]) -> bool {
+        let theirs: Vec<Mailbox> = mailboxes
+            .iter()
+            .filter(|mailbox| mailbox.account_id == account)
+            .cloned()
+            .collect();
+        self.per_account
+            .entry(account)
+            .or_default()
+            .note_last_sync(&theirs)
+    }
+
+    /// The statuses of `accounts`, in the order given.
+    ///
+    /// The caller's order, because it is the sidebar's, which is the order
+    /// the per-account hues are keyed to. An account nothing has been heard
+    /// about still gets an entry: dropping it would be its own omission, in
+    /// the one place whose subject is not omitting things.
+    pub fn statuses(&self, accounts: &[AccountId]) -> Vec<(AccountId, SyncStatus)> {
+        accounts
+            .iter()
+            .map(|account| (*account, self.status(*account)))
+            .collect()
+    }
+}
+
 impl SyncTracker {
     /// A tracker that has heard nothing yet: offline, never synced.
     pub fn new() -> Self {
@@ -762,7 +842,7 @@ struct FolderInner {
     /// The folders as last read — including the synthetic ones — so picking
     /// one can name it without another round trip.
     mailboxes: RefCell<Vec<Mailbox>>,
-    tracker: RefCell<SyncTracker>,
+    trackers: RefCell<Trackers>,
     generation: Cell<u64>,
     /// Whether a reload is already queued for this turn of the main loop.
     queued: Cell<bool>,
@@ -825,7 +905,21 @@ impl FolderInner {
         // status line is about servers and syncs, and a query has neither —
         // a `last_synced_at` on it would be a claim about a sync that never
         // happened to anything.
-        let moved = self.tracker.borrow_mut().note_last_sync(&mailboxes);
+        let moved = {
+            let mut trackers = self.trackers.borrow_mut();
+            let accounts: Vec<AccountId> = match self.sections.borrow().as_slice() {
+                [] => self.account.get().into_iter().collect(),
+                many => many.to_vec(),
+            };
+            // Every account, and deliberately not `any`: that short-circuits
+            // on the first one that moved, and the rest would never be told
+            // their own last-sync time at all.
+            let mut moved = false;
+            for account in accounts {
+                moved |= trackers.note_last_sync(account, &mailboxes);
+            }
+            moved
+        };
         // The smart folder goes in here, before anything else sees the list,
         // so the sidebar keeps drawing exactly what it is handed and learns
         // nothing about folders the server does not have. The next one — a
@@ -848,7 +942,10 @@ impl FolderInner {
     }
 
     fn publish(&self) {
-        let status = self.tracker.borrow().status().clone();
+        let status = match self.account.get() {
+            Some(account) => self.trackers.borrow().status(account),
+            None => SyncStatus::default(),
+        };
         self.sidebar.set_status(status.clone());
         for handler in self.statuses.borrow().iter() {
             handler(&status);
@@ -927,7 +1024,7 @@ impl Folders {
             account: Cell::new(None),
             sections: RefCell::new(Vec::new()),
             mailboxes: RefCell::new(Vec::new()),
-            tracker: RefCell::new(SyncTracker::new()),
+            trackers: RefCell::new(Trackers::default()),
             generation: Cell::new(0),
             queued: Cell::new(false),
             statuses: RefCell::new(Vec::new()),
@@ -996,7 +1093,24 @@ impl Folders {
 
     /// Where the account stands with its server, right now.
     pub fn status(&self) -> SyncStatus {
-        self.0.tracker.borrow().status().clone()
+        match self.0.account.get() {
+            Some(account) => self.0.trackers.borrow().status(account),
+            None => SyncStatus::default(),
+        }
+    }
+
+    /// Every account the sidebar is drawing, and where each stands with its
+    /// server — what an aggregate view needs to say which one is away.
+    ///
+    /// In single-account mode this is the one account, so a caller does not
+    /// have to know which shape the sidebar is in.
+    pub fn statuses(&self) -> Vec<(AccountId, SyncStatus)> {
+        let inner = &self.0;
+        let accounts: Vec<AccountId> = match inner.sections.borrow().as_slice() {
+            [] => inner.account.get().into_iter().collect(),
+            many => many.to_vec(),
+        };
+        inner.trackers.borrow().statuses(&accounts)
     }
 
     /// Called whenever the status line moves — for the list pane's own
@@ -1034,7 +1148,11 @@ impl Folders {
     /// Apply one runtime event to the sidebar.
     pub fn apply(&self, event: &Event) {
         let inner = &self.0;
-        if inner.tracker.borrow_mut().apply(event) {
+        if inner
+            .trackers
+            .borrow_mut()
+            .apply(event, inner.account.get())
+        {
             inner.publish();
         }
         let ours = |account: &AccountId| inner.account.get() == Some(*account);
@@ -1406,5 +1524,124 @@ mod tests {
         ]));
         let age = Instant::now().saturating_duration_since(tracker.status().last_sync.unwrap());
         assert!(age.as_secs() <= 13, "the age came out as {age:?}");
+    }
+}
+
+#[cfg(test)]
+mod trackers_tests {
+    use super::*;
+
+    const WORK: AccountId = AccountId::new(1);
+    const HOME: AccountId = AccountId::new(2);
+
+    #[test]
+    fn each_account_keeps_its_own_connection_state() {
+        // The bug this type exists to fix: one tracker folded every
+        // account's `ConnectionChanged` into one status, last writer wins,
+        // so with two accounts the sidebar's line showed whichever server
+        // happened to report most recently.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: WORK,
+                state: ConnectionState::Online,
+            },
+            Some(WORK),
+        );
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: HOME,
+                state: ConnectionState::Offline,
+            },
+            Some(WORK),
+        );
+
+        assert_eq!(
+            trackers.status(WORK).state,
+            ConnectionState::Online,
+            "Home going offline said nothing about Work"
+        );
+        assert_eq!(trackers.status(HOME).state, ConnectionState::Offline);
+    }
+
+    #[test]
+    fn an_account_nothing_has_been_heard_about_is_working_locally() {
+        // The same default `AppState::connection` gives, and for the same
+        // reason: silence is not a claim that the server is reachable.
+        let trackers = Trackers::default();
+        assert_eq!(trackers.status(WORK).state, ConnectionState::Offline);
+    }
+
+    #[test]
+    fn progress_lands_on_the_account_it_names_and_no_other() {
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::SyncProgress {
+                account: HOME,
+                done: 3,
+                total: 10,
+            },
+            Some(WORK),
+        );
+        assert_eq!(trackers.status(HOME).progress, Some((3, 10)));
+        assert_eq!(
+            trackers.status(WORK).progress,
+            None,
+            "Work is not syncing and its line must not say it is"
+        );
+    }
+
+    #[test]
+    fn an_error_carries_no_account_so_it_lands_on_the_one_in_view() {
+        // `Event::Error` has no account field. Routing it to the account
+        // whose line is on screen is exactly what the single tracker did,
+        // so this is no worse -- and it is written down here rather than
+        // left as an accident of which arm ran.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::Error {
+                message: "the server refused the password".to_owned(),
+            },
+            Some(WORK),
+        );
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: WORK,
+                state: ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
+            },
+            Some(WORK),
+        );
+        assert_eq!(
+            trackers.status(WORK).detail.as_deref(),
+            Some("the server refused the password")
+        );
+        assert_eq!(
+            trackers.status(HOME).detail,
+            None,
+            "an error with no account named must not be attributed to one"
+        );
+    }
+
+    #[test]
+    fn statuses_are_reported_for_the_accounts_asked_for_in_that_order() {
+        // The order is the caller's -- the sidebar's -- because that is the
+        // order the hues are keyed to, and an account absent from the map
+        // still has to appear rather than silently drop out of the banner.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: HOME,
+                state: ConnectionState::Offline,
+            },
+            Some(WORK),
+        );
+        let named = trackers.statuses(&[WORK, HOME]);
+        assert_eq!(named.len(), 2);
+        assert_eq!(named[0].0, WORK);
+        assert_eq!(named[0].1.state, ConnectionState::Offline, "never heard of");
+        assert_eq!(named[1].0, HOME);
+        assert_eq!(named[1].1.state, ConnectionState::Offline);
     }
 }

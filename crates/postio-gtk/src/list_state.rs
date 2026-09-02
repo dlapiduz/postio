@@ -416,6 +416,14 @@ mod imp {
         pub detail: gtk::Label,
         pub hints: gtk::Box,
         pub inputs: RefCell<(SyncStatus, u64, u64, u64, Option<String>)>,
+        /// The accounts an aggregate view is drawing, when it is one.
+        ///
+        /// `None` is an ordinary single-account view, which is what every
+        /// scope but the unified list is. Its own cell rather than a sixth
+        /// slot in `inputs` for the reason `set_searching` has its own: it
+        /// arrives from the sidebar's account list on a completely different
+        /// occasion from the sync feed's status.
+        pub accounts: RefCell<Option<Vec<(String, SyncStatus)>>>,
         pub tick: RefCell<Option<glib::SourceId>>,
     }
 
@@ -427,6 +435,7 @@ mod imp {
                 detail: gtk::Label::new(None),
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
                 inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
+                accounts: RefCell::new(None),
                 tick: RefCell::new(None),
             }
         }
@@ -523,6 +532,20 @@ impl ListStateView {
         self.render();
     }
 
+    /// Say that the list is an aggregate over `accounts`, or a single
+    /// account's view again.
+    ///
+    /// `None` restores the single-account states. `Some` switches the pane to
+    /// ADR 0005 Q10's rule — see [`derive_aggregate`] — and the list must
+    /// hold only the accounts it is actually drawing, in the sidebar's order.
+    pub fn set_accounts(&self, accounts: Option<Vec<(String, SyncStatus)>>) {
+        if *self.imp().accounts.borrow() == accounts {
+            return;
+        }
+        *self.imp().accounts.borrow_mut() = accounts;
+        self.render();
+    }
+
     /// Say that the list is showing results for `query`, or a mailbox again.
     ///
     /// Its own setter rather than a fifth argument to
@@ -548,7 +571,13 @@ impl ListStateView {
         let imp = self.imp();
         let now = Instant::now();
         let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
-        let state = derive(&status, item_count, stored, queued, searching.as_deref());
+        let aggregate = imp.accounts.borrow().clone();
+        let state = match &aggregate {
+            Some(accounts) => {
+                derive_aggregate(accounts, item_count, stored, searching.as_deref())
+            }
+            None => derive(&status, item_count, stored, queued, searching.as_deref()),
+        };
 
         self.set_visible(state.is_some());
         if let Some(state) = &state {
