@@ -47,6 +47,7 @@ mod signature_default_wiring;
 mod startup_repair;
 mod thread_bulk_keystroke;
 mod thread_cursor_preview;
+mod thread_dwell;
 mod thread_keystroke;
 mod window_drain;
 mod wiring;
@@ -223,6 +224,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
         startup_repair::an_account_with_no_credential_lands_on_the_repair_screen as fn(),
+    ),
+    (
+        "thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it",
+        thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it as fn(),
     ),
     (
         "thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane",

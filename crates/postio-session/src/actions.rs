@@ -967,6 +967,7 @@ impl Actions {
 
         let one: FlagSet = std::iter::once(flag.clone()).collect();
         let at = Utc::now();
+        let mut siblings: Vec<MessageId> = Vec::new();
         let transaction = connection.transaction().map_err(store_failure)?;
         {
             let messages = MessageRepository::new(&transaction);
@@ -995,10 +996,46 @@ impl Actions {
                     )
                     .map_err(store_failure)?;
             }
+
+            // The threads those rows belong to keep two things the rows
+            // alone cannot (#754): denormalised aggregates the
+            // account-scoped page reads straight off `threads`, and the
+            // membership that names the row the list draws for the
+            // conversation. Recompute the first and collect the second
+            // while the write is still one transaction, so nothing can
+            // observe a read message under an unread thread.
+            let threads = ThreadRepository::new(&transaction);
+            let mut conversations: Vec<ThreadId> = touched
+                .iter()
+                .filter_map(|message| message.thread_id)
+                .collect();
+            conversations.sort_unstable();
+            conversations.dedup();
+            for thread in &conversations {
+                threads.recompute(*thread).map_err(store_failure)?;
+                for row in threads
+                    .messages(*thread, ThreadOrder::Oldest)
+                    .map_err(store_failure)?
+                {
+                    siblings.push(row.id);
+                }
+            }
         }
         transaction.commit().map_err(store_failure)?;
 
         let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
+        // What repaints is wider than what changed: the list's row for a
+        // conversation is its representative, and `pages_holding` resolves
+        // an announcement against *row* ids — so a non-representative
+        // member marked read refetched no page and the row went on drawing
+        // unread (#754). Naming the siblings is what makes the row
+        // findable. The inverse and the queue stay exactly as wide as the
+        // touch: repainting is not something `u` takes back, and the server
+        // must not hear about flags nobody changed.
+        let mut repaint = changed.clone();
+        repaint.extend(siblings);
+        repaint.sort_unstable();
+        repaint.dedup();
         // Every touched row held the opposite value — that is what "touched"
         // means here — so one command takes all of them back.
         let inverse = match flag {
@@ -1015,11 +1052,11 @@ impl Actions {
             account,
             kind: kind_for(&flag, wanted),
             count: changed.len(),
-            messages: changed.clone(),
+            messages: changed,
             removed: Vec::new(),
             arrived: None,
             reloaded: Vec::new(),
-            changed,
+            changed: repaint,
             inverse: vec![inverse],
         })
     }
@@ -1962,6 +1999,95 @@ mod tests {
             ),
             "the server has to hear about it, or the message is unread again \
              on the next device"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_on_a_thread_member_recomputes_the_threads_unread_count() {
+        // `threads.unread_count` is denormalised, and the account-scoped
+        // page reads it straight off `threads` (#754, consequence 4) — so a
+        // local `\Seen` write that does not recompute it leaves a unified
+        // view drawing the conversation unread for ever. Folder pages
+        // recompute live and never noticed.
+        let world = world();
+        let first = world.message(world.inbox, &[]);
+        let second = world.message(world.inbox, &[]);
+        let third = world.message(world.inbox, &[]);
+        let thread = {
+            let connection = world.database.connection().expect("a connection");
+            let threads = ThreadRepository::new(&connection);
+            let mut thread = postio_model::Thread::new(world.account.id);
+            threads.create(&mut thread).expect("a thread");
+            for message in [first, second, third] {
+                threads.add_message(thread.id, message).expect("membership");
+            }
+            thread.id
+        };
+
+        world
+            .run(Command::MarkReadOnDwell { message: first })
+            .expect("the dwell mark applies");
+
+        let connection = world.database.connection().expect("a connection");
+        let record = ThreadRepository::new(&connection)
+            .get(thread)
+            .expect("a read")
+            .expect("the thread is still there");
+        assert_eq!(
+            record.unread_count, 2,
+            "the thread's own aggregate has to follow a local read, or the \
+             account-scoped page shows the conversation unread for ever"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_announces_the_conversations_other_members_for_repaint() {
+        // The list's row for a conversation is its representative, and
+        // `pages_holding` resolves the event's message ids against *row*
+        // ids — so marking a non-representative member read refetched no
+        // page and the row went on drawing unread (#754, consequence 3).
+        // The event has to carry the siblings for the row to be findable.
+        let world = world();
+        let first = world.message(world.inbox, &[]);
+        let second = world.message(world.inbox, &[]);
+        let third = world.message(world.inbox, &[]);
+        {
+            let connection = world.database.connection().expect("a connection");
+            let threads = ThreadRepository::new(&connection);
+            let mut thread = postio_model::Thread::new(world.account.id);
+            threads.create(&mut thread).expect("a thread");
+            for message in [first, second, third] {
+                threads.add_message(thread.id, message).expect("membership");
+            }
+        }
+
+        world
+            .run(Command::MarkReadOnDwell { message: first })
+            .expect("the dwell mark applies");
+
+        let changed: Vec<MessageId> = world
+            .drained()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::MessagesChanged { messages, .. } => Some(messages),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        for member in [second, third] {
+            assert!(
+                changed.contains(&member),
+                "the repaint announcement has to name the whole conversation, \
+                 or the row standing for it cannot be found: {changed:?}"
+            );
+        }
+        // The *operation* stays one message wide: the siblings are a repaint
+        // concern, and a queue row per untouched member would tell the
+        // server about flags nobody changed.
+        assert_eq!(
+            world.queued().len(),
+            1,
+            "only the marked message goes to the server"
         );
     }
 
