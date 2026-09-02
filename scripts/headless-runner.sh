@@ -136,6 +136,14 @@ if ! compositor_alive; then
     : > "$UNAVAILABLE" 2>/dev/null || true
     rm -f "$SOCKET" 2>/dev/null || true
     echo "postio runner: no compositor behind $SOCKET; using the session's display" >&2
+    # Mutter's own account of why, which is written to a log nobody has ever
+    # read: the failure is silent by construction, and "the compositor did not
+    # come up" is not a diagnosis. Bounded, because a compositor that failed
+    # noisily should not bury the test output that follows it.
+    if [ -s "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" ]; then
+        echo "postio runner: mutter said --" >&2
+        tail -n 15 "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" | sed 's/^/  /' >&2
+    fi
     exec_target "$@"
 fi
 

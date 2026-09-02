@@ -613,18 +613,19 @@ jobs:
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
       #
-      # POSTIO_HEADLESS=0 because the display is Xvfb's, provisioned and
-      # *verified* by the step above. Left on, scripts/headless-runner.sh
-      # starts a nested `mutter --headless` and then unsets DISPLAY so GDK
-      # cannot fall back through XWayland -- correct on a developer's machine,
-      # where the point is to keep test windows off the real session. On this
-      # runner image that compositor does not come up usable, and clearing
-      # DISPLAY threw away the working X display with it: every GTK test took
-      # its "no display" branch and reported success, which is precisely what
-      # gtk_display_required.rs exists to catch. It caught it.
+      # No POSTIO_HEADLESS override any more. #781 needed one because
+      # scripts/headless-runner.sh treated "the socket file exists" as "the
+      # compositor works": mutter binds the socket and exits on a runner with
+      # no DRM device, and the runner then unset DISPLAY and threw away the
+      # Xvfb display the step above had just provisioned and verified.
+      #
+      # #794 taught it to ask whether anything is listening. It now falls back
+      # to this display on its own, which is what its header always promised,
+      # and CI stops carrying a special case for a bug that is fixed. If
+      # mutter is ever made to run on a runner, the tests move back onto it
+      # with no change here -- and gtk_display_required.rs fails loudly if
+      # neither display is there, rather than every GTK test skipping quietly.
       - name: cargo test
-        env:
-          POSTIO_HEADLESS: "0"
         run: cargo test --workspace
 
       # `#![warn(missing_docs)]` has been on most crates from the start and
