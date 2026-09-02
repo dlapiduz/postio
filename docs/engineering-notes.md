@@ -784,11 +784,32 @@ Two details worth keeping:
   gaps in, so a pass routinely finishes well short of it — which is why that
   line reads `fetched 1204` and deliberately not `of`. `BackfillProgress`
   keeps every queued message in exactly one of its counts, so
-  `settled + pending + in_flight` really is everything, and `bodies 412 of
+  `settled + pending + in_flight` really is everything, and `mail 412 of
   2000` is true.
 - **Both phases must clear their number when the queue drains**, or the line
   sticks — `syncing 89%` on a finished folder was the original version of this
   bug, and `downloading 2000 of 2000` would have been the new one.
+
+**The sidebar status line holds counts, never bytes (#411).** The column is
+`SIDEBAR_WIDTH = 212` from canvas 1b and deliberately fixed — about 25
+monospace characters, and `mail 12400 of 81744` is already 19. A byte clause
+was written for that line, measured against the column at render time, and
+shed at every width there is; the measuring code was deleted with it.
+
+Do not put it back, in any spelling. The two numbers answer different
+questions: a count that climbs is a **liveness** signal, which is what #74
+filed this line for, and a byte figure that sits still through a large fetch
+reads as *stalled*. Bytes are a **cost** signal — asked once, deliberately,
+when deciding what to switch on. Already rejected: a shorter spelling
+(`890M/1.4G` buys four characters where fourteen are needed), alternating the
+two clauses (a line whose meaning changes every few seconds is worse than
+either), and moving bytes to line 1 by dropping `· IMAP` (line 1 would mean
+different things at different times, which is a mode in miniature).
+
+The bytes still reach that surface through `SyncStatus::detail_in_full`,
+which builds the tooltip and the accessible description from one string.
+Cost itself lives on the settings panel's account rows, where the figure is
+per account like the footprint is.
 
 **Mailbox counts are maintained by triggers, not by call sites.**
 `mailboxes.total_count`/`unread_count`/`flagged_count` are maintained by
