@@ -652,13 +652,28 @@ impl Session {
 
     /// The whole document for a message, ready to hand a web view.
     ///
-    /// Not fragments to assemble: the content security policy, the embedded
-    /// font faces, the reader tokens, the sanitized body, its `.postio-body`
-    /// container and the scroll markers all come from `postio_ui`, which is
-    /// what the GTK reader composes through too. **The frontend's entire job
-    /// is to build a hardened web view, hand it this string, and refuse
-    /// navigations** — so the two readers cannot disagree about the policy,
-    /// because there is only one that produces it (ADR 0019 Q6).
+    /// Not fragments to assemble: the content security policy, the
+    /// `@font-face` rules, the reader tokens, the sanitized body, its
+    /// `.postio-body` container and the scroll markers all come from
+    /// `postio_ui`, which is what the GTK reader composes through too. **The
+    /// frontend's entire job is to build a hardened web view, hand it this
+    /// string, and refuse navigations** — so the two readers cannot disagree
+    /// about the policy, because there is only one that produces it (ADR
+    /// 0019 Q6).
+    ///
+    /// # Two scheme handlers, not one
+    ///
+    /// The document *references* Postio's typefaces rather than carrying
+    /// them (ADR 0023): `font-src` is `postio-font:`, and a frontend that
+    /// does not serve it renders in system sans — silently, because a font
+    /// that never arrives is not an error. So a frontend registers two
+    /// handlers beside each other, both answering from compiled-in bytes,
+    /// neither touching the filesystem or the network:
+    ///
+    /// * `postio-cid:` — inline parts, through `postio_ui::reader::parts`.
+    /// * `postio-font:` — the eight vendored faces, through
+    ///   `postio_ui::reader::document::font_bytes`, which answers only for
+    ///   names in its `FACES` table and `None` for everything else.
     pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
         use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
 

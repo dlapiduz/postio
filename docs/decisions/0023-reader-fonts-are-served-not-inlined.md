@@ -59,6 +59,20 @@ Whether the engine caches a custom-scheme subresource across document loads is t
 
 If the measurement comes back badly enough to matter, the fallback is the rejected option 2 below, and it should be taken deliberately with the number written down.
 
+> **Measured 2026-09-02 (WebKitGTK 6, `crates/postio-gtk/tests/gtk_reader_fonts.rs`):**
+> **it caches, and it is lazier than this ADR assumed.** Rendering a
+> one-paragraph HTML message fetched **one** face — `Barlow-Regular.ttf`,
+> the only one the page had text to draw with — not eight. Rendering a
+> second, different message into the same view fetched **zero**: the engine
+> served the face it already had.
+>
+> So the per-message font cost after the first render is nothing at all,
+> against ~1.21 MB of base64 re-fed on every render before. "Proportional to
+> what is actually drawn" turns out to understate it: it is proportional to
+> what is drawn *and* not already fetched. The fallback is not needed. The
+> test prints these counts on every run (`-- --nocapture`), so an engine
+> that stops caching shows up as a number rather than as a mystery.
+
 ## What was rejected
 
 **A GTK-only `UserStyleSheet`, keeping the FFI document as it is.** Cheapest to write and fixes the reported symptom on the reported platform. Rejected because it fixes one frontend and freezes the bug into the other, and because it trades away the single structural property ADR 0019 Q6 rests on. "Two readers that agree" is the failure mode Q6 was written to prevent; `reader.rs:88` is the machine that prevents it, and this option's first step is disabling that machine.
