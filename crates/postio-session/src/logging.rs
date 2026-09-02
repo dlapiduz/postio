@@ -173,6 +173,7 @@ pub fn config_at(path: &Path) -> LoggingConfig {
 const OURS: &[&str] = &[
     "postio",
     "postio_app",
+    "postio_bench",
     "postio_body",
     "postio_config",
     "postio_core",
