@@ -65,13 +65,31 @@ entirely in window construction, which is where the first store reads happen.
 That is the price ADR 0014 said would land on this budget, and it lands inside
 it.
 
-**The rest of the gap is not explained.** This document previously recorded
-147 ms. Nothing in that measurement survives to compare against — different
-commit, different schema, and no record of what else the machine was doing —
-so the honest statement is that startup is 427 ms today, 78 ms of which is
-encryption and the remainder of which nobody has bisected. The worst of five
-runs exceeded the 500 ms budget. See [#636](https://github.com/dlapiduz/postio/issues/636) rather than
-treating this paragraph as a resolution.
+**Most of the rest is GTK's own first-realize cost, not a Postio widget.**
+#636 bisected window construction by timing each pane's constructor in
+isolation (`Shell`, `Sidebar`, `MessageListView`, `Finder`, `CheatSheet`,
+`SettingsPanel`, the composer's `Editor` and its WebView) — none cost more
+than a few milliseconds, and they sum to well under 30 ms. What actually
+costs the rest is `GtkWindow::present()` itself, and only for **whichever
+widget is presented first in the process**: presenting a bare `Sidebar`
+alone first cost 110 ms; presenting it second, after something else had
+already triggered a first realize, cost 12 ms. Forcing `GSK_RENDERER`
+confirmed it further — `cairo` (software) measured ~181 ms end to end where
+the platform default measured ~295 ms, and `ngl` measured ~1.9 s. GSK's
+GPU renderer backends compile their shaders on first use; that compile is
+what the "window" phase is mostly paying for, once.
+
+That makes this a rendering-backend tradeoff, not a bug in any one widget:
+trading it away buys faster startup at the cost of GPU-accelerated runtime
+compositing, and nothing in this investigation measured whether that costs
+the 16 ms interaction budget anywhere real use would notice. Filed as
+[#790](https://github.com/dlapiduz/postio/issues/790) rather than decided here. This document previously
+recorded 147 ms for the whole figure; nothing in that measurement survives
+to compare against — different commit, different schema, and no record of
+what else the machine was doing — so the honest statement is 427 ms today,
+of which 78 ms is encryption and the great majority of the remainder is the
+first-realize cost above. The worst of five runs exceeded the 500 ms
+budget. See [#636](https://github.com/dlapiduz/postio/issues/636) for the full investigation.
 
 ## Interaction: the page read and the row draw
 
