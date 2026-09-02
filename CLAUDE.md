@@ -257,6 +257,11 @@ things stay shared:
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other
   sessions' uncommitted work lives in it; inside your worktree those same
   commands are safe and allowed.
+- **A worktree belongs to one session**, and the same hook enforces it —
+  wherever you arrived from, not only through `issue-claim.sh` (#412). The
+  first session to work in a worktree holds it; another session's commands
+  there are refused, and so is a write reaching in from outside. A claim frees
+  itself after 45 minutes of silence, so a dead session strands nothing.
 
 ## Say it where it persists
 

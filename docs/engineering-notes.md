@@ -2836,6 +2836,44 @@ lines under your paths; if there are any, `git add` those exact paths first,
 then `git commit --only <paths>` as usual. Never `git add -A` — the tree is
 shared.
 
+**A worktree holds one session, and the guard is what makes that true.**
+#412. `issue-claim.sh` takes an atomic lock and refuses to adopt an existing
+worktree — but both checks live *inside the script*, so a session that reached
+a worktree any other way was subject to neither: told to work an issue
+directly, a path pasted from an earlier transcript, a resumed session whose
+worktree had been released and recreated. Two sessions edited
+`crates/postio-index/src/index.rs` for four minutes; one removed a field the
+other's tests depended on, and the tests went red in a worktree whose owner had
+not caused it. Nothing said so — it was noticed only because an untracked test
+file appeared in `git status` describing a design decision nobody there had
+made.
+
+So the check moved to `.claude/hooks/guard-shared-tree.py`, the one place that
+sees every command every session runs, however it got there. The claim is
+stamped in the worktree's own git directory (`.git/worktrees/issue-N/`), which
+is outside the working tree — so it cannot appear in `git status`, be staged by
+an `add -A`, or need a `.gitignore` line, and it disappears with the worktree
+when `issue-release.sh` removes it.
+
+Three things about it are worth knowing before changing it:
+
+- **It is a lease, not a lock.** The owner refreshes it as it works and it
+  frees itself after 45 minutes of silence. A lock would be correct and
+  unusable: a session that dies holding one leaves a worktree nobody can take,
+  and the first person that happened to would export `POSTIO_GUARD=off` and
+  never unset it. The lease is long because a session that has backgrounded
+  `issue-land.sh --full` and is waiting for the notification runs no commands
+  for twenty minutes, and taking its worktree then is the bug wearing a fix.
+- **Being *in* the worktree is enough; reaching *into* it needs a write.**
+  They are not the same act. A session whose commands run there is working
+  there. A session naming the path from its own tree is usually reading it —
+  `/lanes` is built on exactly that — so the reach-in half asks for a writing
+  verb as well. Refusing `git -C <peer> log` would refuse the tool sessions are
+  told to use to find out who else is here.
+- **It fails open with no session id**, which is what lets the hook be run by
+  hand and by its own tests without arbitrating between sessions that do not
+  exist.
+
 **Git history was rewritten in place once, before any remote existed**, with
 `git filter-repo --replace-text` to scrub personal addresses from every
 commit. Every commit SHA changed as a result. Old notes citing pre-rewrite
