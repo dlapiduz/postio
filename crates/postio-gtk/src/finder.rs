@@ -1019,7 +1019,7 @@ impl Finder {
         imp.scroller
             .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         imp.scroller.set_propagate_natural_height(true);
-        imp.scroller.set_max_content_height(360);
+        imp.scroller.set_max_content_height(PLATE_MAX_HEIGHT);
         imp.scroller.set_focusable(false);
         imp.scroller.set_child(Some(&imp.list));
 
@@ -1046,6 +1046,27 @@ impl Finder {
     /// The registry is a few dozen rows and a query is one line of text, so
     /// there is nothing to gain from an incremental redraw and a stale row to
     /// lose by it.
+    /// Cap the plate at a whole number of rows.
+    ///
+    /// [`PLATE_MAX_HEIGHT`] is a pixel budget, and a pixel budget almost
+    /// never divides by a row: at the default text scale it left the last row
+    /// cut through the middle of its glyphs, with no scrollbar to explain why
+    /// (#827). A half-drawn word at a hard edge reads as a rendering fault
+    /// rather than as "there is more below".
+    ///
+    /// Measured rather than assumed, because the row height moves with the
+    /// user's text scale — at 200% a fixed guess would be wrong in the other
+    /// direction and show four rows where the budget allows two.
+    fn fit_whole_rows(&self) {
+        let imp = self.imp();
+        let Some(row) = imp.list.first_child() else {
+            return;
+        };
+        let (_, height) = row.preferred_size();
+        imp.scroller
+            .set_max_content_height(whole_rows(PLATE_MAX_HEIGHT, height.height()));
+    }
+
     fn refresh(&self) {
         let imp = self.imp();
         let query = self.query();
@@ -1165,6 +1186,7 @@ impl Finder {
         // a reading of the query, or the fact that nothing matched.
         self.set_visible(open && (listing || !drawn.is_empty()));
         imp.scroller.set_visible(listing && count > 0);
+        self.fit_whole_rows();
         imp.empty.set_visible(listing && count == 0);
         if count == 0 {
             // Never a shrug: say what was looked in, so the next keystroke
@@ -1185,6 +1207,25 @@ impl Finder {
             });
         }
     }
+}
+
+/// How tall the plate may grow before it scrolls, in pixels.
+///
+/// A budget rather than a row count: what fits depends on the user's text
+/// scale, and [`Finder::fit_whole_rows`] is what turns the budget into rows.
+const PLATE_MAX_HEIGHT: i32 = 360;
+
+/// The largest multiple of `row` that fits in `budget`, and never zero.
+///
+/// One whole row is better than none even when the budget cannot afford it:
+/// a plate showing nothing at all would be worse than one that scrolls from
+/// its first row. A row that measures zero — nothing has been laid out yet —
+/// leaves the budget alone rather than dividing by it.
+fn whole_rows(budget: i32, row: i32) -> i32 {
+    if row <= 0 {
+        return budget;
+    }
+    (budget / row).max(1) * row
 }
 
 /// One command row: the title, and the key that runs it.
@@ -1534,5 +1575,40 @@ mod tests {
         let mut noselect = folder(4, "Lists", MailboxRole::Regular, 0);
         noselect.selectable = false;
         assert!(folders(&[noselect], "lists").is_empty());
+    }
+    // -- the plate ends on a whole row (#827) ------------------------------
+
+    #[test]
+    fn the_plate_never_ends_part_way_through_a_row() {
+        // 360 is the budget and 34 a default-scale row: eleven rows would be
+        // 374, so ten fit and the eleventh used to be drawn half-height with
+        // its glyphs cut by the panel's own border.
+        assert_eq!(whole_rows(360, 34), 340);
+        assert_eq!(360 % 34, 20, "the budget really does not divide by a row");
+    }
+
+    #[test]
+    fn a_taller_row_simply_fits_fewer_of_them() {
+        // 200% text scaling. A fixed row count would have overflowed the
+        // budget here; a fixed pixel cap cut a row in half. Measuring does
+        // neither.
+        assert_eq!(whole_rows(360, 68), 340);
+        assert_eq!(whole_rows(360, 120), 360);
+    }
+
+    #[test]
+    fn one_row_always_survives_a_budget_too_small_for_it() {
+        // A plate showing nothing at all is worse than one that scrolls from
+        // its first row.
+        assert_eq!(whole_rows(360, 400), 400);
+        assert_eq!(whole_rows(40, 90), 90);
+    }
+
+    #[test]
+    fn a_row_that_has_not_been_laid_out_leaves_the_budget_alone() {
+        // `preferred_size` before the first allocation can answer zero, and
+        // dividing by it would panic.
+        assert_eq!(whole_rows(360, 0), 360);
+        assert_eq!(whole_rows(360, -1), 360);
     }
 }
