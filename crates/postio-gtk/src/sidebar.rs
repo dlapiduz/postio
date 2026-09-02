@@ -1677,6 +1677,24 @@ impl Sidebar {
         imp.echoing.set(false);
     }
 
+    /// Drop the folder highlight, without telling anyone a folder was picked.
+    ///
+    /// For a scope that is not a folder — Unified (#185) — where leaving
+    /// Inbox highlighted would have the sidebar claiming one account's folder
+    /// is on screen while the list draws every account's mail.
+    ///
+    /// `echoing` is what makes it safe: clearing a `GtkListBox`'s selection
+    /// fires `row-selected` with `None`, and without the guard a handler
+    /// would read that as the user picking something.
+    pub fn clear_folder_selection(&self) {
+        let imp = self.imp();
+        let was = imp.echoing.replace(true);
+        for list in self.selectable_lists() {
+            list.unselect_all();
+        }
+        imp.echoing.set(was);
+    }
+
     /// Whichever row is currently selected, in any of the three lists —
     /// folders in either section, or a saved search. At most one list ever
     /// has a selected row: selecting in one clears the other two (see
