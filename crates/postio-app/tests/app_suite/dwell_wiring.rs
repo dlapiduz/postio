@@ -42,7 +42,18 @@ use postio_storage::{BlobStore, Database, test_support};
 
 /// Short enough that the test does not spend a real second per assertion,
 /// long enough to stay distinguishable from "marked on arrival".
-const DWELL: Duration = Duration::from_millis(80);
+// Long enough that one slow turn of the main loop cannot outlast it.
+//
+// The sweep below moves the cursor five times, pumping between each, and
+// asserts none of the rows it passed was marked read. At 80ms that held only
+// while a pump stayed under 80ms: on a loaded runner one took longer, the
+// clock legitimately expired mid-sweep, and the test reported the product
+// destroying unread state when the product had done exactly what it should.
+//
+// Sized for the slowest machine that runs this rather than the fastest. The
+// property is "moving cancels the clock", not any particular number of
+// milliseconds -- the same lesson as postio-config's watch debounce (#781).
+const DWELL: Duration = Duration::from_millis(500);
 
 /// Drive the main loop until `done`, or give up.
 fn settle_until(done: impl Fn() -> bool) -> bool {
