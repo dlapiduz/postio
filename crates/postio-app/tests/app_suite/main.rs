@@ -16,6 +16,7 @@ mod command_wiring;
 mod compose_detach;
 mod compose_typing;
 mod conversation_body_arrives;
+mod conversation_by_default;
 mod conversation_recipients;
 mod cursor_preview;
 mod drag_out_portal;
@@ -91,6 +92,10 @@ const CASES: &[(&str, fn())] = &[
         "conversation_body_arrives::a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other",
         conversation_body_arrives::a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other
             as fn(),
+    ),
+    (
+        "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
+        conversation_by_default::landing_on_a_thread_row_opens_the_conversation as fn(),
     ),
     (
         "conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header",

@@ -18,6 +18,11 @@
 //! — `Feeds::apply` with a `ConnectionChanged` event — which is exactly what
 //! a real engine's own connection tracker feeds into the same seam.
 //!
+//! Runs in the Flagged view since #755, for `cursor_preview.rs`'s reason: a
+//! folder row is a conversation now and opens the conversation pane, and
+//! the `Absent` plates this proves live on the single-message reader. The
+//! fixture flags every message but the newest so the view holds plenty.
+//!
 //! One test function, for the reason `wiring.rs` gives.
 
 #![allow(unsafe_code)]
@@ -73,9 +78,38 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
+    // Every message but the newest flagged, before anything is wired: the
+    // Flagged view is where rows are genuinely single messages (see the
+    // module comment), and leaving the newest out is what makes the swap to
+    // it observable — the counts differ, and the first row is a message the
+    // folder view has not already reported.
+    let flagged_total: u32 = {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                [],
+            )
+            .expect("the fixture writes");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count")
+    };
+
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+    let wiring = Wiring::new(
+        database.clone(),
+        blobs,
+        bridge.handle(),
+        sink,
+        bridge.commands(),
+    );
 
     let window = Window::default();
     window.present();
@@ -83,10 +117,24 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
 
     let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
 
+    // Into the Flagged view, the way the sidebar's row would take it — but
+    // only after the sidebar's own default pick has landed: the folder list
+    // loads asynchronously and picking the default folder is what it does
+    // on arrival, which would stomp a scope opened before it. Then wait for
+    // the swap itself, because the model keeps the folder's rows until the
+    // Flagged page answers.
     let list = window.list();
     assert!(
         settle_until(|| list.model().n_items() > 0),
-        "the list is empty, so there is no cursor to move"
+        "the opening folder never filled, so no scope can be left"
+    );
+    wired
+        .feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled, so there is no cursor to move"
     );
     press_j(&window);
     assert!(

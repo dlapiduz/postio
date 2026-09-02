@@ -89,19 +89,32 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
     // Every message unread to begin with, or none of the assertions below
-    // distinguish "the dwell marked it" from "it was already read".
-    let inbox = {
+    // distinguish "the dwell marked it" from "it was already read". Flagged
+    // too: the sweep and the rest run in the Flagged view (see below), so
+    // every inbox message has to be in it.
+    let (inbox, flagged_total) = {
         let connection = database.connection().expect("a connection");
+        connection
+            .execute("UPDATE messages SET flagged = 1", [])
+            .expect("the fixture writes");
+        let flagged_total: u32 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count");
         let inbox = report
             .mailbox(postio_model::MailboxRole::Inbox)
             .expect("an inbox");
+        // Every message, not just the inbox: the sweep and the rest run in
+        // the account-wide Flagged view, and a row that was seeded read
+        // would satisfy the resting assertion without the dwell doing
+        // anything.
         connection
-            .execute(
-                "UPDATE messages SET seen = 0, flags = '' WHERE mailbox_id = ?1",
-                [inbox.id.get()],
-            )
+            .execute("UPDATE messages SET seen = 0, flags = ''", [])
             .expect("the fixture writes");
-        inbox.id
+        (inbox.id, flagged_total)
     };
 
     // A *real* bus, not a no-op handler: the whole question is whether the
@@ -149,12 +162,32 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     list.set_dwell_delay(DWELL);
 
     // ── opening the app marks nothing ────────────────────────────────────
+    // In the folder view, deliberately: since #755 the autoselect opens the
+    // newest *conversation* in the reading pane, and the pane's own dwell
+    // must stay off for a landing nobody chose — the same #71 rule the list
+    // has always had, one surface over.
     let untouched: Vec<MessageId> = page(&database, inbox);
     std::thread::sleep(DWELL * 4);
     while glib::MainContext::default().iteration(false) {}
     assert!(
         untouched.iter().all(|id| !is_read(&database, *id)),
         "launching Postio marked mail read that nobody had looked at"
+    );
+
+    // ── into the Flagged view for the cursor phases ──────────────────────
+    // A folder row is a conversation now, and sweeping the cursor over
+    // conversations opens a pane per row — the *list* dwell this file pins
+    // is the single-message rule, which lives in a query view since #755.
+    // (The conversation's own focus-driven dwell is #754's ground.)
+    feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    // Waited for by *count*, not by "has rows": the model keeps the
+    // folder's conversation rows until the Flagged page answers, and the
+    // folder shows fewer rows than there are messages.
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled, so there is nothing to sweep over"
     );
 
     // ── sweeping past rows marks none of them ────────────────────────────

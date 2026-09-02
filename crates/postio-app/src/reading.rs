@@ -727,6 +727,30 @@ impl Fill {
     /// for the same message is the right thing to do rather than a repeat.
     fn fill(&self, window: &Window, row: postio_gtk::list::Row) {
         let message = row.id;
+        // A row that stands for a conversation gets the conversation pane,
+        // not the single reader (#755): ADR 0015 Q4, "The column is an
+        // index. The pane is the conversation." A query view's rows are
+        // messages — `is_thread` is false there by construction — and a
+        // folder row that never got a thread id has no conversation to
+        // open, so both fall through to the single-message path below.
+        if row.is_thread()
+            && let Some(thread) = row.thread
+        {
+            // The same skip the single path makes below, for the same #749
+            // reason: re-opening a conversation the pane already shows
+            // re-runs the opening policy, which moves focus out from under
+            // whoever has moved it since.
+            if self.aimed.get() == Some(message) && window.conversation_on(thread) {
+                return;
+            }
+            self.aimed.set(Some(message));
+            window.open_conversation(&row);
+            // `showing` — what `e` replies to — is not set here: it follows
+            // the pane's focus through `connect_focus_changed` above, and
+            // the pane's opening policy has a better answer than the row's
+            // representative.
+            return;
+        }
         if self.aimed.get() == Some(message) && window.reading() {
             return;
         }

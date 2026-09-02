@@ -29,6 +29,11 @@
 //! straight into the blob store, exactly as a settled backfill would leave
 //! them.
 //!
+//! Runs in the Flagged view since #755: a folder row is a conversation now,
+//! its `e` answers the conversation pane's focus, and what this file pins is
+//! the single-message rule — reply to the row under the cursor — which
+//! lives in a query view.
+//!
 //! One test function, for the reason `wiring.rs` gives.
 
 #![allow(unsafe_code)]
@@ -118,6 +123,29 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let database = test_support::memory();
     let report = seed_small(&database, 23);
     assert!(report.message_count > 4, "not enough mail to walk through");
+    // Every message but the newest flagged: since #755 a folder row is a
+    // conversation and opens the conversation pane, and `e`-on-the-cursor-row
+    // — this file's whole subject — is the single-message rule, which lives
+    // in a query view now. The newest stays out because the folder view the
+    // window opens on has already reported it, and the cursor's dedup would
+    // otherwise swallow the Flagged view's own first report.
+    let flagged_total: u32 = {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                [],
+            )
+            .expect("the fixture writes");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count")
+    };
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
 
@@ -138,11 +166,26 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     settle();
 
     // ── the same call `run` makes ────────────────────────────────────────
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+
+    // Into the Flagged view, the way the sidebar's row would take it — but
+    // only after the sidebar's own default pick has landed: the folder list
+    // loads asynchronously and picking the default folder is what it does
+    // on arrival, which would stomp a scope opened before it. Then wait for
+    // the swap itself, because the model keeps the folder's rows until the
+    // Flagged page answers.
     let list = window.list();
     assert!(
-        settle_until(|| list.model().n_items() > 4),
-        "the list is empty, so there is no cursor to move"
+        settle_until(|| list.model().n_items() > 0),
+        "the opening folder never filled, so no scope can be left"
+    );
+    wired
+        .feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled, so there is no cursor to move"
     );
     let composer = window.composer();
 
