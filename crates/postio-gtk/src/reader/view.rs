@@ -105,6 +105,45 @@ pub struct Reader {
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
     actions_suppressed: Rc<std::cell::Cell<bool>>,
+    /// Disconnects this reader's `dark-notify` handler when the last clone
+    /// of it goes. See [`DarkNotify`].
+    _dark_notify: Rc<DarkNotify>,
+}
+
+/// Undoes the one connection a reader makes to something that outlives it.
+///
+/// `adw::StyleManager::default()` is process-global, and the handler that
+/// repaints the pane on a scheme change holds a strong reference to the
+/// `WebView`. Connected and never disconnected, that reference is
+/// immortal: the view, its `WebContext` — which is a WebProcess — and its
+/// `NetworkSession` all survive every drop, for the life of the process.
+///
+/// In the application that is invisible; there is one reader and it lives
+/// as long as the window. In a test binary it is #794: each test builds a
+/// reader, none of them ever dies, and at `exit()` WebKit finds the UI
+/// process tearing down connections while several WebProcesses are still
+/// attached —
+///
+///     WebProcess didn't exit as expected after the UI process connection
+///     was closed
+///
+/// once per leaked view, and then a segfault. Intermittent, because it is a
+/// race between exit handlers and processes that should already be gone.
+///
+/// Held behind an `Rc` rather than implemented as `Drop for Reader`, because
+/// `Reader` is `Clone` and every field is a handle: a `Drop` on the struct
+/// would disconnect when the *first* clone went out of scope, unhooking a
+/// reader that is still on screen.
+struct DarkNotify {
+    handler: Option<glib::SignalHandlerId>,
+}
+
+impl Drop for DarkNotify {
+    fn drop(&mut self) {
+        if let Some(handler) = self.handler.take() {
+            adw::StyleManager::default().disconnect(handler);
+        }
+    }
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -152,7 +191,7 @@ impl Reader {
         paint_ground(&view);
         // The scheme can change while the application runs, and the widget
         // background is not a document, so no re-render fixes it.
-        adw::StyleManager::default().connect_dark_notify({
+        let dark_notify = adw::StyleManager::default().connect_dark_notify({
             let view = view.clone();
             move |_| paint_ground(&view)
         });
@@ -190,6 +229,9 @@ impl Reader {
             page: Rc::new(std::cell::Cell::new(0)),
             paints: Rc::new(std::cell::Cell::new(0)),
             loads: Rc::new(std::cell::Cell::new(0)),
+            _dark_notify: Rc::new(DarkNotify {
+                handler: Some(dark_notify),
+            }),
             actions_suppressed: Rc::new(std::cell::Cell::new(false)),
         };
 
