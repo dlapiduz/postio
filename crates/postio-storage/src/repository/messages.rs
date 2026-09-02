@@ -1628,6 +1628,11 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
     let (scope, snooze) = match query.scope {
         ListScope::Mailbox(_) => ("messages.mailbox_id = ?1", NOT_YET_DUE),
         ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
+        // Every account, so there is no account to name and no argument to
+        // bind. `idx_messages_recency` is the index this leans on -- added
+        // for exactly this shape in ADR 0005 Q5a, because a composite index
+        // led by `account_id` cannot supply the order once nothing pins it.
+        ListScope::Unified => ("1 = 1", NOT_YET_DUE),
         ListScope::Flagged(_) => (
             "messages.account_id = ?1 AND messages.flagged = 1",
             NOT_YET_DUE,
@@ -1635,23 +1640,31 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         ListScope::Snoozed(_) => ("messages.account_id = ?1", STILL_SNOOZED),
         ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
     };
+    // Numbered from however many arguments the scope itself bound, so a
+    // scope that names nothing does not leave a hole at ?1.
+    let first = scope_arguments(&query.scope).len() + 1;
     let cursor = if with_cursor {
         // A row value, so SQLite can turn it into one range constraint on
         // (received_at, id) and seek straight to the cursor. Spelled as an OR
         // it would be a filter, and a deep page would walk every row above it.
-        " AND (messages.received_at, messages.id) < (?2, ?3)"
+        format!(
+            " AND (messages.received_at, messages.id) < (?{first}, ?{})",
+            first + 1
+        )
     } else {
-        ""
+        String::new()
     };
     format!("{scope} AND messages.deleted_locally = 0 AND {snooze}{cursor}")
 }
 
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
-    vec![match scope {
-        ListScope::Mailbox(id) => id.get(),
-        ListScope::Account(id) | ListScope::Flagged(id) | ListScope::Snoozed(id) => id.get(),
-        ListScope::Thread(id) => id.get(),
-    }]
+    match scope {
+        // Nothing to bind: the scope is every account.
+        ListScope::Unified => Vec::new(),
+        ListScope::Mailbox(id) => vec![id.get()],
+        ListScope::Account(id) | ListScope::Flagged(id) | ListScope::Snoozed(id) => vec![id.get()],
+        ListScope::Thread(id) => vec![id.get()],
+    }
 }
 
 fn page_arguments(query: &ListQuery) -> Vec<i64> {

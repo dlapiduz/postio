@@ -96,6 +96,7 @@ impl MessageSource for Store {
         let mailbox = match request.scope {
             ListScope::Mailbox(id) => id,
             ListScope::Account(_)
+            | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
             | ListScope::Thread(_) => MailboxId::new(0),

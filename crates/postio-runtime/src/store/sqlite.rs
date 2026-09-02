@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use postio_storage::repository::{
     ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository, ThreadCursor,
-    ThreadListQuery, ThreadListRow, ThreadRepository,
+    ThreadListQuery, ThreadListRow, ThreadRepository, UnifiedThreadListQuery,
 };
 use postio_storage::{Database, Pool};
 
@@ -39,6 +39,12 @@ pub struct SqliteStore {
     /// with different row counts -- one set of marks would have each read
     /// clearing the other's.
     thread_marks: Arc<Mutex<Marks<ThreadCursor>>>,
+    /// The same again, for the unified list. Its own for the reason the
+    /// threaded marks have their own: the unified window folds conversations
+    /// across accounts, so it is a different list in a different order from
+    /// any one account's, and two windows sharing marks would each clear the
+    /// other's -- or, where their totals happened to match, seek with one.
+    unified_marks: Arc<Mutex<Marks<ThreadCursor>>>,
 }
 
 /// Remembered page boundaries for one scope.
@@ -120,6 +126,7 @@ impl SqliteStore {
             pool: database.pool().clone(),
             marks: Arc::new(Mutex::new(Marks::default())),
             thread_marks: Arc::new(Mutex::new(Marks::default())),
+            unified_marks: Arc::new(Mutex::new(Marks::default())),
         }
     }
 
@@ -182,7 +189,7 @@ impl SqliteStore {
     /// part of the conversation it belongs to.
     async fn lists_conversations(&self, scope: ListScope) -> Result<bool, StoreError> {
         let ListScope::Mailbox(mailbox) = scope else {
-            return Ok(matches!(scope, ListScope::Account(_)));
+            return Ok(matches!(scope, ListScope::Account(_) | ListScope::Unified));
         };
         self.read(move |connection| {
             let folder = MailboxRepository::new(connection)
@@ -216,6 +223,9 @@ impl SqliteStore {
     /// moment, seek to the nearest boundary anybody has already read, and
     /// remember where this page ended so the next one can seek too.
     async fn read_thread_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
+        if matches!(request.scope, ListScope::Unified) {
+            return self.read_unified_page(request).await;
+        }
         let marks = self.thread_marks.clone();
         self.read(move |connection| {
             let query = thread_query(connection, request.scope, request.limit)?;
@@ -254,7 +264,60 @@ impl SqliteStore {
         .await
     }
 
+    /// One page of the unified list: every account at once, conversations
+    /// grouped across them.
+    ///
+    /// The same seek-mark bargain the account-scoped page makes, and for the
+    /// same reason -- the frontend asks for a row offset and the walk can
+    /// only resume from a cursor. Absorption is what makes the marks worth
+    /// more here than anywhere else: a group is not a fixed number of
+    /// threads, so `unified_page_at` has to re-walk from the cursor to find
+    /// where row *n* begins, and a remembered mark is what keeps that walk
+    /// short.
+    async fn read_unified_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
+        let marks = self.unified_marks.clone();
+        self.read(move |connection| {
+            let threads = ThreadRepository::new(connection);
+            let total = threads.unified_count()?;
+
+            let start = {
+                let mut marks = marks.lock().expect("not poisoned");
+                marks.check(total);
+                marks.nearest(request.offset)
+            };
+            let (seek, skip) = match start {
+                Some((at, cursor)) => (Some(cursor), request.offset - at),
+                None => (None, request.offset),
+            };
+            let groups = threads.unified_page_at(
+                &UnifiedThreadListQuery {
+                    limit: request.limit,
+                    after: seek,
+                },
+                skip,
+            )?;
+            if let Some(last) = groups.last() {
+                marks
+                    .lock()
+                    .expect("not poisoned")
+                    .remember(request.offset + groups.len() as u32, last.cursor());
+            }
+
+            let rows = groups
+                .into_iter()
+                .map(|group| summarise_thread(group.row))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ThreadPage { total, rows })
+        })
+        .await
+    }
+
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
+        if matches!(scope, ListScope::Unified) {
+            return self
+                .read(move |connection| Ok(ThreadRepository::new(connection).unified_count()?))
+                .await;
+        }
         self.read(move |connection| {
             let query = thread_query(connection, scope, 0)?;
             Ok(ThreadRepository::new(connection).count_of(&query)?)
@@ -398,6 +461,13 @@ fn thread_query(
         ListScope::Flagged(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => Err(
             StoreError::new("That view lists messages rather than conversations"),
         ),
+        // Never reached: `read_thread_page` and `read_thread_count` take the
+        // unified branch before they get here. It is spelled out rather than
+        // left to a catch-all so that a future scope cannot land in this arm
+        // by accident.
+        ListScope::Unified => Err(StoreError::new(
+            "The unified list is not scoped to one account",
+        )),
     }
 }
 

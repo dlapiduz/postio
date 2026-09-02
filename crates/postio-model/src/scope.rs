@@ -17,8 +17,15 @@ use crate::ids::{AccountId, MailboxId, ThreadId};
 pub enum ListScope {
     /// One folder, as the server has it.
     Mailbox(MailboxId),
-    /// Every folder in an account: the unified view.
+    /// Every folder in an account: that account's whole mail.
     Account(AccountId),
+    /// Every folder in every enabled account at once (ADR 0005 Q4).
+    ///
+    /// A view, never a destination: mail cannot be moved *into* it, and the
+    /// commands that need somewhere to put a message are unavailable here.
+    /// Rows are conversations grouped across accounts, so one row can stand
+    /// for two threads the user received at two addresses.
+    Unified,
     /// Everything flagged in an account, wherever it is filed.
     Flagged(AccountId),
     /// Everything currently snoozed in an account, wherever it is filed.
@@ -40,6 +47,7 @@ impl ListScope {
         match self {
             ListScope::Mailbox(id) => Some(id),
             ListScope::Account(_)
+            | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
             | ListScope::Thread(_) => None,
@@ -90,6 +98,18 @@ impl ListScope {
                 MessagesRemoved | MessageListChanged if account == scoped => Reload,
                 MessagesChanged => Refetch,
                 _ => Ignore,
+            },
+            // Every account, so no arrival is somebody else's -- but a
+            // delivery still never inserts. A unified row is a conversation
+            // grouped across accounts, and mail arriving at the second
+            // address for a conversation already on screen *folds into that
+            // row* rather than adding one. An insert cannot express that: it
+            // would draw the same conversation twice, which is the one thing
+            // the grouping exists to prevent. Reloading re-runs the walk,
+            // which is the only thing that knows which it was.
+            ListScope::Unified => match arrival {
+                NewMail | MessagesRemoved | MessageListChanged => Reload,
+                MessagesChanged => Refetch,
             },
             ListScope::Flagged(scoped) | ListScope::Snoozed(scoped) => match arrival {
                 MessagesRemoved | MessageListChanged | MessagesChanged if account == scoped => {
@@ -207,6 +227,32 @@ mod reaction_tests {
             scope.reaction(Arrival::MessagesChanged, AWAY, None),
             Reaction::Refetch
         );
+    }
+
+    #[test]
+    fn unified_reacts_to_every_account_and_never_inserts_a_delivery() {
+        let scope = ListScope::Unified;
+        for account in [HOME, AWAY] {
+            assert_eq!(
+                scope.reaction(Arrival::NewMail, account, Some(INBOX)),
+                Reaction::Reload,
+                "a delivery can fold into a row already on screen, and an \
+                 insert would draw that conversation a second time"
+            );
+            for arrival in [Arrival::MessagesRemoved, Arrival::MessageListChanged] {
+                assert_eq!(
+                    scope.reaction(arrival, account, Some(INBOX)),
+                    Reaction::Reload,
+                    "{arrival:?} in {account:?}: no account's mail is somebody \
+                     else's here"
+                );
+            }
+            assert_eq!(
+                scope.reaction(Arrival::MessagesChanged, account, None),
+                Reaction::Refetch,
+                "a flag change moves neither the membership nor the grouping"
+            );
+        }
     }
 
     #[test]

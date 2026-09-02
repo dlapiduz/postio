@@ -167,6 +167,7 @@ fn scope_name(scope: ListScope) -> String {
     match scope {
         ListScope::Mailbox(id) => format!("mailbox {}", id.get()),
         ListScope::Account(account) => format!("account {}", account.get()),
+        ListScope::Unified => "unified".to_owned(),
         ListScope::Flagged(account) => format!("flagged in account {}", account.get()),
         ListScope::Snoozed(account) => format!("snoozed in account {}", account.get()),
         ListScope::Thread(id) => format!("thread {}", id.get()),
