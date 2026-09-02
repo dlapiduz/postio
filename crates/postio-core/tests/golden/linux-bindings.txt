@@ -31,7 +31,7 @@ send	ctrl+Return
 schedule_send	ctrl+shift+Return
 save_draft	ctrl+s
 discard_draft	ctrl+d
-mark_sent	ctrl+shift+s
+mark_sent	ctrl+shift+m
 attach_file	ctrl+shift+a
 detach_composer	ctrl+shift+o
 bold	ctrl+b
