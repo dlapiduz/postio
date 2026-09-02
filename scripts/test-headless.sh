@@ -35,6 +35,11 @@ case "${1:-}" in
             && echo "stopped the headless compositor" \
             || echo "no headless compositor was running"
         rm -f "$SOCKET"
+        # And the runner's "do not bother trying" marker. --stop is what
+        # someone reaches for when the compositor is wedged, so it is the one
+        # command that must leave nothing behind telling the next run to skip
+        # starting a new one.
+        rm -f "$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
         exit 0 ;;
     --status)
         running && echo "up: $SOCKET" || echo "down"
@@ -45,8 +50,11 @@ esac
 if ! running; then
     command -v mutter >/dev/null || {
         echo "mutter is not installed; it normally ships with GNOME." >&2
-        echo "Fallback: sudo dnf install xorg-x11-server-Xvfb, then" >&2
-        echo "  xvfb-run -a env GDK_BACKEND=x11 cargo test -p postio-gtk" >&2
+        echo "  sudo dnf install mutter" >&2
+        # Not Xvfb. Postio is a Wayland application and X11 is not a
+        # supported configuration (maintainer, 2026-09-02), so a suite that
+        # passes under XWayland has proved something we do not ship. See
+        # docs/engineering-notes.md.
         exit 1
     }
     # setsid so the compositor is not in this shell's process group and
