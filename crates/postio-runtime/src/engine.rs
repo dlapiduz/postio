@@ -1999,6 +1999,17 @@ async fn drain(
     };
     let drainer = Drainer::with_policy(parts.backend.as_ref(), parts.retry).with_smtp(smtp);
 
+    // The drain is about to drive this connection itself, and a write
+    // `SELECT`s the mailbox it writes to. That answer is the server telling
+    // the client the mailbox's current state, so an `IDLE` armed afterwards
+    // reports only what happens next -- and a delivery that landed just
+    // before the write is in neither. Dropping the watcher's verification
+    // makes its next step a `STATUS`, which reconciles the gap within one
+    // poll tick instead of leaving it to the five-minute floor (#807).
+    if let Some(watcher) = state.watcher.as_mut() {
+        watcher.unverified();
+    }
+
     let report = match drainer.drain(&connection, parts.account, Utc::now()).await {
         Ok(report) => report,
         Err(error) => {
