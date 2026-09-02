@@ -38,8 +38,9 @@ fn provider(calls: &Rc<Cell<usize>>, files: Vec<gio::File>) -> LazyFiles {
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     glib::MainContext::default().block_on(future)
 }
+#[test]
 
-pub fn dragging_messages_out_hands_over_files() {
+fn dragging_messages_out_hands_over_files() {
     if gtk::init().is_err() {
         eprintln!("skipping: no display (run under scripts/test-headless.sh)");
         return;

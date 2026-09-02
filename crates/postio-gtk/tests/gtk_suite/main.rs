@@ -36,7 +36,6 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
-mod drag_out;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -630,10 +629,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside",
         gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside as fn(),
-    ),
-    (
-        "drag_out::dragging_messages_out_hands_over_files",
-        drag_out::dragging_messages_out_hands_over_files as fn(),
     ),
     (
         "list_model::an_empty_list_has_nothing_in_it",
