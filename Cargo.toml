@@ -20,6 +20,7 @@ members = [
     "crates/postio-app",
     "crates/postio-ffi",
     "crates/postio-bench",
+    "crates/postio-test-support",
 ]
 
 [workspace.package]
@@ -81,6 +82,7 @@ postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
 postio-gtk     = { path = "crates/postio-gtk" }
+postio-test-support = { path = "crates/postio-test-support" }
 
 [profile.release]
 lto = "thin"

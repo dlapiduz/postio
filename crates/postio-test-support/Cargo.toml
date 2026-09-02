@@ -1,0 +1,14 @@
+[package]
+name = "postio-test-support"
+description = "One deadline, one backoff, one timeout message: the wait primitive every suite in this workspace shares."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

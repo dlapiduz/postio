@@ -392,7 +392,18 @@ jobs:
       # So the tests run on the same nested compositor a developer's machine
       # uses: one arrangement to reason about rather than two, and no second
       # display for a green run to have quietly meant instead.
+      # A shared runner is slower and busier than the workstation these
+      # deadlines were chosen on, so it gets more patience -- in one line,
+      # here, rather than by enlarging a constant in a test file and slowing
+      # every developer's run forever. That was the only lever available while
+      # the suite had 171 hand-rolled deadlines (#842).
+      #
+      # It costs nothing when tests pass: a wait that resolves in 3 ms returns
+      # in 3 ms whatever the deadline says. It is only spent on a test that
+      # was going to fail anyway.
       - name: cargo test
+        env:
+          POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace
 
       # Keep the ~400 third-party crates; drop our own, which every commit
