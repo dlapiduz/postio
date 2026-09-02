@@ -341,6 +341,20 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
     assert_eq!(report.applied, 0);
     assert_eq!(report.failed.len(), 1);
     assert_eq!(report.failed[0].op_type, "send");
+    // And it says what the *server* said (#674). Once the indeterminate case
+    // has its own outcome, everything left in `failed` is on the safe side
+    // of the boundary -- so the copy may say the message did not go, and it
+    // owes the user the reason rather than "something went wrong". A code
+    // and a sentence they can act on, or take to their provider.
+    let reason = &report.failed[0].reason;
+    assert!(
+        reason.contains("550") && reason.contains("no such user"),
+        "the failure has to name the server's own answer: {reason}"
+    );
+    assert!(
+        reason.contains("grace@example.net"),
+        "and which recipient it was about: {reason}"
+    );
 
     assert!(
         DraftRepository::new(&connection)
@@ -1122,7 +1136,9 @@ async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
 
     let mut draft = a_draft(&account, "grace@example.net");
     drafts.save(&mut draft).expect("save draft");
-    drafts.queue_send(&mut draft, at(9)).expect("queue the send");
+    drafts
+        .queue_send(&mut draft, at(9))
+        .expect("queue the send");
     let reserved = draft.rfc_message_id.clone().expect("a reservation");
     drafts
         .set_state(draft.id, postio_model::DraftState::Unconfirmed)
@@ -1174,14 +1190,18 @@ async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
 
     let mut draft = a_draft(&account, "grace@example.net");
     drafts.save(&mut draft).expect("save draft");
-    drafts.queue_send(&mut draft, at(9)).expect("queue the send");
+    drafts
+        .queue_send(&mut draft, at(9))
+        .expect("queue the send");
     drafts
         .set_state(draft.id, postio_model::DraftState::Unconfirmed)
         .expect("the state an interrupted submission leaves");
 
     // Same folder, same account, same everything but the id.
     let mut other = postio_model::Message::new(account.id, sent, at(10));
-    other.rfc_message_id = Some(postio_model::RfcMessageId::new("<someone-else@example.com>"));
+    other.rfc_message_id = Some(postio_model::RfcMessageId::new(
+        "<someone-else@example.com>",
+    ));
     MessageRepository::new(&connection)
         .create(&mut other)
         .expect("an unrelated message");
