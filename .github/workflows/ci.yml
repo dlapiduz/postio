@@ -406,10 +406,19 @@ jobs:
       # It costs nothing when tests pass: a wait that resolves in 3 ms returns
       # in 3 ms whatever the deadline says. It is only spent on a test that
       # was going to fail anyway.
+      # `--no-fail-fast`, for the reason the nightly job already gives: plain
+      # cargo abandons the remaining targets at the first failure. On this
+      # run a single flaky case in `postio-runtime` stopped the job with 98
+      # of ~107 binaries reported and the rest -- including two suites the
+      # branch had just restructured -- never executed at all. A red run that
+      # hides what else would have failed costs a whole extra round trip to
+      # find out, and it is the difference between "one test is flaky" and
+      # "something is badly wrong", which is exactly what you want to know
+      # while looking at a red tick.
       - name: cargo test
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo test --workspace
+        run: dbus-run-session -- cargo test --workspace --no-fail-fast
 
       # Keep the ~400 third-party crates; drop our own, which every commit
       # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
