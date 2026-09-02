@@ -129,6 +129,7 @@ mod gtk_undo_toast;
 mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
+mod gtk_window_state;
 mod list_model;
 mod no_stray_prints;
 
@@ -160,6 +161,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_layout_intent::opening_a_message_gives_the_reader_the_screen_when_there_is_room_for_one",
         gtk_layout_intent::opening_a_message_gives_the_reader_the_screen_when_there_is_room_for_one as fn(),
+    ),
+    (
+        "gtk_window_state::narrowing_the_window_does_not_save_away_the_sidebar",
+        gtk_window_state::narrowing_the_window_does_not_save_away_the_sidebar as fn(),
+    ),
+    (
+        "gtk_window_state::closing_the_sidebar_at_full_width_is_saved_as_a_preference",
+        gtk_window_state::closing_the_sidebar_at_full_width_is_saved_as_a_preference as fn(),
+    ),
+    (
+        "gtk_window_state::what_a_window_would_save_survives_a_round_trip",
+        gtk_window_state::what_a_window_would_save_survives_a_round_trip as fn(),
     ),
     (
         "gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending",
