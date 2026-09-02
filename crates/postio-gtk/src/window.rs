@@ -2029,6 +2029,48 @@ impl Window {
             self.imp().pending_move.set(true);
             return;
         }
+        // Opening a message is navigation, not a store verb: it changes what
+        // is on screen and nothing about the mail. The bus owns the verbs
+        // that write — archive, flag, move, snooze — and this is answered
+        // here beside the other view commands, the way `PrevView` and
+        // `NextScope` are.
+        //
+        // It went unanswered anywhere for a while (#767). Nothing noticed
+        // because the *keyboard* path never needed it: `Return` on a row
+        // reaches `connect_activated` through `GtkListView`'s own action, so
+        // reading mail worked and only the paths that name a message were
+        // dead — the search preview's `Ret` and its `Open` button, which
+        // sent this command and got a dispatcher rejection back.
+        //
+        // Matched on the whole command rather than its id, like the move
+        // above, because which message is being asked for is the substance:
+        // `Some` names one and `None` means the row the cursor is on.
+        if let postio_core::Command::OpenMessage { message } = command {
+            let list = self.list();
+            match message {
+                // Put the cursor on it, then *activate* it — do not rely on
+                // the cursor having moved. A result opened out of the search
+                // preview is usually the row the list already had under the
+                // cursor, and a move that moves nowhere emits nothing, so an
+                // open that waited for `notify::selected` would do nothing
+                // for exactly the commonest case (#601 is the same shape,
+                // for a click).
+                //
+                // When the row is not resident yet, `select_message` lands
+                // the cursor asynchronously and the ordinary cursor path
+                // fills the pane when it arrives; activating now would
+                // activate whatever the cursor is on in the meantime, which
+                // is why this asks first.
+                Some(message) => {
+                    list.select_message(message);
+                    if list.cursor_id() == Some(message) {
+                        list.activate_cursor();
+                    }
+                }
+                None => list.activate_cursor(),
+            }
+            return;
+        }
         // A command the window answers itself — closing an overlay, moving
         // the cursor — means the same thing however it was invoked, and stops
         // here either way.

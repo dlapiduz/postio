@@ -43,7 +43,6 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::WidgetExt;
-use postio_core::bridge::CommandSender;
 use postio_core::{Command, Event};
 use postio_gtk::feed::Feeds;
 use postio_gtk::finder::Finder;
@@ -93,7 +92,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     let order: Order = Rc::new(std::cell::Cell::new(postio_search::ResultOrder::default()));
 
     install_leave_to_list(window, &finder);
-    install_preview(&view, wiring);
+    install_preview(&view, wiring, window);
     install_run(
         &view,
         &finder,
@@ -635,7 +634,7 @@ fn results_label(count: u32) -> String {
 }
 
 /// Resolve `cid:` parts, and open what the preview asks to open.
-fn install_preview(view: &View, wiring: &Wiring) {
+fn install_preview(view: &View, wiring: &Wiring, window: &Window) {
     let preview = view.preview();
     preview.set_blob_source(crate::reading::cid_source(
         {
@@ -648,21 +647,30 @@ fn install_preview(view: &View, wiring: &Wiring) {
         wiring.database.clone(),
         wiring.blobs.clone(),
     ));
-    install_open(&preview, wiring.commands.clone());
+    install_open(&preview, window);
 }
 
 /// `Enter` on a previewed result opens it in the reader.
-fn install_open(preview: &postio_gtk::search::Preview, commands: CommandSender) {
-    preview.connect_open(move |message| {
-        if commands
-            .send(Command::OpenMessage {
+///
+/// Through `Window::act` rather than straight onto the command bus (#767).
+/// The bus owns the verbs that *write* — archive, flag, move, snooze — and
+/// opening a message writes nothing; it moves the cursor to the result and
+/// lets the reading pane fill the way it does for any other landing, which
+/// is also what takes the pane back from the preview.
+///
+/// Sending it to the bus was the bug: nothing there answered `OpenMessage`,
+/// so the dispatcher rejected it and the one gesture whose whole purpose is
+/// "open this" did nothing at all.
+fn install_open(preview: &postio_gtk::search::Preview, window: &Window) {
+    preview.connect_open(glib::clone!(
+        #[weak]
+        window,
+        move |message| {
+            window.act(Command::OpenMessage {
                 message: Some(message),
-            })
-            .is_err()
-        {
-            tracing::debug!("the runtime has stopped and did not open that");
+            });
         }
-    });
+    ));
 }
 
 /// Give `@` the account's correspondents.

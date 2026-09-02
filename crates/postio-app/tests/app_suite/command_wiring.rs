@@ -40,9 +40,11 @@
 //! it at all -- no repository to list or create one, no picker, nothing to
 //! wire it *to* -- so #766 removed the command rather than offer a menu
 //! item that could never do anything; #780 tracks building label support
-//! for real. `OpenMessage` is still named below so this test stays green
-//! until it is actually wired, at which point removing it from the list is
-//! how a session confirms the fix.
+//! for real. `OpenMessage` was the last one left: nothing answered it, so
+//! the search preview's `Ret` sent a command the dispatcher rejected and
+//! opened nothing. #767 wired it in `Window::act` and took it off the list,
+//! which is how a session confirms a fix here -- `search_open.rs` drives the
+//! gesture end to end.
 //!
 //! No real dispatcher subscriber besides the spy is ever installed
 //! (`commands::install` is never called, and neither is
@@ -148,7 +150,11 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 /// Genuinely orphaned -- found by this sweep, not #756's to fix. Remove an
 /// entry once its issue lands a real handler; the sweep will fail the same
 /// way it did for `ToggleSidebar` if one is removed too early.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[(CommandId::OpenMessage, "#767")];
+///
+/// Empty, and worth keeping: every id this sweep found unanswered has since
+/// been wired or removed. `OpenMessage` was the last of them (#767) and is
+/// answered in `Window::act` now, proven end to end by `search_open.rs`.
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     let state_dir = tempfile::tempdir().expect("a state directory");
