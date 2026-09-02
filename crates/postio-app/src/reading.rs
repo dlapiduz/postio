@@ -584,7 +584,8 @@ impl Fill {
     ///
     /// The same read as [`Fill::fill`] — the same body loader, the same
     /// `root_type`, so the two cannot drift on what a message is — rendered
-    /// into a given [`Reader`] instead of into the window's one.
+    /// into a given [`Reader`](postio_gtk::reader::Reader) instead of into the
+    /// window's one.
     ///
     /// # Why the late-arrival guard is different
     ///

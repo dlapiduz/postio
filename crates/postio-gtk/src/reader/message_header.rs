@@ -300,7 +300,7 @@ impl Default for MessageHeader {
     }
 }
 
-/// "Name <address>" when a display name is present, the bare address
+/// `"Name <address>"` when a display name is present, the bare address
 /// otherwise — never a name repeated as its own address.
 fn address_line(address: &EmailAddress) -> String {
     match address

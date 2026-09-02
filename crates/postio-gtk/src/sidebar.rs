@@ -583,7 +583,8 @@ mod imp {
         /// Set while a selection is being applied programmatically, so
         /// restoring one does not look like the user clicking it.
         pub echoing: std::cell::Cell<bool>,
-        /// The full mailbox list [`Sidebar::set_mailboxes`] was last given —
+        /// The full mailbox list [`Sidebar::set_mailboxes`](super::Sidebar::set_mailboxes)
+        /// was last given —
         /// kept so a toggle can re-flatten the tree, and a select can find a
         /// row's ancestors, without the caller handing the list back.
         pub mailboxes: RefCell<Vec<Mailbox>>,

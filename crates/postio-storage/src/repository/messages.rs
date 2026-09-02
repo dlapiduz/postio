@@ -623,7 +623,7 @@ impl<'a> MessageRepository<'a> {
     ///
     /// The body and the header block are *not* written: they belong to the blob
     /// store, and their keys are set with
-    /// [`MessageRepository::set_body_blobs`].
+    /// [`MessageRepository::set_body`].
     pub fn create(&self, message: &mut Message) -> Result<MessageId> {
         let transaction = super::Scope::open(self.connection)?;
         let id = insert(&transaction, message)?;
@@ -783,7 +783,7 @@ impl<'a> MessageRepository<'a> {
     /// One message, with its recipients, attachments and labels.
     ///
     /// The body and headers are empty: those bytes are in the blob store. See
-    /// [`MessageRepository::body_blobs`].
+    /// [`MessageRepository::body`].
     pub fn get(&self, id: MessageId) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
@@ -1345,7 +1345,7 @@ impl<'a> MessageRepository<'a> {
 
     /// Sets `body_state` on its own, without touching the stored body.
     ///
-    /// The one write [`set_body_blobs`](Self::set_body_blobs) cannot do: a
+    /// The one write [`set_body`](Self::set_body) cannot do: a
     /// payload landing changes how much of the message is local without
     /// changing where its text is. Kept separate rather than folded in
     /// because reading the blob keys back only to write them again is how a
@@ -1366,7 +1366,8 @@ impl<'a> MessageRepository<'a> {
 
     /// Records where one payload part's bytes landed in the blob store.
     ///
-    /// Keyed by the part's MIME path rather than its [`AttachmentId`],
+    /// Keyed by the part's MIME path rather than its
+    /// [`AttachmentId`](postio_model::AttachmentId),
     /// deliberately. A refetch **replaces** a message's attachment rows —
     /// the parser re-reads the structure and [`update`](Self::update) writes
     /// the new set — so the row id the reading pane was holding does not

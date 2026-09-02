@@ -973,7 +973,8 @@ impl Composer {
     /// passed through from whatever the draft was opened with, so editing the
     /// text of a reply left an HTML half describing the text before the edit.
     ///
-    /// `text` is [`Document::to_flowed_text`], not `to_text` — RFC 3676
+    /// `text` is [`Document::to_flowed_text`](postio_body::Document::to_flowed_text),
+    /// not `to_text` — RFC 3676
     /// `format=flowed` (#333), soft-wrapped at 72 columns. This is the one
     /// place that matters: the `MessageBody` built here is what a draft is
     /// filed as *and* what actually gets sent, so wrapping happens exactly

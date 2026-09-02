@@ -12,7 +12,7 @@
 //! [`postio_core::aim`], because they are semantics and every frontend has to
 //! reach the same answer (#589, ADR 0019). What is left in this module is the
 //! **adapter**: read GTK's focus, scope, selection and cursor, hand them over
-//! as an [`Aim`](postio_core::aim::Aim), and send back what comes out. A
+//! as an [`Aim`], and send back what comes out. A
 //! second frontend writes the same three lines against its own list and gets
 //! the same behaviour by construction rather than by agreement.
 //!

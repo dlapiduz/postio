@@ -64,7 +64,7 @@ fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
     filtered_hints(keymap, true)
 }
 
-/// [`hints_for`], minus `Thread` when the row has nothing to thread — the
+/// `hints_for`, minus `Thread` when the row has nothing to thread — the
 /// same test the badge uses (`thread_count > 1`, in `build`), so the badge
 /// and the hint can never disagree. A row that has not arrived yet (`None`)
 /// has nothing to thread either.

@@ -16,7 +16,7 @@
 //! *caller's* runtime responsive; it does not make the call itself
 //! cancellable. [`blocking`] awaits the spawned task's `JoinHandle`, and
 //! [`Probe::attempt`](super::Probe::attempt) races that await against a
-//! timeout and the caller's [`CancelToken`](crate::cancel::CancelToken) — so
+//! timeout and the caller's [`CancelToken`] — so
 //! when either wins, this function's own future is dropped, but the
 //! `JoinHandle` being dropped only *detaches* the spawned task. Nothing can
 //! abort it; tokio has no way to interrupt a thread mid-`read`.
@@ -38,7 +38,7 @@
 //!   autoconfig fetch, essentially immediately.
 //! * **[`DISCOVERY_IO_TIMEOUT`]** ends it anyway if the peer accepted the
 //!   connection and then went silent. Before this, that case had no bound at
-//!   all: `pimalaya-stream`'s default [`Retry`] budget is a minute *per
+//!   all: `pimalaya-stream`'s default `Retry` budget is a minute *per
 //!   read*, and the DNS path armed no socket deadline whatsoever.
 //!
 //! What is still not bounded is `connect` on the HTTPS path.
@@ -518,7 +518,7 @@ impl DiscoveryTransport for PimalayaTransport {
 /// Turns a client failure into a [`TransportError`], saying so when the
 /// reason was this probe stopping rather than the network.
 ///
-/// The distinction never reaches the user — [`Probe::attempt`] has already
+/// The distinction never reaches the user — [`crate::discovery::Probe::run`] has already
 /// returned `Cancelled` by the time this lands — but it is the difference
 /// between a log that reads "the domain has no autoconfig" and one that reads
 /// "we stopped asking", and only one of those is true.

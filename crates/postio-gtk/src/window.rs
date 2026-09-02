@@ -132,7 +132,8 @@ mod imp {
         ///
         /// `None` — the shipping case — means
         /// `$XDG_STATE_HOME/postio/remote-images.ini`. See
-        /// [`Window::set_allowlist_path`] for why a test needs to say
+        /// [`Window::set_allowlist_path`](super::Window::set_allowlist_path) for
+        /// why a test needs to say
         /// otherwise.
         pub allowlist_path: std::cell::RefCell<Option<std::path::PathBuf>>,
         /// Whether the reader has a message to show.

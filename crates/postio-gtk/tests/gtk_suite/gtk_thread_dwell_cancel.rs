@@ -70,7 +70,12 @@ fn message(id: u32, unread: bool) -> Row {
         draft: false,
         has_attachments: false,
         thread_count: 6,
-        participants: Vec::new(),
+        // Non-empty, so `Row::is_thread` is true: these rows stand for
+        // conversations, which is the whole point of the assertions below.
+        participants: vec![
+            EmailAddress::new(Some("Ada Norwood"), "ada@example.com"),
+            EmailAddress::new(Some("Grace Bell"), "grace@example.net"),
+        ],
     }
 }
 
@@ -96,19 +101,32 @@ pub fn opening_a_conversation_stops_the_lists_clock() {
         move |message| dwelled.borrow_mut().push(message)
     });
 
-    // Arm the clock the way a person does: land the cursor on a row. The
-    // autoselect parks on row 0 and `report_cursor` dedupes, so `next_row`
-    // is the first real landing -- row 1, id 2. That row stands for a
-    // conversation, and its id is the representative.
+    // Land the cursor on a row the way a person does. The autoselect parks
+    // on row 0 and `report_cursor` dedupes, so `next_row` is the first real
+    // landing -- row 1, id 2.
+    //
+    // These rows stand for conversations (`participants` non-empty, so
+    // `Row::is_thread`), and for those the list starts no clock at all: the
+    // id would be the representative, and ADR 0015 Q4 gives reading inside a
+    // conversation to the pane's own focus-driven dwell.
     list.model().set_source(Rc::new(Pages));
     list.model()
         .deliver(0, (0..ROWS).map(|id| message(id, id >= 3)).collect());
     while gtk::glib::MainContext::default().iteration(false) {}
     list.next_row();
     while gtk::glib::MainContext::default().iteration(false) {}
+    let deadline = std::time::Instant::now() + DWELL * 10;
+    while std::time::Instant::now() < deadline {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert!(
         dwelled.borrow().is_empty(),
-        "the clock should be running, not already fired"
+        "landing on a thread row started the list's clock, so {:?} would be \
+         marked read for standing on the row rather than for reading the \
+         message — the row's id is its representative, and ADR 0015 Q4 gives \
+         that decision to the conversation pane",
+        dwelled.borrow()
     );
 
     // ── the conversation takes over ──────────────────────────────────────

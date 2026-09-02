@@ -16,7 +16,8 @@ use url::Url;
 /// Opens a URL outside the application.
 ///
 /// A trait so the flow in [`super::authorize`] never touches a real desktop
-/// in a test: [`RecordingOpener`] stands in for it there.
+/// in a test: `RecordingOpener` stands in for it there — `#[cfg(test)]`,
+/// so it is not part of these docs to link to.
 pub trait BrowserOpener: Send + Sync {
     /// Opens `url` in the user's browser. Returns once the request to open
     /// it has been made — never waits for the browser, let alone the user.

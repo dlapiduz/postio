@@ -863,7 +863,7 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`](crate::error::Error::Io) if the parent directory cannot be created, or any error
+    /// [`Error::Io`] if the parent directory cannot be created, or any error
     /// [`migrate`](crate::migrate) can return.
     /// `key` is the database subkey — `StoreKey::derive(Purpose::Database)` —
     /// and it is not optional. ADR 0014 rules out a plaintext fallback, so
