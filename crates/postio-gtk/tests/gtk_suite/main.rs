@@ -36,6 +36,7 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod drag_out;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -129,6 +130,7 @@ mod gtk_undo_toast;
 mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
+mod list_model;
 mod no_stray_prints;
 
 const CASES: &[(&str, fn())] = &[
@@ -628,6 +630,82 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside",
         gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside as fn(),
+    ),
+    (
+        "drag_out::dragging_messages_out_hands_over_files",
+        drag_out::dragging_messages_out_hands_over_files as fn(),
+    ),
+    (
+        "list_model::an_empty_list_has_nothing_in_it",
+        list_model::an_empty_list_has_nothing_in_it as fn(),
+    ),
+    (
+        "list_model::pointing_at_a_folder_costs_nothing_until_a_row_is_read",
+        list_model::pointing_at_a_folder_costs_nothing_until_a_row_is_read as fn(),
+    ),
+    (
+        "list_model::a_row_that_is_not_here_yet_is_a_placeholder_and_a_request",
+        list_model::a_row_that_is_not_here_yet_is_a_placeholder_and_a_request as fn(),
+    ),
+    (
+        "list_model::a_page_is_never_asked_for_twice",
+        list_model::a_page_is_never_asked_for_twice as fn(),
+    ),
+    (
+        "list_model::scrolling_a_hundred_thousand_messages_keeps_memory_flat",
+        list_model::scrolling_a_hundred_thousand_messages_keeps_memory_flat as fn(),
+    ),
+    (
+        "list_model::the_pages_that_go_are_the_ones_nobody_is_looking_at",
+        list_model::the_pages_that_go_are_the_ones_nobody_is_looking_at as fn(),
+    ),
+    (
+        "list_model::a_redelivered_page_keeps_the_row_objects_it_already_had",
+        list_model::a_redelivered_page_keeps_the_row_objects_it_already_had as fn(),
+    ),
+    (
+        "list_model::a_flag_change_touches_one_row_and_nothing_else",
+        list_model::a_flag_change_touches_one_row_and_nothing_else as fn(),
+    ),
+    (
+        "list_model::a_message_that_is_not_on_screen_needs_no_update",
+        list_model::a_message_that_is_not_on_screen_needs_no_update as fn(),
+    ),
+    (
+        "list_model::new_mail_arrives_as_an_insertion_at_the_top",
+        list_model::new_mail_arrives_as_an_insertion_at_the_top as fn(),
+    ),
+    (
+        "list_model::nothing_happens_when_no_mail_arrives",
+        list_model::nothing_happens_when_no_mail_arrives as fn(),
+    ),
+    (
+        "list_model::a_shrinking_folder_drops_the_rows_that_went",
+        list_model::a_shrinking_folder_drops_the_rows_that_went as fn(),
+    ),
+    (
+        "list_model::switching_folders_forgets_the_one_before",
+        list_model::switching_folders_forgets_the_one_before as fn(),
+    ),
+    (
+        "list_model::a_reordered_list_is_asked_for_again_from_the_top",
+        list_model::a_reordered_list_is_asked_for_again_from_the_top as fn(),
+    ),
+    (
+        "list_model::there_is_nothing_past_the_end",
+        list_model::there_is_nothing_past_the_end as fn(),
+    ),
+    (
+        "list_model::the_model_can_say_which_page_holds_a_message",
+        list_model::the_model_can_say_which_page_holds_a_message as fn(),
+    ),
+    (
+        "list_model::the_model_can_say_where_a_resident_message_sits",
+        list_model::the_model_can_say_where_a_resident_message_sits as fn(),
+    ),
+    (
+        "list_model::a_source_that_answers_too_soon_is_held_until_it_is_safe",
+        list_model::a_source_that_answers_too_soon_is_held_until_it_is_safe as fn(),
     ),
 ];
 

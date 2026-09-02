@@ -100,16 +100,14 @@ fn watch(model: &MessageList) -> Rc<RefCell<Vec<(u32, u32, u32)>>> {
     log
 }
 
-#[test]
-fn an_empty_list_has_nothing_in_it() {
+pub fn an_empty_list_has_nothing_in_it() {
     let model = MessageList::new();
     assert_eq!(model.n_items(), 0);
     assert!(model.item(0).is_none());
     assert_eq!(model.resident_rows(), 0);
 }
 
-#[test]
-fn pointing_at_a_folder_costs_nothing_until_a_row_is_read() {
+pub fn pointing_at_a_folder_costs_nothing_until_a_row_is_read() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -123,8 +121,7 @@ fn pointing_at_a_folder_costs_nothing_until_a_row_is_read() {
     assert_eq!(model.resident_rows(), 0);
 }
 
-#[test]
-fn a_row_that_is_not_here_yet_is_a_placeholder_and_a_request() {
+pub fn a_row_that_is_not_here_yet_is_a_placeholder_and_a_request() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -151,8 +148,7 @@ fn a_row_that_is_not_here_yet_is_a_placeholder_and_a_request() {
     );
 }
 
-#[test]
-fn a_page_is_never_asked_for_twice() {
+pub fn a_page_is_never_asked_for_twice() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -174,8 +170,7 @@ fn a_page_is_never_asked_for_twice() {
     assert!(source.drain().is_empty());
 }
 
-#[test]
-fn scrolling_a_hundred_thousand_messages_keeps_memory_flat() {
+pub fn scrolling_a_hundred_thousand_messages_keeps_memory_flat() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -211,8 +206,7 @@ fn scrolling_a_hundred_thousand_messages_keeps_memory_flat() {
     );
 }
 
-#[test]
-fn the_pages_that_go_are_the_ones_nobody_is_looking_at() {
+pub fn the_pages_that_go_are_the_ones_nobody_is_looking_at() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -239,8 +233,7 @@ fn the_pages_that_go_are_the_ones_nobody_is_looking_at() {
     );
 }
 
-#[test]
-fn a_redelivered_page_keeps_the_row_objects_it_already_had() {
+pub fn a_redelivered_page_keeps_the_row_objects_it_already_had() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -258,8 +251,7 @@ fn a_redelivered_page_keeps_the_row_objects_it_already_had() {
     );
 }
 
-#[test]
-fn a_flag_change_touches_one_row_and_nothing_else() {
+pub fn a_flag_change_touches_one_row_and_nothing_else() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -285,8 +277,7 @@ fn a_flag_change_touches_one_row_and_nothing_else() {
     assert!(after.row().unwrap().flagged);
 }
 
-#[test]
-fn a_message_that_is_not_on_screen_needs_no_update() {
+pub fn a_message_that_is_not_on_screen_needs_no_update() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -304,8 +295,7 @@ fn a_message_that_is_not_on_screen_needs_no_update() {
     );
 }
 
-#[test]
-fn new_mail_arrives_as_an_insertion_at_the_top() {
+pub fn new_mail_arrives_as_an_insertion_at_the_top() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -330,8 +320,7 @@ fn new_mail_arrives_as_an_insertion_at_the_top() {
     );
 }
 
-#[test]
-fn nothing_happens_when_no_mail_arrives() {
+pub fn nothing_happens_when_no_mail_arrives() {
     let source = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -350,8 +339,7 @@ fn nothing_happens_when_no_mail_arrives() {
     );
 }
 
-#[test]
-fn a_shrinking_folder_drops_the_rows_that_went() {
+pub fn a_shrinking_folder_drops_the_rows_that_went() {
     let source = Fake::new(500);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -377,8 +365,7 @@ fn a_shrinking_folder_drops_the_rows_that_went() {
     );
 }
 
-#[test]
-fn switching_folders_forgets_the_one_before() {
+pub fn switching_folders_forgets_the_one_before() {
     let inbox = Fake::new(HUGE);
     let model = MessageList::new();
     model.set_source(inbox.clone());
@@ -403,8 +390,7 @@ fn switching_folders_forgets_the_one_before() {
     );
 }
 
-#[test]
-fn a_reordered_list_is_asked_for_again_from_the_top() {
+pub fn a_reordered_list_is_asked_for_again_from_the_top() {
     let source = Fake::new(500);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -419,8 +405,7 @@ fn a_reordered_list_is_asked_for_again_from_the_top() {
     assert_eq!(model.resident_rows(), 0);
 }
 
-#[test]
-fn there_is_nothing_past_the_end() {
+pub fn there_is_nothing_past_the_end() {
     let source = Fake::new(120);
     let model = MessageList::new();
     model.set_source(source.clone());
@@ -438,8 +423,7 @@ fn there_is_nothing_past_the_end() {
     );
 }
 
-#[test]
-fn the_model_can_say_which_page_holds_a_message() {
+pub fn the_model_can_say_which_page_holds_a_message() {
     // What makes an in-place update cheap: a changed message costs a refetch
     // of the one page it is on, not of the folder.
     let source = Fake::new(HUGE);
@@ -464,8 +448,7 @@ fn the_model_can_say_which_page_holds_a_message() {
     );
 }
 
-#[test]
-fn the_model_can_say_where_a_resident_message_sits() {
+pub fn the_model_can_say_where_a_resident_message_sits() {
     // What a notification's click needs: not just which page a message is
     // on, but the exact position to put the cursor on.
     let source = Fake::new(HUGE);
@@ -518,8 +501,7 @@ impl PageSource for Impatient {
     }
 }
 
-#[test]
-fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
+pub fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
     // `request` is called from inside the model answering `item()`, so a
     // delivery made there would emit `items_changed` while a view is
     // mid-read. GtkListView does not survive that — it segfaults, with no
