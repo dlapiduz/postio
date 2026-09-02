@@ -68,11 +68,33 @@ corpus in `crates/postio-model/tests/corpus/` (`/add-fixture` extends it).
 ## Build & test: verify what you touched, nothing more
 
 ```bash
-scripts/test-fast.sh                                 # the inner loop: units only
+scripts/test-fast.sh                                 # between edits: changed crates, --lib
+scripts/test-sanity.sh                               # before landing: whole workspace, --lib
 cargo test   -p <crate>                              # that crate, integration included
 cargo clippy -p <crate> --all-targets -- -D warnings # before landing
 scripts/check.sh                                     # every repository invariant
 ```
+
+**Three tiers, and picking the right one is most of what makes iterating here
+cheap.** Measured, warm, on this workstation:
+
+| | tests | cost |
+|---|---|---|
+| `scripts/test-fast.sh` — changed crates, `--lib` | varies | seconds |
+| `scripts/test-sanity.sh` — whole workspace, `--lib` | 1,313 | ~5s, 19 binaries |
+| the full suite — integration too | 3,169 | ~497s on CI; `app_suite` alone ~11 min to link |
+
+`issue-land.sh` runs the **sanity tier** by default; `--full` adds the
+per-crate integration suites. That default exists because several sessions
+share this machine with `jobs = 2`, so landing had become something you
+queued for.
+
+**It is safe only because CI still runs the whole workspace on every pull
+request**, and the nightly job runs it again. Unit tests are precisely the
+tier that cannot see this project's characteristic bug — layers that each
+pass and are not joined up, like the Reader that was built, tested and never
+mounted. Do not read the fast default as permission to skip integration
+tests: write them, and let CI be the thing that runs them.
 
 **Iterate at the cheapest layer that can fail.** The tests are not what costs;
 compiling and linking is. On this workstation `postio-body`'s 49 unit tests run
@@ -90,8 +112,8 @@ not license asserting on what a layer was handed instead of what a person would
 see — that is what the integration suites and `issue-land.sh` are still for.
 
 **Test the crates you changed; the reconcile pass proves the rest.**
-`issue-land.sh` runs the full gate chain (fmt, clippy, tests, `check.sh`)
-over exactly your changed crates — plus one `cargo check --workspace
+`issue-land.sh` runs the gate chain (fmt, clippy, the sanity tier,
+`check.sh`) over exactly your changed crates — plus one `cargo check --workspace
 --all-targets`, because a shared type's blast radius is wider than the crate
 list describes (#419) — and the steward loop periodically runs the
 whole workspace against `main` — so a workspace build or test from an

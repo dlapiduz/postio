@@ -193,10 +193,20 @@ scripts/issue-land.sh --gates-only    # check without committing
 scripts/issue-land.sh -m "..." --wip  # push a branch, no PR yet
 ```
 
-It formats, runs clippy and tests **for the crates you actually changed**
-(the periodic reconcile pass proves the rest of the workspace), runs every
-repository invariant via `scripts/check.sh`, commits, pushes the branch, opens
-a PR whose body says `Closes #<n>`, **waits for CI, and merges it**.
+It formats, runs clippy **for the crates you actually changed** and the
+**sanity tier** — the whole workspace's unit tests, 1,313 of them in about
+five seconds — runs every repository invariant via `scripts/check.sh`,
+commits, pushes the branch, opens a PR whose body says `Closes #<n>`,
+**waits for CI, and merges it**.
+
+`--full` adds the per-crate integration suites, which is what this used to
+always do. It is worth reaching for when your change is about wiring rather
+than logic; otherwise let CI run them, which it does on every pull request.
+The default is fast because a `postio-app` integration binary is an
+~11-minute compile and link and several sessions share this machine — not
+because integration tests stopped mattering. They are how this project
+catches the bug it actually ships: layers that each pass and are not joined
+up.
 
 That last part is not optional and not someone else's job. A PR nobody merges
 is work that looks finished and is not: the branch goes stale, it conflicts
