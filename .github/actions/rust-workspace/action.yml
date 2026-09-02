@@ -43,7 +43,6 @@ runs:
           libglib2.0-dev \
           libpango1.0-dev \
           mutter \
-          xvfb \
           dbus-daemon
 
     # The pin decides; see the note in the `fmt` job.
