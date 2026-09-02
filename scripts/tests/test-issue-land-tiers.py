@@ -1,36 +1,27 @@
 #!/usr/bin/env python3
-"""Self-test for #585: adding a workspace member widens the gate.
+"""Self-test for #847: which tests a landing runs, and which it does not.
 
-`cargo test -p postio-session` was red on `main` for two landings, and
-neither landing could have seen it. `postio-session/src/logging.rs` keeps a
-list of every workspace crate so a bare `POSTIO_LOG=debug` does not hold
-Postio's own crates at `warn`, and it has a test that enumerates the
-workspace and fails when one is missing:
+Landing used to run `cargo test -p <crate>` for every crate a branch touched,
+integration binaries included. On this workstation that is the expensive part
+by a wide margin -- a single `postio-app` integration binary is an ~11-minute
+compile and link, several sessions share the machine with `jobs = 2`, and
+landing became something you queued for rather than something you did.
 
-    these crates would be held at `warn` by a bare POSTIO_LOG level:
-        ["postio_ui", "postio_ffi"]
+So the default tier is now the workspace's *unit* tests: 1,313 of them, ~5s
+warm, 19 binaries instead of 197. `--full` restores the old behaviour.
 
-`postio-ui` arrived with #566 and `postio-ffi` with #571, from two different
-sessions. **Neither branch changed `postio-session`**, so the per-crate gate
--- which runs clippy and tests over the crates a branch changed, deliberately
-and for good reasons -- never compiled the test that was about to start
-failing.
+Both directions are pinned here, and the second matters as much as the first:
+a "fast" default that quietly stopped running the integration suites under
+`--full` too would be indistinguishable from this change working.
 
-The per-crate gate is not the bug. Testing the whole workspace on every
-landing is what it was changed away from, and going back would cost every
-session minutes to catch something rare.
+**This does not make unit tests sufficient.** CI still runs the whole
+workspace on every pull request, and the nightly job runs it again. That is
+what makes leaning on the fast tier safe, because the bugs this project ships
+are layers that each pass and are not joined up -- the Reader was built,
+tested and never mounted -- and unit tests are exactly the tier that cannot
+see them.
 
-**Adding a crate is the one edit whose blast radius is definitionally outside
-the crates it touches.** Anything that enumerates the workspace -- that list,
-`check-lint-floor.py`, `check-crate-boundaries.py` -- can start failing
-somewhere nobody looked. So a branch that touches the root `Cargo.toml`'s
-`members` runs the workspace tests, and every other branch is untouched.
-
-Asserting on the recorded `cargo` invocations rather than on a banner, for
-the reason #419's self-test gives: a banner can claim a run that never
-happened.
-
-Usage: scripts/tests/test-issue-land-new-crate.py
+Usage: scripts/tests/test-issue-land-tiers.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -193,13 +184,13 @@ def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
     return root, stub_dir
 
 
-def land(root: Path, stub_dir: Path) -> subprocess.CompletedProcess[str]:
+def land(root: Path, stub_dir: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
     environment.pop("CARGO_TARGET_DIR", None)
     return subprocess.run(
-        ["bash", "scripts/issue-land.sh"],
+        ["bash", "scripts/issue-land.sh", *extra],
         cwd=root,
         env=environment,
         capture_output=True,
@@ -231,37 +222,51 @@ def workspace_tests(calls: str) -> list[str]:
     ]
 
 
+def workspace_unit_tier(calls: str) -> list[str]:
+    return [
+        l for l in calls.splitlines()
+        if l.startswith("cargo ") and " test " in f" {l} " and "--workspace" in l and "--lib" in l
+    ]
+
+
+def per_crate_tests(calls: str) -> list[str]:
+    return [
+        l for l in calls.splitlines()
+        if l.startswith("cargo ") and " test " in f" {l} " and " -p " in f" {l} "
+    ]
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
         base = Path(directory)
 
-        # ── 1. a branch that adds a member runs the workspace tests ───────
-        root, stub_dir = world(base / "adds", adds_a_crate=True)
-        result = land(root, stub_dir)
+        # -- 1. the default tier: units for the workspace, no integration ---
+        root, stub_dir = world(base / "default", adds_a_crate=False)
+        land(root, stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
-        found = workspace_tests(calls)
         case(
-            "adding a workspace member runs the workspace tests",
-            bool(found),
-            "a branch that added a crate ran only the per-crate gates, which "
-            "is exactly how postio-ui and postio-ffi each landed a red "
-            f"postio-session:\n{calls}\n{result.stdout[-2000:]}",
+            "a landing runs the workspace unit tier by default",
+            bool(workspace_unit_tier(calls)),
+            f"no `cargo test --workspace --lib` in:\n{calls}",
+        )
+        case(
+            "and does not run the per-crate integration suites",
+            not per_crate_tests(calls),
+            "a default landing still paid for the integration binaries, which "
+            f"is the cost this change exists to remove:\n{per_crate_tests(calls)}",
         )
 
-        # ── 2. an ordinary branch is unchanged ───────────────────────────
+        # -- 2. --full still runs them ---------------------------------------
         #
-        # The other half of the acceptance, and the one that keeps this from
-        # quietly becoming "test the whole workspace every time" -- which is
-        # the thing the per-crate gate exists to avoid.
-        root, stub_dir = world(base / "ordinary", adds_a_crate=False)
-        result = land(root, stub_dir)
+        # The half that keeps the first half honest: a fast default that had
+        # also broken `--full` would pass every assertion above.
+        root, stub_dir = world(base / "full", adds_a_crate=False)
+        land(root, stub_dir, "--full")
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
-        found = workspace_tests(calls)
         case(
-            "an ordinary branch still runs only the per-crate tests",
-            not found,
-            "a branch that added no crate paid for a whole-workspace test "
-            f"run:\n{found}",
+            "--full runs the per-crate integration suites",
+            bool(per_crate_tests(calls)),
+            f"`--full` ran no per-crate tests at all:\n{calls}",
         )
 
     for failure in FAILURES:
@@ -269,7 +274,7 @@ def main() -> int:
     if FAILURES:
         print(f"\n{len(FAILURES)} case(s) failed.", file=sys.stderr)
         return 1
-    print("issue-land new-crate self-test passed.")
+    print("issue-land tiers self-test passed.")
     return 0
 
 
