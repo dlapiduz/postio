@@ -860,10 +860,22 @@ future aggregate:
 
 Concretely:
 
-- The unified list shows what it has, with a persistent, non-modal line:
-  *"Personal is offline — showing 1 of 2 accounts."* Not a toast, which
-  disappears; not a modal, which blocks; not silence, which is the current
-  design's default and the one that is actually dangerous.
+- The unified list shows what it has, with a persistent, non-modal line
+  naming the account. Not a toast, which disappears; not a modal, which
+  blocks; not silence, which is the current design's default and the one that
+  is actually dangerous.
+
+  **Amended by Q10a (#187):** this bullet originally gave the line as
+  *"Personal is offline — showing 1 of 2 accounts."* That sentence is false
+  in this design. Postio is local-first, so an offline account's synced mail
+  is still in the unified list: the account is not *excluded*, it is
+  *unrefreshed*, and "showing 1 of 2" claims an omission that has not
+  happened whenever the absent account has mail on disk — which is almost
+  always. The rule above is unchanged and the account is still named; what
+  the line says about it is that its mail is what was already synced, in the
+  vocabulary canvas 3d settled on ("Offline — reading local mail"). A count
+  of accounts would be the right sentence only for a view that genuinely
+  dropped one, and this view never does.
 - **Counts are marked partial.** An unread count that silently excludes an
   account is worse than no count, because it looks authoritative.
 - **Search results carry the same marker.** A user who searches for an invoice,

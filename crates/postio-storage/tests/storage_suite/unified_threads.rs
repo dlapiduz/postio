@@ -430,10 +430,42 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
     // One conversation each, and one they share -- with the shared one newer
     // in the account that is about to be switched off, so it would be the
     // group's head and would take the enabled copy down with it.
-    file(&connection, a, a_inbox, 1, Some("<solo-a@example.com>"), &[], "Only in A");
-    file(&connection, b, b_inbox, 2, Some("<solo-b@example.com>"), &[], "Only in B");
-    file(&connection, a, a_inbox, 3, Some("<pair@example.com>"), &[], "Shared");
-    file(&connection, b, b_inbox, 9, Some("<pair@example.com>"), &[], "Shared");
+    file(
+        &connection,
+        a,
+        a_inbox,
+        1,
+        Some("<solo-a@example.com>"),
+        &[],
+        "Only in A",
+    );
+    file(
+        &connection,
+        b,
+        b_inbox,
+        2,
+        Some("<solo-b@example.com>"),
+        &[],
+        "Only in B",
+    );
+    file(
+        &connection,
+        a,
+        a_inbox,
+        3,
+        Some("<pair@example.com>"),
+        &[],
+        "Shared",
+    );
+    file(
+        &connection,
+        b,
+        b_inbox,
+        9,
+        Some("<pair@example.com>"),
+        &[],
+        "Shared",
+    );
 
     let repository = ThreadRepository::new(&connection);
     assert_eq!(

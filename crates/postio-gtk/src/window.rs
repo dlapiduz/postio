@@ -1284,6 +1284,21 @@ impl Window {
             feed,
             move |_| window.refresh_list_state(&folders, &feed)
         ));
+        // And when the list is aimed somewhere else entirely. What the pane
+        // says depends on *which* scope the rows came from -- an aggregate
+        // answers ADR 0005 Q10's rule and a folder does not -- so a scope
+        // change re-derives it. Neither of the other two triggers fires for
+        // one: the connection has not moved, and switching to a view with
+        // the same number of rows changes nothing about the model.
+        feed.connect_opened(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[strong]
+            folders,
+            #[strong(rename_to = opened_feed)]
+            feed,
+            move || window.refresh_list_state(&folders, &opened_feed)
+        ));
         list.model().connect_items_changed(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -1329,7 +1344,8 @@ impl Window {
                 .collect::<Vec<_>>()
         });
         self.list_state().set_accounts(aggregate);
-        self.list_state().set_status(folders.status(), rows, rows, 0);
+        self.list_state()
+            .set_status(folders.status(), rows, rows, 0);
     }
 
     /// Say that the list is showing results for `query`, or a mailbox again.
