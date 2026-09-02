@@ -159,7 +159,7 @@ def main() -> int:
             root = base / name
             root.mkdir()
             origin = base / f"{name}.git"
-            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
             build_sandbox(root, channel)
             git("init", "-q", "-b", "main", cwd=root)
             # Local, not just the `-c` flags this helper passes on its own

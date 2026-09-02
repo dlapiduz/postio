@@ -161,7 +161,7 @@ def test_issue_land_clears_the_override() -> str:
         git("add", "-A", cwd=root)
         git("commit", "-q", "-m", "init", cwd=root)
 
-        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         git("remote", "add", "origin", str(origin), cwd=root)
         git("push", "-q", "origin", "main", cwd=root)
         git("checkout", "-q", "-b", "issue-1-toolchain-test", cwd=root)
