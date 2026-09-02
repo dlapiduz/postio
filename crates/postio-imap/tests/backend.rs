@@ -1482,6 +1482,43 @@ fn a_text_html_part_disposed_inline_is_still_the_body() {
 }
 
 #[test]
+fn the_two_ingest_paths_agree_about_an_inline_disposed_body() {
+    // The same message twice: `inline-disposed-body.eml` as the parser reads
+    // it, and the `BODYSTRUCTURE` a server would report for those exact bytes.
+    // The parser has always found the HTML; the header sync demoted it to an
+    // attachment and left `html_part_id` unset, so the text axis fetched only
+    // the plain-text alternative (#751).
+    let raw = postio_model::test_corpus::load("inline-disposed-body");
+    let parsed = postio_model::mime::parse(raw.bytes());
+    assert!(
+        parsed.body.html.is_some(),
+        "the fixture is the wrong shape if the parser cannot find its HTML"
+    );
+
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/alternative",
+        [
+            PartNode::new("1", "text/plain", 111)
+                .with_charset("utf-8")
+                .with_encoding("7bit")
+                .with_disposition(Disposition::Inline),
+            PartNode::new("2", "text/html", 216)
+                .with_charset("utf-8")
+                .with_encoding("quoted-printable")
+                .with_disposition(Disposition::Inline),
+        ],
+    );
+
+    assert_eq!(
+        structure.html_part().map(PartNode::section),
+        Some("2"),
+        "with no html_part_id the text axis fetches only the plain-text          alternative, and the pane renders a body with no links in it"
+    );
+    assert_eq!(structure.text_part().map(PartNode::section), Some("1"));
+    assert_eq!(structure.to_attachments(MessageId::new(1)).len(), 0);
+}
+
+#[test]
 fn an_inline_part_the_html_references_is_not_the_body() {
     // The other side of the rule above: a part carrying a `Content-ID` is
     // referenced *from* the body, so it is never the body itself, however it

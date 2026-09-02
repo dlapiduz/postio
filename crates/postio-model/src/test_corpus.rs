@@ -342,6 +342,8 @@ corpus! {
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
     "html-tracking-pixel-remote-images": [Html, RemoteContent, QuotedPrintable] =>
         "A 1x1 open-rate beacon, remote <img> tags, CSS background-image URLs and a click-tracking redirect.",
+    "inline-disposed-body": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
+        "Both alternatives carry Content-Disposition: inline \u{2014} the part that *is* the message, marked the way an attachment is.",
     "inline-image-cid": [MultipartRelated, InlineImage, Html, Base64, Attachment] =>
         "Two inline PNGs referenced by cid:, plus a third cid: reference with no matching part.",
     "list-thread-01-root": [Threading, MailingList, PlainText] =>
