@@ -82,7 +82,7 @@ fn id(position: u32) -> MessageId {
 
 pub fn the_cursor_and_the_selection_are_two_different_things() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

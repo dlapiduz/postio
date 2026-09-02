@@ -111,7 +111,7 @@ impl MessageSource for Split {
 
 pub fn drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

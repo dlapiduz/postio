@@ -219,7 +219,7 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
 /// a socket and this never calls it.
 pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
 

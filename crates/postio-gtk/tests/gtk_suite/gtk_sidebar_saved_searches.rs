@@ -16,7 +16,7 @@ use postio_gtk::{fonts, style};
 
 pub fn saved_searches_list_keyboard_navigate_and_report_their_query() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -117,7 +117,7 @@ pub fn saved_searches_list_keyboard_navigate_and_report_their_query() {
 /// chasing its timing.
 fn three_searches() -> Option<(gtk::Window, Sidebar, Vec<gtk::ListBoxRow>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();

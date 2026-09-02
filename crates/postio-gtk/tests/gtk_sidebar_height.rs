@@ -37,7 +37,7 @@ const SHORTEST_WINDOW: i32 = 600;
 #[test]
 fn a_sidebar_full_of_folders_still_fits_in_the_window() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

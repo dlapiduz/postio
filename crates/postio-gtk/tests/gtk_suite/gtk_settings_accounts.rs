@@ -31,7 +31,7 @@ fn an_account(id: i64, name: &str, address: &str) -> Account {
 
 pub fn accounts_render_as_rows_and_hide_when_there_are_none() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -144,7 +144,7 @@ pub fn the_context_menu_reaches_the_action_handler_with_the_right_account() {
 /// never painted the frames the row geometry depends on.
 fn two_accounts() -> Option<(gtk::Window, SettingsPanel, Vec<gtk::ListBoxRow>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();

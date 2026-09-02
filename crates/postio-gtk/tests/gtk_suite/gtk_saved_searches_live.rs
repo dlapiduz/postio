@@ -95,7 +95,7 @@ pub fn pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -226,7 +226,7 @@ pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -391,7 +391,7 @@ pub fn a_pinned_saved_search_does_not_auto_run_on_first_present() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

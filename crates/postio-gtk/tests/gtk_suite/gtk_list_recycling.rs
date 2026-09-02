@@ -66,7 +66,7 @@ struct Case {
 
 pub fn a_list_view_builds_a_bounded_window_however_big_the_model_is() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
 

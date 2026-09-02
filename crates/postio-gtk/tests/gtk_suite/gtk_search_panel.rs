@@ -25,7 +25,7 @@ use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 
 pub fn the_scope_column_narrows_a_search_without_retyping_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

@@ -56,7 +56,7 @@ fn message(id: i64, seen: bool) -> Row {
 
 pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -234,7 +234,7 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
 /// with finding it again.
 pub fn reader_for_finds_only_an_expanded_entrys_own_reader() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

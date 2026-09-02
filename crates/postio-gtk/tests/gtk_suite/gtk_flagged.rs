@@ -117,7 +117,7 @@ impl MessageSource for Store {
 
 pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -258,7 +258,7 @@ impl MessageSource for LiveStore {
 
 pub fn flagged_and_snoozed_update_live_on_a_membership_change() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

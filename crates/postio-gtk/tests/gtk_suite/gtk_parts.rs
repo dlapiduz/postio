@@ -41,7 +41,7 @@ fn press(window: &Window, key: gdk::Key) -> bool {
 
 pub fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

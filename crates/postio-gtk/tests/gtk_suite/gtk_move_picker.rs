@@ -33,7 +33,7 @@ const WAYLAND: i64 = 3;
 
 pub fn m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

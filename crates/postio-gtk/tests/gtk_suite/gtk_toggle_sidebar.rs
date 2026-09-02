@@ -56,7 +56,7 @@ fn field(window: &Window) -> gtk::Text {
 
 pub fn toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

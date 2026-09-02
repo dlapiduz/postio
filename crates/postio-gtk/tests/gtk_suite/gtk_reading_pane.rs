@@ -50,7 +50,7 @@ use postio_model::{Draft, MessageBody};
 
 pub fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
