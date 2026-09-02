@@ -759,10 +759,8 @@ fn main() -> glib::ExitCode {
                     },
                     None,
                 );
-                let widget = reader.widget();
-                widget.set_hexpand(true);
-                widget.set_size_request(-1, 120);
-                widget
+                reader.widget().set_size_request(-1, 120);
+                reader
             }
         });
         if let Some(first) = members.first().cloned() {

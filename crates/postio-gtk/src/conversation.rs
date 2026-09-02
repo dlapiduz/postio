@@ -218,15 +218,22 @@ mod tests {
     }
 }
 
-/// What the pane asks for when a message needs a body: the reader surface for
-/// that message.
+/// What the pane asks for when a message needs a body: the reader for that
+/// message.
 ///
 /// A callback rather than a constructor argument, because building a
 /// [`crate::reader::Reader`] needs a blob source and an allow-list path that
 /// only the window has — and because it is what makes the cost testable. A
-/// test hands back a label and counts the calls; the application hands back
-/// the hardened reader.
-pub type ReaderFactory = Box<dyn Fn(MessageId) -> gtk::Widget>;
+/// test hands back a bare reader and counts the calls; the application hands
+/// back the hardened one.
+///
+/// Hands back the [`Reader`](crate::reader::Reader) itself, not just its
+/// widget: the pane keeps it, so an arrival for an already-expanded entry
+/// can be re-drawn into the reader already on screen ([`reader_for`],
+/// #739) instead of tearing the whole entry down to rebuild one.
+///
+/// [`reader_for`]: ConversationView::reader_for
+pub type ReaderFactory = Box<dyn Fn(MessageId) -> crate::reader::Reader>;
 
 type MessageHandler = Box<dyn Fn(MessageId)>;
 type ReplyHandler = Box<dyn Fn(MessageId, bool)>;
@@ -270,6 +277,13 @@ mod imp {
         /// is what keeps a thirty-message conversation from costing thirty
         /// web views.
         pub body: gtk::Box,
+        /// The reader built for this entry, once it is expanded — kept
+        /// alongside `body` so an arrival for this message can be re-drawn
+        /// into the same `WebView` rather than rebuilding it (`reader_for`,
+        /// #739). `None` until `expand` fills it, and never cleared by
+        /// `collapse`: the widget itself stays parked in `body`, hidden, for
+        /// the same reason.
+        pub reader: RefCell<Option<crate::reader::Reader>>,
         pub actions: gtk::Box,
         pub expanded: Cell<bool>,
         /// The box holding header, actions and body — what the stack owns.
@@ -364,7 +378,10 @@ impl ConversationView {
     /// Set once, by whoever owns the reader's blob source. Until it is set the
     /// pane draws headers and no bodies, which is what a pane with nothing
     /// wired to it should look like rather than a crash.
-    pub fn set_reader_factory(&self, factory: impl Fn(MessageId) -> gtk::Widget + 'static) {
+    pub fn set_reader_factory(
+        &self,
+        factory: impl Fn(MessageId) -> crate::reader::Reader + 'static,
+    ) {
         *self.imp().factory.borrow_mut() = Some(Box::new(factory));
     }
 
@@ -515,11 +532,30 @@ impl ConversationView {
         entry.expanded.set(true);
         entry.actions.set_visible(true);
         if let Some(factory) = imp.factory.borrow().as_ref() {
-            let body = factory(message);
-            body.set_hexpand(true);
-            entry.body.append(&body);
+            let reader = factory(message);
+            let widget = reader.widget();
+            widget.set_hexpand(true);
+            entry.body.append(&widget);
+            *entry.reader.borrow_mut() = Some(reader);
         }
         entry.body.set_visible(true);
+    }
+
+    /// The reader already built for `message`'s entry, if it has one.
+    ///
+    /// The conversation pane's answer to a body or a payload landing for an
+    /// already-expanded entry (#739): `expand` only ever fills an *empty*
+    /// body, so nothing re-fills a full one without a caller that can find
+    /// the reader again and re-render into it — this is that seam. `None`
+    /// for a collapsed entry (there is no reader yet; that is `expand`'s
+    /// job) and for a message the pane is not holding at all.
+    pub fn reader_for(&self, message: MessageId) -> Option<crate::reader::Reader> {
+        self.imp()
+            .entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.message == message && entry.expanded.get())
+            .and_then(|entry| entry.reader.borrow().clone())
     }
 
     /// Collapse `message` back to its one-line header.
@@ -692,6 +728,7 @@ impl ConversationView {
             row: row.clone(),
             header,
             body,
+            reader: std::cell::RefCell::new(None),
             actions,
             expanded: std::cell::Cell::new(false),
             container,

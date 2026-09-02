@@ -373,6 +373,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         named_accounts,
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
+        conversation_queued: RefCell::new(std::collections::HashSet::new()),
         aimed: Cell::new(None),
     });
     window.list().connect_cursor_moved(glib::clone!(
@@ -422,14 +423,12 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
             // portion is hidden — `fill_reader` fills in To/Cc once the
             // envelope has loaded.
             reader.header().set_identity_visible(false);
-            let widget = reader.widget();
-            widget.set_hexpand(true);
             // Hidden until it has something to draw, so an expanded message
             // whose body is still being read is a header rather than a white
             // rectangle pretending to be a message.
-            widget.set_visible(false);
+            reader.widget().set_visible(false);
             parts.fill_reader(&reader, message);
-            widget
+            reader
         }
     });
 
@@ -555,9 +554,18 @@ struct Fill {
     /// Shared, because a fill reads it twice: once to ask the store, and
     /// again when the answer comes back. See [`Fill::waiting_reason`].
     offline: Rc<Cell<bool>>,
-    /// Whether a repaint is already queued for this turn of the main loop —
-    /// see [`Fill::body_arrived`].
+    /// Whether a repaint of the *single* pane is already queued for this
+    /// turn of the main loop — see [`Fill::body_arrived`].
     queued: Cell<bool>,
+    /// Which conversation entries have a repaint already queued for this
+    /// turn of the main loop — see [`Fill::body_arrived`].
+    ///
+    /// A set rather than a flag: a backfill can land bodies for several
+    /// expanded entries in the same burst, and each is its own coalescing
+    /// question — `queued` answers it for the one message the single pane
+    /// can be showing, and this answers it for however many the conversation
+    /// pane has open at once.
+    conversation_queued: RefCell<std::collections::HashSet<MessageId>>,
     /// Which message the *single* reading pane was last aimed at, and so
     /// which one asking again would be asking for twice — see [`Fill::fill`].
     ///
@@ -755,36 +763,66 @@ impl Fill {
         });
     }
 
-    /// A body or a payload for `message` is now on this machine (#396).
+    /// A body or a payload for `message` is now on this machine (#396,
+    /// #739).
     ///
-    /// Two things decide whether this repaints anything.
+    /// Two things decide whether this repaints anything, for each of the two
+    /// panes that can be showing `message` at once — the single reading pane
+    /// and, independently, one entry of the conversation pane (#308).
     ///
     /// **Who it is for.** The engine emits [`Event::BodyLoaded`] for every
     /// body it commits, and a backfill commits thousands the user is not
-    /// looking at. Only an arrival for the message the pane is *showing*
-    /// changes anything on screen, so that is the whole of the guard — and it
-    /// is checked here, before a read is even queued, rather than after one.
+    /// looking at. Only an arrival for a message actually on screen changes
+    /// anything, so that is the whole of the guard — and it is checked here,
+    /// before a read is even queued, rather than after one. The single pane
+    /// asks `showing`; the conversation pane asks whether it has this
+    /// message expanded, which is a different question — several of its
+    /// entries can be expanded at once, none of them need be `showing`
+    /// (that cell aims the reply verbs at whichever is *focused*), and an
+    /// arrival can be for one that is collapsed, which repaints nothing.
     ///
-    /// **How often.** A backfill emits these in bursts, so the repaint is
+    /// **How often.** A backfill emits these in bursts, so each repaint is
     /// coalesced onto the next turn of the main loop: twenty arrivals for the
-    /// message on screen are one store read and one repaint, not twenty of
-    /// each. `Folders::reload` coalesces a resync's `MessagesChanged` the
-    /// same way and for the same reason.
+    /// same message are one store read and one repaint, not twenty of each.
+    /// `Folders::reload` coalesces a resync's `MessagesChanged` the same way
+    /// and for the same reason. The conversation side coalesces *per
+    /// message*, via `conversation_queued`, because a burst can carry
+    /// arrivals for several expanded entries at once and each is its own
+    /// pane to redraw.
     ///
     /// [`Event::BodyLoaded`]: postio_core::Event::BodyLoaded
     fn body_arrived(self: &Rc<Self>, window: &Window, message: MessageId) {
-        if self.showing.get() != Some(message) || self.queued.replace(true) {
-            return;
+        if self.showing.get() == Some(message) && !self.queued.replace(true) {
+            let parts = Rc::clone(self);
+            let window = window.downgrade();
+            glib::idle_add_local_once(move || {
+                parts.queued.set(false);
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                parts.repaint(&window);
+            });
         }
-        let parts = Rc::clone(self);
-        let window = window.downgrade();
-        glib::idle_add_local_once(move || {
-            parts.queued.set(false);
-            let Some(window) = window.upgrade() else {
-                return;
-            };
-            parts.repaint(&window);
-        });
+
+        if window.conversation().reader_for(message).is_some()
+            && self.conversation_queued.borrow_mut().insert(message)
+        {
+            let parts = Rc::clone(self);
+            let window = window.downgrade();
+            glib::idle_add_local_once(move || {
+                parts.conversation_queued.borrow_mut().remove(&message);
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                // Asked again rather than trusted from above: the entry can
+                // have collapsed, or the conversation can have closed
+                // entirely, between the event landing and this turn of the
+                // main loop running.
+                if let Some(reader) = window.conversation().reader_for(message) {
+                    parts.fill_reader(&reader, message);
+                }
+            });
+        }
     }
 
     /// Read whatever the pane is showing again and draw it.
