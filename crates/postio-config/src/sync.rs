@@ -8,6 +8,7 @@
 //! sync_on_startup = true
 //! body_fetch = "lazy"      # lazy | eager
 //! attachment_fetch = "on_open" # on_open | eager | never
+//! max_inline_bytes = 262144   # inline parts under this ride with the text
 //! initial_sync_messages = 5000
 //! notify = true            # desktop notifications for new mail
 //! notify_roles = ["inbox"] # which mailboxes' arrivals notify
@@ -63,6 +64,11 @@ fn initial_sync_messages() -> u32 {
     5_000
 }
 
+/// 256 KiB — ADR 0017's number for [`SyncConfig::max_inline_bytes`].
+fn max_inline_bytes() -> u64 {
+    256 * 1024
+}
+
 /// Notify for the one mailbox a person actually watches, by default. A
 /// desktop notification for every folder an archive rule quietly files mail
 /// into is noise, not news.
@@ -91,6 +97,18 @@ pub struct SyncConfig {
     /// When to download attachment payloads.
     #[serde(default)]
     pub attachment_fetch: AttachmentFetch,
+    /// The largest inline part that is fetched with the message's text
+    /// rather than left on the payload axis, in bytes.
+    ///
+    /// ADR 0017's "inline parts ride with the text". A `cid:` image is not
+    /// something the reader offers to download, it is part of the sentence
+    /// the message is making — and since remote images are blocked by
+    /// default, these are the images that are supposed to appear. Under this
+    /// figure a part is text; over it, a payload, so HTML mail reads
+    /// correctly offline without pulling the forty-megabyte video somebody
+    /// embedded. `0` turns the rule off.
+    #[serde(default = "max_inline_bytes")]
+    pub max_inline_bytes: u64,
     /// How many messages the first sync reaches back for, newest first.
     #[serde(default = "initial_sync_messages")]
     pub initial_sync_messages: u32,
@@ -118,6 +136,7 @@ impl Default for SyncConfig {
             sync_on_startup: true,
             body_fetch: BodyFetch::default(),
             attachment_fetch: AttachmentFetch::default(),
+            max_inline_bytes: max_inline_bytes(),
             initial_sync_messages: initial_sync_messages(),
             notify: true,
             notify_roles: notify_roles(),
@@ -146,6 +165,20 @@ mod tests {
             sync.notify_roles,
             vec!["inbox".to_owned(), "flagged".to_owned()]
         );
+    }
+
+    #[test]
+    fn the_inline_cap_defaults_to_adr_0017s_figure() {
+        // A file that has never heard of the key still reads inline images
+        // with the text, which is what #751 was about.
+        let sync: SyncConfig = toml::from_str("").expect("parse");
+        assert_eq!(sync.max_inline_bytes, 256 * 1024);
+    }
+
+    #[test]
+    fn the_inline_cap_can_be_retuned_or_turned_off() {
+        let sync: SyncConfig = toml::from_str("max_inline_bytes = 0\n").expect("parse");
+        assert_eq!(sync.max_inline_bytes, 0);
     }
 
     #[test]
