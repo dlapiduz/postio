@@ -30,7 +30,7 @@ use io_sasl::rfc7628::oauthbearer::SaslOauthbearerCreds;
 use io_sasl::xoauth2::SaslXoauth2Creds;
 use io_smtp::client::{SmtpClientAsync, SmtpClientError};
 use io_smtp::coroutine::{SmtpCoroutine, SmtpCoroutineState, SmtpYield};
-use io_smtp::rfc5321::data::SmtpDataError;
+use io_smtp::rfc5321::data::{SmtpData, SmtpDataError};
 use io_smtp::rfc5321::mail::SmtpMailError;
 use io_smtp::rfc5321::quit::SmtpQuit;
 use io_smtp::rfc5321::rcpt::SmtpRcptError;
@@ -214,9 +214,79 @@ impl SmtpSession {
         if cancel.is_cancelled() {
             return Err(SmtpError::Cancelled);
         }
-        self.data(raw.to_vec()).await.map_err(map_data_error)?;
+        self.send_payload(raw.to_vec()).await
+    }
 
-        Ok(())
+    /// Runs the `DATA` exchange, tagging whatever fails once the message
+    /// payload has begun going out.
+    ///
+    /// Written out rather than calling [`SmtpClientAsync::data`] because the
+    /// boundary ADR 0021 turns on is invisible from outside that call: it
+    /// writes the command, reads the `354`, writes the body and reads the
+    /// reply, and hands back one error for any of it. From here the shape is
+    /// legible — `SmtpData` yields exactly `WantsWrite("DATA\r\n")`,
+    /// `WantsRead`, `WantsWrite(body)`, `WantsRead` — so **the first write
+    /// after a reply has been read is the payload going onto the wire**, and
+    /// everything from that instant until the last reply is read is a failure
+    /// the client cannot resolve.
+    ///
+    /// Derived from the exchange rather than from a byte count or a state
+    /// name: `SmtpData`'s states are private, and a rule that said "the
+    /// second write" would quietly stop being true if the body were ever
+    /// chunked.
+    ///
+    /// It also maps its own transport errors instead of routing them through
+    /// [`SmtpClientAsync::run`], which flattens every [`TransportError`] into
+    /// an opaque `io::Error`. That is what lets a timeout waiting for the
+    /// reply to the terminating `.` arrive as [`SmtpError::TimedOut`] rather
+    /// than as an `Io` that merely mentions the word.
+    async fn send_payload(&mut self, raw: Vec<u8>) -> SmtpResult<()> {
+        let mut coroutine = SmtpData::new(raw);
+        let mut buffer = [0u8; READ_BUFFER];
+        let mut resume: Option<&[u8]> = None;
+        let mut answered = false;
+        let mut payload_begun = false;
+
+        // Every exit goes through this, and it is read at the moment of
+        // failure rather than at the end: a write that fails *is* the payload
+        // beginning, so the byte that never made it counts the same as one
+        // that did. There is no way to know which.
+        fn tag(payload_begun: bool, error: SmtpError) -> SmtpError {
+            if payload_begun {
+                error.once_the_payload_was_on_the_wire()
+            } else {
+                error
+            }
+        }
+
+        loop {
+            match coroutine.resume(resume.take()) {
+                SmtpCoroutineState::Complete(Ok(())) => return Ok(()),
+                SmtpCoroutineState::Complete(Err(error)) => {
+                    return Err(tag(
+                        payload_begun,
+                        map_data_error(SmtpClientError::from(error)),
+                    ));
+                }
+                SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
+                    let read = self
+                        .stream
+                        .read(&mut buffer)
+                        .await
+                        .map_err(|error| tag(payload_begun, SmtpError::from(error)))?;
+                    answered = true;
+                    resume = Some(&buffer[..read]);
+                }
+                SmtpCoroutineState::Yielded(SmtpYield::WantsWrite(bytes)) => {
+                    // The `354` has been read, so this is the body.
+                    payload_begun |= answered;
+                    self.stream
+                        .write_all(&bytes)
+                        .await
+                        .map_err(|error| tag(payload_begun, SmtpError::from(error)))?;
+                }
+            }
+        }
     }
 
     /// Ends the session politely.

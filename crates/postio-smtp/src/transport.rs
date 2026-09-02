@@ -77,6 +77,20 @@ pub enum TransportError {
         reason: String,
     },
 
+    /// The peer took too long to answer.
+    ///
+    /// Distinct from [`Io`](Self::Io) because the send path has to tell a
+    /// server that refused from one that stopped talking: a timeout waiting
+    /// for the reply to the terminating `.` is the case where the client
+    /// cannot know whether the message was accepted (ADR 0021).
+    #[error("{context} timed out after {}s", after.as_secs_f32())]
+    TimedOut {
+        /// What was being waited for.
+        context: String,
+        /// How long we waited.
+        after: Duration,
+    },
+
     /// The transport cannot do what the protocol asked of it.
     #[error("{0}")]
     Unsupported(String),
@@ -95,6 +109,7 @@ impl From<TransportError> for SmtpError {
                 reason,
             },
             TransportError::Io { context, reason } => Self::Io { context, reason },
+            TransportError::TimedOut { context, after } => Self::TimedOut { context, after },
             TransportError::Unsupported(reason) => Self::Protocol { reason },
         }
     }
@@ -479,6 +494,32 @@ impl ConnectionLog {
     }
 }
 
+/// How a scripted connection stops answering partway through a transaction.
+///
+/// The two cases ADR 0021 turns on, and neither was expressible before #673.
+/// Which one a test picks decides whether retrying the send is safe, so they
+/// are deliberately separate constructors rather than one with a flag.
+#[derive(Clone, Debug)]
+enum Vanish {
+    /// Reset the connection as the client writes the command containing this
+    /// keyword, before the server has said anything about it. Nothing of the
+    /// message is on the wire, so a retry is safe.
+    OnWrite(String),
+    /// Take the message payload and then never answer it — the one window
+    /// where "it never arrived" and "it arrived and the acknowledgement did
+    /// not" are indistinguishable from the client.
+    AfterPayload(AfterPayload),
+}
+
+/// What the silence after an accepted payload looks like.
+#[derive(Clone, Copy, Debug)]
+enum AfterPayload {
+    /// The connection closes.
+    Closed,
+    /// The read waiting for the reply to the terminating `.` times out.
+    TimedOut(Duration),
+}
+
 /// A connector that replays a transcript instead of opening a socket.
 ///
 /// Public on purpose: crates above this one test their connection handling
@@ -490,6 +531,7 @@ pub struct ScriptedConnector {
     log: Arc<Mutex<ConnectionLog>>,
     tls_failure: Option<String>,
     tcp_failure: Option<String>,
+    vanish: Option<Vanish>,
 }
 
 impl ScriptedConnector {
@@ -500,6 +542,7 @@ impl ScriptedConnector {
             log: Arc::new(Mutex::new(ConnectionLog::default())),
             tls_failure: None,
             tcp_failure: None,
+            vanish: None,
         }
     }
 
@@ -512,6 +555,44 @@ impl ScriptedConnector {
     /// Makes every plaintext connect fail with `reason`.
     pub fn failing_tcp(mut self, reason: impl Into<String>) -> Self {
         self.tcp_failure = Some(reason.into());
+        self
+    }
+
+    /// Makes the connection reset as the client writes the command
+    /// containing `keyword`, before any reply to it.
+    ///
+    /// The safe half of ADR 0021's distinction: the server never saw the
+    /// message, so whatever failed can be tried again. `vanishing_at("MAIL
+    /// FROM")` is the canonical case.
+    ///
+    /// Matched against the command text, so it never fires on the message
+    /// payload — that one is [`vanishing_after_the_payload`
+    /// ](Self::vanishing_after_the_payload), and the two must not be
+    /// confusable.
+    pub fn vanishing_at(mut self, keyword: impl Into<String>) -> Self {
+        self.vanish = Some(Vanish::OnWrite(keyword.into()));
+        self
+    }
+
+    /// Makes the connection accept the message payload and then close
+    /// without replying to the terminating `.`.
+    ///
+    /// The dangerous half: the bytes reached the server, or did not, and
+    /// nothing the client can observe tells it which. A send that fails this
+    /// way must be reported rather than retried (ADR 0021, #461).
+    pub fn vanishing_after_the_payload(mut self) -> Self {
+        self.vanish = Some(Vanish::AfterPayload(AfterPayload::Closed));
+        self
+    }
+
+    /// As [`vanishing_after_the_payload`](Self::vanishing_after_the_payload),
+    /// but the read times out rather than the connection closing.
+    ///
+    /// A separate constructor because a timeout and a close arrive as
+    /// different errors and the send path has to reach the same conclusion
+    /// from both.
+    pub fn timing_out_after_the_payload(mut self, after: Duration) -> Self {
+        self.vanish = Some(Vanish::AfterPayload(AfterPayload::TimedOut(after)));
         self
     }
 
@@ -547,6 +628,7 @@ impl SmtpConnector for ScriptedConnector {
             Arc::clone(&self.log),
             self.tls_failure.clone(),
             false,
+            self.vanish.clone(),
         )))
     }
 
@@ -573,6 +655,7 @@ impl SmtpConnector for ScriptedConnector {
             Arc::clone(&self.log),
             None,
             true,
+            self.vanish.clone(),
         )))
     }
 }
@@ -585,6 +668,10 @@ struct ScriptedStream {
     pending: VecDeque<u8>,
     tls_failure: Option<String>,
     encrypted: bool,
+    vanish: Option<Vanish>,
+    /// Set once the payload has been written and the connection is due to
+    /// stop answering, so the *read* that follows is what fails.
+    swallowed_payload: Option<AfterPayload>,
 }
 
 impl ScriptedStream {
@@ -593,6 +680,7 @@ impl ScriptedStream {
         log: Arc<Mutex<ConnectionLog>>,
         tls_failure: Option<String>,
         encrypted: bool,
+        vanish: Option<Vanish>,
     ) -> Self {
         let greeting = crlf(&script.greeting);
         Self {
@@ -601,6 +689,8 @@ impl ScriptedStream {
             pending: greeting.into_bytes().into(),
             tls_failure,
             encrypted,
+            vanish,
+            swallowed_payload: None,
         }
     }
 }
@@ -608,6 +698,18 @@ impl ScriptedStream {
 #[async_trait]
 impl SmtpStream for ScriptedStream {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        // The payload went out and the server is never going to answer it.
+        // The failure lands here rather than on the write on purpose: that is
+        // what makes the outcome unknowable, because the bytes did leave.
+        if let Some(after) = self.swallowed_payload {
+            return Err(match after {
+                AfterPayload::Closed => TransportError::Closed,
+                AfterPayload::TimedOut(after) => TransportError::TimedOut {
+                    context: "waiting for the reply to the message".to_owned(),
+                    after,
+                },
+            });
+        }
         if self.pending.is_empty() {
             return Err(TransportError::Closed);
         }
@@ -619,11 +721,36 @@ impl SmtpStream for ScriptedStream {
     }
 
     async fn write_all(&mut self, bytes: &[u8]) -> Result<(), TransportError> {
+        // Structurally, not by keyword: the payload is the test's own message
+        // and could contain any word at all, so matching it on content would
+        // make `vanishing_at` fire on somebody's mail.
+        let is_payload = bytes.ends_with(b"\r\n.\r\n");
+
+        if let Some(Vanish::OnWrite(keyword)) = &self.vanish
+            && !is_payload
+            && String::from_utf8_lossy(bytes)
+                .to_ascii_uppercase()
+                .contains(&keyword.to_ascii_uppercase())
+        {
+            // Nothing is logged: the command never left, which is exactly the
+            // fact a test asserting "the message was not submitted" needs.
+            return Err(TransportError::Closed);
+        }
+
         self.log
             .lock()
             .expect("connection log")
             .written
             .extend_from_slice(bytes);
+
+        if let Some(Vanish::AfterPayload(after)) = &self.vanish
+            && is_payload
+        {
+            // The write succeeds and is logged -- the bytes are on the wire.
+            // Everything after this read fails.
+            self.swallowed_payload = Some(*after);
+            return Ok(());
+        }
 
         // Every SMTP write from this crate's coroutines is one logical unit
         // awaiting exactly one reply: a single-line command, or — for
