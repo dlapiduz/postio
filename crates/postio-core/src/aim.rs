@@ -298,6 +298,136 @@ pub fn is_wired(wired: &[CommandId], command: &Command) -> bool {
     wired.contains(&command.id())
 }
 
+/// One gesture, and what it has to mean — a row of the conformance table.
+///
+/// See [`conformance_cases`].
+#[derive(Clone, Debug)]
+pub struct Conformance {
+    /// What was invoked.
+    pub id: CommandId,
+    /// What the user had marked at the time.
+    pub selection: Selection,
+    /// Where the keyboard was.
+    pub cursor: Option<MessageId>,
+    /// The rows the frontend's list is holding, and what kind each one is.
+    /// A frontend builds its *own* row source from these, which is the
+    /// point — the table is not a mock, it is the fixture both sources are
+    /// filled from.
+    pub rows: Vec<(MessageId, RowKind)>,
+    /// The command that must come out.
+    pub expected: Command,
+    /// Why this row is in the table, for a failure message that explains
+    /// itself rather than printing two enums.
+    pub because: &'static str,
+}
+
+/// The aiming rules, as a table both frontends run.
+///
+/// [`command_for`] is one implementation, so a test of it proves the rule
+/// once — but the rule is only half of what a frontend does. The other half
+/// is the adapter: reading a selection off a widget, a cursor off a list,
+/// and a row kind out of whatever model that frontend keeps. Two adapters
+/// can both call the same correct function and still disagree, because they
+/// disagree about what they *hand* it. That is what this table is for.
+///
+/// Each frontend fills its own row source from [`Conformance::rows`], builds
+/// its own [`Aim`], and asserts the command that comes out. Same rows, same
+/// gesture, same command, on both sides of the FFI (#589, #721).
+///
+/// The cases are the ones where a frontend could plausibly differ: what a
+/// verb on a thread row means, what it means when the row is a message,
+/// what happens when the cursor points at a row nobody is holding any more,
+/// and what a whole-view selection does to a verb that would otherwise be
+/// narrowed.
+pub fn conformance_cases() -> Vec<Conformance> {
+    let thread_row = MessageId::new(1);
+    let thread = ThreadId::new(11);
+    let message_row = MessageId::new(2);
+    let gone = MessageId::new(99);
+    let rows = || {
+        vec![
+            (thread_row, RowKind::Thread(thread)),
+            (message_row, RowKind::Message),
+        ]
+    };
+    let nothing_marked = || Selection::These(Vec::new());
+
+    vec![
+        Conformance {
+            id: CommandId::Archive,
+            selection: nothing_marked(),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Thread(thread),
+            },
+            because: "a verb on a thread row acts on the conversation (ADR 0015 Q3)",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: nothing_marked(),
+            cursor: Some(message_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "a message row is one message, so the verb stays as it was",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: nothing_marked(),
+            cursor: Some(gone),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "a cursor on a row nobody holds any more must not be \
+                      guessed into a conversation (#468)",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: Selection::These(vec![message_row]),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "something is marked, so the gesture is about the marks \
+                      rather than about the row the cursor happens to be on",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: Selection::Everything { except: Vec::new() },
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "a whole-view selection is a predicate; narrowing it to \
+                      the cursor's conversation would act on less than was asked",
+        },
+        Conformance {
+            id: CommandId::Flag,
+            selection: nothing_marked(),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Flag {
+                target: MessageTarget::Thread(thread),
+                flagged: None,
+            },
+            because: "the rule is about the target, not about which verb it is",
+        },
+        Conformance {
+            id: CommandId::Refresh,
+            selection: nothing_marked(),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Refresh,
+            because: "a command with no message target is handed over untouched",
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

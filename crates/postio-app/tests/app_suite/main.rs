@@ -8,6 +8,7 @@
 //! runner's watchdog by *name* (#272), in isolation.
 
 mod add_account_wiring;
+mod aiming;
 mod attach_account;
 mod body_arrives;
 mod bulk_keystroke;
@@ -61,6 +62,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "add_account_wiring::closing_the_dialog_stops_the_probe_it_started",
         add_account_wiring::closing_the_dialog_stops_the_probe_it_started as fn(),
+    ),
+    (
+        "aiming::the_gtk_adapter_aims_every_gesture_the_way_the_shared_table_says",
+        aiming::the_gtk_adapter_aims_every_gesture_the_way_the_shared_table_says as fn(),
     ),
     (
         "attach_account::an_account_added_to_a_running_application_syncs_without_a_restart",
