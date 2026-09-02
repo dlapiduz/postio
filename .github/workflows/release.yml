@@ -46,6 +46,23 @@ jobs:
       # Pinned to what the manifest declares. Reading them from the manifest
       # rather than repeating the versions keeps this from drifting out of step
       # with it -- a second copy of a version number is a second thing to forget.
+      # The runtime and SDK branch with `runtime-version`, so those are named
+      # here. The SDK *extensions* do not: `rust-stable` is a freedesktop
+      # extension and its branches follow freedesktop's versions, not GNOME's,
+      # so asking flathub for `org.freedesktop.Sdk.Extension.rust-stable//50`
+      # -- the manifest's GNOME runtime version -- resolves to nothing:
+      #
+      #   error: Nothing matches org.freedesktop.Sdk.Extension.rust-stable
+      #          in remote flathub
+      #
+      # and the bare-name fallback beneath it fails for the same reason, a
+      # ref with no branch being no more resolvable than a wrong one.
+      #
+      # So the extensions are left to `flatpak-builder --install-deps-from`
+      # below, which reads the manifest it is about to build and installs what
+      # that manifest actually requires. Guessing a branch from a version that
+      # does not govern it is what broke; the tool that parses the manifest
+      # does not have to guess.
       - name: Install the runtime the manifest asks for
         run: |
           RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$MANIFEST")
@@ -53,11 +70,6 @@ jobs:
           echo "runtime: $RUNTIME"
           echo "sdk:     $SDK"
           flatpak install --user -y flathub "$RUNTIME" "$SDK"
-          for ext in $(jq -r '."sdk-extensions"[]?' "$MANIFEST"); do
-            flatpak install --user -y flathub \
-              "$ext//$(jq -r '."runtime-version"' "$MANIFEST")" || \
-            flatpak install --user -y flathub "$ext"
-          done
 
       # Flatpak builds offline, so every crate is pinned by checksum up front.
       # Generated rather than committed: a stale copy is worse than none, since
@@ -79,6 +91,7 @@ jobs:
       - name: Build
         run: |
           flatpak-builder --user --disable-rofiles-fuse --force-clean \
+            --install-deps-from=flathub \
             --repo=repo build-dir "$MANIFEST"
 
       - name: Bundle
