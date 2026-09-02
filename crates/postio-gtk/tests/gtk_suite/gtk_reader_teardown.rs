@@ -82,3 +82,4 @@ pub fn readers_do_not_accumulate_webviews() {
          is a WebProcess still attached at exit"
     );
 }
+
