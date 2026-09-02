@@ -3,6 +3,11 @@
 //! The golden file was captured from the registry *before* `mod` existed, so
 //! `the_freedesktop_table_is_byte_identical_to_before` is a genuine
 //! before-and-after comparison rather than a restatement of the current code.
+//!
+//! A *new* command adds a row to it, and that row is added by hand on
+//! purpose: the file exists to catch bindings that moved, so regenerating it
+//! wholesale would let exactly the change it guards against slip in as a
+//! diff nobody reads. `mark_sent ctrl+shift+s` was added for #674.
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

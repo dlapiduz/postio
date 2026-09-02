@@ -63,6 +63,8 @@ pub enum UndoKind {
     Snooze,
     /// Messages were unsnoozed.
     Unsnooze,
+    /// A send nobody could confirm was settled by hand (#674).
+    MarkedSent,
 }
 
 impl UndoKind {
@@ -78,6 +80,9 @@ impl UndoKind {
             UndoKind::MarkRead => format!("Marked {count} {messages} as read"),
             UndoKind::MarkUnread => format!("Marked {count} {messages} as unread"),
             UndoKind::Label => format!("Labelled {count} {messages}"),
+            // Never plural: this settles one draft, because the question it
+            // answers was asked about one message.
+            UndoKind::MarkedSent => "Marked as sent".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
         }

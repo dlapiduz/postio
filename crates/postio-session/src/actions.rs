@@ -41,11 +41,13 @@ use postio_core::state::{Resolved, SharedState, ViewScope};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::mailbox::MailboxRole;
+use postio_model::ids::DraftId;
 use postio_model::{
-    AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
+    AccountId, DraftState, Flag, FlagSet, MailboxId, Message, MessageId, Operation,
+    OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, FlagSource, MailboxRepository, MessageRepository, MessageSet,
+    ColumnFlag, DraftRepository, FlagSource, MailboxRepository, MessageRepository, MessageSet,
     OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
@@ -64,6 +66,7 @@ const WIRED: &[CommandId] = &[
     CommandId::MarkUnread,
     CommandId::Snooze,
     CommandId::Unsnooze,
+    CommandId::MarkSent,
     CommandId::Undo,
 ];
 
@@ -267,6 +270,7 @@ impl Actions {
             Command::Unsnooze { target } => vec![self.unsnooze(target)?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
+            Command::MarkSent { draft } => vec![self.mark_sent(*draft)?],
             Command::MarkReadOnDwell { message } => vec![self.set_flag(
                 &MessageTarget::Messages(vec![*message]),
                 Flag::Seen,
@@ -1215,6 +1219,82 @@ impl Actions {
             .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
     }
 
+    /// Settle a draft whose send could not be confirmed: it did arrive.
+    ///
+    /// ADR 0021 Decision 3, #674. Postio resolves most of these by itself --
+    /// the next sync of Sent finding the reserved `Message-ID` -- but where
+    /// the server files no copy the question stands, and the only person who
+    /// can answer it is the one who asked the recipient. Without this they
+    /// have two exits and both are wrong: discard throws the message away,
+    /// and sending again duplicates it.
+    ///
+    /// `None` means the draft the list is on, resolved through the message
+    /// its row carries, so the palette entry works where a draft is visible.
+    fn mark_sent(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect()?;
+        let drafts = DraftRepository::new(&connection);
+
+        let draft = match draft {
+            Some(id) => drafts
+                .get(id)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That draft is no longer here"))?,
+            None => {
+                let rows = match self.aim(&connection, &MessageTarget::Selection)? {
+                    Aim::Rows(rows) => rows,
+                    Aim::Bulk { .. } => {
+                        return Err(CommandError::rejected(
+                            "Pick the message this is about",
+                        ));
+                    }
+                };
+                drafts.by_message(rows[0].id).map_err(store_failure)?.ok_or_else(|| {
+                    CommandError::rejected("That row is not a draft Postio is unsure about")
+                })?
+            }
+        };
+
+        // Only the state this exists for. Saying "it arrived" about a draft
+        // still being edited, or one already sent, is not a correction --
+        // it is a way to lose the draft, since `Sent` is what stops it being
+        // offered for editing.
+        if draft.state != DraftState::Unconfirmed {
+            return Err(CommandError::rejected(
+                "Only a send Postio could not confirm can be marked as sent",
+            ));
+        }
+
+        drafts
+            .set_state(draft.id, DraftState::Sent)
+            .map_err(store_failure)?;
+        Ok(Applied {
+            account: draft.account_id,
+            kind: UndoKind::MarkedSent,
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            // No inverse, and #674 asked for one -- worth saying why.
+            //
+            // An inverse is a `Command`, every `Command` has a `CommandId`,
+            // and every `CommandId` needs a registry entry with a keyboard
+            // binding (PRODUCT.md §8, asserted by `command_registry.rs`). A
+            // "mark unconfirmed again" verb would be a key in the reference
+            // and a row in the palette for something no user ever reaches
+            // for -- a second command invented to satisfy the shape of the
+            // first.
+            //
+            // And undo is the wrong instrument anyway: this settles a claim
+            // about the world rather than changing the world. If the answer
+            // was wrong, the honest correction is to send the message again,
+            // which is a real act with a real effect, not to un-know
+            // something.
+            inverse: Vec::new(),
+        })
+    }
+
     /// A connection to write a verb through, and the right to write it ahead
     /// of bulk background work.
     ///
@@ -1974,6 +2054,77 @@ mod tests {
             .expect_err("a whole-mailbox snooze is not offered");
 
         assert!(matches!(error, CommandError::Rejected(_)));
+    }
+
+    // ── Settling a send nobody could confirm (#674) ──────────────────────
+
+    #[test]
+    fn marking_an_unconfirmed_send_as_sent_settles_the_draft() {
+        // The exit that exists because the other two are wrong: discard
+        // throws away a message that may have arrived, and sending again
+        // duplicates one that did. A user who checked with the recipient
+        // needs to be able to say so.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            draft.to = vec![postio_model::EmailAddress::new(
+                None::<String>,
+                "grace@example.net",
+            )];
+            let id = drafts.save(&mut draft).expect("save");
+            drafts
+                .set_state(id, DraftState::Unconfirmed)
+                .expect("the state an interrupted submission leaves");
+            id
+        };
+
+        world
+            .run(Command::MarkSent { draft: Some(id) })
+            .expect("marking it sent applies");
+
+        let connection = world.database.connection().expect("a connection");
+        assert_eq!(
+            postio_storage::repository::DraftRepository::new(&connection)
+                .get(id)
+                .expect("read")
+                .expect("still there")
+                .state,
+            DraftState::Sent,
+            "the question is settled, so it stops being offered as unsent"
+        );
+    }
+
+    #[test]
+    fn only_an_unconfirmed_send_can_be_marked_as_sent() {
+        // Saying "it arrived" about a draft still being edited is not a
+        // correction, it is a way to lose it: `Sent` is what stops a draft
+        // being offered for editing.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            drafts.save(&mut draft).expect("save")
+        };
+
+        let error = world
+            .run(Command::MarkSent { draft: Some(id) })
+            .expect_err("an editable draft is not something to mark sent");
+
+        assert!(matches!(error, CommandError::Rejected(_)), "{error:?}");
+        assert_eq!(
+            postio_storage::repository::DraftRepository::new(
+                &world.database.connection().expect("a connection")
+            )
+            .get(id)
+            .expect("read")
+            .expect("still there")
+            .state,
+            DraftState::Editing,
+            "and it is left exactly as it was"
+        );
     }
 
     // ── Marking read because you looked at it (#71) ──────────────────────
