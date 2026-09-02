@@ -244,7 +244,12 @@ and is never fully materialised (§18).
 
 The layout adapts rather than being fixed: three panes on a desktop monitor,
 two on a laptop, message-focused for reading and writing, and search-focused
-when results take over the workspace.
+when results take over the workspace. The widths that divide those are in
+`postio-gtk::shell`'s own table rather than repeated here, for the same reason
+the bindings are not repeated in §8 — and what the sidebar does across a
+resize is
+[ADR 0024](decisions/0024-layout-intent-and-constraint.md): the window's width
+decides what is *shown*, never what the user asked for.
 
 **The list has a cursor *and* a selection**, and they are not the same thing —
 the cursor is where the keyboard is, the selection is what `a` would archive.

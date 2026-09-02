@@ -1057,6 +1057,23 @@ impl Window {
         if self.imp().reader.get().is_some() {
             self.shell().set_reading(self.imp().reading.get());
         }
+        // Which pane the narrowest mode shows. Below `MESSAGE_FOCUSED_WIDTH`
+        // there is room for the list *or* the reader, and `focused_pane`
+        // decides -- but nothing moved it when a message opened, so opening
+        // one filled a reader the shell was not showing and the list stayed
+        // on screen. The primary action of a mail client did nothing (#825).
+        //
+        // Declared unconditionally, never behind a mode check:
+        // `set_focused_pane` is documented as harmless in the wider modes --
+        // it is recorded and takes effect if the window is ever narrowed --
+        // and a navigation handler that asks what mode it is in is one that
+        // will be wrong in the mode its author was not thinking about
+        // (ADR 0024).
+        self.shell().set_focused_pane(if self.imp().reading.get() {
+            crate::shell::Pane::Reader
+        } else {
+            crate::shell::Pane::List
+        });
         // The dwell timer (#71) measures "this message was in front of a
         // person for long enough to have been read". The composer taking the
         // pane makes that untrue mid-count, so the clock stops rather than
@@ -2402,7 +2419,11 @@ impl Window {
         self.set_default_size(state.width, state.height);
         self.set_maximized(state.maximized);
         shell.set_divider_positions(state.sidebar_width, state.list_width);
-        shell.set_sidebar_visible(state.sidebar_visible);
+        // The saved *preference*, not a toggle: `set_sidebar_wanted` derives
+        // the effective state from it and the current mode, so a window that
+        // opens narrow shows no sidebar and still remembers the answer for
+        // when it grows (ADR 0024).
+        shell.set_sidebar_wanted(state.sidebar_visible);
 
         // Which folders are closed (#324). A save on every toggle rather
         // than batched with the rest of the window's state: it is cheap,
@@ -2438,7 +2459,11 @@ impl Window {
             maximized: self.is_maximized(),
             sidebar_width,
             list_width,
-            sidebar_visible: shell.sidebar_visible(),
+            // What the user asked for, never what this window's width could
+            // afford. Saving the effective flag meant quitting on a narrow
+            // window recorded "no sidebar" as a preference, and nothing at a
+            // wider size ever put it back (#825).
+            sidebar_visible: shell.sidebar_wanted(),
         };
         if let Err(error) = state.save() {
             // Losing a divider position is a shrug; saying nothing about why

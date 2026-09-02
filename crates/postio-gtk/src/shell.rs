@@ -88,6 +88,36 @@ pub enum ReaderOccupant {
     Composer,
 }
 
+/// Whether the sidebar is drawn, given what the user asked for and what the
+/// window can afford.
+///
+/// The two are different facts and only one of them is the user's (ADR 0024).
+/// `wanted` is a standing preference that survives a resize and a restart;
+/// the mode is a property of the window this instant. Deriving visibility
+/// from both, every time, is what stops a narrow window's answer being
+/// mistaken for the user's — which is what happened when one boolean held
+/// both and `save_state` persisted whichever it was holding (#825).
+///
+/// Pure, so the whole rule is testable without a window.
+pub fn sidebar_shown(wanted: bool, mode: Mode) -> bool {
+    wanted && mode == Mode::ThreePane
+}
+
+/// The standing preference after the user toggles the sidebar to `on`.
+///
+/// A toggle in `ThreePane` is a preference: the user is looking at a window
+/// wide enough to hold the sidebar and has said whether they want it.
+///
+/// A toggle in a narrower mode is an *override* — `shell.rs`'s own promise
+/// that "the sidebar is still reachable in the narrower modes" — and must not
+/// be recorded, or reaching for it once on a small window would be read as
+/// wanting it for ever afterwards on a large one.
+///
+/// Pure, for the same reason as [`sidebar_shown`].
+pub fn sidebar_wanted_after_toggle(on: bool, mode: Mode, wanted: bool) -> bool {
+    if mode == Mode::ThreePane { on } else { wanted }
+}
+
 /// The occupant the active surfaces call for, by rank.
 ///
 /// The composer outranks everything: a half-written draft on a hidden widget
@@ -130,8 +160,18 @@ mod imp {
         /// the header's toggle and the breakpoints — and each has to see the
         /// other's change. `notify` is how the button learns that widening
         /// the window brought the sidebar back.
+        /// Whether the sidebar is drawn right now — derived, never stored as
+        /// an answer to "does the user want it". See [`sidebar_wanted`].
         #[property(get, set = Self::set_sidebar_visible, name = "sidebar-visible")]
         pub sidebar_visible: Cell<bool>,
+        /// Whether the user wants the sidebar, independent of whether this
+        /// window is currently wide enough to hold it (ADR 0024).
+        ///
+        /// Written only by a toggle at full width, and by `restore` putting
+        /// back what was saved. A breakpoint never touches it, which is the
+        /// whole point: the mode is a fact about the window, not about the
+        /// person using it.
+        pub sidebar_wanted: Cell<bool>,
         /// The reading pane's occupants, registered as each is built. Weak,
         /// because the composer can leave for a detached window and the
         /// arbiter must not keep a widget alive that its owner let go.
@@ -168,6 +208,7 @@ mod imp {
                 reader,
                 mode: Cell::new(Mode::default()),
                 sidebar_visible: Cell::new(true),
+                sidebar_wanted: Cell::new(true),
                 focused: Cell::new(Pane::default()),
                 occupants: RefCell::new(Vec::new()),
                 occupant: Cell::new(ReaderOccupant::default()),
@@ -198,6 +239,14 @@ mod imp {
 
     impl Shell {
         fn set_sidebar_visible(&self, visible: bool) {
+            // The property is the effective state; the preference behind it
+            // moves only when the window is wide enough for the answer to
+            // mean anything (ADR 0024).
+            self.sidebar_wanted.set(super::sidebar_wanted_after_toggle(
+                visible,
+                self.mode.get(),
+                self.sidebar_wanted.get(),
+            ));
             self.sidebar_visible.set(visible);
             self.obj().apply();
         }
@@ -421,10 +470,42 @@ impl Shell {
         if self.imp().mode.replace(mode) == mode {
             return;
         }
-        // Entering a narrower mode drops the sidebar; leaving it brings the
-        // sidebar back, because the width that hid it is the width that is now
-        // gone. A toggle afterwards still wins — the property is the last word.
-        self.set_sidebar_visible(mode == Mode::ThreePane);
+        // Entering a narrower mode drops the sidebar; leaving it brings back
+        // whatever the user actually asked for, which may be nothing. Derived
+        // rather than assigned: writing the mode's answer into the preference
+        // is what made a narrow window's constraint outlive it, all the way
+        // into `save_state` and the next launch (ADR 0024, #825).
+        //
+        // Set on the imp directly, not through `set_sidebar_visible`: that one
+        // is the *user's* entry point and records a preference, which is
+        // exactly what a breakpoint must not do.
+        let imp = self.imp();
+        imp.sidebar_visible
+            .set(sidebar_shown(imp.sidebar_wanted.get(), mode));
+        self.apply();
+    }
+
+    /// Whether the user wants the sidebar, whatever this window can currently
+    /// afford — the value worth saving across a restart (ADR 0024).
+    ///
+    /// [`sidebar_visible`](Self::sidebar_visible) is the effective state and
+    /// is the wrong thing to persist: on a narrow window it is the
+    /// breakpoint's answer, not the user's.
+    pub fn sidebar_wanted(&self) -> bool {
+        self.imp().sidebar_wanted.get()
+    }
+
+    /// Put back a saved preference, without treating it as a toggle.
+    ///
+    /// Used by `Window::restore` before the breakpoints have had a chance to
+    /// fire. The effective state is derived from it and the current mode, so
+    /// restoring "wanted" on a window that opens narrow shows no sidebar and
+    /// still remembers the answer.
+    pub fn set_sidebar_wanted(&self, wanted: bool) {
+        let imp = self.imp();
+        imp.sidebar_wanted.set(wanted);
+        imp.sidebar_visible
+            .set(sidebar_shown(wanted, imp.mode.get()));
         self.apply();
     }
 
@@ -511,6 +592,54 @@ mod tests {
     /// search outranks reading, and nothing active is an empty pane. #502's
     /// two screenshots are both rows of this table — the states existed
     /// simultaneously because three owners each answered a different row.
+    // -- intent and constraint are different facts (ADR 0024, #825) --------
+
+    #[test]
+    fn a_narrow_window_hides_the_sidebar_without_forgetting_it() {
+        // The bug this is about: one boolean held "what the viewport affords"
+        // and "what the user asked for", and `save_state` persisted whichever
+        // it was holding. Narrow the window, quit, reopen wide -- no sidebar,
+        // no explanation, because the breakpoint's answer had been recorded as
+        // the preference.
+        assert!(sidebar_shown(true, Mode::ThreePane));
+        assert!(!sidebar_shown(true, Mode::TwoPane));
+        assert!(!sidebar_shown(true, Mode::MessageFocused));
+
+        // And the preference itself is untouched by any of that: the mode
+        // never writes it.
+        for mode in [Mode::ThreePane, Mode::TwoPane, Mode::MessageFocused] {
+            assert!(
+                sidebar_wanted_after_toggle(true, mode, true),
+                "{mode:?} rewrote a preference it does not own"
+            );
+        }
+    }
+
+    #[test]
+    fn a_user_who_does_not_want_the_sidebar_does_not_get_it_back_on_widening() {
+        // The other direction, and the reason this is a derivation rather
+        // than "put it back when the window grows": widening restores what the
+        // user asked for, which may be nothing.
+        assert!(!sidebar_shown(false, Mode::ThreePane));
+    }
+
+    #[test]
+    fn reaching_for_the_sidebar_on_a_narrow_window_is_not_a_preference() {
+        // `shell.rs` promises the sidebar stays reachable in the narrower
+        // modes. Recording that reach would turn one look at the folder list
+        // on a small window into a standing answer on every large one.
+        assert!(!sidebar_wanted_after_toggle(true, Mode::TwoPane, false));
+        assert!(!sidebar_wanted_after_toggle(
+            true,
+            Mode::MessageFocused,
+            false
+        ));
+
+        // A toggle at full width is exactly what a preference is.
+        assert!(sidebar_wanted_after_toggle(true, Mode::ThreePane, false));
+        assert!(!sidebar_wanted_after_toggle(false, Mode::ThreePane, true));
+    }
+
     #[test]
     fn the_fallback_ranks_composer_over_search_over_reading() {
         use ReaderOccupant::*;
