@@ -15,12 +15,12 @@ name: Pages
 # source of truth, `ci.yml`'s own mdbook-build job already failed on the PR
 # that made it stale (Q6). This deploy job trusts the tree it was pushed.
 #
-# Still cheap relative to ci.yml/bench.yml (see CLAUDE.md's "CI is paused"):
+# Still cheap relative to ci.yml/bench.yml:
 # no GTK, no WebKit, no workspace compile -- one small `cargo install` of
 # mdbook itself (cached), an mdbook build, and a Pages upload/deploy. Pushing
 # to main with a docs change is common enough, and this job light enough,
-# that it stays on `push` rather than joining the paused workflows as
-# workflow_dispatch-only.
+# that it stays on `push` -- it never joined the workflows that were
+# workflow_dispatch-only while this repository was private.
 on:
   push:
     branches: [main]

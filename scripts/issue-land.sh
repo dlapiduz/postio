@@ -112,9 +112,10 @@ echo
 # their system libraries that is not a weaker gate, it is no gate at all, and
 # the work lands anyway. A macOS session cannot build `postio-gtk` or
 # `postio-app`: gtk4 and libadwaita have arm64 bottles but webkitgtk has none,
-# and the reader and composer are both WebKit views. CI is paused, so the
-# periodic reconcile pass is the only thing that would notice -- days later,
-# on a repository where several agents work at once on different machines.
+# and the reader and composer are both WebKit views. CI would notice on the
+# pull request, but only after the branch is pushed and only if someone reads
+# it -- and on a repository where several agents work at once on different
+# machines, a gate that silently proved nothing is worth refusing outright.
 #
 # Keyed on what the host can actually build, not on `uname`: a Linux box
 # without the -dev packages is in exactly the same position, and would
