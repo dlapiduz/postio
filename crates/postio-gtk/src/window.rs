@@ -29,14 +29,14 @@ use gtk::glib;
 use postio_core::{ActionId, CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
-use crate::feed::{Feeds, Folders, MailboxSource, MessageSource};
+use crate::feed::{Feed, Feeds, Folders, MailboxSource, MessageSource};
 use crate::finder::{Finder, Mode, Query};
 use crate::keymap::{self, ChordFromGdk, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
 use crate::settings::SettingsPanel;
 use crate::shell::Shell;
-use crate::sidebar::{Sidebar, SyncStatus};
+use crate::sidebar::Sidebar;
 use crate::state::WindowState;
 use crate::{header, style};
 
@@ -1278,14 +1278,20 @@ impl Window {
         folders.connect_status(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |status| window.refresh_list_state(status)
+            #[strong]
+            folders,
+            #[strong]
+            feed,
+            move |_| window.refresh_list_state(&folders, &feed)
         ));
         list.model().connect_items_changed(glib::clone!(
             #[weak(rename_to = window)]
             self,
             #[strong]
             folders,
-            move |_, _, _, _| window.refresh_list_state(&folders.status())
+            #[strong]
+            feed,
+            move |_, _, _, _| window.refresh_list_state(&folders, &feed)
         ));
 
         folders.open(account, address);
@@ -1300,9 +1306,30 @@ impl Window {
     /// of the crate boundary yet — `postio-storage`'s operation queue has no
     /// count — so they are reported as what the pane can actually see, and
     /// `postio-qhz` will widen them when the counts exist.
-    fn refresh_list_state(&self, status: &SyncStatus) {
+    fn refresh_list_state(&self, folders: &Folders, feed: &Feed) {
         let rows = self.list().model().n_items() as u64;
-        self.list_state().set_status(status.clone(), rows, rows, 0);
+
+        // An aggregate view answers by ADR 0005 Q10's rule instead of by the
+        // single-account states: a whole-pane "Offline" would be a claim
+        // about every account when only one of them is away. Named from the
+        // sidebar's own list so the name in the banner and the hue on the
+        // account's row are the same account in the same order.
+        let aggregate = matches!(feed.scope(), Some(postio_model::ListScope::Unified)).then(|| {
+            let names = self.sidebar().account_names();
+            folders
+                .statuses()
+                .into_iter()
+                .filter_map(|(id, status)| {
+                    let name = names
+                        .iter()
+                        .find(|(candidate, _)| *candidate == id)
+                        .map(|(_, name)| name.clone())?;
+                    Some((name, status))
+                })
+                .collect::<Vec<_>>()
+        });
+        self.list_state().set_accounts(aggregate);
+        self.list_state().set_status(folders.status(), rows, rows, 0);
     }
 
     /// Say that the list is showing results for `query`, or a mailbox again.

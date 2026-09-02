@@ -1289,6 +1289,15 @@ impl Sidebar {
         }
     }
 
+    /// The accounts the sidebar is drawing, in the order it draws them.
+    ///
+    /// The order is load-bearing twice over: it is what the per-account hues
+    /// are keyed to, and it is the order an aggregate view names absent
+    /// accounts in, so the colour and the name agree.
+    pub fn account_names(&self) -> Vec<(AccountId, String)> {
+        self.imp().account_names.borrow().clone()
+    }
+
     /// The strip's rows, top to bottom, as they read. For tests.
     #[doc(hidden)]
     pub fn account_rows(&self) -> Vec<String> {
