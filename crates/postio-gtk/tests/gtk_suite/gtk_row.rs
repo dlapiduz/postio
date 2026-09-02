@@ -233,6 +233,108 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     row.set_selected(false);
     pump();
 
+    // ── the cursor and the selection are two different-looking things ────
+    // #753. `gtk_selection.rs` asserts the state *flags* are separate and
+    // says so in its module doc; nothing asserted the pixels, and the two
+    // grounds were the same token in dark (`--postio-selected-bg` and
+    // `--postio-selected-strong-bg` were both `accent-900`). With the check
+    // glyph absent — an icon theme without `object-select-symbolic` draws
+    // nothing at all — the row the keyboard was on and a row an action would
+    // hit were pixel-identical.
+    //
+    // Every scheme, because dark was the broken one and a light-only
+    // assertion would have passed throughout.
+    let manager = adw::StyleManager::default();
+    for (scheme, contrast, name) in [
+        (adw::ColorScheme::ForceLight, false, "light"),
+        (adw::ColorScheme::ForceDark, false, "dark"),
+        (adw::ColorScheme::ForceLight, true, "light high-contrast"),
+        (adw::ColorScheme::ForceDark, true, "dark high-contrast"),
+    ] {
+        manager.set_color_scheme(scheme);
+        // The manager's high-contrast flag follows the desktop, so the class
+        // the stylesheet keys on is set here directly — which is what
+        // `style::track` does from `is_high_contrast`.
+        if contrast {
+            window.add_css_class(style::HIGH_CONTRAST_CLASS);
+        } else {
+            window.remove_css_class(style::HIGH_CONTRAST_CLASS);
+        }
+        pump();
+
+        row.set_cursor(true);
+        row.set_selected(false);
+        pump();
+        let cursor_only = render(&window);
+
+        row.set_cursor(false);
+        row.set_selected(true);
+        pump();
+        let selected_only = render(&window);
+
+        row.set_cursor(true);
+        pump();
+        let both = render(&window);
+
+        match (cursor_only, selected_only, both) {
+            (Some(cursor), Some(selected), Some(both)) => {
+                assert_ne!(
+                    cursor, selected,
+                    "in {name}, the row the keyboard is on and a row in the \
+                     selection draw the same pixels — inside a bulk selection \
+                     there is then no way to see where the cursor is"
+                );
+                assert_ne!(
+                    selected, both,
+                    "in {name}, a row that is both the cursor and selected \
+                     draws exactly like one that is only selected: the cursor \
+                     is invisible for as long as it is inside the selection"
+                );
+                assert_ne!(
+                    cursor, both,
+                    "in {name}, a selected row under the cursor draws exactly \
+                     like an unselected one under it, so the selection is \
+                     invisible wherever the keyboard happens to be"
+                );
+            }
+            _ => eprintln!("skipping the pixel checks: the compositor is not painting this window"),
+        }
+    }
+    window.remove_css_class(style::HIGH_CONTRAST_CLASS);
+    manager.set_color_scheme(adw::ColorScheme::Default);
+    row.set_cursor(false);
+    row.set_selected(false);
+    pump();
+
+    // ── the cursor's edge is not a key-hints feature ─────────────────────
+    // #753 again: the 3px accent edge was drawn only when `shows_hints()`,
+    // which is the hints flag *and* keyboard focus. Turning hints off, or
+    // clicking into the reading pane, silently deleted the only marker of
+    // where the keyboard was. The canvas draws that edge on the current row
+    // unconditionally (`Design/Mail Client.dc.html:76`); only the key caps
+    // are the flag's business.
+    row.set_cursor(true);
+    row.set_show_key_hints(false);
+    pump();
+    let without_hints = render(&window);
+    row.set_cursor(false);
+    pump();
+    let no_cursor = render(&window);
+    row.set_show_key_hints(true);
+    pump();
+
+    match (without_hints, no_cursor) {
+        (Some(without_hints), Some(no_cursor)) => assert_ne!(
+            without_hints, no_cursor,
+            "with key hints off, the row under the cursor draws exactly like \
+             a row that is not — the setting deleted the focus indicator \
+             along with the hints it was supposed to govern"
+        ),
+        _ => eprintln!("skipping the pixel checks: the compositor is not painting this window"),
+    }
+    row.set_cursor(false);
+    pump();
+
     // ── an unbound row is a skeleton, not a crash and not a lie ──────────
     let waiting = MessageRowView::new();
     waiting.set_row(None);
