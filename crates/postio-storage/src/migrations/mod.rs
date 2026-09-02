@@ -198,11 +198,38 @@ pub fn migrate_with(
 
     verify_applied(connection, migrations)?;
 
-    let mut applied = 0;
-    for migration in migrations.iter().filter(|m| m.version > from) {
-        apply(connection, migration)?;
-        applied += 1;
+    // Step 1 of SQLite's own table-rebuild procedure, and not optional the
+    // moment a migration rebuilds a table: a `DROP TABLE` prepared with
+    // foreign keys enabled performs an implicit `DELETE FROM`, and that
+    // *does* fire `ON DELETE CASCADE`. 0004 rebuilds `drafts`, which
+    // `recipients` and `attachments` both cascade from -- so with the pragma
+    // on it would take every draft's addresses and attached files with it,
+    // report success, and leave a schema that looks perfectly correct.
+    //
+    // Out here rather than in `apply` because `PRAGMA foreign_keys` is
+    // silently ignored inside a transaction, and `apply` runs each migration
+    // in one. Restored below whether the run succeeded or not: the pragma is
+    // per-connection, and handing back a connection with referential
+    // integrity switched off would let every later write break it.
+    //
+    // 0004's own header says foreign keys are "deferred for the swap rather
+    // than disabled". That is wrong twice — nothing defers them, and
+    // `defer_foreign_keys` would not have helped, since it defers constraint
+    // *checking* to commit and does not suppress `CASCADE` actions. The file
+    // is left as it is on purpose: `verify_applied` checksums the SQL, so
+    // editing even a comment would make every database that has already run
+    // it refuse to open. This is the correction, and it belongs here anyway.
+    let enforcing = scalar_pragma(connection, "foreign_keys")? != 0;
+    if enforcing {
+        connection.pragma_update(None, "foreign_keys", false)?;
     }
+
+    let result = apply_all(connection, migrations, from);
+
+    if enforcing {
+        connection.pragma_update(None, "foreign_keys", true)?;
+    }
+    let applied = result?;
 
     let to = schema_version(connection)?;
     if applied > 0 {
@@ -212,6 +239,46 @@ pub fn migrate_with(
     }
 
     Ok(MigrationReport { from, to, applied })
+}
+
+/// Reads a one-value pragma.
+fn scalar_pragma(connection: &Connection, pragma: &str) -> Result<i64> {
+    Ok(connection.query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))?)
+}
+
+/// Applies every migration past `from`, and proves the result still hangs
+/// together.
+///
+/// Split out so the caller can restore `foreign_keys` on the way out of both
+/// the success and the failure path.
+fn apply_all(connection: &mut Connection, migrations: &[Migration], from: u32) -> Result<usize> {
+    let mut applied = 0;
+    for migration in migrations.iter().filter(|m| m.version > from) {
+        apply(connection, migration)?;
+        applied += 1;
+    }
+
+    // Step 12 of the rebuild procedure. Enforcement was off for the run, so
+    // nothing above raised a constraint failure; this is what turns a
+    // migration that broke a reference into a loud failure instead of a
+    // database that is quietly wrong. Only when something was applied — on
+    // the ordinary "already at head" path there is nothing to check and the
+    // scan is not free.
+    if applied > 0 {
+        let mut statement = connection.prepare("PRAGMA foreign_key_check")?;
+        let broken: Vec<(String, String)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(2)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        if let Some((table, parent)) = broken.first() {
+            return Err(Error::MigrationBrokeReferences {
+                table: table.clone(),
+                parent: parent.clone(),
+                rows: broken.len(),
+            });
+        }
+    }
+
+    Ok(applied)
 }
 
 /// Applies one migration and records it, atomically.
