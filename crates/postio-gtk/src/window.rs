@@ -1787,6 +1787,8 @@ impl Window {
             // which is why the sidebar had to become a real context rather
             // than a focus flag — see `postio-cfd.2`.
             CommandId::FocusSidebar => self.enter_sidebar(),
+            CommandId::CyclePane => self.cycle_pane(true),
+            CommandId::CyclePaneBack => self.cycle_pane(false),
             CommandId::NextFolder => {
                 self.sidebar().step(1);
             }
@@ -1845,6 +1847,61 @@ impl Window {
         }
         self.imp().before_sidebar.set(Some(self.context()));
         self.set_context(Context::Sidebar);
+    }
+
+    /// Move the keyboard one pane along: sidebar, list, reader, round.
+    ///
+    /// #494: bare Tab had no entry in the table at all, so its top-level
+    /// meaning was whatever GTK's native focus chain produced -- "sometimes
+    /// it changes panes, sometimes it changes items within a pane". This is
+    /// the deliberate version.
+    ///
+    /// The list position is the thread when one is drilled into, because the
+    /// thread *is* the list at that moment; cycling to a hidden list behind
+    /// it would be a pane the user cannot see.
+    fn cycle_pane(&self, forward: bool) {
+        let list_pane = if self.thread_open() {
+            Context::Thread
+        } else {
+            Context::List
+        };
+        let next = match (self.context(), forward) {
+            (Context::Sidebar, true) => list_pane,
+            (Context::List | Context::Thread, true) => Context::Reader,
+            (Context::Reader, true) => Context::Sidebar,
+            (Context::Sidebar, false) => Context::Reader,
+            (Context::List | Context::Thread, false) => Context::Sidebar,
+            (Context::Reader, false) => list_pane,
+            // Tab does not resolve to this command anywhere else -- see
+            // `PANE_SURFACES` -- so any other context means the keymap and
+            // the registry disagree. Do nothing rather than guess a pane.
+            _ => return,
+        };
+        self.focus_pane(next);
+    }
+
+    /// Put the keyboard in `pane`, and record the context that now owns it.
+    fn focus_pane(&self, pane: Context) {
+        match pane {
+            // Reuses the sidebar's own entry path, which brings a hidden
+            // sidebar back before focusing it -- otherwise the cycle would
+            // silently skip a pane at the narrow breakpoint (#494's
+            // acceptance says handled the same way `FocusSidebar` does).
+            Context::Sidebar => self.enter_sidebar(),
+            Context::Thread => {
+                self.thread().grab_focus();
+                self.set_context(Context::Thread);
+            }
+            Context::List => {
+                self.list().grab_focus();
+                self.set_context(Context::List);
+            }
+            Context::Reader => {
+                self.reader().view().grab_focus();
+                self.set_context(Context::Reader);
+            }
+            _ => {}
+        }
     }
 
     /// Give the keyboard back to whatever had it before the folders.

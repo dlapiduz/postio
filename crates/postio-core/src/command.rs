@@ -155,6 +155,10 @@ command_ids! {
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
     FocusSidebar => "focus_sidebar",
+    /// Move the keyboard to the next pane: sidebar, list, reader, round.
+    CyclePane => "cycle_pane",
+    /// Move the keyboard to the previous pane.
+    CyclePaneBack => "cycle_pane_back",
     /// Move to the next folder in the sidebar.
     NextFolder => "next_folder",
     /// Move to the previous folder in the sidebar.
@@ -541,6 +545,14 @@ pub enum Command {
     ToggleSidebar,
     /// Put the keyboard in the folder list.
     FocusSidebar,
+    /// Move the keyboard to the next pane: sidebar, list, reader, round.
+    ///
+    /// The *top-level* meaning of bare Tab, for when a pane itself has the
+    /// keyboard. Panes that own Tab for their own purpose -- a refine chip,
+    /// recipient completion, the finder -- keep first claim on it (#494).
+    CyclePane,
+    /// Move the keyboard to the previous pane.
+    CyclePaneBack,
     /// Move to the next folder.
     NextFolder,
     /// Move to the previous folder.
@@ -692,6 +704,8 @@ impl Command {
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
+            Command::CyclePane => CommandId::CyclePane,
+            Command::CyclePaneBack => CommandId::CyclePaneBack,
             Command::NextFolder => CommandId::NextFolder,
             Command::PrevFolder => CommandId::PrevFolder,
             Command::ToggleFolder => CommandId::ToggleFolder,
@@ -788,6 +802,8 @@ impl Command {
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
+            CommandId::CyclePane => Command::CyclePane,
+            CommandId::CyclePaneBack => Command::CyclePaneBack,
             CommandId::NextFolder => Command::NextFolder,
             CommandId::PrevFolder => Command::PrevFolder,
             CommandId::ToggleFolder => Command::ToggleFolder,
