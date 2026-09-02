@@ -72,6 +72,7 @@ mod gtk_sidebar_saved_searches;
 mod gtk_sidebar_tree;
 mod gtk_style;
 mod gtk_thread;
+mod gtk_thread_dwell_cancel;
 mod gtk_thread_scope;
 mod gtk_toggle_sidebar;
 mod gtk_window;
@@ -337,6 +338,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_style::the_generated_stylesheet_works_in_gtk",
         gtk_style::the_generated_stylesheet_works_in_gtk as fn(),
+    ),
+    (
+        "gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock",
+        gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock as fn(),
     ),
     (
         "gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly",

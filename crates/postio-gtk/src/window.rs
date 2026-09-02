@@ -612,6 +612,28 @@ impl Window {
     /// `rows` oldest first — [`crate::thread::arrange`]'s order — because
     /// that is how the pane numbers them.
     pub fn show_conversation(&self, rows: Vec<crate::list::Row>) {
+        // The list's dwell measures "this row was in front of a person long
+        // enough to have been read" (#71), and a thread row's id is its
+        // *representative* -- the newest message in that folder. Once the
+        // conversation is what the reader is looking at, the row is not, and
+        // letting the clock run marks a message read that focus may never
+        // reach: "opened the thread, all six read", which ADR 0015 Q4 forbids
+        // in those words. Reading inside a conversation is the pane's own
+        // per-message dwell, driven by focus.
+        //
+        // Here rather than in `show_thread`, because that is one of two ways
+        // in: #755 made the list open a conversation directly, without the
+        // drill-in column. This is the single point both routes pass through
+        // -- the pane becoming visible is exactly the moment the row stops
+        // being what is in front of the reader.
+        //
+        // Deliberate, next to the two cases that already stop this clock for
+        // the same reason: the composer taking the pane, and the window going
+        // inactive. It used to depend on `sync_reading_pane`'s
+        // `if !self.reading()` happening to run first, which is timing rather
+        // than a decision -- and on a slow machine it did not. #797.
+        self.list().cancel_dwell();
+
         let pane = self.conversation();
         pane.open(rows);
         pane.widget().set_visible(true);
