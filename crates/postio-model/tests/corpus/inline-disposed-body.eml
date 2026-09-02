@@ -1,0 +1,29 @@
+Message-ID: <20260304T081500.inline.disposed@example.net>
+Date: Wed, 04 Mar 2026 08:15:00 +0000
+From: Booking <no-reply@lanternhouse.example.net>
+To: Quinn Abara <quinn.abara@example.net>
+Subject: Your booking on the 12th is confirmed
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_alt_disp_9c30"
+
+--=_alt_disp_9c30
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+Content-Disposition: inline
+
+Your booking on the 12th is confirmed.
+
+Manage it here: https://lanternhouse.example.net/booking/9c30
+
+--=_alt_disp_9c30
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+Content-Disposition: inline
+
+<html><body style=3D"font-family:Barlow,sans-serif;">
+<p>Your booking on the 12th is <strong>confirmed</strong>.</p>
+<p><a href=3D"https://lanternhouse.example.net/booking/9c30">Manage it he=
+re</a></p>
+</body></html>
+
+--=_alt_disp_9c30--

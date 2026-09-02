@@ -118,6 +118,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | `multipart-alternative.eml` | The canonical text + HTML pair, with a preamble before the first boundary and an epilogue after the closing one; both must be discarded. |
 | `nested-multipart.eml` | `mixed` > `alternative` > `related`, three levels deep, with an inline PNG in the innermost part and an attachment after the whole nest. |
 | `inline-image-cid.eml` | Two inline PNGs addressed by `cid:`, one with `name=` and one without, plus a third `cid:` reference with **no matching part** — the dangling case. |
+| `inline-disposed-body.eml` | Both alternatives carry `Content-Disposition: inline` — the part that *is* the message, marked the way an attachment is. The IMAP header sync used to demote such a part to an attachment, leaving `html_part_id` unset, so the text axis fetched only the plain-text alternative and the pane rendered a body with no images and no links (#751). |
 | `attachment-pdf.eml` | Two attachments, `Content-Description`, `size=` and `creation-date=` disposition parameters, `Cc` recipients. |
 | `attachment-large.eml` | ~256 KiB of base64. This is the fixture that proves attachments stream to the blob store instead of sitting in memory; it is the only file here over 64 KiB, and a test enforces that. |
 | `attachment-rfc2231-filename.eml` | Three spellings of one non-ASCII filename: RFC 2231 continuations (`name*0*`, `name*1*`), the `charset'language'value` form, and the RFC 2047 encoded-word-in-a-parameter abuse that is illegal and ubiquitous. |

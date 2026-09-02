@@ -546,6 +546,35 @@ fn rfc2231_and_encoded_word_filenames_are_decoded() {
 }
 
 #[test]
+fn a_body_part_disposed_inline_is_still_the_body() {
+    // `inline-disposed-body` marks both alternatives `Content-Disposition:
+    // inline`, which plenty of senders do: the disposition says how to present
+    // a part, not whether it is the message. Reading it as an attachment is
+    // what left #751's pane with a body that had no links and no images in it.
+    let parsed = parse("inline-disposed-body");
+
+    let html = parsed
+        .body
+        .html
+        .as_deref()
+        .expect("the text/html alternative is the body, however it is disposed");
+    assert!(html.contains("<strong>confirmed</strong>"));
+    assert!(
+        parsed
+            .body
+            .text
+            .as_deref()
+            .is_some_and(|text| text.contains("confirmed")),
+        "and the plain-text alternative is still the plain-text body"
+    );
+    assert_eq!(
+        parsed.attachments().count(),
+        0,
+        "a message's own words are not attachments, so nothing here gets a chip"
+    );
+}
+
+#[test]
 fn inline_images_are_inline_and_carry_their_content_id() {
     let parsed = parse("inline-image-cid");
 
