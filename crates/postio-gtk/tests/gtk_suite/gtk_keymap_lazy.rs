@@ -11,11 +11,15 @@
 //! and a composer built afterwards still starts on the applied keymap rather
 //! than on the registry defaults it was drawn with.
 //!
-//! Two cases, so they live here rather than in a binary of their own: a file
-//! with two display-needing `#[test]`s hands them to libtest's thread pool,
-//! GTK tolerates one thread, and the loser returns through its own `no
-//! display` guard and is reported as passing (#355). This file was very
-//! nearly the fourth to do that.
+//! Here rather than in a binary of its own because two display-needing
+//! `#[test]`s in one file hand them to libtest's thread pool, GTK tolerates
+//! one thread, and the loser returns through its own `no display` guard and
+//! is reported as passing (#355).
+//!
+//! Its sibling — that a composer built *after* a rebind starts on the rebound
+//! key — is not here, because building one starts a WebKit editor and this
+//! harness deliberately keeps WebKit out (see `main.rs`, and #272). It lives
+//! in `tests/gtk_composer_keymap.rs`, alone in its binary.
 //!
 //! Skips without a display.
 
@@ -46,34 +50,5 @@ pub fn applying_a_keymap_does_not_build_a_composer_nobody_asked_for() {
         !window.has_composer(),
         "applying a keymap built a composer -- every window that reads \
          config.toml now pays for a WebKit editor it may never show"
-    );
-}
-
-pub fn a_composer_built_after_a_rebind_starts_on_the_rebound_key() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display");
-        return;
-    }
-    let display = gdk::Display::default().expect("a display");
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-
-    // The other half of keeping it lazy: `apply_keymap` cannot reach a
-    // composer that does not exist, so the composer has to pick the keymap up
-    // when it is finally built -- or a rebind made before anyone composed
-    // would be invisible until the next edit of `config.toml`.
-    let window = Window::default();
-    let mut overrides = KeyBindings::default();
-    overrides
-        .overrides_mut()
-        .insert("save_draft".to_string(), "mod+w".to_string());
-    window.apply_keymap(Keymap::resolve(&overrides));
-
-    let composer = window.composer();
-    assert!(window.has_composer(), "asking for it builds it");
-    assert_eq!(
-        composer.test_save_hint(),
-        Some("ctrl+w".to_string()),
-        "the composer was built after the rebind and missed it"
     );
 }
