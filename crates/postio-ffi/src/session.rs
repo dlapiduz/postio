@@ -174,10 +174,21 @@ impl SessionOptions {
     /// or it would end up with two runtimes and the deadlock that implies.
     #[cfg(feature = "testing")]
     pub fn in_memory_on(runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
-        Self {
-            bridge: Some((runtime, commands)),
-            ..Self::in_memory()
-        }
+        Self::in_memory().on_bridge(runtime, commands)
+    }
+
+    /// Run on a runtime and command bus the caller owns, keeping whatever
+    /// store these options already name.
+    ///
+    /// The production shape: Swift owns the bridge, and the store is
+    /// whichever one the session was opened over. The two used to be
+    /// expressible only separately — `in_memory_with` gave a seeded store
+    /// with no bus, `in_memory_on` a bus over an empty one — so a test that
+    /// wanted a verb to reach real handlers over real rows could have
+    /// neither (#721).
+    pub fn on_bridge(mut self, runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
+        self.bridge = Some((runtime, commands));
+        self
     }
 }
 
@@ -218,6 +229,17 @@ pub struct Session {
     /// What the window is currently showing, so a page fetch knows what to
     /// ask the store for.
     scope: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// What the user has marked, and where the keyboard is.
+    ///
+    /// Held here rather than passed in with every [`Session::invoke`] (#721).
+    /// A selection is not always a list of ids: `Ctrl+A` makes it a
+    /// *predicate* over the whole view, and marshalling that across the
+    /// boundary as an array would mean materialising a mailbox — the one
+    /// thing this list exists not to do. So the predicate stays on this side,
+    /// and Swift moves it with the same small verbs `postio-ui` gives GTK.
+    selection: Mutex<postio_core::state::Selection>,
+    /// The row the keyboard is on, as the frontend last reported it.
+    cursor: Mutex<Option<postio_model::ids::MessageId>>,
     /// Page reads still in flight, and how many have been issued in total.
     ///
     /// The first is what `settle_for_test` waits on. The second is how a test
@@ -320,6 +342,41 @@ impl Session {
     #[uniffi::method(name = "rowCount")]
     pub fn row_count_ffi(&self) -> u32 {
         self.row_count()
+    }
+
+    /// Run a command, aimed the way this view says it should be.
+    ///
+    /// `id` is the registry's own name for the verb, as
+    /// [`commands`](Session::commands_ffi) reports it. Nothing comes back:
+    /// a verb is local-first, and what happened arrives on `nextEvent` like
+    /// everything else. See [`Session::invoke`].
+    #[uniffi::method(name = "invoke")]
+    pub fn invoke_ffi(&self, id: String) {
+        self.invoke(&id);
+    }
+
+    /// Report which row the keyboard is on, or `None` for no row.
+    #[uniffi::method(name = "setCursor")]
+    pub fn set_cursor_ffi(&self, message: Option<i64>) {
+        self.set_cursor(message);
+    }
+
+    /// Mark a row, or take it back out.
+    #[uniffi::method(name = "toggleSelection")]
+    pub fn toggle_selection_ffi(&self, message: i64) {
+        self.toggle_selection(message);
+    }
+
+    /// Select everything this scope holds, without reading a page of it.
+    #[uniffi::method(name = "selectAll")]
+    pub fn select_all_ffi(&self) {
+        self.select_all();
+    }
+
+    /// Unmark everything.
+    #[uniffi::method(name = "clearSelection")]
+    pub fn clear_selection_ffi(&self) {
+        self.clear_selection();
     }
 
     /// The row at `position`, or `None` while its page is on its way.
@@ -474,6 +531,8 @@ impl Session {
                 wiring: Mutex::new(Some(wiring)),
                 keys: load_key_bindings(options.config_text.as_deref()),
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
+                selection: Mutex::new(postio_core::state::Selection::default()),
+                cursor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
                 offline: Arc::default(),
@@ -517,6 +576,8 @@ impl Session {
             keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
+            selection: Mutex::new(postio_core::state::Selection::default()),
+            cursor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
             reads: Arc::default(),
@@ -543,6 +604,131 @@ impl Session {
         let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
         *self.scope.lock().expect("scope lock") = Some(listed);
         self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Turn a command id into the command it means here, and run it.
+    ///
+    /// **The whole of this frontend's aiming**, and it decides nothing: what
+    /// a gesture acts on is `postio_core::aim`'s rule, and this hands it the
+    /// facts — the scope on screen, what is marked, where the keyboard is,
+    /// and the rows the window is holding. `postio-app` is the same three
+    /// lines over GTK's own widgets (#589, #721). Two adapters, one rule; a
+    /// second copy of the rule here is exactly what that issue removed.
+    ///
+    /// `id` is the registry's own string — `"archive"`, `"open_message"` —
+    /// parsed through [`CommandId`]'s `FromStr`, which is generated from the
+    /// same table the names come from. A `uniffi` enum would be a second copy
+    /// of that vocabulary, kept by hand, free to drift; the string is the
+    /// file format `ARCHITECTURE.md` §3 already says it is.
+    ///
+    /// Returns nothing, deliberately. A verb is local-first: it writes to
+    /// SQLite, enqueues, and the frontend learns what happened from the
+    /// events it is already draining. A `Result` here would imply the caller
+    /// should wait for an answer, which is the shape this architecture spends
+    /// its effort not having.
+    ///
+    /// An id this build does not know is ignored rather than panicking — it
+    /// arrived from another process, and a boundary that aborts on a typo is
+    /// a boundary that can be crashed from Swift.
+    pub fn invoke(&self, id: &str) {
+        let Ok(id) = id.parse::<postio_core::CommandId>() else {
+            tracing::debug!(id, "not a command this build knows; ignored");
+            return;
+        };
+        let Some(commands) = self
+            .wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .map(|wiring| wiring.commands.clone())
+        else {
+            return;
+        };
+
+        let list = self.list.lock().expect("list lock");
+        let selection = self.selection.lock().expect("selection lock");
+        let aim = postio_core::aim::Aim {
+            // The shared conversion, not a second one: `ScopeFfi` becomes a
+            // `ListScope` on the way in, and `aim::view_scope` is the one
+            // rule for what a whole-view gesture is relative to (#670).
+            scope: self
+                .scope
+                .lock()
+                .expect("scope lock")
+                .and_then(postio_core::aim::view_scope),
+            selection: &selection,
+            cursor: *self.cursor.lock().expect("cursor lock"),
+            rows: &*list,
+        };
+        let command = postio_core::aim::command_for(id, &aim);
+        drop(selection);
+        drop(list);
+
+        if commands.send(command).is_err() {
+            // Only during teardown: the bridge has stopped and there is
+            // nothing left to run the verb on.
+            tracing::debug!("the runtime has stopped and did not run that");
+        }
+    }
+
+    /// Report where the keyboard is, so a verb with nothing marked knows
+    /// which row it is about.
+    pub fn set_cursor(&self, message: Option<i64>) {
+        *self.cursor.lock().expect("cursor lock") = message.map(postio_model::ids::MessageId::new);
+    }
+
+    /// Mark `message`, or take it out of the selection again.
+    pub fn toggle_selection(&self, message: i64) {
+        let message = postio_model::ids::MessageId::new(message);
+        let mut selection = self.selection.lock().expect("selection lock");
+        *selection = match std::mem::take(&mut *selection) {
+            postio_core::state::Selection::These(mut marked) => {
+                if let Some(at) = marked.iter().position(|held| *held == message) {
+                    marked.remove(at);
+                } else {
+                    marked.push(message);
+                }
+                postio_core::state::Selection::These(marked)
+            }
+            // Taking a row out of "everything" is what `except` is for —
+            // turning the predicate into a list here would materialise the
+            // mailbox this boundary exists not to materialise.
+            postio_core::state::Selection::Everything { mut except } => {
+                if let Some(at) = except.iter().position(|held| *held == message) {
+                    except.remove(at);
+                } else {
+                    except.push(message);
+                }
+                postio_core::state::Selection::Everything { except }
+            }
+        };
+    }
+
+    /// Select everything the current scope holds — `Ctrl+A`.
+    ///
+    /// A predicate, not a list: the selection stays "everything in this view"
+    /// however many rows that is, and no page is read to answer it.
+    pub fn select_all(&self) {
+        *self.selection.lock().expect("selection lock") =
+            postio_core::state::Selection::Everything { except: Vec::new() };
+    }
+
+    /// Unmark everything.
+    pub fn clear_selection(&self) {
+        *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
+    }
+
+    /// What is marked right now, for a test or a frontend drawing a count.
+    ///
+    /// `None` while the selection is the whole view: there is no list to
+    /// hand back, which is the point of it being a predicate.
+    pub fn selected_messages(&self) -> Option<Vec<i64>> {
+        match &*self.selection.lock().expect("selection lock") {
+            postio_core::state::Selection::These(marked) => {
+                Some(marked.iter().map(|id| id.get()).collect())
+            }
+            postio_core::state::Selection::Everything { .. } => None,
+        }
     }
 
     /// How many rows the current scope has.
