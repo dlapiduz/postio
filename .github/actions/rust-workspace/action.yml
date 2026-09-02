@@ -1,0 +1,89 @@
+name: Rust workspace
+description: >
+  System dependencies, the pinned toolchain, and the build cache shared by the
+  clippy, test and doc jobs.
+
+  Factored out when those three stopped being one job (#818). Three copies of
+  forty lines is three chances to drift, and the copy that drifts is the cache
+  key -- at which point the jobs stop sharing anything and each pays for a
+  cold build of GTK and WebKit.
+
+inputs:
+  save-cache:
+    description: >
+      Whether this job writes the cache back. Exactly one should: the others
+      restore and leave it alone, so a 2 GB upload happens once per run rather
+      than three times. They all read the same key, so whichever job runs
+      first warms the other two.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
+    #   gtk4-devel        -> libgtk-4-dev
+    #   libadwaita-devel  -> libadwaita-1-dev
+    #   webkitgtk6.0-devel-> libwebkitgtk-6.0-dev
+    #   sqlite-devel      -> libsqlite3-dev
+    #   libsecret-devel   -> libsecret-1-dev
+    #   glib2-devel       -> libglib2.0-dev
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --no-install-recommends -y \
+          build-essential \
+          pkg-config \
+          libgtk-4-dev \
+          libadwaita-1-dev \
+          libwebkitgtk-6.0-dev \
+          libsqlite3-dev \
+          libsecret-1-dev \
+          libglib2.0-dev \
+          libpango1.0-dev \
+          mutter \
+          xvfb \
+          dbus-daemon
+
+    # The pin decides; see the note in the `fmt` job.
+    - name: Install Rust toolchain
+      shell: bash
+      run: |
+        rustup show active-toolchain
+        rustc --version && cargo clippy --version
+
+    # The cache key has to name the compiler. It no longer moves on its own
+    # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
+    # a commit, and the cache must not survive it: a key of Cargo.lock alone
+    # still matches afterwards, so the runner spends ~50s restoring 2 GB of
+    # artifacts built by the old compiler that cargo then throws away. A miss
+    # is cheaper than a restore that buys nothing.
+    - name: Identify the compiler
+      id: rust
+      shell: bash
+      run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache cargo registry and target dir
+      if: inputs.save-cache == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          target
+        key: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-
+
+    - name: Restore the shared build cache
+      if: inputs.save-cache != 'true'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          target
+        key: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-
