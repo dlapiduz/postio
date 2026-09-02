@@ -476,34 +476,154 @@ async fn a_rejected_recipient_did_not_deliver_anything_either() {
     assert!(!error.submission_is_indeterminate());
 }
 
-/// A server that stops answering is the case nothing can resolve: the reply
-/// to the terminating `.` is exactly what is missing, so "it never arrived"
-/// and "it arrived and the acknowledgement did not" look identical.
-///
-/// Asserted on the classification rather than driven through a transport,
-/// because a connector that accepts a payload and then vanishes is the
-/// fixture #673 exists to build. Conservative by variant for now — #673
-/// narrows this to failures raised once the payload had begun being written.
+// ---------------------------------------------------------------------------
+// Where the payload begins — ADR 0021, #673
+// ---------------------------------------------------------------------------
+
+/// Sends `MESSAGE` over a connector that dies somewhere, and hands back the
+/// error and the connector so a test can also ask what actually went out.
+async fn send_over(connector: ScriptedConnector) -> (SmtpError, ScriptedConnector) {
+    let mut session = SmtpSession::open(&settings(), &password(), &connector)
+        .await
+        .expect("the scripted handshake");
+    let error = session
+        .send_message(
+            "ada@example.com",
+            &["grace@example.com".to_owned()],
+            MESSAGE,
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap_err();
+    (error, connector)
+}
+
+#[tokio::test]
+async fn a_connection_lost_before_mail_from_submitted_nothing() {
+    // The safe half. Nothing of the message reached the server, so the send
+    // is an ordinary transient failure and the drainer should try it again --
+    // refusing to would strand a queued message on a connection hiccup.
+    let (error, connector) =
+        send_over(ScriptedConnector::new(happy_script()).vanishing_at("MAIL FROM")).await;
+
+    assert!(error.is_transient(), "{error}");
+    assert!(
+        !error.submission_is_indeterminate(),
+        "nothing of the message was written, so retrying cannot deliver it \
+         twice: {error}"
+    );
+    let commands = connector.log().commands();
+    assert!(
+        !commands.iter().any(|line| line.starts_with("MAIL FROM")),
+        "the fixture is wrong if MAIL FROM reached the server: {commands:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_data_command_itself_is_still_before_the_payload() {
+    // The sharp edge. `DATA` is a four-letter command that asks permission;
+    // the message goes out only after the server's `354`. A connection lost
+    // between the two has submitted nothing, and treating it as unknowable
+    // would strand every message that hit a hiccup at exactly that moment.
+    let (error, connector) =
+        send_over(ScriptedConnector::new(happy_script()).vanishing_at("DATA")).await;
+
+    assert!(error.is_transient(), "{error}");
+    assert!(
+        !error.submission_is_indeterminate(),
+        "DATA asks permission; it does not submit anything: {error}"
+    );
+    assert!(
+        !connector.log().written.ends_with(b"\r\n.\r\n"),
+        "no payload should have been written"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_lost_once_the_payload_is_on_the_wire_is_unknowable() {
+    // The dangerous half, and the whole reason ADR 0021 exists: the reply to
+    // the terminating `.` is exactly what is missing, so "it never arrived"
+    // and "it arrived and the acknowledgement did not" look identical from
+    // here. A retry may deliver a second copy to somebody else's inbox.
+    let (error, connector) =
+        send_over(ScriptedConnector::new(happy_script()).vanishing_after_the_payload()).await;
+
+    assert!(
+        error.submission_is_indeterminate(),
+        "the payload was written and never answered; this must not be \
+         retried automatically: {error}"
+    );
+    assert!(
+        error.is_transient(),
+        "the two predicates are orthogonal -- the connection failure is still \
+         the retryable kind, which is precisely why the first one has to be \
+         asked before it: {error}"
+    );
+    assert!(
+        connector.log().written.ends_with(b"\r\n.\r\n"),
+        "the fixture is wrong if the payload never went out"
+    );
+}
+
+#[tokio::test]
+async fn a_timeout_waiting_for_the_reply_to_the_terminator_is_unknowable_too() {
+    // A timeout and a close are different errors and the send path has to
+    // reach the same conclusion from both: the server may have taken it.
+    let (error, _connector) = send_over(
+        ScriptedConnector::new(happy_script())
+            .timing_out_after_the_payload(std::time::Duration::from_secs(30)),
+    )
+    .await;
+
+    assert!(
+        error.submission_is_indeterminate(),
+        "a server that goes quiet after the payload is the same problem \
+         whether it closed or merely stopped talking: {error}"
+    );
+    assert!(error.is_transient(), "{error}");
+}
+
+#[tokio::test]
+async fn a_message_the_server_refused_after_the_payload_is_not_unknowable() {
+    // The other side of the payload boundary. The bytes went out *and the
+    // server answered* -- with a refusal. It said what it did with the
+    // message, so there is nothing indeterminate about it and the queue may
+    // act on the refusal.
+    let script = happy_script().on_data_body("552 5.3.4 message too big");
+    let (error, _connector) = send_over(ScriptedConnector::new(script)).await;
+
+    assert!(
+        !error.submission_is_indeterminate(),
+        "the server answered; being past the payload does not make a \
+         witnessed refusal unknowable: {error}"
+    );
+    assert!(!error.is_transient(), "a 5xx is permanent: {error}");
+}
+
 #[test]
-fn a_transport_that_stops_answering_leaves_the_outcome_unknowable() {
+fn a_transport_failure_on_its_own_says_nothing_about_the_payload() {
+    // The predicate is about *where* a failure happened, not which variant
+    // it is. Before #673 this was approximated by variant, which meant every
+    // dropped connection anywhere in the session was treated as though the
+    // message might have gone out.
     for error in [
         SmtpError::Disconnected {
-            context: "the message body".to_owned(),
+            context: "EHLO".to_owned(),
             reason: "connection reset".to_owned(),
         },
         SmtpError::TimedOut {
-            context: "the message body".to_owned(),
+            context: "AUTH PLAIN".to_owned(),
             after: std::time::Duration::from_secs(30),
         },
         SmtpError::Io {
-            context: "the message body".to_owned(),
+            context: "MAIL FROM".to_owned(),
             reason: "broken pipe".to_owned(),
         },
         SmtpError::Cancelled,
     ] {
         assert!(
-            error.submission_is_indeterminate(),
-            "a send must not be retried on this: {error}"
+            !error.submission_is_indeterminate(),
+            "an untagged transport failure happened before the payload: {error}"
         );
     }
 }

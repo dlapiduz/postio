@@ -963,3 +963,120 @@ async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
          receiver has no way to tell it is one: looked for {reserved}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// The payload boundary reaches the drainer — ADR 0021, #673
+// ---------------------------------------------------------------------------
+
+/// Queues one draft and drains it over `connector`, handing back the report,
+/// the draft id and the connection so a test can ask what became of both.
+///
+/// The two tests below differ in exactly one thing — where the connection
+/// dies — so everything else is shared, and the difference is legible.
+async fn drain_a_send_over(
+    connection: &Connection,
+    connector: &ScriptedConnector,
+) -> (postio_sync::DrainReport, postio_model::DraftId) {
+    let (account, _sent_mailbox) = account_with_sent(connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = DraftRepository::new(connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let tokens = a_password_source(&account).await;
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        connection,
+        &backend,
+        SmtpContext {
+            connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    (report, draft_id)
+}
+
+#[tokio::test]
+async fn a_send_interrupted_once_the_payload_was_on_the_wire_is_not_retried() {
+    // ADR 0021's whole point, driven for the first time through a transport
+    // rather than asserted on a hand-built error: the payload went out, the
+    // server never answered, and the drainer must not try again. "Try again"
+    // and "you already sent it" are indistinguishable from here, and a second
+    // copy in somebody else's inbox cannot be recalled.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+
+    let connector = ScriptedConnector::new(accepting_script()).vanishing_after_the_payload();
+    let (report, draft_id) = drain_a_send_over(&connection, &connector).await;
+
+    assert_eq!(report.applied, 0);
+    assert_eq!(
+        report.deferred, 0,
+        "a deferral is a retry with a timer on it, which is the one thing \
+         this must not be: {report:?}"
+    );
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+
+    let draft = DraftRepository::new(&connection)
+        .get(draft_id)
+        .expect("get")
+        .expect("a draft that may have been sent is not deleted");
+    assert_eq!(
+        draft.state,
+        postio_model::DraftState::Sending,
+        "the mark stays exactly where it is, so `resolve` refuses to submit \
+         this again on the next process too"
+    );
+    assert!(
+        connector.log().written.ends_with(b"\r\n.\r\n"),
+        "the fixture is wrong if the payload never went out"
+    );
+}
+
+#[tokio::test]
+async fn a_send_interrupted_before_the_payload_is_queued_again() {
+    // The other half, and why narrowing the predicate matters: nothing of the
+    // message reached the server, so this is an ordinary connection hiccup.
+    // Refusing to retry it would strand a queued message that was never sent.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+
+    let connector = ScriptedConnector::new(accepting_script()).vanishing_at("MAIL FROM");
+    let (report, draft_id) = drain_a_send_over(&connection, &connector).await;
+
+    assert_eq!(report.applied, 0);
+    assert_eq!(
+        report.deferred, 1,
+        "a transport failure before the payload is retryable: {report:?}"
+    );
+    assert!(report.failed.is_empty(), "{report:?}");
+
+    let draft = DraftRepository::new(&connection)
+        .get(draft_id)
+        .expect("get")
+        .expect("still a draft");
+    assert_eq!(
+        draft.state,
+        postio_model::DraftState::Queued,
+        "the `Sending` mark has to come back off, or `resolve` would refuse \
+         the retry the backoff is about to schedule"
+    );
+}
