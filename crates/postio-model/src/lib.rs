@@ -90,7 +90,7 @@ pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentif
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
 pub use outgoing::{BuiltMessage, OutgoingAttachment};
-pub use scope::ListScope;
+pub use scope::{Arrival, ListScope, Reaction};
 pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;

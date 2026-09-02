@@ -28,16 +28,37 @@
 //!
 //! # Driving the model from events
 //!
-//! | Event | What the list does |
-//! |---|---|
-//! | [`Event::NewMail`] | [`MessageList::inserted_at_top`] — the selection and the scroll anchor move down with their row |
-//! | [`Event::MessagesChanged`] | refetch only the resident pages holding them, so the rows keep their `GObject` and nothing loses its place |
-//! | [`Event::MessagesRemoved`] | refetch; the row count moved |
-//! | [`Event::MessageListChanged`] | refetch; the order itself moved |
+//! [`ListScope::reaction`] answers this, per scope, and both sides agree on
+//! one rule: a list reacts to an event only when the event can change its
+//! own membership or order, and it inserts at the top only when its own
+//! order guarantees the new rows belong there. Everything else reloads
+//! (`Feed::reload`, dropping everything cached and asking again). #773 is
+//! the investigation this table closes.
 //!
-//! Anything about another mailbox is ignored outright — the list shows one
-//! mailbox, and a folder nobody is looking at costs nothing to be wrong
-//! about until it is opened.
+//! | Scope | [`Event::NewMail`] | [`Event::MessagesRemoved`] | [`Event::MessageListChanged`] | [`Event::MessagesChanged`] |
+//! |---|---|---|---|---|
+//! | [`ListScope::Mailbox`] | insert at top when the mailbox matches | reload when the mailbox matches | reload when the mailbox matches | refetch resident pages holding them |
+//! | [`ListScope::Account`] | insert at top when the account matches | reload when the account matches | reload when the account matches | refetch resident pages holding them |
+//! | [`ListScope::Flagged`] / [`ListScope::Snoozed`] | ignore — a delivery is neither flagged nor snoozed | reload when the account matches | reload when the account matches | **reload** when the account matches |
+//! | a result set | ignore | ignore | ignore | refetch resident pages holding them |
+//!
+//! `Flagged`/`Snoozed` reloading on `MessagesChanged` rather than
+//! refetching is the one cell that looks like the others and is not: for
+//! them the flag or the snooze *is* the membership predicate, so a change
+//! can remove a row the same event would repaint for a mailbox. A page
+//! refetch cannot express a row leaving; only a reload can, because the
+//! total moved. They are gated on the *account*, not the mailbox, because
+//! they span every folder in one — the mailbox an event names carries no
+//! information for them.
+//!
+//! [`ListScope::Thread`] never reaches a `Feed` at all: a drill-in issues
+//! one direct [`MessageSource::fetch`] instead
+//! (`postio_gtk::window::Window::open_thread`), so it has no event routing
+//! to get wrong.
+//!
+//! An event naming a different mailbox, or a different account, is ignored
+//! outright — a folder or a scope nobody is looking at costs nothing to be
+//! wrong about until it is opened.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -51,6 +72,7 @@ use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
+use postio_model::{Arrival, Reaction};
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
 use crate::sidebar::SyncStatus;
@@ -299,16 +321,34 @@ impl Inner {
         }
     }
 
-    /// Whether the list is showing `mailbox` — which a list showing search
-    /// results is not, however much it remembers which folder to go back to.
+    /// What the list showing `self.scope` does with one mailbox-shaped
+    /// `arrival`.
     ///
-    /// This is the guard on every mailbox-shaped event at once. `NewMail`
-    /// is the one that matters: the mailbox got longer, the result set did
-    /// not, and inserting at the top of a result set would put a message
-    /// that does not match the query above one that does.
-    fn showing(&self, mailbox: MailboxId) -> bool {
-        self.results.borrow().is_none()
-            && self.scope.get().and_then(ListScope::mailbox) == Some(mailbox)
+    /// A result set has taken the list — however much it remembers which
+    /// folder to go back to — behaves like [`ListScope::Mailbox`] for
+    /// [`Arrival::MessagesChanged`] (the same rows in the same order;
+    /// refetch the pages holding them) and ignores the other three, the
+    /// scope underneath set aside until the result set is left: its
+    /// membership is decided by the query, not by delivery order or a
+    /// resync. Nothing has been opened yet answers [`Reaction::Ignore`] too.
+    fn reaction(
+        &self,
+        arrival: Arrival,
+        account: AccountId,
+        mailbox: Option<MailboxId>,
+    ) -> Reaction {
+        if self.results.borrow().is_some() {
+            return match arrival {
+                Arrival::MessagesChanged => Reaction::Refetch,
+                Arrival::NewMail | Arrival::MessagesRemoved | Arrival::MessageListChanged => {
+                    Reaction::Ignore
+                }
+            };
+        }
+        self.scope
+            .get()
+            .map(|scope| scope.reaction(arrival, account, mailbox))
+            .unwrap_or(Reaction::Ignore)
     }
 }
 
@@ -454,37 +494,62 @@ impl Feed {
     ///
     /// Everything it does not recognise it ignores, deliberately: the event
     /// stream carries the whole application, and a list that reacted to all
-    /// of it would repaint on every keystroke in the composer.
+    /// of it would repaint on every keystroke in the composer. What each
+    /// scope does with the four that remain is [`ListScope::reaction`]'s
+    /// table, in the module docs above.
     pub fn apply(&self, event: &Event) {
         let inner = &self.0;
         let Some(list) = inner.list.upgrade() else {
             return;
         };
         match event {
-            // New mail lands at the top and every row shifts down. This is
-            // an insertion, not a reload, which is what keeps the selection
-            // on the message it was on and the scroll where it was.
             Event::NewMail {
-                mailbox, messages, ..
-            } if inner.showing(*mailbox) => {
-                list.inserted_at_top(messages.len() as u32);
+                account,
+                mailbox,
+                messages,
+                ..
+            } => {
+                if inner.reaction(Arrival::NewMail, *account, Some(*mailbox))
+                    == Reaction::InsertAtTop
+                {
+                    list.inserted_at_top(messages.len() as u32);
+                }
             }
-            // Flags, read state, labels: the rows are still the same rows in
-            // the same order, so only the pages holding them are refetched.
-            // `MessageList::deliver` replaces the data inside the existing
-            // `GObject`, so nothing above rediscovers anything.
-            Event::MessagesChanged { messages, .. } => {
-                for page in list.pages_holding(messages) {
-                    inner.clone().request(page);
+            // Flags, read state, labels, a snooze: the same rows in the same
+            // order for a mailbox, so only the pages holding them are
+            // refetched -- `MessageList::deliver` replaces the data inside
+            // the existing `GObject`, so nothing above rediscovers anything.
+            // For `Flagged`/`Snoozed` the flag *is* the membership predicate,
+            // so `ListScope::reaction` answers `Reload` there instead: a page
+            // refetch cannot express a row leaving.
+            Event::MessagesChanged { account, messages } => {
+                match inner.reaction(Arrival::MessagesChanged, *account, None) {
+                    Reaction::Refetch => {
+                        for page in list.pages_holding(messages) {
+                            inner.clone().request(page);
+                        }
+                    }
+                    Reaction::Reload => self.reload(),
+                    Reaction::Ignore | Reaction::InsertAtTop => {}
                 }
             }
             // The count moved, and so did every position after the gap.
-            Event::MessagesRemoved { mailbox, .. } if inner.showing(*mailbox) => {
-                self.reload();
+            Event::MessagesRemoved {
+                account, mailbox, ..
+            } => {
+                if inner.reaction(Arrival::MessagesRemoved, *account, Some(*mailbox))
+                    == Reaction::Reload
+                {
+                    self.reload();
+                }
             }
             // The order itself moved: a resync, a re-sort, a filter change.
-            Event::MessageListChanged { mailbox, .. } if inner.showing(*mailbox) => {
-                self.reload();
+            Event::MessageListChanged { account, mailbox } => {
+                if inner.reaction(Arrival::MessageListChanged, *account, Some(*mailbox))
+                    == Reaction::Reload
+                {
+                    self.reload();
+                }
             }
             // The hits are the list now. Handled here rather than by whoever
             // ran the search because this is where the list's source lives,

@@ -161,6 +161,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_flagged::the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail as fn(),
     ),
     (
+        "gtk_flagged::flagged_and_snoozed_update_live_on_a_membership_change",
+        gtk_flagged::flagged_and_snoozed_update_live_on_a_membership_change as fn(),
+    ),
+    (
         "gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders",
         gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders as fn(),
     ),
