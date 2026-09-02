@@ -192,7 +192,15 @@ pub fn a_new_message_resets_the_scroll_position() {
     );
 
     assert!(press(&window, gdk::Key::Page_Down));
-    pump();
+    // A condition, not a count. `show_message` is a `load_html`, which is
+    // asynchronous: the forty pump rounds above are enough on an idle
+    // workstation and were not enough on a loaded runner, where this read
+    // `None` because the fragment navigation had not landed yet. Waiting for
+    // the thing being asserted removes the guess -- and a timeout now says
+    // what it was waiting for instead of failing an equality (#851).
+    crate::settle_until("the new message's first page marker", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-1"),
