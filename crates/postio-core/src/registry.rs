@@ -149,6 +149,18 @@ const REPLY_SURFACES: &[Context] = &[
     Context::Reader,
     Context::Composer,
 ];
+/// The three panes bare Tab cycles between, and only those.
+///
+/// Deliberately not `LIST_SURFACES`: `Search` is in that one, and the search
+/// field owns Tab for its refine chips. A cycle that resolved there would
+/// take Tab away from a pane that is using it (#494).
+const PANE_SURFACES: &[Context] = &[
+    Context::Sidebar,
+    Context::List,
+    Context::Thread,
+    Context::Reader,
+];
+
 /// The surfaces that scroll through a list of messages.
 const LIST_SURFACES: &[Context] = &[
     Context::List,
@@ -752,6 +764,34 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "g f",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::CyclePane,
+        title: "Next pane",
+        // The top-level meaning of bare Tab, which had none: it was not a
+        // command at all, so what it did was whatever GTK's native focus
+        // chain produced -- "sometimes it changes panes, sometimes it
+        // changes items within a pane" (#494).
+        //
+        // Rebindable like everything else here. The panes that own Tab for
+        // their own purpose keep first claim on it: they are not in
+        // `PANE_SURFACES`, so this never resolves there.
+        default_binding: "tab",
+        alternate_bindings: &[],
+        contexts: ctx(PANE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::CyclePaneBack,
+        title: "Previous pane",
+        default_binding: "shift+tab",
+        alternate_bindings: &[],
+        contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -1367,6 +1407,44 @@ mod tests {
         );
         assert_eq!(lookup_binding(Context::Composer, "a"), None);
         assert_eq!(lookup_binding(Context::List, "ctrl+alt+q"), None);
+    }
+
+    #[test]
+    fn tab_cycles_the_panes_from_every_pane_it_cycles_through() {
+        // #494, reported directly: "tab, shift+tab, ctrl+tab are
+        // inconsistent, sometimes it changes panes, sometimes it changes
+        // items within a pane. I need an easy way to go from the sidebar to
+        // the message list to the preview pane."
+        //
+        // Bare Tab had no entry in the table at all, so its top-level meaning
+        // was whatever GTK's native focus chain happened to produce. A
+        // binding that resolves from the sidebar but not the reader would
+        // cycle you out and strand you, so every pane in the cycle is
+        // asserted rather than one of them.
+        for context in [
+            Context::Sidebar,
+            Context::List,
+            Context::Thread,
+            Context::Reader,
+        ] {
+            assert_eq!(
+                lookup_binding(context, "tab").map(|spec| spec.id),
+                Some(CommandId::CyclePane),
+                "Tab does not cycle panes from {context:?}"
+            );
+            assert_eq!(
+                lookup_binding(context, "shift+tab").map(|spec| spec.id),
+                Some(CommandId::CyclePaneBack),
+                "Shift+Tab does not cycle back from {context:?}"
+            );
+        }
+
+        // The panes that own Tab for their own purpose keep it. A refine
+        // chip, a recipient-completion popover and the finder are all
+        // correctly consuming Tab, and #494 says so explicitly: those local
+        // overrides are legitimate and must not regress.
+        assert_eq!(lookup_binding(Context::Composer, "tab"), None);
+        assert_eq!(lookup_binding(Context::Search, "tab"), None);
     }
 
     #[test]

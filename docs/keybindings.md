@@ -91,6 +91,8 @@ command from inside a text field.
 | `ctrl+e` | Edit configuration | List, thread, reader |  | `edit_config` |
 | `ctrl+b` | Toggle sidebar | List, thread, reader |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, thread, reader, search |  | `focus_sidebar` |
+| `tab` | Next pane | List, thread, reader, folder list |  | `cycle_pane` |
+| `shift+tab` | Previous pane | List, thread, reader, folder list |  | `cycle_pane_back` |
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |
 | `k` or `Up` | Previous folder | Folder list |  | `prev_folder` |
 | `space` | Expand or collapse folder | Folder list |  | `toggle_folder` |

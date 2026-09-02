@@ -51,6 +51,7 @@ mod gtk_list_reload;
 mod gtk_move_picker;
 mod gtk_new_mail_scroll;
 mod gtk_next_scope;
+mod gtk_pane_cycle;
 mod gtk_parts;
 mod gtk_prev_view;
 mod gtk_reader_pane_owner;
@@ -308,6 +309,10 @@ const CASES: &[(&str, fn())] = &[
         "gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state",
         gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state
             as fn(),
+    ),
+    (
+        "gtk_pane_cycle::tab_walks_the_panes_and_shift_tab_walks_back",
+        gtk_pane_cycle::tab_walks_the_panes_and_shift_tab_walks_back as fn(),
     ),
     (
         "gtk_sidebar_keys::a_mailbox_can_be_chosen_without_touching_the_mouse",
