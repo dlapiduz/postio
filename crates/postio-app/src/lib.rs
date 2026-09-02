@@ -788,7 +788,7 @@ pub fn attach_account(
     // The surfaces that list accounts, now that there is one more. Nothing
     // else reads the account table while the window is up; when something
     // does, this is where it joins.
-    settings_accounts::refresh(window, &wiring.database);
+    settings_accounts::refresh(window, wiring);
     Ok(())
 }
 

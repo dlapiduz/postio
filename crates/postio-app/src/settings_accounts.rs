@@ -25,8 +25,8 @@
 
 use postio_gtk::settings::AccountAction;
 use postio_gtk::window::Window;
-use postio_storage::Database;
-use postio_storage::repository::AccountRepository;
+use postio_runtime::AttachmentPolicy;
+use postio_storage::repository::{AccountRepository, MessageRepository};
 
 use crate::Wiring;
 
@@ -35,19 +35,19 @@ use crate::Wiring;
 /// (opened through [`crate::settings_credential::install`], which needs the
 /// runtime and the secret store `wiring` carries alongside the database).
 pub fn install(window: &Window, wiring: &Wiring) {
-    refresh(window, &wiring.database);
+    refresh(window, wiring);
 
     let panel = window.settings();
     panel.connect_account_enabled_changed({
         let window = window.clone();
-        let database = wiring.database.clone();
+        let wiring = wiring.clone();
         move |id, enabled| {
-            if let Ok(connection) = database.connection()
+            if let Ok(connection) = wiring.database.connection()
                 && let Err(error) = AccountRepository::new(&connection).set_enabled(id, enabled)
             {
                 tracing::warn!(%error, "could not change whether an account is enabled");
             }
-            refresh(&window, &database);
+            refresh(&window, &wiring);
         }
     });
 
@@ -55,7 +55,7 @@ pub fn install(window: &Window, wiring: &Wiring) {
         let window = window.clone();
         let wiring = wiring.clone();
         move |id, action| match action {
-            AccountAction::Remove => remove(&window, &wiring.database, id),
+            AccountAction::Remove => remove(&window, &wiring, id),
             AccountAction::UpdateCredential => {
                 crate::settings_credential::install(&window, &wiring, id)
             }
@@ -74,8 +74,8 @@ pub fn install(window: &Window, wiring: &Wiring) {
 /// a credential update closes, since a repaired account's own submission can
 /// turn `enabled` back on (`onboarding::configure`) and the row should say
 /// so without waiting for the next full refresh.
-pub(crate) fn refresh(window: &Window, database: &Database) {
-    let Ok(connection) = database.connection() else {
+pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
+    let Ok(connection) = wiring.database.connection() else {
         return;
     };
     match AccountRepository::new(&connection).list() {
@@ -84,12 +84,45 @@ pub(crate) fn refresh(window: &Window, database: &Database) {
         // to re-enable one. A row pending removal is different: it is on
         // its way out, and showing it here would let it be removed twice
         // or re-enabled out from under the toast that is about to reap it.
-        Ok(accounts) => window.settings().set_accounts(
-            accounts
+        Ok(accounts) => {
+            let accounts: Vec<_> = accounts
                 .into_iter()
                 .filter(|account| !account.pending_deletion)
-                .collect(),
-        ),
+                .collect();
+            // What each account's mail weighs, read here rather than waited
+            // for: `Event::BackfillProgress` carries the same figure, but it
+            // only arrives while a backfill is running and this panel is
+            // opened at a moment that has nothing to do with one. The same
+            // trade `sidebar_backfill::refresh` makes -- re-read rather than
+            // wait for an event that may never come (#411).
+            let messages = MessageRepository::new(&connection);
+            let weights: Vec<_> = accounts
+                .iter()
+                .filter_map(|account| {
+                    let footprint = messages
+                        .footprint(account.id)
+                        .inspect_err(
+                            |error| tracing::warn!(%error, "could not measure an account's mail"),
+                        )
+                        .ok()?;
+                    Some((
+                        account.id,
+                        postio_core::event::MailFootprint {
+                            total_bytes: footprint.total_bytes,
+                            attachment_bytes: footprint.attachment_bytes,
+                            local_bytes: footprint.local_bytes,
+                            complete: footprint.complete,
+                        },
+                    ))
+                })
+                .collect();
+            let panel = window.settings();
+            panel.set_accounts(accounts);
+            panel.set_mail_weights(
+                &weights,
+                wiring.backfill.attachments == AttachmentPolicy::Eager,
+            );
+        }
         Err(error) => tracing::warn!(%error, "could not read the accounts to show"),
     }
 }
@@ -97,7 +130,8 @@ pub(crate) fn refresh(window: &Window, database: &Database) {
 /// Marks `id` for removal, refreshes the panel to reflect it immediately,
 /// and offers a toast whose own button restores it — see the module doc for
 /// why this is not the global undo stack.
-fn remove(window: &Window, database: &Database, id: postio_model::ids::AccountId) {
+fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
+    let database = &wiring.database;
     let Ok(connection) = database.connection() else {
         return;
     };
@@ -110,16 +144,16 @@ fn remove(window: &Window, database: &Database, id: postio_model::ids::AccountId
         }
     }
     drop(connection);
-    refresh(window, database);
+    refresh(window, wiring);
 
     let restore_window = window.clone();
-    let restore_database = database.clone();
+    let restore_wiring = wiring.clone();
     window.show_removable_toast("Account removed", move || {
-        if let Ok(connection) = restore_database.connection()
+        if let Ok(connection) = restore_wiring.database.connection()
             && let Err(error) = AccountRepository::new(&connection).restore(id)
         {
             tracing::warn!(%error, "could not undo removing an account");
         }
-        refresh(&restore_window, &restore_database);
+        refresh(&restore_window, &restore_wiring);
     });
 }

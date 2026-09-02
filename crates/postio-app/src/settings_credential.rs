@@ -105,7 +105,7 @@ pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
             let dialog = dialog.clone();
             move || {
                 dialog.close();
-                crate::settings_accounts::refresh(&window, &wiring.database);
+                crate::settings_accounts::refresh(&window, &wiring);
             }
         };
         move |submission| {

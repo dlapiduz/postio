@@ -305,6 +305,15 @@ mod imp {
         /// click can find which id and which context-menu items (first/last
         /// have nothing to say) belong to the row it landed on.
         pub accounts: RefCell<Vec<Account>>,
+        /// What each account's mail weighs, and whether the current
+        /// `[sync] attachment_fetch` is already pulling payloads.
+        ///
+        /// Kept apart from `accounts` because the two arrive from different
+        /// places -- the account list from the accounts table, the footprints
+        /// from a per-account measurement -- and neither call may assume it
+        /// runs after the other (#411).
+        pub weights: RefCell<Vec<(AccountId, postio_core::event::MailFootprint)>>,
+        pub attachments_included: std::cell::Cell<bool>,
         /// The account row context menu currently open, if one is — tracked
         /// so a second right click closes the first, the same reason
         /// `Sidebar` tracks `saved_search_menu`.
@@ -334,6 +343,8 @@ mod imp {
                 egress_scroller: gtk::ScrolledWindow::new(),
                 accounts_scroller: gtk::ScrolledWindow::new(),
                 accounts: RefCell::new(Vec::new()),
+                weights: RefCell::new(Vec::new()),
+                attachments_included: Cell::new(false),
                 account_menu: RefCell::new(None),
                 account_action: RefCell::new(Vec::new()),
                 account_enabled_changed: RefCell::new(Vec::new()),
@@ -541,15 +552,57 @@ impl SettingsPanel {
     /// it is clutter the composer's signature picker already taught this
     /// codebase not to add.
     pub fn set_accounts(&self, accounts: Vec<Account>) {
+        *self.imp().accounts.borrow_mut() = accounts;
+        self.redraw_accounts();
+    }
+
+    /// What each account's mail weighs, and whether payloads are already
+    /// being fetched.
+    ///
+    /// `attachments_included` is `[sync] attachment_fetch == "eager"`. The
+    /// setting is global and these figures are per account, which is why the
+    /// numbers land on the rows rather than beside the setting: there is no
+    /// row to read a summed-across-accounts figure off, and this panel is a
+    /// `TextView` over literal TOML on purpose -- a form control here would
+    /// fight what it exists for (#411).
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts): whichever
+    /// arrives second redraws the rows from both.
+    pub fn set_mail_weights(
+        &self,
+        weights: &[(AccountId, postio_core::event::MailFootprint)],
+        attachments_included: bool,
+    ) {
+        let imp = self.imp();
+        *imp.weights.borrow_mut() = weights.to_vec();
+        imp.attachments_included.set(attachments_included);
+        self.redraw_accounts();
+    }
+
+    /// Rebuilds the account rows from whatever accounts and weights are held.
+    fn redraw_accounts(&self) {
         let imp = self.imp();
         while let Some(row) = imp.accounts_list.row_at_index(0) {
             imp.accounts_list.remove(&row);
         }
-        for account in &accounts {
+        for account in imp.accounts.borrow().iter() {
             imp.accounts_list.append(&self.account_row(account));
         }
-        imp.accounts_scroller.set_visible(!accounts.is_empty());
-        *imp.accounts.borrow_mut() = accounts;
+        imp.accounts_scroller
+            .set_visible(!imp.accounts.borrow().is_empty());
+    }
+
+    /// The sentence this account's row carries under its name, if it has one
+    /// to carry.
+    fn mail_weight(&self, account: AccountId) -> Option<String> {
+        let imp = self.imp();
+        let footprint = imp
+            .weights
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, footprint)| *footprint)?;
+        postio_ui::format::mail_weight(&footprint, imp.attachments_included.get())
     }
 
     /// The connections Postio has opened, newest first (#151).
@@ -604,7 +657,8 @@ impl SettingsPanel {
         imp.egress_scroller.set_visible(!entries.is_empty());
     }
 
-    /// One account's row: name and address, an enabled switch at the end.
+    /// One account's row: name and address, what its mail weighs, and an
+    /// enabled switch at the end.
     fn account_row(&self, account: &Account) -> gtk::ListBoxRow {
         let row = gtk::ListBoxRow::new();
         row.add_css_class("postio-settings-account-row");
@@ -621,8 +675,23 @@ impl SettingsPanel {
             account.display_name, account.address.address
         )));
         label.set_xalign(0.0);
-        label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        // Name over number, in one column: the identity is what the row is
+        // for and the size is a fact about it, so the second line is
+        // secondary in the ordinary way rather than a second column
+        // competing with the first.
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        lines.set_hexpand(true);
+        lines.append(&label);
+        let weight = self.mail_weight(account.id);
+        if let Some(text) = &weight {
+            let size = gtk::Label::new(Some(text));
+            size.add_css_class("postio-settings-account-weight");
+            size.set_xalign(0.0);
+            size.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lines.append(&size);
+        }
 
         let enabled = gtk::Switch::new();
         enabled.set_active(account.enabled);
@@ -646,13 +715,19 @@ impl SettingsPanel {
         box_.set_margin_bottom(6);
         box_.set_margin_start(12);
         box_.set_margin_end(12);
-        box_.append(&label);
+        box_.append(&lines);
         box_.append(&enabled);
         row.set_child(Some(&box_));
-        row.update_property(&[gtk::accessible::Property::Label(&format!(
-            "{}, {}",
-            account.display_name, account.address.address
-        ))]);
+        // The row is announced as a unit, so the size has to be part of the
+        // announcement or a screen reader never reaches it.
+        let announcement = match &weight {
+            Some(weight) => format!(
+                "{}, {}, {weight}",
+                account.display_name, account.address.address
+            ),
+            None => format!("{}, {}", account.display_name, account.address.address),
+        };
+        row.update_property(&[gtk::accessible::Property::Label(&announcement)]);
         row
     }
 
