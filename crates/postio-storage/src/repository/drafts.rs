@@ -577,6 +577,29 @@ impl<'a> DraftRepository<'a> {
         Ok(())
     }
 
+    /// Point a draft at the `messages` row it turned out to be.
+    ///
+    /// What resolves an `Unconfirmed` send (#674): the copy arrived in a
+    /// sync, so the draft is the same mail as that row and every surface
+    /// that opens one should reach the other. Separate from
+    /// [`set_state`](Self::set_state) because the two facts are learnt in
+    /// the same breath but are not the same fact — a draft can be `Sent`
+    /// with no synced copy yet, and the link is what makes "show me it"
+    /// work once there is one.
+    pub fn set_synced_message(&self, id: DraftId, message: MessageId) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
+            params![id.get(), message.get()],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "draft",
+                id: id.get(),
+            });
+        }
+        Ok(())
+    }
+
     /// Deletes a draft and everything on it, returning whether there was one.
     ///
     /// Its row in the Drafts folder goes with it. This is the single exit both
