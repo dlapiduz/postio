@@ -180,7 +180,10 @@ def main() -> int:
             "and prints how long each gate phase took",
             re.search(r"^\[timing\] clippy dummy: \d+s$", output, re.MULTILINE)
             is not None
-            and re.search(r"^\[timing\] test dummy: \d+s$", output, re.MULTILINE)
+            # The default tier is the workspace's unit tests, not a
+            # per-crate run, since #847 -- so the timing line names the tier.
+            # `--full` is what still prints `test <crate>`.
+            and re.search(r"^\[timing\] sanity tier: \d+s$", output, re.MULTILINE)
             is not None,
             f"no [timing] lines for the crate's gates\n{output}",
         )

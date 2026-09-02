@@ -12,6 +12,7 @@
 #   scripts/issue-land.sh -m "..." --wip        # push without opening a PR
 #   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
+#   scripts/issue-land.sh --full                # integration suites too, not just units
 #
 # -m is only for uncommitted work: CLAUDE.md says commit as you go, so the
 # ordinary case is a clean tree with the branch's commits already on it, and
@@ -42,13 +43,14 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # this run was asked for; the loop underneath shifts them away.
 ORIGINAL_ARGS=("$@")
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
         --wip)        WIP=1;    shift ;;
         --gates-only) GATES_ONLY=1; shift ;;
         --no-merge)   MERGE=0;      shift ;;
+        --full)       FULL=1;       shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -240,7 +242,7 @@ fi
 # the key, so only a byte-identical tree with the same crate list skips.
 # The invariants (`check.sh`, seconds) still run every time. #742.
 GATES_STAMP="$(git rev-parse --git-dir)/postio-gates-green"
-GATES_KEY="$(git write-tree) crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
+GATES_KEY="$(git write-tree) tier:$FULL crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
 GATES_GREEN=0
 if [ "$(cat "$GATES_STAMP" 2>/dev/null)" = "$GATES_KEY" ]; then
     GATES_GREEN=1
@@ -258,13 +260,41 @@ if [ "$GATES_GREEN" != 1 ]; then
         PHASE_START=$(date +%s)
         cargo clippy -p "$crate" --all-targets -- -D warnings
         echo "[timing] clippy $crate: $(( $(date +%s) - PHASE_START ))s"
-        echo "--- test: $crate ---"
-        # Headless without asking: .cargo/config.toml's runner puts every test
-        # binary on a compositor of its own.
-        PHASE_START=$(date +%s)
-        cargo test -p "$crate"
-        echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
     done
+
+    # The test tier. Default is the whole workspace's *unit* tests: 1,313
+    # tests in ~5s warm, 19 binaries instead of 197. `--full` adds the
+    # per-crate integration suites, which is what this used to always do.
+    #
+    # The reason for the change is the machine, not the tests. Several
+    # sessions share this workstation with `jobs = 2`, and a single
+    # postio-app integration binary is an ~11-minute compile and link -- so
+    # landing became something you queued for. Measured: the whole suite
+    # spends 108s *executing* and the rest is building (#841).
+    #
+    # This is safe only because something else still proves the combination:
+    # CI runs the full workspace on every pull request, and the nightly run
+    # does it again on a schedule. That is not a formality. The bugs this
+    # project ships are layers that each pass and are not joined up -- the
+    # Reader was built, tested and never mounted -- and unit tests are
+    # precisely the tier that cannot see them. If the pull-request suite ever
+    # goes away, this default has to go back with it (#847).
+    if [ "$FULL" = 1 ]; then
+        for crate in $CRATES; do
+            [ -d "$TREE/crates/$crate" ] || continue
+            echo "--- test (full): $crate ---"
+            # Headless without asking: .cargo/config.toml's runner puts every
+            # test binary on a compositor of its own.
+            PHASE_START=$(date +%s)
+            cargo test -p "$crate"
+            echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
+        done
+    else
+        echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
+        PHASE_START=$(date +%s)
+        cargo test --workspace --lib
+        echo "[timing] sanity tier: $(( $(date +%s) - PHASE_START ))s"
+    fi
 
     # Everyone else's *test* targets, against what this branch just changed.
     #
