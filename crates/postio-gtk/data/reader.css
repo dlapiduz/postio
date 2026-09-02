@@ -13,10 +13,13 @@
  * (`tests/reader_tokens.rs`) fails the build if either falls out of sync.
  *
  * `@font-face` rules for Barlow / Barlow Condensed / IBM Plex Mono are
- * prepended at runtime (see `embedded_font_faces` in view.rs), not written
- * here: they carry the vendored font bytes as `data:` URIs, because the
- * `WebView`'s web process never sees the PangoFontMap the rest of the app
- * registers fonts into.
+ * prepended at runtime (see `embedded_font_faces` in postio-ui's
+ * `reader/document.rs`), not written here: the `WebView`'s web process never
+ * sees the PangoFontMap the rest of the app registers fonts into, so the
+ * faces have to reach it some other way. The rules name `postio-font:` URLs
+ * and a scheme handler serves the vendored bytes in-process (ADR 0023).
+ * They used to carry those bytes inline as base64, which put ~1.21 MB into
+ * every document the reader composed (#768).
  *
  * Postio owns the type: `ammonia` strips every sender `style` attribute and
  * `<style>` tag before a body ever reaches this document (see
