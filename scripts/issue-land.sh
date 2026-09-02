@@ -416,7 +416,24 @@ if [ "$BEHIND" -gt 0 ]; then
     echo "combination, which is why this waits for it."
 fi
 
-git push -u origin "$BRANCH"
+# Leased force, not a plain push. This script rebases onto origin/$BASE just
+# above, so the *second* push of a branch already on the remote is necessarily
+# non-fast-forward -- there is no non-forcing spelling of it, which is why
+# this file's own header authorises --force-with-lease here.
+#
+# It was a plain push until #781, and that was invisible while CI was paused:
+# a landing succeeded on its first attempt, pushed the branch once, and
+# merged. A CI-gated landing fails, gets fixed, and lands again -- and every
+# one of those second attempts died on "Updates were rejected because the tip
+# of your current branch is behind its remote counterpart", after the gates
+# had already run.
+#
+# Leased rather than bare: --force-with-lease compares against the
+# remote-tracking ref this worktree last pushed, so it goes through for our
+# own rebase and refuses if the remote moved for any other reason. A bare
+# --force cannot tell those apart, and the guard hook refuses it everywhere
+# for that reason.
+git push -u --force-with-lease origin "$BRANCH"
 
 [ "$WIP" = 1 ] && { echo; echo "pushed $BRANCH without a PR (work in progress)."; exit 0; }
 
