@@ -27,11 +27,12 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
@@ -48,9 +49,7 @@ use std::sync::Arc;
 const ADDRESS: &str = "ada@example.com";
 const PASSWORD: &str = "hunter2";
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
+
 
 fn settle_until(done: impl Fn() -> bool) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

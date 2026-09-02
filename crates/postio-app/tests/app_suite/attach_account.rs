@@ -27,11 +27,12 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
 use postio_app::{attach_account, feed_the_window};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -51,9 +52,7 @@ const SEEDED: [&str; 1] = ["plain-text-simple"];
 const JOINING_ADDRESS: &str = "grace@example.com";
 const JOINING_PASSWORD: &str = "hunter2";
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
+
 
 /// Every widget in the tree carrying `class` (or, when `class` is empty,
 /// every widget), depth first -- copied from `settings_accounts_wiring.rs`

@@ -276,6 +276,40 @@ const CASES: &[(&str, fn())] = &[
     ),
 ];
 
+use gtk::glib;
+
+/// Turn the GTK main loop until there is nothing left to do.
+///
+/// One definition for the suite. There were 18 identical copies of this and
+/// 38 of `settle_until` below, which is the duplication #842 is about: a
+/// deadline written into every file cannot be adjusted anywhere.
+pub fn settle() {
+    while glib::MainContext::default().iteration(false) {}
+}
+
+/// Turn the loop until `done`, or give up after ten seconds.
+///
+/// Ten seconds because that is the number these tests were written with --
+/// how long the engine may take to settle -- and it is a different question
+/// from `postio_test_support::patience`'s "how long before a wait is a
+/// failure". `scaled` keeps the base and applies `POSTIO_TEST_PATIENCE`, so a
+/// loaded runner can be given more without editing this.
+///
+/// Returns whether it happened, because every call site is already inside an
+/// `assert!` that says what was expected.
+pub fn settle_until(done: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while std::time::Instant::now() < deadline {
+        settle();
+        if done() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    done()
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {

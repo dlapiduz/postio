@@ -32,6 +32,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::notifications;
@@ -44,21 +45,7 @@ use postio_session::Wiring;
 use postio_storage::{BlobStore, test_support};
 use std::sync::Arc;
 
-/// Run the main loop until `done` or the budget runs out.
-///
-/// The route is decided on the runtime and answered over a channel, so the
-/// screen is not there the instant `open_or_onboard` returns.
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
+
 
 /// The onboarding screen, if that is what the window is showing.
 fn screen(window: &Window) -> Option<Onboarding> {

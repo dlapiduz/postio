@@ -24,8 +24,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
 use postio_app::feed_the_window;
 use postio_core::Context;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -35,9 +36,7 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
+
 
 /// A key press into the main window. GTK4 gives no supported way to
 /// synthesize a GDK event, so this is the same call the window's own

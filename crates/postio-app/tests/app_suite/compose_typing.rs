@@ -35,6 +35,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -45,9 +46,7 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
+
 
 fn press(window: &Window, key: &str) -> glib::Propagation {
     let outcome = window.handle_key(
