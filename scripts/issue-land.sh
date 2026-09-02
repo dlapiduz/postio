@@ -625,6 +625,44 @@ if [ -n "$MISSING" ]; then
             MISSING=$(missing_from "$(git log "origin/$BASE" --format=%s)")
         done
         [ -n "$MISSING" ] || echo "the commits are on origin/$BASE now."
+
+        # Still nothing? Then stop asking this clone a question the remote can
+        # answer. Four landings on 2026-09-02 (#818, #830, #833) failed here
+        # for work that was on `main`: the subject matching was verified
+        # correct by hand against the real commits, and `git reflog` showed
+        # origin/main moving to the merge commit one second after the PR's own
+        # mergedAt -- so neither the comparison nor replication explains it,
+        # and raising the timeout from 120s to 300s did not help. Rather than
+        # guess at a longer deadline, ask the side that cannot be stale.
+        #
+        # This is a STRONGER guarantee than the subject match, not a weaker
+        # one, which is what makes it safe against #312: it identifies the
+        # merge by SHA rather than by a string that a reworded commit could
+        # duplicate, and it asks specifically whether the base branch contains
+        # that SHA. A `gh pr merge` that put nothing anywhere still fails,
+        # because the compare will not say so.
+        if [ -n "$MISSING" ]; then
+            MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid // empty' 2>/dev/null || true)
+            if [ -n "$MERGE_SHA" ]; then
+                # "identical" when the merge IS the tip, "ahead" once other
+                # work has landed on top of it. Anything else -- including the
+                # empty string from a failed call -- is not a confirmation,
+                # and falls through to the failure below.
+                # `{owner}/{repo}` is gh's own placeholder for the repository
+                # this working directory belongs to, so there is no remote URL
+                # to parse and no second place for it to be wrong.
+                CONTAINMENT=$(gh api "repos/{owner}/{repo}/compare/$MERGE_SHA...$BASE" --jq '.status // empty' 2>/dev/null || true)
+                case "$CONTAINMENT" in
+                identical | ahead)
+                    echo
+                    echo "origin/$BASE still does not show the commits here, but GitHub"
+                    echo "reports $BASE contains the merge commit $(printf '%.7s' "$MERGE_SHA")"
+                    echo "(compare: $CONTAINMENT). The work landed; this clone is behind."
+                    MISSING=
+                    ;;
+                esac
+            fi
+        fi
     fi
 fi
 
