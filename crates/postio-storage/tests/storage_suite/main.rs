@@ -26,6 +26,7 @@ mod connection_priority;
 mod contact_groups;
 mod contacts;
 mod drafts;
+mod encrypt_migration;
 mod encryption;
 mod mailbox_counts;
 mod mailbox_size;

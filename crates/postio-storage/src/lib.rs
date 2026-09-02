@@ -41,6 +41,7 @@
 pub mod blob;
 pub mod body;
 pub mod db;
+pub mod encrypt;
 pub mod error;
 pub mod key;
 pub mod migrations;

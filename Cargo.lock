@@ -2913,6 +2913,7 @@ dependencies = [
 name = "postio-session"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "chrono",
  "postio-config",
  "postio-core",
@@ -2927,6 +2928,7 @@ dependencies = [
  "postio-storage",
  "postio-sync",
  "postio-ui",
+ "rusqlite",
  "tempfile",
  "tokio",
  "tracing",

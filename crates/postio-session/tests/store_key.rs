@@ -240,3 +240,110 @@ async fn no_key_material_reaches_the_log_at_any_level() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The pre-release migration, at the seam that runs it
+// ---------------------------------------------------------------------------
+
+/// A plaintext store: an unencrypted database with one message pointing at a
+/// bare-bytes blob, which is what a checkout from before ADR 0014 has on disk.
+///
+/// Written out here rather than reached for, because the point of these two
+/// tests is the *wiring*: `postio_storage::encrypt` is proven in its own crate,
+/// and what nothing there can show is whether `open_store_at` calls it. That is
+/// this project's characteristic bug — a layer that is built, tested, and never
+/// mounted — so the test has to come in through the door the app comes in
+/// through.
+fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String) {
+    use postio_model::Message;
+    use postio_storage::repository::MessageRepository;
+
+    let path = directory.join("postio.db");
+    let mut connection = rusqlite::Connection::open(&path).expect("a plaintext database");
+    postio_storage::migrate(&mut connection).expect("migrate");
+
+    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    let mut message = Message::new(account.id, inbox, chrono::Utc::now());
+    message.subject = Some("Zarquon".to_owned());
+    let id = MessageRepository::new(&connection)
+        .create(&mut message)
+        .expect("create");
+
+    let raw = b"From: ada@example.com\r\nSubject: Zarquon\r\n\r\nThursday.\r\n";
+    let digest = blake3::hash(raw).to_hex().to_string();
+    let shard = directory
+        .join("blobs")
+        .join(&digest[0..2])
+        .join(&digest[2..4]);
+    std::fs::create_dir_all(&shard).expect("shard directories");
+    std::fs::write(shard.join(&digest[4..]), raw).expect("write the blob");
+
+    connection
+        .execute(
+            "UPDATE messages SET raw_blob_id = ?1 WHERE id = ?2",
+            rusqlite::params![digest, id.get()],
+        )
+        .expect("point the message at its source");
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .expect("checkpoint");
+    drop(connection);
+    (path, digest)
+}
+
+#[test]
+fn opening_a_plaintext_store_encrypts_it_first() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let (path, old_id) = a_plaintext_store(directory.path());
+    let key = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
+
+    let (database, blobs) =
+        postio_session::open_store_at(&path, &key).expect("the store opens after migrating");
+
+    let connection = database.connection().expect("checkout");
+    let (subject, raw): (String, String) = connection
+        .query_row("SELECT subject, raw_blob_id FROM messages", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("the message survived");
+    assert_eq!(subject, "Zarquon");
+    assert_ne!(raw, old_id, "the row still carries the unkeyed digest");
+    assert_eq!(
+        blobs
+            .get(&postio_model::BlobId::new(raw))
+            .expect("the raw source reads through the encrypted store"),
+        b"From: ada@example.com\r\nSubject: Zarquon\r\n\r\nThursday.\r\n"
+    );
+
+    // And it is a store the *next* open can read, which is the only version of
+    // this that matters.
+    drop(connection);
+    drop(database);
+    postio_session::open_store_at(&path, &key).expect("and it opens again");
+}
+
+#[test]
+fn a_store_with_work_still_queued_refuses_and_says_what_to_do() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let (path, _) = a_plaintext_store(directory.path());
+    let connection = rusqlite::Connection::open(&path).expect("open");
+    connection
+        .execute(
+            "INSERT INTO operation_queue (account_id, op_type, created_at, updated_at)
+             VALUES ((SELECT id FROM accounts LIMIT 1), 'flag', 0, 0)",
+            [],
+        )
+        .expect("enqueue");
+    drop(connection);
+
+    let key = postio_storage::key::StoreKey::from_bytes([0x2b; 32]);
+    let said = postio_session::open_store_at(&path, &key)
+        .expect_err("a store with undrained work must not be migrated");
+
+    // The sentence goes on a screen (#404), so it has to name the problem and
+    // the way out rather than a state a person cannot act on.
+    assert!(
+        said.contains("server") && said.to_lowercase().contains("syncing"),
+        "the message must say what to do next: {said}"
+    );
+}

@@ -391,6 +391,47 @@ pub fn open_store_at(
     // other two.
     let database_key = store_key.derive(postio_storage::key::Purpose::Database);
     let path = path.into();
+
+    // Before anything opens the store, because a plaintext one will not open
+    // at all: `Database::open` offers SQLCipher a key for a file that has none
+    // and gets "file is not a database". ADR 0014 Q4's migration is what turns
+    // that into a store this build can read, and it answers
+    // `AlreadyEncrypted` and does no work on every open after the first.
+    match postio_storage::encrypt::encrypt_store(&path, store_key) {
+        Ok(postio_storage::encrypt::Outcome::Encrypted(report)) => {
+            tracing::info!(
+                blobs = report.blobs,
+                bytes = report.bytes,
+                "the local store has been encrypted"
+            );
+        }
+        Ok(postio_storage::encrypt::Outcome::Resumed) => {
+            tracing::info!("an interrupted store encryption was finished");
+        }
+        Ok(
+            postio_storage::encrypt::Outcome::AlreadyEncrypted
+            | postio_storage::encrypt::Outcome::NoStore,
+        ) => {}
+        // The queue is the one thing in the store that is not a copy of
+        // something on a server, so the migration refuses to run over it
+        // rather than deciding for somebody. The sentence has to say what to
+        // do next, because "drain first" is an instruction to a person.
+        Err(error @ postio_storage::Error::QueueNotDrained { .. }) => {
+            tracing::error!(path = %path.display(), %error, "the store cannot be encrypted yet");
+            return Err(format!(
+                "Postio could not encrypt its local store. {error} Open the previous \
+                 version, let it finish syncing, and start this one again."
+            ));
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), %error, "the store could not be encrypted");
+            return Err(format!(
+                "Postio could not encrypt its local store: {error}. Nothing was \
+                 changed; the store is exactly as it was."
+            ));
+        }
+    }
+
     let database = match Database::open(&path, &database_key) {
         Ok(database) => database,
         // A wrong key is its own sentence. `Error::WrongStoreKey` says the

@@ -680,6 +680,58 @@ struct that happens to hold one, which turns any `dbg!`, any `?err` and any
 panic message into a full compromise of the store.
 
 
+**A blob's container version and its nonce layout are on-disk format.** #301,
+ADR 0014 Q2. Version 1 is compressed-and-plaintext and is still *read* — the
+migration has to open the old store, and so does a development store nobody
+has migrated; version 2 is always encrypted, and there is no cipher value
+meaning "none" at that version, which is what keeps the no-plaintext-fallback
+rule from being expressible. The nonce is `prefix(19) ‖ index(4, big-endian)
+‖ last(1)`, pinned by value in `blob::seal`. Change either and every blob a
+user owns stops opening, which under ADR 0016 is their whole mailbox.
+
+The ordering that everything else rests on is **id, then compress, then
+encrypt**. The id is a *keyed* BLAKE3 over the plaintext, so dedup survives
+both — the same content under the same key is still one file — while two
+installations name the same attachment differently. A change that moved the
+id onto the stored bytes would make the same message two blobs the moment the
+codec changed, and would put content equality back on the disk.
+
+**The blob store is sealed in chunks, not as one AEAD, and that is not a
+performance choice.** A single seal cannot be verified until its last byte has
+been read, so honouring the tag would mean holding the 30 MiB attachment whole
+— which is the one thing this store promises never to do. The chunked form is
+what makes the promise and the tag compatible, and the index and last-block
+flag in each chunk's nonce are what make reordering and truncation detectable
+rather than silent. It is hand-laid because RustCrypto dropped
+`aead::stream` in 0.6; the cipher is still the library's.
+
+**The store encryption migration is idempotent by construction, and that is
+the whole design.** `postio_storage::encrypt` builds the encrypted store
+beside the old one, verifies it by reading every referenced blob back through
+its own AEAD, and only then moves the originals aside and the replacements in
+— deleting the plaintext copy last. A swap is several renames and no
+filesystem call does several at once, so what makes it safe is that re-running
+the same guarded sequence from any interruption point converges. Two rules
+hold it up, and both are easy to break by accident:
+
+- **Every original moves aside before any replacement moves in.** The window
+  where the store path holds *neither* half is the only one a resume can read
+  unambiguously. An entry that is present is then either untouched plaintext
+  (its aside copy is missing) or the finished encrypted one (its aside copy is
+  there). Interleaving the moves reintroduces a state where a plaintext blob
+  directory sits beside an encrypted database and nothing can tell.
+- **The aside directory is created only after the staged store verifies**, so
+  its existence is what says "a swap began" and finishing forward is always
+  right. There is no case that puts the plaintext store back.
+
+The first version of this passed every test but one: `database_parts` was
+handed the database *file* as its root, so the plaintext database never moved
+aside and the staged one was renamed straight over it. Every test that only
+checked the mail afterwards passed, because the mail was fine — the one that
+caught it stops mid-swap and asserts the plaintext copy is still on disk. A
+migration test that only looks at the end cannot see the window it is about.
+
+
 **One `TokenSource` per account, and never a second.** ADR 0006 Q5, made real
 in #194. The composition root (`postio_session::engine::start`) builds one and
 hands *that instance* to the account's IMAP pool and to `EngineParts::tokens`,

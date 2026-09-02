@@ -495,7 +495,7 @@ impl BlobStore {
     }
 
     /// Every blob in the store, as `(id, path)`.
-    fn stored_blobs(&self) -> Result<Vec<(BlobId, PathBuf)>> {
+    pub(crate) fn stored_blobs(&self) -> Result<Vec<(BlobId, PathBuf)>> {
         let mut blobs = Vec::new();
         for first in read_dir(&self.root)? {
             let first_path = first.path();
@@ -708,14 +708,17 @@ pub struct EvictionReport {
 }
 
 fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
-    const SQL: &str = "\
-SELECT raw_blob_id FROM messages            WHERE raw_blob_id IS NOT NULL
-UNION
-SELECT blob_id     FROM attachments         WHERE blob_id     IS NOT NULL
-UNION
-SELECT raw_blob_id FROM cross_account_moves WHERE raw_blob_id IS NOT NULL";
+    // Built from `encrypt::BLOB_REFERENCES` rather than written out, because
+    // a column added to one list and not the other is either mail the sweep
+    // deletes while a row still points at it or mail the migration leaves
+    // behind. One list, two readers.
+    let clauses: Vec<String> = crate::encrypt::BLOB_REFERENCES
+        .iter()
+        .map(|(table, column)| format!("SELECT {column} FROM {table} WHERE {column} IS NOT NULL"))
+        .collect();
+    let sql = clauses.join("\nUNION\n");
 
-    let mut statement = connection.prepare(SQL)?;
+    let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     let mut referenced = HashSet::new();
     for row in rows {
