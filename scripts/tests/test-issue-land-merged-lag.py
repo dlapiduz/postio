@@ -84,6 +84,35 @@ fi
 exit 0
 """
 
+# Never pushes to the local origin at all, so the local ref NEVER catches up
+# -- but GitHub's own compare says the merge commit is contained in the base
+# branch. This is the shape that cost four landings on 2026-09-02: the work is
+# on `main`, and only this clone cannot see it.
+#
+# The distinction from the #312 stub below is exactly the one that matters:
+# both say MERGED and neither pushes, and they differ only in what GitHub
+# answers when asked whether the base branch actually contains the merge.
+# That is the question the script has to ask, because it is the one a local
+# ref cannot answer.
+GH_STUB_REMOTE_HAS_IT = """#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
+printf '%s\\n' "$*" >> "$STUB_DIR/calls"
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+    printf '%s' "$*" | grep -q -- "--json state" && { echo "MERGED"; exit 0; }
+    printf '%s' "$*" | grep -q -- "mergeCommit" && { echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; exit 0; }
+    printf '%s' "$*" | grep -q -- "--json url" && { echo "https://example.com/pull/1"; exit 0; }
+    printf '%s' "$*" | grep -q -- "--json number" && { echo "1"; exit 0; }
+    exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then echo "[]"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then echo "Merged"; exit 0; fi
+if [ "$1" = "api" ]; then
+    printf '%s' "$*" | grep -q -- "compare" && { echo "ahead"; exit 0; }
+    exit 0
+fi
+exit 0
+"""
+
 # Says MERGED and never pushes: the #312 shape, which must still fail.
 GH_STUB_NEVER = GH_STUB_LATE.replace(
     '( sleep "$PUSH_DELAY"; git push -q "$ORIGIN" "HEAD:refs/heads/main" ) >/dev/null 2>&1 &\n    disown\n',
@@ -218,6 +247,32 @@ def main() -> int:
             )
         if "merged." not in result.stdout:
             FAILURES.append(f"the landing never reported success:\n{result.stdout}")
+
+        # ── 1b. the local ref never catches up, but the remote has it ─────
+        #
+        # Four landings on 2026-09-02 (#818, #830, #833) exited 1 saying
+        # MERGE DID NOT LAND for work that was on `main`. The subject
+        # matching was verified correct by hand against the real commits, and
+        # `git reflog` had `origin/main` moving to the merge commit one second
+        # after the PR's own `mergedAt` -- so neither the comparison nor
+        # replication explains it, and a bigger timeout did not fix it
+        # (120s -> 300s, same failure).
+        #
+        # Rather than keep guessing at a deadline, ask the side that knows.
+        # No local ref is involved in the answer, so there is no race left to
+        # lose.
+        result = run_landing(base, "remote-has-it", channel, GH_STUB_REMOTE_HAS_IT, "0", "5")
+        if result.returncode != 0:
+            FAILURES.append(
+                "a landing whose local ref never caught up was reported as a "
+                "failure, though GitHub said the base branch contains the "
+                f"merge:\n{result.stdout}\n{result.stderr}"
+            )
+        if "MERGE DID NOT LAND" in result.stderr:
+            FAILURES.append(
+                "the session was told the merge did not land, for work "
+                f"GitHub confirms is on the base branch:\n{result.stderr}"
+            )
 
         # ── 2. MERGED but the commits never appear: still a failure ───────
         #
