@@ -12,7 +12,8 @@
 //! cargo run -p postio-app --example shot -- /tmp/plate.png dark hc
 //! cargo run -p postio-app --example shot -- /tmp/narrow.png 900x700
 //! cargo run -p postio-app --example shot -- /tmp/plate.png demo
-//! cargo run -p postio-app --example shot -- /tmp/settings.png settings
+//! cargo run -p postio-app --example shot -- /tmp/settings.png demo settings
+//! cargo run -p postio-app --example shot -- /tmp/rows.png settings weights
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
@@ -327,6 +328,60 @@ fn show_settings(window: &Window) {
     window.open_settings();
 }
 
+/// Three account rows, to look at what #411 put under the names.
+///
+/// **A layout check, not a wiring check.** `demo settings` draws one row and
+/// `demo accounts settings` two, both through `feed_the_window` -- those are
+/// the shots that can fail when nothing feeds them (#596). This one
+/// hand-feeds three, because "does the second line still read at three rows,
+/// one of them long enough to ellipsize" is a question about spacing that
+/// only three rows can answer, and because the seed cannot produce the three
+/// states side by side.
+///
+/// The three are the states that look different: payloads not being fetched,
+/// payloads being fetched, and totals still being counted.
+fn show_account_weights(window: &Window) {
+    let footprint = |total: u64, attachments: u64, local: u64, complete: bool| {
+        postio_core::event::MailFootprint {
+            total_bytes: total,
+            attachment_bytes: attachments,
+            local_bytes: local,
+            complete,
+        }
+    };
+    let account = |id: i64, name: &str, address: &str| {
+        let mut account =
+            postio_model::Account::new(name, postio_model::EmailAddress::new(Some(name), address));
+        account.id = AccountId::new(id);
+        account.enabled = true;
+        account
+    };
+
+    let panel = window.settings();
+    panel.set_accounts(vec![
+        account(1, "Ada Lovelace", "ada@example.com"),
+        account(2, "Grace Hopper", "grace@example.com"),
+        account(3, "A rather long display name", "someone@example.invalid"),
+    ]);
+    panel.set_mail_weights(
+        &[
+            (
+                AccountId::new(1),
+                footprint(12_884_901_888, 11_811_160_064, 933_232_640, true),
+            ),
+            (
+                AccountId::new(2),
+                footprint(1_503_238_553, 1_400_000_000, 933_232_640, true),
+            ),
+            (
+                AccountId::new(3),
+                footprint(12_884_901_888, 11_811_160_064, 933_232_640, false),
+            ),
+        ],
+        false,
+    );
+}
+
 /// Canvas 2a's own reply, so the composer can be held up against the drawing.
 ///
 /// The canvas' addresses are not ours to ship: every one here is a reserved
@@ -440,6 +495,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "search",
     "syncing",
     "settings",
+    "weights",
     "compose",
     "detached",
     "selected",
@@ -669,6 +725,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("settings") {
         show_settings(&window);
+    }
+    if flag("weights") {
+        show_account_weights(&window);
     }
     if flag("compose") {
         show_composer(&window);

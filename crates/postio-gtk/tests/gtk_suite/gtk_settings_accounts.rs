@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
+use postio_core::event::MailFootprint;
 use postio_gtk::settings::{AccountAction, SettingsPanel};
 use postio_gtk::{fonts, style};
 use postio_model::ids::AccountId;
@@ -172,6 +173,80 @@ fn two_accounts() -> Option<(gtk::Window, SettingsPanel, Vec<gtk::ListBoxRow>)> 
     let all_rows = rows(&panel);
     assert_eq!(all_rows.len(), 2);
     Some((window, panel, all_rows))
+}
+
+/// Issue #411's real payoff: `attachment_fetch = "eager"` is an abstraction
+/// and `attachments would add 11 GB` is a decision somebody can make.
+///
+/// The number lives on the account row rather than beside the setting
+/// because it is per account and the setting is global -- there is no row to
+/// read a summed figure off, and the panel is a `TextView` over literal TOML
+/// on purpose, so a form control here would fight what it is for.
+pub fn an_account_row_says_what_its_mail_weighs() {
+    let Some((window, panel, _)) = two_accounts() else {
+        return;
+    };
+
+    // Nothing measured yet: no line at all. `0 B` reads as a bug rather than
+    // as "no mail", the same rule the status line follows.
+    assert_eq!(weight_in(&rows(&panel)[0]), None);
+    assert_eq!(weight_in(&rows(&panel)[1]), None);
+
+    let ada = MailFootprint {
+        total_bytes: 12_884_901_888,
+        attachment_bytes: 11_811_160_064,
+        local_bytes: 933_232_640,
+        complete: true,
+    };
+    panel.set_mail_weights(&[(AccountId::new(1), ada)], false);
+    pump();
+
+    assert_eq!(
+        weight_in(&rows(&panel)[0]).as_deref(),
+        Some("890 MB downloaded · attachments would add 11 GB"),
+        "a policy that is not fetching payloads owes the cost of switching"
+    );
+    assert_eq!(
+        weight_in(&rows(&panel)[1]),
+        None,
+        "an account nothing has measured makes no claim"
+    );
+    // Switching the policy re-reads the same footprint and asks the other
+    // question of it.
+    panel.set_mail_weights(&[(AccountId::new(1), ada)], true);
+    pump();
+    assert_eq!(
+        weight_in(&rows(&panel)[0]).as_deref(),
+        Some("890 MB of 12 GB downloaded · attachments included")
+    );
+
+    // The weights outlive a rebuild of the rows, and survive arriving before
+    // the accounts do -- the two calls come from different places and there
+    // is no order to rely on.
+    panel.set_accounts(vec![
+        an_account(1, "Ada", "ada@example.com"),
+        an_account(2, "Grace", "grace@example.com"),
+    ]);
+    pump();
+    assert_eq!(
+        weight_in(&rows(&panel)[0]).as_deref(),
+        Some("890 MB of 12 GB downloaded · attachments included"),
+        "redrawing the rows must not lose what was measured for them"
+    );
+
+    window.destroy();
+}
+
+/// The row's own weight line, if it has one.
+fn weight_in(row: &gtk::ListBoxRow) -> Option<String> {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-weight",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .filter(|label| label.is_visible())
+    .map(|label| label.text().to_string())
 }
 
 /// Run the main loop until `window` has actually painted `count` frames.

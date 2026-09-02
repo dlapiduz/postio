@@ -1504,6 +1504,19 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* What an account's mail weighs, under its name (#411).
+
+   Secondary to the name in the ordinary way -- the identity is what the row
+   is for and the size is a fact about it -- and dimmed through the token
+   rather than libadwaita's `dim-label`, so high contrast can bring it back
+   up with everything else that fades. Proportional, not the mono face the
+   status line uses: that line is almost entirely number and sits in a
+   column of them; this one is a sentence with two numbers in it. */
+.postio-settings-account-weight {
+  font-size: 0.7841rem;
+  color: var(--postio-dim);
+}
+
 /* The canvas' "Revert file": a quiet, bordered button, not the ghost style
    the header's own controls use — Revert is a recovery action and reads as
    one rather than blending into the row. */

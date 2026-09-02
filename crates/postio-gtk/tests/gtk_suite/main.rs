@@ -382,6 +382,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts::flipping_the_switch_reports_the_account_and_the_new_state as fn(),
     ),
     (
+        "gtk_settings_accounts::an_account_row_says_what_its_mail_weighs",
+        gtk_settings_accounts::an_account_row_says_what_its_mail_weighs as fn(),
+    ),
+    (
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
             as fn(),
