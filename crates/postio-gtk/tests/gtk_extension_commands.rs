@@ -53,7 +53,16 @@ fn register(id: &str, title: &str, binding: Option<&str>) -> postio_core::ExtId 
 #[test]
 fn a_registered_command_is_findable_in_the_palette() {
     let id = unique_id("summarise-thread");
-    let ext = register(&id, "Summarise thread", Some("ctrl+shift+s"));
+    // A key no built-in claims, and deliberately an unfashionable one.
+    // `ctrl+shift+s` was the original choice and stopped working the day
+    // "Mark as sent" took `mod+shift+s` (8ea27c7), which `expand_mod` turns
+    // into exactly that on Linux: the resolver then refused to let an
+    // extension shadow a built-in, made this command palette-only, and the
+    // assertion below failed for the resolver behaving correctly.
+    //
+    // The lesson is about the fixture, not the resolver. A test that needs
+    // "a binding nobody else has" must not pick one somebody plausibly will.
+    let ext = register(&id, "Summarise thread", Some("ctrl+shift+F9"));
     let keymap = Keymap::resolve(&Default::default());
 
     // By title, the way a user reaches for it.
@@ -65,7 +74,7 @@ fn a_registered_command_is_findable_in_the_palette() {
     assert_eq!(row.title, "Summarise thread");
     assert_eq!(
         row.binding.as_deref(),
-        Some("ctrl+shift+s"),
+        Some("ctrl+shift+F9"),
         "the palette shows the key it is actually bound to, the same as for a \
          built-in — read from the live keymap, not from the registration"
     );
