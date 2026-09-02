@@ -190,6 +190,7 @@ const OURS: &[&str] = &[
     "postio_smtp",
     "postio_storage",
     "postio_sync",
+    "postio_test_support",
     "postio_ui",
     "io_imap",
 ];
