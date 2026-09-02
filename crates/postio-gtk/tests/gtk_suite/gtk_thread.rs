@@ -16,6 +16,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -346,11 +347,6 @@ fn settle(window: &Window) {
         context.iteration(true);
     }
     heartbeat.remove();
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Drive the main loop until `done`, or give up after a deadline.

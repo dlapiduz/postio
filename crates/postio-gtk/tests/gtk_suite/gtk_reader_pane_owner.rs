@@ -17,6 +17,7 @@
 //! Skips without a display. One test function, for the reason `gtk_style.rs`
 //! gives.
 
+use crate::settle as pump;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::finder::{Mode, Query};
@@ -188,9 +189,4 @@ fn hit(id: i64) -> SearchHit {
         snippet: "the radon report".to_string(),
         score: -1.0,
     }
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    while context.iteration(false) {}
 }

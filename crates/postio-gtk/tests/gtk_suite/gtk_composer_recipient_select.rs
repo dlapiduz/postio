@@ -20,6 +20,7 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::settle;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -28,10 +29,6 @@ use postio_gtk::composer::{self, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn grace() -> EmailAddress {
     EmailAddress::new(Some("Grace Hopper"), "grace@example.com")

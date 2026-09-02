@@ -15,14 +15,11 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use postio_core::CommandId;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn u_and_the_toasts_button_both_reach_command_id_undo() {
     let state_dir = tempfile::tempdir().expect("a state directory");

@@ -15,6 +15,7 @@
 //! Skips without a display. One test function, for the reason `gtk_style.rs`
 //! gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -147,11 +148,6 @@ fn press(window: &Window, key: &str) {
     let key = gtk::gdk::Key::from_name(key).expect("a named key");
     window.handle_key(key, gdk::ModifierType::empty());
     pump();
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

@@ -13,16 +13,13 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::ConnectionState;
 use postio_gtk::list_state::ListStateView;
 use postio_gtk::sidebar::SyncStatus;
 use postio_gtk::{app, fonts, style};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn status(state: ConnectionState) -> SyncStatus {
     SyncStatus {

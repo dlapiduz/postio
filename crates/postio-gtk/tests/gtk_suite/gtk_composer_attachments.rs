@@ -21,16 +21,13 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::ids::MessageId;
 use postio_model::{AccountId, Attachment, Draft};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
     let state_dir_guard = tempfile::tempdir().expect("a state directory");

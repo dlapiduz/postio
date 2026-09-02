@@ -13,6 +13,7 @@
 //! One test function: GTK is single-threaded and initialised once per
 //! process. Skips without a display. Nothing here touches the network.
 
+use crate::settle as pump;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
@@ -75,10 +76,6 @@ impl MailboxSource for TinyThread {
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
-}
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 fn settle(window: &Window, what: &str, done: impl Fn() -> bool) {

@@ -18,15 +18,12 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft, DraftId, EmailAddress};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn a_draft(id: i64, subject: &str, to: &str) -> Draft {
     let mut draft = Draft::new(AccountId::UNASSIGNED);

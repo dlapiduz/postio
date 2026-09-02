@@ -631,6 +631,29 @@ const CASES: &[(&str, fn())] = &[
     ),
 ];
 
+/// Turn the GTK main loop until there is nothing left to do.
+///
+/// One definition for the whole suite. There were 37 copies of exactly this
+/// -- spelled `settle`, `pump`, with and without a local `context` binding --
+/// which is the duplication #842 is about: a helper written into every file
+/// is a helper that cannot be fixed in one place.
+///
+/// Deliberately *not* the only wait helper here. Two other shapes exist in
+/// this suite and neither is this one:
+///
+///   * `for _ in 0..80 { iteration(false) }` -- a fixed number of turns,
+///     which keeps going after the loop is idle because a task may be
+///     scheduled by the one before it. Collapsing those into this would
+///     silently shorten them.
+///   * `settle(what, done)` with a deadline -- a condition wait, which
+///     belongs in `postio_test_support::settle_until` and reports what it
+///     was waiting for when it times out.
+///
+/// Those are converted case by case, not by pattern.
+pub fn settle() {
+    while glib::MainContext::default().iteration(false) {}
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {

@@ -12,6 +12,7 @@
 //! One test function: GTK is single-threaded and initialised once per
 //! process. Skips without a display. Nothing here touches the network.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -21,10 +22,6 @@ use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::AccountScope;
 use postio_model::ids::AccountId;
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn g_a_cycles_the_strip_the_same_way_clicking_its_rows_does() {
     if adw::init().is_err() || gdk::Display::default().is_none() {

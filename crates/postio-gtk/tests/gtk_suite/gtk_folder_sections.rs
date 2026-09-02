@@ -24,6 +24,7 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -57,10 +58,6 @@ impl MailboxSource for PerAccount {
         ];
         Box::pin(async move { Ok(folders) })
     }
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 pub fn the_feed_reads_every_account_it_is_given_and_keeps_their_order() {

@@ -14,6 +14,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::{ActionId, CommandId, Context, Keymap};
@@ -22,11 +23,6 @@ use postio_gtk::{app, fonts, style};
 
 fn defaults() -> Keymap {
     Keymap::resolve(&postio_config::KeyBindings::default())
-}
-
-/// Runs the main loop until everything queued has been done.
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 pub fn the_cheat_sheet_opens_and_reprints_on_a_rebind() {

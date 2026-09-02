@@ -19,14 +19,11 @@
 //! from one thread, and a second `#[test]` here would race `adw::init()` —
 //! see the note in `gtk_onboarding.rs`.
 
+use crate::settle;
 use adw::prelude::*;
 use postio_gtk::onboarding::{Onboarding, Server, Settings, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn return_does_the_right_thing_in_every_field() {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {

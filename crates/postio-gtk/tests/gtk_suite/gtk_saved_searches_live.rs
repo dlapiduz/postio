@@ -14,6 +14,7 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -50,10 +51,6 @@ fn wait_until(condition: impl Fn() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(10));
     }
     false
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 fn saved_search_names(window: &Window) -> Vec<String> {

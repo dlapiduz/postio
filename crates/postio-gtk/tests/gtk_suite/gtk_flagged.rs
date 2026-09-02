@@ -17,6 +17,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -346,10 +347,6 @@ pub fn flagged_and_snoozed_update_live_on_a_membership_change() {
     );
 
     window.destroy();
-}
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 /// Select a folder the way a click does: through the row widget, not through
