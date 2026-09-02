@@ -131,6 +131,49 @@ pub enum Closing {
     Drop,
 }
 
+/// Which draft [`Composer::open`] puts on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opening {
+    /// Show the draft that was asked for.
+    Fill,
+    /// Leave the kept draft where it is and come back to it.
+    Restore,
+}
+
+/// Which draft wins when the composer is asked to open one.
+///
+/// `c` on a composer that kept a draft means "show me it", never "start
+/// another" — that is the one-composition-at-a-time rule, and coming back to
+/// what was kept is what makes `Esc` safe to press. But the rule is about
+/// *fresh compositions*, and it used to be applied to every request: a
+/// reply, a forward or a `mailto:` asked for after closing a draft with
+/// anything in it was silently thrown away, and the user landed back in the
+/// old draft instead of the reply they had just asked for (#691).
+///
+/// So the question is what is being *asked for*, not only what is being
+/// held. Two things make a request deliberate, and either is enough:
+///
+/// * **It answers a message.** A reply, a reply-all or a forward names one,
+///   which is an intention no amount of emptiness takes back — forwarding a
+///   message with no subject and an empty body builds a draft that *looks*
+///   blank and is not.
+/// * **It arrives with something in it.** Recipients, a subject, a body: a
+///   `mailto:` link is a fresh composition by kind and still a specific one.
+///
+/// Everything else is `c`, and comes back to whatever was kept.
+///
+/// Nothing is lost either way: closing flushes the autosave, so a kept
+/// draft is already a row in the Drafts folder by the time this is asked —
+/// the same reasoning [`Composer::resume`] gives for replacing one outright.
+pub fn opening(kept: &Draft, asked: &Draft) -> Opening {
+    let deliberate = asked.kind != DraftKind::New || closing(asked) == Closing::Keep;
+    if deliberate || closing(kept) == Closing::Drop {
+        Opening::Fill
+    } else {
+        Opening::Restore
+    }
+}
+
 /// Whether closing the composer has anything to keep.
 ///
 /// The acceptance criterion "`Esc` never silently discards content" is this
@@ -716,8 +759,11 @@ impl Composer {
     /// nothing rebuilt. The list is not touched at all, which is what keeps its
     /// scroll offset and its selection where the user left them.
     ///
-    /// A draft already in the composer with something in it wins over `draft`:
-    /// see the module documentation for why one pane means one composition.
+    /// A draft the composer kept wins over a *blank* `draft` — `c` twice
+    /// means "show me what I kept", which is the one-composition-at-a-time
+    /// rule and what makes `Esc` safe. A `draft` that arrives with something
+    /// in it is a specific request about a specific message and wins
+    /// instead; see [`opening`] for why, and for the #691 it cost.
     pub fn open(&self, draft: Draft) {
         // Already composing: `c` a second time is a no-op that puts the
         // keyboard back, never a reset of what is being typed. Detached, the
@@ -732,7 +778,10 @@ impl Composer {
             return;
         }
 
-        if closing(&self.imp().draft.borrow()) == Closing::Keep {
+        // Decided before anything is filled, so the borrow is dropped by the
+        // time `fill` wants the cell mutably.
+        let decision = opening(&self.imp().draft.borrow(), &draft);
+        if decision == Opening::Restore {
             self.set_status(RETAINED);
         } else {
             self.fill(draft);
@@ -3472,6 +3521,62 @@ mod tests {
             Closing::Keep,
             "a word above it is content"
         );
+    }
+
+    /// A draft with something in it, as `started()` builds one in
+    /// `gtk_composer.rs`: a recipient, a subject and a word of body.
+    fn written() -> Draft {
+        let mut draft = draft();
+        draft.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        draft.subject = "the mbox importer".to_owned();
+        draft.body = MessageBody {
+            text: Some("Looking now.".to_owned()),
+            html: None,
+        };
+        draft
+    }
+
+    #[test]
+    fn pressing_compose_again_comes_back_to_the_draft_that_was_kept() {
+        // The one-composition-at-a-time rule, and what makes `Esc` safe to
+        // press: `c` on a composer holding a kept draft is "show me it".
+        assert_eq!(opening(&written(), &draft()), Opening::Restore);
+    }
+
+    #[test]
+    fn a_draft_that_names_its_own_message_wins_over_the_kept_one() {
+        // #691: a reply, a forward or a `mailto:` is a specific request
+        // about a specific message. Answering it with the draft somebody
+        // closed ten minutes ago discards what they just asked for, and
+        // says nothing about having done so.
+        let mut forward = draft();
+        forward.kind = DraftKind::Forward;
+        forward.subject = "Fwd: the tide gate interlock".to_owned();
+        assert_eq!(opening(&written(), &forward), Opening::Fill);
+
+        let mut reply = draft();
+        reply.kind = DraftKind::Reply;
+        reply.to = vec![EmailAddress::new(None::<String>, "grace@example.com")];
+        assert_eq!(opening(&written(), &reply), Opening::Fill);
+    }
+
+    #[test]
+    fn forwarding_an_empty_message_is_still_a_deliberate_request() {
+        // A forward carries no recipients and quotes whatever the message
+        // held, so forwarding one with no subject and an empty body builds a
+        // draft that *looks* blank. It is not: the user named a message.
+        // Judging this one on its contents would answer them with somebody
+        // else's draft, which is the whole of #691.
+        let mut empty = draft();
+        empty.kind = DraftKind::Forward;
+        assert_eq!(opening(&written(), &empty), Opening::Fill);
+    }
+
+    #[test]
+    fn a_composer_holding_nothing_shows_whatever_it_is_handed() {
+        // Nothing to come back to, so there is no question to answer.
+        assert_eq!(opening(&draft(), &draft()), Opening::Fill);
+        assert_eq!(opening(&draft(), &written()), Opening::Fill);
     }
 
     #[test]
