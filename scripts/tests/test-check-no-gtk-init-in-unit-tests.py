@@ -235,6 +235,31 @@ def main() -> int:
         should_fail=False,
     )
 
+    # The marker clears a file for *one* init, which is what its own wording
+    # claims ("the only one"). It used to clear the file outright, so a second
+    # GTK test could be added to `postio-app/src/compose.rs` without
+    # tripping anything -- and it was. It passed locally for weeks, because
+    # whichever test ran second found the display gone and skipped, then
+    # panicked with "two different threads" the first time a runner gave both
+    # of them one at once. The exception the marker records is singular.
+    case(
+        "a marked file may keep one init, not two",
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    // POSTIO-GTK-INIT: deliberately the only one in this crate.\n"
+        "    #[test]\n"
+        "    fn go() {\n"
+        "        adw::init().unwrap();\n"
+        "    }\n"
+        "    #[test]\n"
+        "    fn also_go() {\n"
+        "        adw::init().unwrap();\n"
+        "    }\n"
+        "}\n",
+        should_fail=True,
+        expect_text="second",
+    )
+
     # `git ls-files` is the input, so the check is about the repository rather
     # than about whatever happens to be in somebody's working tree.
     case(
