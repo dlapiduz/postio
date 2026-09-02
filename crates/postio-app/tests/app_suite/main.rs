@@ -51,6 +51,7 @@ mod thread_bulk_keystroke;
 mod thread_cursor_preview;
 mod thread_dwell;
 mod thread_keystroke;
+mod unconfirmed_send;
 mod window_drain;
 mod wiring;
 
@@ -250,6 +251,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "thread_keystroke::pressing_a_on_a_thread_row_archives_the_whole_conversation",
         thread_keystroke::pressing_a_on_a_thread_row_archives_the_whole_conversation as fn(),
+    ),
+    (
+        "unconfirmed_send::an_unconfirmed_send_is_listed_and_can_be_marked_as_sent",
+        unconfirmed_send::an_unconfirmed_send_is_listed_and_can_be_marked_as_sent as fn(),
     ),
     (
         "window_drain::an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes",

@@ -40,8 +40,8 @@ use postio_core::dispatch::{CommandError, DispatcherBuilder};
 use postio_core::state::{Resolved, SharedState, ViewScope};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
 use postio_core::{Command, CommandId, Event, MessageTarget};
-use postio_model::mailbox::MailboxRole;
 use postio_model::ids::DraftId;
+use postio_model::mailbox::MailboxRole;
 use postio_model::{
     AccountId, DraftState, Flag, FlagSet, MailboxId, Message, MessageId, Operation,
     OperationTarget, ThreadId,
@@ -1243,14 +1243,15 @@ impl Actions {
                 let rows = match self.aim(&connection, &MessageTarget::Selection)? {
                     Aim::Rows(rows) => rows,
                     Aim::Bulk { .. } => {
-                        return Err(CommandError::rejected(
-                            "Pick the message this is about",
-                        ));
+                        return Err(CommandError::rejected("Pick the message this is about"));
                     }
                 };
-                drafts.by_message(rows[0].id).map_err(store_failure)?.ok_or_else(|| {
-                    CommandError::rejected("That row is not a draft Postio is unsure about")
-                })?
+                drafts
+                    .by_message(rows[0].id)
+                    .map_err(store_failure)?
+                    .ok_or_else(|| {
+                        CommandError::rejected("That row is not a draft Postio is unsure about")
+                    })?
             }
         };
 
