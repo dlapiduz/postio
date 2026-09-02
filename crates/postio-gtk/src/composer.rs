@@ -2791,6 +2791,19 @@ impl Composer {
 
     // -- Test support -----------------------------------------------------
 
+    /// What the Save draft button currently names as its key, if anything.
+    ///
+    /// For the test that a composer built *after* a rebind starts on the
+    /// rebound key rather than on the registry defaults `build_actions` drew
+    /// it with (#828). Reads the widget rather than the keymap, so it fails
+    /// if `set_keymap` stops reaching the button.
+    #[doc(hidden)]
+    pub fn test_save_hint(&self) -> Option<String> {
+        let row = self.imp().save.child()?.downcast::<gtk::Box>().ok()?;
+        let hint = row.last_child()?.downcast::<gtk::Label>().ok()?;
+        Some(hint.label().to_string())
+    }
+
     /// Sets the subject field as if the user had typed it, firing the
     /// entry's own `changed` signal.
     ///
