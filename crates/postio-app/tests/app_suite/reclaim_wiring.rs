@@ -33,8 +33,6 @@ use postio_storage::{BlobStore, test_support};
 
 use postio_gtk::{app, fonts, style};
 
-
-
 pub fn opening_a_store_reclaims_what_nothing_references() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

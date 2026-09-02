@@ -37,8 +37,6 @@ use postio_storage::repository::{ColumnFlag, MessageRepository, MessageSet};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
 
-
-
 /// How many messages in `mailbox` are still unread, straight out of the
 /// database. A count rather than a read, for the same reason the verb uses one.
 fn unread_in(database: &Database, mailbox: MailboxId) -> u32 {

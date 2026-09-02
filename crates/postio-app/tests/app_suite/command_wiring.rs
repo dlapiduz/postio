@@ -75,8 +75,6 @@ use postio_session::{actions, refresh};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 /// `Window::act` threads these through `follow_drill_in` rather than
 /// `handled_here`: the local effect happens (closing a thread, drilling
 /// into one), but the original command is still delivered afterwards for

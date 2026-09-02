@@ -39,8 +39,6 @@ use postio_storage::{BlobStore, test_support};
 /// about the wiring rather than about the corpus.
 const QUERY: &str = "example.com";
 
-
-
 pub fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

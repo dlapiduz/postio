@@ -38,8 +38,6 @@ use postio_session::{Wiring, actions};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
 
-
-
 /// Every message of `thread`, and which mailbox each is in right now.
 fn thread_mailboxes(database: &Database, thread: ThreadId) -> Vec<(MessageId, i64)> {
     let connection = database.connection().expect("a connection");

@@ -35,8 +35,6 @@ use postio_session::Wiring;
 use postio_storage::repository::{AccountRepository, MessageRepository};
 use postio_storage::{Database, test_support};
 
-
-
 fn settle_until(done: impl Fn() -> bool) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {

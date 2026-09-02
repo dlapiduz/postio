@@ -36,8 +36,6 @@ use postio_storage::{BlobStore, test_support};
 const SUBJECT: &str = "Tide gate interlock, follow-up";
 const RECIPIENT: &str = "quinn@example.net";
 
-
-
 fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
     window.handle_key(gdk::Key::from_name(key).unwrap(), modifiers);
     settle();

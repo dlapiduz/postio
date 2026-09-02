@@ -55,8 +55,6 @@ Content-Disposition: attachment; filename=\"figures.csv\"\r\n\
 one,two\r\n\
 --edge--\r\n";
 
-
-
 /// Presses `key` exactly as the window's own top-level controller would.
 /// `GTK4` gives no supported way to synthesize a real key event, so this
 /// drives the same entry point one would deliver to -- see `postio-14b`.

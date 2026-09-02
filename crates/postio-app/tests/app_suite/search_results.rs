@@ -53,8 +53,6 @@ use postio_storage::{BlobStore, test_support};
 /// about the wiring rather than about the corpus.
 const QUERY: &str = "example.com";
 
-
-
 /// Every id the list model is currently holding, in list order.
 ///
 /// `peek` rather than anything that would fault a page in: this has to report

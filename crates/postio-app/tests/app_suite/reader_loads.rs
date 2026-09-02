@@ -51,8 +51,6 @@ use postio_model::{BodyState, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::{BlobStore, Database, test_support};
 
-
-
 /// Give the application every chance to load a document, and answer whether
 /// it left `held` true throughout — the mirror of [`settle_until`], for the
 /// criteria that are about something *not* happening.

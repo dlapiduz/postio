@@ -55,8 +55,6 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 /// `j`, through the keymap the application actually runs.
 fn press_j(window: &Window) {
     window.handle_key(gdk::Key::j, gdk::ModifierType::empty());

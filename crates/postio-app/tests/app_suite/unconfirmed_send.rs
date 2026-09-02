@@ -35,8 +35,6 @@ use postio_storage::{BlobStore, test_support};
 
 const SUBJECT: &str = "Tide gate interlock";
 
-
-
 pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

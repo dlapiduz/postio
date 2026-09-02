@@ -69,8 +69,6 @@ Content-Disposition: attachment; filename=\"figures.csv\"\r\n\
 one,two\r\n\
 --edge--\r\n";
 
-
-
 /// Give the application every chance to repaint, and answer whether it left
 /// `held` true throughout.
 ///

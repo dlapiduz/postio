@@ -36,8 +36,6 @@ use postio_session::Wiring;
 use postio_storage::seed::{seed_extra_account, seed_small};
 use postio_storage::{BlobStore, test_support};
 
-
-
 pub fn picking_unified_lists_mail_from_every_account() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

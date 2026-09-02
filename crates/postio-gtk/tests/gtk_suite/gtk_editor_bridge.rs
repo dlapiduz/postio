@@ -15,27 +15,16 @@
 //!
 //! One test function: GTK is single-threaded and initialised once.
 
+use crate::settle_until as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_body::{Block, Document, Inline};
 use postio_gtk::editor::Editor;
 use webkit6::prelude::*;
-
-fn settle(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(done(), "timed out waiting for {what}");
-}
 
 fn eval(view: &webkit6::WebView, script: &str) -> String {
     let result: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));

@@ -36,8 +36,6 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

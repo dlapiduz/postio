@@ -35,8 +35,6 @@ use postio_gtk::{app, fonts, style};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 pub fn the_status_lines_sync_button_asks_for_a_refresh() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

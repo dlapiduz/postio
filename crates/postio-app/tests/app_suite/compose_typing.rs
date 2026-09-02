@@ -46,8 +46,6 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 fn press(window: &Window, key: &str) -> glib::Propagation {
     let outcome = window.handle_key(
         gdk::Key::from_name(key).unwrap(),

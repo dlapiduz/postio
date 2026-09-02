@@ -44,8 +44,6 @@ use postio_storage::{BlobStore, test_support};
 const SUBJECT: &str = "Tide gate interlock";
 const RECIPIENT: &str = "quinn@example.net";
 
-
-
 /// A key press into the main window. GTK4 gives no supported way to
 /// synthesize a GDK event, so this is the same call the window's own
 /// controller makes — one line below where a real key would land.

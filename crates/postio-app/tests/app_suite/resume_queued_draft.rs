@@ -37,8 +37,6 @@ use postio_storage::{BlobStore, test_support};
 
 const SUBJECT: &str = "Tide gate interlock";
 
-
-
 pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

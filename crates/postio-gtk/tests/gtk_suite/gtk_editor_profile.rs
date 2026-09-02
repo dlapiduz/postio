@@ -20,6 +20,7 @@
 //!
 //! One test function: GTK is single-threaded and initialised once.
 
+use crate::settle_until as settle;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::TcpListener;
@@ -41,18 +42,6 @@ impl BlobSource for Blobs {
     fn resolve(&self, content_id: &str) -> Option<(Vec<u8>, String)> {
         self.0.get(content_id).cloned()
     }
-}
-
-fn settle(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(done(), "timed out waiting for {what}");
 }
 
 fn eval(view: &webkit6::WebView, script: &str) -> String {

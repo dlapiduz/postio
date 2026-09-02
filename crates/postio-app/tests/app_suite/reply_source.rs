@@ -42,8 +42,8 @@
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
 use crate::settle;
-use gtk::prelude::*;
 use gtk::gdk;
+use gtk::prelude::*;
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -54,8 +54,6 @@ use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
-
-
 
 fn settle_until(done: impl Fn() -> bool) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
