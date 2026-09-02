@@ -373,21 +373,33 @@ impl PartNode {
     /// Whether this part is the message's own text, rather than something
     /// hanging off it.
     ///
-    /// A `text/plain` or `text/html` part with no filename and no inline
-    /// disposition is the body; the same type *with* a filename is an
-    /// attachment that happens to be text, and must not be rendered as the
-    /// message.
+    /// A `text/plain` or `text/html` part with no filename and no
+    /// `Content-ID` is the body; the same type *with* a filename is an
+    /// attachment that happens to be text, and one with a `Content-ID` is a
+    /// fragment the body references by `cid:`. Neither is the message.
+    ///
+    /// `Content-Disposition: inline` used to disqualify a part here, and that
+    /// was #751's third cause: plenty of senders write `inline` on the part
+    /// that *is* the message, and demoting it left `html_part_id` unset, so
+    /// the text axis fetched only the plain-text alternative and the pane
+    /// rendered a body with no images and no links -- or, when both
+    /// alternatives were inline-disposed, no body at all. `inline` says how
+    /// to present a part, not whether it is the message; what actually marks
+    /// a part as something the body points *at* is the `Content-ID`.
     pub fn is_body_text(&self) -> bool {
         matches!(self.mime_type.as_str(), "text/plain" | "text/html")
             && self.filename.is_none()
-            && self.disposition != Disposition::Inline
+            && self.content_id.is_none()
     }
 
     /// Turns this part into attachment metadata with no bytes downloaded.
     pub fn to_attachment(&self, message_id: MessageId) -> Attachment {
         let mut attachment = Attachment::new(message_id, self.mime_type.clone(), self.size);
         attachment.filename = self.filename.clone();
-        attachment.content_id = self.content_id.clone();
+        // Normalised rather than copied: `BODYSTRUCTURE`'s id field is the
+        // `Content-ID` *header value*, angle brackets and all, and the store
+        // holds ids bare so they compare against a `cid:` URL directly. #751.
+        attachment.set_content_id(self.content_id.as_deref());
         attachment.disposition = self.disposition.clone();
         attachment.part_id = Some(self.section.clone());
         // What will explain the bytes when somebody fetches `BODY[<section>]`

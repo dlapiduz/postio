@@ -32,7 +32,7 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support::{self, TempDatabase};
 use postio_storage::{BlobStore, PooledConnection};
-use postio_sync::backfill::{BodyRequest, Outcome as BackfillOutcome, fetch_body};
+use postio_sync::backfill::{BackfillPolicy, BodyRequest, Outcome as BackfillOutcome, fetch_body};
 use postio_sync::{
     Attention, Drainer, Outcome, Watch, WatchPolicy, Watcher, resync_mailbox, sync_mailbox,
 };
@@ -646,6 +646,7 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
         &local.blobs,
         &backend,
         &body_request(&local.inbox, id, Uid::new(2)),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -718,6 +719,7 @@ async fn a_body_torn_off_the_socket_stores_nothing() {
         &local.blobs,
         &backend,
         &body_request(&local.inbox, id, Uid::new(1)),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
