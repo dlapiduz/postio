@@ -48,6 +48,8 @@ add_account	ctrl+shift+n
 edit_config	ctrl+e
 toggle_sidebar	ctrl+b
 focus_sidebar	g f
+cycle_pane	tab
+cycle_pane_back	shift+tab
 next_folder	j | Down
 prev_folder	k | Up
 toggle_folder	space
