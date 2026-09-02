@@ -80,6 +80,15 @@ def run(*args: str) -> tuple[subprocess.CompletedProcess, Path]:
     env["XDG_DATA_HOME"] = str(data_home)
     env["PREFIX"] = str(prefix)
     env["CARGO_TARGET_DIR"] = str(target)
+    # What is under test here is the icon cache refresh, not the build
+    # dependency probe -- and `cargo` is a stub, so nothing is compiled and no
+    # GTK is needed. Without this the script refuses before reaching any of it
+    # on a machine that cannot build Postio, which is every runner but the one
+    # job that installs GTK: `boundaries` runs on ubuntu-latest precisely
+    # because none of its checks need a compositor. The probe's own behaviour
+    # has a test of its own (test-install-local-build-deps.py), which manages
+    # this variable deliberately in both directions.
+    env["POSTIO_SKIP_DEP_CHECK"] = "1"
 
     proc = subprocess.run(
         ["bash", str(SCRIPT), *args],
