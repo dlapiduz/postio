@@ -98,6 +98,7 @@ mod gtk_reader_actions;
 mod gtk_reader_fonts;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
+mod gtk_reader_teardown;
 mod gtk_reading_pane;
 mod gtk_result_order;
 mod gtk_row;
@@ -718,6 +719,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "list_model::a_source_that_answers_too_soon_is_held_until_it_is_safe",
         list_model::a_source_that_answers_too_soon_is_held_until_it_is_safe as fn(),
+    ),
+    (
+        "gtk_reader_teardown::a_dropped_reader_releases_its_webview",
+        gtk_reader_teardown::a_dropped_reader_releases_its_webview as fn(),
+    ),
+    (
+        "gtk_reader_teardown::readers_do_not_accumulate_webviews",
+        gtk_reader_teardown::readers_do_not_accumulate_webviews as fn(),
     ),
 ];
 
