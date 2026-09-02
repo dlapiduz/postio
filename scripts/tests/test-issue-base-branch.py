@@ -156,7 +156,7 @@ def world(base: Path, channel: str, issue: int) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
 
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True, capture_output=True)
     root.mkdir()
     build_repo(root, channel)
     git("init", "-q", "-b", "main", cwd=root)

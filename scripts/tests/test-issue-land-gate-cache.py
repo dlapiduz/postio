@@ -137,7 +137,7 @@ def main() -> int:
         root = base / "sandbox"
         root.mkdir()
         origin = base / "origin.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         build_sandbox(root, channel)
         # The real repository commits its Cargo.lock; without one here the
         # first gate run generates it, which changes the tree and makes the

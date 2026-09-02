@@ -98,7 +98,7 @@ def main() -> int:
             check=True, capture_output=True,
         )
         origin = base / "origin.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         subprocess.run(
             ["git", "-C", str(repo), "remote", "add", "origin", str(origin)],
             check=True,

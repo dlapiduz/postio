@@ -155,7 +155,7 @@ def run_landing(
     (stub_dir / "bin" / "gh").chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
 
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
     build_sandbox(root, channel)
     git("init", "-q", "-b", "main", cwd=root)

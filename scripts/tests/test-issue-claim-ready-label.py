@@ -116,7 +116,7 @@ def world(base: Path) -> tuple[Path, Path]:
     git("add", "-A", cwd=repo)
     git("commit", "-q", "-m", "init", cwd=repo)
     origin = base / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     git("remote", "add", "origin", str(origin), cwd=repo)
     git("push", "-q", "origin", "main", cwd=repo)
     return repo, stub_dir
