@@ -121,6 +121,8 @@ command_ids! {
     SaveDraft => "save_draft",
     /// Throw away the draft in the composer.
     DiscardDraft => "discard_draft",
+    /// Settle an unconfirmed send by hand: it did arrive.
+    MarkSent => "mark_sent",
     /// Attach a file to the draft.
     AttachFile => "attach_file",
     /// Move the composition between the reading pane and a window of its own.
@@ -481,6 +483,18 @@ pub enum Command {
     SaveDraft,
     /// Throw away the composer's draft.
     DiscardDraft,
+    /// Settle a draft whose send could not be confirmed: it did arrive
+    /// (ADR 0021 Decision 3, #674).
+    ///
+    /// `None` means the draft in view. A user who has checked with the
+    /// recipient and learnt the message got there otherwise has only two
+    /// exits -- discard, which throws the message away, or send again, which
+    /// duplicates it -- and an `Unconfirmed` draft with no honest way out is
+    /// a dead end.
+    MarkSent {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId>,
+    },
     /// Attach a file to the draft.
     AttachFile {
         /// The file; `None` opens the file chooser.
@@ -661,6 +675,7 @@ impl Command {
             Command::ScheduleSend => CommandId::ScheduleSend,
             Command::SaveDraft => CommandId::SaveDraft,
             Command::DiscardDraft => CommandId::DiscardDraft,
+            Command::MarkSent { .. } => CommandId::MarkSent,
             Command::AttachFile { .. } => CommandId::AttachFile,
             Command::DetachComposer => CommandId::DetachComposer,
             Command::Bold => CommandId::Bold,
@@ -756,6 +771,7 @@ impl Command {
             CommandId::ScheduleSend => Command::ScheduleSend,
             CommandId::SaveDraft => Command::SaveDraft,
             CommandId::DiscardDraft => Command::DiscardDraft,
+            CommandId::MarkSent => Command::MarkSent { draft: None },
             CommandId::AttachFile => Command::AttachFile { path: None },
             CommandId::DetachComposer => Command::DetachComposer,
             CommandId::Bold => Command::Bold,

@@ -541,6 +541,30 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::MarkSent,
+        title: "Mark as sent",
+        // #674 called for palette-only, and this table cannot: PRODUCT.md §8
+        // says every command is reachable by keyboard, and
+        // `command_registry.rs` asserts it. So it gets a real binding, and
+        // one that reads: `mod+shift+s` beside `mod+shift+Return`'s send,
+        // for the rarer act of settling a send that already happened.
+        default_binding: "mod+shift+s",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Composer]),
+        // It settles a question rather than destroying anything: the mail is
+        // either already delivered or it is not, and this changes only what
+        // Postio claims to know.
+        destructive: false,
+        // #674 asked for `Undo`. An inverse would have to be a second
+        // registry command -- with its own binding, under PRODUCT.md §8 --
+        // invented for something no user reaches for. And undo is the wrong
+        // instrument: this settles a claim about the world rather than
+        // changing it, so the correction for a wrong answer is to send the
+        // message again, which is a real act. See `Actions::mark_sent`.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::AttachFile,
         title: "Attach file…",
         default_binding: "mod+shift+a",
