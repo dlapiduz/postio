@@ -9,6 +9,7 @@
 //! Its own file: GTK is single-threaded and initialised once, so one
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -34,10 +35,6 @@ fn settle(what: &str, done: impl Fn() -> bool) {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(done(), "timed out waiting for {what}");
-}
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 /// A real PNG, the way the paste path makes one.

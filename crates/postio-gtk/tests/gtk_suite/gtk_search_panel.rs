@@ -12,6 +12,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -320,11 +321,6 @@ fn label_text(widget: &gtk::Widget) -> String {
         .downcast::<gtk::Label>()
         .map(|label| label.text().to_string())
         .unwrap_or_default()
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

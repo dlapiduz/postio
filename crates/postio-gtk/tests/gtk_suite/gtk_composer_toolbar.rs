@@ -10,6 +10,7 @@
 //! Its own file: GTK is single-threaded and initialised once, so one
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
+use crate::settle as pump;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
@@ -68,10 +69,6 @@ fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
          just answered a trivial round trip in {bridge:?}, so the report this test \
          was waiting on was never going to arrive"
     );
-}
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 /// Depth-first search of a widget tree for the first one carrying `class`.

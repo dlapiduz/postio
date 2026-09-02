@@ -22,6 +22,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -30,10 +31,6 @@ use postio_core::{Command, CommandId, MessageTarget};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::MessageId;
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn every_gesture_reaches_the_bus_exactly_once() {
     let state_dir = tempfile::tempdir().expect("a state directory");

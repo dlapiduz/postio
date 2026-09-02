@@ -13,6 +13,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -268,11 +269,6 @@ fn snippet_runs(window: &Window) -> Vec<(String, bool)> {
         runs.push((rest.to_string(), false));
     }
     runs
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

@@ -26,6 +26,7 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -55,10 +56,6 @@ fn has_header_bar(widget: &gtk::Widget) -> bool {
         child = current.next_sibling();
     }
     false
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 /// A key press into the main window, the way `gtk_composer.rs` does it —

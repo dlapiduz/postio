@@ -18,6 +18,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
@@ -50,10 +51,6 @@ fn wait_until(condition: impl Fn() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(10));
     }
     false
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
 }
 
 /// The binding the window currently has for a command, as the cheat sheet

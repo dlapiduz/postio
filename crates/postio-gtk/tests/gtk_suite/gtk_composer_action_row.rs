@@ -16,14 +16,11 @@
 //! Its own file: GTK is single-threaded and initialised once, so one
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
+use crate::settle;
 use gtk::gdk;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft};
-
-fn settle() {
-    while gtk::glib::MainContext::default().iteration(false) {}
-}
 
 pub fn the_escape_hint_is_the_one_allowed_to_shrink() {
     let state_dir =

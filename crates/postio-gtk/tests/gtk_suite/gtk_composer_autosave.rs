@@ -16,6 +16,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
@@ -23,10 +24,6 @@ use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft, DraftId};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// Pumps the main loop, including its timers, until `condition` holds or
 /// `timeout` passes. What a test does instead of a fixed real-time sleep when

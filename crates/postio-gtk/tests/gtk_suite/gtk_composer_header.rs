@@ -10,15 +10,12 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 pub fn the_compose_button_tracks_the_composer_and_closes_it_when_pressed_again() {
     let state_dir = tempfile::tempdir().expect("a state directory");

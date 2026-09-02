@@ -7,16 +7,13 @@
 //! Its own file: GTK is single-threaded and initialised once, so one
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
+use crate::settle;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{Account, AccountId, EmailAddress, Message, MessageBody};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn press(window: &Window, key: &str) {
     window.handle_key(

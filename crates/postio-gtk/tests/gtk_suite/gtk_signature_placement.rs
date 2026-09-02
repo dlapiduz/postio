@@ -8,6 +8,7 @@
 //! Its own file: GTK is single-threaded and initialised once, so one
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
+use crate::settle;
 use gtk::gdk;
 use postio_body::Placement;
 use postio_gtk::composer;
@@ -15,10 +16,6 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::Signature;
 use postio_model::{Account, AccountId, Draft, DraftKind, EmailAddress, Identity, MessageBody};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// An account whose one identity signs.
 fn account() -> Account {

@@ -29,16 +29,13 @@
 // which is the one moment it is sound. The crate's library code forbids
 // `unsafe`.
 
+use crate::settle as pump;
 use gtk::gdk;
 use postio_core::Context;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn tab(window: &Window, shift: bool) {
     let modifiers = if shift {

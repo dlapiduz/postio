@@ -21,6 +21,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -30,10 +31,6 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
-
-fn pump() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn press(window: &Window, key: &str) {
     window.handle_key(

@@ -17,15 +17,12 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use gtk::gdk;
 use postio_gtk::composer::{self, Field};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{Account, AccountId, EmailAddress, Message};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn press(window: &Window, key: &str) {
     window.handle_key(
