@@ -430,7 +430,6 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Cache the mdbook binary
-        id: mdbook-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/mdbook
@@ -440,15 +439,24 @@ jobs:
       # same book the same way, or a PR could pass here and still fail on
       # deploy.
       #
-      # Skipped on a cache hit, and that is not just a saving: `cargo install`
-      # refuses outright with "binary `mdbook` already exists in destination"
-      # when the cache has already put one there, so an unguarded install
+      # Installed only when the cache did not already bring it: `cargo
+      # install` refuses outright with "binary `mdbook` already exists in
+      # destination" when a cached copy is on disk, so an unguarded install
       # fails the job every time the cache works. It went unnoticed because
-      # the first run after the cache was seeded is the first run that can
-      # hit it, and CI was dispatch-only from then until #781.
+      # the first run after the cache is seeded is the first run that can hit
+      # it, and CI was dispatch-only from then until #781.
+      #
+      # The binary is asked, not the cache: `cache-hit` is false on a
+      # restore-keys prefix hit even though the files are there, so a
+      # cache-hit guard is wrong wherever restore-keys are in play (they are,
+      # in the coverage, mutants and fuzz caches). One idiom for all four.
       - name: Install mdbook
-        if: steps.mdbook-cache.outputs.cache-hit != 'true'
-        run: cargo install mdbook --locked --version 0.5.4
+        run: |
+          if mdbook --version 2>/dev/null | grep -qw "v0.5.4"; then
+            echo "mdbook 0.5.4 restored from the cache"
+          else
+            cargo install mdbook --locked --version 0.5.4 --force
+          fi
 
       # This is what ADR 0011 Q6 calls "catch a broken link or a missing
       # SUMMARY.md entry in review": mdbook fails the build on either, and
@@ -699,8 +707,21 @@ jobs:
       # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
       # floating latest, so a coverage-tool release cannot change what
       # "passing" means out from under a commit that touched nothing.
+      # Reinstalled only when the cache did not already bring the right
+      # binary. `cache-hit` is the wrong question here: this cache has
+      # restore-keys, and a *prefix* restore reports `cache-hit: false` while
+      # still putting cargo-llvm-cov on disk -- after which an unconditional
+      # `cargo install` fails outright with "binary `cargo-llvm-cov` already
+      # exists in destination" and takes the job with it. Asking the binary
+      # its version answers under an exact hit, a prefix hit and a miss alike,
+      # and catches a cached copy of the wrong version too.
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked --version 0.9.0
+        run: |
+          if cargo llvm-cov --version 2>/dev/null | grep -qw "0.9.0"; then
+            echo "cargo-llvm-cov 0.9.0 restored from the cache"
+          else
+            cargo install cargo-llvm-cov --locked --version 0.9.0 --force
+          fi
 
       # This is the PR-gating half of #98's "open question": coverage
       # instrumentation roughly doubles test wall-clock, which is too much

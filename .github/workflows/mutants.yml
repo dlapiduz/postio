@@ -92,7 +92,12 @@ jobs:
       # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
       # floating latest.
       - name: Install cargo-mutants
-        run: cargo install cargo-mutants --locked --version 27.1.0
+        run: |
+          if cargo mutants --version 2>/dev/null | grep -qw "27.1.0"; then
+            echo "cargo-mutants 27.1.0 restored from the cache"
+          else
+            cargo install cargo-mutants --locked --version 27.1.0 --force
+          fi
 
       - name: Mutation-test the pure crates
         run: |

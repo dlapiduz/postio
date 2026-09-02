@@ -97,7 +97,12 @@ jobs:
             fuzz-${{ runner.os }}-${{ steps.rust.outputs.version }}-
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked --version 0.13.2
+        run: |
+          if cargo fuzz --version 2>/dev/null | grep -qw "0.13.2"; then
+            echo "cargo-fuzz 0.13.2 restored from the cache"
+          else
+            cargo install cargo-fuzz --locked --version 0.13.2 --force
+          fi
 
       # None of the three targets links GTK, WebKit or SQLite -- they reach
       # postio-model, postio-body and postio-search, which are the pure leaves.
