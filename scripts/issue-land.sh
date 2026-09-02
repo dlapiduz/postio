@@ -302,6 +302,30 @@ if [ "$GATES_GREEN" != 1 ]; then
         PHASE_START=$(date +%s)
         cargo check --workspace --all-targets
         echo "[timing] workspace check: $(( $(date +%s) - PHASE_START ))s"
+
+        # Adding a crate is the one edit whose blast radius is definitionally
+        # outside the crates it touches, so it is the one edit the per-crate
+        # gate cannot describe. `postio-session/src/logging.rs` keeps a list
+        # of every workspace crate and a test that fails when one is missing;
+        # `postio-ui` (#566) and `postio-ffi` (#571) each landed a red
+        # `postio-session` because neither branch changed it, so nothing in
+        # either chain had any reason to compile that test (#585).
+        #
+        # `check` above cannot catch it: the test compiles fine, it just
+        # fails. Only running it finds this, and the other things that
+        # enumerate the workspace -- check-lint-floor.py,
+        # check-crate-boundaries.py -- fail the same way for the same reason.
+        #
+        # Rare enough to cost nothing in the ordinary case: this fires only
+        # when the root manifest's `members` actually changed, not merely
+        # because Cargo.toml was touched for a dependency bump.
+        if git diff -U0 "origin/$BASE...HEAD" -- Cargo.toml \
+           | grep -qE '^[+-].*crates/'; then
+            echo "--- workspace tests: this branch changes the members list ---"
+            PHASE_START=$(date +%s)
+            cargo test --workspace
+            echo "[timing] workspace tests: $(( $(date +%s) - PHASE_START ))s"
+        fi
     fi
 fi
 
