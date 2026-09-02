@@ -248,6 +248,13 @@ jobs:
         # branch merged anyway. CI is paused, so nothing else would notice. #555.
         run: python3 scripts/tests/test-issue-land-unbuildable.py
 
+      - name: Prove issue-land.sh compiles every crate's test targets
+        # The per-crate gates cannot see a shared type's blast radius: a field
+        # added in postio-core broke postio-gtk's *test* call sites, both
+        # libraries still compiled, and main went red for whoever touched that
+        # crate next. #419.
+        run: python3 scripts/tests/test-issue-land-workspace-check.py
+
       - name: Prove the workflow scripts run on BSD userland too
         # GNU-only `sed \+` and `date -d` made the whole issue workflow
         # unusable on macOS -- you could not claim, so you could do nothing. #559.
