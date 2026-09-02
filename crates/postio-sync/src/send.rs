@@ -150,6 +150,12 @@ pub(crate) enum ResolvedSend {
     Obsolete(String),
     /// Cannot be sent and retrying will not change that.
     Impossible(String),
+    /// It may already have been sent, and there is no way to find out.
+    ///
+    /// A fresh process finding a draft still marked `Sending`, or one
+    /// already left `Unconfirmed`: the previous attempt died inside the
+    /// window ADR 0021 cannot close. Retrying would risk a duplicate.
+    Uncertain(String),
 }
 
 /// Resolves a `Send` operation for `draft_id`: loads the draft, its account
@@ -188,12 +194,22 @@ pub(crate) fn resolve(
     // message that needs saying "send it again" costs three seconds to a
     // person who has been told what happened.
     //
-    // `Impossible` rather than a retry is the interim ADR 0021 names: #674
-    // gives this its own `Outcome::Uncertain` and a visible `Unconfirmed`
-    // draft, because "failed" claims more than is known. The reason below is
-    // written so that what the user reads is true under either.
-    if draft.state == DraftState::Sending {
-        return Ok(ResolvedSend::Impossible(INDETERMINATE.to_owned()));
+    // Its own outcome rather than a failure (#674): "failed" claims more
+    // than is known, and this is the one case where nothing can be known.
+    // The draft carries it too, so the answer survives the process that
+    // could not find it out.
+    if draft.state == DraftState::Sending || draft.state == DraftState::Unconfirmed {
+        // Promote the mark on the way past. `Sending` is a *transient* state
+        // -- it means "a submission is happening right now" -- and finding it
+        // here means the process that was doing it is gone. Leaving it would
+        // make every later read say a send is in flight that nothing is
+        // flying, and the Drafts list would show a spinner for ever.
+        // `Unconfirmed` is the resting state for the same fact, and it is
+        // what the user is shown (#674).
+        if draft.state == DraftState::Sending {
+            DraftRepository::new(connection).set_state(draft.id, DraftState::Unconfirmed)?;
+        }
+        return Ok(ResolvedSend::Uncertain(INDETERMINATE.to_owned()));
     }
     if !draft.has_recipients() {
         return Ok(ResolvedSend::Impossible(
@@ -368,7 +384,20 @@ pub(crate) async fn send(
             // exactly where it is: this is the one failure that must not
             // become a retry, because "try again" and "you already sent it"
             // are indistinguishable from here.
-            return Outcome::Failed {
+            // The draft says so too, and it is the durable half: the queue
+            // row is settled and gone, while `Unconfirmed` is what the user
+            // finds in Drafts ten minutes later. A failure to write it is
+            // not a reason to retry the *send* -- that is the one thing this
+            // branch exists to prevent -- so it is recorded and the outcome
+            // stands.
+            if let Err(error) = mark(connection, job, DraftState::Unconfirmed) {
+                tracing::error!(
+                    %error,
+                    "could not record that a send was left unconfirmed; the \
+                     draft stays in Sending, which still refuses to resend it"
+                );
+            }
+            return Outcome::Uncertain {
                 reason: INDETERMINATE.to_owned(),
             };
         }

@@ -89,6 +89,14 @@ pub struct DrainSummary {
     pub deferred: usize,
     /// Rows given up on, each with the reason the user should see.
     pub failed: Vec<String>,
+    /// Rows that may or may not have happened, each with its reason.
+    ///
+    /// Separate from `failed` because the two say different things and the
+    /// user is told different things (#674): a failure did not happen, and
+    /// this may have. Nothing here becomes an `Event::Error` — a send that
+    /// might be in somebody's inbox is not an error, it is a question, and
+    /// the `Unconfirmed` draft is where it is asked.
+    pub uncertain: Vec<String>,
     /// Mailboxes whose local state is now known to disagree with the server.
     pub needs_resync: Vec<MailboxId>,
 }
@@ -101,6 +109,7 @@ impl DrainSummary {
             && self.obsolete == 0
             && self.deferred == 0
             && self.failed.is_empty()
+            && self.uncertain.is_empty()
     }
 }
 
@@ -1968,6 +1977,7 @@ async fn drain(
         obsolete = report.obsolete,
         deferred = report.deferred,
         failed = report.failed.len(),
+        uncertain = report.uncertain.len(),
         needs_resync = report.needs_resync.len(),
         "drained the operation queue"
     );
@@ -1981,6 +1991,11 @@ async fn drain(
             .failed
             .iter()
             .map(|failure| failure.reason.clone())
+            .collect(),
+        uncertain: report
+            .uncertain
+            .iter()
+            .map(|unresolved| unresolved.reason.clone())
             .collect(),
         needs_resync: report.needs_resync.clone(),
     })
@@ -2635,6 +2650,14 @@ fn announce_drain(
                 events.emit(Event::Error {
                     message: reason.clone(),
                 });
+            }
+            // And deliberately *not* an error (#674). A send that may have
+            // arrived is not a failure to report and dismiss; it is a
+            // question, and the durable place it is asked is the
+            // `Unconfirmed` draft the send path left behind. Logged so a bug
+            // report can see it happened at all.
+            for reason in &summary.uncertain {
+                tracing::warn!(reason, "an operation settled without a knowable outcome");
             }
         }
         Err(error) => {
