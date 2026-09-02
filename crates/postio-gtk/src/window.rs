@@ -2444,16 +2444,20 @@ impl Window {
         ));
     }
 
-    /// Write the geometry and the divider positions back out.
+    /// The state this window would persist, without persisting it.
     ///
-    /// Best-effort: a state file that cannot be written is worth one line on
-    /// stderr and nothing more.
-    pub fn save_state(&self) {
-        let Some(shell) = self.imp().shell.get() else {
-            return;
-        };
+    /// Split from [`save_state`](Self::save_state) so that *what* gets saved
+    /// is assertable on its own (#852). The write goes to
+    /// `WindowState::path()`, the real user state file, which a test may not
+    /// touch — and the obvious way round that, overriding `XDG_STATE_HOME`,
+    /// would leak into every other case sharing `gtk_suite`'s process.
+    ///
+    /// `None` before the shell is built, which is the same condition
+    /// `save_state` has always returned early on.
+    pub fn window_state(&self) -> Option<WindowState> {
+        let shell = self.imp().shell.get()?;
         let (sidebar_width, list_width) = shell.divider_positions();
-        let state = WindowState {
+        Some(WindowState {
             width: self.default_width(),
             height: self.default_height(),
             maximized: self.is_maximized(),
@@ -2464,6 +2468,16 @@ impl Window {
             // window recorded "no sidebar" as a preference, and nothing at a
             // wider size ever put it back (#825).
             sidebar_visible: shell.sidebar_wanted(),
+        })
+    }
+
+    /// Write the geometry and the divider positions back out.
+    ///
+    /// Best-effort: a state file that cannot be written is worth one line on
+    /// stderr and nothing more.
+    pub fn save_state(&self) {
+        let Some(state) = self.window_state() else {
+            return;
         };
         if let Err(error) = state.save() {
             // Losing a divider position is a shrug; saying nothing about why

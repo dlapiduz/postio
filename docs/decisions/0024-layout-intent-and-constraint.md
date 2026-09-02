@@ -176,11 +176,11 @@ Two of those fail against the previous code for the reasons above: `set_mode`
 used to re-show the sidebar on widening whatever the user had asked, and
 nothing moved `focused_pane` when a message opened.
 
-**One gap, stated rather than hidden.** That `save_state` persists the
-preference and not the constraint is a one-token substitution
-(`sidebar_wanted()` for `sidebar_visible()`) and is *not* covered by a test.
-`Window::save_state` writes to the real user state file, and `gtk_suite` is a
-shared process where setting `XDG_STATE_HOME` would leak into every other
-case. The property it depends on — that narrowing leaves `sidebar_wanted`
-alone — is tested. Closing the gap properly wants `save_state` to take a path,
-which is a wider change than this one.
+That `save_state` persists the preference and not the constraint was the one
+gap when this ADR was written, because the write goes to the real user state
+file and `gtk_suite` is a shared process where overriding `XDG_STATE_HOME`
+would leak into every other case. #852 closed it by splitting the decision
+from the write: `Window::window_state` returns what would be saved,
+`save_state` is that plus the write, and
+`tests/gtk_suite/gtk_window_state.rs` asserts that narrowing the window does
+not save the sidebar away while closing it at full width does.
