@@ -232,13 +232,13 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         ("syncing · imap".to_string(), "fetched 30".to_string())
     );
 
-    // ── bodies arriving is its own state, on the real widget ─────────────
+    // ── mail arriving is its own state, on the real widget ───────────────
     //
     // Issue #74: the backfill announced nothing, so the longest phase of a
     // first sync drew `idle` -- not merely unreported but reported as
     // nothing happening, which reads as stuck. It is a separate word from
     // `syncing` because the consequences differ: a mailbox whose list is
-    // still arriving cannot be read, and one whose bodies are still arriving
+    // still arriving cannot be read, and one whose mail is still arriving
     // can.
     feeds.apply(&Event::SyncProgress {
         account: AccountId::new(ACCOUNT),
@@ -256,9 +256,9 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         status_text(&window),
         (
             "downloading · imap".to_string(),
-            "bodies 412 of 2000".to_string()
+            "mail 412 of 2000".to_string()
         ),
-        "the list is complete and the bodies are not, and the line has to \
+        "the list is complete and the mail is not, and the line has to \
          say which"
     );
 

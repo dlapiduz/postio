@@ -105,12 +105,12 @@ pub struct SyncStatus {
     pub last_sync: Option<Instant>,
     /// Completed and expected units of a long resync.
     pub progress: Option<(u32, u32)>,
-    /// Settled and queued message *bodies*, while a backfill is running.
+    /// Settled and queued mail, while a backfill is running.
     ///
     /// Kept apart from [`progress`](Self::progress) rather than folded into
     /// it, because the two phases mean different things to someone looking
-    /// at the sidebar: a list still arriving cannot be read, and bodies
-    /// still arriving can. See issue #74.
+    /// at the sidebar: a list still arriving cannot be read, and mail whose
+    /// text is still arriving can. See issue #74.
     pub backfill: Option<(u32, u32)>,
     /// Why the connection is failing, phrased for the user.
     pub detail: Option<String>,
@@ -144,22 +144,32 @@ impl SyncStatus {
     pub fn lines(&self, now: Instant) -> (String, String) {
         (
             format!("{} · {PROTOCOL}", self.state_word()),
-            self.detail_line_with(now, true),
+            self.detail_line(now),
         )
     }
 
-    /// The two lines with the byte clause shed, for a column too narrow to
-    /// hold it.
+    /// The detail line with the byte clause the column cannot hold, for the
+    /// tooltip and the accessible description.
     ///
-    /// The bytes are what drops, and they drop *whole*: a truncated number
-    /// (`· 8…`) still reads as a measurement, and it is not one. Everything
-    /// else on the line answers "is anything happening", which is the
-    /// question the line exists for.
-    pub fn lines_without_bytes(&self, now: Instant) -> (String, String) {
-        (
-            format!("{} · {PROTOCOL}", self.state_word()),
-            self.detail_line_with(now, false),
-        )
+    /// The sidebar is 212px by canvas 1b and deliberately fixed, which is
+    /// about 25 monospace characters; `mail 12400 of 81744` is already 19.
+    /// So on that line it is counts or bytes, never both, and #411 settled
+    /// which: a count that climbs answers *"is anything happening"*, which
+    /// is what #74 filed this line for, and a byte figure that sits still
+    /// through a large fetch reads as stalled. Bytes are a cost signal, and
+    /// cost is asked once and deliberately.
+    ///
+    /// They still reach this surface, just not 25 columns of it. A screen
+    /// reader and a hover both get the number, and both get it from here, so
+    /// the two cannot drift.
+    pub fn detail_in_full(&self, now: Instant) -> String {
+        let detail = self.detail_line(now);
+        // Only while a backfill is running: anywhere else there is no count
+        // for the bytes to be a second clause of.
+        match self.filling().and(self.bytes_clause()) {
+            Some(bytes) => format!("{detail} · {bytes}"),
+            None => detail,
+        }
     }
 
     fn state_word(&self) -> String {
@@ -168,7 +178,7 @@ impl SyncStatus {
             ConnectionState::Connecting => "connecting".to_string(),
             ConnectionState::Failing { .. } => "error".to_string(),
             ConnectionState::Online if self.syncing().is_some() => "syncing".to_string(),
-            // The list is complete and the bodies are not. Its own word,
+            // The list is complete and the mail itself is not. Its own word,
             // because "syncing" already means the list and "idle" was the
             // lie issue #74 was filed about. It matches what the reading
             // pane says about a message it has no body for, which is the
@@ -199,7 +209,7 @@ impl SyncStatus {
         }
     }
 
-    /// How many bodies the backfill has settled, if one is running.
+    /// How much mail the backfill has settled, if a backfill is running.
     ///
     /// `None` once the queue has drained, so a finished backfill falls back
     /// to the ordinary idle line rather than sticking at `2000 of 2000` —
@@ -214,6 +224,9 @@ impl SyncStatus {
     }
 
     /// `890 MB of 1.4 GB`, when there is a measured size worth claiming.
+    ///
+    /// Feeds [`detail_in_full`](Self::detail_in_full) only — the drawn line
+    /// has no room for it (#411).
     ///
     /// `None` in the two cases where a size would be a lie rather than a
     /// number:
@@ -243,7 +256,7 @@ impl SyncStatus {
     ///
     /// The reason wins. "last sync 4h" is not what someone needs to read when
     /// the password has expired.
-    fn detail_line_with(&self, now: Instant, with_bytes: bool) -> String {
+    fn detail_line(&self, now: Instant) -> String {
         if matches!(self.state, ConnectionState::Failing { .. })
             && let Some(detail) = &self.detail
         {
@@ -268,11 +281,7 @@ impl SyncStatus {
         // `BackfillProgress` keeps. So this one can honestly say "of", which
         // "fetched 1204" above deliberately cannot.
         if let Some((done, total)) = self.filling() {
-            let counts = format!("bodies {done} of {total}");
-            return match self.bytes_clause().filter(|_| with_bytes) {
-                Some(bytes) => format!("{counts} · {bytes}"),
-                None => counts,
-            };
+            return format!("mail {done} of {total}");
         }
         match self.last_sync {
             Some(at) => format!("last sync {}", age(now.saturating_duration_since(at))),
@@ -798,20 +807,6 @@ impl Sidebar {
         status.add_css_class("postio-status-line");
         status.append(&lines);
         status.append(&imp.status_refresh);
-        // The byte clause is kept or shed by measurement, so the line has to
-        // be redrawn when the width it was measured against changes -- a
-        // density change moves the type scale under it, and the narrow
-        // breakpoint moves the column itself (#411).
-        // Measured against a width, so it has to be measured again once there
-        // is one: before the first allocation the short form wins, and this
-        // is what lets the byte clause appear when the column turns out to
-        // hold it. Later width changes are covered by the backfill's own
-        // progress events, which re-render this line as they arrive (#411).
-        imp.status_detail.connect_map(glib::clone!(
-            #[weak(rename_to = sidebar)]
-            self,
-            move |_| sidebar.render_status()
-        ));
         // One landmark, read as a unit, rather than two stray lines.
         status.set_accessible_role(gtk::AccessibleRole::Status);
         column.append(&status);
@@ -1976,31 +1971,6 @@ impl Sidebar {
         self.render_status();
     }
 
-    /// The status lines, shedding the byte clause when the column cannot hold
-    /// it (#411's dense state).
-    ///
-    /// Measured rather than guessed: the sidebar is one width today and the
-    /// densities change the type scale under it, so a character budget would
-    /// be right at one density and wrong at the other two. Pango is asked
-    /// what the string would actually occupy.
-    ///
-    /// Before the first allocation the width is zero and nothing is known, so
-    /// the short form wins — the safe direction, because it is the one that
-    /// cannot draw half a number.
-    fn status_lines_that_fit(&self, status: &SyncStatus, now: Instant) -> (String, String) {
-        let full = status.lines(now);
-        let available = self.imp().status_detail.width();
-        if available <= 0 {
-            return status.lines_without_bytes(now);
-        }
-        let layout = self.imp().status_detail.create_pango_layout(Some(&full.1));
-        if layout.pixel_size().0 <= available {
-            full
-        } else {
-            status.lines_without_bytes(now)
-        }
-    }
-
     /// The status as it stands.
     pub fn status(&self) -> SyncStatus {
         self.imp().status.borrow().clone()
@@ -2010,9 +1980,15 @@ impl Sidebar {
         let imp = self.imp();
         let status = imp.status.borrow().clone();
         let now = Instant::now();
-        let (state, detail) = self.status_lines_that_fit(&status, now);
+        let (state, detail) = status.lines(now);
         imp.status_state.set_text(&state);
         imp.status_detail.set_text(&detail);
+        // The bytes the column cannot hold, for a hover and a screen reader.
+        // Both from one string, so the two cannot drift (#411).
+        let in_full = status.detail_in_full(now);
+        imp.status_detail.set_tooltip_text(Some(&in_full));
+        imp.status_detail
+            .update_property(&[gtk::accessible::Property::Description(&in_full)]);
         set_class(
             &imp.status_state,
             "error",
@@ -2933,12 +2909,14 @@ mod tests {
 
     /// Issue #411's six states, on the line that has to hold all of them.
     ///
-    /// #383 landed the footprint and the event that carries it; nothing drew
-    /// it, and a fact that reaches the UI and is never drawn is
-    /// indistinguishable from one nobody computed. These are the states where
-    /// drawing it wrong is worse than not drawing it.
+    /// The counts stay on the line and the bytes never join them. The two
+    /// numbers answer different questions: a count that climbs is a
+    /// *liveness* signal, which is what #74 filed this line for, and a byte
+    /// figure that sits still for thirty seconds during a large fetch reads
+    /// as stalled. Bytes are a *cost* signal, asked once and deliberately,
+    /// and they get their home on the account row instead.
     #[test]
-    fn the_status_line_says_what_the_mail_weighs_without_ever_claiming_too_much() {
+    fn the_status_line_counts_messages_and_never_claims_a_size() {
         use postio_core::event::MailFootprint;
 
         let now = Instant::now();
@@ -2949,14 +2927,69 @@ mod tests {
             ..SyncStatus::default()
         };
 
-        // ── nothing measured: the counts alone, as before #411 ───────────
+        let measured = MailFootprint {
+            total_bytes: 1_503_238_553,
+            attachment_bytes: 1_400_000_000,
+            local_bytes: 933_232_640,
+            complete: true,
+        };
+
+        // The word is `mail`, not `bodies`: this is a mail client's sidebar,
+        // and `bodies` is the codebase's word for the text axis, not a
+        // person's word for their post.
+        assert_eq!(filling(None).lines(now).1, "mail 12400 of 81744");
         assert_eq!(
-            filling(None).lines(now).1,
-            "bodies 12400 of 81744",
-            "with no footprint the line must read exactly as it always did"
+            filling(Some(measured)).lines(now).1,
+            "mail 12400 of 81744",
+            "the column is 25 monospace characters and the bytes do not go on it"
         );
 
-        // ── measured and finished counting ───────────────────────────────
+        // ── failing: the reason wins over any number ─────────────────────
+        let failing = SyncStatus {
+            state: ConnectionState::Failing {
+                reason: postio_core::event::FailureReason::Auth,
+            },
+            detail: Some("Password rejected".to_owned()),
+            backfill: Some((12_400, 81_744)),
+            footprint: Some(measured),
+            ..SyncStatus::default()
+        };
+        assert_eq!(
+            failing.lines(now).1,
+            "Password rejected",
+            "the reason it is failing is what someone needs to read"
+        );
+
+        // ── a drained queue goes back to the ordinary line ───────────────
+        let drained = SyncStatus {
+            state: ConnectionState::Online,
+            backfill: None,
+            footprint: Some(measured),
+            last_sync: Some(now),
+            ..SyncStatus::default()
+        };
+        assert_eq!(
+            drained.lines(now).1,
+            "last sync 0s",
+            "with nothing downloading the line goes back to saying when it last did"
+        );
+    }
+
+    /// The bytes still reach this surface -- through the description and the
+    /// tooltip, which a screen reader and a hover get and the 25-character
+    /// column does not have to hold.
+    #[test]
+    fn the_full_detail_carries_the_bytes_the_column_cannot() {
+        use postio_core::event::MailFootprint;
+
+        let now = Instant::now();
+        let filling = |footprint: Option<MailFootprint>| SyncStatus {
+            state: ConnectionState::Online,
+            backfill: Some((12_400, 81_744)),
+            footprint,
+            ..SyncStatus::default()
+        };
+
         let complete = MailFootprint {
             total_bytes: 1_503_238_553,
             attachment_bytes: 1_400_000_000,
@@ -2964,8 +2997,8 @@ mod tests {
             complete: true,
         };
         assert_eq!(
-            filling(Some(complete)).lines(now).1,
-            "bodies 12400 of 81744 · 890 MB of 1.4 GB"
+            filling(Some(complete)).detail_in_full(now),
+            "mail 12400 of 81744 · 890 MB of 1.4 GB"
         );
 
         // ── still counting: the total is a lower bound and must say so ───
@@ -2976,8 +3009,8 @@ mod tests {
             ..complete
         };
         assert_eq!(
-            filling(Some(counting)).lines(now).1,
-            "bodies 12400 of 81744 · 890 MB of over 1.4 GB",
+            filling(Some(counting)).detail_in_full(now),
+            "mail 12400 of 81744 · 890 MB of over 1.4 GB",
             "an incomplete header pass makes every total a lower bound"
         );
 
@@ -2990,44 +3023,28 @@ mod tests {
             complete: true,
         };
         assert_eq!(
-            filling(Some(empty)).lines(now).1,
-            "bodies 12400 of 81744",
+            filling(Some(empty)).detail_in_full(now),
+            "mail 12400 of 81744",
             "an account with no mail owes no size claim at all"
         );
 
-        // ── failing: the reason wins over any number ─────────────────────
-        // A frozen byte total beside an expired password is the line
-        // answering a question nobody asked.
-        let failing = SyncStatus {
-            state: ConnectionState::Failing {
-                reason: postio_core::event::FailureReason::Auth,
-            },
-            detail: Some("Password rejected".to_owned()),
-            backfill: Some((12_400, 81_744)),
-            footprint: Some(complete),
-            ..SyncStatus::default()
-        };
+        // ── nothing measured: the counts alone ───────────────────────────
         assert_eq!(
-            failing.lines(now).1,
-            "Password rejected",
-            "the reason it is failing is what someone needs to read"
+            filling(None).detail_in_full(now),
+            "mail 12400 of 81744",
+            "with no footprint the description is exactly the line"
         );
 
-        // ── the size outlives the queue draining ─────────────────────────
-        // What the mail weighs is true whether or not a backfill is running;
-        // the settings panel asks at a moment that has nothing to do with one.
-        let drained = SyncStatus {
+        // ── every other state: the description is the line, verbatim ─────
+        // Bytes ride along only while a backfill is running; anywhere else
+        // there is no count for them to be a second clause of.
+        let idle = SyncStatus {
             state: ConnectionState::Online,
-            backfill: None,
             footprint: Some(complete),
             last_sync: Some(now),
             ..SyncStatus::default()
         };
-        assert_eq!(
-            drained.lines(now).1,
-            "last sync 0s",
-            "with nothing downloading the line goes back to saying when it last did"
-        );
+        assert_eq!(idle.detail_in_full(now), idle.lines(now).1);
     }
 
     /// Issue #74. The long phase of a first sync was reported as nothing
@@ -3051,7 +3068,7 @@ mod tests {
         );
         assert_eq!(state, "downloading · imap");
         assert_eq!(
-            detail, "bodies 412 of 2000",
+            detail, "mail 412 of 2000",
             "the count is what answers `is anything happening`"
         );
     }
