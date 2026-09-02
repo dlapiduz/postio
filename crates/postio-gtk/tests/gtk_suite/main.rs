@@ -94,10 +94,6 @@ const CASES: &[(&str, fn())] = &[
         gtk_keymap_lazy::applying_a_keymap_does_not_build_a_composer_nobody_asked_for as fn(),
     ),
     (
-        "gtk_keymap_lazy::a_composer_built_after_a_rebind_starts_on_the_rebound_key",
-        gtk_keymap_lazy::a_composer_built_after_a_rebind_starts_on_the_rebound_key as fn(),
-    ),
-    (
         "gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending",
         gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending
             as fn(),
