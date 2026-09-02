@@ -187,13 +187,28 @@ async fn a_seeded_body_is_actually_fetched() {
     let (engine, database, report, _events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
-    give_the_inbox_uids(&database, inbox.id);
+    let candidates = give_the_inbox_uids(&database, inbox.id);
 
     let queued = engine
         .seed_backfill(inbox.id, 10)
         .await
         .expect("seeding reads the store");
-    assert!(queued > 0, "the seed left nothing worth fetching");
+
+    // Deliberately not `assert!(queued > 0)`. That asserted "*this call*
+    // queued the work", which is not the subject of this test and is a race
+    // the engine can win: `backfill::seed` counts only what `enqueue`
+    // accepted, and the loop spawned above may already have queued these
+    // messages in the moment between the uids landing and this call. Then
+    // `queued` is 0 with nothing wrong, and the test failed on CI having
+    // proved nothing (#851).
+    //
+    // The precondition that matters is that there was work at all, and the
+    // fixture asserts that now. What this test is actually about is below:
+    // that a queued body gets claimed, fetched and accounted for.
+    assert!(
+        candidates > 0,
+        "the fixture found no messages to give uids to"
+    );
 
     // Give the loop a moment to claim and settle what it was handed.
     let settled = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -232,13 +247,20 @@ async fn a_backfill_says_how_far_it_has_got_without_being_asked() {
     let (engine, database, report, events, _directory) = engine();
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
-    give_the_inbox_uids(&database, inbox.id);
+    let candidates = give_the_inbox_uids(&database, inbox.id);
 
     let queued = engine
         .seed_backfill(inbox.id, 10)
         .await
         .expect("seeding reads the store");
-    assert!(queued > 0, "the seed left nothing worth fetching");
+    // The same race as the test above: `queued` counts what *this* call
+    // enqueued, and the running loop may have got there first. What has to
+    // be true is that there was work, which the fixture asserts. See #851.
+    let _ = queued;
+    assert!(
+        candidates > 0,
+        "the fixture found no messages to give uids to"
+    );
 
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
@@ -902,14 +924,28 @@ fn server() -> MockBackend {
 /// it exists to fill a screenshot, not to stand in for a synced mailbox — and
 /// `needing_backfill` will not offer a message it cannot ask the server for.
 /// A backfill test has to supply that itself.
-fn give_the_inbox_uids(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) {
+fn give_the_inbox_uids(
+    database: &postio_storage::Database,
+    mailbox: postio_model::ids::MailboxId,
+) -> usize {
     let connection = database.connection().expect("a connection");
-    connection
+    let touched = connection
         .execute(
             "UPDATE messages SET uid = id, remote_id = '1:' || id WHERE mailbox_id = ?1",
             [mailbox.get()],
         )
         .expect("the fixture writes");
+    // A fixture that quietly matched nothing is worse than one that fails:
+    // the `UPDATE` succeeds, and the test goes on to blame whatever it
+    // asked next for finding no work. `docs/engineering-notes.md` records
+    // that shape -- a test's own observation defaulting instead of failing
+    // turns schema drift into a false accusation.
+    assert!(
+        touched > 0,
+        "the fixture gave uids to no messages at all: mailbox {mailbox} is \
+         empty, so nothing after this can mean what it says"
+    );
+    touched
 }
 
 /// Queue one flag change against the newest message in `mailbox`.
