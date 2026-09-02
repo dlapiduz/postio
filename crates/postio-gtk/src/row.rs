@@ -972,18 +972,34 @@ impl MessageRowView {
     /// background. A row that forgot its hints on alt-tab would be teaching
     /// the keyboard only while you were not using it.
     pub fn shows_hints(&self) -> bool {
-        self.imp().hints_enabled.get()
-            && self.imp().focused.get()
-            && self.imp().row.borrow().is_some()
+        self.imp().hints_enabled.get() && self.holds_keyboard() && self.imp().row.borrow().is_some()
     }
 
-    /// Work out whether the keyboard is on this row, and remember it.
+    /// Whether the keyboard is on this row, asked rather than remembered.
     ///
     /// Either place counts: inside a `GtkListView` the focus lands on the
     /// list item wrapping this widget, and anywhere else — a test, a bench,
     /// the row used as a plain widget — on the widget itself.
+    ///
+    /// Live, because the remembered answer could be another row's (#753).
+    /// The signals that maintain it fire when focus *moves*, and recycling
+    /// is the case where focus did not move and the row underneath the
+    /// widget changed: scrolling hands a widget that was on the focused row
+    /// to a row with no claim on it, and the stale flag rode along. Asking
+    /// costs two pointer comparisons, which is cheaper than the bookkeeping
+    /// that would keep a cache honest through recycling.
+    fn holds_keyboard(&self) -> bool {
+        self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus())
+    }
+
+    /// Note that the keyboard has arrived or left, and re-lay the row.
+    ///
+    /// [`shows_hints`](Self::shows_hints) reads the live answer, so this
+    /// exists for its side effect rather than for the flag: the hints take
+    /// vertical space, so a row that gains or loses them has to be measured
+    /// again. The remembered value is only how that change is detected.
     fn refresh_focus(&self) {
-        let focused = self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus());
+        let focused = self.holds_keyboard();
         if self.imp().focused.replace(focused) == focused {
             return;
         }
@@ -1222,23 +1238,38 @@ impl MessageRowView {
         let fill = |color: &gdk::RGBA, x, y, w, h| snapshot.append_color(color, &rect(x, y, w, h));
 
         // Three facts, three devices, so they stay legible apart when a row
-        // is more than one of them at once (`postio-qhz.1`):
+        // is more than one of them at once (`postio-qhz.1`, #753):
         //
-        //   cursor    where the keyboard is — canvas 1b's accent tint
-        //   focused   the keyboard is *here*, in this window — the 3px edge
-        //             and the key hints
-        //   selected  what an action will hit — a steel check where the
-        //             avatar was, on its own ground
+        //   cursor    where the keyboard is — the 3px accent edge, always
+        //   selected  what an action will hit — its own deeper ground, and
+        //             a steel check where the avatar was
+        //   focused   the keyboard is *here*, in this window — the key hints
         //
-        // The check is what carries the meaning. Ground alone could not: the
-        // cursor tint and the selected ground are two steps of one colour in
-        // light and the same colour in dark (canvas 3c), and a distinction
-        // nobody can see in dark is not a distinction. A glyph reads at a
-        // glance, survives high contrast, and does not depend on hue.
+        // The pairing used to be different, and that was the bug. The ground
+        // carried *both* cursor and selection, as two steps of one colour —
+        // 2% apart in light and the identical token in dark — leaving the
+        // check glyph as the only real tiebreaker. Which gave two ways to
+        // see nothing at all: an icon theme without `object-select-symbolic`
+        // resolves the check to `None` and draws neither glyph nor initials,
+        // and this branch was `if selected … else if cursor`, so a row that
+        // was both never drew the cursor's tint. Bulk-selecting, the row the
+        // keyboard was on and the rows it had already taken were the same
+        // pixels.
+        //
+        // So the two facts get two *devices* rather than two shades of one:
+        // the edge is the cursor's, the ground is the selection's, and a row
+        // that is both shows both. Neither depends on an icon resolving, or
+        // on telling two tints apart in dark. The check stays where it
+        // renders, as reinforcement rather than as the whole distinction.
         //
         // The edge is also this widget's focus ring: it paints its own
-        // pixels, so no CSS `outline` reaches it.
-        let focused = self.shows_hints();
+        // pixels, so no CSS `outline` reaches it. It follows the *cursor*
+        // rather than `shows_hints()` — gating it on the hints flag meant
+        // `[ui] show_key_hints = false` silently deleted the focus
+        // indicator, and gating it on window focus meant clicking into the
+        // reading pane did too. The canvas draws it on the current row
+        // unconditionally (`Design/Mail Client.dc.html:76`); only the key
+        // caps are the flag's business.
         if selected {
             fill(&palette.checked_bg, 0.0, 0.0, width, height);
         } else if cursor {
@@ -1246,7 +1277,7 @@ impl MessageRowView {
         } else if hovered {
             fill(&palette.hover_bg, 0.0, 0.0, width, height);
         }
-        if focused {
+        if cursor {
             fill(&palette.selected_edge, 0.0, 0.0, EDGE, height);
         }
 
