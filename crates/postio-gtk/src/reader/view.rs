@@ -124,8 +124,10 @@ pub struct Reader {
 /// process tearing down connections while several WebProcesses are still
 /// attached —
 ///
-///     WebProcess didn't exit as expected after the UI process connection
-///     was closed
+/// ```text
+/// WebProcess didn't exit as expected after the UI process connection
+/// was closed
+/// ```
 ///
 /// once per leaked view, and then a segfault. Intermittent, because it is a
 /// race between exit handlers and processes that should already be gone.
