@@ -14,34 +14,19 @@ use std::time::{Duration, Instant};
 use postio_core::bridge::{Bridge, EventStream, handler_fn};
 use postio_core::{Command, Event, MessageTarget};
 
-/// Long enough that a broken bridge fails rather than flakes, short enough
-/// that the suite stays fast.
-const PATIENCE: Duration = Duration::from_secs(5);
-
 /// Wait for the next event, or fail the test rather than hang the suite.
+///
+/// The deadline and the backoff come from `postio_test_support`, so
+/// `POSTIO_TEST_PATIENCE` reaches this the way it reaches every other wait in
+/// the workspace. It used to be a `PATIENCE` constant defined here, which is
+/// how the suite ended up with 171 of them.
 fn next_event(events: &EventStream) -> Event {
-    let deadline = Instant::now() + PATIENCE;
-    loop {
-        if let Some(event) = events.try_next() {
-            return event;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no event arrived within {PATIENCE:?}"
-        );
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
-
-fn wait_until(mut done: impl FnMut() -> bool) {
-    let deadline = Instant::now() + PATIENCE;
-    while !done() {
-        assert!(
-            Instant::now() < deadline,
-            "condition not met within {PATIENCE:?}"
-        );
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    let mut taken = None;
+    postio_test_support::wait_until("an event to arrive on the bridge", || {
+        taken = events.try_next();
+        taken.is_some()
+    });
+    taken.expect("the wait only returns once an event was taken")
 }
 
 /// An echo handler: every command becomes one `ActionCompleted` event naming it.
@@ -193,7 +178,9 @@ fn commands_may_be_sent_from_many_threads_at_once() {
         thread.join().expect("sender thread did not panic");
     }
 
-    wait_until(|| handled.load(Ordering::SeqCst) == 8 * 64);
+    postio_test_support::wait_until("all 512 commands to reach the handler", || {
+        handled.load(Ordering::SeqCst) == 8 * 64
+    });
 }
 
 #[test]
@@ -249,8 +236,11 @@ fn shutdown_does_not_wait_for_detached_background_work() {
     bridge.commands().send(Command::Refresh).expect("running");
     let start = Instant::now();
     bridge.shutdown();
+    // An upper bound, not a wait: shutdown has already returned, and the
+    // question is whether it returned promptly. Shares the workspace deadline
+    // so a slow machine raises this too.
     assert!(
-        start.elapsed() < PATIENCE,
+        start.elapsed() < postio_test_support::patience(),
         "shutdown hung on a detached task"
     );
 }
@@ -265,7 +255,9 @@ fn events_emitted_before_shutdown_are_still_readable_after_it() {
     assert_eq!(description(&next_event(&events)), "refresh");
     // Drained, and the producer is gone: the UI loop can exit.
     assert!(events.try_next().is_none());
-    wait_until(|| events.is_closed());
+    postio_test_support::wait_until("the event stream to close after shutdown", || {
+        events.is_closed()
+    });
 }
 
 #[test]

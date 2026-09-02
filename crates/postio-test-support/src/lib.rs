@@ -226,7 +226,14 @@ mod tests {
         // A typo in a workflow must not set every deadline in the suite to
         // zero, which would turn every wait into an instant failure and read
         // as the whole suite breaking at once.
-        for bad in [Some(""), Some("abc"), Some("0"), Some("-2"), Some("nonsense"), None] {
+        for bad in [
+            Some(""),
+            Some("abc"),
+            Some("0"),
+            Some("-2"),
+            Some("nonsense"),
+            None,
+        ] {
             assert_eq!(
                 patience_from(bad),
                 Duration::from_millis(BASE_MILLIS),

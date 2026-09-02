@@ -2647,6 +2647,7 @@ dependencies = [
  "async-channel",
  "postio-config",
  "postio-model",
+ "postio-test-support",
  "serde",
  "serde_json",
  "tempfile",
@@ -2916,6 +2917,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "postio-test-support"
+version = "0.1.0"
 
 [[package]]
 name = "postio-ui"
