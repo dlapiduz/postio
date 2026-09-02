@@ -25,6 +25,7 @@ mod drag_out_wiring;
 mod dwell_wiring;
 mod egress_wiring;
 mod keystroke;
+mod manual_sync;
 mod parts_open_wiring;
 mod reader_loads;
 mod reading;
@@ -129,6 +130,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "keystroke::pressing_a_archives_the_row_in_the_database",
         keystroke::pressing_a_archives_the_row_in_the_database as fn(),
+    ),
+    (
+        "manual_sync::the_status_lines_sync_button_asks_for_a_refresh",
+        manual_sync::the_status_lines_sync_button_asks_for_a_refresh as fn(),
     ),
     (
         "parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop",
