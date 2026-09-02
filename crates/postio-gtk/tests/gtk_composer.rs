@@ -58,8 +58,8 @@ fn started() -> Draft {
     };
     draft
 }
-
 #[test]
+
 fn the_composer_takes_the_reading_pane_and_gives_it_back() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
