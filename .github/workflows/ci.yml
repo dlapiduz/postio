@@ -430,6 +430,7 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Cache the mdbook binary
+        id: mdbook-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/mdbook
@@ -438,7 +439,15 @@ jobs:
       # Keep this version pin in step with pages.yml's -- they must build the
       # same book the same way, or a PR could pass here and still fail on
       # deploy.
+      #
+      # Skipped on a cache hit, and that is not just a saving: `cargo install`
+      # refuses outright with "binary `mdbook` already exists in destination"
+      # when the cache has already put one there, so an unguarded install
+      # fails the job every time the cache works. It went unnoticed because
+      # the first run after the cache was seeded is the first run that can
+      # hit it, and CI was dispatch-only from then until #781.
       - name: Install mdbook
+        if: steps.mdbook-cache.outputs.cache-hit != 'true'
         run: cargo install mdbook --locked --version 0.5.4
 
       # This is what ADR 0011 Q6 calls "catch a broken link or a missing
@@ -466,11 +475,29 @@ jobs:
       # Its own job on ubuntu-latest rather than a step in `build`: it needs
       # cargo metadata and no GTK, so it runs in seconds beside the other cheap
       # checks instead of waiting on the workspace to compile.
+      # The action runs cargo-deny inside a musl container, and rustup there
+      # honours this repository's rust-toolchain.toml like anywhere else --
+      # then fails with "override toolchain '<channel>-x86_64-unknown-linux-musl'
+      # is not installed", because the container ships its own toolchain and
+      # not ours. Telling the action which channel to install resolves the
+      # override instead of fighting it.
+      #
+      # Read out of rust-toolchain.toml rather than written here: the pin has
+      # one source, and a second copy is one that can drift from it silently
+      # (`issue-land.sh` reads it the same way, for the same reason).
+      - name: Read the pinned toolchain
+        id: pin
+        run: |
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "cargo-deny will run on $channel"
+
       - name: cargo-deny
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
           arguments: --all-features
+          rust-version: ${{ steps.pin.outputs.channel }}
 
   build:
     name: Clippy and tests
