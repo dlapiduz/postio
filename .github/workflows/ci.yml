@@ -28,32 +28,22 @@ name: CI
 # it fails in the safe direction: a doc nobody has listed here runs CI, which
 # costs four minutes. A generated file nobody remembered to exclude would skip
 # it, which costs a silent regression.
-# PAUSED 2026-08-25: this repo is private, and a push-plus-pull_request
-# trigger means every merge bought two full runs -- one on the PR, one again
-# on the push to main that landed it -- against a private repo's small free
-# minutes allotment. That ran the account out. Public repos get free minutes
-# on GitHub-hosted runners, so the real fix is going OSS; until then this
-# workflow is workflow_dispatch-only, and the steward loop runs
-# `cargo test --workspace --no-fail-fast` by hand against main periodically
-# instead (see CLAUDE.md's "CI is paused" note). Restore by uncommenting
-# `push`/`pull_request` below -- the paths-ignore list does not need to
-# change.
 on:
-  # push:
-  #   branches: [main]
-  #   paths-ignore: &prose
-  #     - '*.md'
-  #     - '.claude/**'
-  #     - 'Design/**'
-  #     - 'docs/decisions/**'
-  #     - 'docs/images/**'
-  #     - 'docs/PRODUCT.md'
-  #     - 'docs/ARCHITECTURE.md'
-  #     - 'docs/engineering-notes.md'
-  #     - 'docs/session-prompts.md'
-  #     - 'docs/architecture-review-2026-08.md'
-  # pull_request:
-  #   paths-ignore: *prose
+  push:
+    branches: [main]
+    paths-ignore: &prose
+      - '*.md'
+      - '.claude/**'
+      - 'Design/**'
+      - 'docs/decisions/**'
+      - 'docs/images/**'
+      - 'docs/PRODUCT.md'
+      - 'docs/ARCHITECTURE.md'
+      - 'docs/engineering-notes.md'
+      - 'docs/session-prompts.md'
+      - 'docs/architecture-review-2026-08.md'
+  pull_request:
+    paths-ignore: *prose
   workflow_dispatch:
 
 # Least-privilege default: no job here pushes a commit, opens a PR, or
@@ -245,7 +235,8 @@ jobs:
 
       - name: Prove issue-land.sh refuses a crate the host cannot build
         # A host without gtk4 runs no gate at all over postio-gtk, and the
-        # branch merged anyway. CI is paused, so nothing else would notice. #555.
+        # branch merged anyway -- and a gate that proved nothing looks exactly
+        # like one that passed. #555.
         run: python3 scripts/tests/test-issue-land-unbuildable.py
 
       - name: Prove issue-land.sh compiles every crate's test targets

@@ -8,9 +8,10 @@ at all, and the work lands anyway.
 This is live: a macOS session cannot build `postio-gtk` or `postio-app` (no
 gtk4/libadwaita pkg-config, and webkitgtk has no arm64 bottle and no supported
 upstream macOS backend). Without this guard such a session passes its gates and
-pushes something that does not compile on Linux. CI is paused, so the periodic
-reconcile pass is the only backstop -- days of latency, on a repository where
-several agents work concurrently on different machines.
+pushes something that does not compile on Linux. CI would catch it on the pull
+request, but a gate that silently proved nothing is worth refusing where it
+runs, on a repository where several agents work concurrently on different
+machines.
 
 Two behaviours, because the two failure modes are different:
 

@@ -262,16 +262,24 @@ occurrence on an existing issue is worth more than a second issue, because it
 is evidence the bug survived a fix or has come back. `--anyway` files if yours
 is genuinely different, and `--search-only` just looks.
 
-## CI is paused
+## CI runs on every pull request
 
-`ci.yml`/`bench.yml` are `workflow_dispatch`-only until the repo goes public
-(Actions minutes). Landing therefore merges promptly without waiting — do not
-add your own wait. The workspace is proven by the reconcile pass instead: the
-steward loop runs `cargo check --workspace --all-targets` and `cargo test
---workspace --no-fail-fast` against `main` periodically. If it is ever red: pull `ready` from open issues, fix on a
-branch, land it, restore the labels. A release needs a local full-suite run
-first — `release.yml` ships without testing. To restore CI, uncomment the
-triggers `ci.yml` and `bench.yml` name and delete this section.
+`ci.yml` gates each PR and each push to `main`; `bench.yml` compiles the bench
+targets nightly. Both were `workflow_dispatch`-only while this repository was
+private and paying for its own minutes — that ended when it went public.
+
+**`issue-land.sh` waits for the checks and merges when they pass.** Do not add
+a wait of your own, and do not merge around a red one: a check that fails on
+your PR is your work to fix, on the same branch, however green the crates you
+touched were locally. The gate chain proves the crates a branch changed; CI is
+the only thing that proves the *combination*, which is the failure two branches
+that are each green alone can produce together.
+
+The steward loop's periodic `cargo check --workspace --all-targets` and
+`cargo test --workspace --no-fail-fast` against `main` are now a backstop
+rather than the only proof. If either is ever red: pull `ready` from open
+issues, fix on a branch, land it, restore the labels. A release still needs a
+local full-suite run first — `release.yml` ships without testing.
 
 ## Skills and design authorities
 

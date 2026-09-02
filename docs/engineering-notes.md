@@ -2720,7 +2720,7 @@ linked *that* `postio-core`.
 
 Two things make this the dangerous shape. It was **repeatable**, so the usual
 "run it again" tell was absent. And it presented as exactly the case
-CLAUDE.md's **CI is paused** section says to respond to by pulling `ready`
+CLAUDE.md's CI section says to respond to by pulling `ready`
 off every open issue — a disruptive, repository-wide stop, triggered by a
 regression that did not exist. Rebuilding in a private `CARGO_TARGET_DIR`
 passed first time.
