@@ -47,6 +47,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
+use postio_core::{CommandId, Keymap};
 use postio_model::MessageBody;
 use postio_model::ids::MessageId;
 use postio_search::ParsedQuery;
@@ -635,11 +636,31 @@ impl Live {
 const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
 const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
 
-/// The keys the column offers, drawn at its foot.
+/// The keys the column offers, drawn at its foot, from the live keymap.
 ///
 /// Canvas 2b's third line, `C-s save as folder`: `CommandId::SaveSearch`
-/// wires it (issue #10), so the hint can finally say something true.
-const PANEL_KEYS: &str = "Ret open · Tab refine · C-s save as folder";
+/// wires it (issue #10), so the hint can finally say something true — and
+/// since #828 it says something true after a rebind too, rather than the
+/// literal it used to be. A command whose binding the user cleared drops out
+/// rather than printing a blank key, the same rule
+/// [`crate::reader::actions`] follows.
+fn panel_keys(keymap: &Keymap) -> String {
+    let mut parts = Vec::new();
+    if let Some(key) = keymap.binding(CommandId::OpenMessage) {
+        parts.push(format!("{key} open"));
+    }
+    parts.push("Tab refine".to_owned());
+    if let Some(key) = keymap.binding(CommandId::SaveSearch) {
+        parts.push(format!("{key} save as folder"));
+    }
+    parts.join(" · ")
+}
+
+/// The registry's defaults, for a panel built before any `config.toml` has
+/// been read — the same fallback `crate::parts::default_hints` provides.
+fn default_panel_keys() -> String {
+    panel_keys(&Keymap::resolve(&Default::default()))
+}
 
 type ScopeHandler = Box<dyn Fn(Scope)>;
 type RefineHandler = Box<dyn Fn(&str)>;
@@ -651,6 +672,8 @@ mod panel_imp {
         pub(super) scopes: gtk::ListBox,
         pub(super) chips: gtk::FlowBox,
         pub(super) nothing: gtk::Label,
+        /// The footer's key line, kept so a rebind can rewrite it (#828).
+        pub(super) keys: gtk::Label,
         /// The tokens currently drawn, in the order they are drawn.
         pub(super) offered: RefCell<Vec<String>>,
         pub(super) scope: Cell<Scope>,
@@ -667,6 +690,7 @@ mod panel_imp {
                 scopes: gtk::ListBox::new(),
                 chips: gtk::FlowBox::new(),
                 nothing: gtk::Label::new(None),
+                keys: gtk::Label::new(None),
                 offered: RefCell::new(Vec::new()),
                 scope: Cell::new(Scope::default()),
                 echoing: Cell::new(false),
@@ -716,6 +740,15 @@ impl Panel {
     /// A column scoped to all mail, with nothing measured yet.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Regenerate the footer's key hints from the live keymap.
+    ///
+    /// A rebind changes what the footer says without a restart, the same
+    /// promise [`crate::parts::PartsPanel::set_keymap`] already keeps for the
+    /// parts panel's own footer.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        self.imp().keys.set_text(&panel_keys(keymap));
     }
 
     /// Which scope is active.
@@ -879,7 +912,8 @@ impl Panel {
 
         // The keys this column offers, where the canvas puts them. Mono, and
         // the same shape the focused message row uses for its own hints.
-        let keys = gtk::Label::new(Some(PANEL_KEYS));
+        let keys = self.imp().keys.clone();
+        keys.set_text(&default_panel_keys());
         keys.add_css_class("postio-panel-keys");
         keys.set_xalign(0.0);
         keys.set_wrap(true);
@@ -2218,5 +2252,30 @@ mod tests {
 
         let drawn = chips(&parse("subject:"));
         assert_eq!(spoken(&drawn[0]), "subject, no value yet");
+    }
+    // -- the panel's footer keys (#828) ------------------------------------
+
+    #[test]
+    fn the_panel_footer_takes_its_keys_from_the_registry() {
+        // It used to be the literal "Ret open · Tab refine · C-s save as
+        // folder" -- a notation nothing else writes, and one that went on
+        // saying `C-s` after the user rebound `save_search`.
+        assert_eq!(
+            panel_keys(&Keymap::resolve(&Default::default())),
+            "Return open · Tab refine · ctrl+s save as folder"
+        );
+    }
+
+    #[test]
+    fn a_rebind_reaches_the_panel_footer() {
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("save_search".to_string(), "mod+shift+s".to_string());
+
+        assert_eq!(
+            panel_keys(&Keymap::resolve(&overrides)),
+            "Return open · Tab refine · ctrl+shift+s save as folder"
+        );
     }
 }

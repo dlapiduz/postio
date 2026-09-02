@@ -53,6 +53,8 @@ type ActionHandler = Box<dyn Fn(postio_core::Command)>;
 /// What a subscriber to a *registered* command is handed: its id, and nothing
 /// else. See [`Window::connect_ext_command`].
 type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
+/// See [`Window::connect_keymap`].
+type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -187,6 +189,13 @@ mod imp {
         /// Handlers for commands registered at runtime — see
         /// [`Window::connect_ext_command`](super::Window::connect_ext_command).
         pub ext_commands: std::cell::RefCell<Vec<ExtCommandHandler>>,
+        /// Surfaces outside this window that still owe their key hints to the
+        /// live keymap — see
+        /// [`Window::connect_keymap`](super::Window::connect_keymap).
+        pub keymaps: std::cell::RefCell<Vec<KeymapHandler>>,
+        /// The keymap currently in force, so a surface that attaches later
+        /// can be handed it rather than waiting for the next edit.
+        pub keymap: std::cell::RefCell<postio_core::Keymap>,
     }
 
     #[glib::object_subclass]
@@ -2067,6 +2076,21 @@ impl Window {
         self.imp().commands.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called with the keymap whenever one is applied, and once immediately
+    /// with the keymap already in force.
+    ///
+    /// [`apply_keymap`](Self::apply_keymap) reaches the surfaces this window
+    /// owns directly. The search column is not one of them — `postio-app`
+    /// builds it and hands it the shell — and its footer names keys too, so
+    /// it needs a way to hear about a rebind (#828). Called immediately as
+    /// well as on change, because a surface attached after the first
+    /// `apply_keymap` would otherwise keep the registry defaults until the
+    /// user next edited `config.toml`.
+    pub fn connect_keymap(&self, handler: impl Fn(&postio_core::Keymap) + 'static) {
+        handler(&self.imp().keymap.borrow());
+        self.imp().keymaps.borrow_mut().push(Box::new(handler));
+    }
+
     /// Called with every *registered* command a key or a palette row reaches.
     ///
     /// The extension counterpart of [`connect_action`](Self::connect_action).
@@ -2314,6 +2338,13 @@ impl Window {
         self.cheatsheet().set_keymap(keymap.clone());
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
+        // #828: the composer's Send / Schedule / Save draft hints were
+        // literals, so they went on naming the default key after a rebind.
+        self.composer().set_keymap(&keymap);
+        for handler in self.imp().keymaps.borrow().iter() {
+            handler(&keymap);
+        }
+        *self.imp().keymap.borrow_mut() = keymap;
     }
 
     /// Apply the `[ui]` block: what the list shows, and how much of it.

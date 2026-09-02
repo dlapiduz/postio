@@ -72,7 +72,7 @@ use adw::subclass::prelude::*;
 use chrono::{DateTime, Datelike, Duration, Local, Utc};
 use gtk::{gdk, gio, glib};
 use postio_body::Placement;
-use postio_core::{CommandId, Context};
+use postio_core::{CommandId, Context, Keymap};
 use postio_model::address::{current_entry, format_list, parse_list};
 use postio_model::{
     Account, AccountId, Attachment, Draft, DraftKind, EmailAddress, Identity, IdentityId, Message,
@@ -2678,7 +2678,8 @@ impl Composer {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         row.add_css_class("postio-compose-actions");
 
-        imp.send.set_child(Some(&labelled("Send", "C-Ret")));
+        imp.send
+            .set_child(Some(&labelled_for(CommandId::Send, "Send")));
         imp.send.add_css_class("suggested-action");
         imp.send
             .update_property(&[gtk::accessible::Property::Label("Send")]);
@@ -2689,7 +2690,7 @@ impl Composer {
         ));
 
         imp.schedule_send
-            .set_child(Some(&labelled("Schedule…", "C-⇧-Ret")));
+            .set_child(Some(&labelled_for(CommandId::ScheduleSend, "Schedule…")));
         imp.schedule_send.add_css_class("flat");
         imp.schedule_send.add_css_class("postio-ghost");
         imp.schedule_send
@@ -2728,7 +2729,8 @@ impl Composer {
         imp.schedule_send
             .insert_action_group("compose-schedule", Some(&schedule_actions));
 
-        imp.save.set_child(Some(&labelled("Save draft", "C-s")));
+        imp.save
+            .set_child(Some(&labelled_for(CommandId::SaveDraft, "Save draft")));
         imp.save.add_css_class("flat");
         imp.save.add_css_class("postio-ghost");
         imp.save
@@ -2755,6 +2757,36 @@ impl Composer {
         row.append(&imp.save);
         row.append(&imp.escape);
         row
+    }
+
+    /// Relabel the action row's key hints from the live keymap.
+    ///
+    /// Until #828 these were the literals `C-Ret`, `C-⇧-Ret` and `C-s`: a
+    /// notation nothing else in the application uses, and — worse — one that
+    /// went on saying the same thing after the user rebound the command in
+    /// `[keys]`. A hint that lies is worse than no hint, and the reading
+    /// pane's own bar had solved this already
+    /// ([`crate::reader::actions::ReaderActions::set_keymap`]).
+    ///
+    /// A command whose binding the user cleared entirely loses its hint
+    /// rather than showing a blank, which is the same rule that bar follows.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        let imp = self.imp();
+        // Set one at a time rather than over an array: `schedule_send` is a
+        // `MenuButton` and the other two are `Button`s, so there is no one
+        // element type to iterate. `action_hints` still carries the order,
+        // which is the part worth testing.
+        let hints = action_hints(keymap);
+        let child = |index: usize| -> gtk::Widget {
+            let (_, text) = ACTION_BUTTONS[index];
+            match &hints[index].1 {
+                Some(key) => labelled(text, key),
+                None => gtk::Label::new(Some(text)).upcast(),
+            }
+        };
+        imp.send.set_child(Some(&child(0)));
+        imp.schedule_send.set_child(Some(&child(1)));
+        imp.save.set_child(Some(&child(2)));
     }
 
     // -- Test support -----------------------------------------------------
@@ -3132,6 +3164,43 @@ fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4
 }
 
 /// A button label with the key that reaches it, as the header bar does it.
+/// The three buttons the action row draws, in the order it draws them, with
+/// the command each one stands for.
+///
+/// `Discard` is deliberately absent — see [`Composer::build_actions`] for
+/// why — and `Esc` is not a registered command, so the footer's escape hint
+/// stays literal.
+const ACTION_BUTTONS: &[(CommandId, &str)] = &[
+    (CommandId::Send, "Send"),
+    (CommandId::ScheduleSend, "Schedule…"),
+    (CommandId::SaveDraft, "Save draft"),
+];
+
+/// Each action button's command paired with the key `keymap` currently gives
+/// it — `None` when the user has cleared the binding rather than changed it.
+///
+/// A free function, decoupled from the widgets [`Composer::set_keymap`]
+/// updates from it, so a rebind reaching the row is testable without a
+/// display. The same split [`crate::reader::actions`] makes, for the same
+/// reason (#828).
+fn action_hints(keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
+    ACTION_BUTTONS
+        .iter()
+        .map(|(id, _)| (*id, keymap.binding(*id).map(str::to_owned)))
+        .collect()
+}
+
+/// [`labelled`] with the key read from the registry's defaults, for a button
+/// built before any `config.toml` has been read.
+///
+/// `Window::apply_keymap` replaces it the moment a real keymap exists, so a
+/// composer that opens before the config watcher has run still shows the
+/// right key rather than a blank.
+fn labelled_for(id: CommandId, text: &str) -> gtk::Widget {
+    let keymap = Keymap::resolve(&Default::default());
+    labelled(text, keymap.binding(id).unwrap_or_default())
+}
+
 fn labelled(text: &str, key: &str) -> gtk::Widget {
     let label = gtk::Label::new(Some(text));
     let hint = gtk::Label::new(Some(key));
@@ -4005,5 +4074,75 @@ mod tests {
                 assert!(when > now, "{label} is not ahead of {now}: {when}");
             }
         }
+    }
+    // -- the action row's key hints (#828) ---------------------------------
+
+    fn keys_of(keymap: &Keymap) -> Vec<Option<String>> {
+        action_hints(keymap)
+            .into_iter()
+            .map(|(_, key)| key)
+            .collect()
+    }
+
+    #[test]
+    fn the_action_row_takes_its_keys_from_the_registry() {
+        // They used to be the literals `C-Ret`, `C-⇧-Ret` and `C-s` -- a
+        // notation nothing else in the application writes. What the registry
+        // says is what the palette, the cheat sheet and `keybindings.md`
+        // already show, and on macOS it is what makes `mod` mean Command
+        // rather than Control.
+        assert_eq!(
+            keys_of(&Keymap::resolve(&Default::default())),
+            vec![
+                Some("ctrl+Return".to_string()),
+                Some("ctrl+shift+Return".to_string()),
+                Some("ctrl+s".to_string()),
+            ],
+            "canvas order: Send, Schedule, Save draft"
+        );
+    }
+
+    #[test]
+    fn a_rebind_in_keys_reaches_the_action_row() {
+        // The bug this issue is actually about: a literal goes on naming the
+        // default key forever, so the button lies to whoever rebound it.
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("send".to_string(), "mod+Return".to_string());
+        overrides
+            .overrides_mut()
+            .insert("save_draft".to_string(), "mod+w".to_string());
+
+        let keys = keys_of(&Keymap::resolve(&overrides));
+        assert_eq!(keys[2], Some("ctrl+w".to_string()), "Save draft rebound");
+        assert_eq!(
+            keys[1],
+            Some("ctrl+shift+Return".to_string()),
+            "Schedule kept its default; only the two named were rebound"
+        );
+    }
+
+    #[test]
+    fn a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one() {
+        // Giving `save_draft` the key `send` has by default leaves one of the
+        // two without a binding -- an explicit `[keys]` entry outranks a
+        // default, so it is `send` that loses it. It must drop its hint
+        // rather than render an empty one, which is the rule
+        // `reader::actions` already follows. All three of these live in the
+        // composer context, so this really is a collision rather than two
+        // surfaces harmlessly sharing a key.
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("save_draft".to_string(), "mod+Return".to_string());
+
+        let keys = keys_of(&Keymap::resolve(&overrides));
+        assert_eq!(
+            keys[2],
+            Some("ctrl+Return".to_string()),
+            "the override wins the key"
+        );
+        assert_eq!(keys[0], None, "and Send shows no hint at all: {keys:?}");
     }
 }
