@@ -62,7 +62,25 @@ if '$crate' not in floors:
 print(floors['$crate'])
 ")
 
-    percent=$(env -u RUSTUP_TOOLCHAIN cargo llvm-cov -p "$crate" --json --summary-only 2>/dev/null \
+    # Kept apart from the parse below, and stderr kept rather than discarded.
+    # When the measurement itself fails -- a crate that will not build under
+    # instrumentation, a runner that ran out of memory -- `cargo llvm-cov`
+    # writes nothing to stdout, and piping that straight into `json.load`
+    # turned a tool failure into `JSONDecodeError: Expecting value: line 1
+    # column 1`, a Python traceback naming neither the crate nor the reason.
+    # That is what this looked like on CI, and it cost a run to find out.
+    if ! report=$(env -u RUSTUP_TOOLCHAIN cargo llvm-cov -p "$crate" --json --summary-only); then
+        echo >&2
+        echo "could not measure coverage for '$crate': cargo llvm-cov failed." >&2
+        echo "Its error is above; this is a broken measurement, not a floor." >&2
+        exit 1
+    fi
+    if [ -z "$report" ]; then
+        echo >&2
+        echo "cargo llvm-cov produced no report for '$crate'." >&2
+        exit 1
+    fi
+    percent=$(printf '%s' "$report" \
         | python3 -c "import json, sys; print(json.load(sys.stdin)['data'][0]['totals']['lines']['percent'])")
 
     if python3 -c "import sys; sys.exit(0 if $percent >= $floor else 1)"; then
