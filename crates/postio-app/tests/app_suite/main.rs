@@ -53,6 +53,7 @@ mod thread_cursor_preview;
 mod thread_dwell;
 mod thread_keystroke;
 mod unconfirmed_send;
+mod unified_list;
 mod window_drain;
 mod wiring;
 
@@ -264,6 +265,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "window_drain::an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes",
         window_drain::an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes as fn(),
+    ),
+    (
+        "unified_list::picking_unified_lists_mail_from_every_account",
+        unified_list::picking_unified_lists_mail_from_every_account as fn(),
     ),
     (
         "wiring::a_window_over_a_populated_store_lists_its_mail",

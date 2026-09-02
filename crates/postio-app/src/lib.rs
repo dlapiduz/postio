@@ -437,14 +437,23 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         .map(|account| (account.id, account.display_name))
         .collect();
     //
-    // `offer_unified: false` until #184: a unified *list* is that issue's
-    // work, and a row that selects a scope nothing can draw would be a dead
-    // end. `g a` cycles through the accounts for the same reason.
+    // `offer_unified: true` since `ListScope::Unified` gave the row somewhere
+    // to lead (#185). It opens on an account rather than on Unified: the
+    // scope a person left in is not remembered yet, and one account's inbox
+    // is the smaller surprise on a cold start.
     window.sidebar().set_accounts(
         &named,
         postio_core::state::Scope::Account(account.id),
-        false,
+        true,
     );
+    // And the window, which is a separate thing from the strip: the strip is
+    // what a person clicks, `Window::scope` is what decides whether a command
+    // needing somewhere in *one* account to put a message is offered at all
+    // (`Requirement::SingleAccount`). Nothing set it before this, and
+    // `AccountScope`'s own default is Unified -- so every window, including
+    // every single-account one, has been hiding "Move to…" from the palette
+    // and the cheat sheet since the requirement was added.
+    window.set_scope(postio_core::state::Scope::Account(account.id));
     // With more than one account the sidebar draws a section each, so the feed
     // has to read every tree rather than the current one (#185). `install_feeds`
     // has already opened the current account's; this re-points it, and only
@@ -466,18 +475,39 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     ));
     window.sidebar().connect_scope_selected({
         let feeds = feeds.clone();
+        let sidebar = glib::object::ObjectExt::downgrade(&window.sidebar());
+        let window_for_scope = glib::object::ObjectExt::downgrade(window);
         let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();
         let addresses: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
             .into_iter()
             .map(|account| (account.id, account.address.address))
             .collect();
         move |scope| {
+            // What is available follows the scope wherever it goes, so this
+            // is first and unconditional: both branches below change what the
+            // list is showing, and a window still claiming the old scope
+            // offers the wrong verbs for the new one.
+            if let Some(window) = window_for_scope.upgrade() {
+                window.set_scope(scope);
+            }
             // Re-point the folder feed, which re-reads that account's tree
             // and, through its own loaded handler, opens its inbox. Nothing
             // here reaches into the list: the folders are what the list
             // follows, so there is one path rather than two that can
             // disagree about which account is on screen.
             let Some(id) = scope.account() else {
+                // Unified is the exception, and it has to be: it is a view
+                // over every account rather than a folder in one, so there
+                // is no tree to re-point and no inbox for a loaded handler
+                // to open. The list is addressed directly, and the folder
+                // highlight is cleared because no folder is showing -- a
+                // sidebar still pointing at Inbox while the list draws every
+                // account's mail is the app disagreeing with itself about
+                // where the user is.
+                feeds.messages.open(postio_model::ListScope::Unified);
+                if let Some(sidebar) = sidebar.upgrade() {
+                    sidebar.clear_folder_selection();
+                }
                 return;
             };
             let Some((_, address)) = addresses.iter().find(|(candidate, _)| *candidate == id)
