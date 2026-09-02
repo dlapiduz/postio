@@ -81,6 +81,15 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
 
+    // The column's footer names keys, and the window cannot reach it from
+    // `apply_keymap` -- this view is the composition root's, not the
+    // window's. So it listens instead, and a rebind reaches the footer the
+    // same moment it reaches the keyboard (#828).
+    window.connect_keymap({
+        let panel = view.panel();
+        move |keymap| panel.set_keymap(keymap)
+    });
+
     // The hits the surfaces are drawn from, shared between the run that
     // produces them and the cursor that walks them.
     let held: Held = Rc::new(std::cell::RefCell::new(None));
