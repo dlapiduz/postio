@@ -2446,6 +2446,33 @@ fn settle_pass(
                         message: error.to_string(),
                     });
                 }
+
+                // A sync is also when a send nobody could confirm may have
+                // turned up (#674). The draft reserved its `Message-ID`
+                // before the first attempt, so a message arriving with that
+                // id *is* the confirmation — no user action, no extra
+                // request, nothing that leaves the machine. Only when the
+                // pass actually changed something: an unchanged mailbox
+                // cannot have brought the copy down.
+                match postio_sync::send::confirm_unconfirmed(connection, parts.account) {
+                    Ok(resolved) => {
+                        for (draft, message) in resolved {
+                            // The Drafts list has a row that has stopped
+                            // being a draft, and the pane may be showing it.
+                            tracing::debug!(draft = draft.get(), "an unconfirmed send is resolved");
+                            parts.events.emit(Event::MessagesChanged {
+                                account: parts.account,
+                                messages: vec![message],
+                            });
+                        }
+                    }
+                    // Worth a line, not a banner: the drafts stay
+                    // `Unconfirmed`, which is the honest state, and the next
+                    // pass looks again.
+                    Err(error) => {
+                        tracing::warn!(%error, "could not check for resolved sends");
+                    }
+                }
             }
             Ok(summary)
         }

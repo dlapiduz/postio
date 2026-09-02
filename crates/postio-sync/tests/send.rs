@@ -12,7 +12,8 @@ use postio_model::{
 use postio_smtp::transport::{ScriptedConnector, SmtpScript};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
-    AccountRepository, DraftRepository, MailboxRepository, OperationQueueRepository,
+    AccountRepository, DraftRepository, MailboxRepository, MessageRepository,
+    OperationQueueRepository,
 };
 use postio_storage::test_support;
 use postio_sync::Drainer;
@@ -1100,5 +1101,106 @@ async fn a_send_interrupted_before_the_payload_is_queued_again() {
         postio_model::DraftState::Queued,
         "the `Sending` mark has to come back off, or `resolve` would refuse \
          the retry the backoff is about to schedule"
+    );
+}
+
+/// A sync that brings the message down is the confirmation, and it costs the
+/// user nothing.
+///
+/// ADR 0021 Decision 3's second half (#674): the draft reserved a
+/// `Message-ID` before the first attempt (#461), so a message arriving with
+/// that id in this account is proof the submission went through — whatever
+/// the dropped connection left the client believing. Many submission servers
+/// file the sender's copy themselves, so for a good share of users this
+/// resolves silently within one sync.
+#[tokio::test]
+async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, sent) = account_with_sent(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    drafts.save(&mut draft).expect("save draft");
+    drafts.queue_send(&mut draft, at(9)).expect("queue the send");
+    let reserved = draft.rfc_message_id.clone().expect("a reservation");
+    drafts
+        .set_state(draft.id, postio_model::DraftState::Unconfirmed)
+        .expect("the state an interrupted submission leaves");
+
+    // The copy the server filed, arriving in an ordinary sync.
+    let mut message = postio_model::Message::new(account.id, sent, at(10));
+    message.rfc_message_id = Some(reserved.clone());
+    let message_id = MessageRepository::new(&connection)
+        .create(&mut message)
+        .expect("the synced copy");
+
+    let resolved = postio_sync::send::confirm_unconfirmed(&connection, account.id)
+        .expect("confirming reads the store and nothing else");
+
+    assert_eq!(
+        resolved,
+        vec![(draft.id, message_id)],
+        "the draft and the message it turned out to be"
+    );
+    let after = drafts.get(draft.id).expect("read").expect("still there");
+    assert_eq!(
+        after.state,
+        postio_model::DraftState::Sent,
+        "the question is answered, so it stops being unconfirmed"
+    );
+    assert_eq!(
+        drafts
+            .by_message(message_id)
+            .expect("read")
+            .map(|found| found.id),
+        Some(draft.id),
+        "and the two are linked, so the surfaces that open one reach the other"
+    );
+}
+
+/// The same lookup must not resolve on somebody else's message.
+///
+/// The reservation is the whole evidence here: matching on anything softer —
+/// subject, recipients, a nearby timestamp — is how the wrong message gets
+/// called the sent one, and the user is then told a message arrived that
+/// never did.
+#[tokio::test]
+async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, sent) = account_with_sent(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    drafts.save(&mut draft).expect("save draft");
+    drafts.queue_send(&mut draft, at(9)).expect("queue the send");
+    drafts
+        .set_state(draft.id, postio_model::DraftState::Unconfirmed)
+        .expect("the state an interrupted submission leaves");
+
+    // Same folder, same account, same everything but the id.
+    let mut other = postio_model::Message::new(account.id, sent, at(10));
+    other.rfc_message_id = Some(postio_model::RfcMessageId::new("<someone-else@example.com>"));
+    MessageRepository::new(&connection)
+        .create(&mut other)
+        .expect("an unrelated message");
+
+    let resolved =
+        postio_sync::send::confirm_unconfirmed(&connection, account.id).expect("confirm");
+
+    assert!(
+        resolved.is_empty(),
+        "only the reserved id is evidence: {resolved:?}"
+    );
+    assert_eq!(
+        drafts
+            .get(draft.id)
+            .expect("read")
+            .expect("still there")
+            .state,
+        postio_model::DraftState::Unconfirmed,
+        "the question is still open, and saying otherwise would be a lie the \
+         user acts on"
     );
 }

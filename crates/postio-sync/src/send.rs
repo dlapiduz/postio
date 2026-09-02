@@ -551,3 +551,57 @@ fn outcome_from_smtp_error(error: postio_smtp::error::SmtpError) -> Outcome {
     }
     Outcome::Failed { reason }
 }
+
+/// Resolve every `Unconfirmed` draft whose message has since turned up.
+///
+/// The half of ADR 0021 Decision 3 that answers the question instead of
+/// asking it (#674). A send interrupted mid-submission leaves a draft nobody
+/// can settle — but the message, if it went, carries the `Message-ID` the
+/// draft reserved before the first attempt (#461), and many submission
+/// servers file the sender's copy themselves. So the next sync that brings
+/// that message down *is* the confirmation, and it arrives without asking
+/// the user anything and without a single extra request.
+///
+/// Run after a pass rather than only after a Sent pass: where a copy is
+/// filed is the server's choice, not ours, and the cost of looking is one
+/// indexed read per unconfirmed draft — of which there are normally none.
+///
+/// Returns the drafts it resolved, so the caller can tell the panes. A draft
+/// with no reserved id predates #461 and is left alone: without one there is
+/// nothing to recognise it by, and guessing from subject and recipients is
+/// how the wrong message gets called the sent one.
+pub fn confirm_unconfirmed(
+    connection: &Connection,
+    account: AccountId,
+) -> Result<Vec<(DraftId, postio_model::ids::MessageId)>> {
+    let drafts = DraftRepository::new(connection);
+    let messages = MessageRepository::new(connection);
+    let mut resolved = Vec::new();
+
+    for draft in drafts.by_state(DraftState::Unconfirmed)? {
+        if draft.account_id != account {
+            continue;
+        }
+        let Some(reserved) = draft.rfc_message_id.as_ref() else {
+            continue;
+        };
+        // The account is part of the lookup: the same `Message-ID` arriving
+        // in a *different* account is somebody else's copy of a conversation,
+        // not evidence that this account's submission succeeded.
+        let Some(message) = messages
+            .ids_by_rfc_message_id(account, reserved)?
+            .into_iter()
+            .next()
+        else {
+            continue;
+        };
+        drafts.set_state(draft.id, DraftState::Sent)?;
+        drafts.set_synced_message(draft.id, message)?;
+        tracing::info!(
+            draft = draft.id.get(),
+            "an unconfirmed send turned up in a sync; it did arrive"
+        );
+        resolved.push((draft.id, message));
+    }
+    Ok(resolved)
+}
