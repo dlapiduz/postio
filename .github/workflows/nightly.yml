@@ -155,3 +155,39 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings -A rustdoc::private_intra_doc_links
         run: cargo doc --workspace --no-deps --document-private-items
+
+  full-suite:
+    name: Full suite
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      # Every test in the workspace, integration binaries included -- the same
+      # thing the pull-request path runs, on a schedule as well.
+      #
+      # It is here because the *local* landing gate stopped running it (#847):
+      # several sessions share one workstation, and a postio-app integration
+      # binary is an ~11-minute compile and link, so landing had become
+      # something you queued for. Locally the gate is now the workspace's unit
+      # tests -- 1,313 of them in ~5s.
+      #
+      # That trade is only safe while something still proves the *combination*
+      # before merge, which the pull-request run does. This job is the second
+      # reader, not the first: it catches what a branch-shaped view misses,
+      # like two branches that are each green alone.
+      #
+      # `--no-fail-fast` on purpose: plain cargo abandons the remaining targets
+      # at the first failure, and one red crate then hides a thousand passing
+      # tests -- which is exactly the wrong shape for a report nobody is
+      # watching live.
+      - name: cargo test --workspace
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --no-fail-fast
