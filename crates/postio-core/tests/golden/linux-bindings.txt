@@ -24,7 +24,6 @@ flag	s
 mark_unread	U
 snooze	b
 unsnooze	B
-add_label	L
 search	/
 save_search	ctrl+s
 compose	c

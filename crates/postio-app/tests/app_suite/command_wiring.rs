@@ -36,9 +36,13 @@
 //! `OpenMessage`'s search-preview path. Those were #756's bug, not #756's
 //! fix: filed as #765, #766 and #767. `PrevView` and `NextScope` are wired
 //! now (`gtk_prev_view.rs`, `gtk_next_scope.rs` prove it for real, through
-//! `Window::act`); `AddLabel` and `OpenMessage` are still named below so
-//! this test stays green until each is actually wired, at which point
-//! removing it from the list is how a session confirms the fix.
+//! `Window::act`). `AddLabel` turned out to have no label support behind
+//! it at all -- no repository to list or create one, no picker, nothing to
+//! wire it *to* -- so #766 removed the command rather than offer a menu
+//! item that could never do anything; #780 tracks building label support
+//! for real. `OpenMessage` is still named below so this test stays green
+//! until it is actually wired, at which point removing it from the list is
+//! how a session confirms the fix.
 //!
 //! No real dispatcher subscriber besides the spy is ever installed
 //! (`commands::install` is never called, and neither is
@@ -144,10 +148,7 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 /// Genuinely orphaned -- found by this sweep, not #756's to fix. Remove an
 /// entry once its issue lands a real handler; the sweep will fail the same
 /// way it did for `ToggleSidebar` if one is removed too early.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    (CommandId::AddLabel, "#766"),
-    (CommandId::OpenMessage, "#767"),
-];
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[(CommandId::OpenMessage, "#767")];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     let state_dir = tempfile::tempdir().expect("a state directory");
