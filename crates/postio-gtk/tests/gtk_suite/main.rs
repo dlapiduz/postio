@@ -46,6 +46,7 @@ mod gtk_finder;
 mod gtk_flagged;
 mod gtk_focus_visible;
 mod gtk_keymap_lazy;
+mod gtk_layout_intent;
 mod gtk_list_focus_return;
 mod gtk_list_recycling;
 mod gtk_list_reload;
@@ -93,6 +94,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_keymap_lazy::applying_a_keymap_does_not_build_a_composer_nobody_asked_for",
         gtk_keymap_lazy::applying_a_keymap_does_not_build_a_composer_nobody_asked_for as fn(),
+    ),
+    (
+        "gtk_layout_intent::a_narrow_window_hides_the_sidebar_and_widening_brings_it_back",
+        gtk_layout_intent::a_narrow_window_hides_the_sidebar_and_widening_brings_it_back as fn(),
+    ),
+    (
+        "gtk_layout_intent::a_sidebar_turned_off_stays_off_across_a_resize",
+        gtk_layout_intent::a_sidebar_turned_off_stays_off_across_a_resize as fn(),
+    ),
+    (
+        "gtk_layout_intent::reaching_for_the_sidebar_on_a_narrow_window_is_not_a_preference",
+        gtk_layout_intent::reaching_for_the_sidebar_on_a_narrow_window_is_not_a_preference as fn(),
+    ),
+    (
+        "gtk_layout_intent::opening_a_message_gives_the_reader_the_screen_when_there_is_room_for_one",
+        gtk_layout_intent::opening_a_message_gives_the_reader_the_screen_when_there_is_room_for_one as fn(),
     ),
     (
         "gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending",
