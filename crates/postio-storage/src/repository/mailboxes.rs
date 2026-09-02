@@ -162,7 +162,7 @@ impl<'a> MailboxRepository<'a> {
     }
 
     /// Flips whether `id` participates in background backfill — the
-    /// settings-surface counterpart of [`AccountRepository`]'s
+    /// settings-surface counterpart of [`super::AccountRepository`]'s
     /// [`set_enabled`](super::AccountRepository::set_enabled), for the same
     /// reason: the caller here is a folder's own settings toggle, not code
     /// holding a full, freshly-loaded [`Mailbox`].

@@ -549,7 +549,7 @@ impl MessageListView {
     /// How long a dwell takes, for a test that cannot afford to wait a real
     /// second per assertion.
     ///
-    /// Public for the reason [`crate::parts::PartsPanel::press`] is: the
+    /// Public for the reason [`crate::finder::Finder::press_backspace`] is: the
     /// behaviour worth proving is "it fires once the cursor rests, and not
     /// when it moves on", and a test that re-implemented the timer to check
     /// that would be testing its own copy. Not a setting — see
@@ -612,7 +612,18 @@ impl MessageListView {
         // arriving for the row the cursor is already on, never reaches this
         // line, so a mailbox syncing under the cursor cannot keep resetting
         // the clock.
-        if imp.landed.get() {
+        //
+        // Never for a thread row, whatever the timing. A thread row's id is
+        // its *representative* -- the newest message in this folder -- and
+        // ADR 0015 Q4 puts reading inside a conversation on the pane's own
+        // per-message dwell, driven by focus: "never 'opened the thread, all
+        // six read'". Arming here and cancelling when the pane opens
+        // (#797's first attempt) is a race, because the pane opens behind an
+        // async fetch while this arms synchronously -- and a race that
+        // usually wins is what made `app_suite/thread_dwell.rs` pass on a
+        // developer's machine and fail on a runner. A row that stands for a
+        // conversation simply has no clock to start.
+        if imp.landed.get() && !row.is_thread() {
             self.arm_dwell(row.id);
         }
     }

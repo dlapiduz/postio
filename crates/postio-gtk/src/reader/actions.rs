@@ -9,7 +9,7 @@
 //! Every button here runs [`Command::default_for`] on the same [`CommandId`]
 //! the keybinding does, and hands it out through [`ReaderActions::connect_command`]
 //! for whoever mounts the reader to act on — the same shape
-//! [`crate::list_view::ListView::connect_command`] already uses for a row's
+//! [`crate::list_view::MessageListView::connect_command`] already uses for a row's
 //! hover actions and context menu. There is no second "reply from a button"
 //! implementation to keep in step with the real one.
 //!

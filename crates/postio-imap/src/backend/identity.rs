@@ -32,7 +32,7 @@ pub fn wire(remote_id: &RemoteId) -> Option<(UidValidity, Uid)> {
 /// Unpacks a batch of ids into the wire set, refusing any that are not of
 /// this mailbox's live generation.
 ///
-/// The refusal is [`BackendError::UidValidityChanged`] — the same answer a
+/// The refusal is [`crate::backend::BackendError::UidValidityChanged`] — the same answer a
 /// renumber discovered at `SELECT` gives — because that is what a stale id
 /// *is*: a name from a generation the server has abandoned. The caller's
 /// recovery is identical: resync the mailbox, never retry the uid.

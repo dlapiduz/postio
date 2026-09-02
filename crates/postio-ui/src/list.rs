@@ -100,7 +100,7 @@ pub trait ListRow {
     /// says so by overriding this.
     ///
     /// The one question `postio_core::aim` asks a frontend's list, reached
-    /// through the blanket [`RowFacts`](postio_core::aim::RowFacts)
+    /// through the blanket [`RowFacts`]
     /// implementation below. See that module for why the seam reports a fact
     /// and never a decision.
     fn thread(&self) -> Option<ThreadId> {

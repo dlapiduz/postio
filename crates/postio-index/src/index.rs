@@ -207,7 +207,7 @@ pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) 
 /// [`index_body`] with text it extracted itself. "Raw markup must never reach
 /// this column" is a rule about the column, so the crate that owns the column
 /// is where it is kept: an HTML-only message goes through
-/// [`postio_body::parse`] and is indexed as what it *says*, never as its
+/// [`postio_body::parse()`] and is indexed as what it *says*, never as its
 /// markup — otherwise every such message is a hit for `div`, for `href`, and
 /// for the host of every tracking redirect it carries.
 ///

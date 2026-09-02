@@ -632,7 +632,7 @@ impl Plan {
         }
     }
 
-    /// [`Plan::join_sql`], but for `fetch` specifically, where the join order
+    /// [`Plan::source_sql`], but for `fetch` specifically, where the join order
     /// matters in a way `count` never sees.
     ///
     /// A plain `JOIN` lets SQLite pick which side drives the loop, which is
@@ -759,7 +759,7 @@ impl Plan {
     /// Two queries rather than one: the first selects only `m.id`, ordered
     /// and cut down to `pool_size`, and is the query that has to be fast
     /// across every match size — the plan discussed in
-    /// [`Plan::fetch_join_sql`] depends on the query being simple enough for
+    /// [`Plan::fetch_form`] depends on the query being simple enough for
     /// SQLite to recognize. Folding in the per-row correlated subqueries
     /// (sender name/address, contact affinity, snippet) for *every* matching
     /// row, before the `LIMIT` narrows it, was measured to cost the same

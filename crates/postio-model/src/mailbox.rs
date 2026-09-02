@@ -286,7 +286,7 @@ pub struct Mailbox {
     /// Whether the account is subscribed to it.
     pub subscribed: bool,
     /// A signature that overrides the account's own default when composing
-    /// from this folder (#394) — see [`signature_default::resolve`]. Local
+    /// from this folder (#394) — see [`crate::signature_default::resolve`]. Local
     /// preference, never server state: unlike every field below these two,
     /// nothing in a sync pass ever sets or reads it.
     #[serde(default)]

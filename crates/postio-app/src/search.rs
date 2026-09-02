@@ -136,7 +136,8 @@ fn install_leave_to_list(window: &Window, finder: &Finder) {
 /// The order the current result set is in. See [`install`].
 type Order = Rc<std::cell::Cell<postio_search::ResultOrder>>;
 
-/// Answer [`CommandId::ToggleResultOrder`] — `o` over results, or a click on
+/// Answer [`CommandId::ToggleResultOrder`](postio_core::CommandId::ToggleResultOrder)
+/// — `o` over results, or a click on
 /// the list header's sort control.
 ///
 /// Toggles, relabels, and asks the same query again in the new order. Only

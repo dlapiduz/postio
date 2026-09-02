@@ -998,7 +998,7 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 ///
 /// `body_state` is what everything else reads to decide whether a body is
 /// local, so it is written *last*, by
-/// [`set_body_blobs`](MessageRepository::set_body_blobs). A crash anywhere
+/// [`set_body`](MessageRepository::set_body). A crash anywhere
 /// before that leaves orphaned blobs — which the blob store's garbage
 /// collection sweeps — and a message that still says it has no body, so the
 /// next pass simply fetches it again. The opposite order would leave a message
@@ -1011,7 +1011,8 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 /// the reference account that is 12.43 GB fetched to index the 1.43 GB of it
 /// that is words, because ~90% of a mailbox by weight is payloads FTS5 cannot
 /// index. So when the header sync recorded where the text lives
-/// ([`Message::text_part_id`]), this fetches exactly those sections and leaves
+/// ([`Message::text_part_id`](postio_model::Message::text_part_id)), this
+/// fetches exactly those sections and leaves
 /// the payloads on the server until somebody opens one.
 ///
 /// A row whose sections are unknown — synced before migration 0008, or from a
@@ -1174,7 +1175,8 @@ pub async fn fetch_body(
 /// `BODY[1.1]` returns a part's *encoded* bytes and none of its headers, so
 /// nothing in the response says whether they are base64 or what charset they
 /// are in. Both were reported by `BODYSTRUCTURE` and kept on the row
-/// ([`Message::text_part_headers`]), so prepending them turns the fetched
+/// ([`Message::text_part_headers`](postio_model::Message::text_part_headers)),
+/// so prepending them turns the fetched
 /// section back into a self-contained entity the parser can decode — without
 /// spending a second round trip on `BODY[1.1.MIME]`.
 ///

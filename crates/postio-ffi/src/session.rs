@@ -44,7 +44,8 @@ impl SessionError {
     /// Maps a keyring failure onto the case the frontend routes on.
     ///
     /// A match rather than `to_string`, and that is the entire point of this
-    /// function. ADR 0014's rule is that [`SecretError::Locked`] must survive
+    /// function. ADR 0014's rule is that
+    /// [`SecretError::Locked`](postio_imap::secret::SecretError::Locked) must survive
     /// to the surface that asks the user to unlock, rather than being
     /// flattened into "something went wrong" and sent to onboarding — which
     /// would ask somebody with perfectly good mail to set up an account they

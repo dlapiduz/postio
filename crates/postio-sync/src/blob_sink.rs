@@ -57,7 +57,7 @@ impl BlobSink {
     ///
     /// # Errors
     ///
-    /// [`BackendError::Storage`] if the temporary file cannot be created.
+    /// [`BackendError::Protocol`] if the temporary file cannot be created.
     pub fn new(blobs: &BlobStore) -> BackendResult<Self> {
         Ok(Self {
             writer: Some(blobs.writer().map_err(storage_error)?),

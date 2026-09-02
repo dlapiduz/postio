@@ -7,7 +7,7 @@
 //!   other scripting-adjacent surface (`WebGL`, `WebRTC`, IndexedDB-style
 //!   storage, the offline application cache) — a script disabled by policy in
 //!   one place and reachable through another is not disabled.
-//! * **Nothing is fetched.** [`sanitize::sanitize_body`] never leaves a
+//! * **Nothing is fetched.** [`postio_body::sanitize_body`] never leaves a
 //!   remote `src` in the markup unless the caller explicitly allows it
 //!   (`postio-xxz`), so there is nothing in the DOM to fetch in the first
 //!   place; the `WebView` also gets its own ephemeral `NetworkSession`,
@@ -432,7 +432,7 @@ impl Reader {
     /// Called with the invocation whenever a button in the action bar is
     /// pressed — the same [`postio_core::Command`] the keyboard's binding for
     /// the same verb would produce. See
-    /// [`crate::list_view::ListView::connect_command`] for the shared shape;
+    /// [`crate::list_view::MessageListView::connect_command`] for the shared shape;
     /// whoever mounts the reader hands this straight to the same
     /// `Window::act` the list's row actions do.
     pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {

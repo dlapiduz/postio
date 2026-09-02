@@ -67,8 +67,8 @@ pub fn install(window: &Window, wiring: &Wiring) {
 ///
 /// Not incremental: the settings panel is opened rarely and an account list
 /// is never more than a handful of rows, so rebuilding it fresh is simpler
-/// than reconciling a diff, the same trade [`crate::compose::install_identities`]
-/// makes for a much larger list.
+/// than reconciling a diff, the same trade [`crate::compose`]'s
+/// `install_identities` makes for a much larger list.
 ///
 /// `pub(crate)`: [`crate::settings_credential::install`] calls this too, once
 /// a credential update closes, since a repaired account's own submission can

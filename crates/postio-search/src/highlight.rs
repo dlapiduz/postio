@@ -206,7 +206,7 @@ pub const SNIPPET_TOKENS: usize = 12;
 /// `snippet()` is an FTS5 function over the *indexed content*, and the body
 /// index has none: `message_bodies_fts` is `content = ''`, which is the whole
 /// point of it (#407). So the excerpt is cut here instead, from the same text
-/// the caller handed [`crate::index`-adjacent] indexing — which is a stronger
+/// the caller handed `postio-index`'s indexing — which is a stronger
 /// guarantee than the old one rather than a weaker one, because it is
 /// literally the string that was indexed rather than SQLite's reconstruction
 /// of it.
