@@ -79,6 +79,33 @@ pub enum State {
     NoMatches {
         /// What was searched for, shown back so what to widen is visible.
         query: String,
+        /// Accounts that could not be reached, and so could not be fully
+        /// searched. Empty is the ordinary single-account answer.
+        ///
+        /// ADR 0005 Q10 calls an empty result set the single most important
+        /// instance of the omission rule: someone searches for an invoice,
+        /// finds nothing, and concludes it does not exist. "Nothing matched"
+        /// is a claim about the whole corpus, and a corpus short an account
+        /// cannot support it.
+        incomplete: Vec<String>,
+    },
+    /// An aggregate view is showing what it has, and it is not everything.
+    ///
+    /// ADR 0005 Q10: *a view that cannot include an account says so, names
+    /// the account, and stays usable.* Rows from the accounts that did answer
+    /// are real mail and stay readable underneath — this is a
+    /// [`Placement::Banner`] whenever there is anything to put it over.
+    ///
+    /// **The rows of a named account are not missing, they are unrefreshed.**
+    /// Postio is local-first, so an offline account's synced mail is still in
+    /// this list; what cannot be vouched for is that it is current. The
+    /// wording says exactly that, because "showing 1 of 2 accounts" would be
+    /// its own lie whenever the absent account has mail on disk — which is
+    /// almost always.
+    Partial {
+        /// The accounts that did not answer, in the order the sidebar draws
+        /// them — which is the order their hues are keyed to.
+        accounts: Vec<String>,
     },
 }
 
@@ -104,7 +131,7 @@ impl State {
     pub fn placement(&self, item_count: u64) -> Placement {
         match self {
             State::InboxZero { .. } | State::NoMatches { .. } => Placement::Full,
-            State::Offline { .. } | State::Failing { .. } => {
+            State::Offline { .. } | State::Failing { .. } | State::Partial { .. } => {
                 if item_count == 0 {
                     Placement::Full
                 } else {
@@ -148,6 +175,9 @@ pub fn derive(
     if let Some(query) = searching.filter(|_| item_count == 0) {
         return Some(State::NoMatches {
             query: query.to_string(),
+            // One account, and it is the one that just answered: there is no
+            // other account whose absence could have hidden a match.
+            incomplete: Vec::new(),
         });
     }
     match status.state {
@@ -164,6 +194,84 @@ pub fn derive(
         }),
         ConnectionState::Online => None,
     }
+}
+
+/// Whether an account's contribution to an aggregate can be vouched for.
+///
+/// [`ConnectionState::Connecting`] is deliberately *not* a reason to name an
+/// account. The single-account states fold it into
+/// [`State::Offline`](State::Offline) because from the user's chair both mean
+/// "local mail still works", and that is right for a whole-pane statement
+/// about the one account they are looking at. A banner is a different act: it
+/// names an account, and one that appears for the two seconds an account
+/// takes to connect — on every launch, for every account — is how people
+/// learn to stop reading banners.
+fn is_current(status: &SyncStatus) -> bool {
+    match status.state {
+        ConnectionState::Online | ConnectionState::Connecting => true,
+        ConnectionState::Offline | ConnectionState::Failing { .. } => false,
+    }
+}
+
+/// Which state an *aggregate* view shows — the unified list, across accounts.
+///
+/// ADR 0005 Q10's rule: **a view that cannot include an account says so,
+/// names the account, and stays usable.** [`derive`] answers for one account
+/// and cannot express this; the difference is not the number of statuses but
+/// that a whole-pane "Offline" would be a claim about every account when only
+/// one of them is away.
+///
+/// `accounts` carries one entry per **enabled** account, in the sidebar's own
+/// order. That an account disabled by the user simply is not in the list is
+/// the whole of Q10's disabled-account rule: it drops out silently and
+/// correctly, because the user asked for that, and there is nothing to
+/// disclose about a view that is showing what it was told to show.
+///
+/// The order of the checks is the argument:
+///
+/// 1. **A search that matched nothing** answers first, and carries the
+///    accounts it could not reach — the instance Q10 calls the most
+///    important, because "nothing matched" reads as proof.
+/// 2. **An account that did not answer** outranks everything else, including
+///    inbox zero: "nothing left to triage" is a claim about every account.
+/// 3. Otherwise the aggregate behaves as one healthy view does.
+pub fn derive_aggregate(
+    accounts: &[(String, SyncStatus)],
+    item_count: u64,
+    stored: u64,
+    searching: Option<&str>,
+) -> Option<State> {
+    let absent: Vec<String> = accounts
+        .iter()
+        .filter(|(_, status)| !is_current(status))
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    if let Some(query) = searching.filter(|_| item_count == 0) {
+        return Some(State::NoMatches {
+            query: query.to_string(),
+            incomplete: absent,
+        });
+    }
+    if !absent.is_empty() {
+        return Some(State::Partial { accounts: absent });
+    }
+
+    // Every account answered, so the aggregate can speak with one voice --
+    // and the only thing left worth saying is that there is nothing in it.
+    // The oldest last sync across the accounts, because the freshest would
+    // overstate how current the view is.
+    if item_count == 0 && !accounts.is_empty() {
+        return Some(State::InboxZero {
+            last_sync: accounts
+                .iter()
+                .map(|(_, status)| status.last_sync)
+                .min()
+                .flatten(),
+            stored,
+        });
+    }
+    None
 }
 
 /// One key hint: what it does, and the key that does it.
@@ -243,14 +351,58 @@ fn describe(state: &State, now: Instant) -> Content {
         // because a query is user-typed and a Pango markup span would mean
         // escaping it; a label that renders `&` wrong is a worse bug than a
         // face that is not quite the token.
-        State::NoMatches { query } => Content {
+        State::NoMatches { query, incomplete } => Content {
             icon: "system-search-symbolic",
             icon_class: "no-matches",
             title: "No matches",
-            detail: format!("Nothing in the local store matches \u{201c}{query}\u{201d}."),
+            // The caveat goes *after* the query, not instead of it: what was
+            // searched for is still the thing to change. But "nothing
+            // matches" reads as proof the mail does not exist, so an
+            // unreachable account has to be named here or the sentence is a
+            // lie by omission (ADR 0005 Q10).
+            detail: match incomplete.as_slice() {
+                [] => format!("Nothing in the local store matches \u{201c}{query}\u{201d}."),
+                absent => format!(
+                    "Nothing in the local store matches \u{201c}{query}\u{201d}. {} \
+                     not reachable, so {} mail was searched only as far as it \
+                     had already synced.",
+                    naming(absent),
+                    if absent.len() == 1 { "its" } else { "their" },
+                ),
+            },
             hints: vec![("Back to the folder", "Esc")],
         },
+        State::Partial { accounts } => Content {
+            icon: "network-offline-symbolic",
+            icon_class: "offline",
+            // Named in the title, because the account is the fact. A title
+            // that said "Some accounts are offline" would make the reader
+            // open something else to find out which.
+            title: "Showing local mail",
+            detail: format!(
+                "{} not reachable, so {} mail is what was already synced. \
+                 Everything here still opens.",
+                naming(accounts),
+                if accounts.len() == 1 { "its" } else { "their" },
+            ),
+            hints: vec![("Retry now", "R")],
+        },
     }
+}
+
+/// "Personal is", "Personal and Work are", "Personal, Work and Archive are".
+///
+/// Every name, never "and 2 others": naming one of three absent accounts is
+/// its own omission, and the list is bounded by how many accounts a person
+/// configures.
+fn naming(accounts: &[String]) -> String {
+    let verb = if accounts.len() == 1 { "is" } else { "are" };
+    let names = match accounts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("{names} {verb}")
 }
 
 mod imp {
@@ -601,6 +753,7 @@ mod tests {
             derived,
             Some(State::NoMatches {
                 query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
             })
         );
         // Nothing underneath it to keep visible.
@@ -664,6 +817,7 @@ mod tests {
         let content = describe(
             &State::NoMatches {
                 query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
             },
             Instant::now(),
         );
@@ -778,6 +932,7 @@ mod tests {
             },
             State::NoMatches {
                 query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
             },
         ] {
             let content = describe(&state, now);
@@ -803,6 +958,7 @@ mod tests {
             },
             State::NoMatches {
                 query: "from:ada invoice".to_string(),
+                incomplete: Vec::new(),
             },
         ] {
             let content = describe(&state, now);
@@ -843,5 +999,192 @@ mod tests {
 
         let queued = describe(&State::Offline { queued: 3 }, now);
         assert!(queued.detail.contains("3 changes"));
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+
+    fn status(state: ConnectionState) -> SyncStatus {
+        SyncStatus {
+            state,
+            ..SyncStatus::default()
+        }
+    }
+
+    fn named(entries: &[(&str, ConnectionState)]) -> Vec<(String, SyncStatus)> {
+        entries
+            .iter()
+            .map(|(name, state)| ((*name).to_owned(), status(*state)))
+            .collect()
+    }
+
+    #[test]
+    fn every_account_online_says_nothing_at_all() {
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Online),
+        ]);
+        assert_eq!(
+            derive_aggregate(&accounts, 40, 4291, None),
+            None,
+            "a complete view has nothing to disclose, and a banner that is \
+             always up is a banner nobody reads"
+        );
+    }
+
+    #[test]
+    fn an_unreachable_account_is_named_over_the_rows_it_could_not_refresh() {
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Offline),
+        ]);
+        let derived = derive_aggregate(&accounts, 40, 4291, None);
+        assert_eq!(
+            derived,
+            Some(State::Partial {
+                accounts: vec!["Personal".to_owned()],
+            }),
+            "ADR 0005 Q10: the view names the account it cannot vouch for"
+        );
+        assert_eq!(
+            derived.unwrap().placement(40),
+            Placement::Banner,
+            "the rows are real mail and stay readable -- covering them to say \
+             the view is incomplete keeps the promise in words and breaks it \
+             on screen"
+        );
+    }
+
+    #[test]
+    fn a_failing_account_counts_as_one_it_cannot_vouch_for_too() {
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            (
+                "Personal",
+                ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
+            ),
+        ]);
+        assert_eq!(
+            derive_aggregate(&accounts, 40, 4291, None),
+            Some(State::Partial {
+                accounts: vec!["Personal".to_owned()],
+            })
+        );
+    }
+
+    #[test]
+    fn connecting_is_not_worth_naming_because_it_resolves_itself() {
+        // The single-account states fold `Connecting` into `Offline`, because
+        // from the user's chair both mean "local mail still works". A banner
+        // is different: it names an account, and one that appears for the two
+        // seconds an account takes to connect -- on every launch, for every
+        // account -- teaches people to stop reading banners.
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Connecting),
+        ]);
+        assert_eq!(derive_aggregate(&accounts, 40, 4291, None), None);
+    }
+
+    #[test]
+    fn every_unreachable_account_is_named_in_the_order_given() {
+        let accounts = named(&[
+            ("Work", ConnectionState::Offline),
+            ("Personal", ConnectionState::Online),
+            ("Archive", ConnectionState::Offline),
+        ]);
+        assert_eq!(
+            derive_aggregate(&accounts, 40, 4291, None),
+            Some(State::Partial {
+                accounts: vec!["Work".to_owned(), "Archive".to_owned()],
+            }),
+            "naming one of two absent accounts is its own lie by omission, \
+             and the order is the sidebar's so the colours line up"
+        );
+    }
+
+    #[test]
+    fn a_search_that_found_nothing_while_an_account_is_away_says_so() {
+        // ADR 0005 Q10 calls this the single most important instance of the
+        // rule: someone searches for an invoice, finds nothing, and concludes
+        // it does not exist. `NoMatches` on its own is a claim about the
+        // whole corpus, and here the corpus is short an account.
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Offline),
+        ]);
+        let derived = derive_aggregate(&accounts, 0, 4291, Some("invoice"));
+        assert_eq!(
+            derived,
+            Some(State::NoMatches {
+                query: "invoice".to_owned(),
+                incomplete: vec!["Personal".to_owned()],
+            }),
+            "an empty result set has to carry the accounts it could not \
+             search fully, or it reads as proof the mail is not there"
+        );
+    }
+
+    #[test]
+    fn a_search_that_found_nothing_with_everything_online_is_a_plain_no_match() {
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Online),
+        ]);
+        assert_eq!(
+            derive_aggregate(&accounts, 0, 4291, Some("invoice")),
+            Some(State::NoMatches {
+                query: "invoice".to_owned(),
+                incomplete: Vec::new(),
+            }),
+            "nothing to disclose, so the answer is the same one a single \
+             account gives"
+        );
+    }
+
+    #[test]
+    fn an_empty_aggregate_with_everything_online_is_still_inbox_zero() {
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Online),
+        ]);
+        assert_eq!(
+            derive_aggregate(&accounts, 0, 4291, None),
+            Some(State::InboxZero {
+                last_sync: None,
+                stored: 4291,
+            })
+        );
+    }
+
+    #[test]
+    fn an_unreachable_account_outranks_inbox_zero_when_there_are_no_rows() {
+        // "Nothing left to triage" is a claim about every account, and one of
+        // them did not answer. With nothing underneath, it takes the plate.
+        let accounts = named(&[
+            ("Work", ConnectionState::Online),
+            ("Personal", ConnectionState::Offline),
+        ]);
+        let derived = derive_aggregate(&accounts, 0, 4291, None);
+        assert_eq!(
+            derived,
+            Some(State::Partial {
+                accounts: vec!["Personal".to_owned()],
+            })
+        );
+        assert_eq!(derived.unwrap().placement(0), Placement::Full);
+    }
+
+    #[test]
+    fn a_disabled_account_never_reaches_here_so_it_is_never_named() {
+        // ADR 0005 Q10: `enabled = 0` drops out of Unified silently and
+        // correctly, because the user asked for that. It is expressed as the
+        // caller passing only enabled accounts -- an empty list is a view
+        // with nothing to disclose rather than one that is degraded.
+        assert_eq!(derive_aggregate(&[], 0, 0, None), None);
     }
 }
