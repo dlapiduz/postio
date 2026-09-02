@@ -505,6 +505,31 @@ impl Watcher {
         }
     }
 
+    /// Forget every mailbox's verification, without cancelling anything.
+    ///
+    /// For when something *else* drove the connection. A queued write has to
+    /// `SELECT` the mailbox to run, and `SELECT` answers with that mailbox's
+    /// current state — which the server thereafter considers the client to
+    /// have been told. An `IDLE` armed afterwards reports only what happens
+    /// *next*, so mail that landed between the last `IDLE` and the write is
+    /// in neither: the `IDLE` that would have caught it was not armed yet,
+    /// and the one that is armed now has already been told.
+    ///
+    /// The same reasoning [`interrupted`](Self::interrupted) is written from,
+    /// applied to a gap nothing was cancelled in. Without it the only floor
+    /// left is the poll interval, which is five minutes — long enough for a
+    /// delivery to sit invisible while the account looks perfectly healthy
+    /// (#807).
+    ///
+    /// Nothing is cancelled and no step is handed back, so this is safe to
+    /// call while a step is outstanding: it changes what the *next* decision
+    /// will be, not what the current one is doing.
+    pub fn unverified(&mut self) {
+        for target in self.targets.values_mut() {
+            target.verified_at = None;
+        }
+    }
+
     /// Parks the watcher and ends every outstanding command.
     ///
     /// What suspending a laptop means. Cancelling is the whole point: an
@@ -754,6 +779,50 @@ mod tests {
         assert!(
             matches!(watcher.next_poll(now), Watch::Wait { until: None }),
             "manual mode must never poll automatically either"
+        );
+    }
+
+    #[test]
+    fn a_write_driving_the_connection_costs_the_watcher_its_evidence() {
+        // #807. A queued write `SELECT`s the mailbox it writes to, and that
+        // answer is the server telling the client the mailbox's current
+        // state. An `IDLE` armed afterwards reports only what happens next,
+        // so a delivery that landed between the last `IDLE` and the write is
+        // in neither of them. Without this the next step is another `IDLE`
+        // and the only floor left is the poll interval -- five minutes of a
+        // message sitting invisible while the account looks healthy.
+        let mut watcher = Watcher::new(WatchPolicy::default(), &idling());
+        let mailbox = MailboxId::new(1);
+        let now = DateTime::<Utc>::MIN_UTC;
+        watcher.watch(mailbox, "INBOX", Attention::Push);
+
+        // Verified once, so the watcher is content to idle.
+        let status = MailboxStatus {
+            path: "INBOX".to_owned(),
+            generation: postio_model::Generation::new(1),
+            uid_next: Uid::new(3),
+            exists: 2,
+            unseen: None,
+            highest_mod_seq: None,
+            permanent_flags: postio_model::FlagSet::default(),
+            can_create_keywords: false,
+            read_only: false,
+        };
+        watcher.observed(mailbox, &status, now);
+        assert!(
+            matches!(watcher.next_push(now), Watch::Idle { .. }),
+            "a freshly verified mailbox idles; this test is about what \
+             happens to that"
+        );
+        watcher.woke(mailbox, &[], now);
+
+        watcher.unverified();
+
+        assert!(
+            matches!(watcher.next_push(now), Watch::Poll { .. }),
+            "after something else drove the connection the mailbox is \
+             *reconciled*, not idled at again -- only a STATUS can find what \
+             the SELECT already swallowed"
         );
     }
 
