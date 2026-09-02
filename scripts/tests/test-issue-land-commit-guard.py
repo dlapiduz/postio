@@ -74,6 +74,22 @@ def build_sandbox(root: Path, channel: str) -> None:
     )
     (dummy / "lib.rs").write_text("pub fn x() {}\n", encoding="utf-8")
 
+    # A lockfile, so the sandbox looks like a real checkout.
+    #
+    # Without one, cargo writes it during the gates -- after issue-land.sh's
+    # `git add -A`, which runs before them -- so it lands untracked and the
+    # "clean tree" assertions below fail depending on when cargo got there.
+    # That is a property of the fixture, not of the guard under test: this
+    # repository commits its Cargo.lock, and a sandbox that does not is
+    # testing a situation that cannot arise. Found by running the self-tests
+    # in parallel, where the timing shifted enough to expose it.
+    subprocess.run(
+        ["cargo", "generate-lockfile"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
     scripts = root / "scripts"
     scripts.mkdir()
     (scripts / "checks").mkdir()

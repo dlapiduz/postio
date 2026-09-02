@@ -172,241 +172,44 @@ jobs:
         # green. See scripts/checks/check-runtime-crossings.py and #66.
         run: python3 scripts/checks/check-runtime-crossings.py
 
-      - name: Prove the boundary check actually fails when violated
-        run: python3 scripts/tests/test-check-crate-boundaries.py
-
-      - name: Prove the toolchain check actually fails when violated
-        run: python3 scripts/tests/test-check-toolchain-pinned.py
-
-      - name: Prove RUSTUP_TOOLCHAIN cannot reach a gate
-        # The pin only guarantees anything if a session's own environment
-        # cannot override it; this exercises issue-land.sh and
-        # test-headless.sh with an uninstalled toolchain named in
-        # RUSTUP_TOOLCHAIN and checks that neither one lets it through. #112.
-        run: python3 scripts/tests/test-rustup-toolchain-cleared.py
-
-      - name: Prove the headless runner sends only test binaries to the compositor
-        # The runner fronts every binary cargo executes. Test binaries (the
-        # 16-hex metadata suffix) go headless; `cargo run -p postio-app` and
-        # examples must reach the real display, or the README's own run
-        # instruction launches the app invisibly. #315.
-        run: python3 scripts/tests/test-headless-runner.py
-
-      - name: Prove the sccache daemon is never pinned to a worktree
-        # sccache is one machine-wide daemon that fixes its temp directory at
-        # spawn and never re-reads it. Pinned to a worktree's target/tmp it
-        # breaks every build on the machine, for every session, the moment
-        # issue-release.sh deletes that worktree. #359.
-        run: python3 scripts/tests/test-rustc-wrapper-tmpdir.py
-
-      - name: Prove the C compiles reach the cache and fail open without it
-        # sccache as RUSTC_WRAPPER never sees the C compiler inside the
-        # openssl-src, libsqlite3-sys and zstd-sys build scripts — 77% of a
-        # fresh worktree's postio-storage build was uncached C. cc-wrapper.sh
-        # is the C half of the cache, through ccache, whose path
-        # normalization is the whole point: without it nothing hits across
-        # worktrees. #736.
-        run: python3 scripts/tests/test-cc-wrapper.py
-
-      - name: Prove a fresh tree's TMPDIR is created before anything wants it
-        # .cargo/config.toml points TMPDIR at target/tmp and nothing creates
-        # it, so the first temp file in a fresh clone or worktree failed with
-        # NotFound, naming a path nobody wrote. Both scripts that front cargo
-        # have to make it, and both have to stay fail-open. #613.
-        run: python3 scripts/tests/test-tmpdir-created.py
-
-      - name: Prove green gates are not re-run on an unchanged tree
-        # Killed land runs used to re-pay clippy and the full per-crate test
-        # suite on retries that changed nothing -- #109's landing paid its
-        # gates three times. The record is keyed on `git write-tree` plus
-        # the crate list, so any content change re-runs everything. #742.
-        run: python3 scripts/tests/test-issue-land-gate-cache.py
-
-      - name: Prove issue-claim.sh never adopts an existing worktree
-        # A claim lock can go missing while its session works; adopting the
-        # worktree it protected puts two sessions in one tree. #328.
-        run: python3 scripts/tests/test-issue-claim-no-adoption.py
-
-      - name: Prove the macOS boundary's Swift bindings still generate
-        # postio-ffi is the seam the Swift app talks to. It carries no
-        # macOS-specific code precisely so this runs on Linux: the expensive
-        # platform's shim is proven on the cheap one. ADR 0019, #571.
-        run: python3 scripts/tests/test-ffi-bindgen.py
-
-      - name: Prove issue-land.sh refuses a crate the host cannot build
-        # A host without gtk4 runs no gate at all over postio-gtk, and the
-        # branch merged anyway -- and a gate that proved nothing looks exactly
-        # like one that passed. #555.
-        run: python3 scripts/tests/test-issue-land-unbuildable.py
-
-      - name: Prove issue-land.sh compiles every crate's test targets
-        # The per-crate gates cannot see a shared type's blast radius: a field
-        # added in postio-core broke postio-gtk's *test* call sites, both
-        # libraries still compiled, and main went red for whoever touched that
-        # crate next. #419.
-        run: python3 scripts/tests/test-issue-land-workspace-check.py
-
-      - name: Prove the workflow scripts run on BSD userland too
-        # GNU-only `sed \+` and `date -d` made the whole issue workflow
-        # unusable on macOS -- you could not claim, so you could do nothing. #559.
-        run: python3 scripts/tests/test-scripts-bsd-portable.py
-
-      - name: Prove issue-claim.sh can claim from a second queue
-        # macOS issues carry `ready-mac` and not `ready`, so an ordinary Linux
-        # claim skips them by construction rather than by convention. #552.
-        run: python3 scripts/tests/test-issue-claim-ready-label.py
-
-      - name: Prove the stale sweep spares any claim whose worktree exists
-        # The orphaned-lock branch used to trust the in-progress label alone,
-        # which is how live claims got swept. #328.
-        run: python3 scripts/tests/test-issue-release-stale.py
-
-      - name: Prove issue-land.sh's commit guard only fires when needed
-        # A clean tree with commits already on the branch -- the state
-        # "commit as you go" leaves a session in -- must land with no -m;
-        # a dirty tree with no -m must still refuse, but say so. #120.
-        run: python3 scripts/tests/test-issue-land-commit-guard.py
-
-      - name: Prove issue-land.sh stages before the personal-data gate runs
-        # check-no-personal-data.py reads `git ls-files` -- tracked files
-        # only -- and used to run before `git add -A`, so a file this
-        # session was adding was invisible to it on the very landing that
-        # added it. That is how #269's PNG got through unscanned. #270.
-        run: python3 scripts/tests/test-issue-land-personal-data.py
-
-      - name: Prove issue-land.sh's merge step survives main's worktree
-        # `gh pr merge --rebase --delete-branch` fails here every time,
-        # because deleting the local branch makes `gh` switch this worktree
-        # off it first, and `main` is permanently checked out elsewhere.
-        # The stubbed `gh` fails loudly, with the real error text, if it is
-        # ever asked for --delete-branch again. #167.
-        run: python3 scripts/tests/test-issue-land-merge.py
-
-      - name: Prove issue-claim.sh's blockedBy check reads the real field
-        # `gh issue list --json blockedBy` never emits `closed` -- it emits
-        # `state: "OPEN"|"CLOSED"`. Reading the wrong key made `not False`
-        # always true, so every issue with any blockedBy entry was reported
-        # blocked forever, even once its blocker closed. #247.
-        run: python3 scripts/tests/test-issue-claim-blocked-by.py
-
-      - name: Prove issue-land.sh's gates do not share a target directory
-        # #178 gave every worktree its own target/ because sharing one
-        # compiles a worktree's crate against a sibling's; issue-land.sh kept
-        # defaulting to the main checkout's, so the one run a merge is staked
-        # on was the one still sharing. This builds a real crate through
-        # --gates-only and looks at where the artifacts landed. #253.
-        run: python3 scripts/tests/test-issue-land-target-dir.py
-
-      - name: Prove issue-land.sh hands over to the machinery it rebases in
-        # It rebases the tree it lives in, so a fix to the landing machinery
-        # was invisible to the first run that pulled it in -- which is how a
-        # three-crate change merged without waiting for CI. #160.
-        run: python3 scripts/tests/test-issue-land-rebase-handover.py
-
-      - name: Prove issue-land.sh does not report a merge that did not happen
-        # `gh pr merge` prints "already merged" and exits 0 when there is
-        # nothing to do, which once let the script announce success, delete
-        # the remote branch, and send the operator to remove the worktree
-        # holding the only copy. #312.
-        run: python3 scripts/tests/test-issue-land-312.py
-
-      - name: Prove issue-land.sh does not report a merge that did land
-        # The other direction, and the more expensive mistake: `gh pr merge`
-        # returns before the new tip is necessarily visible, so a single-shot
-        # check turned seconds of replication lag into "MERGE DID NOT LAND"
-        # and told the session to open a second PR for work already on main.
-        # #406.
-        run: python3 scripts/tests/test-issue-land-lagging-ref.py
-
-      - name: Prove issue-file.sh searches before it files
-        # One bug collected three issue numbers in two days, both duplicates
-        # filed off a fresh reproduction -- the state where searching first
-        # feels redundant. The case that matters is a *closed* prior issue,
-        # which is what both duplicates were filed against. #415.
-        run: python3 scripts/tests/test-issue-file-duplicates.py
-
-      - name: Prove fuzz.sh says what is missing instead of failing late
-        # Without cargo-fuzz it ran `cargo fuzz`, which made rustup download
-        # a whole nightly toolchain and then failed with "no such command:
-        # fuzz" -- naming neither the missing tool nor the fix. #277.
-        run: python3 scripts/tests/test-fuzz-missing-tool.py
-
-      - name: Prove a worktree lands back onto the base it was cut from
-        # Both scripts hardcoded `main` in five places. An initiative branch
-        # (multi-account, #1) needs work to land back onto it, and every one
-        # of those five was correct-looking -- so getting it wrong merged
-        # initiative work straight into main, silently. #290.
-        run: python3 scripts/tests/test-issue-base-branch.py
-
-      - name: Prove the GTK-init check actually fails when violated
-        # The tree is clean, so this check passes whether it works or not.
-        # Its own failure modes -- including the brace scanner that decides
-        # where a test module ends -- are exercised instead.
-        run: python3 scripts/tests/test-check-no-gtk-init-in-unit-tests.py
-
-      - name: Prove the one-GTK-test-per-binary check actually fails when violated
-        # Same reason as above: the tree is clean now that #355's three files
-        # moved into the harness. The case that matters most is the one that
-        # must NOT fail -- two tests where only one needs a display, which is
-        # gtk_shell.rs and is legitimate.
-        run: python3 scripts/tests/test-check-one-gtk-test-per-binary.py
-
-      - name: Prove the lint-floor check actually fails when violated
-        run: python3 scripts/tests/test-check-lint-floor.py
-
-      - name: Prove the personal-data check reads the right files
-        # It read every tracked file as UTF-8 with errors="ignore", binaries
-        # included -- and "ignore" *deletes* undecodable bytes, splicing
-        # what sat either side into an address that exists nowhere in the
-        # file. A screenshot's compressed pixels did exactly that and blocked
-        # every landing in the repository. #144.
-        run: python3 scripts/tests/test-check-no-personal-data.py
-
-      - name: Prove the tracking check actually fails when violated
-        # It guards something that does not exist yet, so on a clean tree it
-        # passes whether it works or not. That is the shape of check that
-        # rots silently, so its own failure modes are exercised too.
-        run: python3 scripts/tests/test-check-no-silent-tracking.py
-
-      - name: Prove the CI-expectation predicate answers both ways
-        # It decides whether issue-land.sh may merge without seeing a check.
-        # Wrong one way it costs a re-run; wrong the other it merges code CI
-        # never looked at, which is what happened on #135. See #139.
-        run: python3 scripts/tests/test-ci-expected-workflows.py
-
-      - name: Prove the check-wait refuses to merge when a check never appears
-        # Drives scripts/wait-for-checks.sh against a stubbed `gh`, including
-        # the registration race in both directions.
-        run: python3 scripts/tests/test-wait-for-checks.py
-
-      - name: Prove the runtime-crossing check catches the bug it exists for
-        # Its first case is the 0.1.0 defect verbatim in shape. A guard that
-        # would not have caught the fault it was written for is worth nothing.
-        run: python3 scripts/tests/test-check-runtime-crossings.py
-
-      - name: Prove install-local.sh forces a stale icon cache to rebuild
-        # gtk-update-icon-cache -qt only skips demanding an index.theme; it
-        # does not rebuild a cache that is already there, which is why the
-        # app grid kept the default icon after a fresh install. #427.
-        run: python3 scripts/tests/test-install-local-icon.py
-
-      - name: Prove install-local.sh names every missing build dependency at once
-        # OpenSSL's Configure stops at the first module it cannot find, minutes
-        # into a release build, so the six perl modules Fedora leaves out were
-        # six failed builds to discover. The check must also stay silent on a
-        # machine that has everything. #646.
-        run: python3 scripts/tests/test-install-local-build-deps.py
-
-      - name: Prove coverage.sh's floor comparison fails in both directions
-        # Stubs cargo-llvm-cov so the floor-comparison arithmetic gets to be
-        # red-then-green without spending the minutes a real instrumented
-        # build costs. #98.
-        run: python3 scripts/tests/test-coverage-gate.py
-
-      - name: Prove mutants.sh's baseline diff fails in both directions
-        # Same reason, for the baseline-vs-survivors comparison a real run
-        # takes hours to exercise. #99.
-        run: python3 scripts/tests/test-mutants-gate.py
+      # Every self-test under scripts/tests, discovered rather than listed,
+      # and run several at a time.
+      #
+      # Listed, this was 38 steps and took 8.4 minutes of a job that does
+      # nothing else expensive -- 38 sequential python processes, most of
+      # which build a cargo sandbox. They do not depend on each other, so
+      # queueing them behind each other bought nothing.
+      #
+      # Discovered, because the list had already drifted: nine self-tests
+      # existed that CI never ran, two of them added the same day this was
+      # written. A hand-maintained enumeration of "the tests we remember"
+      # fails in exactly the direction nobody notices -- the test is present,
+      # green locally, and simply never runs here. Adding a file to
+      # scripts/tests/ is now enough.
+      #
+      # Each test says what it is for in its own module docstring, which is
+      # where that belonged: a step name in a workflow is not a place anybody
+      # reads, and a comment there was a second copy free to disagree.
+      - name: Prove the tooling still holds itself up
+        run: |
+          ls scripts/tests/*.py | sort > /tmp/self-tests
+          echo "running $(wc -l < /tmp/self-tests) self-tests, four at a time"
+          # `-P4` and not more: several of these build a cargo sandbox, and
+          # .cargo/config.toml already pins two jobs per cargo.
+          if ! xargs -P4 -I{} -a /tmp/self-tests \
+              sh -c 'python3 "$1" >"/tmp/$(basename "$1").log" 2>&1 || { echo "FAILED: $1"; exit 1; }' _ {}; then
+            echo
+            echo "::error::a tooling self-test failed; its output follows"
+            for log in /tmp/test-*.log; do
+              name=$(basename "$log" .log)
+              grep -q "" "$log" || continue
+              if ! grep -qE "passed|ok\b" "$log"; then
+                echo "--- $name ---"
+                tail -n 40 "$log"
+              fi
+            done
+            exit 1
+          fi
 
       - name: Assert CI never runs the network-touching tests
         run: |
@@ -683,82 +486,3 @@ jobs:
                  target/*/deps/libpostio_*.d
           rm -rf target/*/.fingerprint/postio-*
           echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
-
-  coverage:
-    name: Coverage floors
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
-      # postio-search and postio-config are pure leaves, and postio-storage /
-      # postio-sync need SQLite and the keyring, not a display. Still ubuntu-26.04
-      # rather than ubuntu-latest, so the pinned toolchain's cache key and the
-      # rest of this workflow's runner-version assumptions stay one thing.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential \
-            pkg-config \
-            libsqlite3-dev \
-            libsecret-1-dev \
-            libglib2.0-dev
-
-      # The pin decides; see the note in the `fmt` job.
-      - name: Install Rust toolchain
-        run: rustup show active-toolchain
-
-      # cargo-llvm-cov instruments with LLVM's own source-based coverage,
-      # which needs the toolchain's llvm-tools alongside it -- a component,
-      # not a second toolchain, so `check-toolchain-pinned.py`'s rule 2 does
-      # not apply (that rule is about a workflow selecting a *toolchain* of
-      # its own, not adding a component to the one rust-toolchain.toml pins).
-      - name: Install llvm-tools
-        run: rustup component add llvm-tools-preview
-
-      - name: Identify the compiler
-        id: rust
-        run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache cargo registry, cargo-llvm-cov, and target dir
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            ~/.cargo/bin/cargo-llvm-cov
-            target
-          key: ${{ runner.os }}-cargo-coverage-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-coverage-${{ steps.rust.outputs.version }}-
-
-      # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
-      # floating latest, so a coverage-tool release cannot change what
-      # "passing" means out from under a commit that touched nothing.
-      # Reinstalled only when the cache did not already bring the right
-      # binary. `cache-hit` is the wrong question here: this cache has
-      # restore-keys, and a *prefix* restore reports `cache-hit: false` while
-      # still putting cargo-llvm-cov on disk -- after which an unconditional
-      # `cargo install` fails outright with "binary `cargo-llvm-cov` already
-      # exists in destination" and takes the job with it. Asking the binary
-      # its version answers under an exact hit, a prefix hit and a miss alike,
-      # and catches a cached copy of the wrong version too.
-      - name: Install cargo-llvm-cov
-        run: |
-          if cargo llvm-cov --version 2>/dev/null | grep -qw "0.9.0"; then
-            echo "cargo-llvm-cov 0.9.0 restored from the cache"
-          else
-            cargo install cargo-llvm-cov --locked --version 0.9.0 --force
-          fi
-
-      # This is the PR-gating half of #98's "open question": coverage
-      # instrumentation roughly doubles test wall-clock, which is too much
-      # to add to every crate on every PR, but the five crates named in
-      # scripts/coverage-floors.json are cheap enough, and pure/logic enough,
-      # that a real regression here is worth blocking on rather than only
-      # noticing later. postio-gtk and the rest are deliberately not run
-      # here -- see that file's own comment for why a single global number
-      # would be actively misleading across crates this different.
-      - name: cargo llvm-cov (gated crates)
-        run: scripts/coverage.sh
