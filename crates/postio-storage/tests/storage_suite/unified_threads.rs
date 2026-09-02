@@ -410,3 +410,60 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
         assert_eq!(actual, expected, "the window at row {offset}");
     }
 }
+
+/// An account the user disabled is not in the unified view at all.
+///
+/// ADR 0005 Q10 draws the line: a *disabled* account is not a *failing* one.
+/// It drops out silently and correctly, because the user asked for that —
+/// which is the one case where saying nothing is right, and the reason
+/// `ListScope::Unified` is documented as every enabled account's mail.
+///
+/// It has to hold for the partner search too, not just the page: a thread in
+/// a disabled account that absorbed its partner in an enabled one would take
+/// a row the user can see and fold it into a row they cannot.
+#[test]
+fn a_disabled_account_is_not_in_the_unified_view_at_all() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+
+    // One conversation each, and one they share -- with the shared one newer
+    // in the account that is about to be switched off, so it would be the
+    // group's head and would take the enabled copy down with it.
+    file(&connection, a, a_inbox, 1, Some("<solo-a@example.com>"), &[], "Only in A");
+    file(&connection, b, b_inbox, 2, Some("<solo-b@example.com>"), &[], "Only in B");
+    file(&connection, a, a_inbox, 3, Some("<pair@example.com>"), &[], "Shared");
+    file(&connection, b, b_inbox, 9, Some("<pair@example.com>"), &[], "Shared");
+
+    let repository = ThreadRepository::new(&connection);
+    assert_eq!(
+        repository.unified_count().expect("count"),
+        3,
+        "with both accounts enabled: two solos and the shared pair"
+    );
+
+    postio_storage::repository::AccountRepository::new(&connection)
+        .set_enabled(b, false)
+        .expect("disable the second account");
+
+    let rows: Vec<Option<String>> = repository
+        .unified_page(&UnifiedThreadListQuery {
+            limit: 10,
+            after: None,
+        })
+        .expect("unified page")
+        .into_iter()
+        .map(|group| group.row.subject)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![Some("shared".to_owned()), Some("only in a".to_owned())],
+        "the disabled account's own conversation is gone, and the shared one \
+         is still drawn from the account that is still enabled"
+    );
+    assert_eq!(
+        repository.unified_count().expect("count"),
+        2,
+        "the count agrees with the rows, or the list grows placeholders"
+    );
+}

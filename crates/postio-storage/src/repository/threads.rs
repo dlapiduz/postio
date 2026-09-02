@@ -118,6 +118,25 @@ impl ThreadGroup {
     }
 }
 
+/// `alias`'s thread belongs to an account the user has switched on.
+///
+/// The unified view is every *enabled* account's mail, and ADR 0005 Q10 is
+/// explicit that this is the one omission that needs no disclosure: a
+/// disabled account drops out silently and correctly, because the user asked
+/// for that. It is a failing account that has to be named, and that is a
+/// different axis entirely.
+///
+/// Applied to the partner search as well as to the page, and that is the half
+/// that is easy to miss: a thread in a disabled account that absorbed its
+/// partner in an enabled one would take a row the user can still see and fold
+/// it into a row they cannot.
+fn enabled_account(alias: &str) -> String {
+    format!(
+        "{alias}account_id IN \
+         (SELECT id FROM accounts WHERE enabled = 1 AND pending_deletion = 0)"
+    )
+}
+
 /// `THREAD_COLUMNS`, each qualified with `alias.` for a joined statement.
 fn prefixed_thread_columns(alias: &str) -> String {
     THREAD_COLUMNS
@@ -594,10 +613,10 @@ impl<'a> ThreadRepository<'a> {
         let count: i64 = self.connection.query_row(
             &format!(
                 "SELECT count(*) FROM threads t
-                  WHERE t.message_count > 0
+                  WHERE t.message_count > 0 AND {head_enabled}
                     AND NOT EXISTS (
                           SELECT 1 FROM threads p
-                           WHERE p.message_count > 0
+                           WHERE p.message_count > 0 AND {partner_enabled}
                              AND p.account_id <> t.account_id
                              AND (p.last_at, p.id) > (t.last_at, t.id)
                              AND (
@@ -613,7 +632,9 @@ impl<'a> ThreadRepository<'a> {
                                               SELECT tm.rfc_message_id FROM messages tm
                                                WHERE tm.thread_id = t.id AND tm.{MEMBER}
                                                ORDER BY tm.received_at, tm.id
-                                               LIMIT 1))))"
+                                               LIMIT 1))))",
+                head_enabled = enabled_account("t."),
+                partner_enabled = enabled_account("p."),
             ),
             [window_millis],
             |row| row.get(0),
@@ -630,8 +651,9 @@ impl<'a> ThreadRepository<'a> {
         };
         let mut statement = self.connection.prepare(&format!(
             "SELECT {THREAD_COLUMNS} FROM threads
-              WHERE message_count > 0{cursor}
-              ORDER BY last_at DESC, id DESC LIMIT {limit}"
+              WHERE message_count > 0 AND {enabled}{cursor}
+              ORDER BY last_at DESC, id DESC LIMIT {limit}",
+            enabled = enabled_account("")
         ))?;
         let mut arguments: Vec<i64> = Vec::new();
         if let Some(after) = after {
@@ -697,8 +719,9 @@ impl<'a> ThreadRepository<'a> {
                 "SELECT DISTINCT m.rfc_message_id, {columns} FROM threads t
                    JOIN messages m ON m.thread_id = t.id
                   WHERE m.rfc_message_id IN ({root_placeholders})
-                    AND t.message_count > 0",
-                columns = prefixed_thread_columns("t")
+                    AND t.message_count > 0 AND {enabled}",
+                columns = prefixed_thread_columns("t"),
+                enabled = enabled_account("t.")
             ))?;
             let rows = statement.query_map(params_from_iter(&root_keys), |row| {
                 let root: String = row.get(0)?;
@@ -735,7 +758,9 @@ impl<'a> ThreadRepository<'a> {
                 .join(", ");
             let mut statement = self.connection.prepare(&format!(
                 "SELECT {THREAD_COLUMNS} FROM threads
-                  WHERE subject IN ({subject_placeholders}) AND message_count > 0"
+                  WHERE subject IN ({subject_placeholders}) AND message_count > 0
+                    AND {enabled}",
+                enabled = enabled_account("")
             ))?;
             let rows = statement.query_map(params_from_iter(&subjects), read_thread)?;
             for candidate in rows {
