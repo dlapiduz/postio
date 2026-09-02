@@ -15,12 +15,25 @@ use postio_config::live::{LiveConfig, Reload};
 use postio_config::watch::{ConfigWatcher, WatchOptions};
 use postio_config::{Checked, Density};
 
-/// Short enough to keep the suite quick, long enough to coalesce one save.
-const DEBOUNCE: Duration = Duration::from_millis(60);
+/// Long enough to coalesce a burst, short enough to keep the suite quick.
+///
+/// 60ms was too short and failed intermittently on CI (#781), always in the
+/// coverage job: `a_burst_of_writes_is_coalesced_into_one_reload` writes the
+/// file five times and expects one reload, which only holds while the whole
+/// burst lands inside one debounce window. Instrumented binaries on a shared
+/// runner do not write five files in 60ms reliably, the window closed
+/// mid-burst, and the second reload failed an assertion about coalescing that
+/// the watcher had actually honoured.
+///
+/// The property under test is "a burst becomes one reload", not any
+/// particular number of milliseconds, so the window is sized to hold a burst
+/// on the slowest machine that runs this rather than the fastest.
+const DEBOUNCE: Duration = Duration::from_millis(300);
 /// Generous: a loaded CI box can take a while to deliver an inotify event.
 const EXPECT: Duration = Duration::from_secs(5);
-/// How long "and nothing else happened" is worth waiting for.
-const QUIET: Duration = Duration::from_millis(400);
+/// How long "and nothing else happened" is worth waiting for. Longer than
+/// DEBOUNCE, or it could not observe a second window opening at all.
+const QUIET: Duration = Duration::from_millis(600);
 
 struct TempDir(PathBuf);
 
