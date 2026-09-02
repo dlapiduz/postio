@@ -61,7 +61,11 @@ fn engine_for(
     backend: Arc<MockBackend>,
 ) -> (Engine, tempfile::TempDir) {
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = event_channel();
 
     let engine = Engine::spawn(EngineParts {

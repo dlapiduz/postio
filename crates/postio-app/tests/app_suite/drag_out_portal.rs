@@ -178,7 +178,11 @@ pub fn a_dragged_message_survives_the_portal() {
     // ── a store with one account, one folder and one real message ───────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let message_id = {
         let connection = database.connection().expect("a connection");

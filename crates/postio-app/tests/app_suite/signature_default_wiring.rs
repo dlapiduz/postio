@@ -52,7 +52,11 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
     let database = test_support::memory();
     let report = seed_small(&database, 31);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let connection = database.connection().expect("a connection");
     let mut account = AccountRepository::new(&connection)

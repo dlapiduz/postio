@@ -512,12 +512,15 @@ impl Session {
                         tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
                             message: error.to_string(),
                         })?;
-                    let blobs =
-                        postio_storage::BlobStore::open(scratch.path()).map_err(|error| {
-                            SessionError::StoreUnavailable {
-                                message: error.to_string(),
-                            }
-                        })?;
+                    let blobs = postio_storage::BlobStore::open(
+                        scratch.path(),
+                        &postio_storage::key::BlobKeys::derive(
+                            &postio_storage::key::StoreKey::generate(),
+                        ),
+                    )
+                    .map_err(|error| SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    })?;
                     (blobs, scratch)
                 }
             };

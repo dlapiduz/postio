@@ -54,7 +54,11 @@ pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // ── exactly `run`'s arrangement ─────────────────────────────────────
     // One hub. The bus emits into it through the bridge; the sync engine

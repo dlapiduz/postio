@@ -1623,7 +1623,11 @@ mod tests {
         let report = seed_small(&database, 11);
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
         let (sink, _events) = postio_core::bridge::event_channel();
 
         let mut mailbox = MockMailbox::new(&inbox.path);

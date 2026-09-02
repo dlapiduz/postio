@@ -57,7 +57,11 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
         .expect("the fixture has a Drafts folder")
         .clone();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // Exactly what an interrupted submission leaves behind: the draft is
     // still here, it is not `Failed`, and nothing is going to retry it.

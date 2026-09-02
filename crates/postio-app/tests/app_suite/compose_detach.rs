@@ -62,7 +62,11 @@ pub fn the_detach_key_reaches_the_composer_in_a_wired_application() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();

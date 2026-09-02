@@ -84,7 +84,11 @@ fn message_with_an_inline_logo() -> MockMessage {
 #[tokio::test(flavor = "current_thread")]
 async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     let database = test_support::temp();
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let connection = database.connection().expect("checkout");
     let account = test_support::account(&connection);
     let inbox = test_support::mailbox(&connection, &account, INBOX);

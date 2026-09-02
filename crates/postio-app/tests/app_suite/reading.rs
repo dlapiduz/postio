@@ -75,7 +75,11 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // Every message but the newest flagged, before anything is wired: the
     // Flagged view is where rows are genuinely single messages (see the

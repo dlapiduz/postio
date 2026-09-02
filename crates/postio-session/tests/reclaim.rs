@@ -25,7 +25,11 @@ fn store_with_a_message() -> (
     postio_model::MessageId,
 ) {
     let database = test_support::temp();
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let connection = database.connection().expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection);
 
@@ -120,7 +124,11 @@ fn a_blob_younger_than_the_grace_period_is_left_alone() {
     // with no grace period would delete the body of a message that was
     // mid-fetch. The default is an hour; production must not pass `ZERO`.
     let database = test_support::temp();
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     blobs
         .put(b"written a moment ago, not committed yet")
         .expect("put");
@@ -139,7 +147,11 @@ fn debris_from_a_torn_off_fetch_is_purged() {
     // case no destructor ran at all: a power cut or a kill -9 mid-fetch leaves
     // a `.part` file nothing will ever finish.
     let database = test_support::temp();
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     std::fs::write(
         blobs.temporary_directory().join("1234-0.part"),
         b"half a message",

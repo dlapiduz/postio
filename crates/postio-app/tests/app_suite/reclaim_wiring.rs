@@ -52,7 +52,11 @@ pub fn opening_a_store_reclaims_what_nothing_references() {
     assert!(report.message_count > 0, "the fixture seeded no mail");
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // What a deleted message leaves behind: bytes on disk that no row names.
     // Written directly rather than by deleting a seeded message, so the test

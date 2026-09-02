@@ -75,7 +75,11 @@ pub fn moving_and_reopening_a_message_costs_one_document_load_each() {
     //    document rather than a plate ──────────────────────────────────────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (account, newest, older) = {
         let connection = database.connection().expect("a connection");

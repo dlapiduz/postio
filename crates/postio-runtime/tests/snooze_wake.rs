@@ -51,7 +51,11 @@ async fn a_due_snooze_wakes_and_repaints_without_being_asked() {
     };
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, events) = event_channel();
 
     let engine = Engine::spawn(EngineParts {

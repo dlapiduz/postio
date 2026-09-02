@@ -123,7 +123,11 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
     assert_eq!(inbox.role, MailboxRole::Inbox);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, events) = event_channel();
 
     let engine = Engine::spawn(EngineParts {

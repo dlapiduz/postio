@@ -18,6 +18,7 @@
 
 mod accounts;
 mod blob;
+mod blob_encryption;
 mod body;
 mod bulk;
 mod connection;

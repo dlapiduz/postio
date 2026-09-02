@@ -94,8 +94,11 @@ pub fn a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_o
 
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (account, inbox) = {
         let connection = database.connection().expect("a connection");

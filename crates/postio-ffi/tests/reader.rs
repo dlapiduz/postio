@@ -19,7 +19,9 @@ use postio_ui::reader::document as shared;
 fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory();
     let scratch = tempfile::tempdir().expect("a scratch directory");
-    let blobs = postio_storage::BlobStore::open(scratch.path()).expect("a blob store");
+    let blobs =
+        postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
 
     let id = {
         let connection = database.connection().expect("a connection");
@@ -120,7 +122,9 @@ fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
     // empty column. The boundary must carry the reason, not an empty string.
     let database = test_support::memory();
     let scratch = tempfile::tempdir().expect("a scratch directory");
-    let blobs = postio_storage::BlobStore::open(scratch.path()).expect("a blob store");
+    let blobs =
+        postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
     let id = {
         let connection = database.connection().expect("a connection");
         let (account, inbox) = test_support::account_with_inbox(&connection);
@@ -152,7 +156,9 @@ fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
 fn two_messages_with_inline_parts() -> (std::sync::Arc<Session>, i64, i64) {
     let database = test_support::memory();
     let scratch = tempfile::tempdir().expect("a scratch directory");
-    let blobs = postio_storage::BlobStore::open(scratch.path()).expect("a blob store");
+    let blobs =
+        postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
 
     let (first, second) = {
         let connection = database.connection().expect("a connection");

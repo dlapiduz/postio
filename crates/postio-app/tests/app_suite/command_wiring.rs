@@ -162,7 +162,11 @@ pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     let database = test_support::memory();
     seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // Composed exactly as `open_with` composes it, so `wired` is the same
     // list the real application would check a command against.

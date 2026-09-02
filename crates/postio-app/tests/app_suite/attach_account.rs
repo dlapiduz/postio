@@ -119,7 +119,11 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     let report = seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let (bridge, _replies) =

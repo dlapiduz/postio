@@ -895,7 +895,8 @@ mod tests {
         // ── Run one: type, park the draft with Esc, exit cleanly ─────────
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();
@@ -926,7 +927,8 @@ mod tests {
         // ── Run two: the draft is parked, not in the way ─────────────────
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();
@@ -982,7 +984,8 @@ mod tests {
         // committed is what has to survive it, not an orderly exit.
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();
@@ -1009,7 +1012,8 @@ mod tests {
         // ── Run two: a fresh window, a fresh database handle, same file ──
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();

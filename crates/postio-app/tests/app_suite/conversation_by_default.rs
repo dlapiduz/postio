@@ -95,8 +95,11 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
     let newest = threaded_message(&database, account.id, inbox, thread, 1, "the reply");
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

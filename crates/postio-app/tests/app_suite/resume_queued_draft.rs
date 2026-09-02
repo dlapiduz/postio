@@ -59,7 +59,11 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         .expect("the fixture has a Drafts folder")
         .clone();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // A draft handed to the operation queue for sending -- exactly what
     // `Composer::send` leaves behind, and never drained, so it is still

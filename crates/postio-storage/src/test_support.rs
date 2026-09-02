@@ -39,7 +39,7 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::Database;
-use crate::key::{Purpose, StoreKey, Subkey};
+use crate::key::{BlobKeys, Purpose, StoreKey, Subkey};
 use crate::repository::{AccountRepository, MailboxRepository};
 
 /// The key every scratch database is encrypted under.
@@ -54,7 +54,30 @@ use crate::repository::{AccountRepository, MailboxRepository};
 /// not a secret and must never be used by anything that ships; nothing outside
 /// the `test-support` feature can reach it.
 pub fn key() -> Subkey {
-    StoreKey::from_bytes([0x5a; crate::key::KEY_BYTES]).derive(Purpose::Database)
+    master().derive(Purpose::Database)
+}
+
+/// The keys every scratch blob store is opened under.
+///
+/// The blob half of [`key`], from the same fixed master, and there for the
+/// same reason: ADR 0014 Q2 gave blobs a per-file AEAD and a keyed id, and a
+/// suite that opened plaintext blob stores would be testing a configuration
+/// that no longer ships. Every `BlobStore::open` in the workspace's tests goes
+/// through this, so the encrypted path is the ordinary path.
+///
+/// Fixed, so a test can close a store and reopen it — and so two stores in one
+/// test dedup against each other, which several of them rely on. A test that
+/// is *about* two installations not sharing ids derives its own keys from
+/// different masters instead.
+pub fn blob_keys() -> BlobKeys {
+    BlobKeys::derive(&master())
+}
+
+/// The master key both of the above derive from.
+///
+/// Not a secret, and nothing outside the `test-support` feature can reach it.
+fn master() -> StoreKey {
+    StoreKey::from_bytes([0x5a; crate::key::KEY_BYTES])
 }
 
 /// A migrated scratch database, shared by every connection its pool opens.

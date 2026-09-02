@@ -14,7 +14,11 @@ use postio_sync::blob_sink::BlobSink;
 /// way of doing it would be a second thing to keep in step.
 fn store() -> (postio_storage::test_support::TempDatabase, BlobStore) {
     let database = postio_storage::test_support::temp();
-    let store = BlobStore::open(database.directory().join("blobs")).expect("open");
+    let store = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("open");
     (database, store)
 }
 

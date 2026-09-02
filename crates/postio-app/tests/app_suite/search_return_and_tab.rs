@@ -73,7 +73,8 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     );
     ensure_search_index(&database).expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = BlobStore::open(directory.keep(), &postio_storage::test_support::blob_keys())
+        .expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();

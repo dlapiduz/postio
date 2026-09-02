@@ -878,7 +878,11 @@ fn on_disk() -> OnDisk {
     let connection = database.connection().expect("checkout");
     let account = test_support::account(&connection);
     let inbox = test_support::mailbox(&connection, &account, INBOX);
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("a blob store");
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     OnDisk {
         database,

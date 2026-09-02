@@ -413,7 +413,10 @@ pub fn open_store_at(
     };
     // Beside the database, not inside it: bodies and attachments are
     // content-addressed files, and SQLite holds the key and the metadata.
-    let blobs = match BlobStore::open(path.with_file_name("blobs")) {
+    let blobs = match BlobStore::open(
+        path.with_file_name("blobs"),
+        &postio_storage::key::BlobKeys::derive(store_key),
+    ) {
         Ok(blobs) => blobs,
         Err(error) => {
             tracing::error!(%error, "cannot open the blob store");

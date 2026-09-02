@@ -103,7 +103,11 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
     // ── a store holding two messages, neither with a body ────────────────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (account, shown, other) = {
         let connection = database.connection().expect("a connection");

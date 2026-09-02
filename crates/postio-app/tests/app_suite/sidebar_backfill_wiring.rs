@@ -61,7 +61,11 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
     let inbox = report.mailbox(MailboxRole::Inbox).expect("a seeded inbox");
     let inbox_id = inbox.id;
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
