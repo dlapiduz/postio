@@ -97,7 +97,11 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     let database = test_support::memory();
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = postio_core::bridge::event_channel();
 
     let backend = Arc::new(server(120));

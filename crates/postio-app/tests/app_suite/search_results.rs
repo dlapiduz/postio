@@ -87,7 +87,11 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
     );
     ensure_search_index(&database).expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();

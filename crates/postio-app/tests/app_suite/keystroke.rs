@@ -75,7 +75,11 @@ pub fn pressing_a_archives_the_row_in_the_database() {
         .id
         .get();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // The real bus, over the real store — the piece that was a no-op.
     let state = SharedState::default();

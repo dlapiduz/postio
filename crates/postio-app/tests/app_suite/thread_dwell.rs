@@ -129,8 +129,11 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
     let members = members_of(new_thread(), 0);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // A *real* bus, exactly as `dwell_wiring.rs` argues: the question is
     // whether focus reaches a verb that writes to SQLite.

@@ -43,7 +43,11 @@ struct World {
 
 fn world(raw: &[u8], with_message_id: bool) -> World {
     let database = test_support::temp();
-    let blobs = BlobStore::open(database.directory().join("blobs")).expect("blobs");
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("blobs");
     let connection = database.connection().expect("checkout");
 
     let (source, source_inbox) = test_support::account_with_inbox(&connection);

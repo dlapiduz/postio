@@ -146,8 +146,11 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

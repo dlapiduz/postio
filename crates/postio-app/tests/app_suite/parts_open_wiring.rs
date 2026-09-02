@@ -100,7 +100,11 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     // ── a store with one account, one folder, and a real attached message ──
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     {
         let connection = database.connection().expect("a connection");

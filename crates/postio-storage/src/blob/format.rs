@@ -8,10 +8,20 @@
 //! rewriting every blob a user owns. Under ADR 0016 that is their entire
 //! mailbox, so a flag day here is measured in hours of somebody's disk.
 //!
-//! So blobs written from now on carry a fixed eight-byte header saying what
-//! they are, and readers dispatch on it. The reserved byte is where ADR 0014's
-//! encryption fields land, and the version is what lets that arrive without
-//! another flag day.
+//! So blobs written from now on carry a fixed header saying what they are, and
+//! readers dispatch on it. The reserved byte was where ADR 0014's encryption
+//! field would land, and the version is what let it arrive without another
+//! flag day. #301 spent both: the reserved byte is now the cipher, the version
+//! is 2, and a random nonce prefix follows the fixed part.
+//!
+//! # Two versions, one of them read-only
+//!
+//! Version 1 is the compressed-but-unencrypted container this build no longer
+//! writes. It is still *read*, because the pre-release migration (ADR 0014 Q4)
+//! has to open the old store to re-encrypt it, and so does a development store
+//! nobody has migrated yet. Version 2 is always encrypted; there is no cipher
+//! value meaning "none" at that version, which is what keeps ADR 0014's
+//! no-plaintext-fallback rule from being expressible here.
 //!
 //! # Legacy blobs are not migrated
 //!
@@ -26,6 +36,7 @@
 //! the fourth would have to match four more magic bytes and two valid
 //! discriminants as well to be mistaken for a container.
 
+use crate::blob::seal;
 use crate::error::{Error, Result};
 
 /// Marks a file as a container rather than bare plaintext.
@@ -33,14 +44,30 @@ use crate::error::{Error, Result};
 /// Leading NUL on purpose; see the [module documentation](self).
 pub(crate) const MAGIC: [u8; 5] = [0x00, b'P', b'B', b'L', b'B'];
 
-/// The only container version so far.
-pub(crate) const VERSION: u8 = 1;
+/// The compressed, unencrypted container. Read, never written; see the
+/// [module documentation](self).
+pub(crate) const VERSION_PLAIN: u8 = 1;
 
-/// Bytes of header before the payload begins.
+/// The container this build writes: compressed and encrypted.
+pub(crate) const VERSION: u8 = 2;
+
+/// Bytes of header shared by both versions.
 ///
 /// `MAGIC` (5) ‖ version (1) ‖ codec (1) ‖ dictionary id (4, little-endian)
-/// ‖ reserved (1).
-pub(crate) const HEADER_LEN: usize = MAGIC.len() + 7;
+/// ‖ cipher (1).
+pub(crate) const FIXED_LEN: usize = MAGIC.len() + 7;
+
+/// Bytes of header before an encrypted payload begins.
+///
+/// [`FIXED_LEN`] plus the per-blob nonce prefix. A version 1 container's
+/// payload begins at `FIXED_LEN` instead.
+pub(crate) const HEADER_LEN: usize = FIXED_LEN + seal::NONCE_PREFIX_LEN;
+
+/// Cipher byte for a version 1 container, which has none.
+const CIPHER_NONE: u8 = 0;
+
+/// Cipher byte for XChaCha20-Poly1305 over 64 KiB chunks (`blob::seal`).
+const CIPHER_XCHACHA20_POLY1305: u8 = 1;
 
 /// Dictionary id meaning "compressed against no dictionary".
 ///
@@ -104,25 +131,49 @@ impl Codec {
 }
 
 /// The bytes that precede a container's payload.
-pub(crate) fn header(codec: Codec, dictionary: u32) -> [u8; HEADER_LEN] {
+pub(crate) fn header(
+    codec: Codec,
+    dictionary: u32,
+    nonce: &[u8; seal::NONCE_PREFIX_LEN],
+) -> [u8; HEADER_LEN] {
     let mut bytes = [0u8; HEADER_LEN];
     bytes[..MAGIC.len()].copy_from_slice(&MAGIC);
     bytes[MAGIC.len()] = VERSION;
     bytes[MAGIC.len() + 1] = codec.as_byte();
     bytes[MAGIC.len() + 2..MAGIC.len() + 6].copy_from_slice(&dictionary.to_le_bytes());
-    // The last byte stays zero: reserved for ADR 0014's encryption flags, so
-    // adding them is a version bump rather than a change of shape.
+    bytes[MAGIC.len() + 6] = CIPHER_XCHACHA20_POLY1305;
+    bytes[FIXED_LEN..].copy_from_slice(nonce);
     bytes
 }
 
 /// What a file's opening bytes say it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Framing {
-    /// A container: skip [`HEADER_LEN`] bytes and decode with this codec,
-    /// against this dictionary id.
-    Container(Codec, u32),
+    /// A container: skip [`Container::payload_at`] bytes and decode with the
+    /// codec it names, after unsealing it if it is encrypted.
+    Container(Container),
     /// Bare plaintext from before the container existed.
     Legacy,
+}
+
+/// A container header, read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Container {
+    /// How the payload is encoded, under the encryption.
+    pub(crate) codec: Codec,
+    /// The per-blob nonce prefix, or `None` for a version 1 container.
+    pub(crate) nonce: Option<[u8; seal::NONCE_PREFIX_LEN]>,
+}
+
+impl Container {
+    /// Where the payload begins.
+    pub(crate) fn payload_at(self) -> usize {
+        if self.nonce.is_some() {
+            HEADER_LEN
+        } else {
+            FIXED_LEN
+        }
+    }
 }
 
 /// Reads the framing of a file that begins with `start`.
@@ -136,11 +187,11 @@ pub(crate) enum Framing {
 /// newer Postio, and guessing would hand back wrong bytes under a digest that
 /// promises otherwise; refusing is the only safe answer.
 pub(crate) fn framing_of(start: &[u8]) -> Result<Framing> {
-    if start.len() < HEADER_LEN || start[..MAGIC.len()] != MAGIC {
+    if start.len() < FIXED_LEN || start[..MAGIC.len()] != MAGIC {
         return Ok(Framing::Legacy);
     }
     let version = start[MAGIC.len()];
-    if version != VERSION {
+    if version != VERSION && version != VERSION_PLAIN {
         return Err(Error::UnreadableBlob {
             reason: format!("blob container version {version} is newer than this build reads"),
         });
@@ -161,7 +212,33 @@ pub(crate) fn framing_of(start: &[u8]) -> Result<Framing> {
             ),
         });
     }
-    Ok(Framing::Container(codec, dictionary))
+    let nonce = nonce_of(start, version, start[MAGIC.len() + 6])?;
+    Ok(Framing::Container(Container { codec, nonce }))
+}
+
+/// The nonce prefix a container carries, checked against its version.
+///
+/// The two are not independent: version 1 has no cipher and no nonce, version
+/// 2 always has both. A file claiming any other combination was written by
+/// something this build does not understand, and guessing would hand back
+/// wrong bytes under a digest that promises otherwise.
+fn nonce_of(start: &[u8], version: u8, cipher: u8) -> Result<Option<[u8; seal::NONCE_PREFIX_LEN]>> {
+    match (version, cipher) {
+        (VERSION_PLAIN, CIPHER_NONE) => Ok(None),
+        (VERSION, CIPHER_XCHACHA20_POLY1305) => {
+            let Some(bytes) = start.get(FIXED_LEN..HEADER_LEN) else {
+                return Err(Error::UnreadableBlob {
+                    reason: "this blob stops inside its own header".to_owned(),
+                });
+            };
+            Ok(Some(bytes.try_into().expect("the slice is that long")))
+        }
+        (_, cipher) => Err(Error::UnreadableBlob {
+            reason: format!(
+                "blob cipher {cipher} is not one a version {version} container may carry"
+            ),
+        }),
+    }
 }
 
 /// Whether `sample` is worth compressing.

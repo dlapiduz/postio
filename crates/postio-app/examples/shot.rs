@@ -95,7 +95,11 @@ use postio_storage::seed::SeedReport;
 fn populate(window: &Window, two_accounts: bool, backfill: bool) {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
-    let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.keep(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let report = postio_storage::seed::seed_small_with_bodies(&database, 11);
     let account = report.account.id;
     stamp_as_just_synced(&database, &report);

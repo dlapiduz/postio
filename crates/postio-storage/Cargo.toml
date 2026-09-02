@@ -23,6 +23,10 @@ getrandom = "0.3.4"
 # Key material overwrites itself when it drops, the same discipline
 # `postio-imap`'s `Password` already keeps.
 zeroize = "1.9.0"
+# Blob contents are XChaCha20-Poly1305 (ADR 0014 Q2). Pure Rust, no new
+# native dependency, and the 24-byte nonce is what makes a random per-blob
+# nonce safe without a counter to keep.
+chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model = { version = "0.1.0", path = "../postio-model" }
 # SQLCipher, not plain SQLite (ADR 0014 Q1). `bundled-sqlcipher-vendored-openssl`

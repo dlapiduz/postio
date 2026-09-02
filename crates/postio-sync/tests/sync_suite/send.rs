@@ -33,7 +33,8 @@ struct TempBlobs {
 impl TempBlobs {
     fn new() -> Self {
         let directory = std::env::temp_dir().join(format!("postio-send-test-{}", uuid_ish()));
-        let store = BlobStore::open(&directory).expect("a blob store");
+        let store = BlobStore::open(&directory, &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
         Self { store, directory }
     }
 }

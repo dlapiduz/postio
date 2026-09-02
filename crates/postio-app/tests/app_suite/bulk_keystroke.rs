@@ -63,7 +63,11 @@ pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
     let database = test_support::memory();
     let report = seed_small(&database, 17);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let state = SharedState::default();
     let bus = actions::wire(

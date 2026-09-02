@@ -175,7 +175,8 @@ mod tests {
         let report = postio_storage::seed::seed_small(&database, 3);
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path()).expect("a blob store");
+        let blobs = BlobStore::open(directory.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
         let (sink, _engine_events) = event_channel();
 
         let backend = Arc::new(

@@ -65,7 +65,11 @@ pub fn a_window_over_a_populated_store_lists_its_mail() {
         "the fixture seeded no mail, so this test could not fail"
     );
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // The runtime the reads are polled on. A no-op command handler: this
     // test is about the panes being fed, not about what a keystroke does.

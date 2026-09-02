@@ -2904,7 +2904,11 @@ mod tests {
         let account = postio_storage::test_support::account(&connection);
         drop(connection);
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
         let (sink, events) = postio_core::bridge::event_channel();
         let parts = EngineParts {
             account: account.id,

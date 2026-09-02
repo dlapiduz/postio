@@ -12,7 +12,11 @@ use postio_storage::blob::{BlobStore, GarbageCollection};
 
 fn store() -> (tempfile::TempDir, BlobStore) {
     let directory = tempfile::tempdir().expect("tempdir");
-    let store = BlobStore::open(directory.path().join("blobs")).expect("open the store");
+    let store = BlobStore::open(
+        directory.path().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("open the store");
     (directory, store)
 }
 
@@ -512,11 +516,11 @@ mod private_by_default {
     fn a_root_that_was_loosened_is_repaired_on_reopen() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("blobs");
-        BlobStore::open(&root).expect("first open");
+        BlobStore::open(&root, &postio_storage::test_support::blob_keys()).expect("first open");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
             .expect("loosen it, the way a pre-fix store would be");
 
-        BlobStore::open(&root).expect("reopen");
+        BlobStore::open(&root, &postio_storage::test_support::blob_keys()).expect("reopen");
 
         assert_eq!(mode_of(&root), 0o700);
     }
@@ -643,7 +647,11 @@ fn the_id_is_the_digest_of_the_plaintext_not_of_what_is_on_disk() {
 
     let id = store.put(&content).expect("put");
 
-    let mut hasher = blake3::Hasher::new();
+    // Keyed since #301, so this recomputes it the way the store does rather
+    // than the way anybody holding the file could. That the id is *not* the
+    // plain digest is `blob_encryption.rs`'s to assert.
+    let keys = postio_storage::test_support::blob_keys();
+    let mut hasher = blake3::Hasher::new_keyed(keys.id().expose());
     hasher.update(&content);
     assert_eq!(id.as_str(), hasher.finalize().to_hex().as_str());
 }
@@ -685,9 +693,15 @@ fn already_compressed_bytes_are_not_compressed_again() {
     let on_disk = store.len_of(&id).expect("stored length");
 
     assert_eq!(store.get(&id).expect("get"), content);
+    // What encryption costs on disk, spelled out rather than allowed for: the
+    // 31-byte header, and one 16-byte Poly1305 tag per 64 KiB chunk. Pinned
+    // here so growing it is a decision somebody makes rather than a number
+    // that drifts.
+    let chunks = (content.len() as u64).div_ceil(64 * 1024);
+    let overhead = 31 + 16 * chunks;
     assert!(
-        on_disk <= content.len() as u64 + 64,
-        "an incompressible blob must not grow: {} from {}",
+        on_disk <= content.len() as u64 + overhead,
+        "an incompressible blob must not grow beyond its seal: {} from {} (+{overhead})",
         on_disk,
         content.len()
     );

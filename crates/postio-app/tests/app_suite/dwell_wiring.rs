@@ -85,7 +85,11 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // Every message unread to begin with, or none of the assertions below
     // distinguish "the dwell marked it" from "it was already read". Flagged

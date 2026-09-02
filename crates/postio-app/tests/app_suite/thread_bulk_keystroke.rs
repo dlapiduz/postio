@@ -77,7 +77,11 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
         .id
         .get();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let state = SharedState::default();
     let bus = actions::wire(

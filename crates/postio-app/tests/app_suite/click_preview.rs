@@ -62,7 +62,11 @@ pub fn clicking_a_message_fills_the_reading_pane() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 2, "need rows to click");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // Every message but the newest flagged, before anything is wired: the
     // Flagged view is where rows are genuinely single messages (see the

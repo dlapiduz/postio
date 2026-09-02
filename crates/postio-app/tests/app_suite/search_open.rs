@@ -69,7 +69,11 @@ pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
     assert!(report.message_count > 0, "the fixture seeded no mail");
     ensure_search_index(&database).expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // A real bridge, so a command that nothing answers is rejected by the
     // real dispatcher rather than swallowed by a stub that accepts anything.

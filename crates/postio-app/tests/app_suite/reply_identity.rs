@@ -104,8 +104,11 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
     };
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

@@ -152,7 +152,11 @@ fn no_message_content_reaches_the_log_at_any_level() {
     let secrets = content_of(&database, report.account.id);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = postio_core::bridge::event_channel();
 
     let engine = Engine::spawn(EngineParts {

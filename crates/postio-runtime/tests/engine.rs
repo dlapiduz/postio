@@ -84,7 +84,11 @@ fn engine_with_backfill(
     let database = test_support::memory();
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, events) = event_channel();
 
     let backend = Arc::new(server());
@@ -865,7 +869,11 @@ fn engine_over_arc(
     backend: Arc<MockBackend>,
 ) -> (Engine, EventStream, tempfile::TempDir) {
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, events) = event_channel();
     let engine = Engine::spawn(EngineParts {
         account,
@@ -1015,7 +1023,11 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
     }
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = event_channel();
 
     let backend = Arc::new(
@@ -1117,7 +1129,11 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
         account
     };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = event_channel();
 
     let backend = Arc::new(
@@ -1364,7 +1380,11 @@ fn engine_seeding_in_batches(
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = event_channel();
 
     let mut mailbox = MockMailbox::new("INBOX");
@@ -1557,7 +1577,11 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     drop(connection);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = event_channel();
 
     let mut mailbox = MockMailbox::new("INBOX");
@@ -1732,7 +1756,11 @@ fn engine_over_a_real_sync(
         test_support::account(&connection)
     };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = event_channel();
     let engine = Engine::spawn(EngineParts {
         account: account.id,

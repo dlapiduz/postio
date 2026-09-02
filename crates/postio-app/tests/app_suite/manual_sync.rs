@@ -52,7 +52,11 @@ pub fn the_status_lines_sync_button_asks_for_a_refresh() {
     let database = test_support::memory();
     seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // Every command that reaches the bus, recorded. `Refresh` starts a
     // network pass in the real application, which this test has no business

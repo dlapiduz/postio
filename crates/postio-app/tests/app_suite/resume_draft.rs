@@ -60,7 +60,11 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
         .expect("the fixture has a Drafts folder")
         .clone();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // A draft, written and autosaved, exactly as the composer's own wiring
     // would have left it — and never uploaded, so nothing about this depends
