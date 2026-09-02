@@ -244,8 +244,24 @@ fn the_group_count_is_what_walking_every_page_produces() {
     let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
 
     // Grouped by root identity, across accounts.
-    file(&connection, a, a_inbox, 20, Some("<r@example.com>"), &[], "Root pair");
-    file(&connection, b, b_inbox, 19, Some("<r@example.com>"), &[], "Root pair");
+    file(
+        &connection,
+        a,
+        a_inbox,
+        20,
+        Some("<r@example.com>"),
+        &[],
+        "Root pair",
+    );
+    file(
+        &connection,
+        b,
+        b_inbox,
+        19,
+        Some("<r@example.com>"),
+        &[],
+        "Root pair",
+    );
 
     // Grouped by subject, inside the coalescing window.
     file(&connection, a, a_inbox, 16, None, &[], "Subject pair");
@@ -254,7 +270,15 @@ fn the_group_count_is_what_walking_every_page_produces() {
     // Same subject, beyond the window: two rows, not one.
     let far = 24 * postio_model::subject::COALESCING_WINDOW_DAYS + 48;
     file(&connection, a, a_inbox, 200, None, &[], "Weekly digest");
-    file(&connection, b, b_inbox, 200 + far, None, &[], "Weekly digest");
+    file(
+        &connection,
+        b,
+        b_inbox,
+        200 + far,
+        None,
+        &[],
+        "Weekly digest",
+    );
 
     // Same subject inside the window but the *same* account: never a group,
     // because a conversation folds across accounts and not within one.
@@ -262,8 +286,24 @@ fn the_group_count_is_what_walking_every_page_produces() {
     file(&connection, a, a_inbox, 31, None, &[], "Same account twice");
 
     // Plain solos, one per account.
-    file(&connection, a, a_inbox, 5, Some("<solo-a@example.com>"), &[], "Alone in A");
-    file(&connection, b, b_inbox, 4, Some("<solo-b@example.com>"), &[], "Alone in B");
+    file(
+        &connection,
+        a,
+        a_inbox,
+        5,
+        Some("<solo-a@example.com>"),
+        &[],
+        "Alone in A",
+    );
+    file(
+        &connection,
+        b,
+        b_inbox,
+        4,
+        Some("<solo-b@example.com>"),
+        &[],
+        "Alone in B",
+    );
 
     let repository = ThreadRepository::new(&connection);
 
@@ -282,7 +322,10 @@ fn the_group_count_is_what_walking_every_page_produces() {
     // Ten threads, eight rows: the root pair and the subject pair each fold,
     // and nothing else does. Stated absolutely as well as against the walk,
     // so the two agreeing on a wrong number still fails.
-    assert_eq!(walked, 8, "the walk folds exactly the two cross-account pairs");
+    assert_eq!(
+        walked, 8,
+        "the walk folds exactly the two cross-account pairs"
+    );
     assert_eq!(
         repository.unified_count().expect("unified count") as usize,
         walked,
@@ -306,10 +349,34 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
     // Six rows, one of them a cross-account pair, so the offset has to be an
     // offset into *groups* rather than into threads.
     for hour in [1, 3, 5, 7] {
-        file(&connection, a, a_inbox, hour, None, &[], &format!("Note {hour}"));
+        file(
+            &connection,
+            a,
+            a_inbox,
+            hour,
+            None,
+            &[],
+            &format!("Note {hour}"),
+        );
     }
-    file(&connection, a, a_inbox, 9, Some("<p@example.com>"), &[], "Paired");
-    file(&connection, b, b_inbox, 8, Some("<p@example.com>"), &[], "Paired");
+    file(
+        &connection,
+        a,
+        a_inbox,
+        9,
+        Some("<p@example.com>"),
+        &[],
+        "Paired",
+    );
+    file(
+        &connection,
+        b,
+        b_inbox,
+        8,
+        Some("<p@example.com>"),
+        &[],
+        "Paired",
+    );
     file(&connection, b, b_inbox, 2, None, &[], "Only in B");
 
     let repository = ThreadRepository::new(&connection);
