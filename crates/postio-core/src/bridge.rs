@@ -764,7 +764,20 @@ impl Bridge {
             let timeout = self.shutdown_timeout;
             let drained =
                 runtime.block_on(async move { tokio::time::timeout(timeout, pump).await.is_ok() });
-            debug_assert!(drained, "the command pump did not drain within {timeout:?}");
+            // A miss here is not proof of a hang: dropping the timed-out
+            // await does not abort the pump task (a dropped JoinHandle
+            // detaches; it does not cancel -- see the sync engine's own
+            // shutdown grace, #759), and `shutdown_timeout` below gives it a
+            // second, equal-length chance to finish before anything is
+            // actually dropped. Missing the first window is reachable under
+            // ordinary CI scheduling contention for a pump doing nothing
+            // wrong, so this warns rather than asserts (#817).
+            if !drained {
+                tracing::warn!(
+                    ?timeout,
+                    "the command pump did not drain within the shutdown timeout on the first wait"
+                );
+            }
         }
 
         if let Some(runtime) = self.runtime.take() {
