@@ -113,10 +113,27 @@ pub fn memory() -> Database {
         .expect("a scratch database must always open")
 }
 
-/// Every directory [`memory`] ever creates carries this prefix, and the
-/// sweep below never touches a `/dev/shm` entry without it — nothing else
-/// this crate puts there is its business to delete.
+/// Every directory [`memory`] creates today carries this prefix. The sweep
+/// below reclaims those, and also any directory holding a
+/// [`SCRATCH_DATABASE`] — which is how it reaches the ones made before this
+/// prefix existed. Nothing without one of those two marks is its business to
+/// delete.
 const SWEEP_PREFIX: &str = "postio-test-";
+
+/// The file every scratch directory this module makes contains, and the other
+/// half of "is this one of ours".
+///
+/// The prefix alone is not enough, and the gap is not hypothetical: scratch
+/// directories predating [`SWEEP_PREFIX`] carry `tempfile`'s default name
+/// instead, so an age-and-prefix sweep can never reach them however long it
+/// runs. A box that has been building this workspace for a week accumulates
+/// gigabytes of them, in `/dev/shm`, which is memory — the machine starts
+/// swapping and nothing on it explains why.
+///
+/// Matching on the database file rather than loosening the prefix is what
+/// keeps the sweep from touching a `/dev/shm` entry that is not this crate's
+/// business: nothing else puts a `postio.db` there.
+const SCRATCH_DATABASE: &str = "postio.db";
 
 /// Below this age, a directory might still belong to a test binary that has
 /// not finished starting up. The sweep never touches it, however many
@@ -169,13 +186,15 @@ fn sweep_now(dir: &Path) {
         let Some(name) = name.to_str() else {
             continue;
         };
-        if !name.starts_with(SWEEP_PREFIX) {
-            continue;
-        }
         let Ok(metadata) = entry.metadata() else {
             continue;
         };
         if !metadata.is_dir() {
+            continue;
+        }
+        // Ours by name, or -- for the ones made before the name existed --
+        // ours by what is inside.
+        if !name.starts_with(SWEEP_PREFIX) && !entry.path().join(SCRATCH_DATABASE).is_file() {
             continue;
         }
         let Ok(modified) = metadata.modified() else {
@@ -407,7 +426,8 @@ mod sweep_tests {
 
         assert!(
             other.is_dir(),
-            "the sweep must only ever touch directories carrying its own prefix"
+            "the sweep must only ever touch directories that are this \
+             crate's: its own prefix, or a scratch database inside"
         );
     }
 
@@ -440,6 +460,71 @@ mod sweep_tests {
             paths[0].is_dir(),
             "the youngest directories should survive while the total is over \
              the cap but shrinking toward it"
+        );
+    }
+
+    /// A directory named the way `tempfile` names one, holding `file`.
+    ///
+    /// What a scratch directory made before [`SWEEP_PREFIX`] existed looks
+    /// like on disk.
+    fn unprefixed_dir(root: &Path, name: &str, age: Duration, file: &str) -> std::path::PathBuf {
+        let path = root.join(name);
+        std::fs::create_dir(&path).expect("create dir");
+        std::fs::write(path.join(file), b"x").expect("write the marker file");
+        let stamp = SystemTime::now()
+            .checked_sub(age)
+            .expect("age fits before now");
+        std::fs::File::open(&path)
+            .expect("open dir")
+            .set_modified(stamp)
+            .expect("backdate mtime");
+        path
+    }
+
+    #[test]
+    fn a_scratch_directory_made_before_the_prefix_existed_is_still_reclaimed() {
+        // The leak this closes. Directories predating `SWEEP_PREFIX` carry
+        // `tempfile`'s default name, so a prefix-only sweep could never reach
+        // them however long it ran -- they are not merely missed, they are
+        // unreachable for ever. On `/dev/shm`, which is memory, a week of
+        // them is gigabytes and the machine starts swapping with nothing on
+        // it saying why.
+        let root = tempfile::tempdir().expect("tempdir");
+        let old_style = unprefixed_dir(
+            root.path(),
+            ".tmpAbCdEf",
+            SWEEP_MIN_AGE + Duration::from_secs(1),
+            SCRATCH_DATABASE,
+        );
+
+        sweep_now(root.path());
+
+        assert!(
+            !old_style.exists(),
+            "a pre-prefix scratch directory was left behind, which is the \
+             whole of the leak"
+        );
+    }
+
+    #[test]
+    fn an_old_directory_holding_somebody_elses_database_is_left_alone() {
+        // The half that matters more than the leak: `/dev/shm` is shared, and
+        // a sweep that took an unrelated directory because it was merely old
+        // and had a database in it would be a far worse bug.
+        let root = tempfile::tempdir().expect("tempdir");
+        let theirs = unprefixed_dir(
+            root.path(),
+            ".tmpSomeoneElse",
+            SWEEP_MIN_AGE + Duration::from_secs(1),
+            "their-data.db",
+        );
+
+        sweep_now(root.path());
+
+        assert!(
+            theirs.is_dir(),
+            "an old directory holding a database that is not this crate's \
+             was deleted"
         );
     }
 
