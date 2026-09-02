@@ -21,18 +21,21 @@
 //! (`"new-mail-<mailbox>"`), which is what `gio::Application::send_notification`
 //! treats as "replace the one already showing" rather than "queue another
 //! popup beside it" — so several `IDLE` wake-ups in a row settle into the one
-//! notification on screen actually saying, rather than a burst of them.
+//! notification on screen actually saying, rather than a burst of them. Each
+//! replacement names its own batch's newest arrival (see [`content`]), so a
+//! detailed single-arrival popup is never overwritten by a less detailed one
+//! — #745's report of exactly that.
 //!
 //! # What a click does
 //!
-//! Presents the window, then switches to the mailbox the mail landed in —
-//! and, for a single arrival, puts the cursor on that message. A burst
-//! ("3 new messages") has no one message to point at, so it only opens the
-//! mailbox. `Window::open_mailbox` and `Window::open_message`
-//! (`postio-gtk`) are what make this possible from outside a click on an
-//! already-visible row; [`build`] is where the click's target is encoded
-//! onto the notification, in [`RAISE_ACTION`]'s own string parameter, and
-//! [`install_action`] is where it is read back.
+//! Presents the window, then switches to the mailbox the mail landed in and
+//! puts the cursor on the message the notification named — the newest
+//! arrival, single message or burst alike ([`content`], [`target_for`]).
+//! `Window::open_mailbox` and `Window::open_message` (`postio-gtk`) are what
+//! make this possible from outside a click on an already-visible row;
+//! [`build`] is where the click's target is encoded onto the notification,
+//! in [`RAISE_ACTION`]'s own string parameter, and [`install_action`] is
+//! where it is read back.
 
 use std::sync::Arc;
 
@@ -212,8 +215,27 @@ fn account_label(database: &Database, account: AccountId) -> Option<String> {
         .map(|account| account.display_name)
 }
 
-/// The title and body a batch of arrivals reads as: one sender and subject
-/// for a single arrival, a count for a burst.
+/// The arrival to name a batch after: whichever `received_at` is latest.
+///
+/// A position in `rows` says nothing about arrival order — `notify` hands
+/// this whatever `store.message_rows` returned for the ids `Event::NewMail`
+/// carried, and nothing along that path promises newest-last (or first).
+/// `received_at` is the one field that actually says so.
+///
+/// # Panics
+///
+/// If `rows` is empty. Both callers ([`content`], [`target_for`]) only ever
+/// see what `Notifier::notify` already checked non-empty.
+fn newest(
+    rows: &[postio_runtime::store::MessageSummary],
+) -> &postio_runtime::store::MessageSummary {
+    rows.iter()
+        .max_by_key(|row| row.received_at)
+        .expect("notify() only builds a notification for a non-empty batch")
+}
+
+/// The title and body a batch of arrivals reads as: sender and subject of
+/// the newest one, plus how many more came with it.
 ///
 /// Pure on purpose — `gio::Notification` has no getters to assert against
 /// (it is a write-only description, sent rather than introspected), so this
@@ -226,27 +248,28 @@ fn content(
         Some(name) => format!("{title} — {name}"),
         None => title,
     };
-    if let [only] = rows {
-        let from = only
-            .from
-            .as_ref()
-            .map(|address| address.display().to_owned())
-            .unwrap_or_else(|| "Someone".to_owned());
-        let subject = only
-            .subject
-            .clone()
-            .unwrap_or_else(|| "(no subject)".to_owned());
+    let newest = newest(rows);
+    let from = newest
+        .from
+        .as_ref()
+        .map(|address| address.display().to_owned())
+        .unwrap_or_else(|| "Someone".to_owned());
+    let subject = newest
+        .subject
+        .clone()
+        .unwrap_or_else(|| "(no subject)".to_owned());
+    if let [_only] = rows {
         (named(from), subject)
     } else {
         (
-            named("New mail".to_owned()),
-            format!("{} new messages", rows.len()),
+            named(from),
+            format!("\"{subject}\" and {} more", rows.len() - 1),
         )
     }
 }
 
 /// The notification itself, from [`content`], with a click target that says
-/// which mailbox and — for a single arrival — which message to focus.
+/// which mailbox and which message to focus.
 fn build(
     mailbox: MailboxId,
     rows: &[postio_runtime::store::MessageSummary],
@@ -264,17 +287,11 @@ fn build(
 
 /// What a click on this notification should focus.
 ///
-/// A single arrival names its own message: the notification already says
-/// who it is from and what it is about, so the click should land on exactly
-/// that row. A burst has no one message to point at — "3 new messages" does
-/// not pick one — so it names only the mailbox, and the click opens it the
-/// way picking it in the sidebar does, cursor wherever the folder's own
-/// autoselect puts it.
+/// The notification always names one message now — the newest, [`content`]'s
+/// `from`/`subject` — so the click lands on exactly that row, single arrival
+/// or burst alike, the way #56 already made a single arrival do.
 fn target_for(mailbox: MailboxId, rows: &[postio_runtime::store::MessageSummary]) -> String {
-    match rows {
-        [only] => encode_target(mailbox, Some(only.id)),
-        _ => encode_target(mailbox, None),
-    }
+    encode_target(mailbox, Some(newest(rows).id))
 }
 
 /// `RAISE_ACTION`'s parameter: a mailbox, and optionally the one message a
@@ -324,6 +341,16 @@ mod tests {
             draft: false,
             has_attachments: false,
             thread_count: 1,
+        }
+    }
+
+    /// `row`, arrived at `when` — a burst's "newest" is a fact about
+    /// `received_at`, not about a row's position in the slice, so a test
+    /// that wants to prove that has to control it.
+    fn at(row: MessageSummary, when: chrono::DateTime<chrono::Utc>) -> MessageSummary {
+        MessageSummary {
+            received_at: when,
+            ..row
         }
     }
 
@@ -406,12 +433,19 @@ mod tests {
     }
 
     #[test]
-    fn a_burst_targets_only_the_mailbox() {
-        let rows = [summary("Ada Lovelace", "One"), summary("Bob", "Two")];
+    fn a_burst_targets_its_newest_message() {
+        let base = chrono::Utc::now();
+        let mut newest = summary("Carol", "Three");
+        newest.id = MessageId::new(99);
+        let rows = [
+            at(summary("Ada Lovelace", "One"), base),
+            at(newest, base + chrono::Duration::minutes(2)),
+            at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
+        ];
         assert_eq!(
             target_for(MailboxId::new(7), &rows),
-            encode_target(MailboxId::new(7), None),
-            "\"2 new messages\" does not point at either one of them"
+            encode_target(MailboxId::new(7), Some(MessageId::new(99))),
+            "the click should land on the message the notification actually named"
         );
     }
 
@@ -424,15 +458,68 @@ mod tests {
 
     #[test]
     fn a_burst_is_a_count_rather_than_one_popup_per_message() {
-        let (_, body) = content(
+        // Deliberately out of arrival order: the newest is the middle one,
+        // so a fix that just reads rows[0] or rows.last() cannot pass this.
+        let base = chrono::Utc::now();
+        let (title, body) = content(
             &[
-                summary("Ada Lovelace", "One"),
-                summary("Bob", "Two"),
-                summary("Carol", "Three"),
+                at(summary("Ada Lovelace", "One"), base),
+                at(
+                    summary("Carol", "Three"),
+                    base + chrono::Duration::minutes(2),
+                ),
+                at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
             ],
             None,
         );
-        assert_eq!(body, "3 new messages");
+        assert_eq!(
+            title, "Carol",
+            "the newest arrival's sender, not the first one that arrived"
+        );
+        assert_eq!(body, "\"Three\" and 2 more");
+    }
+
+    #[test]
+    fn a_two_message_burst_says_one_more() {
+        let base = chrono::Utc::now();
+        let (_, body) = content(
+            &[
+                at(summary("Ada Lovelace", "One"), base),
+                at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
+            ],
+            None,
+        );
+        assert_eq!(body, "\"Two\" and 1 more");
+    }
+
+    #[test]
+    fn a_ten_message_burst_counts_the_rest() {
+        let base = chrono::Utc::now();
+        let rows: Vec<MessageSummary> = (0..10)
+            .map(|index| {
+                at(
+                    summary(&format!("Sender {index}"), &format!("Subject {index}")),
+                    base + chrono::Duration::minutes(index),
+                )
+            })
+            .collect();
+        let (_, body) = content(&rows, None);
+        assert_eq!(body, "\"Subject 9\" and 9 more");
+    }
+
+    #[test]
+    fn a_burst_whose_newest_message_has_no_subject_still_reads_as_a_sentence() {
+        let base = chrono::Utc::now();
+        let mut newest = summary("Ada Lovelace", "");
+        newest.subject = None;
+        let (_, body) = content(
+            &[
+                at(summary("Bob", "Two"), base),
+                at(newest, base + chrono::Duration::minutes(1)),
+            ],
+            None,
+        );
+        assert_eq!(body, "\"(no subject)\" and 1 more");
     }
 
     #[test]
@@ -453,11 +540,15 @@ mod tests {
 
     #[test]
     fn a_burst_names_the_account_too() {
+        let base = chrono::Utc::now();
         let (title, _) = content(
-            &[summary("Ada Lovelace", "One"), summary("Bob", "Two")],
+            &[
+                at(summary("Ada Lovelace", "One"), base),
+                at(summary("Bob", "Two"), base + chrono::Duration::minutes(1)),
+            ],
             Some("Work"),
         );
-        assert_eq!(title, "New mail — Work");
+        assert_eq!(title, "Bob — Work");
     }
 
     #[test]
