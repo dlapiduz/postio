@@ -423,6 +423,17 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
             // portion is hidden — `fill_reader` fills in To/Cc once the
             // envelope has loaded.
             reader.header().set_identity_visible(false);
+            // Same reason (#822): the entry below the header already draws
+            // its own Reply/Reply all/Forward row
+            // (`conversation::ConversationView::build_entry`), deliberately
+            // without Archive — every other verb belongs to the
+            // conversation, not to one message in the stack. This reader's
+            // own action bar would duplicate it, in a different style, with
+            // a fourth button nothing here should offer per-message, and its
+            // clicks reach nothing anyway: `new_reader` never wires
+            // `connect_command` the way `Window::reader` does for the
+            // standalone pane.
+            reader.set_actions_visible(false);
             // Hidden until it has something to draw, so an expanded message
             // whose body is still being read is a header rather than a white
             // rectangle pretending to be a message.

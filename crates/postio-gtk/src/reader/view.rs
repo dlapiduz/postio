@@ -101,6 +101,10 @@ pub struct Reader {
     /// How many documents have actually been handed to WebKit — see
     /// [`Reader::loads`].
     loads: Rc<std::cell::Cell<u32>>,
+    /// Set by [`Reader::set_actions_visible`]`(false)` — overrides what
+    /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
+    /// otherwise show the action bar for.
+    actions_suppressed: Rc<std::cell::Cell<bool>>,
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -186,6 +190,7 @@ impl Reader {
             page: Rc::new(std::cell::Cell::new(0)),
             paints: Rc::new(std::cell::Cell::new(0)),
             loads: Rc::new(std::cell::Cell::new(0)),
+            actions_suppressed: Rc::new(std::cell::Cell::new(false)),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -285,6 +290,37 @@ impl Reader {
         Rc::clone(&self.header)
     }
 
+    /// Hide this reader's own action bar regardless of what `render`/
+    /// `show_absent` would otherwise show it for, or restore it to following
+    /// them again.
+    ///
+    /// For a reader embedded inside another surface that already draws its
+    /// own actions for the same message — the conversation pane's per-entry
+    /// row (`crate::conversation::ConversationView::build_entry`) — the same
+    /// reason [`Reader::header`]'s identity fields get hidden there. The
+    /// surface around this reader already carries Reply/Reply all/Forward;
+    /// drawing this reader's own copy on top is a duplicate, not a second
+    /// opinion.
+    pub fn set_actions_visible(&self, visible: bool) {
+        self.actions_suppressed.set(!visible);
+        self.actions.set_visible(visible);
+    }
+
+    /// Show the action bar unless [`Reader::set_actions_visible`]`(false)`
+    /// has suppressed it — what every call site that used to say
+    /// `self.actions.set_visible(true)` means now.
+    fn show_actions_unless_suppressed(&self) {
+        if !self.actions_suppressed.get() {
+            self.actions.set_visible(true);
+        }
+    }
+
+    /// Whether the action bar is currently on screen. For tests.
+    #[doc(hidden)]
+    pub fn actions_visible(&self) -> bool {
+        self.actions.widget().is_visible()
+    }
+
     /// The banner's "always allow" button label, naming whichever sender it
     /// would exempt.
     pub fn banner_always_allow_label(&self) -> String {
@@ -349,7 +385,7 @@ impl Reader {
             body: body.clone(),
             sender: sender.map(str::to_owned),
         });
-        self.actions.set_visible(true);
+        self.show_actions_unless_suppressed();
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
         let remote = if allowed {
             RemoteImages::Allowed
@@ -470,7 +506,7 @@ impl Reader {
         // not — so Reply, Forward and Archive stay reachable exactly as they
         // are from the keyboard while the pane explains why there is no body
         // yet. Only `clear()`'s "nothing selected at all" hides the bar.
-        self.actions.set_visible(true);
+        self.show_actions_unless_suppressed();
         self.banner.set_visible(false);
         load_document(
             &self.canvas(),
