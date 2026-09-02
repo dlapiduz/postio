@@ -29,7 +29,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::glib;
 use postio_gtk::feed::{Folders, MailboxFuture, MailboxSource};
 use postio_gtk::sidebar::Sidebar;
 use postio_gtk::{app, fonts, style};
