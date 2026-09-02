@@ -617,10 +617,11 @@ impl Session {
     /// second copy of the rule here is exactly what that issue removed.
     ///
     /// `id` is the registry's own string — `"archive"`, `"open_message"` —
-    /// parsed through [`CommandId`]'s `FromStr`, which is generated from the
-    /// same table the names come from. A `uniffi` enum would be a second copy
-    /// of that vocabulary, kept by hand, free to drift; the string is the
-    /// file format `ARCHITECTURE.md` §3 already says it is.
+    /// parsed through [`postio_core::CommandId`]'s `FromStr`, which is
+    /// generated from the same table the names come from. A `uniffi` enum
+    /// would be a second copy of that vocabulary, kept by hand, free to
+    /// drift; the string is the file format `ARCHITECTURE.md` §3 already
+    /// says it is.
     ///
     /// Returns nothing, deliberately. A verb is local-first: it writes to
     /// SQLite, enqueues, and the frontend learns what happened from the
