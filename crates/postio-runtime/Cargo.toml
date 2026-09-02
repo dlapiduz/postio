@@ -39,6 +39,8 @@ postio-storage = { workspace = true, features = ["test-support"] }
 # graph, so the feature selecting SQLCipher has to agree everywhere (ADR 0014).
 rusqlite = { version = "0.40.2", features = [
     "bundled-sqlcipher-vendored-openssl",
+    # `Connection::trace_v2` -- examples/store_diag.rs's per-statement timing.
+    "trace",
 ] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
