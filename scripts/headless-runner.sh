@@ -106,7 +106,23 @@ compositor_alive() {
 
 # One binary learning the compositor will not come up saves the next twenty
 # from waiting ten seconds each to learn it again.
-[ -e "$UNAVAILABLE" ] && exec_target "$@"
+#
+# It expires, though, and that is not a detail. `XDG_RUNTIME_DIR` lives as
+# long as the login session, so a marker nothing removes is not "this run has
+# no compositor", it is "this machine has no compositor until someone deletes
+# a file they do not know exists". The nested compositor here exited nine
+# hours into a run, and every suite afterwards would have been quietly demoted
+# to the session's display -- throwing test windows at whoever was at the
+# keyboard, and proving the suites pass on a configuration Postio does not
+# ship. A shortcut may save the next twenty binaries; it may not decide
+# tomorrow's run.
+if [ -e "$UNAVAILABLE" ]; then
+    # `find -mmin +N` prints the file only when it is older than N minutes.
+    if [ -z "$(find "$UNAVAILABLE" -mmin +"${POSTIO_UNAVAILABLE_MINUTES:-5}" 2>/dev/null)" ]; then
+        exec_target "$@"
+    fi
+    rm -f "$UNAVAILABLE" 2>/dev/null || true
+fi
 
 if [ ! -S "$SOCKET" ]; then
     # A lock so twenty test binaries starting at once bring up one compositor
@@ -126,7 +142,23 @@ fi
 
 # Still nothing? Then run on whatever the session has. A test that needs a
 # display will skip itself; one that does not is unaffected.
-[ -S "$SOCKET" ] || exec_target "$@"
+#
+# Out loud, because the alternative is a silence that means two opposite
+# things. The path below announces its fallback, this one used not to, so a CI
+# log grepped for `postio runner:` came back empty whether mutter had worked
+# perfectly or never started at all -- and "which display did the suites
+# actually run on" is not a question a green tick answers. Leaving a marker
+# too, for the same reason the path below does: the next twenty binaries
+# should not each wait ten seconds to rediscover this.
+if [ ! -S "$SOCKET" ]; then
+    : > "$UNAVAILABLE" 2>/dev/null || true
+    echo "postio runner: mutter never bound $SOCKET; using the session's display" >&2
+    if [ -s "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" ]; then
+        echo "postio runner: mutter said --" >&2
+        tail -n 15 "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" | sed 's/^/  /' >&2
+    fi
+    exec_target "$@"
+fi
 
 # A socket with nothing behind it is the same situation wearing a disguise.
 # Clear it and say so once, so the rest of the run stops paying for the
