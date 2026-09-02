@@ -441,11 +441,9 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // to lead (#185). It opens on an account rather than on Unified: the
     // scope a person left in is not remembered yet, and one account's inbox
     // is the smaller surprise on a cold start.
-    window.sidebar().set_accounts(
-        &named,
-        postio_core::state::Scope::Account(account.id),
-        true,
-    );
+    window
+        .sidebar()
+        .set_accounts(&named, postio_core::state::Scope::Account(account.id), true);
     // And the window, which is a separate thing from the strip: the strip is
     // what a person clicks, `Window::scope` is what decides whether a command
     // needing somewhere in *one* account to put a message is offered at all

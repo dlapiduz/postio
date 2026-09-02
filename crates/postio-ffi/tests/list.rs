@@ -128,3 +128,40 @@ fn reopening_a_scope_discards_what_the_old_one_had_in_flight() {
     assert_eq!(session.row_count(), 120);
     session.shutdown();
 }
+
+/// The unified view is selectable across the ABI, not just from GTK.
+///
+/// `ScopeFfi` is the wire mirror of `ListScope`, and a variant missing from
+/// it is a view the second frontend (ADR 0019) cannot ask for at all — the
+/// drift `docs/engineering-notes.md` warns about under "Six types are called
+/// *Scope*". Asserted by counting rows rather than by matching the enum: a
+/// mapping that compiled and then listed nothing would satisfy a round-trip
+/// check and still be broken.
+#[test]
+fn the_unified_scope_crosses_the_abi_and_lists_every_accounts_mail() {
+    let database = test_support::memory();
+    postio_storage::seed::seed_small(&database, 21);
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 22);
+
+    let session = Session::open(SessionOptions::in_memory_with(database))
+        .expect("a session over the seeded store");
+
+    session.open_scope(ScopeFfi::Unified);
+    assert!(
+        session.row_count() > 0,
+        "two seeded accounts and the unified scope reports an empty list"
+    );
+
+    // Miss, then settle, then read -- the same shape every other test here
+    // uses, because the first ask issues the page read rather than waiting
+    // on it.
+    let _ = session.row_at(0);
+    session.settle_for_test();
+    assert!(
+        session.row_at(0).is_some(),
+        "the unified scope reports {} rows and cannot name the first one \
+         after its page arrived",
+        session.row_count()
+    );
+    session.shutdown();
+}

@@ -3318,7 +3318,7 @@ happen to want the same English word.
 |---|---|---|
 | `AccountScope` (re-exported as `postio_core::state::Scope`) | `postio-model` | **Which accounts?** `Unified` or one account. #186 moved it down here from `postio_core::state` so search and the list could not disagree; its doc comment is the best short argument in the tree for moving a type down a crate. |
 | `postio_search::facets::Scope` | `postio-search` | **Which slice does a search look at?** `AllMail` / `Inbox` / `Lists` — the canvas's standing, no-typing rescope. Not a mailbox id, deliberately. |
-| `ListScope` | `postio-model` (was `postio-runtime::store`) | **Which messages is this view showing?** `Mailbox` / `Account` / `Flagged` / `Snoozed` / `Thread`. What the message list is paged over. |
+| `ListScope` | `postio-model` (was `postio-runtime::store`) | **Which messages is this view showing?** `Mailbox` / `Account` / `Unified` / `Flagged` / `Snoozed` / `Thread`. What the message list is paged over. `Account` is *one* account's every folder; `Unified` (#185) is every account's, and the two are not spellings of each other. |
 | `ViewScope` | `postio-core::state` | **What is a whole-view selection relative to?** `Mailbox` / `Flagged` only, because `Ctrl+A` is not a gesture inside a thread and nothing needs a `Snoozed` predicate yet. |
 | `FeedScope` | *deleted by #670* | Was `postio-gtk`'s own spelling of `ListScope`. |
 | `ScopeFfi` | `postio-ffi` | Not a question — the uniffi ABI mirror of `ListScope`, with `i64` fields. A wire format, the way `ExtCommand` is the owned counterpart of `CommandSpec`. |
@@ -3336,6 +3336,34 @@ one type fewer and a strictly weaker guarantee.
 none of the above asks, and it belongs in the lowest crate that all its
 readers share — which #186 and #670 both discovered the same way, by finding
 a second crate that needed the same value and could not reach it.
+
+## A grouped list cannot insert at the top (2026-09-02, #185)
+
+`ListScope::reaction` decides what a list does when mail arrives, and until
+the unified view every scope whose order guaranteed new mail belonged at the
+top answered `InsertAtTop`. `ListScope::Unified` looks like it qualifies —
+it is newest-first across every account, so a delivery is always the newest
+thing in it — and it must not.
+
+A unified row is a *conversation grouped across accounts*. Mail arriving at
+the second address for a conversation already on screen folds into the row
+that is already there: the row's `last_at` moves and it rises. An insert
+cannot express that. It puts a second row on screen for the same
+conversation, which is precisely what `unified_page`'s absorption exists to
+prevent, and no later read repairs it because the inserted row is real — it
+is a thread, and it is in the list.
+
+**The rule this generalises to:** `InsertAtTop` is only sound when a row
+stands for exactly one thing that arrival can create. Any view that folds
+several stored rows into one displayed row — grouping, deduplication,
+coalescing — has to reload, because the arrival may have changed an existing
+row rather than added one, and only the query that built the grouping knows
+which.
+
+The same shape is why `unified_count` cannot be `count(*)` over threads, and
+why it applies the page's own absorption predicate instead: a count and a
+walk that disagree about what a row is give the list trailing placeholders
+that never resolve.
 
 ## Two compile caches, because neither can do the other's job (2026-08-28, #736)
 
