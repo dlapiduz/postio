@@ -266,7 +266,12 @@ def main() -> int:
         )
         case(
             "on a host with GTK the gates still ran over the crate",
-            "clippy -p postio-gtk" in calls and "test -p postio-gtk" in calls,
+            # Clippy is still per-crate; the tests are the sanity tier since
+            # #847, so "the gates ran" is no longer spelled `test -p <crate>`.
+            # What this case is really about is unchanged: a host that *can*
+            # build the crate must not silently skip its gates.
+            "clippy -p postio-gtk" in calls
+            and "test --workspace --lib" in calls,
             f"the gates were skipped on a host that can run them:\n{calls}",
         )
 
