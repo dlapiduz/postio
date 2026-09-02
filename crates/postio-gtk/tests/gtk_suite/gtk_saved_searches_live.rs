@@ -27,7 +27,18 @@ use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 
-const PATIENCE: Duration = Duration::from_secs(5);
+/// How long a wait below may go without seeing its condition before it is
+/// called a hang.
+///
+/// A *liveness* bound, not a latency claim: the waits are already
+/// event-driven (real watcher, real debounce), so this deadline does no
+/// measuring -- it only turns a genuine stall into a failure with a name.
+/// Deliberately enormous, the way `postio-core`'s own config-watcher test
+/// fixed the identical shape (#219): at 5 seconds this flaked on a pristine
+/// `main` checkout under nothing more than ordinary shared-box contention
+/// (#838). See `docs/engineering-notes.md`'s "tests that fail under load"
+/// doctrine -- "liveness deadlines are minutes, not budgets."
+const PATIENCE: Duration = Duration::from_secs(120);
 
 fn wait_until(condition: impl Fn() -> bool) -> bool {
     let deadline = Instant::now() + PATIENCE;
