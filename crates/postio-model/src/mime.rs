@@ -727,14 +727,11 @@ fn parsed_part(
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned);
-    attachment.content_id = part.content_id().map(|id| {
-        // Stored bare, so it compares directly against the `cid:` URL in an
-        // HTML body rather than after stripping brackets at every use.
-        id.trim()
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .to_owned()
-    });
+    // Stored bare, so it compares directly against the `cid:` URL in an HTML
+    // body rather than after stripping brackets at every use. The IMAP header
+    // sync reaches the same normaliser, which is what #751 needed: two ingest
+    // paths, one answer.
+    attachment.set_content_id(part.content_id());
     attachment.disposition = disposition(part);
     attachment.part_id = paths.get(&id).cloned();
 

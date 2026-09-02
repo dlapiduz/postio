@@ -1375,3 +1375,128 @@ async fn a_foreign_remote_id_is_a_caller_bug_not_a_resync() {
         "a resync cannot repair a caller handing the wrong backend's id: {error:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Inline parts — #751
+// ---------------------------------------------------------------------------
+
+/// A `multipart/related` message whose HTML references its own attached
+/// image, as bytes and as the `BODYSTRUCTURE` a server would report for it.
+///
+/// The two have to be written out separately because that is the real
+/// asymmetry: `mime::parse` reads the entity, the header sync reads a
+/// `BODYSTRUCTURE`, and #751 is what happened when the two disagreed about
+/// what a `Content-ID` looks like.
+fn related_message() -> (Vec<u8>, postio_imap::backend::BodyStructure) {
+    let raw = b"From: Ada Lovelace <ada@example.com>\r\n\
+         Subject: One inline shot\r\n\
+         Message-ID: <related-1@example.com>\r\n\
+         MIME-Version: 1.0\r\n\
+         Content-Type: multipart/related; type=\"text/html\"; boundary=rel\r\n\
+         \r\n\
+         --rel\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\
+         Content-Transfer-Encoding: 7bit\r\n\
+         \r\n\
+         <p><img src=\"cid:logo@example.com\" alt=\"\"></p>\r\n\
+         --rel\r\n\
+         Content-Type: image/png\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         Content-ID: <logo@example.com>\r\n\
+         Content-Disposition: inline\r\n\
+         \r\n\
+         aVZCT1J3MEtHZ289\r\n\
+         --rel--\r\n"
+        .to_vec();
+
+    // Exactly what the wire says: RFC 3501's `BODYSTRUCTURE` id field is the
+    // `Content-ID` *header value*, brackets and all.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/related",
+        [
+            PartNode::new("1", "text/html", 46).with_charset("utf-8"),
+            PartNode::new("2", "image/png", 16)
+                .with_encoding("base64")
+                .with_content_id("<logo@example.com>")
+                .with_disposition(Disposition::Inline),
+        ],
+    );
+    (raw, structure)
+}
+
+#[test]
+fn the_imap_path_and_the_parser_agree_on_a_content_id() {
+    // #751 cause 2. `resolve_cid` compares the stored id against the `cid:`
+    // URL with `==`, and the sanitizer strips brackets when it builds that
+    // URL -- so `<logo@example.com>` never matches, and every IMAP-synced
+    // inline image 404s no matter how many bytes are local.
+    let (raw, structure) = related_message();
+
+    let parsed = postio_model::mime::parse(&raw);
+    let from_parser: Vec<String> = parsed
+        .attachments()
+        .filter_map(|part| part.content_id.clone())
+        .collect();
+
+    let from_imap: Vec<String> = structure
+        .to_attachments(MessageId::new(1))
+        .iter()
+        .filter_map(|part| part.content_id.clone())
+        .collect();
+
+    assert_eq!(
+        from_imap,
+        vec!["logo@example.com".to_owned()],
+        "the IMAP ingest path must store a Content-ID bare, as \
+         `postio_model::mime` does -- brackets and all is what the wire says, \
+         not what the store holds"
+    );
+    assert_eq!(
+        from_imap, from_parser,
+        "the two ingest paths produced different ids for the same message"
+    );
+}
+
+#[test]
+fn a_text_html_part_disposed_inline_is_still_the_body() {
+    // #751 cause 3. Plenty of senders write `Content-Disposition: inline` on
+    // the part that *is* the message. Demoting it to an attachment leaves
+    // `html_part_id` unset, so the text axis fetches only the plain-text
+    // alternative and the pane renders a body with no images and no links --
+    // or, when both alternatives are inline-disposed, no body at all.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/alternative",
+        [
+            PartNode::new("1", "text/plain", 30).with_disposition(Disposition::Inline),
+            PartNode::new("2", "text/html", 90).with_disposition(Disposition::Inline),
+        ],
+    );
+
+    assert_eq!(structure.text_part().map(PartNode::section), Some("1"));
+    assert_eq!(structure.html_part().map(PartNode::section), Some("2"));
+    assert_eq!(
+        structure.attachments().count(),
+        0,
+        "the message's own words are not attachments"
+    );
+}
+
+#[test]
+fn an_inline_part_the_html_references_is_not_the_body() {
+    // The other side of the rule above: a part carrying a `Content-ID` is
+    // referenced *from* the body, so it is never the body itself, however it
+    // is disposed. Without this the relaxation would swallow a `text/html`
+    // part a sender embedded by `cid:`.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/related",
+        [
+            PartNode::new("1", "text/plain", 30),
+            PartNode::new("2", "text/html", 90)
+                .with_content_id("<fragment@example.com>")
+                .with_disposition(Disposition::Inline),
+        ],
+    );
+
+    assert_eq!(structure.html_part(), None);
+    assert_eq!(structure.attachments().count(), 1);
+}

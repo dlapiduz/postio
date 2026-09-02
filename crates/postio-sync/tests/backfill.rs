@@ -488,6 +488,7 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -518,6 +519,7 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -556,6 +558,7 @@ async fn a_message_deleted_before_its_body_arrived_is_gone_rather_than_failed() 
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -580,6 +583,7 @@ async fn a_dropped_connection_mid_body_stores_nothing() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -613,6 +617,7 @@ async fn a_cancelled_fetch_stores_nothing() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &cancel,
     )
     .await
@@ -695,6 +700,7 @@ async fn a_fetched_body_becomes_searchable_text() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -741,6 +747,7 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 4_096),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -829,6 +836,7 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, HUGE),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -887,6 +895,7 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -923,6 +932,7 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -965,6 +975,7 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
         &local.blobs,
         &backend,
         &request,
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -1003,6 +1014,7 @@ async fn text_fetched_by_section_reaches_the_search_index() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, HUGE),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -1059,6 +1071,7 @@ async fn text_that_is_not_part_one_is_still_found() {
         &local.blobs,
         &backend,
         &request(&local.inbox, id, uid, HUGE),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -1192,6 +1205,7 @@ async fn a_partial_message(local: &Local, backend: &MockBackend) -> (MessageId, 
         &local.blobs,
         backend,
         &request(&local.inbox, id, uid, 4_096),
+        BackfillPolicy::default().max_inline_bytes,
         &CancelToken::new(),
     )
     .await
@@ -1250,6 +1264,7 @@ async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
         &local.blobs,
         &backend,
         &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
         &claim.cancel,
     )
     .await
@@ -1295,6 +1310,7 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
         &local.blobs,
         &backend,
         &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
         &claim.cancel,
     )
     .await
@@ -1333,6 +1349,7 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
             &local.blobs,
             &backend,
             &request(&local.inbox, id, uid, 4_096),
+            BackfillPolicy::default().max_inline_bytes,
             &CancelToken::new(),
         )
         .await
@@ -1346,6 +1363,7 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
             &local.blobs,
             &backend,
             &claim.request,
+            BackfillPolicy::default().max_inline_bytes,
             &claim.cancel,
         )
         .await
@@ -1414,6 +1432,7 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
         &local.blobs,
         &backend,
         &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
         &claim.cancel,
     )
     .await
@@ -1469,6 +1488,7 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
             &local.blobs,
             &backend,
             &claim.request,
+            BackfillPolicy::default().max_inline_bytes,
             &claim.cancel,
         )
         .await
@@ -1569,4 +1589,228 @@ fn a_full_store_never_refuses_the_user() {
 
     let next = backfill.next_body().expect("work");
     assert_eq!(next.request.message, MessageId::new(7));
+}
+
+// ---------------------------------------------------------------------------
+// Inline parts ride with the text — ADR 0017, #751
+// ---------------------------------------------------------------------------
+
+/// Base64 for `PNGBYTES`, so the decoded bytes are recognisable in a failure.
+const SMALL_INLINE: &str = "UE5HQllURVM=";
+
+/// A `multipart/related` message: an HTML body, a small inline image it
+/// references, and an inline image far too big for the text axis to carry.
+///
+/// Only sections `1` and `2` are seeded. The mock rejects a `BODY[<section>]`
+/// nobody seeded, so a fetch that reached for the oversized part fails the
+/// test rather than quietly costing forty megabytes no assertion can see.
+fn with_inline_images(uid: u32) -> MockMessage {
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/related",
+        [
+            postio_imap::backend::PartNode::new("1", "text/html", 64)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "image/png", 8)
+                .with_encoding("base64")
+                // Brackets and all, exactly as `BODYSTRUCTURE` reports it.
+                .with_content_id("<logo@example.com>")
+                .with_disposition(postio_imap::backend::Disposition::Inline),
+            postio_imap::backend::PartNode::new("3", "image/png", HUGE)
+                .with_encoding("base64")
+                .with_content_id("<banner@example.com>")
+                .with_disposition(postio_imap::backend::Disposition::Inline),
+        ],
+    );
+    MockMessage::new(
+        format!(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             Subject: Two inline shots {uid}\r\n\
+             Message-ID: <inline-{uid}@example.com>\r\n\
+             Content-Type: multipart/related; boundary=rel\r\n\
+             \r\n\
+             --rel\r\n\
+             Content-Type: text/html; charset=utf-8\r\n\
+             \r\n\
+             <p><img src=\"cid:logo@example.com\"></p>\r\n\
+             --rel--\r\n"
+        )
+        .into_bytes(),
+    )
+    .with_internal_date(at(uid as i64))
+    .with_structure(structure)
+    .with_part("1", &b"<p><img src=\"cid:logo@example.com\"></p>"[..])
+    .with_part("2", SMALL_INLINE.as_bytes())
+}
+
+#[tokio::test]
+async fn the_text_axis_carries_the_inline_images_the_body_references() {
+    // #751 cause 1, and ADR 0017's "inline parts ride with the text": the rule
+    // was decided, documented, and built by nothing, so `cid:` resolved to no
+    // bytes and every HTML message with its own images drew broken boxes.
+    //
+    // Under the default `AttachmentPolicy::OnOpen` -- payloads stay on the
+    // server until somebody asks -- the inline part under the cap must still
+    // be local when the text lands, because it *is* the text as far as a
+    // person reading the message is concerned.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_inline_images(1));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, HUGE),
+        policy().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+
+    let logo = stored
+        .attachments
+        .iter()
+        .find(|part| part.content_id.as_deref() == Some("logo@example.com"))
+        .expect("the inline part the HTML references, stored bare");
+    let blob = logo.blob_id.clone().expect(
+        "an inline part under the cap is fetched with the text, or the pane draws a broken box",
+    );
+    assert_eq!(
+        local.blobs.get(&blob).expect("the blob"),
+        b"PNGBYTES",
+        "the inline part is stored decoded, as the payload axis stores one"
+    );
+
+    let banner = stored
+        .attachments
+        .iter()
+        .find(|part| part.content_id.as_deref() == Some("banner@example.com"))
+        .expect("the oversized inline part is still described");
+    assert!(
+        banner.blob_id.is_none(),
+        "an inline part over the cap is a payload: it stays on the server \
+         until somebody asks for it, which is what stops HTML mail dragging \
+         an embedded video down the text axis"
+    );
+
+    assert_eq!(
+        stored.sync.body_state,
+        BodyState::Partial,
+        "the words and the small image are local; the big one is not"
+    );
+}
+
+#[tokio::test]
+async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
+    // The other side of the cap: when nothing was left on the server, the
+    // message is `full`, so the reader offers "open" rather than "download"
+    // and search knows it is answering from a complete corpus.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/related",
+        [
+            postio_imap::backend::PartNode::new("1", "text/html", 64).with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "image/png", 8)
+                .with_encoding("base64")
+                .with_content_id("<logo@example.com>")
+                .with_disposition(postio_imap::backend::Disposition::Inline),
+        ],
+    );
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(
+            MockMessage::new(note(1))
+                .with_internal_date(at(1))
+                .with_structure(structure)
+                .with_part("1", &b"<p>Hello.</p>"[..])
+                .with_part("2", SMALL_INLINE.as_bytes()),
+        );
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 4_096),
+        policy().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+}
+
+#[tokio::test]
+async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
+    // The cap is about *inline* parts. A small PDF the sender attached is a
+    // payload however little it weighs, or `attachment_fetch = "on_open"`
+    // would quietly stop meaning anything. The mock has no bytes seeded for
+    // section 2, so reaching for it fails this test.
+    let structure = postio_imap::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_imap::backend::PartNode::new("2", "application/pdf", 512)
+                .with_encoding("base64")
+                .with_filename("receipt.pdf"),
+        ],
+    );
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(
+            MockMessage::new(note(1))
+                .with_internal_date(at(1))
+                .with_structure(structure)
+                .with_part("1", &b"Your receipt is attached."[..]),
+        );
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 4_096),
+        policy().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .expect("get")
+        .expect("row");
+    assert!(
+        stored.attachments.iter().all(|part| part.blob_id.is_none()),
+        "a named attachment stays on the server under the default policy"
+    );
+    assert_eq!(stored.sync.body_state, BodyState::Partial);
 }

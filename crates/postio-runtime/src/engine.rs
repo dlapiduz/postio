@@ -1597,6 +1597,10 @@ async fn pump_body(
         &parts.blobs,
         parts.backend.as_ref(),
         &claim.request,
+        // ADR 0017's inline rule, from the same policy the queue is scheduled
+        // under, so `[sync] max_inline_bytes` reaches the fetch that honours
+        // it rather than stopping at a struct field nobody reads (#751).
+        state.backfill.policy().max_inline_bytes,
         &claim.cancel,
     );
     tokio::pin!(fetch);

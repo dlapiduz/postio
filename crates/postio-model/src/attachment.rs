@@ -53,6 +53,17 @@ impl Disposition {
     }
 }
 
+/// A `Content-ID` header value as the store holds it — see
+/// [`Attachment::set_content_id`], which is how ingest paths should reach it.
+pub fn bare_content_id(raw: &str) -> Option<String> {
+    let bare = raw
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim();
+    (!bare.is_empty()).then(|| bare.to_owned())
+}
+
 /// One attachment or inline part of a message.
 ///
 /// Metadata is stored eagerly so search and the list can show
@@ -110,6 +121,26 @@ impl Attachment {
             part_headers: None,
             blob_id: None,
         }
+    }
+
+    /// Records a `Content-ID` as the store holds it: bare, with the angle
+    /// brackets RFC 2045 wraps the header value in taken off.
+    ///
+    /// Every ingest path goes through here, because the alternative is what
+    /// #751 was. `postio_model::mime` trimmed the brackets and the IMAP
+    /// header sync did not -- `BODYSTRUCTURE`'s id field is the header value
+    /// verbatim, `<logo@example.com>` -- so the same message stored a
+    /// different id depending on how it arrived. The sanitizer builds
+    /// `postio-cid:logo@example.com` from the HTML either way and
+    /// `postio_session::reading::resolve_cid` compares with `==`, so an
+    /// IMAP-synced inline image could never resolve however many of its bytes
+    /// were local.
+    ///
+    /// An id that is empty once trimmed is no id: it can match no `cid:` URL,
+    /// and `Some("")` would only give the comparison something to be wrong
+    /// about.
+    pub fn set_content_id(&mut self, raw: Option<&str>) {
+        self.content_id = raw.and_then(bare_content_id);
     }
 
     /// Whether the bytes are in the local blob store.
