@@ -11,6 +11,12 @@
 //! and a composer built afterwards still starts on the applied keymap rather
 //! than on the registry defaults it was drawn with.
 //!
+//! Two cases, so they live here rather than in a binary of their own: a file
+//! with two display-needing `#[test]`s hands them to libtest's thread pool,
+//! GTK tolerates one thread, and the loser returns through its own `no
+//! display` guard and is reported as passing (#355). This file was very
+//! nearly the fourth to do that.
+//!
 //! Skips without a display.
 
 use gtk::gdk;
@@ -19,8 +25,7 @@ use postio_core::Keymap;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 
-#[test]
-fn applying_a_keymap_does_not_build_a_composer_nobody_asked_for() {
+pub fn applying_a_keymap_does_not_build_a_composer_nobody_asked_for() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display");
         return;
@@ -44,8 +49,7 @@ fn applying_a_keymap_does_not_build_a_composer_nobody_asked_for() {
     );
 }
 
-#[test]
-fn a_composer_built_after_a_rebind_starts_on_the_rebound_key() {
+pub fn a_composer_built_after_a_rebind_starts_on_the_rebound_key() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display");
         return;
