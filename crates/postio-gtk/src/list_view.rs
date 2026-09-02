@@ -1140,7 +1140,67 @@ impl MessageListView {
         imp.model.connect_items_changed(glib::clone!(
             #[weak(rename_to = pane)]
             self,
-            move |_, _, _, _| pane.report_cursor()
+            move |_, position, removed, added| {
+                // New mail landing at the very top (#750): `inserted_at_top`
+                // fires exactly `items_changed(0, 0, count)`, and the row
+                // the cursor is on keeps its message id -- `report_cursor`'s
+                // own dedup below already declines to repaint the reading
+                // pane over it. What is missing is the *view*'s scroll
+                // position, and it turns out to be missing unconditionally:
+                // `GtkListView`'s anchor-preservation does not reliably
+                // survive `inserted_at_top`'s cache invalidation (every
+                // resident page is dropped and refetched, not only the rows
+                // that actually moved), measured landing anywhere from
+                // "sitting at the very top, new mail shows up 220px below
+                // the viewport" to "scrolled well away, the whole view snaps
+                // back to zero" depending on where the viewport already was.
+                //
+                // So this does not special-case the top: it captures
+                // whatever the offset already was, the instant the model
+                // changed, and reasserts exactly that value until GTK stops
+                // fighting it. At the top that value is 0 -- which is
+                // exactly "reveal the new mail" -- and away from the top it
+                // is whatever the reader had scrolled to, which is exactly
+                // #72's "nothing moves" contract. One correction serves
+                // both.
+                //
+                // One tick callback is not enough: `add_tick_callback` runs
+                // in the frame clock's update phase, which comes *before*
+                // GTK's own layout phase re-applies the shift this is
+                // undoing, so a single correction is clobbered the moment it
+                // lands. Reasserting it keeps up with however many layout
+                // passes the insertion actually takes -- but only for as
+                // long as GTK is still fighting back: this stops two frames
+                // after the offset has held at the captured value *on its
+                // own*, so it never overrides a scroll a person makes
+                // moments after the insertion, and it does not linger once
+                // there is nothing left to correct.
+                if position == 0 && removed == 0 && added > 0 {
+                    let anchored = pane.scroll_offset();
+                    let held = Cell::new(0u32);
+                    // A hard stop past what any real layout should need, so
+                    // a GTK version that never actually stabilises here
+                    // cannot turn this into a tick callback that runs
+                    // forever.
+                    let budget = Cell::new(60u32);
+                    pane.add_tick_callback(move |pane, _| {
+                        if pane.scroll_offset() == anchored {
+                            held.set(held.get() + 1);
+                        } else {
+                            pane.set_scroll_offset(anchored);
+                            held.set(0);
+                        }
+                        let remaining = budget.get().saturating_sub(1);
+                        budget.set(remaining);
+                        if held.get() >= 2 || remaining == 0 {
+                            glib::ControlFlow::Break
+                        } else {
+                            glib::ControlFlow::Continue
+                        }
+                    });
+                }
+                pane.report_cursor()
+            }
         ));
 
         let scroller = gtk::ScrolledWindow::new();

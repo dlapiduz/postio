@@ -49,6 +49,7 @@ mod gtk_list_focus_return;
 mod gtk_list_recycling;
 mod gtk_list_reload;
 mod gtk_move_picker;
+mod gtk_new_mail_scroll;
 mod gtk_next_scope;
 mod gtk_parts;
 mod gtk_prev_view;
@@ -196,6 +197,10 @@ const CASES: &[(&str, fn())] = &[
         "gtk_list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
         gtk_list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone
             as fn(),
+    ),
+    (
+        "gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else",
+        gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else as fn(),
     ),
     (
         "gtk_move_picker::m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move",
