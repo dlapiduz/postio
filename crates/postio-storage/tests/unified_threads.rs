@@ -227,3 +227,119 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         "the absorbed partner never resurfaces as a row of its own"
     );
 }
+
+/// The list needs a total before it has drawn a row, and that total has to be
+/// the number of rows the walk will actually produce.
+///
+/// `unified_page` decides what a row is by absorbing older partners into the
+/// newest member, so the count cannot be "how many threads are there" — a
+/// grouped pair is two threads and one row. Asserted against the walk rather
+/// than against a literal: a hand-counted expectation would let the two drift
+/// apart in exactly the case that matters, which is the fixture holding every
+/// grouping rule at once.
+#[test]
+fn the_group_count_is_what_walking_every_page_produces() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+
+    // Grouped by root identity, across accounts.
+    file(&connection, a, a_inbox, 20, Some("<r@example.com>"), &[], "Root pair");
+    file(&connection, b, b_inbox, 19, Some("<r@example.com>"), &[], "Root pair");
+
+    // Grouped by subject, inside the coalescing window.
+    file(&connection, a, a_inbox, 16, None, &[], "Subject pair");
+    file(&connection, b, b_inbox, 15, None, &[], "Re: Subject pair");
+
+    // Same subject, beyond the window: two rows, not one.
+    let far = 24 * postio_model::subject::COALESCING_WINDOW_DAYS + 48;
+    file(&connection, a, a_inbox, 200, None, &[], "Weekly digest");
+    file(&connection, b, b_inbox, 200 + far, None, &[], "Weekly digest");
+
+    // Same subject inside the window but the *same* account: never a group,
+    // because a conversation folds across accounts and not within one.
+    file(&connection, a, a_inbox, 30, None, &[], "Same account twice");
+    file(&connection, a, a_inbox, 31, None, &[], "Same account twice");
+
+    // Plain solos, one per account.
+    file(&connection, a, a_inbox, 5, Some("<solo-a@example.com>"), &[], "Alone in A");
+    file(&connection, b, b_inbox, 4, Some("<solo-b@example.com>"), &[], "Alone in B");
+
+    let repository = ThreadRepository::new(&connection);
+
+    // Walk in small pages, so absorption across a page boundary counts too.
+    let mut walked = 0usize;
+    let mut after = None;
+    loop {
+        let groups = repository
+            .unified_page(&UnifiedThreadListQuery { limit: 2, after })
+            .expect("unified page");
+        let Some(last) = groups.last() else { break };
+        after = Some(last.cursor());
+        walked += groups.len();
+    }
+
+    // Ten threads, eight rows: the root pair and the subject pair each fold,
+    // and nothing else does. Stated absolutely as well as against the walk,
+    // so the two agreeing on a wrong number still fails.
+    assert_eq!(walked, 8, "the walk folds exactly the two cross-account pairs");
+    assert_eq!(
+        repository.unified_count().expect("unified count") as usize,
+        walked,
+        "the count and the walk have to agree about what a row is -- a list \
+         told there are more rows than the pages can fill ends in trailing \
+         placeholders that never resolve"
+    );
+}
+
+/// The list model scrolls by index, so the store has to be able to answer at
+/// one — the same bargain [`ThreadRepository::page_at`] makes for a folder.
+///
+/// The offset is counted from the cursor every time, which is why
+/// `postio_runtime::store` keeps seek marks and hands this a small number.
+#[test]
+fn an_offset_window_is_the_walk_from_that_row_on() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+
+    // Six rows, one of them a cross-account pair, so the offset has to be an
+    // offset into *groups* rather than into threads.
+    for hour in [1, 3, 5, 7] {
+        file(&connection, a, a_inbox, hour, None, &[], &format!("Note {hour}"));
+    }
+    file(&connection, a, a_inbox, 9, Some("<p@example.com>"), &[], "Paired");
+    file(&connection, b, b_inbox, 8, Some("<p@example.com>"), &[], "Paired");
+    file(&connection, b, b_inbox, 2, None, &[], "Only in B");
+
+    let repository = ThreadRepository::new(&connection);
+    let all = repository
+        .unified_page(&UnifiedThreadListQuery {
+            limit: 50,
+            after: None,
+        })
+        .expect("the whole list");
+    assert_eq!(all.len(), 6, "the pair is one row");
+
+    for offset in 0..all.len() as u32 {
+        let window = repository
+            .unified_page_at(
+                &UnifiedThreadListQuery {
+                    limit: 2,
+                    after: None,
+                },
+                offset,
+            )
+            .expect("offset window");
+        let expected: Vec<Option<&str>> = all[offset as usize..]
+            .iter()
+            .take(2)
+            .map(|group| group.row.subject.as_deref())
+            .collect();
+        let actual: Vec<Option<&str>> = window
+            .iter()
+            .map(|group| group.row.subject.as_deref())
+            .collect();
+        assert_eq!(actual, expected, "the window at row {offset}");
+    }
+}
