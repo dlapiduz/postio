@@ -45,6 +45,7 @@ mod gtk_feeds;
 mod gtk_finder;
 mod gtk_flagged;
 mod gtk_focus_visible;
+mod gtk_keymap_lazy;
 mod gtk_list_focus_return;
 mod gtk_list_recycling;
 mod gtk_list_reload;
@@ -87,6 +88,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "feed_results::search_hits_reach_the_message_list",
         feed_results::search_hits_reach_the_message_list as fn(),
+    ),
+    (
+        "gtk_keymap_lazy::applying_a_keymap_does_not_build_a_composer_nobody_asked_for",
+        gtk_keymap_lazy::applying_a_keymap_does_not_build_a_composer_nobody_asked_for as fn(),
+    ),
+    (
+        "gtk_keymap_lazy::a_composer_built_after_a_rebind_starts_on_the_rebound_key",
+        gtk_keymap_lazy::a_composer_built_after_a_rebind_starts_on_the_rebound_key as fn(),
     ),
     (
         "gtk_composer_autosave::typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending",
