@@ -357,52 +357,30 @@ jobs:
       # configuration developers do — against the compositor the application
       # actually targets — instead of a second, differently-behaved one.
       #
-      # Xvfb is the backstop, not the plan. A runner has no logind seat and no
-      # session bus, so `mutter --headless` may well refuse to start; the
-      # runner then fails open and execs the test binary unchanged, which
-      # inherits the DISPLAY set here. Belt and braces, because the failure
-      # this is guarding against is silent.
+      # There is no Xvfb backstop any more, and that is the point. X11 is not
+      # a supported configuration (maintainer, 2026-09-02: "there is no plan
+      # to support x11"), so a suite that passed on it proved something we do
+      # not ship — and because the runner fell back in silence, a green run
+      # could not be read to say which of the two had happened. Grepping a
+      # full job log for `postio runner:` returned zero lines whether mutter
+      # had worked perfectly or never started at all.
       #
-      # `gtk_display_required.rs` fails the build if both paths ever stop
-      # working, so the skips cannot come back unnoticed.
-      - name: Give the GTK suites a display
+      # So the only display here is the one the application targets. If the
+      # compositor does not come up, `gtk_display_required.rs` fails the run
+      # loudly, which is the outcome #114 wanted: a red tick beats a green one
+      # that means "nothing ran".
+      - name: Give the GTK suites a runtime directory
         run: |
-          Xvfb :99 -screen 0 1280x800x24 &
-          # The socket, not `xdpyinfo`, which lives in x11-utils and would be
-          # a second package to install for one readiness check.
-          for _ in $(seq 1 40); do
-            [ -S /tmp/.X11-unix/X99 ] && break
-            sleep 0.25
-          done
-          [ -S /tmp/.X11-unix/X99 ] \
-            || { echo "::error::Xvfb never came up; the GTK suites would all skip"; exit 1; }
-
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
           mkdir -p "$runtime" && chmod 700 "$runtime"
-
-          {
-            echo "DISPLAY=:99"
-            echo "XDG_RUNTIME_DIR=$runtime"
-          } >> "$GITHUB_ENV"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
       #
-      # No POSTIO_HEADLESS override any more. #781 needed one because
-      # scripts/headless-runner.sh treated "the socket file exists" as "the
-      # compositor works": mutter binds the socket and exits on a runner with
-      # no DRM device, and the runner then unset DISPLAY and threw away the
-      # Xvfb display the step above had just provisioned and verified.
-      #
-      # #794 taught it to ask whether anything is listening. It now falls back
-      # to this display on its own, which is what its header always promised,
-      # and CI stops carrying a special case for a bug that is fixed. If
-      # mutter is ever made to run on a runner, the tests move back onto it
-      # with no change here -- and gtk_display_required.rs fails loudly if
-      # neither display is there, rather than every GTK test skipping quietly.
-      # Under `dbus-run-session` so the runner's own compositor can start.
-      # mutter gets all the way up on a runner -- surfaceless renderer, virtual
-      # monitor, Wayland socket bound -- and then dies on
+      # `dbus-run-session` is what makes the nested compositor possible here.
+      # mutter gets all the way up on a runner -- surfaceless renderer,
+      # virtual monitor, Wayland socket bound -- and then dies on
       #
       #   libmutter:ERROR:.../meta-wayland.c:761:set_gnome_env:
       #   assertion failed: (session_bus)
@@ -411,10 +389,9 @@ jobs:
       # day: it wants a session bus and a runner has none. That log had been
       # written to $XDG_RUNTIME_DIR/<display>.log all along and never read.
       #
-      # With a bus the tests run on the same nested compositor a developer's
-      # machine uses, instead of on Xvfb through the runner's fallback -- one
-      # arrangement to reason about rather than two, and the X11 path is where
-      # #794's teardown segfault lives.
+      # So the tests run on the same nested compositor a developer's machine
+      # uses: one arrangement to reason about rather than two, and no second
+      # display for a green run to have quietly meant instead.
       - name: cargo test
         run: dbus-run-session -- cargo test --workspace
 
