@@ -76,6 +76,37 @@ esac
 
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless}"
 SOCKET="$XDG_RUNTIME_DIR/$DISPLAY_NAME"
+UNAVAILABLE="$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
+
+# Whether a compositor is actually behind the socket, rather than a socket
+# file being present.
+#
+# These are different questions and the difference is not academic: mutter can
+# bind the socket and then exit -- on a machine with no DRM device, which is
+# every GitHub-hosted runner -- leaving a file that passes `-S` with nothing
+# listening. Committing to that is worse than never starting one, because the
+# lines below unset DISPLAY and force GDK_BACKEND=wayland, so the fallback
+# display is thrown away too and *every* GTK test skips itself for want of a
+# display it actually had. That is what #781 spent a day discovering, and it
+# is the opposite of this script's promise to exec the binary unchanged when
+# anything is wrong.
+# Asked of the socket, not of the process table. `pgrep -f
+# wayland-display=<name>` looks like the obvious check and is wrong twice
+# over: a compositor for a *different* XDG_RUNTIME_DIR can share the display
+# name, and `-f` happily matches any shell whose command line mentions it.
+# Both were observed while writing this.
+#
+# `ss` prints a line only when something is actually listening on that exact
+# path. If ss is missing, this cannot tell, and says so by keeping the old
+# behaviour rather than inventing an answer.
+compositor_alive() {
+    command -v ss >/dev/null 2>&1 || return 0
+    [ -n "$(ss -lxH src "$SOCKET" 2>/dev/null)" ]
+}
+
+# One binary learning the compositor will not come up saves the next twenty
+# from waiting ten seconds each to learn it again.
+[ -e "$UNAVAILABLE" ] && exec_target "$@"
 
 if [ ! -S "$SOCKET" ]; then
     # A lock so twenty test binaries starting at once bring up one compositor
@@ -96,6 +127,17 @@ fi
 # Still nothing? Then run on whatever the session has. A test that needs a
 # display will skip itself; one that does not is unaffected.
 [ -S "$SOCKET" ] || exec_target "$@"
+
+# A socket with nothing behind it is the same situation wearing a disguise.
+# Clear it and say so once, so the rest of the run stops paying for the
+# attempt, then fall back to the session's own display -- which on CI is the
+# Xvfb the workflow started and verified.
+if ! compositor_alive; then
+    : > "$UNAVAILABLE" 2>/dev/null || true
+    rm -f "$SOCKET" 2>/dev/null || true
+    echo "postio runner: no compositor behind $SOCKET; using the session's display" >&2
+    exec_target "$@"
+fi
 
 export WAYLAND_DISPLAY="$DISPLAY_NAME"
 export GDK_BACKEND=wayland
