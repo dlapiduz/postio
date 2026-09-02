@@ -534,7 +534,8 @@ jobs:
             libglib2.0-dev \
             libpango1.0-dev \
             mutter \
-            xvfb
+            xvfb \
+            dbus-daemon
 
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
@@ -625,8 +626,23 @@ jobs:
       # mutter is ever made to run on a runner, the tests move back onto it
       # with no change here -- and gtk_display_required.rs fails loudly if
       # neither display is there, rather than every GTK test skipping quietly.
+      # Under `dbus-run-session` so the runner's own compositor can start.
+      # mutter gets all the way up on a runner -- surfaceless renderer, virtual
+      # monitor, Wayland socket bound -- and then dies on
+      #
+      #   libmutter:ERROR:.../meta-wayland.c:761:set_gnome_env:
+      #   assertion failed: (session_bus)
+      #
+      # which is not about the GPU, as everyone including me assumed for a
+      # day: it wants a session bus and a runner has none. That log had been
+      # written to $XDG_RUNTIME_DIR/<display>.log all along and never read.
+      #
+      # With a bus the tests run on the same nested compositor a developer's
+      # machine uses, instead of on Xvfb through the runner's fallback -- one
+      # arrangement to reason about rather than two, and the X11 path is where
+      # #794's teardown segfault lives.
       - name: cargo test
-        run: cargo test --workspace
+        run: dbus-run-session -- cargo test --workspace
 
       # `#![warn(missing_docs)]` has been on most crates from the start and
       # failed nothing, because no job ever built the docs. Denying warnings
