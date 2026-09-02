@@ -22,9 +22,18 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::conversation::{ConversationView, EAGER_EXPANSION_CAP};
 use postio_gtk::list::Row;
+use postio_gtk::reader::Reader;
 use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
+
+/// A reader with nothing behind it — no blob source worth naming, since
+/// nothing here asks it to resolve a `cid:`. Good enough to stand in for the
+/// hardened one everywhere this file only cares that a reader was built, not
+/// what it can render.
+fn stub_reader() -> Reader {
+    Reader::new(Rc::new(|_content_id: &str| None))
+}
 
 /// One message of the conversation, oldest first by id.
 fn message(id: i64, seen: bool) -> Row {
@@ -64,9 +73,9 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
     let counter = Rc::clone(&built);
     pane.set_reader_factory(move |message| {
         counter.borrow_mut().push(message);
-        // A stand-in for the hardened reader: this test is about the stack,
-        // and `gtk_reader.rs` covers what goes in each slot.
-        gtk::Label::new(Some("body")).upcast::<gtk::Widget>()
+        // A bare reader: this test is about the stack, and `gtk_reader.rs`
+        // covers what goes in each slot.
+        stub_reader()
     });
 
     window.set_child(Some(&pane.widget()));
@@ -210,6 +219,92 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
         &[MessageId::new(23)],
         "dwell has to read the message that was rested on, and nothing the \
          cursor passed over on the way to it"
+    );
+
+    window.close();
+}
+
+/// `reader_for` finds the reader already built for an expanded entry, and
+/// nothing for anything else (#739).
+///
+/// This is the seam a body or a payload landing for a message the
+/// conversation pane is already showing has to come back through:
+/// `expand` only ever builds a reader once, so re-drawing an arrival into
+/// the *same* one — rather than tearing an entry down to rebuild it — starts
+/// with finding it again.
+pub fn reader_for_finds_only_an_expanded_entrys_own_reader() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(move |_message| stub_reader());
+
+    window.set_child(Some(&pane.widget()));
+    window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    // Two read (collapsed), then two unread (expanded up to the cap).
+    let messages: Vec<Row> = (0..4).map(|id| message(id, id < 2)).collect();
+    pane.open(messages);
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let expanded = MessageId::new(2);
+    let collapsed = MessageId::new(0);
+    let absent = MessageId::new(99);
+    assert!(
+        pane.is_expanded(expanded),
+        "the setup for this test changed"
+    );
+    assert!(
+        !pane.is_expanded(collapsed),
+        "the setup for this test changed"
+    );
+
+    assert!(
+        pane.reader_for(collapsed).is_none(),
+        "a collapsed entry has no reader to find — expand builds one, this \
+         does not"
+    );
+    assert!(
+        pane.reader_for(absent).is_none(),
+        "a message outside the conversation should have nothing to find"
+    );
+
+    let reader = pane
+        .reader_for(expanded)
+        .expect("an expanded entry has a reader");
+    assert_eq!(
+        reader.paints(),
+        0,
+        "the factory in this test never rendered anything"
+    );
+
+    // Draw into it directly, the way a repaint on an arrival would.
+    reader.render(
+        &postio_model::MessageBody {
+            text: Some("a body that landed".into()),
+            html: None,
+        },
+        None,
+    );
+
+    // Asking again returns the *same* reader — the point of keeping it,
+    // rather than `expand`'s factory being called a second time — so the
+    // paint just made is still on it.
+    let same = pane
+        .reader_for(expanded)
+        .expect("the entry is still expanded");
+    assert_eq!(
+        same.paints(),
+        1,
+        "reader_for handed back a different reader than the one drawn into, \
+         so the entry does not carry the paint forward"
     );
 
     window.close();
