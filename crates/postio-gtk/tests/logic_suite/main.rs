@@ -25,9 +25,7 @@
 //! exactly the failure #355 records.
 
 mod desktop_entry;
-mod drag_out;
 mod gtk_extension_commands;
 mod keymap_defaults;
 mod keymap_live;
-mod list_model;
 mod reader_tokens;

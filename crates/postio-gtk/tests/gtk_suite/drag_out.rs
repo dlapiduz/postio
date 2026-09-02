@@ -39,8 +39,7 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     glib::MainContext::default().block_on(future)
 }
 
-#[test]
-fn dragging_messages_out_hands_over_files() {
+pub fn dragging_messages_out_hands_over_files() {
     if gtk::init().is_err() {
         eprintln!("skipping: no display (run under scripts/test-headless.sh)");
         return;
