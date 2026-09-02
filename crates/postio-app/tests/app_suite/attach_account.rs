@@ -52,8 +52,6 @@ const SEEDED: [&str; 1] = ["plain-text-simple"];
 const JOINING_ADDRESS: &str = "grace@example.com";
 const JOINING_PASSWORD: &str = "hunter2";
 
-
-
 /// Every widget in the tree carrying `class` (or, when `class` is empty,
 /// every widget), depth first -- copied from `settings_accounts_wiring.rs`
 /// rather than shared, matching that file's own reason for copying it: no

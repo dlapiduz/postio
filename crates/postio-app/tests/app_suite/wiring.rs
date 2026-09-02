@@ -43,8 +43,6 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 pub fn a_window_over_a_populated_store_lists_its_mail() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

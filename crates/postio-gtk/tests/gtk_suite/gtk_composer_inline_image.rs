@@ -10,10 +10,10 @@
 //! `#[test]` per integration binary. See `gtk_composer.rs`.
 
 use crate::settle as pump;
+use crate::settle_until as settle;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -24,18 +24,6 @@ use postio_gtk::{app, fonts, style};
 use postio_model::Attachment;
 use postio_model::attachment::Disposition;
 use postio_model::ids::MessageId;
-
-fn settle(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(done(), "timed out waiting for {what}");
-}
 
 /// A real PNG, the way the paste path makes one.
 fn png_bytes() -> Vec<u8> {

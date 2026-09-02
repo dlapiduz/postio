@@ -38,8 +38,6 @@ use postio_storage::{BlobStore, test_support};
 
 const SUBJECT: &str = "Tide gate interlock";
 
-
-
 pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

@@ -2718,6 +2718,7 @@ dependencies = [
  "postio-core",
  "postio-model",
  "postio-search",
+ "postio-test-support",
  "postio-ui",
  "tempfile",
  "thiserror",

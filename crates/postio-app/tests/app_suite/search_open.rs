@@ -41,8 +41,6 @@ use postio_storage::{BlobStore, test_support};
 /// Matches the seeded corpus: every fixture address is on a reserved domain.
 const QUERY: &str = "example.com";
 
-
-
 pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

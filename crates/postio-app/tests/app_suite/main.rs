@@ -298,8 +298,8 @@ pub fn settle() {
 /// Returns whether it happened, because every call site is already inside an
 /// `assert!` that says what was expected.
 pub fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now()
-        + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         settle();
         if done() {

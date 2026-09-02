@@ -24,27 +24,14 @@
 //!
 //! One test function: GTK is single-threaded and initialised once.
 
+use crate::settle_until as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_body::{Block, Document, Inline, parse};
 use webkit6::prelude::*;
-
-/// Pump the main context until `done`, with a liveness-only deadline.
-fn settle(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(done(), "timed out waiting for {what}");
-}
 
 /// Run `script` in the view and hand back its string result.
 fn eval(view: &webkit6::WebView, script: &str) -> String {

@@ -49,8 +49,6 @@ fn list_has_keyboard(window: &Window) -> bool {
     list.is_focus() || list.focus_child().is_some()
 }
 
-
-
 pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     let state_dir =
         std::env::temp_dir().join(format!("postio-search-return-tab-{}", std::process::id()));

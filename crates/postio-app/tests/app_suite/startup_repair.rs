@@ -45,8 +45,6 @@ use postio_session::Wiring;
 use postio_storage::{BlobStore, test_support};
 use std::sync::Arc;
 
-
-
 /// The onboarding screen, if that is what the window is showing.
 fn screen(window: &Window) -> Option<Onboarding> {
     window.content().and_downcast::<Onboarding>()

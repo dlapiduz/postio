@@ -42,8 +42,6 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
 
-
-
 /// Which mailbox holds `message`, straight out of the database.
 fn mailbox_of(database: &Database, message: MessageId) -> i64 {
     let connection = database.connection().expect("a connection");

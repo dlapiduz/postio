@@ -723,6 +723,27 @@ const CASES: &[(&str, fn())] = &[
 ///     was waiting for when it times out.
 ///
 /// Those are converted case by case, not by pattern.
+use gtk::glib;
+
+/// Turn the loop until `done`, or fail saying what `what` was.
+///
+/// Six modules had this, identically, with a 120-second deadline. It
+/// delegates to `postio_test_support` so the deadline answers to
+/// `POSTIO_TEST_PATIENCE` -- the whole point of #842 -- and so a timeout
+/// reports how long it actually waited rather than only what it wanted.
+///
+/// 120 seconds is kept rather than folded into the crate's five-second
+/// default: these wait on WebKit loading a document, which is a different
+/// order of thing from "a widget should have updated by now".
+pub fn settle_until(what: &str, done: impl Fn() -> bool) {
+    postio_test_support::settle_until_within(
+        postio_test_support::scaled(std::time::Duration::from_secs(120)),
+        what,
+        || while glib::MainContext::default().iteration(false) {},
+        done,
+    );
+}
+
 pub fn settle() {
     while glib::MainContext::default().iteration(false) {}
 }

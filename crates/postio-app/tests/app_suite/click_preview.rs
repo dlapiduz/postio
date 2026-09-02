@@ -44,8 +44,6 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 pub fn clicking_a_message_fills_the_reading_pane() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.

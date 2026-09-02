@@ -26,8 +26,6 @@ use postio_storage::repository::AccountRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-
-
 fn settle_until(done: impl Fn() -> bool) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
