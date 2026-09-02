@@ -171,12 +171,64 @@ fn the_sandboxed_spelling_is_offered_too() {
     // types by hand: naming them would silently drop this one, and drag-out
     // would work on the host and fail in the sandbox — which is the one
     // combination nobody would notice until a user reported it.
+    // Asserted only where GDK could offer it. The spelling is registered by
+    // GDK when the FileTransfer portal is reachable on a session bus, so on a
+    // desktop it is there and on a bare CI runner -- no session bus at all --
+    // it never can be, and asserting it there tests the runner rather than
+    // Postio. `dbus-run-session` with xdg-desktop-portal installed does not
+    // close the gap: the daemon starts and then fails to reach the secrets
+    // service, so the name is still unowned.
+    //
+    // The skip is loud on purpose. A quiet one is how every GTK test in this
+    // workspace came to "pass" without a display (#781), and the assertion
+    // below is worth more than most: its own point is that hand-naming the
+    // mime types would work on the host and fail in the sandbox, which is the
+    // one combination nobody notices until a user reports it. #121 is where
+    // that path is proven for real, under Flatpak.
+    if offered
+        .iter()
+        .any(|mime| mime == "application/vnd.portal.filetransfer")
+    {
+        return;
+    }
     assert!(
-        offered
-            .iter()
-            .any(|mime| mime == "application/vnd.portal.filetransfer"),
-        "the sandboxed path is not on offer: {offered:?}"
+        !portal_is_reachable(),
+        "the sandboxed path is not on offer even though the FileTransfer \
+         portal is reachable, so this is Postio's provider and not the \
+         environment: {offered:?}"
     );
+    eprintln!(
+        "skipping the sandbox spelling: no FileTransfer portal on this \
+         session bus, so GDK cannot advertise it here. #121 proves this path \
+         under Flatpak; it is not proven by this run."
+    );
+}
+
+/// Whether `org.freedesktop.portal.FileTransfer` has an owner on the session
+/// bus -- which is what decides whether GDK can advertise the sandbox
+/// spelling at all.
+fn portal_is_reachable() -> bool {
+    use gtk::gio;
+    use gtk::prelude::*;
+
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        return false;
+    };
+    let owned = bus.call_sync(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        Some(&("org.freedesktop.portal.FileTransfer",).to_variant()),
+        None,
+        gio::DBusCallFlags::NONE,
+        1000,
+        gio::Cancellable::NONE,
+    );
+    owned
+        .ok()
+        .and_then(|reply| reply.child_value(0).get::<bool>())
+        .unwrap_or(false)
 }
 
 /// A drop that hands over nothing must not report success.
