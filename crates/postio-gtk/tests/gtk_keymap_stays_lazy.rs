@@ -14,7 +14,6 @@
 //! Skips without a display.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_config::KeyBindings;
 use postio_core::Keymap;
 use postio_gtk::window::Window;
