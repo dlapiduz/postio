@@ -121,7 +121,8 @@ pub struct Aim<'a> {
 /// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
 /// gets acted on instead.
 ///
-/// Also `None` for Snoozed (#493) and for the unified per-account view:
+/// Also `None` for Snoozed (#493), for the unified per-account view and for
+/// the cross-account one:
 /// unlike Flagged, nothing here needs `Ctrl+A` to select every snoozed or
 /// every account-wide message at once yet, so it is not worth a
 /// `MessageSet` predicate of its own until something does. A person can
@@ -138,7 +139,10 @@ pub fn view_scope(scope: ListScope) -> Option<ViewScope> {
     match scope {
         ListScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
         ListScope::Flagged(account) => Some(ViewScope::Flagged(account)),
-        ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => None,
+        ListScope::Account(_)
+        | ListScope::Unified
+        | ListScope::Snoozed(_)
+        | ListScope::Thread(_) => None,
     }
 }
 

@@ -84,7 +84,10 @@ impl MessageSource for Store {
             ListScope::Mailbox(_) => 0,
             // This store is about which scope the sidebar asked for; a
             // drill-in is `gtk_thread_scope.rs`.
-            ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => 0,
+            ListScope::Account(_)
+            | ListScope::Unified
+            | ListScope::Snoozed(_)
+            | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
@@ -222,7 +225,10 @@ impl MessageSource for LiveStore {
             ListScope::Flagged(_) => *self.flagged.borrow(),
             ListScope::Snoozed(_) => *self.snoozed.borrow(),
             ListScope::Mailbox(id) if id.get() == INBOX => 10,
-            ListScope::Mailbox(_) | ListScope::Account(_) | ListScope::Thread(_) => 0,
+            ListScope::Mailbox(_)
+            | ListScope::Account(_)
+            | ListScope::Unified
+            | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);

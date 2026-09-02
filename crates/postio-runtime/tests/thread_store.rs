@@ -150,3 +150,66 @@ async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
         assert_eq!(threads.rows.len(), 20);
     }
 }
+
+/// The unified scope is a list over every account, and the store has to page
+/// it by position like any other.
+///
+/// The risk this covers is the offset bridge, not the grouping —
+/// `postio-storage` owns that. `read_thread_page` remembers a cursor for a
+/// row it has already handed out and then skips forward from it, and the
+/// unified walk folds threads together as it goes, so an off-by-one in that
+/// bridge shows up as a row served twice or a row never served at all.
+/// Walking the whole list and insisting every row is distinct is what would
+/// catch it.
+#[tokio::test]
+async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
+    let database = test_support::temp();
+    postio_storage::seed::seed_small(&database, 3);
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4);
+    let store = SqliteStore::new(&database);
+
+    let first = store
+        .thread_page(request(ListScope::Unified, 0, 10))
+        .await
+        .expect("a unified page");
+    let total = first.total;
+    assert!(
+        total > 10,
+        "the fixture has to span more than one page or the skip is never \
+         exercised at all; got {total}"
+    );
+
+    let mut seen: Vec<postio_model::MessageId> = Vec::new();
+    let mut offset = 0;
+    while offset < total {
+        let page = store
+            .thread_page(request(ListScope::Unified, offset, 10))
+            .await
+            .expect("a unified page");
+        assert!(
+            !page.rows.is_empty(),
+            "row {offset} of {total} is inside the list and has to be servable"
+        );
+        assert_eq!(
+            page.total, total,
+            "the total cannot move while nothing is being written"
+        );
+        offset += page.rows.len() as u32;
+        seen.extend(page.rows.iter().map(|row| row.representative.id));
+    }
+
+    assert_eq!(
+        seen.len(),
+        total as usize,
+        "the walk serves exactly the number of rows it promised"
+    );
+    let mut distinct = seen.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        seen.len(),
+        "no conversation is served twice: absorption means a group is not a \
+         fixed number of threads, so the skip has to count rows"
+    );
+}
