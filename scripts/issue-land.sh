@@ -264,6 +264,44 @@ if [ "$GATES_GREEN" != 1 ]; then
         cargo test -p "$crate"
         echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
     done
+
+    # Everyone else's *test* targets, against what this branch just changed.
+    #
+    # The gates above run over the crates you changed, which is the right
+    # trade for speed and the wrong one for blast radius: a shared type that
+    # gains a field breaks call sites in crates you never named, and when
+    # those call sites are in test code the libraries still compile. So
+    # `cargo build` is green, `cargo check -p <the crate you changed>` is
+    # green, and `main` goes red for the next session unlucky enough to touch
+    # the crate whose tests stopped building. That happened twice in one day
+    # (#419): `Event::BackfillProgress` gained `footprint`, and six call
+    # sites in postio-gtk's tests were never updated.
+    #
+    # `check`, not `build` or `test`: no codegen, no linking, nothing
+    # executed -- the cheapest question that covers the whole workspace, and
+    # the only one that would have caught either of them.
+    #
+    # What it costs, measured on this workstation (#419): 6m20s against a
+    # cold target directory, 0.6s warm. A landing pays somewhere between,
+    # depending on how much of the graph the per-crate gates above already
+    # compiled -- close to nothing for a postio-gtk branch, most of the
+    # frontend for a leaf-crate one. A retry after a killed run pays the warm
+    # number, and the gate cache above usually skips it entirely.
+    #
+    # Skipped where the hard stop above would not have fired: a host without
+    # the GTK libraries would fail this on system headers rather than on the
+    # branch, and refusing there would stop such a host doing any work at
+    # all. Its PR already carries `needs-linux-verify`.
+    if [ -n "$UNBUILDABLE" ]; then
+        echo "--- workspace check: skipped ---"
+        echo "This host cannot build ${UNBUILDABLE// /, }, so a workspace-wide"
+        echo "check would fail on system libraries rather than on this branch."
+    else
+        echo "--- workspace check: every crate's test targets ---"
+        PHASE_START=$(date +%s)
+        cargo check --workspace --all-targets
+        echo "[timing] workspace check: $(( $(date +%s) - PHASE_START ))s"
+    fi
 fi
 
 echo "--- repository invariants ---"

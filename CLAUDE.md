@@ -91,7 +91,9 @@ see — that is what the integration suites and `issue-land.sh` are still for.
 
 **Test the crates you changed; the reconcile pass proves the rest.**
 `issue-land.sh` runs the full gate chain (fmt, clippy, tests, `check.sh`)
-over exactly your changed crates, and the steward loop periodically runs the
+over exactly your changed crates — plus one `cargo check --workspace
+--all-targets`, because a shared type's blast radius is wider than the crate
+list describes (#419) — and the steward loop periodically runs the
 whole workspace against `main` — so a workspace build or test from an
 ordinary session is almost always waste, and a red crate you didn't touch is
 usually someone's in-flight TDD: note it on your issue and move on. Don't
@@ -115,8 +117,11 @@ the exact tree, so an unchanged retry skips straight to the landing.
   `scripts/test-headless.sh --stop` to stop the compositor. Headless is ~3.5x
   faster than a live display — a test that passes on the desktop and fails
   headless usually has a real race (see `docs/engineering-notes.md`).
-- **The reconcile pass**, when you are the one doing it: `cargo test
-  --workspace --no-fail-fast` — always `--no-fail-fast`, because plain cargo
+- **The reconcile pass**, when you are the one doing it: `cargo check
+  --workspace --all-targets` first — it is what catches a *test* target that
+  stopped compiling, which is how `main` went red twice in one day (#419),
+  and it answers before the test run has finished linking — then `cargo test
+  --workspace --no-fail-fast`, always `--no-fail-fast`, because plain cargo
   aborts remaining targets on the first failure and one red crate hides a
   thousand passing tests. `cargo bench` checks the perf budgets.
 - **To see the app**: `scripts/run-isolated.sh [commit] [--inspect|--shot]`
@@ -262,8 +267,8 @@ is genuinely different, and `--search-only` just looks.
 `ci.yml`/`bench.yml` are `workflow_dispatch`-only until the repo goes public
 (Actions minutes). Landing therefore merges promptly without waiting — do not
 add your own wait. The workspace is proven by the reconcile pass instead: the
-steward loop runs `cargo test --workspace --no-fail-fast` against `main`
-periodically. If it is ever red: pull `ready` from open issues, fix on a
+steward loop runs `cargo check --workspace --all-targets` and `cargo test
+--workspace --no-fail-fast` against `main` periodically. If it is ever red: pull `ready` from open issues, fix on a
 branch, land it, restore the labels. A release needs a local full-suite run
 first — `release.yml` ships without testing. To restore CI, uncomment the
 triggers `ci.yml` and `bench.yml` name and delete this section.
