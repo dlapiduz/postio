@@ -833,16 +833,18 @@ impl MessageListView {
     ///
     /// `Return` reaches `connect_activated` through `GtkListView`'s own
     /// `list.activate-item` action, which needs the view to hold the keyboard.
-    /// A test driving keys through [`Window::handle_key`] never goes near the
-    /// widget, so it cannot press it; this invokes the same action the
-    /// keybinding does, rather than calling the handlers directly, so a wiring
-    /// that had come loose between the action and the signal would still show.
+    /// This invokes that same action rather than calling the handlers
+    /// directly, so a wiring that had come loose between the action and the
+    /// signal still shows.
     ///
-    /// Not meant for anything but tests.
+    /// Two callers need that. A test driving keys through
+    /// [`Window::handle_key`] never goes near the widget, so it cannot press
+    /// `Return`. And `CommandId::OpenMessage` with no message named means
+    /// "the row the cursor is on" — `o` from anywhere, including while the
+    /// keyboard is somewhere the list's own binding cannot fire (#767).
     ///
     /// [`Window::handle_key`]: crate::window::Window::handle_key
-    #[doc(hidden)]
-    pub fn test_activate_cursor(&self) {
+    pub fn activate_cursor(&self) {
         let imp = self.imp();
         let position = imp.cursor.selected();
         if position == gtk::INVALID_LIST_POSITION {
@@ -853,6 +855,13 @@ impl MessageListView {
             "list.activate-item",
             Some(&position.to_variant()),
         );
+    }
+
+    /// [`activate_cursor`](Self::activate_cursor), under the name the tests
+    /// that predate it already call.
+    #[doc(hidden)]
+    pub fn test_activate_cursor(&self) {
+        self.activate_cursor();
     }
 
     /// Extend the selection one row in `step`'s direction, taking the cursor

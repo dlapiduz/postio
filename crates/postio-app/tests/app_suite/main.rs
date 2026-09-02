@@ -34,6 +34,7 @@ mod reply_source;
 mod resume_draft;
 mod resume_queued_draft;
 mod search_index;
+mod search_open;
 mod search_results;
 mod search_return_and_tab;
 mod search_wiring;
@@ -176,6 +177,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",
         egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable as fn(),
+    ),
+    (
+        "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",
+        search_open::opening_a_previewed_result_shows_it_in_the_reading_pane as fn(),
     ),
     (
         "search_results::a_query_puts_the_matching_messages_in_the_list",
