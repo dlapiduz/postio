@@ -99,6 +99,12 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
         "Page_Down should be claimed, not passed through"
     );
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-1", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-1"),
@@ -107,6 +113,12 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
 
     assert!(press(&window, gdk::Key::Page_Down));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-2", || {
+        fragment(&window).as_deref() == Some("pos-2")
+    });
     assert_eq!(fragment(&window).as_deref(), Some("pos-2"));
 
     // -- Page_Up walks it back ------------------------------------------
@@ -115,11 +127,23 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
         "Page_Up should be claimed too"
     );
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-1", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(fragment(&window).as_deref(), Some("pos-1"));
 
     // -- the space/shift+space alternates do the same thing -----------------
     assert!(press(&window, gdk::Key::space));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-2", || {
+        fragment(&window).as_deref() == Some("pos-2")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-2"),
@@ -127,6 +151,12 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     );
     assert!(press_shift(&window, gdk::Key::space));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-1", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-1"),
@@ -136,12 +166,24 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // -- Page_Up cannot go past the top --------------------------------
     assert!(press(&window, gdk::Key::Page_Up));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-0", || {
+        fragment(&window).as_deref() == Some("pos-0")
+    });
     assert_eq!(fragment(&window).as_deref(), Some("pos-0"));
     assert!(
         press(&window, gdk::Key::Page_Up),
         "still claimed at the top -- it is this command's key either way"
     );
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-0", || {
+        fragment(&window).as_deref() == Some("pos-0")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-0"),
@@ -174,6 +216,12 @@ pub fn a_new_message_resets_the_scroll_position() {
     assert!(press(&window, gdk::Key::Page_Down));
     assert!(press(&window, gdk::Key::Page_Down));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-2", || {
+        fragment(&window).as_deref() == Some("pos-2")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-2"),
