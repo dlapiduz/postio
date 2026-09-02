@@ -193,9 +193,14 @@ mod imp {
         /// live keymap — see
         /// [`Window::connect_keymap`](super::Window::connect_keymap).
         pub keymaps: std::cell::RefCell<Vec<KeymapHandler>>,
-        /// The keymap currently in force, so a surface that attaches later
-        /// can be handed it rather than waiting for the next edit.
-        pub keymap: std::cell::RefCell<postio_core::Keymap>,
+        /// The keymap currently in force, once one has been applied, so a
+        /// surface built later can be handed it rather than waiting for the
+        /// next edit.
+        ///
+        /// `None` until then rather than `Keymap::default()`, which is empty:
+        /// handing that to a surface would clear every hint it had drawn from
+        /// the registry defaults, which is worse than the defaults.
+        pub keymap: std::cell::RefCell<Option<postio_core::Keymap>>,
     }
 
     #[glib::object_subclass]
@@ -706,6 +711,18 @@ impl Window {
         }
     }
 
+    /// Whether a composer has been built yet.
+    ///
+    /// For the tests that guard [`composer`](Self::composer)'s laziness: it
+    /// is easy to reach for the composer from something that runs on every
+    /// window — `apply_keymap` did (#828) — and the cost of that is a WebKit
+    /// editor built in every window that never composes, which shows up as a
+    /// test suite timing out rather than as anything obviously wrong.
+    #[doc(hidden)]
+    pub fn has_composer(&self) -> bool {
+        self.imp().composer.get().is_some()
+    }
+
     /// The composer, installing it into the reading pane the first time
     /// anyone asks.
     ///
@@ -730,6 +747,13 @@ impl Window {
             let window = self.clone();
             move |_| window.sync_reading_pane()
         });
+        // Built after the keymap was applied, so it starts on the user's
+        // bindings rather than the registry defaults `build_actions` drew
+        // with. `apply_keymap` deliberately does not reach for a composer
+        // that does not exist yet, so this is the other half of that (#828).
+        if let Some(keymap) = self.imp().keymap.borrow().as_ref() {
+            composer.set_keymap(keymap);
+        }
         let _ = self.imp().composer.set(composer.clone());
         composer
     }
@@ -2087,7 +2111,9 @@ impl Window {
     /// `apply_keymap` would otherwise keep the registry defaults until the
     /// user next edited `config.toml`.
     pub fn connect_keymap(&self, handler: impl Fn(&postio_core::Keymap) + 'static) {
-        handler(&self.imp().keymap.borrow());
+        if let Some(keymap) = self.imp().keymap.borrow().as_ref() {
+            handler(keymap);
+        }
         self.imp().keymaps.borrow_mut().push(Box::new(handler));
     }
 
@@ -2340,11 +2366,20 @@ impl Window {
         self.reader().set_keymap(&keymap);
         // #828: the composer's Send / Schedule / Save draft hints were
         // literals, so they went on naming the default key after a rebind.
-        self.composer().set_keymap(&keymap);
+        //
+        // Only if one exists. `composer()` builds the composer on first ask,
+        // deliberately — a window used only for a test of the sidebar has no
+        // reason to pay for one — and reaching for it here would build a
+        // WebKit editor in every window that ever applies a keymap. A
+        // composer made later picks the keymap up from `imp().keymap` at
+        // construction instead.
+        if let Some(composer) = self.imp().composer.get() {
+            composer.set_keymap(&keymap);
+        }
         for handler in self.imp().keymaps.borrow().iter() {
             handler(&keymap);
         }
-        *self.imp().keymap.borrow_mut() = keymap;
+        *self.imp().keymap.borrow_mut() = Some(keymap);
     }
 
     /// Apply the `[ui]` block: what the list shows, and how much of it.
