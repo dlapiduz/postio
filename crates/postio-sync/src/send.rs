@@ -362,10 +362,12 @@ pub(crate) async fn send(
         .await
     {
         if error.submission_is_indeterminate() {
-            // The client stopped hearing from the server somewhere inside the
-            // transaction. Leave the mark exactly where it is: this is the
-            // one failure that must not become a retry, because "try again"
-            // and "you already sent it" are indistinguishable from here.
+            // The client stopped hearing from the server once the payload was
+            // already going out (#673 is what makes that knowable, rather than
+            // any lost connection anywhere in the session). Leave the mark
+            // exactly where it is: this is the one failure that must not
+            // become a retry, because "try again" and "you already sent it"
+            // are indistinguishable from here.
             return Outcome::Failed {
                 reason: INDETERMINATE.to_owned(),
             };
