@@ -392,6 +392,11 @@ jobs:
       # So the tests run on the same nested compositor a developer's machine
       # uses: one arrangement to reason about rather than two, and no second
       # display for a green run to have quietly meant instead.
+      #
+      # This does NOT fix #794's teardown segfault, and an earlier version of
+      # this comment claimed the crash lived on the X11 path. It does not:
+      # `backend_choice` passed its one test and then died with SIGSEGV on
+      # the nested Wayland compositor, with no Xvfb anywhere in the job.
       # A shared runner is slower and busier than the workstation these
       # deadlines were chosen on, so it gets more patience -- in one line,
       # here, rather than by enlarging a constant in a test file and slowing
