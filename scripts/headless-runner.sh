@@ -201,7 +201,15 @@ gtk_reader-*|e2e-*|gtk_suite-*|app_suite-*|gtk_editable_dialect-*|gtk_editor*|gt
     # NetworkProcess children die with it), a hard deadline, and a dump of
     # kernel-side state before the kill so a hang leaves a diagnosis rather
     # than a mystery.
+    # Scaled by POSTIO_TEST_PATIENCE, like every other deadline in the suite
+    # (#842). This one guards a *hang*, so it is deliberately generous rather
+    # than tight -- but 300s was chosen on an idle workstation, and the
+    # machines most likely to take longer than it are exactly the loaded ones
+    # where a wrongly-killed suite is hardest to interpret. `awk` because this
+    # is POSIX sh and the multiplier may be fractional.
     LIMIT="${POSTIO_TEST_WATCHDOG:-300}"
+    LIMIT=$(awk -v base="$LIMIT" -v factor="${POSTIO_TEST_PATIENCE:-1}" \
+        'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", base * factor }')
     setsid "$@" &
     GROUP=$!
     trap 'kill -9 -"$GROUP" 2>/dev/null' INT TERM
