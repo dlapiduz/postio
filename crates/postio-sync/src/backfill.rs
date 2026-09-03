@@ -254,6 +254,19 @@ pub enum Want {
     /// `Attachment::part_headers`, so a fetched section could not be decoded.
     /// Slower and fatter, and the only answer that is not a guess.
     Whole,
+    /// The header block alone, for a row that has one nowhere else.
+    ///
+    /// The repair lane #884 needs, and the only one of these that fetches
+    /// nothing a person is waiting for. A store in use since before blocks
+    /// were stored holds messages whose body is local and whose raw source was
+    /// never kept — the text axis never keeps one — so their block cannot be
+    /// rebuilt from disk however long anybody waits. `BODY[HEADER]` is the
+    /// smallest thing that answers it.
+    ///
+    /// Not to be confused with fetching headers at *sync* time, which ADR 0025
+    /// Q4 refuses: that charges every user's every sync forever. This is a
+    /// one-off over mail that is already here, and it stops finding work.
+    HeaderBlock,
 }
 
 impl Want {
@@ -914,6 +927,41 @@ pub fn request_payloads(
     Ok(true)
 }
 
+/// Queue a header-block fetch for every row in `mailbox_id` that can get one
+/// no other way. Answers how many joined the queue.
+///
+/// The third row of #884's repair table. `postio_session::repair_header_blocks`
+/// handles the rows whose raw source is still on disk, locally and with no
+/// network at all; these are the remainder — the `partial` state, which never
+/// keeps a raw blob, and rows whose raw source eviction has taken (PRODUCT.md
+/// §6 takes it first).
+///
+/// Background priority, under the policy already in force, in the lane that
+/// already exists: nobody is waiting for one of these, and a repair that
+/// competed with the mail somebody is reading would be the wrong trade. It
+/// stops finding work once the blocks are stored, which is what keeps it from
+/// being a permanent tax on every sync.
+pub fn seed_header_blocks(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    mailbox_id: MailboxId,
+    limit: u32,
+) -> Result<usize> {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+        return Ok(0);
+    }
+    let messages = MessageRepository::new(connection);
+    let mut queued = 0;
+    for candidate in messages.messages_needing_a_header_fetch(mailbox_id, limit)? {
+        let mut request = BodyRequest::from(candidate);
+        request.want = Want::HeaderBlock;
+        if backfill.enqueue(request) {
+            queued += 1;
+        }
+    }
+    Ok(queued)
+}
+
 /// Queues the payloads of up to `limit` text-backfilled messages in
 /// `mailbox_id`, and answers how many requests joined the queue.
 ///
@@ -1054,6 +1102,23 @@ pub async fn fetch_body(
                 connection, blobs, backend, request, message, inline_cap, cancel,
             )
             .await;
+        }
+        // The block and nothing else, for a row that can get one no other
+        // way. Deliberately does not touch the body: the words are already on
+        // this machine and re-storing them would risk them for no reason.
+        Want::HeaderBlock => {
+            let block = fetch_header_block(backend, request, cancel).await;
+            let Some(block) = block else {
+                // The server would not give it up. Set aside like any other
+                // failed fetch rather than written as an empty block, which
+                // would be a claim that the message has no such header.
+                return Ok(Outcome::Failed {
+                    reason: "the header block could not be fetched".to_owned(),
+                });
+            };
+            let bytes = block.text.len() as u64;
+            messages.set_headers(request.message, Some(&block))?;
+            return Ok(Outcome::Stored { bytes });
         }
         // Every byte: asked for, or the only answer left for a row whose
         // structure was never recorded.

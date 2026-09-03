@@ -12,7 +12,7 @@ use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::test_support::{self, TempDatabase};
 use postio_sync::backfill::{
     AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Priority, Want, fetch_body,
-    request_body, request_payloads, seed, seed_payloads,
+    request_body, request_payloads, seed, seed_header_blocks, seed_payloads,
 };
 use postio_sync::sync_mailbox;
 
@@ -1965,11 +1965,18 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
 }
 
 #[tokio::test]
-async fn a_payload_fetch_stores_the_header_block_too() {
-    // The `partial` path -- ~15% of ADR 0017's reference mailbox -- never
-    // fetches a raw blob at all, so without this it is the one state where
-    // `header:` would answer "no such mail" for mail that is right there.
-    // `BODY[HEADER]` is one more section on a fetch already happening.
+async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
+    // The `partial` path -- ~15% of ADR 0017's reference mailbox. It asks for
+    // the text sections by name and stores no raw source at all, so it is the
+    // one state where nothing else would ever bring the block and `header:`
+    // would answer "no such mail" for mail that is right there. It now asks
+    // for `BODY[HEADER]` as well, which is one more section on a fetch that is
+    // already happening.
+    //
+    // The payload fetch below is not what stores it -- `fetch_payloads` writes
+    // no body at all -- and this test said otherwise until the block was
+    // checked against which function actually wrote it. It is here to prove
+    // the block survives the message going from `partial` to `full`.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -2010,5 +2017,88 @@ async fn a_payload_fetch_stores_the_header_block_too() {
             .raw_blob_id
             .is_none(),
         "this path stores no raw blob, which is exactly why it must store the block"
+    );
+}
+
+#[tokio::test]
+async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
+    // The third row of #884's repair table, and the only one that touches the
+    // network. A store that has been in use since before blocks were stored
+    // has messages whose body is local, whose raw source was never kept -- the
+    // `partial` path never keeps one -- and whose block therefore cannot be
+    // rebuilt from disk. Without this they would stay unanswerable for ever,
+    // which is the shape of "the feature works only on mail you received after
+    // you upgraded".
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+    let messages = MessageRepository::new(&local.connection);
+
+    // Wind it back to what a pre-#884 store holds: body local, block absent.
+    messages.set_headers(id, None).expect("clear the block");
+    assert!(
+        messages
+            .body(id)
+            .expect("body")
+            .expect("row")
+            .headers
+            .is_none(),
+        "the fixture has to start where a legacy store is"
+    );
+    assert!(
+        messages
+            .get(id)
+            .expect("get")
+            .expect("row")
+            .raw_blob_id
+            .is_none(),
+        "and with no raw source to rebuild it from"
+    );
+
+    let mut backfill = Backfill::new(policy());
+    let queued =
+        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed");
+    assert_eq!(
+        queued, 1,
+        "the row needs a block and nothing local can give it"
+    );
+
+    let claim = backfill.next_body().expect("a claim");
+    assert_eq!(claim.request.want, Want::HeaderBlock);
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
+        &claim.cancel,
+    )
+    .await
+    .expect("fetch");
+
+    let stored = messages.body(id).expect("body").expect("row");
+    assert!(
+        stored
+            .headers
+            .as_deref()
+            .is_some_and(|block| block.contains("Subject")),
+        "got: {:?}",
+        stored.headers
+    );
+    assert_eq!(
+        stored.text.as_deref(),
+        Some("Your statement is attached."),
+        "a header fetch must not disturb the words already on this machine"
+    );
+
+    // And it stops being offered, or the lane spins (#500).
+    assert_eq!(
+        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10).expect("seed"),
+        0
     );
 }
