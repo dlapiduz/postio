@@ -153,6 +153,15 @@ pub fn encrypt_store(database: &Path, master: &StoreKey) -> Result<Outcome> {
 /// exists because "a migration that dies half-way loses nothing" is a claim
 /// about points *between* filesystem calls, and the only way to assert it is
 /// to stand at each one.
+///
+/// `#[doc(hidden)]` because it is the codebase's mark for "a test reaches
+/// this and nothing else should" — which is also what
+/// `check-uncalled-pub-fn.py` reads. It would otherwise be flagged: that
+/// check blanks string literals before it looks for `#[cfg(test)]`, so
+/// `#[cfg(feature = "test-support")]` does not read as test scaffolding to
+/// it, and the only caller is an integration test, which it deliberately
+/// does not count as one.
+#[doc(hidden)]
 #[cfg(feature = "test-support")]
 pub fn stopping_after(database: &Path, master: &StoreKey, stage: Stage) -> Result<Outcome> {
     run(database, master, Some(stage))
