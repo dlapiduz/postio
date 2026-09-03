@@ -184,6 +184,48 @@ impl<'a> CrossAccountMoveRepository<'a> {
             .map_err(Into::into)
     }
 
+    /// Every saga still running for one of `sources`, oldest first.
+    ///
+    /// "Still running" is `copying`, `unconfirmed` or `confirmed` — the
+    /// phases where a saga is a thing that could still be cancelled or
+    /// reversed. `done` and `aborted` are over, and a source message that has
+    /// been moved twice would otherwise hand back a saga that finished last
+    /// week.
+    ///
+    /// Undo is what asks (#531): the undo stack records the source rows, and
+    /// the saga table is the only place that knows a move between accounts
+    /// was one. Scans by `phase` — the index the table already has — rather
+    /// than by source, because the live set is small by construction and a
+    /// second index on a table with at most a handful of open rows is not
+    /// worth its writes.
+    pub fn open_for_sources(&self, sources: &[MessageId]) -> Result<Vec<CrossAccountMove>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: std::collections::BTreeSet<i64> = sources.iter().map(|id| id.get()).collect();
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM cross_account_moves
+              WHERE phase IN ('copying', 'unconfirmed', 'confirmed')
+              ORDER BY id",
+        )?;
+        let ids: Vec<i64> = statement
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut found = Vec::new();
+        for id in ids {
+            let Some(saga) = self.get(CrossAccountMoveId::new(id))? else {
+                continue;
+            };
+            if saga
+                .source_message
+                .is_some_and(|source| wanted.contains(&source.get()))
+            {
+                found.push(saga);
+            }
+        }
+        Ok(found)
+    }
+
     /// Move the saga to `next`, enforcing [`MovePhase::allows`].
     ///
     /// Refusal is an error, not a no-op: a drainer asking for an illegal
