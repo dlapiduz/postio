@@ -313,3 +313,203 @@ mod tests {
         );
     }
 }
+
+/// The longest header block that is stored, in bytes.
+///
+/// The pathological case only — a mailing-list message that has been through
+/// twenty hops with a DKIM signature at each one, or a spam report with a
+/// kilobyte of scoring. ADR 0025 stores the block **whole** precisely so the
+/// indexing policy stays revisable by a local reindex rather than a
+/// re-download, and a bound this generous keeps that true for every message
+/// anyone will actually meet while refusing to let one message decide the size
+/// of the store.
+pub const BLOCK_LIMIT: usize = 256 * 1024;
+
+/// A message's header block as it is stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    /// The block text, headers only, no trailing blank line.
+    pub text: String,
+    /// Whether [`BLOCK_LIMIT`] cut it short.
+    ///
+    /// Carried out to the row rather than left implicit, because a truncated
+    /// block cannot answer "this message has no such header" — only "the part
+    /// of it that was kept has none". An evaluator that could not tell the two
+    /// apart would report absence with the same confidence either way.
+    pub truncated: bool,
+}
+
+/// The header block of a raw RFC 5322 message.
+///
+/// Everything before the first empty line, which is what separates headers
+/// from body in RFC 5322 §2.1 — accepting either CRLF or bare LF, because
+/// mail that has been through a Unix mailbox has usually lost its carriage
+/// returns and refusing it would mean refusing the block on real messages.
+///
+/// `None` when there is no separator at all: that is not a message with no
+/// body, it is bytes that are not a message, and inventing a block from them
+/// would put nonsense into the index.
+pub fn block_of(raw: &[u8]) -> Option<Block> {
+    let block = match find_separator(raw) {
+        Some(end) => &raw[..end],
+        // No separator. Either the whole message is headers -- which is a real
+        // shape, and in the corpus: a nightly-build notice that is a subject
+        // and nothing else -- or these are not headers at all. `looks_like_a_field`
+        // is what tells the two apart, because inventing a block from arbitrary
+        // bytes puts nonsense in the index and the index cannot tell nonsense
+        // from a header nobody has heard of.
+        None if looks_like_a_field(raw) => trim_line_break(raw),
+        None => return Option::None,
+    };
+
+    let (block, truncated) = match cut_to_limit(block) {
+        Some(cut) => (cut, true),
+        None => (block, false),
+    };
+    Some(Block {
+        text: String::from_utf8_lossy(block).into_owned(),
+        truncated,
+    })
+}
+
+/// The offset of the first empty line, or `None` if there is not one.
+fn find_separator(raw: &[u8]) -> Option<usize> {
+    if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+        return Some(at);
+    }
+    raw.windows(2).position(|w| w == b"\n\n")
+}
+
+/// Whether the first line reads as an RFC 5322 field: a name, then a colon.
+///
+/// Deliberately weak. It is not validating the block — `mime::parse_headers`
+/// does that, and this crate's rule is to show what arrived rather than to
+/// refuse it. All this has to separate is "a message whose body is empty" from
+/// "not a message", and a colon before the first space does that without
+/// having an opinion about anybody's header names.
+fn looks_like_a_field(raw: &[u8]) -> bool {
+    let first = raw.split(|byte| *byte == b'\n').next().unwrap_or(raw);
+    match first.iter().position(|byte| *byte == b':') {
+        Some(colon) => colon > 0 && !first[..colon].contains(&b' '),
+        None => false,
+    }
+}
+
+/// `raw` without one trailing line break, if it has one.
+fn trim_line_break(raw: &[u8]) -> &[u8] {
+    let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
+    raw.strip_suffix(b"\r").unwrap_or(raw)
+}
+
+/// `block` cut to [`BLOCK_LIMIT`] at a field boundary, or `None` if it fits.
+///
+/// The cut lands on a line break rather than at the byte: what is kept has to
+/// parse, and half a field looks exactly like a whole one to every reader
+/// downstream — which is worse than the field being absent, because absence is
+/// at least honest. Cutting on a line boundary also means never splitting a
+/// UTF-8 character, since a line break cannot be inside one.
+fn cut_to_limit(block: &[u8]) -> Option<&[u8]> {
+    if block.len() <= BLOCK_LIMIT {
+        return None;
+    }
+    let boundary = block[..=BLOCK_LIMIT]
+        .iter()
+        .rposition(|byte| *byte == b'\n')?;
+    Some(trim_line_break(&block[..boundary]))
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    const MESSAGE: &[u8] = b"From: ada@example.com\r\n\
+                             Subject: hello\r\n\
+                             X-Mailer: mutt 1.5.24\r\n\
+                             \r\n\
+                             the body, which is not a header\r\n";
+
+    #[test]
+    fn the_block_is_everything_before_the_blank_line() {
+        let block = block_of(MESSAGE).expect("a message has a header block");
+        assert!(block.text.contains("X-Mailer: mutt 1.5.24"));
+        assert!(
+            !block.text.contains("the body"),
+            "the body is not a header and must not reach the index: {:?}",
+            block.text
+        );
+        assert!(!block.truncated);
+    }
+
+    #[test]
+    fn a_message_that_lost_its_carriage_returns_still_has_a_block() {
+        // Mail that has been through a Unix mailbox, or a fixture saved by
+        // hand. Refusing it would mean refusing the block on real messages.
+        let unix = b"From: ada@example.com\nSubject: hello\n\nthe body\n";
+        let block = block_of(unix).expect("bare LF is still a separator");
+        assert!(block.text.contains("Subject: hello"));
+        assert!(!block.text.contains("the body"));
+    }
+
+    #[test]
+    fn bytes_with_no_separator_have_no_block_rather_than_a_made_up_one() {
+        // Not "a message with no body": bytes that are not a message. A block
+        // invented from them is nonsense in the index, and the index cannot
+        // tell nonsense from a header nobody has heard of.
+        assert_eq!(block_of(b"this is not a message at all"), None);
+    }
+
+    #[test]
+    fn a_block_past_the_limit_is_cut_and_says_so() {
+        // Twenty hops, each with its own DKIM signature. The cap exists so one
+        // message cannot decide the size of the store.
+        let mut raw = Vec::new();
+        while raw.len() <= BLOCK_LIMIT {
+            raw.extend_from_slice(b"Received: from relay.example.com by mx.example.net\r\n");
+        }
+        raw.extend_from_slice(b"\r\nthe body\r\n");
+
+        let block = block_of(&raw).expect("a block");
+
+        assert!(
+            block.truncated,
+            "a block over the cap has to say it was cut"
+        );
+        assert!(block.text.len() <= BLOCK_LIMIT);
+    }
+
+    #[test]
+    fn a_cut_block_still_ends_on_a_whole_field() {
+        // What is kept has to parse. Cutting mid-field would leave a partial
+        // value that looks like a real one to every reader downstream, which
+        // is worse than the field being absent.
+        let mut raw = Vec::new();
+        while raw.len() <= BLOCK_LIMIT {
+            raw.extend_from_slice(b"Received: from relay.example.com by mx.example.net\r\n");
+        }
+        raw.extend_from_slice(b"\r\nthe body\r\n");
+
+        let block = block_of(&raw).expect("a block");
+
+        assert!(
+            block.text.ends_with("mx.example.net"),
+            "the cut landed inside a field: {:?}",
+            &block.text[block.text.len().saturating_sub(60)..]
+        );
+    }
+
+    #[test]
+    fn every_fixture_in_the_corpus_yields_a_block() {
+        // The corpus is real mail. A parser that found no header block in one
+        // of these would be finding none in somebody's mailbox either.
+        for fixture in crate::test_corpus::all() {
+            let block = block_of(fixture.bytes())
+                .unwrap_or_else(|| panic!("{} has no header block", fixture.name()));
+            assert!(!block.truncated, "{} is not pathological", fixture.name());
+            assert!(
+                !block.text.is_empty(),
+                "{} produced an empty block",
+                fixture.name()
+            );
+        }
+    }
+}
