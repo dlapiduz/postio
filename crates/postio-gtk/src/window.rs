@@ -1283,11 +1283,35 @@ impl Window {
 
         folders.connect_loaded({
             let show = show.clone();
-            let feed = feed.clone();
             let folders = folders.clone();
             let sidebar = self.sidebar();
+            // Which folder tree this handler has already opened something
+            // for. `None` is "not yet": generations start at zero, so zero
+            // is a real value here rather than a spare one.
+            //
+            // This fires on *every* load, not only the first, and picking a
+            // default every time is what threw the list out of Flagged
+            // whenever a resync emitted `MailboxesChanged` (#813). Picking
+            // once per generation keeps the startup convenience -- `open`
+            // and `open_sections` bump it, so switching accounts still opens
+            // the new account's inbox -- and drops the rest.
+            let picked_for = std::cell::Cell::new(None::<u64>);
             move |_| {
-                if feed.mailbox().is_some() {
+                let generation = folders.generation();
+                if picked_for.get() == Some(generation) {
+                    // Already opened something for this tree, and the user
+                    // has been free to move since.
+                    //
+                    // This replaces a `feed.mailbox().is_some()` check,
+                    // which could not do the job from either side. It said
+                    // "nothing is open" for every scope that is not a real
+                    // folder -- Flagged, Snoozed, Unified -- so a reload
+                    // opened the inbox over whatever the user was looking
+                    // at (#813); and it said "something is open" for the
+                    // real folder left over from the *previous* account, so
+                    // switching accounts re-read the new tree and then
+                    // declined to open anything in it. Both are answered by
+                    // asking which tree this is instead of what is showing.
                     return;
                 }
                 // Only a *real* folder counts as "already picked". The
@@ -1300,6 +1324,11 @@ impl Window {
                 // anything drove a first sync into a real window.
                 let picked = sidebar.selected().filter(|id| id.get() > 0);
                 if let Some(id) = picked.or_else(|| folders.default_mailbox()) {
+                    // Recorded only when something was actually opened. An
+                    // account whose first read comes back empty has not had
+                    // its turn yet, and must still get one when the folders
+                    // arrive.
+                    picked_for.set(Some(generation));
                     sidebar.select(id);
                     show(id);
                 }

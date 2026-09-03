@@ -1084,6 +1084,22 @@ impl Folders {
         inner.clone().reload_now();
     }
 
+    /// Which reading of the folder tree this is.
+    ///
+    /// Bumped by [`open`](Self::open) and
+    /// [`open_sections`](Self::open_sections) -- the two things that change
+    /// *which* account's folders are on screen -- and by nothing else. A
+    /// reload for a `MailboxesChanged` keeps the generation it had.
+    ///
+    /// That is the distinction #813 needed and could not get from the feed:
+    /// a smart folder on screen looks the same whether the user chose it or
+    /// `GtkListBox` auto-selected its sentinel before the real folders
+    /// arrived, but "have I already picked a folder for *this* tree" tells
+    /// the two apart.
+    pub fn generation(&self) -> u64 {
+        self.0.generation.get()
+    }
+
     /// The folders as last read.
     pub fn mailboxes(&self) -> Vec<Mailbox> {
         self.0.mailboxes.borrow().clone()
