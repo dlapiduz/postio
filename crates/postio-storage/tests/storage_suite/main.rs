@@ -29,6 +29,7 @@ mod contacts;
 mod drafts;
 mod encrypt_migration;
 mod encryption;
+mod labels;
 mod list_statement_count;
 mod mailbox_counts;
 mod mailbox_size;
