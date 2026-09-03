@@ -276,8 +276,23 @@ async fn a_shipped_provider_resolves_with_no_network_at_all() {
         assert_eq!(settings.source, SettingsSource::Builtin);
         assert_eq!(settings.imap.host, preset.imap_host());
         assert_eq!(settings.smtp.host, preset.smtp_host());
-        assert_eq!(settings.imap.encryption, Encryption::Tls);
-        assert_eq!(settings.smtp.encryption, Encryption::Tls);
+        // Every shipped provider connects encrypted -- that is the real
+        // invariant here, not that every provider picks the *same* one.
+        // Implicit TLS and STARTTLS (office365's submission port, #868)
+        // are both real transport security; plaintext is what this must
+        // catch.
+        assert_ne!(
+            settings.imap.encryption,
+            Encryption::None,
+            "{}",
+            preset.display_name()
+        );
+        assert_ne!(
+            settings.smtp.encryption,
+            Encryption::None,
+            "{}",
+            preset.display_name()
+        );
     }
 }
 
