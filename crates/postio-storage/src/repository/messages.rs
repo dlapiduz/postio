@@ -749,6 +749,7 @@ impl<'a> MessageRepository<'a> {
 
         // Read once for the batch, like the two snapshots above.
         let unacknowledged = unacknowledged_flag_changes(&transaction)?;
+        let awaiting_identity = local_copies_awaiting_identity(&transaction)?;
 
         for message in batch.iter_mut() {
             // The identity is what names a message (#543); the wire pair is
@@ -770,6 +771,16 @@ impl<'a> MessageRepository<'a> {
                 )?,
                 _ => None,
             };
+            // Last, and only for a row with no server coordinates to match
+            // on: the copy this client wrote before the server had named it
+            // (#942). Tried after both server-identity routes so a message
+            // the server *can* place is never resolved by a `Message-ID`.
+            let existing = existing.or_else(|| {
+                let rfc = message.rfc_message_id.as_ref()?;
+                awaiting_identity
+                    .get(&(message.mailbox_id, rfc.as_str().to_ascii_lowercase()))
+                    .copied()
+            });
 
             match existing {
                 Some(id) => {
@@ -2418,6 +2429,47 @@ fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, Stri
     })?;
     rows.collect::<rusqlite::Result<BTreeSet<_>>>()
         .map_err(Into::into)
+}
+
+/// Rows this client wrote that the server has not named yet, by `Message-ID`.
+///
+/// `(mailbox, message-id) -> id`, and only for rows with **no server identity
+/// at all** — no `remote_id`, no uid. Postio writes a sent message into Sent
+/// the moment it is on its way (#942), which is well before the `APPEND` that
+/// gives it one, and the same thing happens whenever that append fails and
+/// the folder is flagged for resync instead.
+///
+/// Without this, neither of the two things [`MessageRepository::upsert_batch`]
+/// matches on can find such a row, so a resync that fetched the server's own
+/// copy inserted a second one and Sent showed the message twice.
+///
+/// **Narrow on purpose.** A row that already carries an identity is a
+/// different message that happens to share a `Message-ID` — a mailing list's
+/// copy of one's own post is the ordinary case — and collapsing those would
+/// lose one of them. `COLLATE NOCASE` matches
+/// [`MessageRepository::ids_by_rfc_message_id`], since a `Message-ID` is
+/// compared case-insensitively.
+fn local_copies_awaiting_identity(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<(MailboxId, String), MessageId>> {
+    let mut statement = connection.prepare(
+        "SELECT mailbox_id, lower(rfc_message_id), id
+           FROM messages
+          WHERE remote_id IS NULL
+            AND uid IS NULL
+            AND rfc_message_id IS NOT NULL
+            AND deleted_locally = 0",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            (
+                MailboxId::new(row.get::<_, i64>(0)?),
+                row.get::<_, String>(1)?,
+            ),
+            MessageId::new(row.get(2)?),
+        ))
+    })?;
+    rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
 }
 
 /// `(mailbox, uid_validity, uid)` for every message with an undrained

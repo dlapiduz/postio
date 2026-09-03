@@ -2418,3 +2418,102 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
     assert_eq!(stored.headers.as_deref(), Some("X-Mailer: mutt"));
     assert!(stored.headers_truncated);
 }
+
+#[test]
+fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() {
+    // #942. A sent message is written into Sent locally the moment it is on
+    // its way, so the user can see it — before the IMAP `APPEND` has given it
+    // a server identity. The identity arrives afterwards.
+    //
+    // Until then the row has no `remote_id` and no uid, so neither of the two
+    // things `upsert_batch` matches on can find it: a resync of Sent that
+    // fetched the server's own copy inserted a *second* row, and the user's
+    // Sent folder showed the message twice.
+    //
+    // The reserved `Message-ID` is what ties them together. It is the same key
+    // ADR 0021 already uses to answer "did this send arrive?" against the Sent
+    // folder, and it is only consulted for a local row that has no server
+    // identity at all — a row nothing but this client could have written.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, sent) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let reserved = RfcMessageId::new("<reserved.once@example.com>");
+    let mut ours = a_message(sent, account.id, 20);
+    ours.rfc_message_id = Some(reserved.clone());
+    ours.server = Default::default();
+    messages.create(&mut ours).expect("the local copy");
+    assert!(ours.server.remote_id.is_none(), "written before the append");
+
+    // The server's copy of the same message, arriving through an ordinary
+    // sync of the Sent folder.
+    let mut fetched = a_message(sent, account.id, 21);
+    fetched.rfc_message_id = Some(reserved.clone());
+    let report = messages
+        .upsert_batch(&mut vec![fetched.clone()])
+        .expect("the resync");
+
+    assert_eq!(
+        report.inserted, 0,
+        "the fetched copy was inserted beside the local row, so Sent now \
+         shows the message twice"
+    );
+    assert_eq!(report.updated, 1, "it should have adopted the local row");
+
+    let all = messages
+        .page(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(sent),
+            limit: 50,
+            after: None,
+        })
+        .expect("a page");
+    assert_eq!(
+        all.len(),
+        1,
+        "Sent holds {} rows for one message: {:?}",
+        all.len(),
+        all.iter().map(|row| row.id).collect::<Vec<_>>()
+    );
+
+    let stored = messages
+        .get(ours.id)
+        .expect("get")
+        .expect("the original row is the one that survived");
+    assert_eq!(
+        stored.server.remote_id, fetched.server.remote_id,
+        "the local row did not take on the server identity, so the next \
+         resync will insert the copy all over again"
+    );
+}
+
+#[test]
+fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identity() {
+    // The narrow half of the rule above. Adoption is only ever right for a
+    // row this client wrote and the server has not yet named; a row that
+    // already carries a `remote_id` is a different message that happens to
+    // share a `Message-ID` — a mailing list copy of one's own post is the
+    // ordinary case — and collapsing the two would lose one of them.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let shared = RfcMessageId::new("<shared@example.com>");
+    let mut existing = a_message(inbox, account.id, 30);
+    existing.rfc_message_id = Some(shared.clone());
+    messages.create(&mut existing).expect("an ordinary message");
+    assert!(existing.server.remote_id.is_some());
+
+    let mut fetched = a_message(inbox, account.id, 31);
+    fetched.rfc_message_id = Some(shared);
+    let report = messages
+        .upsert_batch(&mut vec![fetched])
+        .expect("the resync");
+
+    assert_eq!(
+        report.inserted, 1,
+        "a message sharing a Message-ID with one that already has a server \
+         identity is a different message and must not be collapsed into it"
+    );
+}
