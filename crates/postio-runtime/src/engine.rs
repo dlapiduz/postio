@@ -813,10 +813,23 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>, busy
                 // mailbox long. See `sync_wave`.
                 while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
+                    && !has_queued_work(&parts, &pool)
                     && !state.to_sync.is_empty()
                 {
                     state.busy.set("a sync wave");
                     sync_wave(&parts, &pool, &mut state, &inbox).await;
+                }
+
+                // A wave that yielded to queued work has to be followed by the
+                // drain it yielded *for*. Without this the operation waits at
+                // the `select!` above for up to `POLL_INTERVAL` — the wave
+                // stops promptly and then nothing happens, which is most of
+                // the delay #944 reported and the half that is easy to miss
+                // once the yielding itself looks fixed.
+                if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
+                    state.busy.set("draining after a wave");
+                    let outcome = drain(&parts, &pool, &mut state).await;
+                    announce_drain(&parts.events, parts.account, &outcome);
                 }
 
                 // Then fetch bodies, but only while nothing else is asking. One
@@ -2218,10 +2231,19 @@ async fn sync_wave(
                 // job (or the shutdown's close) can land mid-drain and this
                 // queue is the whole account's backlog (#759).
                 if !asked_to_stop {
-                    while nothing_asked(inbox) && pump_body(parts, pool, state, inbox).await {}
+                    while nothing_asked(inbox)
+                        && !has_queued_work(parts, pool)
+                        && pump_body(parts, pool, state, inbox).await
+                    {}
                 }
             }
-            _ = wait_for_job(inbox), if !asked_to_stop => {
+            // `interruption`, not `wait_for_job`: a local mutation is not a
+            // job -- nobody tells this thread that a row was written -- so a
+            // wave that woke only for jobs made the user's send, mark-read or
+            // move wait out every folder left in `to_sync` (#944). The idle
+            // watcher and the backfill loops have always had this half; the
+            // wave was the one place it was never applied.
+            _ = interruption(parts, pool, inbox), if !asked_to_stop => {
                 asked_to_stop = true;
                 cancel.cancel();
             }
