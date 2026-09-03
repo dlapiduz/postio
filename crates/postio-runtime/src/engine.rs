@@ -1406,6 +1406,36 @@ fn top_up_backfill(parts: &EngineParts, pool: &Pool, state: &mut State) -> usize
         }
     }
 
+    // Blocks for the rows that cannot rebuild one from disk (#884). After the
+    // words and before the payloads: it is a small fetch that makes `header:`
+    // stop lying about mail already on this machine, where a payload is bytes
+    // nobody has asked for yet. Unconditional, unlike the payload lane below,
+    // because it is not a policy anyone opts into -- it is a store finishing a
+    // migration -- and it stops finding work once every block is stored.
+    for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
+        let queued = match backfill::seed_header_blocks(
+            &connection,
+            &mut state.backfill,
+            mailbox.id,
+            parts.backfill.seed_batch,
+        ) {
+            Ok(queued) => queued,
+            Err(error) => {
+                tracing::warn!(%error, "cannot top up the header blocks for a folder");
+                continue;
+            }
+        };
+        if queued > 0 {
+            tracing::debug!(
+                mailbox = mailbox.id.get(),
+                queued,
+                "header blocks topped up"
+            );
+            announce_backfill(parts, state, std::time::Instant::now());
+            return queued;
+        }
+    }
+
     // Every folder's *words* are local. Only now the payloads, and only if
     // this installation asked for them: ADR 0017's two axes are ordered, not
     // interleaved, because the text axis is what makes search complete and
