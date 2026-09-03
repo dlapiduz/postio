@@ -64,6 +64,7 @@ mod gtk_cursor_preview;
 mod gtk_dispatch;
 mod gtk_display_required;
 mod gtk_dwell;
+mod gtk_dwell_conversation;
 mod gtk_editable_dialect;
 mod gtk_editor_bridge;
 mod gtk_editor_format;
@@ -643,6 +644,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_dwell::a_message_is_marked_read_by_resting_on_it_not_by_passing_over_it",
         gtk_dwell::a_message_is_marked_read_by_resting_on_it_not_by_passing_over_it as fn(),
+    ),
+    (
+        "gtk_dwell_conversation::opening_a_conversation_stops_the_lists_read_clock",
+        gtk_dwell_conversation::opening_a_conversation_stops_the_lists_read_clock as fn(),
     ),
     (
         "gtk_editable_dialect::webkit_editing_gestures_stay_inside_the_canonical_subset",
