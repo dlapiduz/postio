@@ -299,7 +299,10 @@ fn the_config_in_force_is_readable_for_the_subsystems_that_want_it() {
     let service = service_with("[sync]\nidle = false\n[ui]\ndensity = \"compact\"\n");
 
     let config: &Config = service.config();
-    assert!(!config.sync.idle);
+    assert_eq!(
+        config.sync.check_for_mail,
+        postio_config::CheckForMail::Poll
+    );
     assert_eq!(config.ui.density, postio_config::Density::Compact);
 }
 

@@ -27,7 +27,7 @@ wrote it.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `idle` | boolean | `true` | Hold an `IDLE` connection on INBOX for push delivery. |
+| `check_for_mail` | string | `"idle"` | How Postio learns about new mail: `idle` (hold an `IDLE` connection on INBOX for push delivery), `poll` (no `IDLE`, every mailbox reconciled on `poll_interval_secs`), or `manual` (never checks on its own). |
 | `poll_interval_secs` | integer | `300` | Polling interval for folders without `IDLE`, in seconds. |
 | `max_connections` | integer | `5` | Maximum simultaneous IMAP connections per account. |
 | `sync_on_startup` | boolean | `true` | Start a sync as soon as the app opens. |

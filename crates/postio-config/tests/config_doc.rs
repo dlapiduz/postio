@@ -78,10 +78,10 @@ const ENTRIES: &[Entry] = &[
     },
     // ── [sync] ────────────────────────────────────────────────────────
     Entry {
-        path: "sync.idle",
-        kind: "boolean",
-        default: "true",
-        description: "Hold an `IDLE` connection on INBOX for push delivery.",
+        path: "sync.check_for_mail",
+        kind: "string",
+        default: "\"idle\"",
+        description: "How Postio learns about new mail: `idle` (hold an `IDLE` connection on INBOX for push delivery), `poll` (no `IDLE`, every mailbox reconciled on `poll_interval_secs`), or `manual` (never checks on its own).",
     },
     Entry {
         path: "sync.poll_interval_secs",
