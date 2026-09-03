@@ -21,6 +21,7 @@ mod blob;
 mod blob_encryption;
 mod body;
 mod bulk;
+mod cold_jump_cost;
 mod connection;
 mod connection_priority;
 mod contact_groups;
