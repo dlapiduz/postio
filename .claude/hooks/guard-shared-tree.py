@@ -395,20 +395,24 @@ def take_or_refuse(worktree: str, session: str) -> str | None:
 def worktrees_named(command: str, worktrees: str) -> list[str]:
     """Every worktree path that appears in `command`.
 
-    Heredocs are stripped -- documenting a path is not writing to it -- but
-    quotes are *not*, unlike everywhere else in this file: a path is far more
-    often quoted because it might contain a space than mentioned inside a
-    commit message. The trade is deliberate and it is the same one
-    `unscoped_rustfmt` makes in the other direction, for the same reason: the
-    expensive mistake here is the miss, not the false positive, and a false
-    positive says how to override it.
+    Heredocs and quoted spans are both stripped, for the same reason: a path
+    somebody wrote *about* is not a path somebody wrote *to*. #889 is what
+    made quotes non-negotiable — this rule fires when the command names a
+    worktree and carries a writing verb, and `git commit -m "…"` about a
+    worktree is both.
+
+    The cost is a real miss: `rm -rf "<worktree>"` with the path quoted gets
+    through. That is the same trade `unscoped_rustfmt` makes in the other
+    direction and it is the right way round here, because this half is
+    defence in depth behind the cwd rule — which is the one that catches the
+    failure #412 actually recorded, and which quoting cannot hide from.
     """
     prefixes = {worktrees}
     home = os.path.expanduser("~")
     if worktrees.startswith(home):
         tail = worktrees[len(home):]
         prefixes |= {"~" + tail, "$HOME" + tail, "${HOME}" + tail}
-    text = strip_heredocs(command)
+    text = strip_quoted(strip_heredocs(command))
     found: list[str] = []
     for prefix in prefixes:
         for name in re.findall(
@@ -526,6 +530,29 @@ def is_worktree(worktrees: str, path: str) -> bool:
         return False
 
 
+def quoted_spans(command: str) -> list[tuple[int, int]]:
+    """`(start, end)` of every quoted span, quote characters included.
+
+    Shares its scanner with [`strip_quoted`], which blanks the same spans.
+    This form is for the one caller that needs to know *where* the quotes are
+    rather than to remove what is inside them: see [`cd_destination`].
+    """
+    spans: list[tuple[int, int]] = []
+    quote: str | None = None
+    start = 0
+    for index, char in enumerate(command):
+        if quote:
+            if char == quote:
+                spans.append((start, index + 1))
+                quote = None
+        elif char in "'\"":
+            quote, start = char, index
+    if quote:
+        # An unterminated quote runs to the end of the command.
+        spans.append((start, len(command)))
+    return spans
+
+
 def cd_destination(command: str, cwd: str) -> str:
     """Where a leading `cd` sends the command, or `""` if none does.
 
@@ -539,12 +566,36 @@ def cd_destination(command: str, cwd: str) -> str:
     with tests rather than a condition inline.
 
     Heredoc bodies are stripped first: documenting a `cd` must not be
-    performing one.
+    performing one. A `cd` inside a **quoted span** is dropped for the same
+    reason — that one is #889, and it bit within an hour of #412 making this
+    function's answer load-bearing in the refusing direction: a `gh issue
+    comment` whose body quoted the command that had just been refused was
+    itself refused, because the body contained the words `&& cd <worktree> &&`.
+
+    What is tested is whether the `cd` **keyword** is quoted, never whether
+    its argument is. `cd '<worktree>' && cargo fmt --all` is a correct
+    invocation and has to keep working, so blanking quoted spans wholesale —
+    which is what [`strip_quoted`] does for the pattern rules — would break it
+    by leaving `cd` with an empty target.
+
+    Before #412 the permissive direction made this look harmless: a misread
+    `cd` could only ever *grant* the worktree exemption. It was never harmless,
+    only quiet — in the shared checkout a commit message mentioning one would
+    have exempted the command that carried it.
 
     The last `cd` wins, because that is the directory the rest of the line
     runs in.
     """
-    targets = CD.findall(strip_heredocs(command))
+    text = strip_heredocs(command)
+    quoted = quoted_spans(text)
+    targets = [
+        match.group(1)
+        for match in CD.finditer(text)
+        # `match.start()`, not the argument's: the argument of a real `cd` is
+        # very often quoted and that is fine. It is the keyword that must not
+        # be.
+        if not any(start <= match.start() < end for start, end in quoted)
+    ]
     if not targets:
         return ""
     target = targets[-1].strip("\"'")
