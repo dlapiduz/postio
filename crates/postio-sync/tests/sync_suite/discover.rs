@@ -552,3 +552,40 @@ async fn a_role_follows_the_folder_when_the_server_renames_it() {
         "a folder the server does not list cannot be the place mail is filed"
     );
 }
+
+#[tokio::test]
+async fn one_folder_per_role_survives_discovery() {
+    // #943, as found on a live account: the server has its own Sent folder
+    // and a user folder another client created that merely looks like one.
+    // The IMAP edge arbitrates the pair (`resolve_roles`) and demotes the
+    // loser; discovery then throws that verdict away by re-deriving the
+    // role from the name, and both rows wear it. `by_role` picks between
+    // them by path order, and "Sent" sorts before "Sent Messages".
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Sent Messages").attributes(["\\Sent"]))
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    let mailboxes = MailboxRepository::new(&connection);
+    let sent: Vec<String> = mailboxes
+        .list_for_account(account.id)
+        .expect("list")
+        .into_iter()
+        .filter(|mailbox| mailbox.role == MailboxRole::Sent)
+        .map(|mailbox| mailbox.path)
+        .collect();
+    assert_eq!(
+        sent,
+        vec!["Sent Messages".to_owned()],
+        "a role names one folder; the server's own claim beats a look-alike"
+    );
+}
