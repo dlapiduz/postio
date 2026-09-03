@@ -51,6 +51,8 @@ use std::time::Duration;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
+use postio_config::filters::{FilterConfig, Reorder};
+use postio_config::{Config, patch_filters};
 use postio_model::{Account, AccountId};
 
 /// How long to let typing settle before writing the buffer back to disk.
@@ -153,6 +155,25 @@ impl Section {
             Section::Filters => "[filters]",
         }
     }
+}
+
+/// Every saved search's key, in the order the structured filters pane shows
+/// them: pinned ones first, in their sidebar order
+/// ([`Config::ordered_filter_keys`]), then anything unpinned — the sidebar
+/// never shows those, so this settings pane is the only place they are
+/// visible at all, and alphabetical by key is the same fallback
+/// `ordered_filter_keys` already gives pinned filters with no explicit
+/// order.
+fn filter_display_order(config: &Config) -> Vec<String> {
+    let mut keys = config.ordered_filter_keys();
+    let mut unpinned: Vec<&String> = config
+        .filters
+        .keys()
+        .filter(|key| !keys.iter().any(|pinned| pinned == *key))
+        .collect();
+    unpinned.sort();
+    keys.extend(unpinned.into_iter().cloned());
+    keys
 }
 
 /// The first path segment of a `[...]` header line, if `line` is one.
@@ -320,6 +341,15 @@ mod imp {
         pub account_menu: RefCell<Option<gtk::PopoverMenu>>,
         pub account_action: RefCell<Vec<AccountActionHandler>>,
         pub account_enabled_changed: RefCell<Vec<AccountEnabledHandler>>,
+        /// One row per saved search, pinned or not (#869) — the structured
+        /// pane [`Section::Filters`] now shows instead of only jumping the
+        /// raw text view to `[filters]`.
+        pub filters_list: gtk::ListBox,
+        pub filters_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `filters_scroller` when there is nothing saved
+        /// yet — canvas's "empty is never blank" rule; see
+        /// `SettingsPanel::redraw_filters`.
+        pub filters_empty: gtk::Label,
     }
 
     impl Default for SettingsPanel {
@@ -348,6 +378,11 @@ mod imp {
                 account_menu: RefCell::new(None),
                 account_action: RefCell::new(Vec::new()),
                 account_enabled_changed: RefCell::new(Vec::new()),
+                filters_list: gtk::ListBox::new(),
+                filters_scroller: gtk::ScrolledWindow::new(),
+                filters_empty: gtk::Label::new(Some(
+                    "No saved searches yet — press Ctrl+S in search to save one.",
+                )),
             }
         }
     }
@@ -414,6 +449,7 @@ impl SettingsPanel {
         imp.loading.set(false);
 
         self.refresh_validity();
+        self.redraw_filters();
         if postio_config::validate::check_str(&text)
             .validation
             .is_valid()
@@ -846,6 +882,199 @@ impl SettingsPanel {
         popover.popup();
     }
 
+    /// Rebuilds the filter rows from the buffer's current text.
+    ///
+    /// Unlike accounts, `[filters]` lives entirely in `config.toml` — there
+    /// is no second store to read, so this parses the buffer itself rather
+    /// than waiting on an outside caller to hand over what to show. Invalid
+    /// TOML mid-edit leaves whatever was last drawn rather than clearing it:
+    /// a typo elsewhere in the file is not a reason to blank out a pane the
+    /// user is not even looking at.
+    fn redraw_filters(&self) {
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        while let Some(row) = imp.filters_list.row_at_index(0) {
+            imp.filters_list.remove(&row);
+        }
+        let order = filter_display_order(&config);
+        let pinned = config.ordered_filter_keys();
+        for key in &order {
+            imp.filters_list
+                .append(&self.filter_row(key, &config.filters[key], &pinned));
+        }
+        imp.filters_scroller.set_visible(!order.is_empty());
+        imp.filters_empty.set_visible(order.is_empty());
+    }
+
+    /// Applies `mutate` to the buffer's current `[filters]` state and writes
+    /// the result back into the buffer — which is what actually reaches disk,
+    /// through the same debounced write every other edit in this panel goes
+    /// through. Invalid TOML mid-edit is left alone: there is no sensible
+    /// `Config` to mutate yet.
+    fn apply_filters_mutation(&self, mutate: impl FnOnce(&mut Config)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        mutate(&mut config);
+        match patch_filters(&original, &config.filters) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [filters]"),
+        }
+    }
+
+    /// One saved search's row: its name (editable), its query (for context,
+    /// not editable here — renaming a filter's query is not a feature this
+    /// pane offers), whether it shows in the sidebar, reorder, and delete.
+    ///
+    /// `pinned_keys` is [`Config::ordered_filter_keys`] — the sidebar's own
+    /// order — so the up/down buttons can tell a row apart from the very
+    /// first or last *pinned* filter, which is not the same thing as this
+    /// row's position in the combined pinned-then-unpinned list this pane
+    /// displays.
+    fn filter_row(
+        &self,
+        key: &str,
+        filter: &FilterConfig,
+        pinned_keys: &[String],
+    ) -> gtk::ListBoxRow {
+        // Owned, not borrowed: every row action below moves its own clone of
+        // this into a `'static` closure, which a `&str` tied to the caller's
+        // stack frame cannot satisfy.
+        let key = key.to_string();
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-filter-row");
+        row.set_selectable(false);
+
+        let title = filter.name.clone().unwrap_or_else(|| filter.query.clone());
+        let name_entry = gtk::Entry::new();
+        name_entry.set_text(&title);
+        name_entry.add_css_class("postio-settings-filter-name");
+        name_entry.set_hexpand(true);
+        name_entry.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Name for the saved search {}",
+            filter.query
+        ))]);
+        name_entry.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |entry| {
+                let key = key.clone();
+                let text = entry.text().to_string();
+                panel.apply_filters_mutation(move |config| {
+                    config.rename_filter(&key, &text);
+                });
+            }
+        ));
+
+        let query_label = gtk::Label::new(Some(&filter.query));
+        query_label.add_css_class("postio-settings-filter-query");
+        query_label.set_xalign(0.0);
+        query_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        lines.set_hexpand(true);
+        lines.append(&name_entry);
+        lines.append(&query_label);
+
+        let pinned = gtk::Switch::new();
+        pinned.set_active(filter.pinned);
+        pinned.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Show {title} in the sidebar"
+        ))]);
+        pinned.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |switch| {
+                let key = key.clone();
+                let active = switch.is_active();
+                panel.apply_filters_mutation(move |config| {
+                    config.set_filter_pinned(&key, active);
+                });
+            }
+        ));
+
+        let position = pinned_keys.iter().position(|candidate| *candidate == key);
+        let up = gtk::Button::from_icon_name("go-up-symbolic");
+        up.add_css_class("postio-settings-filter-up");
+        up.add_css_class("flat");
+        up.set_tooltip_text(Some("Move up"));
+        up.set_sensitive(position.is_some_and(|index| index > 0));
+        up.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |_| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.move_filter(&key, Reorder::Up);
+                });
+            }
+        ));
+
+        let down = gtk::Button::from_icon_name("go-down-symbolic");
+        down.add_css_class("postio-settings-filter-down");
+        down.add_css_class("flat");
+        down.set_tooltip_text(Some("Move down"));
+        down.set_sensitive(position.is_some_and(|index| index + 1 < pinned_keys.len()));
+        down.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |_| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.move_filter(&key, Reorder::Down);
+                });
+            }
+        ));
+
+        let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+        delete.add_css_class("postio-settings-filter-delete");
+        delete.add_css_class("flat");
+        delete.set_tooltip_text(Some("Delete"));
+        delete.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Delete the saved search {title}"
+        ))]);
+        delete.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |_| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.delete_filter(&key);
+                });
+            }
+        ));
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&lines);
+        box_.append(&pinned);
+        box_.append(&up);
+        box_.append(&down);
+        box_.append(&delete);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{title}, {}",
+            filter.query
+        ))]);
+        row
+    }
+
     /// Records `text` as the last configuration known to load without error,
     /// without touching the buffer.
     ///
@@ -986,6 +1215,30 @@ impl SettingsPanel {
             .add_css_class("postio-settings-accounts");
         imp.accounts_scroller.set_visible(false);
 
+        // ── filters: one row each, name/query, pinned, reorder, delete ───
+        imp.filters_list
+            .add_css_class("postio-settings-filters-list");
+        imp.filters_list
+            .set_selection_mode(gtk::SelectionMode::None);
+        imp.filters_list
+            .update_property(&[gtk::accessible::Property::Label("Saved searches")]);
+
+        imp.filters_scroller.set_child(Some(&imp.filters_list));
+        imp.filters_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.filters_scroller
+            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
+        imp.filters_scroller.set_propagate_natural_height(true);
+        imp.filters_scroller
+            .add_css_class("postio-settings-filters");
+        imp.filters_scroller.set_visible(false);
+
+        imp.filters_empty
+            .add_css_class("postio-settings-filters-empty");
+        imp.filters_empty.set_xalign(0.0);
+        imp.filters_empty.set_wrap(true);
+        imp.filters_empty.set_visible(false);
+
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
         imp.nav.set_selection_mode(gtk::SelectionMode::Single);
@@ -1080,6 +1333,8 @@ impl SettingsPanel {
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&imp.accounts_scroller);
         column.append(&imp.egress_scroller);
+        column.append(&imp.filters_scroller);
+        column.append(&imp.filters_empty);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);
@@ -1093,6 +1348,7 @@ impl SettingsPanel {
                     return;
                 }
                 panel.refresh_validity();
+                panel.redraw_filters();
                 panel.schedule_write();
             }
         ));
@@ -1123,6 +1379,7 @@ impl SettingsPanel {
         self.add_controller(keys);
 
         self.refresh_validity();
+        self.redraw_filters();
     }
 }
 
@@ -1220,6 +1477,46 @@ idle = true
     #[test]
     fn section_at_line_past_the_end_of_the_file_is_the_last_section() {
         assert_eq!(section_at_line(SAMPLE, 999), Some(Section::Sync));
+    }
+
+    // -- filter_display_order (#869) -----------------------------------------
+
+    #[test]
+    fn filter_display_order_puts_pinned_filters_first_in_sidebar_order_then_unpinned_alphabetically()
+     {
+        let config = Config::from_toml_str(
+            "\
+[filters.b]
+query = \"subject:b\"
+pinned = false
+
+[filters.zebra]
+query = \"is:unread\"
+pinned = true
+order = 1
+
+[filters.apple]
+query = \"has:attach\"
+pinned = true
+order = 0
+
+[filters.a]
+query = \"subject:a\"
+pinned = false
+",
+        )
+        .expect("parses");
+
+        assert_eq!(
+            filter_display_order(&config),
+            vec![
+                "apple".to_string(),
+                "zebra".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+            ],
+            "pinned filters in their explicit order, then unpinned ones by key"
+        );
     }
 
     // -- display_path -------------------------------------------------------
