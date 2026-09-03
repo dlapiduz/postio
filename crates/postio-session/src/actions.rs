@@ -43,12 +43,12 @@ use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
-    AccountId, DraftState, Flag, FlagSet, MailboxId, Message, MessageId, Operation,
+    AccountId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message, MessageId, Operation,
     OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, DraftRepository, FlagSource, MailboxRepository, MessageRepository, MessageSet,
-    OperationQueueRepository, ThreadOrder, ThreadRepository,
+    ColumnFlag, DraftRepository, FlagSource, LabelRepository, MailboxRepository, MessageRepository,
+    MessageSet, OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
 
@@ -273,6 +273,13 @@ impl Actions {
             // marking unread is clearing a flag, not setting one.
             Command::MarkUnread { target, unread } => {
                 self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?
+            }
+            Command::AddLabel { target, label, on } => {
+                // `None` is half a request, not a failure: ADR 0005's picker
+                // case, the same shape `Move { to: None }` has. The window
+                // opens the picker before this is reached.
+                let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
+                vec![self.set_label(target, label, *on)?]
             }
             Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE)?],
             Command::Unsnooze { target } => vec![self.unsnooze(target)?],
@@ -948,6 +955,129 @@ impl Actions {
             inverse: vec![Command::Snooze {
                 target: MessageTarget::Messages(ids),
             }],
+        })
+    }
+
+    /// Put a label on the selection, or take it off (#780).
+    ///
+    /// `Flag`'s shape, deliberately: a label is *stored* as a row in
+    /// `message_labels` and *travels* as an IMAP keyword, so this writes both
+    /// — the join the list and reader render from, and the flag the queue
+    /// carries to the server. Writing only the join would show a label that
+    /// no other client ever sees; writing only the keyword would leave the
+    /// label with no name or colour to draw.
+    ///
+    /// `want` of `None` toggles, exactly as `Flag` does.
+    fn set_label(
+        &self,
+        target: &MessageTarget,
+        label: LabelId,
+        want: Option<bool>,
+    ) -> Result<Applied, CommandError> {
+        let (mut connection, _permit) = self.connect()?;
+        let rows = match self.aim(&connection, target)? {
+            Aim::Rows(rows) => rows,
+            // A whole mailbox at once would need the counted, three-statement
+            // shape `set_flag_set` has, and there is no verb that asks for it
+            // yet: `L` labels a selection.
+            Aim::Bulk { .. } => {
+                return Err(CommandError::rejected(
+                    "Labelling a whole mailbox at once is not supported yet",
+                ));
+            }
+        };
+        let account = rows[0].account_id;
+
+        let name = {
+            let repository = LabelRepository::new(&connection);
+            repository
+                .get(label)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That label no longer exists"))?
+                .name
+        };
+        let keyword = Flag::Keyword(name);
+
+        let carried: Vec<bool> = {
+            let repository = LabelRepository::new(&connection);
+            rows.iter()
+                .map(|message| {
+                    repository
+                        .for_message(message.id)
+                        .map(|labels| labels.contains(&label))
+                        .map_err(store_failure)
+                })
+                .collect::<Result<_, _>>()?
+        };
+        let wanted = want.unwrap_or_else(|| !carried.iter().all(|has| *has));
+
+        let touched: Vec<&Message> = rows
+            .iter()
+            .zip(&carried)
+            .filter(|(_, has)| **has != wanted)
+            .map(|(message, _)| message)
+            .collect();
+        if touched.is_empty() {
+            return Err(CommandError::rejected("Already set"));
+        }
+
+        let one: FlagSet = std::iter::once(keyword.clone()).collect();
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        {
+            let labels = LabelRepository::new(&transaction);
+            let messages = MessageRepository::new(&transaction);
+            let queue = OperationQueueRepository::new(&transaction);
+            for message in &touched {
+                if wanted {
+                    labels.attach(message.id, label).map_err(store_failure)?;
+                } else {
+                    labels.detach(message.id, label).map_err(store_failure)?;
+                }
+                let mut flags = message.flags.clone();
+                if wanted {
+                    flags.insert(keyword.clone());
+                } else {
+                    flags.remove(&keyword);
+                }
+                messages
+                    .set_flags(message.id, &flags, FlagSource::Local)
+                    .map_err(store_failure)?;
+                let operation = if wanted {
+                    Operation::SetFlags { flags: one.clone() }
+                } else {
+                    Operation::ClearFlags { flags: one.clone() }
+                };
+                queue
+                    .enqueue(
+                        account,
+                        OperationTarget::Message(message.id),
+                        &operation,
+                        at,
+                    )
+                    .map_err(store_failure)?;
+            }
+        }
+        transaction.commit().map_err(store_failure)?;
+
+        let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
+        // Every touched row held the opposite value, so one command takes all
+        // of them back — the same argument `set_flag_rows` makes.
+        let inverse = Command::AddLabel {
+            target: MessageTarget::Messages(changed.clone()),
+            label: Some(label),
+            on: Some(!wanted),
+        };
+        Ok(Applied {
+            account,
+            kind: UndoKind::Label,
+            count: changed.len(),
+            messages: changed.clone(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed,
+            inverse: vec![inverse],
         })
     }
 
@@ -1881,6 +2011,22 @@ mod tests {
                 .expect("a read")
                 .expect("the message is still there")
                 .mailbox_id
+        }
+
+        /// A label on this world's account.
+        fn label(&self, name: &str) -> postio_model::LabelId {
+            let connection = self.database.connection().expect("a connection");
+            let mut label = postio_model::Label::new(self.account.id, name);
+            postio_storage::repository::LabelRepository::new(&connection)
+                .create(&mut label)
+                .expect("create a label")
+        }
+
+        fn labels_of(&self, message: MessageId) -> Vec<postio_model::LabelId> {
+            let connection = self.database.connection().expect("a connection");
+            postio_storage::repository::LabelRepository::new(&connection)
+                .for_message(message)
+                .expect("a read")
         }
 
         fn flags_of(&self, message: MessageId) -> postio_model::FlagSet {
@@ -3678,5 +3824,116 @@ mod tests {
                 "`{id}` is registered on the bus but `act` has no arm for it"
             );
         }
+    }
+    // ── Labels (#780) ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_label_goes_on_the_selection_and_undo_takes_it_off() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+
+        world
+            .run(Command::AddLabel {
+                target: MessageTarget::Messages(vec![message]),
+                label: Some(work),
+                on: None,
+            })
+            .expect("label it");
+
+        assert_eq!(world.labels_of(message), vec![work]);
+        // The wire form of a label is an IMAP keyword, so the flag the server
+        // will be told about is on the row too -- otherwise the next resync
+        // would disagree with what the user is looking at.
+        assert!(
+            world
+                .flags_of(message)
+                .contains(&Flag::Keyword("Work".to_owned())),
+            "the label is not on the message as a keyword: {:?}",
+            world.flags_of(message)
+        );
+
+        world.run(Command::Undo).expect("undo");
+        assert!(
+            world.labels_of(message).is_empty(),
+            "`u` left the label on, and the registry promises Recovery::Undo"
+        );
+        assert!(
+            !world
+                .flags_of(message)
+                .contains(&Flag::Keyword("Work".to_owned())),
+            "the keyword outlived the label it stands for"
+        );
+    }
+
+    #[test]
+    fn labelling_tells_the_server_and_undo_tells_it_the_other_thing() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+        let keyword: postio_model::FlagSet =
+            std::iter::once(Flag::Keyword("Work".to_owned())).collect();
+
+        world
+            .run(Command::AddLabel {
+                target: MessageTarget::Messages(vec![message]),
+                label: Some(work),
+                on: None,
+            })
+            .expect("label it");
+
+        let connection = world.database.connection().expect("a connection");
+        let queued = OperationQueueRepository::new(&connection)
+            .pending(world.account.id, Utc::now())
+            .expect("the queue");
+        assert_eq!(
+            queued
+                .iter()
+                .map(|row| row.operation.clone())
+                .collect::<Vec<_>>(),
+            vec![Operation::SetFlags {
+                flags: keyword.clone()
+            }],
+            "a label is a keyword on the wire, and the queue is how it gets there"
+        );
+    }
+
+    #[test]
+    fn a_label_already_on_the_message_is_not_applied_twice() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+        let on = |on| Command::AddLabel {
+            target: MessageTarget::Messages(vec![message]),
+            label: Some(work),
+            on: Some(on),
+        };
+
+        world.run(on(true)).expect("label it");
+        assert_eq!(
+            world.run(on(true)),
+            Err(CommandError::rejected("Already set")),
+            "a second `L` on a labelled message must not enqueue a second \
+             operation, or `u` would take back something nobody did"
+        );
+        assert_eq!(world.labels_of(message), vec![work]);
+    }
+
+    #[test]
+    fn a_label_with_no_label_asks_rather_than_failing() {
+        // `None` is half a request -- ADR 0005's picker case, the same shape
+        // `Move { to: None }` has. The window opens the picker before this is
+        // ever reached; what it must not do is look like an error nobody can
+        // act on.
+        let world = world();
+        world.message(world.inbox, &[]);
+        assert_eq!(
+            world.run(Command::AddLabel {
+                target: MessageTarget::Selection,
+                label: None,
+                on: None,
+            }),
+            Err(CommandError::rejected("Pick a label to add"))
+        );
     }
 }

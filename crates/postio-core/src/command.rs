@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use postio_model::{AccountId, DraftId, MailboxId, MessageId, OperationRange, ThreadId};
+use postio_model::{AccountId, DraftId, LabelId, MailboxId, MessageId, OperationRange, ThreadId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {
@@ -107,6 +107,8 @@ command_ids! {
     Snooze => "snooze",
     /// Cancel a snooze immediately.
     Unsnooze => "unsnooze",
+    /// Attach a label to the selection.
+    AddLabel => "add_label",
     /// Focus the search field.
     Search => "search",
     /// Save the current search as a pinned folder in the sidebar.
@@ -461,6 +463,22 @@ pub enum Command {
         /// The message the cursor rested on.
         message: MessageId,
     },
+    /// Attach a label, or take one off.
+    AddLabel {
+        /// What to label.
+        target: MessageTarget,
+        /// The label; `None` opens the label picker.
+        label: Option<LabelId>,
+        /// On, off, or `None` to toggle.
+        ///
+        /// [`Command::Flag`]'s shape, and for its reason: `u` takes an action
+        /// back by *dispatching its inverse*, so removing a label has to be
+        /// something a `Command` can say. One registered verb that can do
+        /// both beats a second entry in the registry that has no binding, no
+        /// menu item and no way for a person to reach it -- which is what
+        /// `AddLabel` itself was before #766 removed it (#780).
+        on: Option<bool>,
+    },
 
     // -- Search ----------------------------------------------------------
     /// Search, or focus the search field when `query` is `None`.
@@ -635,7 +653,8 @@ impl Command {
             | Command::Flag { target, .. }
             | Command::MarkUnread { target, .. }
             | Command::Snooze { target }
-            | Command::Unsnooze { target } => Some(target),
+            | Command::Unsnooze { target }
+            | Command::AddLabel { target, .. } => Some(target),
             _ => None,
         }
     }
@@ -662,6 +681,7 @@ impl Command {
             Command::MarkUnread { unread, .. } => Command::MarkUnread { target, unread },
             Command::Snooze { .. } => Command::Snooze { target },
             Command::Unsnooze { .. } => Command::Unsnooze { target },
+            Command::AddLabel { label, on, .. } => Command::AddLabel { target, label, on },
             other => other,
         }
     }
@@ -697,6 +717,7 @@ impl Command {
             Command::MarkUnread { .. } | Command::MarkReadOnDwell { .. } => CommandId::MarkUnread,
             Command::Snooze { .. } => CommandId::Snooze,
             Command::Unsnooze { .. } => CommandId::Unsnooze,
+            Command::AddLabel { .. } => CommandId::AddLabel,
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
             Command::Compose { .. } => CommandId::Compose,
@@ -797,6 +818,11 @@ impl Command {
             },
             CommandId::Unsnooze => Command::Unsnooze {
                 target: MessageTarget::Selection,
+            },
+            CommandId::AddLabel => Command::AddLabel {
+                target: MessageTarget::Selection,
+                label: None,
+                on: None,
             },
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
