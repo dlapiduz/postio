@@ -50,3 +50,14 @@ impl ContactGroup {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_group_carries_no_vcard_link_until_one_is_given() {
+        let group = ContactGroup::new(Some(AccountId::new(1)), "Book club", Utc::now());
+        assert_eq!(group.uid, None);
+    }
+}
