@@ -252,6 +252,123 @@ fn weight_in(row: &gtk::ListBoxRow) -> Option<String> {
     .map(|label| label.text().to_string())
 }
 
+/// The row's connection-type and auth-method badge (#878).
+fn badge_in(row: &gtk::ListBoxRow) -> String {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-badge",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .expect("every account row has a badge")
+    .text()
+    .to_string()
+}
+
+/// The row's own token-validity line, if it has one (#878).
+fn validity_in(row: &gtk::ListBoxRow) -> Option<String> {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-validity",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .filter(|label| label.is_visible())
+    .map(|label| label.text().to_string())
+}
+
+/// Issue #878: the badge names the connection Postio actually uses,
+/// straight off the account, with no round trip through the composition
+/// root the way the weight and the validity line need.
+pub fn an_account_row_says_how_it_connects() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let panel = SettingsPanel::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&panel));
+    window.present();
+
+    let mut imap_password = an_account(1, "Ada", "ada@example.com");
+    imap_password.backend = postio_model::account::Backend::Imap;
+    imap_password.auth = postio_model::account::AuthMethod::Password;
+
+    let mut gmail_oauth = an_account(2, "Grace", "grace@example.com");
+    gmail_oauth.backend = postio_model::account::Backend::Gmail;
+    gmail_oauth.auth = postio_model::account::AuthMethod::OAuth2;
+
+    panel.set_accounts(vec![imap_password, gmail_oauth]);
+    pump();
+
+    let all_rows = rows(&panel);
+    assert_eq!(badge_in(&all_rows[0]), "IMAP · password");
+    assert_eq!(badge_in(&all_rows[1]), "Gmail · OAuth 2");
+
+    window.destroy();
+}
+
+/// Issue #878, on top of #870's persistence: the validity line reads
+/// whatever the composition root last handed it, and says nothing at all
+/// for an account nobody has an expiry for.
+pub fn an_account_row_says_whether_its_token_is_still_good() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let panel = SettingsPanel::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&panel));
+    window.present();
+
+    let password_account = an_account(1, "Ada", "ada@example.com");
+    let mut oauth_account = an_account(2, "Grace", "grace@example.com");
+    oauth_account.auth = postio_model::account::AuthMethod::OAuth2;
+    panel.set_accounts(vec![password_account, oauth_account]);
+    pump();
+
+    let all_rows = rows(&panel);
+    assert_eq!(
+        validity_in(&all_rows[0]),
+        None,
+        "nobody told this panel about a password account's token, because it has none"
+    );
+    assert_eq!(
+        validity_in(&all_rows[1]),
+        None,
+        "no expiry has been reported for the OAuth account yet either"
+    );
+
+    let far_off = std::time::SystemTime::now() + Duration::from_secs(41 * 24 * 60 * 60);
+    panel.set_token_expiries(&[(AccountId::new(2), Some(far_off))]);
+    pump();
+    let validity = validity_in(&rows(&panel)[1]).expect("an expiry was reported");
+    assert!(
+        validity.starts_with("token valid 4") && validity.ends_with('d'),
+        "expected roughly 41 days out, got {validity:?}"
+    );
+
+    let already_past = std::time::SystemTime::now() - Duration::from_secs(60);
+    panel.set_token_expiries(&[(AccountId::new(2), Some(already_past))]);
+    pump();
+    assert_eq!(
+        validity_in(&rows(&panel)[1]).as_deref(),
+        Some("token expired — re-authorization needed")
+    );
+
+    window.destroy();
+}
+
 /// Run the main loop until `window` has actually painted `count` frames.
 ///
 /// `is_mapped()` becoming true is not enough -- a row can be mapped with its

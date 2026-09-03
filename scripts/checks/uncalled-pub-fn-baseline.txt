@@ -121,7 +121,6 @@ set_metered                       # crates/postio-sync/src/backfill.rs:478
 set_name                          # crates/postio-storage/src/repository/contact_groups.rs:66
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
-stored_expiry                     # crates/postio-account/src/oauth/token_source.rs:134 -- #870 persists the expiry, #878 (settings redesign, filed) is the account-row reader that calls this
 suspend                           # crates/postio-sync/src/watch.rs:510
 takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145

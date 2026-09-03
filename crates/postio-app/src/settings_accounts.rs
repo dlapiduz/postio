@@ -25,6 +25,7 @@
 //! runs at the next launch, before any engine exists
 //! (`postio_app::reap_pending_accounts`).
 
+use gtk::glib;
 use postio_gtk::settings::AccountAction;
 use postio_gtk::window::Window;
 use postio_runtime::AttachmentPolicy;
@@ -118,6 +119,47 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
                     ))
                 })
                 .collect();
+            // The account row's own token-validity line (#878, on top of
+            // #870's persistence): only an account that signed in through
+            // Postio's own OAuth client has anything persisted to read --
+            // a password account has no such thing, and an account fed by
+            // an external broker never had this module write one either
+            // (`OwnClientTokenSource::persist_expiry`'s own doc explains
+            // why). The keyring read is async and this function is not, so
+            // it crosses the runtime the same way `onboarding::submit`'s
+            // credential test does, and lands back through the same panel
+            // `set_accounts`/`set_mail_weights` already update.
+            let oauth_accounts: Vec<_> = accounts
+                .iter()
+                .filter(|account| account.oauth.is_some())
+                .map(|account| (account.id, account.address.address.clone()))
+                .collect();
+            if !oauth_accounts.is_empty() {
+                let secrets = wiring.secrets.clone();
+                let (sender, receiver) = async_channel::bounded(1);
+                wiring.runtime.spawn(async move {
+                    let mut expiries = Vec::with_capacity(oauth_accounts.len());
+                    for (id, address) in oauth_accounts {
+                        let key = postio_account::secret::AccountKey::new(address);
+                        let expiry = postio_account::oauth::token_source::stored_expiry(
+                            secrets.as_ref(),
+                            &key,
+                        )
+                        .await;
+                        expiries.push((id, expiry));
+                    }
+                    let _ = sender.send(expiries).await;
+                });
+                glib::spawn_future_local({
+                    let window = window.clone();
+                    async move {
+                        if let Ok(expiries) = receiver.recv().await {
+                            window.settings().set_token_expiries(&expiries);
+                        }
+                    }
+                });
+            }
+
             let panel = window.settings();
             panel.set_accounts(accounts);
             panel.set_mail_weights(
