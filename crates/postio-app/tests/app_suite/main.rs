@@ -28,6 +28,7 @@ mod dwell_wiring;
 mod egress_wiring;
 mod event_fanout;
 mod keystroke;
+mod label_wiring;
 mod manual_sync;
 mod onboarding_probe;
 mod parts_open_wiring;
@@ -338,6 +339,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "sync_window::picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml",
         sync_window::picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml as fn(),
+    ),
+    (
+        "label_wiring::a_label_command_puts_a_label_on_the_message_it_names",
+        label_wiring::a_label_command_puts_a_label_on_the_message_it_names as fn(),
+    ),
+    (
+        "label_wiring::a_label_command_with_no_label_opens_the_picker",
+        label_wiring::a_label_command_with_no_label_opens_the_picker as fn(),
     ),
 ];
 

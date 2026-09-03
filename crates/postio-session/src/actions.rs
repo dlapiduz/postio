@@ -66,6 +66,10 @@ const WIRED: &[CommandId] = &[
     CommandId::MarkUnread,
     CommandId::Snooze,
     CommandId::Unsnooze,
+    // After Unsnooze, matching the registry's own order: `bus.wired()`
+    // reports in registry order and `every_wired_command_has_a_handler_and_an_arm`
+    // compares the two lists directly.
+    CommandId::AddLabel,
     CommandId::MarkSent,
     CommandId::Undo,
 ];
@@ -3826,6 +3830,23 @@ mod tests {
         }
     }
     // ── Labels (#780) ────────────────────────────────────────────────────
+
+    #[test]
+    fn the_bus_answers_add_label() {
+        // The gap this test exists for: `AddLabel` has a handler *and* an
+        // arm, and was still unanswered, because `WIRED` is what subscribes
+        // it to the bus and it was not in the list. `command_wiring.rs`'s
+        // sweep did not catch that either -- the window intercepts
+        // `AddLabel { label: None }` to open the picker, which satisfies
+        // "handled locally", so only the *answered* form was adrift.
+        let world = world();
+        let bus = dispatcher(world.actions.clone());
+        assert!(
+            bus.wired().any(|id| id == CommandId::AddLabel),
+            "AddLabel is not on the bus, so a command carrying a label \
+             reaches nothing that writes"
+        );
+    }
 
     #[test]
     fn a_label_goes_on_the_selection_and_undo_takes_it_off() {
