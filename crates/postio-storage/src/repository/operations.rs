@@ -275,6 +275,14 @@ impl<'a> OperationQueueRepository<'a> {
             |row| row.get(0),
         )?;
 
+        // `ORDER BY messages.id` is not decoration: without it the queue's
+        // own order is whatever order the planner happened to walk the rows
+        // in, and that is a property of the *indexes*, not of this statement.
+        // #638 widened the list indexes and the order silently reversed --
+        // the planner could suddenly answer the predicate from
+        // `idx_messages_list`, which is keyed `received_at DESC, id DESC`,
+        // where before it had scanned in rowid order. The queue drains in id
+        // order, so this decides the order operations reach the server.
         let (predicate, mut arguments) = set.predicate(8);
         let sql = format!(
             "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
@@ -283,7 +291,8 @@ impl<'a> OperationQueueRepository<'a> {
              SELECT ?1, ?2, 'message', messages.id, ?3, ?4, ?5, ?6, 0, ?7, ?7,
                     messages.remote_id
                FROM messages
-              WHERE {predicate}"
+              WHERE {predicate}
+              ORDER BY messages.id"
         );
         let mut parameters = vec![
             Value::from(account_id),
