@@ -782,9 +782,19 @@ impl Window {
     pub fn new_reader(&self) -> crate::reader::Reader {
         // Read through the slot on every request rather than captured, so a
         // source wired after the reader was built still resolves parts.
+        // Weak, and this one is load-bearing (#794). The closure becomes the
+        // `Rc<dyn BlobSource>` the reader hands to its `WebContext`, so a
+        // strong capture closes
+        //
+        //     Window -> Reader -> WebContext -> scheme handler -> closure
+        //
+        // back onto the Window. That cycle lives inside WebKit's context,
+        // which is why destroying the window never broke it and why the
+        // WebProcess was still attached at `exit()`.
         let source = {
-            let window = self.clone();
+            let window = self.downgrade();
             move |content_id: &str| {
+                let window = window.upgrade()?;
                 let blobs = window.imp().blobs.borrow();
                 blobs.as_ref().and_then(|blobs| blobs.resolve(content_id))
             }
@@ -901,12 +911,19 @@ impl Window {
         // the first: the banner's "show once" and "always allow" change how
         // much is being held back, and a badge that only updated on the
         // initial render would go stale the moment either is used.
+        // Weak, like the two below it: `Reader` stores these handlers, and
+        // the window's imp stores the `Reader`, so a strong capture is a
+        // cycle. All three had to go weak before the window could be freed
+        // -- any one of them alone kept it alive, which is why fixing them
+        // one at a time looked like no fix at all (#794).
         reader.connect_rendered({
-            let window = self.clone();
+            let window = self.downgrade();
             move |held| {
-                window
-                    .parts()
-                    .set_held_back(held.remote_images, held.trackers)
+                if let Some(window) = window.upgrade() {
+                    window
+                        .parts()
+                        .set_held_back(held.remote_images, held.trackers)
+                }
             }
         });
 
@@ -915,8 +932,12 @@ impl Window {
         // acted directly would be a second implementation of a verb the
         // registry already owns.
         reader.connect_command({
-            let window = self.clone();
-            move |command| window.act(command)
+            let window = self.downgrade();
+            move |command| {
+                if let Some(window) = window.upgrade() {
+                    window.act(command)
+                }
+            }
         });
 
         let _ = self.imp().reader.set(reader.clone());
