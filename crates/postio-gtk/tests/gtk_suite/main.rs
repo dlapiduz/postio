@@ -74,6 +74,7 @@ mod gtk_finder;
 mod gtk_finder_focus;
 mod gtk_flagged;
 mod gtk_focus_visible;
+mod gtk_folder_reload_scope;
 mod gtk_folder_sections;
 mod gtk_identity;
 mod gtk_keymap_lazy;
@@ -665,6 +666,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_finder_focus::leaving_the_search_field_gives_the_single_key_bindings_back",
         gtk_finder_focus::leaving_the_search_field_gives_the_single_key_bindings_back as fn(),
+    ),
+    (
+        "gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_flagged",
+        gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_flagged as fn(),
+    ),
+    (
+        "gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_snoozed",
+        gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_snoozed as fn(),
+    ),
+    (
+        "gtk_folder_reload_scope::a_first_load_still_opens_the_inbox_over_the_auto_selected_sentinel",
+        gtk_folder_reload_scope::a_first_load_still_opens_the_inbox_over_the_auto_selected_sentinel as fn(),
+    ),
+    (
+        "gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_the_unified_view",
+        gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_the_unified_view as fn(),
+    ),
+    (
+        "gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox",
+        gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox as fn(),
     ),
     (
         "gtk_folder_sections::the_feed_reads_every_account_it_is_given_and_keeps_their_order",
