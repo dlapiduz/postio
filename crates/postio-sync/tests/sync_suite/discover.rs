@@ -6,7 +6,9 @@
 
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, EmailAddress, MailboxRole, Message, RoleOverrides};
-use postio_storage::repository::{AccountRepository, MailboxRepository, MessageRepository};
+use postio_storage::repository::{
+    AccountRepository, MailboxRepository, MailboxRoleRepository, MessageRepository,
+};
 use postio_storage::test_support;
 use postio_sync::discover::discover;
 use rusqlite::Connection;
@@ -587,5 +589,135 @@ async fn one_folder_per_role_survives_discovery() {
         sent,
         vec!["Sent Messages".to_owned()],
         "a role names one folder; the server's own claim beats a look-alike"
+    );
+}
+
+/// iCloud's shape: the provider's own Sent folder beside one another client
+/// made, and nothing declared, so the alphabet would pick `Sent`.
+async fn a_silent_server_with_two_sent_folders() -> MockBackend {
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Sent"))
+        .mailbox(MockMailbox::new("Sent Messages"))
+        .build();
+    backend.connect().await.expect("connect");
+    backend
+}
+
+fn sent_path(connection: &Connection, account: &Account) -> Option<String> {
+    MailboxRepository::new(connection)
+        .by_role(account.id, MailboxRole::Sent)
+        .expect("by role")
+        .map(|mailbox| mailbox.path)
+}
+
+#[tokio::test]
+async fn an_accounts_own_map_outranks_the_configuration() {
+    // ADR 0025: `[mailboxes]` is one table for every account; the account's
+    // own map, in the store, is what the user said about *this* server.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_silent_server_with_two_sent_folders().await;
+
+    let configured = RoleOverrides::from_pairs([(MailboxRole::Sent, "Sent")]);
+    MailboxRoleRepository::new(&connection)
+        .set(account.id, MailboxRole::Sent, "Sent Messages")
+        .expect("the account's own choice");
+
+    discover(&connection, &backend, account.id, &configured)
+        .await
+        .expect("discover");
+
+    assert_eq!(
+        sent_path(&connection, &account).as_deref(),
+        Some("Sent Messages"),
+        "the account's map wins over [mailboxes]"
+    );
+    let look_alike = MailboxRepository::new(&connection)
+        .by_path(account.id, "Sent")
+        .expect("by path")
+        .expect("the row");
+    assert_eq!(
+        look_alike.role,
+        MailboxRole::Regular,
+        "and the folder the configuration named is an ordinary folder here"
+    );
+}
+
+#[tokio::test]
+async fn an_accounts_map_says_nothing_about_another_account() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let icloud = an_account(&connection);
+    let mut other = Account::new(
+        "Other",
+        EmailAddress::new(Some("Ada Lovelace"), "ada@example.net"),
+    );
+    AccountRepository::new(&connection)
+        .create(&mut other)
+        .expect("create account");
+    let backend = a_silent_server_with_two_sent_folders().await;
+
+    MailboxRoleRepository::new(&connection)
+        .set(icloud.id, MailboxRole::Sent, "Sent Messages")
+        .expect("map one account");
+
+    for account in [&icloud, &other] {
+        discover(&connection, &backend, account.id, &RoleOverrides::default())
+            .await
+            .expect("discover");
+    }
+
+    assert_eq!(
+        sent_path(&connection, &icloud).as_deref(),
+        Some("Sent Messages")
+    );
+    assert_eq!(
+        sent_path(&connection, &other).as_deref(),
+        Some("Sent"),
+        "the other account resolves on its own, by the automatic rule"
+    );
+}
+
+#[tokio::test]
+async fn a_map_changed_between_passes_takes_effect_on_the_next() {
+    // Nothing is frozen at startup: the engine's part is the configuration
+    // tier only, and the account's map is read every pass, so a choice made
+    // in settings needs no restart to be honoured by discovery.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_silent_server_with_two_sent_folders().await;
+    let configured = RoleOverrides::default();
+
+    discover(&connection, &backend, account.id, &configured)
+        .await
+        .expect("first pass");
+    assert_eq!(sent_path(&connection, &account).as_deref(), Some("Sent"));
+
+    MailboxRoleRepository::new(&connection)
+        .set(account.id, MailboxRole::Sent, "Sent Messages")
+        .expect("choose in settings");
+    discover(&connection, &backend, account.id, &configured)
+        .await
+        .expect("second pass");
+
+    assert_eq!(
+        sent_path(&connection, &account).as_deref(),
+        Some("Sent Messages"),
+        "the second pass honours the choice with the engine untouched"
+    );
+    let roles: Vec<String> = MailboxRepository::new(&connection)
+        .list_for_account(account.id)
+        .expect("list")
+        .into_iter()
+        .filter(|mailbox| mailbox.role == MailboxRole::Sent)
+        .map(|mailbox| mailbox.path)
+        .collect();
+    assert_eq!(
+        roles,
+        vec!["Sent Messages".to_owned()],
+        "and still one folder per role"
     );
 }
