@@ -15,11 +15,13 @@
 //!
 //! # Remove is local to its own toast, not the undo stack
 //!
-//! `AccountAction::Remove` is not a `postio_core::Command`, so `u` does not
-//! reach it — [`postio_gtk::window::Window::show_removable_toast`] is a
-//! second, narrower undo button for exactly this case, wired straight to
+//! [`postio_gtk::window::Window::show_removable_toast`] is a narrower undo
+//! for exactly this case, wired straight to
 //! [`postio_storage::repository::AccountRepository::restore`] rather than
-//! through the global stack. Marking is instant; the actual delete only
+//! through the global stack. `u` *does* reach it, as of #471: removal is a
+//! command now, with `Recovery::Undo`, and `u` in `Context::Accounts`
+//! activates the showing toast. Context-local state, context-local binding;
+//! the global stack still never holds an account removal. Marking is instant; the actual delete only
 //! runs at the next launch, before any engine exists
 //! (`postio_app::reap_pending_accounts`).
 

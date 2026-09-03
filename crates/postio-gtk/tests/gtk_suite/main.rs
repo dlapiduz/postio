@@ -109,6 +109,7 @@ mod gtk_search_preview;
 mod gtk_selection;
 mod gtk_settings;
 mod gtk_settings_accounts;
+mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
 mod gtk_shell;
 mod gtk_sidebar;
@@ -379,6 +380,34 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings::a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log",
         gtk_settings::a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::focus_on_an_account_row_enters_the_accounts_context_and_leaving_restores_it",
+        gtk_settings_accounts_keys::focus_on_an_account_row_enters_the_accounts_context_and_leaving_restores_it as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::remove_account_acts_on_the_row_the_keyboard_is_on",
+        gtk_settings_accounts_keys::remove_account_acts_on_the_row_the_keyboard_is_on as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::update_credential_acts_on_the_row_the_keyboard_is_on",
+        gtk_settings_accounts_keys::update_credential_acts_on_the_row_the_keyboard_is_on as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::toggling_enabled_flips_the_focused_rows_switch_and_reports_it",
+        gtk_settings_accounts_keys::toggling_enabled_flips_the_focused_rows_switch_and_reports_it as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::the_account_commands_do_nothing_when_the_keyboard_is_elsewhere",
+        gtk_settings_accounts_keys::the_account_commands_do_nothing_when_the_keyboard_is_elsewhere as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::undo_in_the_account_list_reaches_the_removal_toast",
+        gtk_settings_accounts_keys::undo_in_the_account_list_reaches_the_removal_toast as fn(),
+    ),
+    (
+        "gtk_settings_accounts_keys::undo_outside_the_account_list_leaves_the_removal_toast_alone",
+        gtk_settings_accounts_keys::undo_outside_the_account_list_leaves_the_removal_toast_alone as fn(),
     ),
     (
         "gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none",

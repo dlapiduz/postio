@@ -621,13 +621,21 @@ The three commands:
 |---|---|---|---|
 | `ToggleAccountEnabled` | `Return` | no | `None` — pressing it again is the reversal |
 | `RemoveAccount` | `d` | **yes** | `Undo` |
-| `UpdateCredential` | none; palette only | no | `None` |
+| `UpdateCredential` | `c` | no | `None` |
 
 `d` matches `DeleteSavedSearch`'s spelling in `Context::Sidebar`, which is the
-neighbouring list and the same verb. `UpdateCredential` gets no default binding
-— ten commands already have none — because it opens a dialog, happens once
-every few months, and the palette is the right discoverability for exactly that
-shape of verb. Getting into the list needs no new key either: the account rows
+neighbouring list and the same verb.
+
+> **Corrected while implementing (#471).** This originally gave
+> `UpdateCredential` no default binding, reasoning that "ten commands already
+> have none". None do: it would have been the only entry in the registry
+> without one, and `PRODUCT.md` §8 makes a shortcut a structural requirement
+> that `every_command_has_an_id_a_title_and_a_default_binding` enforces. The
+> reasoning behind the exemption — that it opens a dialog, happens once every
+> few months, and wants discoverability rather than muscle memory — argues for
+> the palette entry it has either way, not against a binding. So it takes `c`,
+> for credential. Nothing is shadowed: `Compose`'s `c` is scoped to the
+> message surfaces, and this context layers over `Global` alone. Getting into the list needs no new key either: the account rows
 sit above the text in the focus chain, so `Tab` already reaches them.
 
 **`Recovery::Undo` on `RemoveAccount` has to become true.** Q6a built the
