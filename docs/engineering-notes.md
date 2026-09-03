@@ -2888,6 +2888,29 @@ lines under your paths; if there are any, `git add` those exact paths first,
 then `git commit --only <paths>` as usual. Never `git add -A` — the tree is
 shared.
 
+**What Postio actually implements against the RFCs lives in
+`docs/rfc-compliance.md`**, and a verdict there changes in the same commit as
+`crates/postio-model/tests/rfc5322.rs` — the point of having both is that
+neither can drift alone. #462 wrote the RFC 5322 section; #680, #681 and #682
+have sections to add to rather than a format to invent.
+
+Two things from that pass are worth knowing before touching the parser or the
+generator, because both look like bugs and are not:
+
+- **`postio_model::address::parse_list` is not an RFC 5322 parser and must not
+  become one.** It parses what a person types into a composer field, on every
+  keystroke, where the text is mid-edit far more often than it is finished —
+  so it accepts an unterminated `<`, treats `;` as a separator, and keeps a
+  half-typed address rather than dropping it. Received mail never goes through
+  it; that is `mime::addresses`, which is `mail-parser`. Making the composer
+  strict would make it reject text somebody is still typing.
+- **A decoded header value can contain CR and LF, and that is the parser
+  behaving correctly.** RFC 2047 encodes octets, `=0D=0A` is two of them, and
+  unfolding cannot remove them because they were never folding whitespace.
+  Anything that writes such a value back into a header has to say what it does
+  about that — which is #864, and which is why
+  `encoded-word-crlf-in-header.eml` exists.
+
 **A worktree holds one session, and the guard is what makes that true.**
 #412. `issue-claim.sh` takes an atomic lock and refuses to adopt an existing
 worktree — but both checks live *inside the script*, so a session that reached
