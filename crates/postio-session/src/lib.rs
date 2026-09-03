@@ -54,7 +54,7 @@ use std::time::{Duration, SystemTime};
 
 use postio_core::bridge::EventSink;
 use postio_runtime::store::{MailStore, SqliteStore};
-use postio_storage::blob::{GarbageCollection, GarbageReport};
+use postio_storage::blob::{EvictionReport, GarbageCollection, GarbageReport};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, Database};
 
@@ -71,6 +71,20 @@ pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
         .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.role_overrides())
         .unwrap_or_default()
+}
+
+/// `[storage] max_bytes` from the file at `path`, or nothing.
+///
+/// Unreadable, unparseable, absent and unset all answer `None`, which is the
+/// documented default and means unbounded — see `postio_config::storage` for
+/// why a number here is a promise about somebody else's disk that Postio is
+/// not in a position to make. Read once at startup, like `[mailboxes]` and
+/// `[sync]` beside it.
+pub fn storage_ceiling_at(path: &std::path::Path) -> Option<u64> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .and_then(|config| config.storage.max_bytes)
 }
 
 /// Read `[sync]` from `path` and turn it into the policy the engine backfills
@@ -285,6 +299,15 @@ pub struct Wiring {
     /// and `engine::start` reading the file itself could not be driven by a
     /// test.
     pub backfill: postio_runtime::BackfillPolicy,
+    /// The ceiling on the blob store, from `[storage] max_bytes`.
+    ///
+    /// A part, like `backfill`, and for the same reason: how much of this
+    /// machine's disk Postio may use is a choice about *this installation*,
+    /// and a sweep that read the file itself could not be driven by a test.
+    /// `None` is the default and means unbounded — see
+    /// [`enforce_storage_ceiling`], which is the one place that decision is
+    /// made.
+    pub storage_ceiling: Option<u64>,
 }
 
 impl Wiring {
@@ -314,6 +337,7 @@ impl Wiring {
             secrets: postio_account::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
+            storage_ceiling: None,
         }
     }
 
@@ -334,6 +358,15 @@ impl Wiring {
     /// built-in default.
     pub fn with_backfill(mut self, backfill: postio_runtime::BackfillPolicy) -> Self {
         self.backfill = backfill;
+        self
+    }
+
+    /// The same wiring, holding the blob store to `[storage] max_bytes`.
+    ///
+    /// `None` — the default, and what every existing `config.toml` gets — is
+    /// unbounded, exactly as before this was wired up.
+    pub fn with_storage_ceiling(mut self, max_bytes: Option<u64>) -> Self {
+        self.storage_ceiling = max_bytes;
         self
     }
 
@@ -698,6 +731,79 @@ pub fn reclaim_orphaned_blobs(
         );
     }
     Ok(report)
+}
+
+/// Bring the blob store back under `[storage] max_bytes` by dropping what can
+/// be fetched again. Answers what one pass took, or `None` when no ceiling is
+/// set.
+///
+/// # Why this exists at all
+///
+/// The third of the sweeps #416 was filed about, and the last to get a caller.
+/// `BlobStore::evict_to_fit` was written, documented and tested five times
+/// over, and no production code named it — so `max_bytes` in somebody's
+/// `config.toml` was a setting that parsed, validated, round-tripped, and did
+/// nothing whatever to their disk. #416 deliberately scoped it out because it
+/// is the one sweep carrying a policy; #862 is that policy arriving.
+///
+/// # Unset means unbounded, and must not be read as zero
+///
+/// `[storage]`'s module docs settle the default: a number here is a promise
+/// about somebody else's disk and Postio does not know how big theirs is. So
+/// `None` returns before anything is counted rather than falling through to a
+/// budget of nothing — the reading that would empty a store on first start.
+/// That is why this takes `Option<u64>` rather than a `u64` a caller has
+/// already unwrapped: the decision belongs in one place, with a test on it.
+///
+/// # Why it can afford to lose something
+///
+/// Unlike [`reclaim_orphaned_blobs`], this removes blobs a row still points
+/// at. ADR 0014 is what makes that safe: everything except drafts and the
+/// operation queue can be re-synced, so the store is a cache and a cache may
+/// evict. What goes is only ever raw message source and attachment payloads,
+/// oldest mail first, and never the text search is made of — since ADR 0020
+/// bodies are columns on the row, so there is no blob here for a pass over the
+/// blob store to take. Eviction costs a round trip later; it never costs mail,
+/// and the row it clears is left exactly as the payload axis reads "not here
+/// yet".
+///
+/// # Not on the startup path
+///
+/// It stats every blob in the store to measure it, which on a backfilled
+/// archive is a great many files — the same reason [`reclaim_orphaned_blobs`]
+/// is spawned rather than awaited, and the same 500 ms budget it would
+/// otherwise spend.
+pub fn enforce_storage_ceiling(
+    database: &Database,
+    blobs: &BlobStore,
+    max_bytes: Option<u64>,
+) -> Result<Option<EvictionReport>, Box<dyn std::error::Error>> {
+    let Some(budget) = max_bytes else {
+        return Ok(None);
+    };
+    let connection = database.connection()?;
+    let report = blobs.evict_to_fit(&connection, budget)?;
+    if report.removed > 0 {
+        // Counts and bytes only: what was in those blobs is somebody's mail.
+        tracing::info!(
+            removed = report.removed,
+            bytes = report.bytes_reclaimed,
+            remaining = report.bytes_remaining,
+            budget,
+            "evicted refetchable blobs to fit the storage ceiling"
+        );
+    }
+    if report.bytes_remaining > budget {
+        // Eviction ran out of things it was allowed to take, which means the
+        // store is mostly text. Worth saying once: the ceiling is not being
+        // honoured, and no further pass will change that.
+        tracing::warn!(
+            remaining = report.bytes_remaining,
+            budget,
+            "the store is over its ceiling with nothing refetchable left to drop"
+        );
+    }
+    Ok(Some(report))
 }
 
 /// Train a body-compression dictionary from the mail already on this machine,

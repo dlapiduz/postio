@@ -1332,6 +1332,108 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
 }
 
 #[tokio::test]
+async fn an_evicted_payload_can_be_fetched_again() {
+    // The promise the whole ceiling rests on (#862). `evict_to_fit` deletes
+    // bytes a row still points at -- which is exactly what separates it from
+    // garbage collection -- and it is only safe because those bytes are
+    // refetchable. So the test is not "the file is gone": it is that a store
+    // which has just lost an attachment to its ceiling asks for it again and
+    // gets the same bytes back.
+    //
+    // Structurally that rests on what `forget` writes: `blob_id = NULL` and
+    // `body_state = partial`, which together are precisely what the payload
+    // axis reads as "not here yet". An eviction that cleared one and not the
+    // other would leave the attachment unreachable for ever, and nothing
+    // downstream could tell.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+    let messages = MessageRepository::new(&local.connection);
+
+    let mut backfill = Backfill::new(policy());
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+    let claim = backfill.next_body().expect("a claim");
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
+        &claim.cancel,
+    )
+    .await
+    .expect("fetch");
+    // As the engine does: a claim stays in flight until its outcome is
+    // reported, and a message in flight has its next request held rather than
+    // queued.
+    backfill.finished(
+        id,
+        Outcome::Stored {
+            bytes: PDF.len() as u64,
+        },
+    );
+    let blob = messages.get(id).expect("get").expect("row").attachments[0]
+        .blob_id
+        .clone()
+        .expect("the payload is here to begin with");
+
+    // A ceiling of nothing at all: the smallest store that is over budget.
+    let report = local
+        .blobs
+        .evict_to_fit(&local.connection, 0)
+        .expect("evict");
+    assert_eq!(report.removed, 1, "the payload was the only thing to take");
+    assert!(!local.blobs.contains(&blob), "the bytes really are gone");
+
+    let evicted = messages.get(id).expect("get").expect("row");
+    assert_eq!(
+        evicted.sync.body_state,
+        BodyState::Partial,
+        "the row stops claiming a part it no longer has"
+    );
+
+    // And the part is askable again, from the same call the attachment chip
+    // makes when somebody presses download.
+    assert!(
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask"),
+        "an evicted payload is a payload the server still has: eviction is \
+         not a delete from the user's point of view"
+    );
+    let claim = backfill.next_body().expect("a claim for the evicted part");
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
+        &claim.cancel,
+    )
+    .await
+    .expect("refetch");
+
+    let restored = messages.get(id).expect("get").expect("row");
+    let back = restored.attachments[0]
+        .blob_id
+        .clone()
+        .expect("the payload came back");
+    assert_eq!(
+        local.blobs.get(&back).expect("read"),
+        PDF,
+        "the same bytes, decoded the same way"
+    );
+    assert_eq!(
+        restored.sync.body_state,
+        BodyState::Full,
+        "and the message is whole again"
+    );
+}
+
+#[tokio::test]
 async fn two_messages_carrying_the_same_file_share_one_blob() {
     // Dedup is worth real bytes: on the reference account 22,878 named
     // attachment parts collapse to 13,099 distinct. Content addressing gets

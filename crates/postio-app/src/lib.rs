@@ -149,11 +149,19 @@ pub fn run() -> glib::ExitCode {
         .map(postio_session::mailbox_roles_at)
         .unwrap_or_default();
 
+    // `[storage] max_bytes`, read once here for the same reason `[mailboxes]`
+    // is: `reclaim_disk` is spawned from `feed_the_window`, which runs before
+    // anything is watching the file.
+    let storage_ceiling = config_path
+        .as_deref()
+        .and_then(postio_session::storage_ceiling_at);
+
     let context = Rc::new(Installation {
         secrets,
         state,
         mailbox_roles,
         sync_config: sync_config.clone(),
+        storage_ceiling,
     });
 
     // The store's key, before the store. ADR 0014 Q3: a locked keyring means
@@ -640,8 +648,19 @@ fn train_the_body_dictionary(wiring: &Wiring) {
 /// Once per start, not on a timer. Orphans are produced by deletes, moves and
 /// resyncs — none of which happen fast enough to be worth a schedule, and all
 /// of which will still be there next time.
+///
+/// # And the third sweep
+///
+/// `BlobStore::evict_to_fit` was the one #416 left behind, on the argument
+/// that it is opt-in and so less urgent than the two that leaked
+/// unconditionally. It stayed uncalled, which meant `[storage] max_bytes` was
+/// a setting that parsed and did nothing (#862). It runs last here, after the
+/// two sweeps that take only what nothing wants: there is no sense evicting a
+/// blob somebody would have to refetch when an orphan of the same size was
+/// about to go for free.
 fn reclaim_disk(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    let ceiling = wiring.storage_ceiling;
     wiring.runtime.spawn_blocking(move || {
         if let Err(error) = postio_session::purge_fetch_debris(&blobs) {
             tracing::warn!(%error, "could not remove debris from unfinished fetches");
@@ -667,6 +686,11 @@ fn reclaim_disk(wiring: &Wiring) {
             // client that could not tidy up still reads mail, and the next
             // start tries again.
             tracing::warn!(%error, "could not reclaim blobs nothing references");
+        }
+        // Last, and only when somebody has set a ceiling: this is the sweep
+        // that costs a refetch, so it takes what the free sweeps left.
+        if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling) {
+            tracing::warn!(%error, "could not bring the store under its ceiling");
         }
     });
 }
@@ -931,6 +955,11 @@ struct Installation {
     state: SharedState,
     mailbox_roles: postio_model::RoleOverrides,
     sync_config: postio_config::SyncConfig,
+    /// `[storage] max_bytes`, or `None` for the documented default of
+    /// unbounded. Read here beside the other two sections, and for the same
+    /// reason: the sweep that reads it runs before there is anywhere else to
+    /// have put it.
+    storage_ceiling: Option<u64>,
 }
 
 /// Everything downstream of the store key.
@@ -995,6 +1024,7 @@ fn open_with(
         ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
             .with_mailbox_roles(context.mailbox_roles.clone())
             .with_backfill(postio_session::backfill_policy(&context.sync_config))
+            .with_storage_ceiling(context.storage_ceiling)
             .with_secrets(context.secrets.clone())
     };
 

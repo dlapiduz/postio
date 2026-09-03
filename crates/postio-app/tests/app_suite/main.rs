@@ -163,6 +163,10 @@ const CASES: &[(&str, fn())] = &[
         reclaim_wiring::opening_a_store_reclaims_what_nothing_references as fn(),
     ),
     (
+        "reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it",
+        reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it as fn(),
+    ),
+    (
         "reply_identity::a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity",
         reply_identity::a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity
             as fn(),
