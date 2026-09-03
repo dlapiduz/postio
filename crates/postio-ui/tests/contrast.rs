@@ -1,4 +1,5 @@
-//! WCAG contrast floors for the light theme's de-emphasised ink roles (#829).
+//! WCAG contrast floors for the de-emphasised ink roles, light and dark
+//! (#829, #895).
 //!
 //! The default theme shipped `--postio-dim` and `--postio-faint` chosen by
 //! eye rather than measured, and both failed WCAG 2.2 against the row
@@ -20,9 +21,24 @@
 //! through to the list view's own white background, which is what #829's
 //! screenshot measurement confirmed empirically).
 //!
-//! High contrast already clears both floors comfortably and dark mode is
-//! unmeasured (#829 leaves it for a follow-up) — this file only holds the
-//! light, normal-contrast scheme the decision fixed.
+//! **Dark was measured second (#895), and passes as it stands.** It reaches
+//! the same two roles by a different mechanism — palette steps
+//! (`--postio-color-neutral-400`/`-500`) rather than an alpha tint of
+//! `color-text` — so nothing about the light fix implied anything about it,
+//! which is exactly why it needed its own measurement rather than an
+//! assumption. Against `#2b2b2d`, the dark row background:
+//!
+//! ```text
+//! --postio-dim    neutral-400  #b7b7ba   7.06:1   floor 4.5   pass
+//! --postio-faint  neutral-500  #98989b   4.91:1   floor 3.0   pass
+//! ```
+//!
+//! Both clear comfortably, and `dim` out-contrasts `faint` as it must, so no
+//! retune was needed. The tests below are what stops that drifting the way
+//! light did — the numbers were fine until somebody changed a palette step.
+//!
+//! High contrast already clears both floors comfortably in both schemes and
+//! is not asserted here.
 //!
 //! No display to guard: this is arithmetic over two generated tokens.
 
@@ -151,6 +167,68 @@ fn contrast_ratio(a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
+/// Pull `--role` out of the dark scheme, following one level of `var()`.
+///
+/// Dark states its roles as palette references (`var(--postio-color-neutral-400)`)
+/// where light states literal `rgba()`, so this resolves the reference against
+/// the palette block rather than assuming a colour is written where the role
+/// is. That difference is the whole reason #895 existed: measuring light said
+/// nothing about dark, because the two do not share a mechanism.
+fn dark_role_color(css: &str, role: &str) -> (u8, u8, u8, f32) {
+    // `:root.postio-dark {` matches once. The high-contrast block is
+    // `:root.postio-dark.postio-hc {`, which does not contain this needle
+    // because of what sits between the class and the brace.
+    let block = css
+        .split(":root.postio-dark {")
+        .nth(1)
+        .expect("no dark roles block")
+        .split("}\n")
+        .next()
+        .unwrap();
+    parse_color(&resolve(css, value_of(block, role)))
+}
+
+/// The dark row background, read from the same block rather than hard-coded:
+/// a scheme that restyled its list would move this, and a floor measured
+/// against the wrong background is worse than no floor.
+fn dark_row_background(css: &str) -> (u8, u8, u8) {
+    let (r, g, b, _) = dark_role_color(css, "--view-bg-color");
+    (r, g, b)
+}
+
+/// The declared value of `role` inside one already-sliced block.
+fn value_of(block: &str, role: &str) -> String {
+    let needle = format!("{role}: ");
+    block
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(&needle))
+        .unwrap_or_else(|| panic!("`{role}` is not defined in this block"))
+        .trim_start_matches(&needle)
+        .trim_end_matches(';')
+        .trim()
+        .to_owned()
+}
+
+/// `var(--postio-color-x)` looked up in the palette block; anything else
+/// returned as it stands.
+fn resolve(css: &str, value: String) -> String {
+    let Some(name) = value
+        .strip_prefix("var(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return value;
+    };
+    let palette = css
+        .split(":root {")
+        .nth(1)
+        .expect("no palette block")
+        .split("}\n")
+        .next()
+        .unwrap();
+    value_of(palette, name.trim())
+}
+
 const WHITE: (u8, u8, u8) = (255, 255, 255);
 
 #[test]
@@ -192,6 +270,83 @@ fn dim_is_darker_than_faint() {
         dim_ratio > faint_ratio,
         "--postio-dim ({dim_ratio:.2}:1) should out-contrast --postio-faint \
          ({faint_ratio:.2}:1) — content should read more clearly than an \
+         affordance, not the other way round"
+    );
+}
+
+// ── The dark scheme (#895) ──────────────────────────────────────────────
+//
+// Same two floors, same reasoning about which role carries content and which
+// carries an affordance — measured against the dark row background instead of
+// the white one, and reading the roles through the palette because that is
+// how dark states them.
+
+#[test]
+fn dark_dim_clears_the_content_floor_against_the_dark_row() {
+    let css = light_tokens();
+    let background = dark_row_background(&css);
+    let dim = dark_role_color(&css, "--postio-dim");
+    let ratio = contrast_ratio(
+        composite(dim, background),
+        (
+            f64::from(background.0),
+            f64::from(background.1),
+            f64::from(background.2),
+        ),
+    );
+    assert!(
+        ratio >= 4.5,
+        "dark --postio-dim is {ratio:.2}:1 against the row background, below \
+         the 4.5:1 WCAG floor for content (the list preview line and the \
+         timestamp read it)"
+    );
+}
+
+#[test]
+fn dark_faint_clears_the_affordance_floor_against_the_dark_row() {
+    let css = light_tokens();
+    let background = dark_row_background(&css);
+    let faint = dark_role_color(&css, "--postio-faint");
+    let ratio = contrast_ratio(
+        composite(faint, background),
+        (
+            f64::from(background.0),
+            f64::from(background.1),
+            f64::from(background.2),
+        ),
+    );
+    assert!(
+        ratio >= 3.0,
+        "dark --postio-faint is {ratio:.2}:1 against the row background, \
+         below the 3:1 WCAG floor for a UI affordance (the focused row's key \
+         hint reads it)"
+    );
+}
+
+/// The same ordering invariant the light scheme has, for the same reason: two
+/// palette steps that swapped would clear both floors above and still be
+/// wrong.
+#[test]
+fn dark_dim_is_lighter_than_faint() {
+    let css = light_tokens();
+    let background = dark_row_background(&css);
+    let against = (
+        f64::from(background.0),
+        f64::from(background.1),
+        f64::from(background.2),
+    );
+    let dim = contrast_ratio(
+        composite(dark_role_color(&css, "--postio-dim"), background),
+        against,
+    );
+    let faint = contrast_ratio(
+        composite(dark_role_color(&css, "--postio-faint"), background),
+        against,
+    );
+    assert!(
+        dim > faint,
+        "dark --postio-dim ({dim:.2}:1) should out-contrast --postio-faint \
+         ({faint:.2}:1) — content should read more clearly than an \
          affordance, not the other way round"
     );
 }
