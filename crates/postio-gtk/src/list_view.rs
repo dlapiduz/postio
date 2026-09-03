@@ -39,7 +39,7 @@ use postio_model::MessageId;
 
 use crate::list::{MessageList, MessageRow};
 use crate::row::MessageRowView;
-use crate::selection::{self, SelectionState};
+use crate::selection::{self, Reach, SelectionState};
 
 /// What to call when a row is activated — `Enter`, or a double click.
 type ActivateHandler = Box<dyn Fn(crate::list::Row)>;
@@ -111,6 +111,13 @@ mod imp {
         pub(super) cursor: gtk::SingleSelection,
         /// The **selection**: what an action would hit.
         pub(super) selected: SelectionState,
+        /// What this list could show *right now*, account-wise.
+        ///
+        /// Live, kept in step by `Window::refresh_list_state` from the same
+        /// statuses the ADR 0005 Q10 banner is derived from. A whole-view
+        /// gesture freezes it into the selection; nothing else reads it, and
+        /// nothing reads it again afterwards (#811).
+        pub(super) reach: RefCell<Reach>,
         /// Where a Shift-click counts from, as a position rather than an id,
         /// because a range is a span of the list and not of the mailbox.
         pub(super) anchor: Cell<Option<u32>>,
@@ -203,6 +210,7 @@ mod imp {
                 model,
                 cursor,
                 selected: SelectionState::new(),
+                reach: RefCell::new(Reach::default()),
                 anchor: Cell::new(None),
                 hovered: RefCell::new(None),
                 density: Rc::new(Cell::new(Density::default())),
@@ -755,8 +763,34 @@ impl MessageListView {
     ///
     /// A predicate, not a hundred thousand ids: see [`crate::selection`].
     pub fn select_all(&self) {
-        self.imp().anchor.set(None);
-        self.imp().selected.select_all();
+        let imp = self.imp();
+        imp.anchor.set(None);
+        // The gesture is the moment the scope is fixed. Reading reachability
+        // when the verb runs instead would let an account that reconnected in
+        // between join a selection the user was never shown -- a selection
+        // that silently grows, which is the one kind the summary cannot
+        // disclose (#811, ADR 0005 Q10).
+        imp.selected.select_all(imp.reach.borrow().clone());
+    }
+
+    /// Which accounts this list can currently vouch for, and which it cannot.
+    ///
+    /// The live value, which a whole-view gesture freezes into the selection.
+    /// [`SelectionState::reach`] is the frozen one and answers only while the
+    /// selection is a predicate — before the gesture it is, correctly, empty,
+    /// so this is what says whether the list was ever told.
+    pub fn reach(&self) -> Reach {
+        self.imp().reach.borrow().clone()
+    }
+
+    /// Say which accounts this list can currently vouch for, and which it
+    /// cannot.
+    ///
+    /// [`Reach::default()`] for every view that is not an aggregate: a
+    /// single-account list leaves nothing out, so there is nothing to scope
+    /// or to disclose.
+    pub fn set_reach(&self, reach: Reach) {
+        *self.imp().reach.borrow_mut() = reach;
     }
 
     /// Drop the selection — `Esc`, when there is one.
@@ -926,6 +960,19 @@ impl MessageListView {
         }
     }
 
+    /// What the header is actually saying about the selection right now.
+    ///
+    /// The label's own text, read back off the widget, rather than a second
+    /// call to [`selection::summary`]: a test that re-derived the sentence
+    /// could not fail when the header stopped being told about the selection
+    /// at all, which is the half of this that has ever broken.
+    ///
+    /// `None` when the header is not showing a selection.
+    pub fn selection_summary(&self) -> Option<String> {
+        let imp = self.imp();
+        imp.count.is_visible().then(|| imp.count.text().to_string())
+    }
+
     /// Put the header back in step with the selection.
     fn refresh_header(&self) {
         let imp = self.imp();
@@ -933,7 +980,11 @@ impl MessageListView {
             0 => None,
             total => Some(total),
         };
-        match selection::summary(&imp.selected.selection(), total) {
+        match selection::summary(
+            &imp.selected.selection(),
+            total,
+            &imp.selected.reach().omitted,
+        ) {
             Some(text) => {
                 imp.count.set_text(&text);
                 imp.count.set_visible(true);
@@ -1538,7 +1589,11 @@ impl MessageListView {
             0 => None,
             total => Some(total),
         };
-        let text = match selection::summary(&imp.selected.selection(), total)? {
+        let text = match selection::summary(
+            &imp.selected.selection(),
+            total,
+            &imp.selected.reach().omitted,
+        )? {
             // "1 selected" is a count; "1 message" is what is being carried.
             count if count.starts_with("1 ") => "1 message".to_owned(),
             count => count.replace(" selected", " messages"),

@@ -966,3 +966,106 @@ fn the_source_mailboxes_of_a_set_are_answered_without_naming_its_rows() {
     expected.sort_by_key(|mailbox| mailbox.get());
     assert_eq!(folders, expected);
 }
+
+// ── Across accounts ──────────────────────────────────────────────────────
+
+/// A second account with its own INBOX, for the cross-account predicate.
+///
+/// `test_support::account_with_inbox` builds every account at the same
+/// address, which is fine for one and not for two: these tests are about
+/// which account a row belongs to, so the two have to be distinguishable.
+fn second_world(connection: &Connection) -> World {
+    let mut account = Account::new(
+        "Away",
+        postio_model::EmailAddress::new(Some("Away User"), "away@example.com"),
+    );
+    account.incoming.host = "imap.example.com".to_owned();
+    account.outgoing.host = "smtp.example.com".to_owned();
+    postio_storage::repository::AccountRepository::new(connection)
+        .create(&mut account)
+        .expect("create the second account");
+    let inbox = test_support::mailbox(connection, &account, "INBOX").id;
+    let archive = test_support::mailbox(connection, &account, "Archive").id;
+    World {
+        account,
+        inbox,
+        archive,
+    }
+}
+
+#[test]
+fn a_cross_account_set_touches_only_the_accounts_it_names() {
+    // `Ctrl+A` in the unified view, with one account unreachable. The scope
+    // names the accounts the view could actually show, and the predicate is
+    // that list -- so the account left out keeps its mail where it was
+    // (#811, ADR 0005 Q10).
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let here = world(&connection);
+    let away = second_world(&connection);
+    let mine = fill(&connection, here.inbox, 5);
+    let theirs = fill(&connection, away.inbox, 4);
+
+    let moved = MessageRepository::new(&connection)
+        .move_set(
+            &MessageSet::InAccounts {
+                accounts: vec![here.account.id],
+                except: Vec::new(),
+            },
+            here.archive,
+        )
+        .expect("a bulk move");
+
+    assert_eq!(moved, 5, "only the named account's mail is in the set");
+    for message in &mine {
+        assert_eq!(mailbox_of(&connection, *message), here.archive);
+    }
+    for message in &theirs {
+        assert_eq!(
+            mailbox_of(&connection, *message),
+            away.inbox,
+            "an account the selection was never scoped to must not move"
+        );
+    }
+}
+
+#[test]
+fn a_cross_account_set_spans_every_account_it_does_name() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let here = world(&connection);
+    let away = second_world(&connection);
+    fill(&connection, here.inbox, 5);
+    fill(&connection, away.inbox, 4);
+
+    let counted = MessageRepository::new(&connection)
+        .count_set(&MessageSet::InAccounts {
+            accounts: vec![here.account.id, away.account.id],
+            except: Vec::new(),
+        })
+        .expect("a count");
+
+    assert_eq!(counted, 9);
+}
+
+#[test]
+fn a_row_taken_back_out_of_a_cross_account_selection_stays_put() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let here = world(&connection);
+    let messages = fill(&connection, here.inbox, 6);
+    let kept = vec![messages[2]];
+
+    let moved = MessageRepository::new(&connection)
+        .move_set(
+            &MessageSet::InAccounts {
+                accounts: vec![here.account.id],
+                except: kept.clone(),
+            },
+            here.archive,
+        )
+        .expect("a bulk move");
+
+    assert_eq!(moved, 5);
+    assert_eq!(mailbox_of(&connection, kept[0]), here.inbox);
+}

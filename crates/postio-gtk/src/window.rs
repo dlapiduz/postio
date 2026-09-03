@@ -1482,7 +1482,7 @@ impl Window {
         // about every account when only one of them is away. Named from the
         // sidebar's own list so the name in the banner and the hue on the
         // account's row are the same account in the same order.
-        let aggregate = matches!(feed.scope(), Some(postio_model::ListScope::Unified)).then(|| {
+        let drawn = matches!(feed.scope(), Some(postio_model::ListScope::Unified)).then(|| {
             let names = self.sidebar().account_names();
             folders
                 .statuses()
@@ -1492,8 +1492,35 @@ impl Window {
                         .iter()
                         .find(|(candidate, _)| *candidate == id)
                         .map(|(_, name)| name.clone())?;
-                    Some((name, status))
+                    Some((id, name, status))
                 })
+                .collect::<Vec<_>>()
+        });
+        // The same accounts, twice over, from one reading of one rule: the
+        // banner names the ones the view cannot vouch for, and a whole-view
+        // selection is scoped to the ones it can. Deriving those separately
+        // is how the disclosure and the selection would come to disagree
+        // about which account is which (#811, ADR 0005 Q10).
+        self.list().set_reach(match &drawn {
+            Some(accounts) => crate::selection::Reach {
+                accounts: accounts
+                    .iter()
+                    .filter(|(_, _, status)| crate::list_state::is_current(status))
+                    .map(|(id, _, _)| *id)
+                    .collect(),
+                omitted: accounts
+                    .iter()
+                    .filter(|(_, _, status)| !crate::list_state::is_current(status))
+                    .map(|(_, name, _)| name.clone())
+                    .collect(),
+            },
+            // Not an aggregate: one account, nothing left out.
+            None => crate::selection::Reach::default(),
+        });
+        let aggregate = drawn.map(|accounts| {
+            accounts
+                .into_iter()
+                .map(|(_, name, status)| (name, status))
                 .collect::<Vec<_>>()
         });
         self.list_state().set_accounts(aggregate);

@@ -30,10 +30,29 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use postio_core::state::Selection;
-use postio_model::MessageId;
+use postio_model::{AccountId, MessageId};
 
 /// A change to the selection, handed to whoever is drawing it.
 type Observer = Box<dyn Fn(&Selection)>;
+
+/// What an aggregate view could show when a whole-view selection was made.
+///
+/// The unified list draws every configured account, including ones Postio
+/// cannot currently reach — their synced mail is real mail, and ADR 0005 Q10
+/// is emphatic that hiding it would be the worse lie. A `Ctrl+A` there is
+/// therefore about *fewer* accounts than the rows on screen, and both halves
+/// of that have to travel together: the ids so the verb acts on the right
+/// rows, the names so the header can say what it left out.
+///
+/// Default — both empty — is every ordinary view: one account, nothing
+/// omitted, nothing to disclose.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reach {
+    /// The accounts the view could show, in the sidebar's order.
+    pub accounts: Vec<AccountId>,
+    /// The accounts it could not, named as the banner names them.
+    pub omitted: Vec<String>,
+}
 
 /// The selection, the anchor a range extends from, and who to tell.
 ///
@@ -47,6 +66,10 @@ pub struct SelectionState {
 #[derive(Default)]
 struct Inner {
     selection: RefCell<Selection>,
+    /// What the view could show when `Everything` was made. Meaningless for
+    /// any other selection, which is why [`SelectionState::reach`] answers
+    /// from the selection rather than from this alone.
+    reach: RefCell<Reach>,
     /// Where a range extension counts from — the last row the user pointed
     /// at deliberately, rather than wherever the cursor has since wandered.
     anchor: Cell<Option<MessageId>>,
@@ -128,8 +151,28 @@ impl SelectionState {
     }
 
     /// Select everything the list is showing, without naming any of it.
-    pub fn select_all(&self) {
+    ///
+    /// `reach` is what the view could actually show at this instant, and it
+    /// is recorded here rather than read again when a verb runs. Those are
+    /// different moments: an account that reconnects in between would join a
+    /// selection the user was never shown, and a selection that silently
+    /// *grows* cannot be spotted in the summary (#811, ADR 0005 Q10).
+    /// [`Reach::default()`] for every view that is not an aggregate.
+    pub fn select_all(&self, reach: Reach) {
+        self.inner.reach.replace(reach);
         self.replace(Selection::Everything { except: Vec::new() });
+    }
+
+    /// What the current whole-view selection was scoped to.
+    ///
+    /// Empty unless the selection is a predicate over an aggregate view:
+    /// every other selection either names its rows or is relative to a view
+    /// that is within one account already.
+    pub fn reach(&self) -> Reach {
+        match &*self.inner.selection.borrow() {
+            Selection::Everything { .. } => self.inner.reach.borrow().clone(),
+            Selection::These(_) => Reach::default(),
+        }
     }
 
     /// Drop the selection, and the anchor with it.
@@ -176,10 +219,31 @@ impl SelectionState {
 /// described rather than counted — "everything" is a promise about a query,
 /// and answering "how many" by walking it is the one thing the predicate
 /// exists to prevent.
-pub fn summary(selection: &Selection, total: Option<u32>) -> Option<String> {
+///
+/// # `omitted`, and why it costs the count
+///
+/// The accounts a whole-view selection was **not** scoped to, named. In the
+/// unified list an account Postio cannot reach is still drawn — its synced
+/// mail is real mail — and is deliberately left out of `Ctrl+A` (#811,
+/// ADR 0005 Q10). So `total` counts rows the predicate does not name, and the
+/// arithmetic above would produce a number that is simply wrong.
+///
+/// Rather than guess at a correction, the summary stops claiming a count and
+/// says what it left out instead. The *why* is already on screen a few pixels
+/// above, in `postio_gtk::list_state`'s `Partial` banner; this names the same
+/// accounts in the same words — [`crate::format::names`] — so the two read as
+/// one statement rather than two.
+///
+/// Empty for every ordinary view, including a named selection, which left
+/// nothing out by construction: its rows were pointed at one at a time.
+pub fn summary(selection: &Selection, total: Option<u32>, omitted: &[String]) -> Option<String> {
     match selection {
         Selection::These(messages) if messages.is_empty() => None,
         Selection::These(messages) => Some(format!("{} selected", count(messages.len() as u32))),
+        Selection::Everything { .. } if !omitted.is_empty() => Some(format!(
+            "All selected, except {}",
+            crate::format::names(omitted)
+        )),
         Selection::Everything { except } => match total {
             Some(total) => {
                 let selected = total.saturating_sub(except.len() as u32);
@@ -258,7 +322,7 @@ mod tests {
     #[test]
     fn select_all_is_a_predicate_rather_than_a_hundred_thousand_ids() {
         let state = SelectionState::new();
-        state.select_all();
+        state.select_all(Reach::default());
 
         assert!(state.selection().is_everything());
         assert_eq!(state.selection().ids(), None, "nothing was materialised");
@@ -268,7 +332,7 @@ mod tests {
     #[test]
     fn taking_a_row_out_of_everything_edits_the_exceptions() {
         let state = SelectionState::new();
-        state.select_all();
+        state.select_all(Reach::default());
 
         state.toggle(id(4));
 
@@ -294,14 +358,17 @@ mod tests {
 
     #[test]
     fn an_empty_selection_says_nothing() {
-        assert_eq!(summary(&Selection::default(), Some(40)), None);
+        assert_eq!(summary(&Selection::default(), Some(40), &[]), None);
     }
 
     #[test]
     fn a_named_selection_counts_itself() {
         let selection = Selection::These(vec![id(1), id(2), id(3)]);
 
-        assert_eq!(summary(&selection, None).as_deref(), Some("3 selected"));
+        assert_eq!(
+            summary(&selection, None, &[]).as_deref(),
+            Some("3 selected")
+        );
     }
 
     #[test]
@@ -311,7 +378,7 @@ mod tests {
         };
 
         assert_eq!(
-            summary(&selection, Some(50_000)).as_deref(),
+            summary(&selection, Some(50_000), &[]).as_deref(),
             Some("49,998 selected"),
             "counted by arithmetic, never by walking the mailbox"
         );
@@ -321,7 +388,85 @@ mod tests {
     fn a_predicate_with_no_total_is_described_rather_than_counted() {
         let selection = Selection::Everything { except: Vec::new() };
 
-        assert_eq!(summary(&selection, None).as_deref(), Some("All selected"));
+        assert_eq!(
+            summary(&selection, None, &[]).as_deref(),
+            Some("All selected")
+        );
+    }
+
+    #[test]
+    fn the_reach_is_fixed_when_the_gesture_is_made_not_when_it_is_read() {
+        // The time-of-check/time-of-use hole this exists to close: the
+        // accounts a select-all is about are the ones the view could show at
+        // the moment it was pressed. Nothing consults reachability again, so
+        // an account coming back cannot widen a selection already made.
+        let state = SelectionState::new();
+
+        state.select_all(Reach {
+            accounts: vec![AccountId::new(1)],
+            omitted: vec!["Personal".to_owned()],
+        });
+
+        assert_eq!(state.reach().accounts, vec![AccountId::new(1)]);
+        assert_eq!(state.reach().omitted, vec!["Personal".to_owned()]);
+    }
+
+    #[test]
+    fn a_selection_that_names_its_rows_has_no_reach_to_disclose() {
+        // Pointing at rows one at a time leaves nothing out, so a stale
+        // reach from an earlier select-all must not follow the selection
+        // that replaced it into the header.
+        let state = SelectionState::new();
+        state.select_all(Reach {
+            accounts: vec![AccountId::new(1)],
+            omitted: vec!["Personal".to_owned()],
+        });
+
+        state.select_only(id(4));
+
+        assert_eq!(state.reach(), Reach::default());
+    }
+
+    #[test]
+    fn a_predicate_that_left_an_account_out_names_it_instead_of_counting() {
+        // #811, ADR 0005 Q10. The unified list draws an unreachable account's
+        // synced mail, so the row count includes rows the selection does not.
+        // Subtracting nothing and printing the total would be a count that
+        // silently excludes an account -- the same lie as the banner not
+        // being there, in a smaller place.
+        let selection = Selection::Everything { except: Vec::new() };
+
+        assert_eq!(
+            summary(&selection, Some(50_000), &["Personal".to_owned()]).as_deref(),
+            Some("All selected, except Personal"),
+        );
+    }
+
+    #[test]
+    fn every_account_left_out_is_named() {
+        let selection = Selection::Everything { except: Vec::new() };
+
+        assert_eq!(
+            summary(
+                &selection,
+                Some(50_000),
+                &["Personal".to_owned(), "Work".to_owned()]
+            )
+            .as_deref(),
+            Some("All selected, except Personal and Work"),
+        );
+    }
+
+    #[test]
+    fn a_named_selection_is_never_partial_however_many_accounts_are_away() {
+        // The rows were pointed at one by one, so nothing was left out of
+        // them: the disclosure belongs to the predicate, not to the header.
+        let selection = Selection::These(vec![id(1), id(2)]);
+
+        assert_eq!(
+            summary(&selection, Some(40), &["Personal".to_owned()]).as_deref(),
+            Some("2 selected"),
+        );
     }
 
     #[test]
