@@ -76,6 +76,14 @@ impl DiscoveryTransport for DeadTransport {
     ) -> Result<DiscoverySrvReport, TransportError> {
         Err(TransportError::new("this test resolves from presets only"))
     }
+
+    async fn mx(
+        &self,
+        _domain: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<String>, TransportError> {
+        Err(TransportError::new("this test resolves from presets only"))
+    }
 }
 
 // --- the fake browser and the scripted IdP ------------------------------

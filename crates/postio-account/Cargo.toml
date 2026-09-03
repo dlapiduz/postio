@@ -68,6 +68,13 @@ io-imap = { version = "=0.6.0", default-features = false, features = ["client"],
 # HTTP itself stays on this crate's own cancellable pimalaya-stream
 # transport, because io-oauth's optional client wrapper consumes the HTTP
 # status that the 200-with-error-body shim in `exchange.rs` needs.
+# The DNS wire format, for the MX query #94 adds. `io-pim-discovery` carries
+# the exchange (`DiscoveryDnsExchange`) and the stream pool but publishes no
+# MX lookup of its own, and this is the crate it builds its own TXT and SRV
+# queries with -- so this is the family's own extension point rather than a
+# second DNS stack. Already in the graph transitively under
+# `io-pim-discovery`; naming it here adds no new version.
+domain = { version = "0.12", default-features = false, features = ["alloc", "std", "unstable-new"] }
 io-oauth = { version = "0.3", default-features = false, features = ["client"] }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
 io-sasl = { version = "=0.1.0", default-features = false, optional = true }

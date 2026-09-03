@@ -59,6 +59,14 @@ impl DiscoveryTransport for DeadTransport {
     ) -> Result<DiscoverySrvReport, TransportError> {
         Err(TransportError::new("this test resolves from presets only"))
     }
+
+    async fn mx(
+        &self,
+        _domain: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<String>, TransportError> {
+        Err(TransportError::new("this test resolves from presets only"))
+    }
 }
 
 /// A JMAP session endpoint that accepts exactly one bearer.

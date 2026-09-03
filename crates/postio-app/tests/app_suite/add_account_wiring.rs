@@ -95,6 +95,10 @@ impl DiscoveryTransport for HangingTransport {
     ) -> Result<DiscoverySrvReport, TransportError> {
         Err(self.hold(cancel).await)
     }
+
+    async fn mx(&self, _domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError> {
+        Err(self.hold(cancel).await)
+    }
 }
 
 // --- harness ------------------------------------------------------------

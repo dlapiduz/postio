@@ -170,6 +170,17 @@ pub trait DiscoveryTransport: Send + Sync {
         domain: &str,
         cancel: &CancelToken,
     ) -> Result<DiscoverySrvReport, TransportError>;
+
+    /// Resolves `domain`'s MX records, best preference first (#94).
+    ///
+    /// The hostnames only. What turns one into IMAP/SMTP settings is the
+    /// preset table's `mx_suffixes`, which is a fact about a provider and so
+    /// is data rather than anything this layer knows.
+    ///
+    /// An empty list is a domain that publishes no MX, which is a *miss*
+    /// rather than a failure: plenty of domains do not, and the probe has
+    /// more steps after this one.
+    async fn mx(&self, domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +524,135 @@ impl DiscoveryTransport for PimalayaTransport {
         })
         .await
     }
+
+    async fn mx(&self, domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError> {
+        let resolver = self.resolver.clone();
+        let query = domain.to_owned();
+        let cancel = cancel.clone();
+        let egress = self.egress.clone();
+
+        blocking(move || {
+            let tcp = {
+                let cancel = cancel.clone();
+                move |url: &url::Url| {
+                    let stream = connect_tcp(url, &cancel);
+                    if let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default())
+                    {
+                        report_egress(&egress, host, port, stream.is_ok());
+                    }
+                    stream
+                }
+            };
+            mx_lookup(&query, resolver, tcp).map_err(|err| transport_error(&cancel, err))
+        })
+        .await
+    }
 }
+
+/// One MX query, driven the way `DiscoverySrvClientStd::discover` drives its
+/// own (#94).
+///
+/// `io-pim-discovery` publishes the DNS *exchange* and the stream pool but no
+/// MX lookup, so this builds the query with the same `domain` crate the
+/// family's own TXT and SRV queries are built with, and hands it to
+/// `DiscoveryDnsExchange`. That is the family's extension point rather than a
+/// second DNS stack: one resolver, one transport, one set of sockets the
+/// egress log already sees.
+fn mx_lookup<F, S>(domain_name: &str, resolver: url::Url, factory: F) -> Result<Vec<String>, String>
+where
+    F: FnMut(&url::Url) -> anyhow::Result<S> + 'static,
+    S: io_pim_discovery::shared::pool::DiscoveryStream + 'static,
+{
+    use domain::new::base::name::{NameCompressor, RevNameBuf};
+    use domain::new::base::parse::MessageParser;
+    use domain::new::base::wire::{AsBytes, U16};
+    use domain::new::base::{
+        HeaderFlags, MessageItem, QClass, QType, Question, build::MessageBuilder,
+    };
+    use domain::new::rdata::RecordData;
+    use io_pim_discovery::coroutine::{
+        DiscoveryCoroutine, DiscoveryCoroutineState, DiscoveryYield,
+    };
+    use io_pim_discovery::shared::dns::DiscoveryDnsExchange;
+    use io_pim_discovery::shared::pool::DiscoveryStreamPool;
+
+    // `RevNameBuf` rejects a relative name, and the caller's domain is always
+    // relative — the same `absolute_name` step the crate's own builders take.
+    let absolute = if domain_name.ends_with('.') {
+        domain_name.to_owned()
+    } else {
+        format!("{domain_name}.")
+    };
+    let qname = absolute
+        .parse::<RevNameBuf>()
+        .map_err(|err| format!("`{domain_name}` is not a domain name: {err}"))?;
+
+    let mut buf = vec![0u8; QUERY_BUF_SIZE];
+    let mut compressor = NameCompressor::default();
+    let mut builder = MessageBuilder::new(
+        &mut buf,
+        &mut compressor,
+        U16::new(1),
+        *HeaderFlags::default().set_rd(true),
+    );
+    builder
+        .push_question(&Question {
+            qname,
+            qtype: QType::MX,
+            qclass: QClass::IN,
+        })
+        .map_err(|err| format!("the MX query did not fit: {err}"))?;
+    let message = builder.finish().as_bytes().to_vec();
+
+    let mut pool = DiscoveryStreamPool::new().with_factory("tcp", factory);
+    let mut exchange = DiscoveryDnsExchange::new(message, resolver);
+    let mut read = [0u8; MX_READ_BUFFER_SIZE];
+    let mut arg: Option<&[u8]> = None;
+    let response = loop {
+        match exchange.resume(arg.take()) {
+            DiscoveryCoroutineState::Complete(Ok(response)) => break response,
+            DiscoveryCoroutineState::Complete(Err(err)) => {
+                return Err(format!("the MX lookup failed: {err}"));
+            }
+            DiscoveryCoroutineState::Yielded(DiscoveryYield::WantsRead { url }) => {
+                let stream = pool.get(&url).map_err(|err| err.to_string())?;
+                let n = stream.read(&mut read).map_err(|err| err.to_string())?;
+                arg = Some(&read[..n]);
+            }
+            DiscoveryCoroutineState::Yielded(DiscoveryYield::WantsWrite { url, bytes }) => {
+                let stream = pool.get(&url).map_err(|err| err.to_string())?;
+                stream.write_all(&bytes).map_err(|err| err.to_string())?;
+            }
+        }
+    };
+
+    // Preference ascending: RFC 5321 §5.1 says the lowest number is tried
+    // first, and "where this domain's mail actually goes" is the primary.
+    let mut found: Vec<(u16, String)> = Vec::new();
+    let parser = MessageParser::new(&response)
+        .map_err(|err| format!("the MX answer did not parse: {err}"))?;
+    for item in parser {
+        let Ok(MessageItem::Answer(record)) = item else {
+            continue;
+        };
+        let RecordData::Mx(mx) = record.rdata else {
+            continue;
+        };
+        found.push((mx.preference.get(), mx.exchange.to_string()));
+    }
+    found.sort_by_key(|(preference, _)| *preference);
+    Ok(found
+        .into_iter()
+        .map(|(_, host)| host.trim_end_matches('.').to_owned())
+        .collect())
+}
+
+/// The `domain` crate needs a buffer to build into; 4 KiB is what
+/// `io-pim-discovery` uses for its own queries.
+const QUERY_BUF_SIZE: usize = 4 * 1024;
+
+/// Matches `DiscoverySrvClientStd`'s own read buffer.
+const MX_READ_BUFFER_SIZE: usize = 8 * 1024;
 
 /// Turns a client failure into a [`TransportError`], saying so when the
 /// reason was this probe stopping rather than the network.

@@ -2633,44 +2633,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "postio-account"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "io-http",
- "io-imap",
- "io-oauth",
- "io-pim-discovery",
- "io-sasl",
- "log",
- "oo7",
- "pimalaya-stream",
- "postio-account",
- "postio-config",
- "postio-model",
- "rand 0.9.5",
- "rustls",
- "rustls-platform-verifier",
- "secrecy",
- "security-framework",
- "serde",
- "serde-xml-rs",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "toml 1.1.4+spec-1.1.0",
- "tracing",
- "url",
- "zeroize",
-]
-
-[[package]]
 name = "postio-app"
 version = "0.2.0"
 dependencies = [
@@ -2679,10 +2641,10 @@ dependencies = [
  "chrono",
  "gtk4",
  "libadwaita",
- "postio-account",
  "postio-config",
  "postio-core",
  "postio-gtk",
+ "postio-imap",
  "postio-index",
  "postio-jmap",
  "postio-model",
@@ -2711,10 +2673,10 @@ dependencies = [
  "futures-util",
  "gtk4",
  "libadwaita",
- "postio-account",
  "postio-config",
  "postio-core",
  "postio-gtk",
+ "postio-imap",
  "postio-index",
  "postio-model",
  "postio-runtime",
@@ -2773,11 +2735,11 @@ dependencies = [
  "async-channel",
  "async-trait",
  "chrono",
- "postio-account",
  "postio-body",
  "postio-config",
  "postio-core",
  "postio-ffi",
+ "postio-imap",
  "postio-model",
  "postio-runtime",
  "postio-session",
@@ -2799,7 +2761,7 @@ dependencies = [
  "chrono",
  "io-gmail",
  "pimalaya-stream",
- "postio-account",
+ "postio-imap",
  "postio-model",
  "secrecy",
  "thiserror",
@@ -2836,6 +2798,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-imap"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "domain",
+ "io-http",
+ "io-imap",
+ "io-oauth",
+ "io-pim-discovery",
+ "io-sasl",
+ "log",
+ "oo7",
+ "pimalaya-stream",
+ "postio-config",
+ "postio-imap",
+ "postio-model",
+ "rand 0.9.5",
+ "rustls",
+ "rustls-platform-verifier",
+ "secrecy",
+ "security-framework",
+ "serde",
+ "serde-xml-rs",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "toml 1.1.4+spec-1.1.0",
+ "tracing",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "postio-index"
 version = "0.2.0"
 dependencies = [
@@ -2857,7 +2858,7 @@ dependencies = [
  "chrono",
  "io-jmap",
  "pimalaya-stream",
- "postio-account",
+ "postio-imap",
  "postio-model",
  "secrecy",
  "serde_json",
@@ -2886,8 +2887,8 @@ dependencies = [
  "async-channel",
  "chrono",
  "futures-util",
- "postio-account",
  "postio-core",
+ "postio-imap",
  "postio-index",
  "postio-model",
  "postio-search",
@@ -2916,10 +2917,10 @@ version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
- "postio-account",
  "postio-config",
  "postio-core",
  "postio-gmail",
+ "postio-imap",
  "postio-index",
  "postio-jmap",
  "postio-model",
@@ -2982,7 +2983,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "postio-account",
+ "postio-imap",
  "postio-index",
  "postio-model",
  "postio-smtp",

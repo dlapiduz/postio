@@ -28,6 +28,10 @@
 [provider.icloud]
 display_name = "iCloud"
 domains = ["icloud.com", "me.com", "mac.com"]
+# A custom domain delegated here publishes these as its MX (#94). The suffix
+# is matched on a label boundary, so `alice-com.mx01.mail.icloud.com` counts
+# and `evilmail.icloud.com` does not.
+mx_suffixes = ["mail.icloud.com"]
 imap_host = "imap.mail.me.com"
 imap_port = 993
 imap_security = "tls"
@@ -46,6 +50,9 @@ auth = ["app-password"]
 backend = ["imap", "gmail"]
 display_name = "Gmail"
 domains = ["gmail.com", "googlemail.com"]
+# Google Workspace domains publish these; a custom domain on Workspace is
+# reached at the same IMAP/SMTP hosts as a consumer account.
+mx_suffixes = ["google.com", "googlemail.com"]
 imap_host = "imap.gmail.com"
 imap_port = 993
 imap_security = "tls"
@@ -70,6 +77,7 @@ sources = ["own-client", "broker"]
 [provider.fastmail]
 display_name = "Fastmail"
 domains = ["fastmail.com", "fastmail.fm"]
+mx_suffixes = ["messagingengine.com"]
 # Fastmail's native protocol first (ADR 0018 Q5); the add-account proof
 # tries backends in this order and stores the first that works, so a
 # credential that only speaks IMAP still lands.

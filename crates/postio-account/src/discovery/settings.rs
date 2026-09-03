@@ -71,6 +71,14 @@ pub enum SettingsSource {
     Ispdb,
     /// RFC 6186 `_imaps._tcp` / `_submission._tcp` SRV records.
     Srv,
+    /// The domain's MX records named a provider Postio ships settings for
+    /// (#94).
+    ///
+    /// Better evidence than a convention guess -- the domain really did
+    /// delegate its mail there -- but it is still not what the domain
+    /// published about *mail configuration*, so it prefills the manual form
+    /// rather than presenting itself as a discovered account.
+    Mx,
     /// A common-name guess. Unverified: only ever used to prefill the manual
     /// form, never presented as a discovered account.
     Guess,
@@ -85,6 +93,7 @@ impl SettingsSource {
             Self::Autoconfig => "autoconfig subdomain",
             Self::Ispdb => "Thunderbird ISPDB",
             Self::Srv => "SRV records",
+            Self::Mx => "MX records",
             Self::Guess => "guess",
         }
     }
@@ -92,7 +101,14 @@ impl SettingsSource {
     /// Whether these settings came from an authoritative source. Guesses are
     /// not.
     pub fn is_authoritative(&self) -> bool {
-        !matches!(self, Self::Guess)
+        // `Mx` joins `Guess` here (#94). Both are *inference*: the domain
+        // published where its mail is delivered, or nothing at all, and
+        // neither is a statement about how to reach a mailbox or how to log
+        // in to it. An MX hit is much better evidence than a convention
+        // guess, and it is still not the domain answering the question that
+        // was asked -- so it prefills the manual form rather than presenting
+        // itself as a discovered account.
+        !matches!(self, Self::Guess | Self::Mx)
     }
 }
 
