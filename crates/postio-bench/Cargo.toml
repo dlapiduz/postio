@@ -71,6 +71,10 @@ name = "list_scroll"
 harness = false
 
 [[bench]]
+name = "composer_open"
+harness = false
+
+[[bench]]
 name = "thread_drill"
 harness = false
 
