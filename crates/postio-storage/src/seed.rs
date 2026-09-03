@@ -422,7 +422,11 @@ fn write_body(connection: &Connection, id: MessageId, body: &postio_model::Messa
             &StoredBody {
                 text: body.text.clone(),
                 html: body.html.clone(),
+                // Seeded mail carries no header block: the fixture's own bytes
+                // are parsed for the parts this needs and the block has no
+                // reader in a seeded store.
                 headers: None,
+                headers_truncated: false,
             },
             BodyState::Full,
         )

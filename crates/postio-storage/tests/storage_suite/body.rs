@@ -63,6 +63,7 @@ fn a_body_round_trips_through_the_row() {
         text: Some(a_body(1)),
         html: Some(format!("<p>{}</p>", a_body(2))),
         headers: Some("Subject: Invoice 42\r\nFrom: ada@example.com\r\n".to_owned()),
+        headers_truncated: false,
     };
     messages.set_body(id, &body, BodyState::Full).expect("set");
 
@@ -118,6 +119,7 @@ fn an_empty_or_absent_part_stays_absent() {
         text: Some(String::new()),
         html: None,
         headers: None,
+        headers_truncated: false,
     };
     messages.set_body(id, &body, BodyState::Full).expect("set");
 
@@ -365,6 +367,7 @@ fn a_body_survives_being_rewritten() {
                 text: Some("first".to_owned()),
                 html: Some("<p>first</p>".to_owned()),
                 headers: None,
+                headers_truncated: false,
             },
             BodyState::Partial,
         )
@@ -376,6 +379,7 @@ fn a_body_survives_being_rewritten() {
                 text: Some("second".to_owned()),
                 html: None,
                 headers: Some("Subject: x\r\n".to_owned()),
+                headers_truncated: false,
             },
             BodyState::Full,
         )
@@ -387,6 +391,7 @@ fn a_body_survives_being_rewritten() {
             text: Some("second".to_owned()),
             html: None,
             headers: Some("Subject: x\r\n".to_owned()),
+            headers_truncated: false,
         }),
         "a rewrite replaces every part, including clearing one"
     );

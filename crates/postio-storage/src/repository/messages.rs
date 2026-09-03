@@ -488,6 +488,12 @@ pub struct StoredBody {
     pub html: Option<String>,
     /// The full header block.
     pub headers: Option<String>,
+    /// Whether [`postio_model::headers::BLOCK_LIMIT`] cut that block short.
+    ///
+    /// Part of the body rather than a column a caller sets separately: the
+    /// block and the fact that it is partial are one piece of information, and
+    /// a writer that could set them apart would eventually set one.
+    pub headers_truncated: bool,
 }
 
 /// One message still missing all or part of its body.
@@ -1252,7 +1258,8 @@ impl<'a> MessageRepository<'a> {
     /// rather than as an absent body: those are opposite facts to a reader.
     pub fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         let mut statement = self.connection.prepare(
-            "SELECT body_text, body_html, body_headers, body_dictionary_id
+            "SELECT body_text, body_html, body_headers, body_dictionary_id,
+                    body_headers_truncated
                FROM messages WHERE id = ?1",
         )?;
         let mut rows = statement.query([id.get()])?;
@@ -1263,6 +1270,7 @@ impl<'a> MessageRepository<'a> {
         let html: Option<Vec<u8>> = row.get(1)?;
         let headers: Option<Vec<u8>> = row.get(2)?;
         let dictionary_id: Option<i64> = row.get(3)?;
+        let headers_truncated: bool = row.get(4)?;
         drop(rows);
         drop(statement);
 
@@ -1287,6 +1295,7 @@ impl<'a> MessageRepository<'a> {
             text: decode(text)?,
             html: decode(html)?,
             headers: decode(headers)?,
+            headers_truncated,
         }))
     }
 
@@ -1323,7 +1332,8 @@ impl<'a> MessageRepository<'a> {
         let changed = self.connection.execute(
             "UPDATE messages
                 SET body_text = ?2, body_html = ?3, body_headers = ?4,
-                    body_dictionary_id = ?5, body_state = ?6
+                    body_dictionary_id = ?5, body_state = ?6,
+                    body_headers_truncated = ?7
               WHERE id = ?1",
             params![
                 id.get(),
@@ -1332,6 +1342,7 @@ impl<'a> MessageRepository<'a> {
                 encode(&body.headers)?,
                 dictionary_id,
                 body_state.as_str(),
+                body.headers_truncated,
             ],
         )?;
         if changed == 0 {

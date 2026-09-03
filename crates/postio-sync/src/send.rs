@@ -504,10 +504,17 @@ async fn file_sent_copy(
     // row. A call here would only redo what the trigger just did -- see
     // `MailboxRepository::recount`'s own docs. postio-qhz.8.
 
+    // The block of what was actually sent, from the same bytes the raw blob
+    // was written from. Mail Postio sent is mail `header:` has to be able to
+    // find (#884): a Sent folder that answered "no such message" for a header
+    // on a message this client composed would be the most obviously wrong
+    // possible answer.
+    let block = postio_model::headers::block_of(&job.raw);
     let body = StoredBody {
         text: stored_text(message.body.text.as_deref()),
         html: stored_text(message.body.html.as_deref()),
-        headers: None,
+        headers: block.as_ref().map(|block| block.text.clone()),
+        headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
     };
     let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
 

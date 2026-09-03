@@ -1,0 +1,17 @@
+-- Whether `body_headers` holds the whole block or only what fit.
+--
+-- ADR 0025 stores the header block whole -- that is what makes the indexing
+-- policy revisable by a local reindex rather than a re-download -- bounded at
+-- 256 KiB for the pathological case: twenty hops each with its own DKIM
+-- signature, or a spam report with a kilobyte of scoring.
+--
+-- The flag is on the row rather than inside the block because a marker inside
+-- it would be indexed as a header, and a synthetic `X-Postio-…` field is
+-- exactly the named-provider-constant shape PRODUCT.md refuses. It matters
+-- because a truncated block cannot answer "this message has no such header",
+-- only "the part that was kept has none" -- and an evaluator that could not
+-- tell those apart would report absence with the same confidence either way.
+--
+-- Every existing row is 0, which is true of them twice over: nothing has ever
+-- written `body_headers` at all (#884).
+ALTER TABLE messages ADD COLUMN body_headers_truncated INTEGER NOT NULL DEFAULT 0;

@@ -340,6 +340,7 @@ fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
                 text: Some("the plain text".to_owned()),
                 html: Some("<p>the html</p>".to_owned()),
                 headers: Some("Subject: hello\r\n".to_owned()),
+                headers_truncated: false,
             },
             BodyState::Full,
         )
@@ -2106,4 +2107,71 @@ fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
     assert_eq!(report.updated, 1, "{report:?}");
     assert_eq!(report.inserted, 0, "{report:?}");
     assert_eq!(shifted[0].id, id, "the identity resolved to the same row");
+}
+
+#[test]
+fn a_truncated_header_block_says_so_when_it_is_read_back() {
+    // The flag is the difference between "this message has no such header" and
+    // "the part of it that was kept has none". An evaluator that could not
+    // tell those apart would report absence with the same confidence either
+    // way, which is the one thing a search must not do.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+    let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    let id = messages.create(&mut message).expect("create");
+
+    messages
+        .set_body(
+            id,
+            &StoredBody {
+                text: Some("the body".to_owned()),
+                html: None,
+                headers: Some("X-Mailer: mutt".to_owned()),
+                headers_truncated: true,
+            },
+            BodyState::Full,
+        )
+        .expect("set");
+
+    let stored = messages.body(id).expect("body").expect("the row");
+    assert_eq!(stored.headers.as_deref(), Some("X-Mailer: mutt"));
+    assert!(
+        stored.headers_truncated,
+        "the row lost the fact that its block was cut short"
+    );
+}
+
+#[test]
+fn a_whole_header_block_is_not_marked_truncated() {
+    // The ordinary case, and the one that must not drift to `true` by
+    // accident: every message in a real store takes this path.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+    let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    let id = messages.create(&mut message).expect("create");
+
+    messages
+        .set_body(
+            id,
+            &StoredBody {
+                text: Some("the body".to_owned()),
+                html: None,
+                headers: Some("X-Mailer: mutt".to_owned()),
+                headers_truncated: false,
+            },
+            BodyState::Full,
+        )
+        .expect("set");
+
+    assert!(
+        !messages
+            .body(id)
+            .expect("body")
+            .expect("the row")
+            .headers_truncated
+    );
 }

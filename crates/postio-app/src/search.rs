@@ -752,7 +752,9 @@ mod tests {
                 &postio_storage::repository::StoredBody {
                     text: Some(body.to_owned()),
                     html: None,
+                    // A search excerpt writes text, never a block.
                     headers: None,
+                    headers_truncated: false,
                 },
                 postio_model::BodyState::Full,
             )
