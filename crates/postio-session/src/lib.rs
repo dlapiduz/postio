@@ -806,6 +806,106 @@ pub fn enforce_storage_ceiling(
     Ok(Some(report))
 }
 
+/// How many blocks one repair batch rebuilds.
+///
+/// Each one is a blob read and a parse, so the batch is a bound on how long
+/// the pass holds a connection between yields rather than a tuning knob. The
+/// same size and the same reason as [`INDEX_BODY_BATCH`].
+const REPAIR_HEADERS_BATCH: u32 = 256;
+
+/// Rebuild the header blocks of mail downloaded before there was anywhere to
+/// put them. Answers how many.
+///
+/// # Why there is anything to repair
+///
+/// `messages.body_headers` has existed since migration 0001 and has been NULL
+/// on every row in every store, because both backfill paths passed
+/// `headers: None` on purpose — "a copy nobody reads is a copy that can go
+/// stale", which was true until ADR 0025 gave it a reader. Mail arriving from
+/// now on carries its block; this is the mail that is already here, and
+/// without it `header:` answers "no such mail" across a mailbox somebody has
+/// been using for a year, which is indistinguishable from the feature being
+/// broken.
+///
+/// # It reaches no network
+///
+/// Only messages that still have their raw source, which is already on disk —
+/// that is what makes this a repair rather than a re-download. Messages with
+/// no blob need a fetch and are
+/// [`MessageRepository::messages_needing_a_header_fetch`]'s, deliberately kept
+/// out of this pass's batches: it is windowed newest-first, so one batch of
+/// unfetchable rows would make no progress, trip the guard below, and stop the
+/// pass before it reached older messages it could have fixed.
+///
+/// # Not on the startup path
+///
+/// A blob read and a header parse per message, over every message in the
+/// store. That is minutes of I/O on a backfilled archive and nothing on screen
+/// waits for it, so callers spawn it exactly as they spawn [`index_local_bodies`].
+///
+/// # A blob that will not read is not an empty block
+///
+/// Eviction takes raw source first (`PRODUCT.md` §6), so the oldest mail in a
+/// bounded store routinely has a row pointing at a blob that is gone. Those
+/// are skipped rather than written as an empty block: an empty block is a
+/// claim that the message *has* no such header, which the index would then
+/// answer with for ever and nothing would be left to say otherwise.
+pub fn repair_header_blocks(
+    database: &Database,
+    blobs: &BlobStore,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut repaired = 0usize;
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let candidates = messages.messages_missing_headers(REPAIR_HEADERS_BATCH)?;
+        if candidates.is_empty() {
+            break;
+        }
+        let batch: Vec<i64> = candidates
+            .iter()
+            .map(|candidate| candidate.message_id.get())
+            .collect();
+        // The candidate query's contract is that repairing a message removes
+        // it from the answer. An identical batch means that contract is broken
+        // and another lap can only spin — the failure #500 recorded, where one
+        // batch of messages nothing could do anything with ran a core flat out
+        // for as long as the application was open.
+        if batch == last_batch {
+            tracing::warn!(
+                batch = batch.len(),
+                "a header-repair batch made no progress; stopping the pass"
+            );
+            break;
+        }
+        last_batch = batch;
+
+        for candidate in candidates {
+            let Some(blob) = candidate.raw_blob_id else {
+                continue;
+            };
+            let Ok(raw) = blobs.get(&blob) else {
+                // Evicted, or a store somebody tidied by hand. Not an empty
+                // block: see the note above about what that would claim.
+                continue;
+            };
+            let Some(block) = postio_model::headers::block_of(&raw) else {
+                continue;
+            };
+            messages.set_headers(candidate.message_id, Some(&block))?;
+            repaired += 1;
+        }
+    }
+
+    if repaired > 0 {
+        // A count, and nothing about what was in them: header values carry
+        // `Received` chains with addresses and internal hostnames.
+        tracing::info!(repaired, "rebuilt header blocks from raw source on disk");
+    }
+    Ok(repaired)
+}
+
 /// Train a body-compression dictionary from the mail already on this machine,
 /// if the corpus has grown enough to be worth one. Answers whether it did.
 ///
