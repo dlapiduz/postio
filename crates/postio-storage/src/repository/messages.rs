@@ -496,6 +496,19 @@ pub struct StoredBody {
     pub headers_truncated: bool,
 }
 
+/// One message whose header block was never stored, and what can be done
+/// about it (#884).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderRepair {
+    /// The row.
+    pub message_id: MessageId,
+    /// Its raw source, when there is one. `Some` means the block can be
+    /// recovered from disk with no network call at all; `None` means the only
+    /// way to it is a fetch — the `partial` state, which never stores a raw
+    /// blob, or a store whose raw source has been evicted (PRODUCT.md §6).
+    pub raw_blob_id: Option<BlobId>,
+}
+
 /// One message still missing all or part of its body.
 ///
 /// Everything the backfill scheduler needs to turn a row into a fetch: which
@@ -1352,6 +1365,92 @@ impl<'a> MessageRepository<'a> {
                 postio_model::mime::parse_headers(&terminated).headers
             }
         }))
+    }
+
+    /// Messages whose body is local and whose header block is not.
+    ///
+    /// Every message in every store that exists today, because nothing has
+    /// ever written `body_headers` (#884). Scoped to bodies that have already
+    /// been fetched: a message still waiting for its body will get its block
+    /// with it, and offering one here would put work on the queue that this
+    /// pass can do nothing about.
+    ///
+    /// **Repairing a message must remove it from this answer**, which
+    /// [`set_headers`](Self::set_headers) does by writing a non-NULL block.
+    /// A pass over a candidate query that does not shrink spins at 100% of a
+    /// core for as long as the application is open — not hypothetical, that is
+    /// #500 — so the caller compares batches and stops.
+    pub fn messages_missing_headers(&self, limit: u32) -> Result<Vec<HeaderRepair>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, raw_blob_id FROM messages
+              WHERE body_headers IS NULL
+                AND body_state IN ('partial', 'full')
+              ORDER BY received_at DESC
+              LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit], |row| {
+            Ok(HeaderRepair {
+                message_id: MessageId::new(row.get(0)?),
+                raw_blob_id: row.get::<_, Option<String>>(1)?.map(BlobId::new),
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Writes just the header block, leaving the body beside it alone.
+    ///
+    /// # Why this is not `set_body` with the other fields refilled
+    ///
+    /// The row carries **one** `body_dictionary_id` for `body_text`,
+    /// `body_html` and `body_headers` together, and an ADR 0020 frame can only
+    /// be read with the dictionary it was written against. So a repair that
+    /// compressed the block against the newest dictionary and updated that id
+    /// would leave the text and html beside it unreadable — losing a message's
+    /// words to a pass whose whole job was to add its headers.
+    ///
+    /// This compresses against **the dictionary the row already names**,
+    /// whatever that is, and never touches the id. A row that has none stores
+    /// the block uncompressed against none, exactly as its body is.
+    pub fn set_headers(
+        &self,
+        id: MessageId,
+        block: Option<&postio_model::headers::Block>,
+    ) -> Result<()> {
+        let dictionary_id: Option<i64> = self.connection.query_row(
+            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| row.get(0),
+        )?;
+        let dictionary = match dictionary_id {
+            None => None,
+            Some(dictionary_id) => Some(
+                self.dictionaries
+                    .borrow_mut()
+                    .get(self.connection, dictionary_id)?,
+            ),
+        };
+        let encoded = block
+            .map(|block| {
+                crate::body::compress(&block.text, dictionary.as_ref().map(|d| d.as_slice()))
+            })
+            .transpose()?;
+        let changed = self.connection.execute(
+            "UPDATE messages
+                SET body_headers = ?2, body_headers_truncated = ?3
+              WHERE id = ?1",
+            params![
+                id.get(),
+                encoded,
+                block.is_some_and(|block| block.truncated),
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "message",
+                id: id.get(),
+            });
+        }
+        Ok(())
     }
 
     /// Stores a message's decoded content on its row, compressed.
