@@ -48,6 +48,7 @@ mod search_wiring;
 mod second_activate_wiring;
 mod send_later_wiring;
 mod send_wiring;
+mod settings_account_detail_wiring;
 mod settings_accounts_token_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
@@ -240,6 +241,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "send_wiring::ctrl_return_queues_the_draft_for_sending",
         send_wiring::ctrl_return_queues_the_draft_for_sending as fn(),
+    ),
+    (
+        "settings_account_detail_wiring::editing_the_detail_view_writes_straight_to_the_accounts_table",
+        settings_account_detail_wiring::editing_the_detail_view_writes_straight_to_the_accounts_table
+            as fn(),
     ),
     (
         "settings_accounts_wiring::account_rows_persist_enable_and_mark_removal",
