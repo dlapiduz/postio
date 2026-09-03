@@ -92,7 +92,12 @@ use postio_storage::seed::SeedReport;
 ///
 /// `feed_the_window` reads the local store. `start_syncing` is the half that
 /// opens a socket, and this never calls it.
-fn populate(window: &Window, two_accounts: bool, backfill: bool) {
+///
+/// Returns the `Wired` `feed_the_window` built, leaked `'static` like
+/// everything else here — so a caller that also wants `search` can hand
+/// `wired.search` to [`show_search_panels`] instead of it calling
+/// `search::View::attach` a second time on the same shell (#831).
+fn populate(window: &Window, two_accounts: bool, backfill: bool) -> &'static postio_app::Wired {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
     let blobs = postio_storage::BlobStore::open(
@@ -148,12 +153,13 @@ fn populate(window: &Window, two_accounts: bool, backfill: bool) {
         });
     }
 
-    Box::leak(Box::new(wired));
+    let wired: &'static postio_app::Wired = Box::leak(Box::new(wired));
     Box::leak(Box::new(bridge));
     Box::leak(Box::new(replies));
     Box::leak(Box::new(events));
 
     wait_for_first_page(window);
+    wired
 }
 
 /// Stamp every seeded folder as synced twelve seconds ago.
@@ -232,13 +238,23 @@ fn sample_contacts() -> Vec<postio_model::Contact> {
 
 /// Canvas 2b's left column, over the artboard's own numbers.
 ///
-/// Mounted through `search::View::attach`, which is the one call a running
-/// Postio makes — so what this renders is what the application renders once
-/// something answers with facets.
-fn show_search_panels(window: &Window) {
+/// `existing` is the view `feed_the_window` already installed, when there is
+/// one — `demo search` has one, since `postio_app::search::install` is the
+/// one call a running Postio makes and `populate` already ran it. Attaching
+/// a second one on the same shell for the same demo is exactly #831: two
+/// previews stacked in `shell.reader()`, and since #831 `register_reader_occupant`
+/// panics on it rather than drawing it. Falling back to `View::attach` only
+/// when there is no wiring behind the window keeps `shot out.png search`
+/// (no `demo`) working — the one case that has nothing to reuse.
+fn show_search_panels(window: &Window, existing: Option<&'static postio_gtk::search::View>) {
     use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 
-    let view = postio_gtk::search::View::attach(&window.shell(), &window.finder());
+    let view = existing.unwrap_or_else(|| {
+        Box::leak(Box::new(postio_gtk::search::View::attach(
+            &window.shell(),
+            &window.finder(),
+        )))
+    });
     let count = |scope, hits| ScopeCount { scope, hits };
     let refinement = |token: &str, hits| Refinement {
         token: token.to_owned(),
@@ -303,10 +319,6 @@ fn show_search_panels(window: &Window) {
         },
         Some("lena@example.com"),
     );
-
-    // Leaked for the same reason `populate` leaks its feeds: the shot renders
-    // one window and exits, and a view dropped here would unwire itself.
-    Box::leak(Box::new(view));
 }
 
 /// Canvas 3f's own sample file, so the shot can be held up against the
@@ -662,9 +674,13 @@ fn main() -> glib::ExitCode {
     if let Some((width, height)) = size {
         window.set_default_size(width, height);
     }
-    if flag("demo") {
-        populate(&window, flag("accounts"), flag("backfill"));
-    }
+    // `demo`'s own search view, if `demo` ran — `search` below reuses it
+    // rather than attaching a second one on the same shell (#831).
+    let wired: Option<&'static postio_app::Wired> = if flag("demo") {
+        Some(populate(&window, flag("accounts"), flag("backfill")))
+    } else {
+        None
+    };
     // The screen a store that will not open puts up instead of the mail
     // (#404). Rendered from the same words `SecretError::Locked` writes, so
     // what this shows is what a person with a locked keyring sees.
@@ -725,7 +741,7 @@ fn main() -> glib::ExitCode {
                 },
             );
         }
-        show_search_panels(&window);
+        show_search_panels(&window, wired.and_then(|w| w.search));
     }
     if flag("settings") {
         show_settings(&window);
