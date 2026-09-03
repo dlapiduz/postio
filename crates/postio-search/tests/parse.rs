@@ -1004,9 +1004,24 @@ fn fuzzing_the_parser_with_query_shaped_noise_never_errors() {
             );
             cursor = token.span.end;
         }
-        // Filters, partials and text partition the tokens exactly.
+        // Filters, partials, text and structure partition the tokens
+        // exactly. `OR` and the parentheses joined that partition with #478;
+        // they are tokens that constrain nothing by themselves.
+        let structure = parsed
+            .tokens()
+            .iter()
+            .filter(|token| {
+                matches!(
+                    token.kind,
+                    TokenKind::Or | TokenKind::Open | TokenKind::Close
+                )
+            })
+            .count();
         assert_eq!(
-            parsed.filters().count() + parsed.partials().count() + parsed.text_terms().count(),
+            parsed.filters().count()
+                + parsed.partials().count()
+                + parsed.text_terms().count()
+                + structure,
             parsed.tokens().len(),
             "{input:?}"
         );
@@ -1033,5 +1048,209 @@ fn popping_a_chip_removes_exactly_that_token() {
                 .any(|t| t.raw == parsed.tokens()[index].raw),
             "{popped:?} still contains the popped chip"
         );
+    }
+}
+
+// ── #478: OR, parentheses, and the two new fields ───────────────────────
+//
+// The flat token vector stays the lexical form -- chips do not change -- and
+// the boolean structure arrives as a tree derived from it. A query with no
+// `OR` must mean exactly what it means today, which is the property most of
+// these are really about.
+
+/// Every token kind in source order, as a terse string, so a lexer
+/// expectation reads as the shape it is asserting.
+fn shape(input: &str) -> Vec<String> {
+    q(input)
+        .tokens()
+        .iter()
+        .map(|token| match &token.kind {
+            TokenKind::Filter(clause) => format!("filter:{}", clause.filter.field().keyword()),
+            TokenKind::Partial(partial) => format!("partial:{}", partial.field.keyword()),
+            TokenKind::Text(term) => format!("text:{}", term.value),
+            TokenKind::Or => "OR".to_string(),
+            TokenKind::Open => "(".to_string(),
+            TokenKind::Close => ")".to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn or_is_a_keyword_only_when_it_is_shouted() {
+    // Uppercase only. "cats or dogs" is somebody searching for three words,
+    // and a language that quietly turned the middle one into a boolean would
+    // be answering a question nobody asked.
+    assert_eq!(
+        shape("from:ada OR from:grace"),
+        ["filter:from", "OR", "filter:from"]
+    );
+    assert_eq!(
+        shape("cats or dogs"),
+        ["text:cats", "text:or", "text:dogs"],
+        "lowercase `or` is a word, not an operator"
+    );
+    assert_eq!(shape("cats Or dogs"), ["text:cats", "text:Or", "text:dogs"]);
+    assert_eq!(
+        shape("\"OR\""),
+        ["text:OR"],
+        "a quoted OR is the word, which is the only way to search for it"
+    );
+}
+
+#[test]
+fn parentheses_come_away_from_the_words_they_touch() {
+    assert_eq!(
+        shape("from:ada OR (from:grace has:attach)"),
+        ["filter:from", "OR", "(", "filter:from", "filter:has", ")"]
+    );
+    assert_eq!(shape("((a))"), ["(", "(", "text:a", ")", ")"]);
+    assert_eq!(
+        shape("subject:\"(draft)\""),
+        ["filter:subject"],
+        "a quoted parenthesis is part of the phrase, not a grouping"
+    );
+    assert_eq!(
+        filters("subject:\"(draft)\""),
+        [Filter::Subject("(draft)".into())]
+    );
+}
+
+#[test]
+fn body_matches_the_text_rather_than_the_metadata() {
+    // `header:`'s own parsing is covered by the block of tests beside the
+    // other operators, which is where it landed with its executor (#926);
+    // this slice's remaining half is `body:`.
+    assert_eq!(filters("body:invoice"), [Filter::Body("invoice".into())]);
+    assert_eq!(
+        filters("body:\"quarterly report\""),
+        [Filter::Body("quarterly report".into())],
+        "a quoted body value is one phrase"
+    );
+    assert_eq!(Field::parse("header"), Some(Field::Header));
+    assert_eq!(Field::parse("body"), Some(Field::Body));
+}
+
+#[test]
+fn a_query_without_or_means_exactly_what_it_means_today() {
+    use postio_search::query::QueryTree;
+
+    // The whole compatibility claim, stated as a tree: a flat conjunction of
+    // every constraint, in source order, and nothing else.
+    assert_eq!(
+        q("from:ada has:attach invoice").tree(),
+        QueryTree::All(vec![
+            QueryTree::Filter(clause(Filter::From("ada".into()), false)),
+            QueryTree::Filter(clause(Filter::HasAttachment, false)),
+            QueryTree::Text(term("invoice", false)),
+        ])
+    );
+    assert_eq!(
+        q("").tree(),
+        QueryTree::All(vec![]),
+        "an empty query constrains nothing"
+    );
+    assert_eq!(
+        q("is:").tree(),
+        QueryTree::All(vec![]),
+        "a half-typed operator constrains nothing, as it always has"
+    );
+}
+
+#[test]
+fn and_binds_tighter_than_or() {
+    use postio_search::query::QueryTree;
+
+    let expected = QueryTree::Any(vec![
+        QueryTree::Filter(clause(Filter::From("ada".into()), false)),
+        QueryTree::All(vec![
+            QueryTree::Filter(clause(Filter::From("grace".into()), false)),
+            QueryTree::Filter(clause(Filter::HasAttachment, false)),
+        ]),
+    ]);
+
+    assert_eq!(q("from:ada OR from:grace has:attach").tree(), expected);
+    assert_eq!(
+        q("from:ada OR (from:grace has:attach)").tree(),
+        expected,
+        "the parentheses are what the precedence already does, written out"
+    );
+    assert_eq!(
+        q("(from:ada) OR (from:grace has:attach)").tree(),
+        expected,
+        "a group of one is that one thing"
+    );
+}
+
+#[test]
+fn grouping_can_override_the_precedence() {
+    use postio_search::query::QueryTree;
+
+    assert_eq!(
+        q("(from:ada OR from:grace) has:attach").tree(),
+        QueryTree::All(vec![
+            QueryTree::Any(vec![
+                QueryTree::Filter(clause(Filter::From("ada".into()), false)),
+                QueryTree::Filter(clause(Filter::From("grace".into()), false)),
+            ]),
+            QueryTree::Filter(clause(Filter::HasAttachment, false)),
+        ])
+    );
+}
+
+#[test]
+fn negation_survives_inside_a_group() {
+    use postio_search::query::QueryTree;
+
+    assert_eq!(
+        q("(-from:bob OR -spam)").tree(),
+        QueryTree::Any(vec![
+            QueryTree::Filter(clause(Filter::From("bob".into()), true)),
+            QueryTree::Text(term("spam", true)),
+        ])
+    );
+}
+
+#[test]
+fn a_half_typed_boolean_still_parses_because_everything_does() {
+    use postio_search::query::QueryTree;
+
+    // Results update on every keystroke, so each of these is an ordinary
+    // intermediate state on the way to something valid, not an error.
+    let ada = || QueryTree::Filter(clause(Filter::From("ada".into()), false));
+
+    // A conjunction of one is that one, and a disjunction of one is that
+    // one, so each of these settles to the single constraint that was typed.
+    assert_eq!(
+        q("(from:ada").tree(),
+        ada(),
+        "an unclosed group closes at the end of the input"
+    );
+    assert_eq!(
+        q("from:ada)").tree(),
+        ada(),
+        "a stray close is dropped rather than swallowing the query"
+    );
+    assert_eq!(
+        q("from:ada OR").tree(),
+        ada(),
+        "an OR with nothing after it is not yet an OR"
+    );
+    assert_eq!(
+        q("OR from:ada").tree(),
+        ada(),
+        "and neither is one with nothing before it"
+    );
+    assert_eq!(q("()").tree(), QueryTree::All(vec![]));
+    assert_eq!(q("OR").tree(), QueryTree::All(vec![]));
+}
+
+fn clause(filter: Filter, negated: bool) -> postio_search::query::Clause {
+    postio_search::query::Clause { negated, filter }
+}
+
+fn term(value: &str, negated: bool) -> postio_search::query::TextTerm {
+    postio_search::query::TextTerm {
+        negated,
+        value: value.to_string(),
     }
 }

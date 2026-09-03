@@ -96,6 +96,12 @@ pub enum Field {
     /// body arrives is promoted to an operator of its own instead — `list:`
     /// is one that was.
     Header,
+    /// `body:` — words in the message text, as opposed to its metadata.
+    ///
+    /// Free text already searches the body; this narrows a term to it, so
+    /// `body:invoice` finds messages that say "invoice" without matching the
+    /// ones that merely have it in the subject.
+    Body,
 }
 
 impl Field {
@@ -115,6 +121,7 @@ impl Field {
         Field::List,
         Field::Account,
         Field::Group,
+        Field::Body,
         // Last, because the popup is ordered by how often an operator is
         // reached for and this is the one you type when none of the others
         // will do.
@@ -139,6 +146,7 @@ impl Field {
             Field::Account => "account",
             Field::Group => "group",
             Field::Header => "header",
+            Field::Body => "body",
         }
     }
 
@@ -161,6 +169,7 @@ impl Field {
             "account" => Some(Field::Account),
             "group" => Some(Field::Group),
             "header" => Some(Field::Header),
+            "body" => Some(Field::Body),
             _ => None,
         }
     }
@@ -180,6 +189,7 @@ impl Field {
                 | Field::Account
                 | Field::Group
                 | Field::Header
+                | Field::Body
         )
     }
 }
@@ -248,6 +258,8 @@ pub enum Filter {
         /// What the value must contain, or `None` to ask only for presence.
         value: Option<String>,
     },
+    /// `body:invoice` — a word in the message text rather than its metadata.
+    Body(String),
     /// `has:attach`
     HasAttachment,
     /// `is:unread`, `is:read`, `is:flagged`
@@ -275,6 +287,7 @@ impl Filter {
             Filter::Account(_) => Field::Account,
             Filter::Group(_) => Field::Group,
             Filter::Header { .. } => Field::Header,
+            Filter::Body(_) => Field::Body,
             Filter::HasAttachment => Field::Has,
             Filter::Is(_) => Field::Is,
             Filter::After(_) => Field::After,
@@ -329,6 +342,17 @@ pub enum TokenKind {
     Partial(Partial),
     /// Free text.
     Text(TextTerm),
+    /// The `OR` keyword, which joins what is on either side of it.
+    ///
+    /// Uppercase only. "cats or dogs" is three words somebody is searching
+    /// for, and a language that quietly promoted the middle one to a boolean
+    /// would be answering a question nobody asked. `"OR"` in quotes is the
+    /// word, which is how to search for it.
+    Or,
+    /// `(` — the start of a group.
+    Open,
+    /// `)` — the end of one.
+    Close,
 }
 
 /// One chip's worth of query: a slice of the input and what it means.
@@ -349,7 +373,7 @@ impl Token {
         match &self.kind {
             TokenKind::Filter(clause) => Some(clause.filter.field()),
             TokenKind::Partial(partial) => Some(partial.field),
-            TokenKind::Text(_) => None,
+            TokenKind::Text(_) | TokenKind::Or | TokenKind::Open | TokenKind::Close => None,
         }
     }
 
@@ -359,12 +383,62 @@ impl Token {
             TokenKind::Filter(clause) => clause.negated,
             TokenKind::Partial(partial) => partial.negated,
             TokenKind::Text(term) => term.negated,
+            TokenKind::Or | TokenKind::Open | TokenKind::Close => false,
         }
     }
 
     /// Whether this token should be drawn as a chip rather than as plain text.
+    ///
+    /// Structure is not a chip. `OR` and the parentheses are punctuation the
+    /// user typed and can edit as text; drawing them as chips would make the
+    /// shape of a query harder to change than the parts it is made of.
     pub fn is_operator(&self) -> bool {
-        !matches!(self.kind, TokenKind::Text(_))
+        matches!(self.kind, TokenKind::Filter(_) | TokenKind::Partial(_))
+    }
+}
+
+/// The boolean shape of a query, derived from its flat token vector.
+///
+/// The tokens are the *lexical* form — what the search bar draws chips from,
+/// and what `remove_token` edits. This is the same query as a structure, for
+/// the executor to compile. Deriving it rather than storing it keeps one
+/// source of truth: an edit to the tokens cannot leave a stale tree behind
+/// (#478).
+///
+/// A query with no `OR` derives to `All`, a flat conjunction in source order
+/// — which is exactly what the executor did before this existed, so nothing
+/// that worked changes meaning.
+///
+/// Negation lives on the leaves, in [`Clause`] and [`TextTerm`], where it
+/// already lived. There is no `Not` node: `-from:bob` negates that one
+/// constraint, and Postio has never had a way to negate a group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryTree {
+    /// Every child must match. `All(vec![])` constrains nothing, which is
+    /// what an empty query means.
+    All(Vec<QueryTree>),
+    /// Any one child matching is enough. Never empty: a disjunction with one
+    /// arm is that arm.
+    Any(Vec<QueryTree>),
+    /// One structured constraint.
+    Filter(Clause),
+    /// One free-text term.
+    Text(TextTerm),
+}
+
+impl QueryTree {
+    /// Whether this tree contains no `OR` anywhere.
+    ///
+    /// The executor's fast path: a pure conjunction compiles to the flat list
+    /// of conditions it always did, keeping the plan (and the measured
+    /// `<100 ms`) that the join-based free-text match was built for. Only a
+    /// query that actually asks for a disjunction pays for one.
+    pub fn is_conjunctive(&self) -> bool {
+        match self {
+            QueryTree::Any(_) => false,
+            QueryTree::All(children) => children.iter().all(QueryTree::is_conjunctive),
+            QueryTree::Filter(_) | QueryTree::Text(_) => true,
+        }
     }
 }
 
@@ -390,6 +464,90 @@ impl ParsedQuery {
     /// Whether the query constrains nothing at all.
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
+    }
+
+    /// The query's boolean shape.
+    ///
+    /// Total, like the parser: every input produces a tree, because results
+    /// update on every keystroke and half-typed structure is the ordinary
+    /// case. An unclosed `(` closes at the end of the input, a stray `)` is
+    /// dropped, and an `OR` with nothing on one side is not yet an `OR`.
+    /// [`Partial`] tokens constrain nothing and do not appear.
+    pub fn tree(&self) -> QueryTree {
+        let mut cursor = 0usize;
+        let tree = self.disjunction(&mut cursor, false);
+        // A stray close at the top level left the cursor short; nothing after
+        // it can be reached, and the alternative -- treating it as text --
+        // would search for a bracket the user is in the middle of pairing.
+        tree
+    }
+
+    /// `conjunction ( 'OR' conjunction )*`, from `cursor`.
+    ///
+    /// `nested` says whether a `)` should return to a caller (it does) or be
+    /// skipped as stray punctuation (at the top level, it is).
+    fn disjunction(&self, cursor: &mut usize, nested: bool) -> QueryTree {
+        let mut arms = vec![self.conjunction(cursor, nested)];
+        while matches!(
+            self.tokens.get(*cursor).map(|t| &t.kind),
+            Some(TokenKind::Or)
+        ) {
+            *cursor += 1;
+            arms.push(self.conjunction(cursor, nested));
+        }
+        // An `OR` with an empty side is somebody mid-keystroke, so the empty
+        // arms fall away and what is left is what they have typed so far.
+        arms.retain(|arm| !matches!(arm, QueryTree::All(children) if children.is_empty()));
+        match arms.len() {
+            0 => QueryTree::All(Vec::new()),
+            1 => arms.pop().expect("just checked there is one"),
+            _ => QueryTree::Any(arms),
+        }
+    }
+
+    /// `factor+`, stopping at `OR`, at `)`, or at the end.
+    fn conjunction(&self, cursor: &mut usize, nested: bool) -> QueryTree {
+        let mut parts = Vec::new();
+        while let Some(token) = self.tokens.get(*cursor) {
+            match &token.kind {
+                TokenKind::Or => break,
+                TokenKind::Close if nested => break,
+                // A close with nothing open is punctuation on the way to
+                // something, not a token to search for.
+                TokenKind::Close => *cursor += 1,
+                TokenKind::Open => {
+                    *cursor += 1;
+                    let inner = self.disjunction(cursor, true);
+                    // Consume the matching `)`. An unclosed group simply ran
+                    // to the end of the input, which is where it closes.
+                    if matches!(
+                        self.tokens.get(*cursor).map(|t| &t.kind),
+                        Some(TokenKind::Close)
+                    ) {
+                        *cursor += 1;
+                    }
+                    // `()` groups nothing, and a group of one is that one.
+                    if !matches!(&inner, QueryTree::All(children) if children.is_empty()) {
+                        parts.push(inner);
+                    }
+                }
+                TokenKind::Filter(clause) => {
+                    parts.push(QueryTree::Filter(clause.clone()));
+                    *cursor += 1;
+                }
+                TokenKind::Text(term) => {
+                    parts.push(QueryTree::Text(term.clone()));
+                    *cursor += 1;
+                }
+                // A half-typed operator constrains nothing, exactly as it
+                // does for `filters()`.
+                TokenKind::Partial(_) => *cursor += 1,
+            }
+        }
+        match parts.len() {
+            1 => parts.pop().expect("just checked there is one"),
+            _ => QueryTree::All(parts),
+        }
     }
 
     /// The structured constraints, in source order.

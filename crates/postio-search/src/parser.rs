@@ -6,11 +6,23 @@
 //! not an error case:
 //!
 //! ```text
-//! query   := token*
+//! query   := disjunction
+//! disjunction := conjunction ( 'OR' conjunction )*
+//! conjunction := factor+
+//! factor  := '(' disjunction ')' | token
 //! token   := '-'? ( operator | text )
 //! operator:= keyword ':' value          (keyword is one Postio knows)
 //! text    := word | '"' phrase '"'
 //! ```
+//!
+//! `AND` is juxtaposition and binds tighter than `OR`, so
+//! `from:ada OR from:grace has:attach` is `ada OR (grace AND attach)` (#478).
+//! There is no `AND` keyword: adjacency already means it, and a second
+//! spelling of the same thing is a second thing to get wrong.
+//!
+//! The token vector stays *flat* and lexical — it is what the search bar
+//! draws chips from, and chips did not change. The boolean structure is
+//! derived on demand by [`ParsedQuery::tree`].
 //!
 //! A word runs to the next whitespace, except that a `"` suspends that rule so
 //! `subject:"quarterly report"` is one token. An unterminated quote simply runs
@@ -44,19 +56,60 @@ pub fn parse(input: &str, today: NaiveDate) -> ParsedQuery {
     while let Some(start) = next_word_start(input, cursor) {
         let end = word_end(input, start);
         cursor = end;
+        // A parenthesis is punctuation, not part of the word it is touching:
+        // `(from:grace` is a group opening on a filter. Peeled off both ends
+        // before classifying, and only outside quotes -- `subject:"(draft)"`
+        // is a phrase that happens to contain brackets.
+        let mut offset = start;
         let raw = &input[start..end];
-        if let Some(kind) = classify(raw, today) {
-            tokens.push(Token {
-                span: Span::new(start, end),
-                raw: raw.to_string(),
-                kind,
-            });
+        if !raw.starts_with('"') {
+            while input[offset..end].starts_with('(') {
+                tokens.push(punctuation(input, offset, TokenKind::Open));
+                offset += 1;
+            }
         }
+        let mut limit = end;
+        let mut trailing = Vec::new();
+        if !input[offset..limit].ends_with('"') {
+            while limit > offset && input[offset..limit].ends_with(')') {
+                limit -= 1;
+                trailing.push(punctuation(input, limit, TokenKind::Close));
+            }
+        }
+        let body = &input[offset..limit];
+        if !body.is_empty() {
+            let kind = if body == OR {
+                Some(TokenKind::Or)
+            } else {
+                classify(body, today)
+            };
+            if let Some(kind) = kind {
+                tokens.push(Token {
+                    span: Span::new(offset, limit),
+                    raw: body.to_string(),
+                    kind,
+                });
+            }
+        }
+        trailing.reverse();
+        tokens.append(&mut trailing);
     }
 
     ParsedQuery {
         input: input.to_string(),
         tokens,
+    }
+}
+
+/// The one spelling of the boolean. See [`TokenKind::Or`] for why it shouts.
+const OR: &str = "OR";
+
+/// A one-character structural token at `at`.
+fn punctuation(input: &str, at: usize, kind: TokenKind) -> Token {
+    Token {
+        span: Span::new(at, at + 1),
+        raw: input[at..at + 1].to_string(),
+        kind,
     }
 }
 
@@ -165,6 +218,7 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
         Field::List => filter(Filter::List(value)),
         Field::Account => filter(Filter::Account(value)),
         Field::Group => filter(Filter::Group(value)),
+        Field::Body => filter(Filter::Body(value)),
         Field::Has => match value.to_ascii_lowercase().as_str() {
             "attach" | "attachment" | "attachments" | "file" | "files" => {
                 filter(Filter::HasAttachment)
