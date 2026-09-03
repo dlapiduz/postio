@@ -13,10 +13,6 @@
 -- sets one. `StoredBody` carries both, so there is no way to store a body
 -- without answering this.
 --
--- Every existing row is 0, and that is a claim rather than a default: it says
--- "no problem recorded", not "no problem". Bodies stored before this column
--- existed were never asked, and a reparse is what would answer them --
--- `raw_blob_id` keeps the octets, so it is recoverable, and #901 deliberately
--- does not backfill it. Saying "this decoded cleanly" about mail nobody
--- checked would be the same false confidence the column exists to remove.
+-- Rows written before this column take the default and are not reparsed; a
+-- resync answers them.
 ALTER TABLE messages ADD COLUMN body_encoding_problems INTEGER NOT NULL DEFAULT 0;
