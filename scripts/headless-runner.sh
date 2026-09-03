@@ -207,7 +207,16 @@ gtk_reader-*|e2e-*|gtk_suite-*|app_suite-*|gtk_editable_dialect-*|gtk_editor*|gt
     # machines most likely to take longer than it are exactly the loaded ones
     # where a wrongly-killed suite is hardest to interpret. `awk` because this
     # is POSIX sh and the multiplier may be fractional.
-    LIMIT="${POSTIO_TEST_WATCHDOG:-300}"
+    # 900s, not 300. This bounds a *hang* -- #272's DMA-BUF handshake wedging
+    # at 0% CPU -- and a hang never finishes, so the only thing a larger bound
+    # costs is how long a wedged run takes to fail. Sizing it close to the
+    # legitimate runtime buys nothing and kills real work.
+    #
+    # 300 was chosen when gtk_suite was ~76 cases. #841 consolidated 45 more
+    # into it, and it now takes ~220s on an idle workstation -- inside 300, but
+    # not while a gate run is also compiling. It was killed at 142 passing
+    # cases with nothing wrong.
+    LIMIT="${POSTIO_TEST_WATCHDOG:-900}"
     LIMIT=$(awk -v base="$LIMIT" -v factor="${POSTIO_TEST_PATIENCE:-1}" \
         'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", base * factor }')
     setsid "$@" &
