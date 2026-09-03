@@ -778,6 +778,86 @@ impl SettingsPanel {
 
     /// Called when an account row's context menu picks
     /// [`AccountAction::UpdateCredential`] or [`AccountAction::Remove`].
+    /// The account list itself, for the focus controller `Window` puts on it.
+    ///
+    /// A widget accessor rather than a `connect_` seam because what the
+    /// window needs is the widget: `Context::Accounts` is scoped to exactly
+    /// this list (ADR 0005 Q6c), and an `EventControllerFocus` has to go on
+    /// the thing the context is named for.
+    pub fn accounts_list(&self) -> gtk::ListBox {
+        self.imp().accounts_list.clone()
+    }
+
+    /// The account whose row the keyboard is in, if it is in one.
+    ///
+    /// Focus rather than selection: the rows are `set_selectable(false)` and
+    /// the list is `SelectionMode::None`, because an account row is a thing
+    /// you act on rather than a thing you pick. `focus_child` is the row that
+    /// contains the focus, which is what "the row the keyboard is on" means
+    /// when the focus is actually on the switch inside it.
+    ///
+    /// `None` is a real answer and the callers must respect it: the context
+    /// can be live with the focus somewhere else in the panel, and a command
+    /// that guessed a row would remove an account on a keystroke aimed at
+    /// nothing.
+    pub fn focused_account(&self) -> Option<AccountId> {
+        let row = self
+            .imp()
+            .accounts_list
+            .focus_child()?
+            .downcast::<gtk::ListBoxRow>()
+            .ok()?;
+        let id = row_account_id(&row);
+        id.is_assigned().then_some(id)
+    }
+
+    /// Fires the account-action callbacks, as the row's context menu does.
+    ///
+    /// The keyboard path and the mouse path go through here together on
+    /// purpose: two entry points that each call their own handlers are two
+    /// things to keep in step, and this one ends in an account being removed.
+    pub fn request_account_action(&self, id: AccountId, action: AccountAction) {
+        for callback in self.imp().account_action.borrow().iter() {
+            callback(id, action);
+        }
+    }
+
+    /// Flips `id`'s enabled switch, as clicking it does.
+    ///
+    /// Moves the switch rather than calling the handler directly, so the
+    /// control the person is looking at and the column the handler writes
+    /// cannot disagree — the notify signal the switch emits is what calls
+    /// the handler, exactly as it does for a click.
+    ///
+    /// Answers whether a row for `id` was found.
+    pub fn toggle_account_enabled(&self, id: AccountId) -> bool {
+        let Some(switch) = self.enabled_switch(id) else {
+            return false;
+        };
+        switch.set_active(!switch.is_active());
+        true
+    }
+
+    /// The enabled switch on `id`'s row.
+    fn enabled_switch(&self, id: AccountId) -> Option<gtk::Switch> {
+        let mut index = 0;
+        while let Some(row) = self.imp().accounts_list.row_at_index(index) {
+            index += 1;
+            if row_account_id(&row) != id {
+                continue;
+            }
+            let mut child = row.child()?.first_child();
+            while let Some(widget) = child {
+                if let Ok(switch) = widget.clone().downcast::<gtk::Switch>() {
+                    return Some(switch);
+                }
+                child = widget.next_sibling();
+            }
+            return None;
+        }
+        None
+    }
+
     pub fn connect_account_action(&self, handler: impl Fn(AccountId, AccountAction) + 'static) {
         self.imp()
             .account_action
@@ -851,11 +931,7 @@ impl SettingsPanel {
             simple.connect_activate(glib::clone!(
                 #[weak(rename_to = panel)]
                 self,
-                move |_, _| {
-                    for callback in panel.imp().account_action.borrow().iter() {
-                        callback(id, action);
-                    }
-                }
+                move |_, _| panel.request_account_action(id, action)
             ));
             actions.add_action(&simple);
         }

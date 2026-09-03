@@ -42,6 +42,12 @@ pub const TOAST_TIMEOUT: u32 = 8;
 pub struct Toast {
     overlay: adw::ToastOverlay,
     current: RefCell<Option<adw::Toast>>,
+    /// The undo behind the toast now showing, if it has one.
+    ///
+    /// Held so `u` can reach it as well as the button (#471). The closure is
+    /// the same one the button runs -- one behaviour with two ways in, not
+    /// two implementations that have to agree.
+    pending_undo: RefCell<Option<std::rc::Rc<dyn Fn()>>>,
 }
 
 impl Toast {
@@ -50,6 +56,7 @@ impl Toast {
         Self {
             overlay: adw::ToastOverlay::new(),
             current: RefCell::new(None),
+            pending_undo: RefCell::new(None),
         }
     }
 
@@ -96,16 +103,40 @@ impl Toast {
     /// panel, not a [`postio_core::Command`], because it needs a specific
     /// account as its payload with no keystroke-derived default and there
     /// is no `Context::Settings` for the keymap to reach it in — see ADR
-    /// 0005 Q6a. Its undo is real (Q6 requires it), just local to this one
-    /// button rather than reachable from `u`.
+    /// 0005 Q6a. Its undo is real (Q6 requires it) and local to this one
+    /// toast rather than to the global stack -- but no longer local to the
+    /// *button*: #471 made removal a command with `Recovery::Undo`, so `u`
+    /// in `Context::Accounts` reaches it through [`Self::activate_undo`].
     pub fn show_removable(&self, description: &str, on_undo: impl Fn() + 'static) {
         let toast = adw::Toast::builder()
             .title(description)
             .timeout(TOAST_TIMEOUT)
             .button_label("Undo")
             .build();
-        toast.connect_button_clicked(move |_| on_undo());
+        let on_undo = std::rc::Rc::new(on_undo);
+        toast.connect_button_clicked({
+            let on_undo = std::rc::Rc::clone(&on_undo);
+            move |_| on_undo()
+        });
         self.push(toast);
+        // After `push`, which clears whatever the last toast left here.
+        *self.pending_undo.borrow_mut() = Some(on_undo);
+    }
+
+    /// Runs the showing toast's undo, if it has one, and dismisses it.
+    ///
+    /// Answers whether there was anything to undo, so a caller can tell "the
+    /// toast is up and I ran it" from "there was no toast" -- `u` with
+    /// nothing showing must not be reported as an undo that happened.
+    pub fn activate_undo(&self) -> bool {
+        let Some(on_undo) = self.pending_undo.borrow_mut().take() else {
+            return false;
+        };
+        on_undo();
+        if let Some(toast) = self.current.borrow_mut().take() {
+            toast.dismiss();
+        }
+        true
     }
 
     /// *Archived 12 messages, undone.* What `u` (or the toast's own button)
@@ -120,6 +151,10 @@ impl Toast {
 
     /// Dismisses whatever is showing and shows `toast` instead.
     fn push(&self, toast: adw::Toast) {
+        // A new toast replaces the old one's offer too: an undo whose toast
+        // is gone is one the person can no longer see, and `u` must not
+        // reach back past what is on screen.
+        self.pending_undo.borrow_mut().take();
         if let Some(previous) = self.current.borrow_mut().take() {
             previous.dismiss();
         }

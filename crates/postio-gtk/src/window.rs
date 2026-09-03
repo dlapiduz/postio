@@ -184,6 +184,9 @@ mod imp {
         /// The context that had the keyboard before it went to the parts
         /// panel, restored when the panel closes — see `before_sidebar`.
         pub before_parts: std::cell::Cell<Option<Context>>,
+        /// The context that had the keyboard before it went to the account
+        /// list in settings — see `before_sidebar` (#471).
+        pub before_accounts: std::cell::Cell<Option<Context>>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -1580,6 +1583,35 @@ impl Window {
         let _ = self.imp().list.set(list_view);
         let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
+        // The context follows the keyboard into the account list, the same
+        // way it follows it into the folders — and scoped to that list
+        // rather than to the panel, because the panel also holds a TextView
+        // of the literal config.toml where `d` has to insert a `d`
+        // (ADR 0005 Q6c). The TextView never enters this context, so the
+        // trap is closed by construction rather than by remembering.
+        let accounts_focus = gtk::EventControllerFocus::new();
+        accounts_focus.connect_enter(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() != Context::Accounts {
+                    window.imp().before_accounts.set(Some(window.context()));
+                    window.set_context(Context::Accounts);
+                }
+            }
+        ));
+        accounts_focus.connect_leave(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() == Context::Accounts {
+                    let previous = window.imp().before_accounts.take();
+                    window.set_context(previous.unwrap_or(Context::List));
+                }
+            }
+        ));
+        settings.accounts_list().add_controller(accounts_focus);
+
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         let _ = self.imp().compose_button.set(header.compose.clone());
@@ -1862,6 +1894,40 @@ impl Window {
             // row, which matters most when the selection is a predicate.
             // Nearest first. The parts panel is the innermost thing `Esc`
             // could mean while it is up.
+            // The account row the keyboard is on. `focused_account` answers
+            // `None` when the focus is elsewhere in the panel, and that is a
+            // real answer: falling back to "the first account" would remove
+            // somebody's mail on a keystroke aimed at nothing (ADR 0005 Q6c).
+            CommandId::RemoveAccount => {
+                if let Some(id) = self.settings().focused_account() {
+                    self.settings()
+                        .request_account_action(id, crate::settings::AccountAction::Remove);
+                }
+            }
+            CommandId::UpdateCredential => {
+                if let Some(id) = self.settings().focused_account() {
+                    self.settings().request_account_action(
+                        id,
+                        crate::settings::AccountAction::UpdateCredential,
+                    );
+                }
+            }
+            CommandId::ToggleAccountEnabled => {
+                if let Some(id) = self.settings().focused_account() {
+                    self.settings().toggle_account_enabled(id);
+                }
+            }
+            // `u` here means the removal toast, never the global stack: the
+            // stack never held this removal (#464 wired it straight to
+            // AccountRepository::restore), so nothing else could answer it.
+            // Handled whether or not a toast is up -- falling through would
+            // undo the last *mail* action from a context where the person is
+            // looking at accounts.
+            CommandId::Undo if self.context() == Context::Accounts => {
+                if let Some(toast) = self.imp().toast.get() {
+                    toast.activate_undo();
+                }
+            }
             CommandId::Back if self.parts().is_visible() => self.close_parts(),
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
             CommandId::Back if self.finder().is_open() => self.close_finder(),

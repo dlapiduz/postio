@@ -2,11 +2,13 @@
 //!
 //! `set_accounts` draws one row per account with an enabled switch; the
 //! row's context menu is `SavedSearchAction`'s exact shape from #292 --
-//! `gio::SimpleActionGroup`, addressed by name, not a `CommandId`. See the
-//! ADR for why: no `Context::Settings` exists for the keymap to reach these
-//! in, and each needs a specific account as its payload with no
-//! keystroke-derived default. Skips without a display. Nothing here touches
-//! the network.
+//! `gio::SimpleActionGroup`, addressed by name, not a `CommandId`.
+//!
+//! That is still how the *menu* is built, but the verbs behind it are
+//! commands now: ADR 0005 Q6c added `Context::Accounts` and #471 registered
+//! the three, so the keyboard reaches them through the focused row. Both
+//! paths end in the same callbacks -- `gtk_settings_accounts_keys.rs` is the
+//! keyboard half. Skips without a display. Nothing here touches the network.
 
 use crate::pump;
 use std::cell::RefCell;
