@@ -178,6 +178,43 @@ fn body() -> MessageBody {
     }
 }
 
+/// A second surface registering for a kind that already has a live,
+/// still-parented occupant is always a bug (#831) — never a legitimate
+/// re-registration, since each of the three real callers mounts exactly
+/// once per window. `shot`'s `demo search` hit exactly this by calling
+/// `search::View::attach` twice on the same shell: the first preview stayed
+/// parented and visible forever, since nothing removed it and the tracking
+/// that drives visibility had already moved to the second. This asserts the
+/// mistake now crashes at the second `attach`, not two owners drawing a
+/// message together in a screenshot nobody could produce from the app.
+pub fn a_second_attach_for_the_same_occupant_kind_panics() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let _first = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    let shell = window.shell();
+    let finder = window.finder();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        View::attach(&shell, &finder);
+    }));
+    assert!(
+        result.is_err(),
+        "a second search::View::attach on the same shell should panic \
+         rather than silently leave two previews in the reading pane"
+    );
+
+    window.destroy();
+}
+
 fn hit(id: i64) -> SearchHit {
     SearchHit {
         message_id: MessageId::new(id),

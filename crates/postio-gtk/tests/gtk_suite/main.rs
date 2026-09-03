@@ -361,6 +361,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_pane_owner::the_reading_pane_has_one_visible_occupant_at_a_time as fn(),
     ),
     (
+        "gtk_reader_pane_owner::a_second_attach_for_the_same_occupant_kind_panics",
+        gtk_reader_pane_owner::a_second_attach_for_the_same_occupant_kind_panics as fn(),
+    ),
+    (
         "gtk_search_preview::the_preview_follows_the_focus_and_answers_the_query_on_screen",
         gtk_search_preview::the_preview_follows_the_focus_and_answers_the_query_on_screen as fn(),
     ),
