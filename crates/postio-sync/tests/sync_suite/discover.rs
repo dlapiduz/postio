@@ -509,3 +509,46 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
          relabelling it could not be undone by editing the line back."
     );
 }
+
+#[tokio::test]
+async fn a_role_follows_the_folder_when_the_server_renames_it() {
+    // #943. The Sent folder is renamed on the server (by another client, or
+    // by the provider). The old row is retired and keeps its role; the new
+    // row is born with the same role; and `by_role` picks between them by
+    // path order. "Sent" sorts before "Sent Items", so every sent copy from
+    // here on is filed into a folder the server no longer has.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+
+    let before = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Sent").attributes(["\\Sent"]))
+        .build();
+    before.connect().await.expect("connect");
+    discover(&connection, &before, account.id, &RoleOverrides::default())
+        .await
+        .expect("first pass");
+
+    let after = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Sent Items").attributes(["\\Sent"]))
+        .build();
+    after.connect().await.expect("connect");
+    discover(&connection, &after, account.id, &RoleOverrides::default())
+        .await
+        .expect("second pass");
+
+    let sent = MailboxRepository::new(&connection)
+        .by_role(account.id, MailboxRole::Sent)
+        .expect("by role")
+        .expect("the account still has a Sent folder");
+    assert_eq!(
+        sent.path, "Sent Items",
+        "the role belongs to the folder the server has, not the one it had"
+    );
+    assert!(
+        sent.selectable,
+        "a folder the server does not list cannot be the place mail is filed"
+    );
+}
