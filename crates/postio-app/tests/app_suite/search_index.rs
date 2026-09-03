@@ -83,6 +83,7 @@ fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Optio
         text: text.map(str::to_owned),
         html: html.map(str::to_owned),
         headers: None,
+        headers_truncated: false,
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)

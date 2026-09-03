@@ -72,6 +72,7 @@ fn store_body(database: &Database, message: MessageId, text: &str) {
                 text: Some(text.to_owned()),
                 html: None,
                 headers: None,
+                headers_truncated: false,
             },
             BodyState::Full,
         )
