@@ -310,6 +310,19 @@ const TREE_MAX_HEIGHT: i32 = 360;
 
 type NodeHandler = Box<dyn Fn(&Node)>;
 /// A part, and where the user chose to put it.
+/// What the panel needs a destination for.
+///
+/// The argument to an [`Parts::connect_ask`] handler, which stands in for the
+/// `GtkFileDialog` the panel would otherwise open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    /// `s` — where to put this one part.
+    Part(Node),
+    /// `S` — which folder to put every part in.
+    Everything,
+}
+
+type AskHandler = Box<dyn Fn(&Ask)>;
 type SaveHandler = Box<dyn Fn(&Node, &gio::File)>;
 /// Where the user chose to put every part.
 type SaveAllHandler = Box<dyn Fn(&gio::File)>;
@@ -336,6 +349,7 @@ mod imp {
         /// then trackers. Drawn as the canvas' `remote blocked` tag.
         pub(super) held_back: Cell<(u32, u32)>,
         pub(super) on_open: RefCell<Vec<NodeHandler>>,
+        pub(super) on_ask: RefCell<Vec<AskHandler>>,
         pub(super) on_save: RefCell<Vec<SaveHandler>>,
         pub(super) on_save_all: RefCell<Vec<SaveAllHandler>>,
         pub(super) on_external: RefCell<Vec<NodeHandler>>,
@@ -503,6 +517,9 @@ impl PartsPanel {
         let Some(node) = self.cursor().filter(Node::is_leaf) else {
             return;
         };
+        if self.asked(&Ask::Part(node.clone())) {
+            return;
+        }
         let dialog = gtk::FileDialog::builder()
             .title(format!("Save {}", node.label()))
             .initial_name(save_name(&node))
@@ -535,6 +552,9 @@ impl PartsPanel {
     /// A folder rather than a filename, because there is more than one file:
     /// [`save_name`] gives each part the name it goes in under.
     pub fn save_all(&self) {
+        if self.asked(&Ask::Everything) {
+            return;
+        }
         let dialog = gtk::FileDialog::builder()
             .title("Save every part")
             .modal(true)
@@ -580,6 +600,43 @@ impl PartsPanel {
     }
 
     /// Called with the part to save and the file the user chose for it.
+    /// Answer "where should this go?" instead of opening a file dialog.
+    ///
+    /// **Installed, this replaces the dialog entirely** — [`save_part`] and
+    /// [`save_all`] call the handler and construct nothing. That is the point
+    /// (#988): a `GtkFileDialog` cannot be safely opened inside `gtk_suite`.
+    /// The `GtkFileChooserNative` behind it keeps the parent window alive
+    /// past the case that opened it, so closing the stray dialog frees a
+    /// window its finalize later calls `gtk_window_destroy` on — a
+    /// use-after-free that lands on whichever *later* case next turns the
+    /// main loop, reading as flakiness in code that is fine. Cancelling with
+    /// a `gio::Cancellable` instead only moves the crash earlier, into GTK's
+    /// xdg-foreign export of the parent handle completing after the cancel.
+    ///
+    /// An override rather than the default path, deliberately: with nothing
+    /// installed the panel opens the real dialog exactly as before, so no
+    /// wiring has to be remembered in the application for `s` to work. A
+    /// forgotten wire is the failure this codebase keeps finding
+    /// (`postio-bl2`), and it is worse than the thing being worked around.
+    ///
+    /// [`save_part`]: Self::save_part
+    /// [`save_all`]: Self::save_all
+    pub fn connect_ask(&self, handler: impl Fn(&Ask) + 'static) {
+        self.imp().on_ask.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Whether an [`Ask`] handler answered, so no dialog should be built.
+    fn asked(&self, ask: &Ask) -> bool {
+        let handlers = self.imp().on_ask.borrow();
+        if handlers.is_empty() {
+            return false;
+        }
+        for handler in handlers.iter() {
+            handler(ask);
+        }
+        true
+    }
+
     pub fn connect_save(&self, handler: impl Fn(&Node, &gio::File) + 'static) {
         self.imp().on_save.borrow_mut().push(Box::new(handler));
     }
