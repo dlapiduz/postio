@@ -2245,3 +2245,176 @@ fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
 
     assert!(headers.is_empty());
 }
+
+#[test]
+fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
+    // Every message in every store that exists today: `body_headers` has been
+    // NULL since migration 0001 because nothing ever wrote it. The pass has to
+    // find them, and has to stop finding them once they are done or it spins
+    // (#500).
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut fetched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    fetched.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
+    let fetched_id = messages.create(&mut fetched).expect("create");
+    messages
+        .set_body(
+            fetched_id,
+            &StoredBody {
+                text: Some("the body".to_owned()),
+                html: None,
+                headers: None,
+                headers_truncated: false,
+            },
+            BodyState::Full,
+        )
+        .expect("set");
+
+    // Never downloaded: not a repair candidate. Its block will arrive with its
+    // body like any other, and offering it here would put a message on the
+    // queue that the pass can do nothing about.
+    let mut untouched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    messages.create(&mut untouched).expect("create");
+
+    let candidates = messages.messages_missing_headers(10).expect("candidates");
+
+    assert_eq!(candidates.len(), 1, "got: {candidates:?}");
+    assert_eq!(candidates[0].message_id, fetched_id);
+    assert!(
+        candidates[0].raw_blob_id.is_some(),
+        "the blob is what makes this repairable without a network call"
+    );
+
+    // And once repaired it stops coming back, which is the contract #500's
+    // no-progress guard is watching for.
+    messages
+        .set_headers(
+            fetched_id,
+            Some(&postio_model::headers::Block {
+                text: "X-Mailer: mutt".to_owned(),
+                truncated: false,
+            }),
+        )
+        .expect("repair");
+    assert!(
+        messages
+            .messages_missing_headers(10)
+            .expect("candidates")
+            .is_empty()
+    );
+}
+
+#[test]
+fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
+    // The hazard in repairing one column of three: the row carries a single
+    // `body_dictionary_id` for `body_text`, `body_html` and `body_headers`
+    // together. A repair that compressed the block against a newer dictionary
+    // and updated that id would make the text and html beside it unreadable --
+    // ADR 0020's frames can only be read with the dictionary they were written
+    // against. Losing a message's text to a pass that was only supposed to add
+    // its headers would be the worst possible trade.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    // A corpus, so that a dictionary exists and the row under test actually
+    // names one. Without this the whole store has `body_dictionary_id` NULL,
+    // the two code paths agree by accident, and this test cannot fail for the
+    // reason it is about.
+    for seed in 0..64 {
+        let mut filler = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+        let filler_id = messages.create(&mut filler).expect("create");
+        messages
+            .set_body(
+                filler_id,
+                &StoredBody {
+                    // 64 messages of real size: `train_dictionary` wants
+                    // MIN_SAMPLES rows and MIN_SAMPLE_BYTES between them, and
+                    // a corpus under either threshold trains nothing at all.
+                    text: Some(
+                        format!(
+                            "On Tuesday the {seed}th, Ada wrote about invoice {seed} and \
+                             the quarterly reconciliation that nobody has finished \
+                             reading yet.\n"
+                        )
+                        .repeat(40),
+                    ),
+                    ..StoredBody::default()
+                },
+                BodyState::Full,
+            )
+            .expect("set");
+    }
+    postio_storage::body::train_dictionary(&connection)
+        .expect("train")
+        .expect("a corpus this size trains");
+
+    let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    let id = messages.create(&mut message).expect("create");
+    let words = "the text nobody may lose to a header repair".repeat(20);
+    messages
+        .set_body(
+            id,
+            &StoredBody {
+                text: Some(words.clone()),
+                html: Some("<p>and the html</p>".to_owned()),
+                headers: None,
+                headers_truncated: false,
+            },
+            BodyState::Full,
+        )
+        .expect("set");
+
+    // A second dictionary, so "the newest" and "the one this row names" are
+    // different answers. With only one trained they coincide and a repair that
+    // reached for the newest would look correct -- which is the whole failure
+    // this test exists to catch, and it happens in real stores every time the
+    // corpus grows enough to retrain.
+    let second = postio_storage::body::train_dictionary(&connection)
+        .expect("train")
+        .expect("a second dictionary");
+    let named: Option<i64> = connection
+        .query_row(
+            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| row.get(0),
+        )
+        .expect("the row");
+    assert_ne!(
+        named,
+        Some(second.get()),
+        "the row must still name the older dictionary, or there is no hazard here"
+    );
+
+    messages
+        .set_headers(
+            id,
+            Some(&postio_model::headers::Block {
+                text: "X-Mailer: mutt".to_owned(),
+                truncated: true,
+            }),
+        )
+        .expect("repair");
+
+    let dictionary: Option<i64> = connection
+        .query_row(
+            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| row.get(0),
+        )
+        .expect("the row");
+    assert!(
+        dictionary.is_some(),
+        "the row names no dictionary, so this test cannot see the hazard it is about"
+    );
+
+    let stored = messages.body(id).expect("body").expect("the row");
+    assert_eq!(stored.text.as_deref(), Some(words.as_str()));
+    assert_eq!(stored.html.as_deref(), Some("<p>and the html</p>"));
+    assert_eq!(stored.headers.as_deref(), Some("X-Mailer: mutt"));
+    assert!(stored.headers_truncated);
+}
