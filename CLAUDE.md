@@ -174,10 +174,17 @@ to export.
 
 ### It must feel instant
 
-Enforced by `cargo bench`, not checked by hand: startup < 500 ms, interaction
-< 16 ms, local search < 100 ms. Transitions ≤ 100 ms or absent; honor
-`prefers-reduced-motion`. Never load a whole mailbox into memory — the list
-is windowed over paged SQLite.
+Startup < 500 ms, interaction < 16 ms, local search < 100 ms. Transitions
+≤ 100 ms or absent; honor `prefers-reduced-motion`. Never load a whole
+mailbox into memory — the list is windowed over paged SQLite.
+
+**Gated as counts, not as timings.** `bench.yml` compiles the bench targets
+nightly and deliberately times nothing, because a shared runner cannot defend
+16 ms — so what gates a PR is the *cause* of each budget, counted:
+`postio_storage::test_support::counting` reads statements, rows and trigger
+firings off SQLite's trace hook, and those are the same numbers on any
+machine. When you touch a read path, that is the thing to add an assertion to;
+`docs/engineering-notes.md` has what the three counts can and cannot see.
 
 ## Invariants the checks enforce
 

@@ -418,7 +418,12 @@ it must never become Postio telling the *sender* something. §21.
 
 ## 18. Performance is a functional requirement
 
-A budget, enforced by benches in CI, not checked by hand at the end.
+A budget, not something checked by hand at the end. What gates a pull request
+is a count rather than a stopwatch — the number of statements a list issues,
+the rows a page materialises, the per-row work a start does — because those
+are identical on a developer's machine and on a shared runner, where a
+millisecond budget is not defensible (#100). Wall-clock benches still run,
+nightly and reporting rather than gating.
 
 | | Target |
 |---|---|
