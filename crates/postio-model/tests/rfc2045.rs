@@ -127,6 +127,71 @@ fn base64_that_will_not_decode_degrades_to_its_own_text_and_says_so() {
 }
 
 #[test]
+fn an_unknown_transfer_encoding_is_flagged() {
+    // §6.4: an unrecognised Content-Transfer-Encoding must be treated as
+    // `application/octet-stream`. Showing the payload verbatim as text is a
+    // defensible degradation -- it beats an empty body -- but it is a guess,
+    // and a guess the reader presents as the message is the failure #901 is
+    // about. The audit found this one not even flagged.
+    let parsed = mime::parse(&single(
+        "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: x-uuencode",
+        b"begin 644 note.txt\r\nM:&5L;&\\@=V]R;&0`\r\n`\r\nend\r\n",
+    ));
+    assert!(
+        parsed.encoding_problems,
+        "an encoding the parser does not know is a guess, and has to say so: \
+         text={:?}",
+        parsed.body.text
+    );
+}
+
+#[test]
+fn a_charset_that_decoded_lossily_is_flagged() {
+    // The case a user actually reports as mojibake, and the lossy direction
+    // of it: the octets are latin-1, the header says utf-8, and what survives
+    // is U+FFFD. Nothing later can recover the bytes -- once the replacement
+    // character is in the stored body it is in the search index and in every
+    // reply that quotes it.
+    //
+    // `is_encoding_problem` cannot see this. It is about the *transfer*
+    // encoding, so it is false in both directions of a charset mismatch,
+    // which is why #901 is worse than "computed and read by nothing" here.
+    let parsed = mime::parse(&single(
+        "Content-Type: text/plain; charset=utf-8",
+        b"\xe9t\xe9 was the summer\r\n",
+    ));
+    assert!(
+        parsed
+            .body
+            .text
+            .as_deref()
+            .is_some_and(|text| text.contains('\u{fffd}')),
+        "the fixture is meant to decode lossily: {:?}",
+        parsed.body.text
+    );
+    assert!(
+        parsed.encoding_problems,
+        "a body that lost octets to U+FFFD is exactly the mojibake the flag's \
+         own doc comment promises to carry"
+    );
+}
+
+#[test]
+fn a_charset_that_decoded_cleanly_is_not_flagged() {
+    // The control: text containing a replacement character the *sender* sent
+    // is not a decoding failure, and flagging every U+FFFD would make the
+    // caveat meaningless on the mail that legitimately carries one.
+    let parsed = mime::parse(&single(
+        "Content-Type: text/plain; charset=utf-8",
+        "the glyph \u{fffd} is what a font shows for a missing character\r\n".as_bytes(),
+    ));
+    assert!(
+        !parsed.encoding_problems,
+        "a well-formed utf-8 body was flagged because of its own contents"
+    );
+}
+
+#[test]
 fn base64_and_quoted_printable_round_trip_from_the_corpus() {
     for name in [
         "transfer-encoding-base64",

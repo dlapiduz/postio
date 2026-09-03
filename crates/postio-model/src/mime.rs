@@ -511,9 +511,72 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             Some(parsed_part(*id, part, &paths))
         })
         .collect();
-    message.encoding_problems = source.parts.iter().any(|part| part.is_encoding_problem);
+    // Three ways a body can arrive as something other than what was sent, and
+    // the flag has to carry all of them — it is the only signal Postio has
+    // that the words on screen are not the words that were sent (#901).
+    message.encoding_problems = source.parts.iter().any(|part| part.is_encoding_problem)
+        || unknown_transfer_encoding(&source)
+        || decoded_lossily(raw, &message.body);
 
     message
+}
+
+/// The transfer encodings RFC 2045 defines, lowercase.
+///
+/// §6.4: anything else "must be treated as `application/octet-stream`" —
+/// which is to say the parser does not know what the octets mean. Postio
+/// shows them verbatim as text, which beats an empty body and is still a
+/// guess, so it is flagged. `x-` tokens included deliberately: a private
+/// encoding is exactly the case §6.4 is written for.
+const KNOWN_TRANSFER_ENCODINGS: [&str; 5] =
+    ["7bit", "8bit", "binary", "quoted-printable", "base64"];
+
+/// Whether any part declares a transfer encoding this parser cannot undo.
+fn unknown_transfer_encoding(source: &MpMessage<'_>) -> bool {
+    source.parts.iter().any(|part| {
+        part.headers.iter().any(|header| {
+            header
+                .name()
+                .eq_ignore_ascii_case("Content-Transfer-Encoding")
+                && header.value().as_text().is_some_and(|value| {
+                    let value = value.trim();
+                    !value.is_empty()
+                        && !KNOWN_TRANSFER_ENCODINGS
+                            .iter()
+                            .any(|known| value.eq_ignore_ascii_case(known))
+                })
+        })
+    })
+}
+
+/// Whether decoding the charset lost octets.
+///
+/// The mojibake a user actually reports, and the direction of it that cannot
+/// be undone: the octets are one charset, the header names another, and what
+/// survives the decode is U+FFFD. Once that is in the stored body it is in
+/// the search index and in every reply that quotes it — no later pass can
+/// recover the bytes, which is why this is worth saying at the time.
+///
+/// `is_encoding_problem` cannot answer it. That flag is about the *transfer*
+/// encoding — base64 outside its alphabet, a truncated part — and it is
+/// false in both directions of a charset mismatch, measured on #901.
+///
+/// The raw bytes are the control. A sender may legitimately send U+FFFD, and
+/// flagging every message containing one would make the caveat meaningless
+/// on the mail that carries it on purpose; if the replacement character is in
+/// the bytes that arrived, it is the sender's. A message carrying both a sent
+/// U+FFFD and a lossy part reads as clean, which is the safe direction to be
+/// wrong in — it never cries wolf.
+fn decoded_lossily(raw: &[u8], body: &crate::MessageBody) -> bool {
+    const REPLACEMENT_UTF8: &[u8] = "\u{fffd}".as_bytes();
+    let decoded_has_it = [body.text.as_deref(), body.html.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|text| text.contains('\u{fffd}'));
+    decoded_has_it
+        && !raw
+            .windows(REPLACEMENT_UTF8.len())
+            .any(|window| window == REPLACEMENT_UTF8)
 }
 
 /// Every top-level header, unfolded, in wire order.
