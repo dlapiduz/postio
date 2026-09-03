@@ -1380,10 +1380,22 @@ impl<'a> MessageRepository<'a> {
     /// A pass over a candidate query that does not shrink spins at 100% of a
     /// core for as long as the application is open — not hypothetical, that is
     /// #500 — so the caller compares batches and stops.
+    ///
+    /// # Only what this pass can actually fix
+    ///
+    /// Scoped to rows that still have their raw source, because those are the
+    /// ones a local pass can repair. A message with no blob — the `partial`
+    /// state, or a store whose raw source has been evicted — needs a fetch,
+    /// and mixing the two here would be worse than untidy: this is ordered
+    /// newest-first and windowed, so one batch of unfetchable rows would make
+    /// no progress, trip the caller's guard, and stop the pass before it
+    /// reached the older messages it *could* have fixed. Those rows are
+    /// [`messages_needing_a_header_fetch`](Self::messages_needing_a_header_fetch)'s.
     pub fn messages_missing_headers(&self, limit: u32) -> Result<Vec<HeaderRepair>> {
         let mut statement = self.connection.prepare(
             "SELECT id, raw_blob_id FROM messages
               WHERE body_headers IS NULL
+                AND raw_blob_id IS NOT NULL
                 AND body_state IN ('partial', 'full')
               ORDER BY received_at DESC
               LIMIT ?1",
@@ -1393,6 +1405,42 @@ impl<'a> MessageRepository<'a> {
                 message_id: MessageId::new(row.get(0)?),
                 raw_blob_id: row.get::<_, Option<String>>(1)?.map(BlobId::new),
             })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Messages whose block can only be had from the server.
+    ///
+    /// The third row of #884's table: `body_headers` NULL and no raw source to
+    /// take it from. Two ways to arrive here — the `partial` state, which
+    /// fetches sections and never stores a raw blob at all (~15% of ADR 0017's
+    /// reference mailbox), and a store whose raw source has been evicted,
+    /// which PRODUCT.md §6 does *first* when the disk ceiling binds.
+    ///
+    /// Separate from [`messages_missing_headers`](Self::messages_missing_headers)
+    /// because the answer is a network fetch rather than a local read, and the
+    /// two must not share a batch — see that method for why.
+    pub fn messages_needing_a_header_fetch(
+        &self,
+        mailbox_id: MailboxId,
+        limit: u32,
+    ) -> Result<Vec<BackfillCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+                    mailboxes.path, messages.remote_id
+               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+              WHERE messages.mailbox_id = ?1
+                AND messages.body_headers IS NULL
+                AND messages.raw_blob_id IS NULL
+                AND messages.body_state IN ('partial', 'full')
+                AND messages.uid IS NOT NULL
+                AND messages.remote_id IS NOT NULL
+                AND messages.deleted_locally = 0
+              ORDER BY messages.received_at DESC
+              LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![mailbox_id.get(), limit], |row| {
+            read_backfill_candidate(row, mailbox_id)
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }

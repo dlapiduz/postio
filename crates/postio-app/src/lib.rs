@@ -578,10 +578,42 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
+    repair_the_header_blocks(wiring);
     train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
     Some(Wired { feeds, search })
+}
+
+/// Rebuild the header blocks of mail that arrived before there was anywhere
+/// to put them, out of the way.
+///
+/// `messages.body_headers` has been NULL on every row in every store since the
+/// schema was written, because both backfill paths passed `headers: None` on
+/// purpose (#884). New mail carries its block now; this is the mail already
+/// here, and without it `header:` would answer "no such mail" across a mailbox
+/// somebody has been using for a year — which reads as the feature being
+/// broken rather than as an index catching up.
+///
+/// `spawn_blocking` and once per start, the same two reasons
+/// [`catch_up_the_body_index`] has: it is a blob read and a header parse per
+/// message, synchronous from beginning to end, and nothing on screen is
+/// waiting for it. After the index catch-up rather than before, for the same
+/// reason that one goes first — somebody is waiting to search their mail, and
+/// this only makes a *later* search sharper.
+///
+/// Every pass after the first costs one query that finds nothing.
+fn repair_the_header_blocks(wiring: &Wiring) {
+    let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::repair_header_blocks(&database, &blobs) {
+            // Recoverable, like every other idle pass here: `header:` is a
+            // little less complete until the next start tries again, and a
+            // mail client that would not open over it would be trading the
+            // wrong thing.
+            tracing::warn!(%error, "could not rebuild the stored header blocks");
+        }
+    });
 }
 
 /// Train a body-compression dictionary from the mail already here.
