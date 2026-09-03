@@ -605,12 +605,12 @@ button.postio-compose {
   color: var(--postio-selected-fg);
 }
 
+/* #829: content, not affordance — a person reads the preview line to
+   triage mail, so it wears `--postio-dim` (the 4.5:1 floor) rather than
+   `--postio-faint` (3:1, the key hint's floor below) in every state, read
+   or unread. */
 .postio-row-snippet {
   font-size: 0.8182rem;
-  color: var(--postio-faint);
-}
-
-.postio-row-snippet.unread {
   color: var(--postio-dim);
 }
 
@@ -620,12 +620,9 @@ button.postio-compose {
   font-family: var(--postio-font-mono);
 }
 
+/* #829: same content floor as the snippet above. */
 .postio-row-time {
   font-size: 0.75rem;
-  color: var(--postio-faint);
-}
-
-.postio-row-time.unread {
   color: var(--postio-dim);
 }
 
