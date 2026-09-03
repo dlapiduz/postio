@@ -5,13 +5,15 @@
 //! stops being true fails a test rather than quietly becoming a wrong
 //! sentence in a file nobody re-reads.
 //!
-//! **What is not here.** The one gap the audit found — a decoded header value
-//! carrying CR/LF reaching the generator, which turns the rest of that value
-//! into headers — has no test yet on purpose: a test asserting the bug is
-//! worthless and a test asserting the fix cannot pass before the fix. The
-//! *input* half is here (a header value really can arrive with CR/LF in it),
-//! the corpus carries `encoded-word-crlf-in-header.eml`, and the outgoing
-//! half lands with the fix. See the document.
+//! **The gap the audit found is closed (#864).** A decoded header value
+//! carrying CR/LF reached the generator and turned the rest of that value
+//! into headers — reachably a `Bcc`, which is a copy of a reply going
+//! somewhere the sender never chose. Both halves are asserted here now: the
+//! *input* half, that such a value really does arrive
+//! (`encoded-word-crlf-in-header.eml`), and the outgoing half, that a
+//! generated message carries only the headers its draft asked for. Neither
+//! is worth much without the other — a parser that silently stripped the
+//! breaks would make the generator look fixed when it was not.
 
 use postio_model::address::EmailAddress;
 use postio_model::{AccountId, Draft, Identity, MailboxId, Message, RfcMessageId, mime, outgoing};
@@ -323,6 +325,105 @@ fn a_decoded_header_value_can_carry_cr_and_lf() {
         "the fixture no longer delivers a header value with line breaks in it, \
          so the case the outgoing side has to defend against is untested"
     );
+}
+
+/// The header names in `raw`'s block, lowercased, continuation lines skipped.
+fn header_names(raw: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(raw);
+    let block = text.split("\r\n\r\n").next().unwrap_or("").to_owned();
+    block
+        .lines()
+        .filter(|line| !line.starts_with([' ', '\t']))
+        .filter_map(|line| {
+            line.split_once(':')
+                .map(|(name, _)| name.to_ascii_lowercase())
+        })
+        .collect()
+}
+
+#[test]
+fn a_line_break_in_a_header_value_cannot_become_a_header() {
+    // The outgoing half of `a_decoded_header_value_can_carry_cr_and_lf`, and
+    // the fix for #864. A value with a line break in it used to be written
+    // verbatim, so everything after the break became a header the composer
+    // never set — including, reachably, a `Bcc` or a `To`. That is a copy of
+    // a reply going somewhere the sender did not choose, and the recipient
+    // chips would not show it, because it was never in the draft.
+    for (what, subject) in [
+        ("CRLF", "ok\r\nX-Injected: yes"),
+        ("a lone LF", "ok\nX-Injected: yes"),
+        ("a lone CR", "ok\rX-Injected: yes"),
+        ("a recipient", "ok\r\nBcc: eve@example.org"),
+        ("several", "a\r\nX-One: 1\r\nX-Two: 2"),
+        ("a leading break", "\r\nX-Injected: yes"),
+    ] {
+        let mut draft = draft(
+            "placeholder",
+            vec![EmailAddress::new(Some("Grace"), "grace@example.net")],
+        );
+        draft.subject = subject.to_owned();
+        let built = outgoing::build(&draft, &identity(), &[], None);
+
+        let names = header_names(&built.raw);
+        for injected in ["x-injected", "x-one", "x-two"] {
+            assert!(
+                !names.contains(&injected.to_owned()),
+                "{what} in a subject produced a `{injected}` header: {names:?}"
+            );
+        }
+        assert_eq!(
+            names.iter().filter(|name| *name == "bcc").count(),
+            0,
+            "{what} in a subject produced a Bcc header, which is a copy of \
+             this message going somewhere the sender never saw: {names:?}"
+        );
+        assert!(
+            names.contains(&"subject".to_owned()),
+            "{what} lost the subject header entirely: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn replying_to_a_message_whose_subject_carries_line_breaks_writes_the_headers_the_draft_asked_for()
+{
+    // #864's acceptance, against the fixture that carries the real shape: a
+    // subject whose *decoded* value has CR/LF in it, which is how this
+    // reaches Postio without anybody typing it.
+    let parsed =
+        mime::parse(postio_model::test_corpus::load("encoded-word-crlf-in-header").bytes());
+    let mut draft = draft(
+        "placeholder",
+        vec![EmailAddress::new(Some("Grace"), "grace@example.net")],
+    );
+    draft.subject =
+        postio_model::subject::reply_subject(parsed.subject.as_deref().unwrap_or_default());
+    assert!(
+        draft.subject.contains(['\r', '\n']),
+        "the reply subject no longer carries the break, so this asserts \
+         nothing about the generator"
+    );
+
+    let built = outgoing::build(&draft, &identity(), &[], None);
+    let names = header_names(&built.raw);
+    let expected = [
+        "message-id",
+        "date",
+        "from",
+        "reply-to",
+        "subject",
+        "to",
+        "mime-version",
+        "content-type",
+        "content-transfer-encoding",
+    ];
+    for name in &names {
+        assert!(
+            expected.contains(&name.as_str()),
+            "the generated message carries `{name}`, which the draft never \
+             asked for: {names:?}"
+        );
+    }
 }
 
 #[test]
