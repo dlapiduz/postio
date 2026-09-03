@@ -638,6 +638,9 @@ async fn confirm_sent_copy(
                 html: stored_text(message.body.html.as_deref()),
                 headers: block.as_ref().map(|block| block.text.clone()),
                 headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
+                // Postio composed and encoded these bytes, so there is no
+                // decode to have gone wrong (#901).
+                encoding_problems: false,
             };
             let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
         }
