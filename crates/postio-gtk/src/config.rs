@@ -294,9 +294,10 @@ fn save_current_search(window: &Window, path: &Path) {
         return;
     }
 
-    let mut config = Config::load_from_path(path).unwrap_or_default();
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let mut config = Config::from_toml_str(&original).unwrap_or_default();
     config.save_filter(&query);
-    if let Err(error) = config.save_to_path(path) {
+    if let Err(error) = write_filters(&original, &config, path) {
         tracing::warn!(%error, "could not save the search");
         return;
     }
@@ -305,17 +306,29 @@ fn save_current_search(window: &Window, path: &Path) {
         .set_saved_searches(&saved_searches(&config));
 }
 
+/// Writes `config.filters`' current state back to `path`, touching only
+/// `[filters]` — every saved-search verb in this module (`Ctrl+S`, rename,
+/// reorder, delete) writes through this rather than [`Config::save_to_path`],
+/// which reserializes the whole file and would silently drop a hand-written
+/// comment or reorder every other section on someone's next search save
+/// (#885).
+fn write_filters(original: &str, config: &Config, path: &Path) -> postio_config::Result<()> {
+    let patched = postio_config::patch_filters(original, &config.filters)?;
+    Config::write_text_to_path(&patched, path)
+}
+
 /// Move `key` up or down among the pinned filters, and repaint.
 ///
 /// No confirmation: [`postio_core::Recovery`] has nothing to say about a
 /// reorder because it destroys nothing -- moving it back is the same
 /// action once more, the same as any other position swap.
 fn move_saved_search(window: &Window, path: &Path, key: &str, direction: Reorder) {
-    let mut config = Config::load_from_path(path).unwrap_or_default();
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let mut config = Config::from_toml_str(&original).unwrap_or_default();
     if !config.move_filter(key, direction) {
         return;
     }
-    if let Err(error) = config.save_to_path(path) {
+    if let Err(error) = write_filters(&original, &config, path) {
         tracing::warn!(%error, "could not save the reordered searches");
         return;
     }
@@ -361,11 +374,12 @@ fn request_delete(window: &Window, path: &Path, key: &str) {
 }
 
 fn delete_saved_search(window: &Window, path: &Path, key: &str) {
-    let mut config = Config::load_from_path(path).unwrap_or_default();
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let mut config = Config::from_toml_str(&original).unwrap_or_default();
     if !config.delete_filter(key) {
         return;
     }
-    if let Err(error) = config.save_to_path(path) {
+    if let Err(error) = write_filters(&original, &config, path) {
         tracing::warn!(%error, "could not save after deleting the search");
         return;
     }
@@ -417,11 +431,12 @@ fn request_rename(window: &Window, path: &Path, key: &str) {
 }
 
 fn rename_saved_search(window: &Window, path: &Path, key: &str, name: &str) {
-    let mut config = Config::load_from_path(path).unwrap_or_default();
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let mut config = Config::from_toml_str(&original).unwrap_or_default();
     if !config.rename_filter(key, name) {
         return;
     }
-    if let Err(error) = config.save_to_path(path) {
+    if let Err(error) = write_filters(&original, &config, path) {
         tracing::warn!(%error, "could not save the renamed search");
         return;
     }
