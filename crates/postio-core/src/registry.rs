@@ -1135,6 +1135,24 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::MapMailboxRole,
+        title: "Map mailbox role",
+        // `M` for map. This branch was cut when `m` was free and #960 took it
+        // for `SetDefaultAccount` in the meantime; shift is how this app
+        // spells the neighbour of a letter already spoken for (`a`/`A`,
+        // `j`/`J`), so the mnemonic survives the collision. `Move`'s own `m`
+        // is scoped to the message surfaces and this context layers over
+        // Global alone, so nothing is shadowed either way.
+        default_binding: "M",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // The previous mapping is the inverse, and a wrong pick costs one
+        // keystroke rather than a dialog (ADR 0035).
+        recovery: Recovery::Undo,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
