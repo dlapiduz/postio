@@ -32,10 +32,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use gtk::{gdk, glib, graphene};
+use gtk::{gdk, glib};
 use postio_gtk::list::Row;
 use postio_gtk::window::Window;
-use postio_gtk::{app, fonts, style};
+use postio_gtk::{app, capture, fonts, style};
 use postio_model::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
 
@@ -390,32 +390,31 @@ fn main() -> glib::ExitCode {
         settle(&window);
     }
 
-    let (width, height) = (window.width(), window.height());
-    let paintable = gtk::WidgetPaintable::new(Some(&window));
-    let snapshot = gtk::Snapshot::new();
-    paintable.snapshot(&snapshot, width as f64, height as f64);
-    let Some(node) = snapshot.to_node() else {
-        eprintln!(
-            "surface: no frame after {SETTLE_MS}ms — is the screen blanked or the \
-             window occluded? Nothing is painted to a surface the compositor is \
-             not showing."
-        );
-        return glib::ExitCode::FAILURE;
-    };
-    let renderer = window
-        .native()
-        .and_then(|native| native.renderer())
-        .expect("a realized window has a renderer");
-    let bounds = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
-    let texture = renderer.render_texture(&node, Some(&bounds));
-
-    match texture.save_to_png(&path) {
-        Ok(()) => {
+    // The picture, and the wait for it, both belong to `postio_gtk::capture`
+    // -- it turns the main loop until the window is actually drawable rather
+    // than until a fixed number of frames has gone past, and it writes no
+    // file when it cannot, so a non-zero exit here means exactly "there is
+    // nothing to look at" (#809).
+    match capture::png(&window, std::path::Path::new(&path)) {
+        Ok(written) => {
+            let (width, height) = (written.width, written.height);
             println!("surface: {width}x{height} -> {path}");
+            if written.stalled {
+                // Said out loud because the picture is misleading in one
+                // specific way, and silently handing it over is how a
+                // compositor problem gets read as an application one (#809).
+                eprintln!(
+                    "surface: the compositor was not presenting this window -- a blanked \
+                     or locked screen -- so the layout was done here. The widgets \
+                     are drawn correctly, but anything composited by another \
+                     process, the reader's web view above all, will be blank."
+                );
+            }
             glib::ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("surface: cannot write {path}: {error}");
+            eprintln!("surface: {error}");
+            eprintln!("surface: NO IMAGE WAS WRITTEN to {path}");
             glib::ExitCode::FAILURE
         }
     }
