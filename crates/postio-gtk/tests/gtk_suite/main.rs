@@ -132,6 +132,7 @@ mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
 mod gtk_window_state;
+mod gtk_window_teardown;
 mod list_model;
 mod no_stray_prints;
 
@@ -750,6 +751,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_teardown::readers_do_not_accumulate_webviews",
         gtk_reader_teardown::readers_do_not_accumulate_webviews as fn(),
+    ),
+    (
+        "gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_web_process",
+        gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_web_process as fn(),
+    ),
+    (
+        "gtk_window_teardown::dropping_a_window_without_destroying_it_is_not_enough",
+        gtk_window_teardown::dropping_a_window_without_destroying_it_is_not_enough as fn(),
     ),
 ];
 
