@@ -36,6 +36,7 @@ mod encryption;
 mod labels;
 mod list_statement_count;
 mod mailbox_counts;
+mod mailbox_roles;
 mod mailbox_size;
 mod mailboxes;
 mod measurements;
