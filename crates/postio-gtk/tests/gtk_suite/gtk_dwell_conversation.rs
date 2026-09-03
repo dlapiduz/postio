@@ -201,11 +201,31 @@ pub fn a_single_message_taking_the_pane_stops_the_conversations_clock() {
     });
 
     window.show_conversation(vec![row(0), row(1), row(2)]);
-    settle();
+
+    // Opening focuses the first unread and starts *its* clock, so that one
+    // fires first and has nothing to do with what is under test. Waited out
+    // rather than ignored: `settle()` used to stand here, and 64 drains are
+    // faster than the 60ms clock alone and slower than it inside the full
+    // suite — so the control below read the opening message's id on a loaded
+    // machine and row 2's on an idle one. A count is not a wait (#842).
+    //
+    // (In the running application this clock is cancelled by `show_thread`
+    // when nobody chose the row. Reaching `show_conversation` directly, as
+    // both the drill-in and #755's open-from-the-list eventually do, leaves
+    // it armed.)
+    settle_until(|| dwelled.borrow().contains(&MessageId::new(1)));
+    assert_eq!(
+        *dwelled.borrow(),
+        vec![MessageId::new(1)],
+        "opening a conversation focuses its first unread and starts that \
+         message's clock; if this changes, the control below is measuring \
+         something else"
+    );
+    dwelled.borrow_mut().clear();
 
     // ── the control, for the reason the case above has one ───────────────
     pane.focus_message(MessageId::new(2));
-    settle_until(|| !dwelled.borrow().is_empty());
+    settle_until(|| dwelled.borrow().contains(&MessageId::new(2)));
     assert_eq!(
         *dwelled.borrow(),
         vec![MessageId::new(2)],
