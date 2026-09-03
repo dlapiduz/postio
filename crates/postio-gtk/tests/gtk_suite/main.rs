@@ -39,6 +39,7 @@
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
+mod gtk_capture;
 mod gtk_cheatsheet;
 mod gtk_composer_action_row;
 mod gtk_composer_attachments;
@@ -564,6 +565,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_accelerators::menu_items_carry_parseable_accelerators",
         gtk_accelerators::menu_items_carry_parseable_accelerators as fn(),
+    ),
+    (
+        "gtk_capture::a_window_the_compositor_never_showed_is_an_error",
+        gtk_capture::a_window_the_compositor_never_showed_is_an_error as fn(),
+    ),
+    (
+        "gtk_capture::a_capture_that_fails_leaves_no_file",
+        gtk_capture::a_capture_that_fails_leaves_no_file as fn(),
+    ),
+    (
+        "gtk_capture::a_presented_window_is_captured_without_the_caller_counting_frames",
+        gtk_capture::a_presented_window_is_captured_without_the_caller_counting_frames as fn(),
     ),
     (
         "gtk_cheatsheet::the_cheat_sheet_opens_and_reprints_on_a_rebind",
