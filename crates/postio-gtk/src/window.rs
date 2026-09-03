@@ -1348,6 +1348,23 @@ impl Window {
             let finder = self.finder();
             move |mailboxes| finder.set_mailboxes(mailboxes)
         });
+        // A picked label goes onto whatever the box was opened over. The
+        // selection is resolved here rather than captured when the box
+        // opened, for the reason `Move`'s own pick does it this way: the box
+        // is modal over the list, so the selection cannot have moved, and
+        // reading it now is one fewer piece of state to keep true.
+        self.finder().connect_label(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |label| {
+                window.close_finder();
+                window.act(postio_core::Command::AddLabel {
+                    target: postio_core::MessageTarget::Selection,
+                    label: Some(label),
+                    on: None,
+                });
+            }
+        ));
         self.finder().connect_folder(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -2463,6 +2480,15 @@ impl Window {
         if matches!(command, postio_core::Command::Move { to: None, .. }) {
             self.open_finder(Mode::Mailbox);
             self.imp().pending_move.set(true);
+            return;
+        }
+        // The same shape for a label (#780, ADR 0005): `None` means "ask",
+        // and an answered `AddLabel` -- from the pick below -- carries its
+        // label and goes straight out. Without this the command reaches the
+        // dispatcher, which rejects it with "Pick a label to add", and the
+        // menu item is the dead end #766 removed it for being.
+        if matches!(command, postio_core::Command::AddLabel { label: None, .. }) {
+            self.open_finder(Mode::Label);
             return;
         }
         // Opening a message is navigation, not a store verb: it changes what

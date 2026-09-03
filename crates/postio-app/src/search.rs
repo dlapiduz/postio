@@ -53,7 +53,7 @@ use postio_model::AccountScope;
 use postio_model::ids::AccountId;
 use postio_search::facets::{Facets, Scope};
 use postio_search::{ParsedQuery, SearchResults};
-use postio_storage::repository::ContactRepository;
+use postio_storage::repository::{ContactRepository, LabelRepository};
 use postio_storage::{Database, PooledConnection};
 
 use crate::Wiring;
@@ -113,6 +113,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     install_results(window, feeds, &view, held, wiring, order.clone());
     install_order_toggle(window, &finder, feeds, order);
     load_contacts(&finder, account.id, wiring);
+    load_labels(&finder, account.id, wiring);
 
     Some(view)
 }
@@ -705,6 +706,37 @@ fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
             };
             tracing::debug!(count = contacts.len(), "correspondents read");
             finder.set_contacts(&contacts);
+        }
+    });
+}
+
+/// Reads the account's labels and hands them to `+` (#780).
+///
+/// Off the UI thread and shaped exactly like [`load_contacts`], for a
+/// weaker version of the same reason: an account's labels are a handful
+/// rather than a table, but the read still goes through the same pool every
+/// pane is waiting on at startup, and there is no reason for the window to
+/// hold still for it.
+///
+/// Read once, when the search surface is installed. A label created after
+/// that is not offered until the next start -- which is the same limit the
+/// correspondents list has, and worth stating rather than discovering: there
+/// is no label-creation surface yet, so nothing can create one mid-session.
+fn load_labels(finder: &Finder, account: AccountId, wiring: &Wiring) {
+    let answer = ask(&wiring.database, &wiring.runtime, move |connection| {
+        LabelRepository::new(connection)
+            .list(account)
+            .map_err(|error| tracing::warn!(%error, "could not read the labels"))
+            .ok()
+    });
+    glib::spawn_future_local({
+        let finder = finder.clone();
+        async move {
+            let Ok(Some(labels)) = answer.recv().await else {
+                return;
+            };
+            tracing::debug!(count = labels.len(), "labels read");
+            finder.set_labels(&labels);
         }
     });
 }
