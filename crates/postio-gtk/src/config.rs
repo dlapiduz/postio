@@ -308,10 +308,10 @@ fn save_current_search(window: &Window, path: &Path) {
 
 /// Writes `config.filters`' current state back to `path`, touching only
 /// `[filters]` — every saved-search verb in this module (`Ctrl+S`, rename,
-/// reorder, delete) writes through this rather than [`Config::save_to_path`],
-/// which reserializes the whole file and would silently drop a hand-written
-/// comment or reorder every other section on someone's next search save
-/// (#885).
+/// reorder, delete) writes through this rather than through
+/// [`Config::to_toml_string`], which reserializes the whole file and would
+/// silently drop a hand-written comment or reorder every other section on
+/// someone's next search save (#885).
 fn write_filters(original: &str, config: &Config, path: &Path) -> postio_config::Result<()> {
     let patched = postio_config::patch_filters(original, &config.filters)?;
     Config::write_text_to_path(&patched, path)

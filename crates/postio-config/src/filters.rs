@@ -51,10 +51,10 @@ impl Config {
     /// Save `query` as a new pinned filter, named from the query text.
     ///
     /// This is `Ctrl+S`'s write path (issue #10): the caller still has to
-    /// call [`Config::save_to_path`] afterward, the same as any other
-    /// programmatic edit -- this only touches the in-memory table. Returns
-    /// the key the filter was stored under, since the name is derived rather
-    /// than chosen and a caller updating a sidebar needs to know it.
+    /// call [`patch_filters`] afterward, the same as any other programmatic
+    /// edit -- this only touches the in-memory table. Returns the key the
+    /// filter was stored under, since the name is derived rather than chosen
+    /// and a caller updating a sidebar needs to know it.
     pub fn save_filter(&mut self, query: &str) -> String {
         let key = self.unique_filter_key(query);
         self.filters.insert(

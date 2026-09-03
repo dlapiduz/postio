@@ -256,15 +256,6 @@ impl Config {
         toml::to_string_pretty(&table).map_err(|err| ConfigError::Serialize(err.to_string()))
     }
 
-    /// Write the configuration to `path`, creating parent directories.
-    ///
-    /// The file is written `0600` on Unix: it holds no secrets, but it does
-    /// describe the user's accounts.
-    pub fn save_to_path(&self, path: &Path) -> Result<()> {
-        let text = self.to_toml_string()?;
-        Self::write_text_to_path(&text, path)
-    }
-
     /// Write a starter `config.toml` at `path` if nothing is there yet.
     ///
     /// Returns `Ok(true)` if it wrote one, `Ok(false)` if a file already
@@ -295,11 +286,11 @@ impl Config {
     /// Writes already-rendered TOML text to `path`, creating parent
     /// directories and setting `0600` on Unix.
     ///
-    /// Shared by [`Config::save_to_path`] and [`Config::seed_if_missing`],
-    /// which write different text to the same place under the same rules —
-    /// and by [`patch_filters`]'s callers, which write a *patched* text
-    /// rather than a freshly serialized `Config` and so cannot go through
-    /// `save_to_path` without undoing the whole point of patching.
+    /// Shared by [`Config::seed_if_missing`], which writes a starter file
+    /// with a header prepended, and by [`patch_filters`]'s callers, which
+    /// write a *patched* text rather than a freshly serialized `Config` —
+    /// see that function's own doc for why a whole-struct reserialize is
+    /// exactly what a structured edit here must not do.
     pub fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
@@ -361,7 +352,7 @@ mod tests {
         cfg.keys
             .overrides_mut()
             .insert("archive".into(), "x".into());
-        cfg.save_to_path(&path).unwrap();
+        Config::write_text_to_path(&cfg.to_toml_string().unwrap(), &path).unwrap();
 
         assert_eq!(Config::load_from_path(&path).unwrap(), cfg);
         std::fs::remove_dir_all(&dir).ok();
