@@ -128,7 +128,16 @@ mod imp {
         /// built before storage has been wired and start resolving parts the
         /// moment something supplies a source — the same shape the search
         /// preview uses, and for the same reason.
-        pub blobs: std::cell::RefCell<Option<std::rc::Rc<dyn crate::reader::BlobSource>>>,
+        /// Shared as an `Rc` so the reader's blob-source closure can hold
+        /// *this cell* rather than the whole `Window` (#794). The closure
+        /// becomes the `Rc<dyn BlobSource>` the reader hands to its
+        /// `WebContext`, so capturing the window there closed a cycle
+        /// through WebKit; capturing a weak window instead made inline
+        /// images silently fail to decode once the last strong reference
+        /// went. It needs the cell, not the window, and it needs it live —
+        /// `set_blob_source` runs after the reader is built.
+        pub blobs:
+            std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn crate::reader::BlobSource>>>>,
         /// Where the reader's remote-image allow list is read from and saved
         /// back to, when it should not be the real one.
         ///
@@ -791,11 +800,13 @@ impl Window {
         // back onto the Window. That cycle lives inside WebKit's context,
         // which is why destroying the window never broke it and why the
         // WebProcess was still attached at `exit()`.
+        // Captures the blob cell, not the window: no reference back to the
+        // `Window` at all, so there is no cycle to break and nothing to
+        // upgrade. See the field's own comment (#794).
         let source = {
-            let window = self.downgrade();
+            let blobs = std::rc::Rc::clone(&self.imp().blobs);
             move |content_id: &str| {
-                let window = window.upgrade()?;
-                let blobs = window.imp().blobs.borrow();
+                let blobs = blobs.borrow();
                 blobs.as_ref().and_then(|blobs| blobs.resolve(content_id))
             }
         };
