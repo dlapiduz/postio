@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Config, Extras};
+use crate::Extras;
 
 /// Message-list row height. The PLATE design is airy (40px rows); the other two
 /// tighten the same row anatomy rather than changing it.
@@ -85,7 +85,7 @@ impl Default for UiConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::Config;
 
     #[test]
     fn sender_avatars_round_trips_through_the_config_file() {
