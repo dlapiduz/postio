@@ -650,6 +650,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_dwell_conversation::opening_a_conversation_stops_the_lists_read_clock as fn(),
     ),
     (
+        "gtk_dwell_conversation::a_single_message_taking_the_pane_stops_the_conversations_clock",
+        gtk_dwell_conversation::a_single_message_taking_the_pane_stops_the_conversations_clock as fn(),
+    ),
+    (
         "gtk_editable_dialect::webkit_editing_gestures_stay_inside_the_canonical_subset",
         gtk_editable_dialect::webkit_editing_gestures_stay_inside_the_canonical_subset as fn(),
     ),

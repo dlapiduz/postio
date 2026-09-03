@@ -23,6 +23,14 @@
 //! conversation, and waits past it. It fails because the clock was not
 //! stopped, not because of where a machine happened to be.
 //!
+//! # The other half: the conversation's own clock
+//!
+//! #945 asks for an audit of every place "what the reader is showing" can
+//! change. The list's clock is stopped at three of them; the conversation's
+//! is stopped at none, and the same argument applies to it word for word.
+//! `a_single_message_taking_the_pane_stops_the_conversations_clock` is the
+//! one of those a test can drive directly.
+//!
 //! Skips without a display. Nothing here touches the network.
 
 use std::cell::RefCell;
@@ -91,6 +99,23 @@ fn settle() {
     }
 }
 
+/// Drive the loop until `done`, for the *positive* controls.
+///
+/// A fixed `wait` is right for the negative assertions below — you cannot
+/// wait for something not to happen, so the duration is part of what they
+/// mean — and wrong for the controls, which are waiting for a timer that
+/// will fire. Written as a duration first, this file failed twice on a
+/// loaded machine and passed once an `eprintln!` slowed it down, which is
+/// the whole of why CLAUDE.md says to wait on conditions.
+fn settle_until(done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + postio_test_support::patience();
+    let context = gtk::glib::MainContext::default();
+    while !done() && std::time::Instant::now() < deadline {
+        while context.iteration(false) {}
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 pub fn opening_a_conversation_stops_the_lists_read_clock() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -125,7 +150,7 @@ pub fn opening_a_conversation_stops_the_lists_read_clock() {
     // cursor on row 0 and the pane dedupes on the id, so moving *to* row 0
     // is not a landing.
     list.next_row();
-    wait(DWELL * 4);
+    settle_until(|| !dwelled.borrow().is_empty());
     assert_eq!(
         *dwelled.borrow(),
         vec![MessageId::new(2)],
@@ -149,6 +174,67 @@ pub fn opening_a_conversation_stops_the_lists_read_clock() {
         "the list's clock ran on while a conversation was open, so the row's \
          representative was marked read without focus ever reaching it — \
          'opened the thread, all six read', which ADR 0015 Q4 forbids: {:?}",
+        dwelled.borrow()
+    );
+
+    window.destroy();
+}
+
+pub fn a_single_message_taking_the_pane_stops_the_conversations_clock() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    let pane = window.conversation();
+    pane.set_dwell_delay(DWELL);
+
+    let dwelled: Rc<RefCell<Vec<MessageId>>> = Rc::new(RefCell::new(Vec::new()));
+    pane.connect_dwelled({
+        let dwelled = dwelled.clone();
+        move |message| dwelled.borrow_mut().push(message)
+    });
+
+    window.show_conversation(vec![row(0), row(1), row(2)]);
+    settle();
+
+    // ── the control, for the reason the case above has one ───────────────
+    pane.focus_message(MessageId::new(2));
+    settle_until(|| !dwelled.borrow().is_empty());
+    assert_eq!(
+        *dwelled.borrow(),
+        vec![MessageId::new(2)],
+        "resting on a focused message did not start or fire the \
+         conversation's clock, so nothing below this could fail"
+    );
+    dwelled.borrow_mut().clear();
+
+    // ── and a single message taking the pane stops it ────────────────────
+    // `show_message` says so itself: "a single message takes the pane back
+    // from a conversation (#755): the cursor moved to a row that is not one,
+    // so the stack would be showing mail the user has left". Mail the user
+    // has left is not mail in front of them, and the clock that measures
+    // exactly that has to stop -- the same argument #797 made for the list's
+    // clock, which is stopped here and was not.
+    pane.focus_message(MessageId::new(3));
+    window.show_message(
+        &postio_model::MessageBody {
+            text: Some("a different message entirely".to_owned()),
+            html: None,
+        },
+        Some("ada@example.com"),
+    );
+    wait(DWELL * 4);
+
+    assert!(
+        dwelled.borrow().is_empty(),
+        "the conversation's clock ran on after a single message took the \
+         pane, marking read a message the reader had already left: {:?}",
         dwelled.borrow()
     );
 
