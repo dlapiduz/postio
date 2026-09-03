@@ -519,8 +519,8 @@ pub struct StoredBody {
     /// through so a reader can say so. Here for the same reason
     /// `headers_truncated` is: a body and the fact that it may not be the
     /// sender's words are one piece of information, and a `StoredBody` that
-    /// could be built without answering this is one somebody eventually
-    /// builds without answering it (#901).
+    /// can be built without answering this is one somebody eventually builds
+    /// without answering it (#901).
     pub encoding_problems: bool,
 }
 
