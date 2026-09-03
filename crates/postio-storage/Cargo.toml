@@ -12,7 +12,10 @@ repository.workspace = true
 # Test-only: exposes the `test_support` throwaway-database helpers. Off by
 # default; downstream crates enable it from their dev-dependencies so nothing
 # ships in a normal build.
-test-support = ["dep:tempfile", "postio-model/test-corpus"]
+# `rusqlite/trace` is what `test_support::counting` reads statement and row
+# counts from (#100). It rides on this feature rather than on the plain
+# dependency so an ordinary build still carries no tracing binding at all.
+test-support = ["dep:tempfile", "postio-model/test-corpus", "rusqlite/trace"]
 
 [dependencies]
 blake3 = "1.8.7"
