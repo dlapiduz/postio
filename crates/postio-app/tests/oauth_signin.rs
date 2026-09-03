@@ -348,12 +348,12 @@ sources = ["own-client"]
     play_the_browser(&authorize_url, "the-code");
 
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Saved | Status::Failed(_))),
+        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
         "the sign-in never settled: {:?}",
         screen.status()
     );
     assert!(
-        matches!(screen.status(), Status::Saved),
+        matches!(screen.status(), Status::SyncWindow),
         "the sign-in failed: {:?}",
         screen.status()
     );
