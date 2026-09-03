@@ -91,6 +91,7 @@ mod gtk_onboarding;
 mod gtk_onboarding_enter;
 mod gtk_onboarding_guess;
 mod gtk_onboarding_name;
+mod gtk_onboarding_sync_window;
 mod gtk_pane_cycle;
 mod gtk_parts;
 mod gtk_prev_view;
@@ -701,6 +702,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_onboarding_name::a_typed_name_reaches_the_submission_and_a_blank_one_stays_empty",
         gtk_onboarding_name::a_typed_name_reaches_the_submission_and_a_blank_one_stays_empty as fn(),
+    ),
+    (
+        "gtk_onboarding_sync_window::picking_a_window_updates_the_estimate_and_start_sync_fires_it",
+        gtk_onboarding_sync_window::picking_a_window_updates_the_estimate_and_start_sync_fires_it
+            as fn(),
     ),
     (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",

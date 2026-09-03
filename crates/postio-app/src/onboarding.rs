@@ -194,24 +194,48 @@ pub fn install(
         }
     });
 
+    // What finishes the screen for good: swap the window content back and
+    // start the application over the new account, the exact sequence
+    // `run()`'s `activate` handler runs when an account is there from the
+    // start — installing the command handlers and draining the event
+    // queues, not only feeding the panes. Without that a window fed here
+    // would show mail and answer no key, which is the shape of bug
+    // `postio-bl2` is named for.
+    //
+    // Held back from `submit`/`submit_oauth`'s own `on_saved` (below) by
+    // the sync-window step (#876): the account and its credential are
+    // already written by the time that step shows, so `Status::Saved` is
+    // real, but the window this closure swaps to should not appear until
+    // the user has chosen how far back to sync.
+    let finish = {
+        let window = window.clone();
+        let wiring = wiring.clone();
+        let previous = previous.clone();
+        move || {
+            window.set_content(previous.as_ref());
+            crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
+        }
+    };
+    screen.connect_start_sync({
+        let finish = finish.clone();
+        move |window| {
+            if let Err(error) = write_sync_window(window) {
+                tracing::warn!(%error, "could not save the chosen sync window");
+            }
+            finish();
+        }
+    });
+
     screen.connect_submit({
         let screen = screen.clone();
         let wiring = wiring.clone();
         let cancellation = cancellation.clone();
+        // `submit`/`submit_oauth` show the sync-window step and stop —
+        // `finish` runs from `connect_start_sync` above once the user picks
+        // one and presses `Start sync`, not from here.
         let on_saved = {
-            let window = window.clone();
-            let wiring = wiring.clone();
-            let previous = previous.clone();
-            move || {
-                window.set_content(previous.as_ref());
-                // The exact sequence `run()`'s `activate` handler runs when
-                // an account is there from the start — installing the
-                // command handlers and draining the event queues, not only
-                // feeding the panes. Without that a window fed here would
-                // show mail and answer no key, which is the shape of bug
-                // `postio-bl2` is named for.
-                crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
-            }
+            let screen = screen.clone();
+            move || screen.set_status(Status::SyncWindow)
         };
         let offer = offer.clone();
         let jmap = jmap.clone();
@@ -254,6 +278,25 @@ pub fn install(
             }
         }
     });
+}
+
+/// Writes the chosen sync window (#876) to `[sync].initial_sync_messages`,
+/// touching only that key — the same [`postio_config::patch_sync`] every
+/// other structured write to `[sync]` goes through (#874), so a hand-written
+/// comment elsewhere in the file survives.
+///
+/// A write that fails is logged and otherwise swallowed: the account and its
+/// credential are already saved by the time this runs, and the field's own
+/// default (5,000, [`SyncWindow::LastYear`](postio_gtk::onboarding::SyncWindow::LastYear)'s
+/// own count) is exactly what a fresh install already has, so a failed
+/// write here costs the size the user picked, not the account.
+fn write_sync_window(window: postio_gtk::onboarding::SyncWindow) -> postio_config::Result<()> {
+    let path = postio_config::paths::config_path()?;
+    let original = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
+    config.sync.initial_sync_messages = window.message_count();
+    let patched = postio_config::patch_sync(&original, &config.sync)?;
+    postio_config::Config::write_text_to_path(&patched, &path)
 }
 
 /// The cancel token for the probe currently in flight, if there is one.
