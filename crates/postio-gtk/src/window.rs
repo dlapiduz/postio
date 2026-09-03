@@ -73,6 +73,25 @@ pub const DEFAULT_SIZE: (i32, i32) = (1120, 700);
 /// `n of m` says so honestly.
 const THREAD_PAGE: u32 = 500;
 
+/// What the reading pane is showing, as far as the read-clocks care.
+///
+/// Deliberately coarser than "which widget is visible": the only thing this
+/// distinguishes is whose dwell may go on running, and every value that stops
+/// both of them is the same value. A surface added later picks one of these
+/// rather than choosing which timers to cancel, which is the whole point of
+/// #945 -- five call sites each cancelling one of two timers is a shape where
+/// a new one silently reproduces #797 somewhere new.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Showing {
+    /// One message, which is also the row the list cursor is resting on.
+    Message,
+    /// A conversation, whose per-message clock is the one that counts.
+    Conversation,
+    /// The composer has the pane, the pane was emptied, or the user has gone
+    /// somewhere else entirely. Nothing anyone is reading, so nothing is read.
+    NothingInFrontOfAnybody,
+}
+
 mod imp {
     use std::cell::OnceCell;
 
@@ -637,6 +656,52 @@ impl Window {
     /// The tail of [`Window::show_thread`] that is not about the column, so
     /// [`Window::open_conversation`] can raise the pane without one. Expects
     /// `rows` oldest first — [`crate::thread::arrange`]'s order — because
+    /// Whether the conversation pane is the one on screen.
+    ///
+    /// Asked of the slot and of the widget, never of `reading`: that flag is
+    /// about a *single message* being open, and `show_conversation` leaves it
+    /// alone -- so "not reading" is true both when the pane is empty and when
+    /// a whole conversation is sitting in it.
+    fn conversation_visible(&self) -> bool {
+        self.imp()
+            .conversation
+            .get()
+            .is_some_and(|pane| pane.widget().is_visible())
+    }
+
+    /// What the reading pane is showing now.
+    ///
+    /// #945: the read-clocks were two independent timers with five
+    /// independent cancel points, and every new place that changes what the
+    /// reader is looking at had to remember to stop the right one. #797 is
+    /// what forgetting costs -- mail marked read that nobody looked at, which
+    /// is unrecoverable in the way that matters: an unread the user never saw
+    /// is gone from the count and from the bolding that would have brought
+    /// them back to it.
+    ///
+    /// So the cancelling is one decision in one place, and every site that
+    /// changes what is in front of the reader states what it is showing
+    /// instead of naming a timer.
+    fn reader_now_shows(&self, showing: Showing) {
+        // The list's clock measures "this row was in front of a person long
+        // enough to have been read" (#71). A single message in the pane *is*
+        // that row -- the pane follows the cursor (#70) -- so showing one is
+        // the only thing that does not stop it.
+        if showing != Showing::Message {
+            self.list().cancel_dwell();
+        }
+        // The conversation's measures the same thing about its own focused
+        // message (ADR 0015 Q4), so it stops for everything except the
+        // conversation. Asked of the slot rather than of `conversation()`,
+        // which would *build* the pane: a window that has never opened one
+        // has no clock to stop.
+        if showing != Showing::Conversation
+            && let Some(pane) = self.imp().conversation.get()
+        {
+            pane.cancel_dwell();
+        }
+    }
+
     /// that is how the pane numbers them.
     pub fn show_conversation(&self, rows: Vec<crate::list::Row>) {
         // The list's dwell measures "this row was in front of a person long
@@ -659,7 +724,11 @@ impl Window {
         // inactive. It used to depend on `sync_reading_pane`'s
         // `if !self.reading()` happening to run first, which is timing rather
         // than a decision -- and on a slow machine it did not. #797.
-        self.list().cancel_dwell();
+        //
+        // Said as "the pane is showing a conversation now" rather than as
+        // "cancel the list's timer", so the next surface that takes the pane
+        // inherits the decision instead of having to rediscover it (#945).
+        self.reader_now_shows(Showing::Conversation);
 
         let pane = self.conversation();
         pane.open(rows);
@@ -1013,6 +1082,12 @@ impl Window {
         // the cursor moved to a row that is not one, so the stack would be
         // showing mail the user has left.
         self.take_pane_from_conversation();
+        // The conversation the user has left must not go on being read: its
+        // clock is running on a message that is no longer in front of them.
+        // The list's keeps running -- a single message in the pane *is* the
+        // row the cursor is on, and stopping it here would mean nothing in
+        // the list ever went read at all (#945).
+        self.reader_now_shows(Showing::Message);
         self.imp().reading.set(true);
         // A claim, not a sync: opening a message is the gesture that takes
         // the pane — over the search preview when `Enter` opens a result —
@@ -1034,6 +1109,7 @@ impl Window {
         self.reader().show_absent(state);
         // As [`show_message`]: a wait plate is still a single message.
         self.take_pane_from_conversation();
+        self.reader_now_shows(Showing::Message);
         self.imp().reading.set(true);
         self.shell().claim_reading();
         self.sync_reading_pane();
@@ -1057,6 +1133,9 @@ impl Window {
             reader.clear();
         }
         self.imp().reading.set(false);
+        // The folder changed or the message went away, so nothing in the
+        // pane is in front of anybody (#945).
+        self.reader_now_shows(Showing::NothingInFrontOfAnybody);
         self.sync_reading_pane();
     }
 
@@ -1109,13 +1188,26 @@ impl Window {
         } else {
             crate::shell::Pane::List
         });
-        // The dwell timer (#71) measures "this message was in front of a
-        // person for long enough to have been read". The composer taking the
-        // pane makes that untrue mid-count, so the clock stops rather than
-        // marking read a message the user looked away from to write a reply.
-        if !self.reading() {
-            self.list().cancel_dwell();
-        }
+        // The dwell timers (#71) measure "this message was in front of a
+        // person for long enough to have been read", so this is the moment to
+        // restate what is in front of them.
+        //
+        // `!self.reading()` used to stand in for "the composer took the
+        // pane", and it cannot: it is equally true while a conversation is
+        // open, because `show_conversation` does not set that flag. Stopping
+        // both clocks on it would mean a conversation could never be read at
+        // all, and stopping only the list's -- what it did before -- meant
+        // the composer taking the pane left the conversation's running.
+        // Naming the surface answers both (#945).
+        self.reader_now_shows(if self.composing() {
+            Showing::NothingInFrontOfAnybody
+        } else if self.conversation_visible() {
+            Showing::Conversation
+        } else if self.reading() {
+            Showing::Message
+        } else {
+            Showing::NothingInFrontOfAnybody
+        });
     }
 
     /// The header's `Compose` button, once `build` has run. `None` only
@@ -1582,9 +1674,12 @@ impl Window {
         // message while you do something else is not reading it, and a
         // machine left alone overnight must not come back with whatever the
         // cursor happened to be on marked read.
+        // Both clocks, not just the list's: a conversation left open while
+        // the user is elsewhere is no more "in front of them" than a list row
+        // is (#945).
         self.connect_is_active_notify(|window| {
             if !window.is_active() {
-                window.list().cancel_dwell();
+                window.reader_now_shows(Showing::NothingInFrontOfAnybody);
             }
         });
 
