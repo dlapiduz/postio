@@ -63,7 +63,7 @@
 //! what makes the panel itself reachable from a binding and the palette,
 //! alongside the main menu.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -452,11 +452,15 @@ mod imp {
         /// Which account the detail view is currently open on, if any —
         /// what an edit's committed value is reported against.
         pub account_detail_id: RefCell<Option<AccountId>>,
-        pub account_detail_display_name: gtk::Entry,
-        pub account_detail_imap_host: gtk::Entry,
-        pub account_detail_imap_port: gtk::SpinButton,
-        pub account_detail_smtp_host: gtk::Entry,
-        pub account_detail_smtp_port: gtk::SpinButton,
+        /// Built on first use by
+        /// [`super::SettingsPanel::ensure_account_detail_fields`], never in
+        /// `build()` or this struct's own `Default` — see that method's
+        /// doc for why.
+        pub account_detail_display_name: OnceCell<gtk::Entry>,
+        pub account_detail_imap_host: OnceCell<gtk::Entry>,
+        pub account_detail_imap_port: OnceCell<gtk::SpinButton>,
+        pub account_detail_smtp_host: OnceCell<gtk::Entry>,
+        pub account_detail_smtp_port: OnceCell<gtk::SpinButton>,
         /// Set while [`super::SettingsPanel::open_account_detail`] is
         /// populating the fields above, so setting an `Entry`'s text does
         /// not itself fire an edit — the same guard [`SettingsPanel::load`]
@@ -524,11 +528,11 @@ mod imp {
                 account_enabled_changed: RefCell::new(Vec::new()),
                 account_detail: gtk::Box::new(gtk::Orientation::Vertical, 8),
                 account_detail_id: RefCell::new(None),
-                account_detail_display_name: gtk::Entry::new(),
-                account_detail_imap_host: gtk::Entry::new(),
-                account_detail_imap_port: gtk::SpinButton::with_range(1.0, 65535.0, 1.0),
-                account_detail_smtp_host: gtk::Entry::new(),
-                account_detail_smtp_port: gtk::SpinButton::with_range(1.0, 65535.0, 1.0),
+                account_detail_display_name: OnceCell::new(),
+                account_detail_imap_host: OnceCell::new(),
+                account_detail_imap_port: OnceCell::new(),
+                account_detail_smtp_host: OnceCell::new(),
+                account_detail_smtp_port: OnceCell::new(),
                 account_detail_loading: Cell::new(false),
                 account_edited: RefCell::new(Vec::new()),
                 filters_list: gtk::ListBox::new(),
@@ -1234,21 +1238,123 @@ impl SettingsPanel {
         else {
             return;
         };
+        self.ensure_account_detail_fields();
         imp.account_detail_loading.set(true);
         imp.account_detail_display_name
+            .get()
+            .expect("built above")
             .set_text(&account.display_name);
         imp.account_detail_imap_host
+            .get()
+            .expect("built above")
             .set_text(&account.incoming.host);
         imp.account_detail_imap_port
+            .get()
+            .expect("built above")
             .set_value(f64::from(account.incoming.port));
         imp.account_detail_smtp_host
+            .get()
+            .expect("built above")
             .set_text(&account.outgoing.host);
         imp.account_detail_smtp_port
+            .get()
+            .expect("built above")
             .set_value(f64::from(account.outgoing.port));
         imp.account_detail_loading.set(false);
         *imp.account_detail_id.borrow_mut() = Some(id);
         imp.account_detail.set_visible(true);
         imp.accounts_scroller.set_visible(false);
+    }
+
+    /// Builds the detail view's five field widgets, the first time any
+    /// account's detail is opened — never during `build()` or this
+    /// widget's own construction.
+    ///
+    /// `SettingsPanel` is built as a hidden overlay child while `Window::new`
+    /// is still wiring up its own overlay siblings and shortcut controllers
+    /// (`window.rs`), and constructing a widget with its own internal event
+    /// controllers there was found to corrupt keyboard routing for the rest
+    /// of that window (#873, about a `gtk::DropDown`) — `gtk::Entry` and
+    /// `gtk::SpinButton` carry the same kind of internal `GtkText`
+    /// key/IM controllers a `DropDown`'s type-ahead does, so they get the
+    /// same treatment: built only once a real interaction (opening an
+    /// account's detail) proves the window has long since finished
+    /// constructing.
+    fn ensure_account_detail_fields(&self) {
+        let imp = self.imp();
+        if imp.account_detail_display_name.get().is_some() {
+            return;
+        }
+
+        let display_name = gtk::Entry::new();
+        display_name.add_css_class("postio-settings-account-detail-display-name");
+        display_name.update_property(&[gtk::accessible::Property::Label("Display name")]);
+        display_name.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::DisplayName(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("Display name", &display_name));
+        let _ = imp.account_detail_display_name.set(display_name);
+
+        let imap_host = gtk::Entry::new();
+        imap_host.add_css_class("postio-settings-account-detail-imap-host");
+        imap_host.update_property(&[gtk::accessible::Property::Label("IMAP host")]);
+        imap_host.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::ImapHost(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("IMAP host", &imap_host));
+        let _ = imp.account_detail_imap_host.set(imap_host);
+
+        let imap_port = gtk::SpinButton::with_range(1.0, 65535.0, 1.0);
+        imap_port.add_css_class("postio-settings-account-detail-imap-port");
+        imap_port.update_property(&[gtk::accessible::Property::Label("IMAP port")]);
+        imap_port.connect_value_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |spin| {
+                panel.commit_account_edit(AccountEdit::ImapPort(spin.value() as u16));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("IMAP port", &imap_port));
+        let _ = imp.account_detail_imap_port.set(imap_port);
+
+        let smtp_host = gtk::Entry::new();
+        smtp_host.add_css_class("postio-settings-account-detail-smtp-host");
+        smtp_host.update_property(&[gtk::accessible::Property::Label("SMTP host")]);
+        smtp_host.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::SmtpHost(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("SMTP host", &smtp_host));
+        let _ = imp.account_detail_smtp_host.set(smtp_host);
+
+        let smtp_port = gtk::SpinButton::with_range(1.0, 65535.0, 1.0);
+        smtp_port.add_css_class("postio-settings-account-detail-smtp-port");
+        smtp_port.update_property(&[gtk::accessible::Property::Label("SMTP port")]);
+        smtp_port.connect_value_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |spin| {
+                panel.commit_account_edit(AccountEdit::SmtpPort(spin.value() as u16));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("SMTP port", &smtp_port));
+        let _ = imp.account_detail_smtp_port.set(smtp_port);
     }
 
     /// Closes the detail view and shows the account list again, as the
@@ -2102,81 +2208,9 @@ impl SettingsPanel {
             move |_| panel.close_account_detail()
         ));
         imp.account_detail.append(&back);
-
-        imp.account_detail_display_name
-            .add_css_class("postio-settings-account-detail-display-name");
-        imp.account_detail_display_name
-            .update_property(&[gtk::accessible::Property::Label("Display name")]);
-        imp.account_detail_display_name
-            .connect_activate(glib::clone!(
-                #[weak(rename_to = panel)]
-                self,
-                move |entry| {
-                    panel.commit_account_edit(AccountEdit::DisplayName(entry.text().to_string()));
-                }
-            ));
-        imp.account_detail.append(&detail_row(
-            "Display name",
-            &imp.account_detail_display_name,
-        ));
-
-        imp.account_detail_imap_host
-            .add_css_class("postio-settings-account-detail-imap-host");
-        imp.account_detail_imap_host
-            .update_property(&[gtk::accessible::Property::Label("IMAP host")]);
-        imp.account_detail_imap_host.connect_activate(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |entry| {
-                panel.commit_account_edit(AccountEdit::ImapHost(entry.text().to_string()));
-            }
-        ));
-        imp.account_detail
-            .append(&detail_row("IMAP host", &imp.account_detail_imap_host));
-
-        imp.account_detail_imap_port
-            .add_css_class("postio-settings-account-detail-imap-port");
-        imp.account_detail_imap_port
-            .update_property(&[gtk::accessible::Property::Label("IMAP port")]);
-        imp.account_detail_imap_port
-            .connect_value_changed(glib::clone!(
-                #[weak(rename_to = panel)]
-                self,
-                move |spin| {
-                    panel.commit_account_edit(AccountEdit::ImapPort(spin.value() as u16));
-                }
-            ));
-        imp.account_detail
-            .append(&detail_row("IMAP port", &imp.account_detail_imap_port));
-
-        imp.account_detail_smtp_host
-            .add_css_class("postio-settings-account-detail-smtp-host");
-        imp.account_detail_smtp_host
-            .update_property(&[gtk::accessible::Property::Label("SMTP host")]);
-        imp.account_detail_smtp_host.connect_activate(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |entry| {
-                panel.commit_account_edit(AccountEdit::SmtpHost(entry.text().to_string()));
-            }
-        ));
-        imp.account_detail
-            .append(&detail_row("SMTP host", &imp.account_detail_smtp_host));
-
-        imp.account_detail_smtp_port
-            .add_css_class("postio-settings-account-detail-smtp-port");
-        imp.account_detail_smtp_port
-            .update_property(&[gtk::accessible::Property::Label("SMTP port")]);
-        imp.account_detail_smtp_port
-            .connect_value_changed(glib::clone!(
-                #[weak(rename_to = panel)]
-                self,
-                move |spin| {
-                    panel.commit_account_edit(AccountEdit::SmtpPort(spin.value() as u16));
-                }
-            ));
-        imp.account_detail
-            .append(&detail_row("SMTP port", &imp.account_detail_smtp_port));
+        // The five field widgets (Entry/SpinButton) are deliberately NOT
+        // built here -- see `ensure_account_detail_fields`'s own doc for
+        // why constructing them this early would repeat #873.
 
         // ── filters: one row each, name/query, pinned, reorder, delete ───
         imp.filters_list

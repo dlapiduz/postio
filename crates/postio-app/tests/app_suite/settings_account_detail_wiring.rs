@@ -72,17 +72,24 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
 
     let window = Window::default();
     window.present();
+    // Give the window a chance to actually map and pick up a frame clock
+    // before anything below asks it to paint -- `present()` only schedules
+    // that, and `frames()`'s own pumping cannot make up for zero prior
+    // iterations on a runner slow to map a brand new window (matches
+    // `settings_accounts_wiring.rs`'s own `window.present(); settle();`).
+    pump();
     let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
     let panel = window.settings();
+
+    assert!(
+        settle_until(|| !rows(&panel).is_empty()),
+        "expected at least one account row"
+    );
 
     window.toggle_settings();
     assert!(
         frames(&window, 2),
         "the compositor never painted the settings panel"
-    );
-    assert!(
-        settle_until(|| !rows(&panel).is_empty()),
-        "expected at least one account row"
     );
 
     panel.open_account_detail(seeded_id);
