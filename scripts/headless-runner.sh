@@ -61,17 +61,33 @@ exec_target() { exec "$@"; }
 [ -n "${XDG_RUNTIME_DIR:-}" ]     || exec_target "$@"
 command -v mutter >/dev/null 2>&1 || exec_target "$@"
 
-# Only test and bench binaries belong on the hidden compositor. Cargo names
-# them with a 16-hex metadata suffix; everything else -- the application via
-# `cargo run`, examples -- is exec'd unchanged so it reaches the real display.
-SUFFIX="${1##*-}"
-case "$SUFFIX" in
-????????????????)
+# The two examples whose entire output is a file, not a window.
+#
+# #315 sends examples to the real display on the grounds that an example is
+# someone launching a program to look at it. `shot` and `surface` are not
+# that: they render a PNG and exit, and nobody ever sees their window. Sending
+# them to the session's display made the visual check `/gtk-design` requires
+# depend on whether the maintainer's screen happened to be awake -- a locked
+# or blanked screen stops delivering frames, and #809 is what that cost. The
+# private compositor always presents, so here they always work, and on a
+# machine with no session at all they work for the first time.
+case "$(basename "${1:-}")" in
+shot|surface) ;;
+*)
+    # Only test and bench binaries belong on the hidden compositor. Cargo
+    # names them with a 16-hex metadata suffix; everything else -- the
+    # application via `cargo run`, other examples -- is exec'd unchanged so it
+    # reaches the real display.
+    SUFFIX="${1##*-}"
     case "$SUFFIX" in
-    *[!0-9a-f]*) exec_target "$@" ;;   # 16 chars, but not a hash
+    ????????????????)
+        case "$SUFFIX" in
+        *[!0-9a-f]*) exec_target "$@" ;;   # 16 chars, but not a hash
+        esac
+        ;;
+    *) exec_target "$@" ;;
     esac
     ;;
-*) exec_target "$@" ;;
 esac
 
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless}"

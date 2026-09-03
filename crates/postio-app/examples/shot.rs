@@ -62,11 +62,11 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use gtk::{gdk, glib, graphene};
+use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::ConnectionState;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
-use postio_gtk::{app, fonts, style, window::Window};
+use postio_gtk::{app, capture, fonts, style, window::Window};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_session::Wiring;
 use postio_storage::repository::MailboxRepository;
@@ -97,7 +97,11 @@ use postio_storage::seed::SeedReport;
 /// everything else here — so a caller that also wants `search` can hand
 /// `wired.search` to [`show_search_panels`] instead of it calling
 /// `search::View::attach` a second time on the same shell (#831).
-fn populate(window: &Window, two_accounts: bool, backfill: bool) -> &'static postio_app::Wired {
+fn populate(
+    window: &Window,
+    two_accounts: bool,
+    backfill: bool,
+) -> Option<&'static postio_app::Wired> {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
     let blobs = postio_storage::BlobStore::open(
@@ -158,8 +162,7 @@ fn populate(window: &Window, two_accounts: bool, backfill: bool) -> &'static pos
     Box::leak(Box::new(replies));
     Box::leak(Box::new(events));
 
-    wait_for_first_page(window);
-    wired
+    wait_for_first_page(window).then_some(wired)
 }
 
 /// Stamp every seeded folder as synced twelve seconds ago.
@@ -199,7 +202,7 @@ fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport
 /// the main context here starves the frame clock every later `settle` counts
 /// on — which surfaces as a blank render, or as "no frame after 5000ms",
 /// rather than as a wait. The same shape the wiring tests use.
-fn wait_for_first_page(window: &Window) {
+fn wait_for_first_page(window: &Window) -> bool {
     let list = window.list();
     let ready = || list.model().n_items() > 0 && list.model().peek(0).is_some();
     let context = glib::MainContext::default();
@@ -207,14 +210,15 @@ fn wait_for_first_page(window: &Window) {
     while Instant::now() < deadline {
         while context.iteration(false) {}
         if ready() {
-            return;
+            return true;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     eprintln!(
         "shot: the seeded store's first page never arrived, so the panes are \
-         empty. Nothing rendered below this is a picture of anything."
+         empty. Nothing rendered below this would be a picture of anything."
     );
+    false
 }
 
 /// Correspondents for the `@` mode, in the canvas' own cast.
@@ -677,7 +681,17 @@ fn main() -> glib::ExitCode {
     // `demo`'s own search view, if `demo` ran — `search` below reuses it
     // rather than attaching a second one on the same shell (#831).
     let wired: Option<&'static postio_app::Wired> = if flag("demo") {
-        Some(populate(&window, flag("accounts"), flag("backfill")))
+        // A `demo` whose panes were never filled is not a slightly worse
+        // picture, it is a picture of the empty state over a store with mail
+        // in it -- which used to be rendered, saved, and reported as a
+        // success under a warning nobody was required to read (#809).
+        match populate(&window, flag("accounts"), flag("backfill")) {
+            Some(wired) => Some(wired),
+            None => {
+                eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");
+                return glib::ExitCode::FAILURE;
+            }
+        }
     } else {
         None
     };
@@ -923,37 +937,35 @@ fn main() -> glib::ExitCode {
     }
     settle(&window);
 
-    let (width, height) = (target.width(), target.height());
-    let paintable = gtk::WidgetPaintable::new(Some(&target));
-    let snapshot = gtk::Snapshot::new();
-    paintable.snapshot(&snapshot, width as f64, height as f64);
-    let Some(node) = snapshot.to_node() else {
-        // Almost always the compositor rather than the widgets: it stops
-        // delivering frame callbacks to a window nobody can see, and the
-        // commonest reason on a developer's machine is that the screen
-        // blanked part-way through. Worth saying, because "the window drew
-        // nothing" reads like a bug in the thing being rendered.
-        eprintln!(
-            "shot: no frame after {SETTLE_MS}ms — is the screen blanked or the \
-             window occluded? Nothing is painted to a surface the compositor \
-             is not showing."
-        );
-        return glib::ExitCode::FAILURE;
-    };
-    let renderer = target
-        .native()
-        .and_then(|native| native.renderer())
-        .expect("a realized window has a renderer");
-    let bounds = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
-    let texture = renderer.render_texture(&node, Some(&bounds));
-
-    match texture.save_to_png(&path) {
-        Ok(()) => {
+    // The picture, and the wait for it, both belong to `postio_gtk::capture`
+    // -- which turns the main loop until the window is actually drawable
+    // rather than until a fixed number of frames has gone past, and writes no
+    // file when it cannot. See its module docs for why that split matters
+    // (#809).
+    match capture::png(&target, std::path::Path::new(&path)) {
+        Ok(written) => {
+            let (width, height) = (written.width, written.height);
             println!("shot: {width}x{height} -> {path}");
+            if written.stalled {
+                // Said out loud because the picture is misleading in one
+                // specific way, and silently handing it over is how a
+                // compositor problem gets read as an application one (#809).
+                eprintln!(
+                    "shot: the compositor was not presenting this window -- a blanked \
+                     or locked screen -- so the layout was done here. The widgets \
+                     are drawn correctly, but anything composited by another \
+                     process, the reader's web view above all, will be blank."
+                );
+            }
             glib::ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("shot: cannot write {path}: {error}");
+            // Said in full, and on the way out with a non-zero status,
+            // because what this replaced printed one line and exited
+            // successfully: a session that did not go looking for the file
+            // would report "rendered and checked" in good faith (#809).
+            eprintln!("shot: {error}");
+            eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");
             glib::ExitCode::FAILURE
         }
     }

@@ -13,10 +13,10 @@
 //!     an error rather than an empty picture;
 //!   * a failed capture leaves **no file** — so the file's existence is a
 //!     fact a caller can rely on, and `shot` can exit non-zero;
-//!   * a presented window is captured without the caller counting frames.
-//!     The three copies of this logic that #809 found each made the caller
-//!     settle first and each got it slightly differently wrong; the wait
-//!     belongs to the thing that knows what it is waiting for.
+//!   * a presented window is captured without the caller counting frames,
+//!     and is not reported as coming off a stalled compositor. The copies of
+//!     this logic that #809 found each made the caller settle first; the
+//!     wait belongs to the thing that knows what it is waiting for.
 //!
 //! Skips without a display. Nothing here touches the network.
 
@@ -94,15 +94,23 @@ pub fn a_presented_window_is_captured_without_the_caller_counting_frames() {
     // logic #809 found asked its caller to do that first, which is how one
     // of them came to render an empty message list (#596) and how another
     // gave up after eight frames that never came.
-    let texture = match capture::texture_within(&window, Duration::from_secs(30)) {
-        Ok(texture) => texture,
+    let picture = match capture::texture_within(&window, Duration::from_secs(30)) {
+        Ok(picture) => picture,
         Err(error) => panic!("a presented window would not render: {error}"),
     };
 
     assert_eq!(
-        (texture.width(), texture.height()),
+        (picture.texture.width(), picture.texture.height()),
         (window.width(), window.height()),
         "the capture is not the size the window was allocated"
+    );
+    // The suites run on a compositor that presents, so this is the value
+    // that says the stalled-surface warning stays quiet when nothing is
+    // wrong. It is the caveat `shot` prints, and a caveat printed on every
+    // shot is a caveat nobody reads.
+    assert!(
+        !picture.stalled,
+        "a window on a presenting compositor was reported as stalled"
     );
     window.destroy();
 }
