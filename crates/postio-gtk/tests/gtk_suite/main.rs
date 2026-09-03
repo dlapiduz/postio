@@ -109,6 +109,7 @@ mod gtk_search_preview;
 mod gtk_selection;
 mod gtk_settings;
 mod gtk_settings_accounts;
+mod gtk_settings_filters;
 mod gtk_shell;
 mod gtk_sidebar;
 mod gtk_sidebar_accounts;
@@ -390,6 +391,28 @@ const CASES: &[(&str, fn())] = &[
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
             as fn(),
+    ),
+    (
+        "gtk_settings_filters::filters_render_as_rows_and_hide_when_there_are_none",
+        gtk_settings_filters::filters_render_as_rows_and_hide_when_there_are_none as fn(),
+    ),
+    (
+        "gtk_settings_filters::pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically",
+        gtk_settings_filters::pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically
+            as fn(),
+    ),
+    (
+        "gtk_settings_filters::toggling_pinned_writes_straight_to_the_buffer",
+        gtk_settings_filters::toggling_pinned_writes_straight_to_the_buffer as fn(),
+    ),
+    (
+        "gtk_settings_filters::deleting_a_filter_removes_its_row_and_leaves_everything_else_alone",
+        gtk_settings_filters::deleting_a_filter_removes_its_row_and_leaves_everything_else_alone
+            as fn(),
+    ),
+    (
+        "gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends",
+        gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends as fn(),
     ),
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
