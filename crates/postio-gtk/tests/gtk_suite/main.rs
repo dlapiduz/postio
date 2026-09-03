@@ -467,6 +467,26 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_settings_account_detail::the_mailboxes_group_offers_automatic_first_and_names_what_it_resolved_to",
+        gtk_settings_account_detail::the_mailboxes_group_offers_automatic_first_and_names_what_it_resolved_to
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::picking_a_folder_for_a_role_reports_the_account_and_the_path",
+        gtk_settings_account_detail::picking_a_folder_for_a_role_reports_the_account_and_the_path
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::a_mapping_the_server_no_longer_has_is_shown_rather_than_dropped",
+        gtk_settings_account_detail::a_mapping_the_server_no_longer_has_is_shown_rather_than_dropped
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::an_account_with_no_folders_yet_says_so_instead_of_offering_nothing",
+        gtk_settings_account_detail::an_account_with_no_folders_yet_says_so_instead_of_offering_nothing
+            as fn(),
+    ),
+    (
         "gtk_settings_filters::filters_render_as_rows_and_hide_when_there_are_none",
         gtk_settings_filters::filters_render_as_rows_and_hide_when_there_are_none as fn(),
     ),

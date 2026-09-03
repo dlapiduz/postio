@@ -11,11 +11,11 @@
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::settings::{AccountEdit, SettingsPanel};
+use postio_gtk::settings::{AccountEdit, AccountMailboxes, SettingsPanel};
 use postio_gtk::{fonts, style};
 use postio_model::account::{ServerConfig, TransportSecurity};
 use postio_model::ids::AccountId;
-use postio_model::{Account, EmailAddress};
+use postio_model::{Account, EmailAddress, MailboxRole};
 
 fn an_account(id: i64, name: &str, address: &str) -> Account {
     let mut account = Account::new(name, EmailAddress::new(Some(name), address));
@@ -273,4 +273,148 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
+}
+
+// ── The Mailboxes group (ADR 0025, #966) ────────────────────────────────
+
+/// What one account's folders and role map look like coming in.
+fn folders() -> AccountMailboxes {
+    AccountMailboxes {
+        folders: vec![
+            "INBOX".to_owned(),
+            "Sent".to_owned(),
+            "Sent Messages".to_owned(),
+        ],
+        chosen: Vec::new(),
+        resolved: vec![(MailboxRole::Sent, "Sent".to_owned())],
+    }
+}
+
+fn role_dropdown(panel: &SettingsPanel, role: MailboxRole) -> gtk::DropDown {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        &format!("postio-settings-account-detail-role-{}", role.as_str()),
+    )
+    .into_iter()
+    .find_map(|widget| widget.downcast::<gtk::DropDown>().ok())
+    .unwrap_or_else(|| panic!("the detail view has a {role:?} dropdown"))
+}
+
+fn entries(dropdown: &gtk::DropDown) -> Vec<String> {
+    let model = dropdown
+        .model()
+        .expect("the dropdown has a model")
+        .downcast::<gtk::StringList>()
+        .expect("built from strings");
+    (0..model.n_items())
+        .map(|index| model.string(index).expect("an entry").to_string())
+        .collect()
+}
+
+pub fn the_mailboxes_group_offers_automatic_first_and_names_what_it_resolved_to() {
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    panel.set_account_mailboxes(vec![(AccountId::new(1), folders())]);
+    rows(&panel)[0].emit_activate();
+    pump();
+
+    let dropdown = role_dropdown(&panel, MailboxRole::Sent);
+    assert_eq!(
+        entries(&dropdown),
+        vec![
+            "Automatic (Sent)".to_owned(),
+            "INBOX".to_owned(),
+            "Sent".to_owned(),
+            "Sent Messages".to_owned(),
+        ],
+        "automatic comes first and says what it picked, so a person can \
+         disagree with an answer they can see"
+    );
+    assert_eq!(dropdown.selected(), 0, "nothing is chosen yet");
+
+    window.destroy();
+}
+
+pub fn picking_a_folder_for_a_role_reports_the_account_and_the_path() {
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    panel.set_account_mailboxes(vec![(AccountId::new(1), folders())]);
+    rows(&panel)[0].emit_activate();
+    pump();
+
+    let seen: std::rc::Rc<std::cell::RefCell<Vec<(AccountId, AccountEdit)>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    panel.connect_account_edited({
+        let seen = seen.clone();
+        move |id, edit| seen.borrow_mut().push((id, edit))
+    });
+
+    // "Sent Messages" is the last of the three folders, so the third entry
+    // after Automatic.
+    role_dropdown(&panel, MailboxRole::Sent).set_selected(3);
+    pump();
+
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 1, "exactly one edit for one pick: {seen:?}");
+    assert_eq!(seen[0].0, AccountId::new(1));
+    assert_eq!(
+        seen[0].1,
+        AccountEdit::MailboxRole(MailboxRole::Sent, Some("Sent Messages".to_owned())),
+        "the pane reports the folder by its server path"
+    );
+
+    window.destroy();
+}
+
+pub fn a_mapping_the_server_no_longer_has_is_shown_rather_than_dropped() {
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    let mut data = folders();
+    data.chosen = vec![(MailboxRole::Archive, "Archivio".to_owned())];
+    panel.set_account_mailboxes(vec![(AccountId::new(1), data)]);
+    rows(&panel)[0].emit_activate();
+    pump();
+
+    let dropdown = role_dropdown(&panel, MailboxRole::Archive);
+    let entries = entries(&dropdown);
+    assert_eq!(
+        entries.last().map(String::as_str),
+        Some("Archivio (not on this server)"),
+        "a folder that has gone is named, not silently forgotten: {entries:?}"
+    );
+    assert_eq!(
+        dropdown.selected() as usize,
+        entries.len() - 1,
+        "and it is what the row shows, because it is what is stored"
+    );
+
+    window.destroy();
+}
+
+pub fn an_account_with_no_folders_yet_says_so_instead_of_offering_nothing() {
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    panel.set_account_mailboxes(vec![(AccountId::new(1), AccountMailboxes::default())]);
+    rows(&panel)[0].emit_activate();
+    pump();
+
+    let empty = collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-detail-mailboxes-empty",
+    );
+    assert_eq!(empty.len(), 1, "an empty group explains itself");
+    assert!(
+        collect(
+            panel.upcast_ref::<gtk::Widget>(),
+            "postio-settings-account-detail-role"
+        )
+        .is_empty(),
+        "and offers no dropdown over folders nobody has yet"
+    );
+
+    window.destroy();
 }

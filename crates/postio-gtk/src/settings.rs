@@ -73,7 +73,7 @@ use gtk::glib;
 use postio_config::filters::{FilterConfig, Reorder};
 use postio_config::sync::{AttachmentFetch, CheckForMail};
 use postio_config::{Config, Density, SyncConfig, Theme, patch_filters, patch_sync, patch_ui};
-use postio_model::{Account, AccountId};
+use postio_model::{Account, AccountId, MailboxRole};
 
 /// How long to let typing settle before writing the buffer back to disk.
 ///
@@ -144,6 +144,44 @@ pub enum AccountEdit {
     SmtpHost(String),
     /// The SMTP server's port.
     SmtpPort(u16),
+    /// A role pointed at one of the account's own folders, or back to
+    /// resolving automatically (ADR 0025).
+    ///
+    /// The path rather than a `MailboxId`: what is stored is what the user
+    /// said about the server, and it has to survive the folder's row being
+    /// retired and re-created when a listing loses it and finds it again.
+    MailboxRole(MailboxRole, Option<String>),
+}
+
+/// The roles a folder can be mapped to, in the order the group lists them.
+///
+/// `Inbox` is not among them: RFC 3501 names that folder itself, and pointing
+/// it elsewhere would make Postio disagree with every other client on the
+/// same account about where mail arrives. `Flagged` is a view over folders
+/// rather than one of them.
+const MAPPABLE_ROLES: [(MailboxRole, &str); 5] = [
+    (MailboxRole::Sent, "Sent"),
+    (MailboxRole::Archive, "Archive"),
+    (MailboxRole::Drafts, "Drafts"),
+    (MailboxRole::Trash, "Trash"),
+    (MailboxRole::Junk, "Junk"),
+];
+
+/// One account's folders and role map, as the Mailboxes group needs them.
+///
+/// Three lists rather than one, because they answer three different
+/// questions: what folders there are to choose from, which roles the user has
+/// already pointed somewhere, and what each role resolves to as things stand.
+/// The third is what makes "Automatic" nameable -- a person can only disagree
+/// with an answer they can see.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountMailboxes {
+    /// Every folder the account can open, by server path, in listing order.
+    pub folders: Vec<String>,
+    /// The roles this account has pointed somewhere, and where.
+    pub chosen: Vec<(MailboxRole, String)>,
+    /// What each role resolves to right now, mapped or not.
+    pub resolved: Vec<(MailboxRole, String)>,
 }
 
 /// What to call when a field in the account detail view is committed.
@@ -466,6 +504,15 @@ mod imp {
         /// not itself fire an edit — the same guard [`SettingsPanel::load`]
         /// uses on the raw buffer, for the same reason.
         pub account_detail_loading: Cell<bool>,
+        /// The Mailboxes group inside the detail view (#966). The box itself
+        /// is safe to build early -- it carries no event controllers -- but
+        /// the dropdowns inside it are not, so they are built per open by
+        /// [`super::SettingsPanel::redraw_account_mailboxes`].
+        pub account_detail_mailboxes: gtk::Box,
+        /// Every account's folders and role map, as
+        /// [`super::SettingsPanel::set_account_mailboxes`] last gave them.
+        /// Order-independent with `set_accounts`, the way `mail_weights` is.
+        pub account_mailboxes: RefCell<Vec<(AccountId, AccountMailboxes)>>,
         pub account_edited: RefCell<Vec<AccountEditHandler>>,
         /// One row per saved search, pinned or not (#869) — the structured
         /// pane [`Section::Filters`] now shows instead of only jumping the
@@ -534,6 +581,8 @@ mod imp {
                 account_detail_smtp_host: OnceCell::new(),
                 account_detail_smtp_port: OnceCell::new(),
                 account_detail_loading: Cell::new(false),
+                account_detail_mailboxes: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                account_mailboxes: RefCell::new(Vec::new()),
                 account_edited: RefCell::new(Vec::new()),
                 filters_list: gtk::ListBox::new(),
                 filters_scroller: gtk::ScrolledWindow::new(),
@@ -1262,6 +1311,7 @@ impl SettingsPanel {
             .set_value(f64::from(account.outgoing.port));
         imp.account_detail_loading.set(false);
         *imp.account_detail_id.borrow_mut() = Some(id);
+        self.redraw_account_mailboxes(id);
         imp.account_detail.set_visible(true);
         imp.accounts_scroller.set_visible(false);
     }
@@ -1355,6 +1405,142 @@ impl SettingsPanel {
         imp.account_detail
             .append(&detail_row("SMTP port", &smtp_port));
         let _ = imp.account_detail_smtp_port.set(smtp_port);
+
+        // Appended here rather than in `build()` so it reads below the
+        // server fields; the box is empty until an account is opened.
+        imp.account_detail_mailboxes
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.account_detail_mailboxes
+            .add_css_class("postio-settings-account-detail-mailboxes");
+        imp.account_detail.append(&imp.account_detail_mailboxes);
+    }
+
+    /// Rebuilds the Mailboxes group for the account whose detail is open.
+    ///
+    /// Fresh widgets on every open rather than kept ones: the folders differ
+    /// per account, and this is the same trade `redraw_ui` makes -- a handful
+    /// of widgets against having to reconcile two lists that can differ in
+    /// length. It is also where the #873 rule lands: a `gtk::DropDown` is
+    /// built here, reached only from `open_account_detail`, and never while
+    /// the window is still constructing.
+    fn redraw_account_mailboxes(&self, account: AccountId) {
+        let imp = self.imp();
+        let group = &imp.account_detail_mailboxes;
+        while let Some(child) = group.first_child() {
+            group.remove(&child);
+        }
+
+        let heading = gtk::Label::new(Some("Mailboxes"));
+        heading.set_xalign(0.0);
+        heading.add_css_class("postio-settings-account-detail-group");
+        group.append(&heading);
+
+        let data = imp
+            .account_mailboxes
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, data)| data.clone())
+            .unwrap_or_default();
+
+        if data.folders.is_empty() {
+            // Not a blank frame: an account that has never synced has no
+            // folders to offer, and saying which it is beats an empty row.
+            let empty = gtk::Label::new(Some("Folders appear after the first sync."));
+            empty.set_xalign(0.0);
+            empty.set_wrap(true);
+            empty.add_css_class("postio-settings-account-detail-mailboxes-empty");
+            group.append(&empty);
+            return;
+        }
+
+        for (role, title) in MAPPABLE_ROLES {
+            group.append(&detail_row(title, &self.role_dropdown(role, &data)));
+        }
+    }
+
+    /// One role's picker: automatic first, then the account's folders, then
+    /// the mapped folder when the server no longer lists it.
+    fn role_dropdown(&self, role: MailboxRole, data: &AccountMailboxes) -> gtk::DropDown {
+        let chosen = data
+            .chosen
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path.clone());
+        let resolved = data
+            .resolved
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path.as_str());
+        // Named only when nothing is chosen: with a choice in force, what
+        // automatic *would* say is a question only the next discovery pass
+        // can answer, and guessing at it here would be a label that lies.
+        let automatic = match (&chosen, resolved) {
+            (Some(_), _) => "Automatic".to_owned(),
+            (None, Some(path)) => format!("Automatic ({path})"),
+            (None, None) => "Automatic (no folder)".to_owned(),
+        };
+
+        let mut entries = vec![automatic];
+        entries.extend(data.folders.iter().cloned());
+        let dangling = chosen
+            .as_ref()
+            .filter(|path| !data.folders.contains(path))
+            .cloned();
+        if let Some(path) = &dangling {
+            entries.push(format!("{path} (not on this server)"));
+        }
+        let labels: Vec<&str> = entries.iter().map(String::as_str).collect();
+        let dropdown = gtk::DropDown::from_strings(&labels);
+        dropdown.add_css_class("postio-settings-account-detail-role");
+        dropdown.add_css_class(&format!(
+            "postio-settings-account-detail-role-{}",
+            role.as_str()
+        ));
+        dropdown.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{role:?} folder"
+        ))]);
+        dropdown.set_selected(match &chosen {
+            None => 0,
+            Some(path) => match data.folders.iter().position(|folder| folder == path) {
+                Some(index) => index as u32 + 1,
+                // The dangling entry, which is always last.
+                None => entries.len() as u32 - 1,
+            },
+        });
+
+        // Connected *after* `set_selected`, so restoring what is already
+        // stored never reports itself as a change the user made.
+        let folders = data.folders.clone();
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let index = dropdown.selected() as usize;
+                if index == 0 {
+                    panel.commit_account_edit(AccountEdit::MailboxRole(role, None));
+                    return;
+                }
+                // Past the folders is the dangling entry: it is the state
+                // already, not a new choice.
+                if let Some(path) = folders.get(index - 1) {
+                    panel.commit_account_edit(AccountEdit::MailboxRole(role, Some(path.clone())));
+                }
+            }
+        ));
+        dropdown
+    }
+
+    /// Every account's folders and role map, for the Mailboxes group.
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts): whichever
+    /// arrives second redraws what is open.
+    pub fn set_account_mailboxes(&self, mailboxes: Vec<(AccountId, AccountMailboxes)>) {
+        *self.imp().account_mailboxes.borrow_mut() = mailboxes;
+        let open = *self.imp().account_detail_id.borrow();
+        if let Some(account) = open {
+            self.redraw_account_mailboxes(account);
+        }
     }
 
     /// Closes the detail view and shows the account list again, as the
