@@ -20,7 +20,6 @@
 //! One `#[test]`, like the rest of `gtk_*`: GTK may be initialised once per
 //! process (#41).
 
-use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -46,6 +45,24 @@ impl PageSource for Pages {
         ROWS
     }
     fn request(&self, _page: u32) {}
+}
+
+/// Sixty-four turns, deliberately, and **not** `crate::pump`.
+///
+/// This file proves a message is *not* marked read while the cursor is
+/// moving. That is a negative assertion, so the amount of settling is part
+/// of what is under test: turn the loop long enough and the dwell timer
+/// fires, the message is marked, and the test fails for the reason it
+/// exists to catch.
+///
+/// The shared `pump` is 200 drains because for a *positive* assertion more
+/// settling is never worse. Here it is worse, which is the exception that
+/// argument has (#842).
+fn pump() {
+    let context = gtk::glib::MainContext::default();
+    for _ in 0..64 {
+        while context.iteration(false) {}
+    }
 }
 
 fn row(position: u32) -> Row {

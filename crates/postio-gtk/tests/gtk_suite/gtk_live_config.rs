@@ -25,10 +25,6 @@ use postio_core::CommandId;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 
-/// How long to give the watcher. Its debounce is 120ms and `notify` adds the
-/// kernel's own latency; this is a ceiling, not an expectation — the loop below
-/// leaves as soon as the change lands.
-
 /// Pumps the main loop for `grace`, for an assertion that nothing happens.
 ///
 /// A negative assertion has nothing to wait *for*, so it cannot leave early;

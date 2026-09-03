@@ -27,18 +27,6 @@ use postio_core::CommandId;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 
-/// How long a wait below may go without seeing its condition before it is
-/// called a hang.
-///
-/// A *liveness* bound, not a latency claim: the waits are already
-/// event-driven (real watcher, real debounce), so this deadline does no
-/// measuring -- it only turns a genuine stall into a failure with a name.
-/// Deliberately enormous, the way `postio-core`'s own config-watcher test
-/// fixed the identical shape (#219): at 5 seconds this flaked on a pristine
-/// `main` checkout under nothing more than ordinary shared-box contention
-/// (#838). See `docs/engineering-notes.md`'s "tests that fail under load"
-/// doctrine -- "liveness deadlines are minutes, not budgets."
-
 /// The binding the window currently has for a command, as the cheat sheet
 /// would print it — which is the live keymap, not the registry default.
 fn binding(window: &Window, id: CommandId) -> Option<String> {
