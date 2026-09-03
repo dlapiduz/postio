@@ -1099,13 +1099,22 @@ pub async fn fetch_body(
         mime::parse(&raw)
     });
 
+    // The block, from the bytes already in hand. This used to pass `None`,
+    // with the reason at the call site: "the header block has no reader of its
+    // own yet ... a copy nobody reads is a copy that can go stale." `header:`
+    // is the reader that retires it (ADR 0025, #884).
+    //
+    // Not read back off `raw_blob_id` at query time, though it is recoverable
+    // from there: PRODUCT.md §6 evicts raw source *first* when the store hits
+    // its ceiling, so a `header:` answered from the blob would silently stop
+    // working on the oldest mail -- which is the mail somebody is most likely
+    // to be searching for.
+    let block = postio_model::headers::block_of(&raw);
     let stored = StoredBody {
         text: stored_text(parsed.body.text.as_deref()),
         html: stored_text(parsed.body.html.as_deref()),
-        // The header block has no reader of its own yet: everything that wants
-        // headers has the row, and everything that wants all of them has the
-        // raw blob. A copy nobody reads is a copy that can go stale.
-        headers: None,
+        headers: block.as_ref().map(|block| block.text.clone()),
+        headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
     };
 
     message.raw_blob_id = Some(blob);
@@ -1293,10 +1302,20 @@ async fn fetch_text_parts(
         }
     }
 
+    // One more section on a fetch that is already happening. This path never
+    // stores a raw blob -- it asked for sections and got sections -- so it is
+    // the one state where nothing else would ever bring the block, and
+    // `header:` would answer "no such mail" for mail that is right there.
+    //
+    // ADR 0025 Q4 refuses a header fetch at *header-sync* time, which charges
+    // every user's sync forever. This is body-fetch time, where the round trip
+    // is already being paid for.
+    let block = fetch_header_block(backend, request, cancel).await;
     let stored = StoredBody {
         text: stored_text(body.text.as_deref()),
         html: stored_text(body.html.as_deref()),
-        headers: None,
+        headers: block.as_ref().map(|block| block.text.clone()),
+        headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
     };
 
     if message.preview.is_none() {
@@ -1348,6 +1367,44 @@ async fn fetch_text_parts(
 ///
 /// It is also what makes an eager fetch and an on-open fetch land *identically*
 /// rather than giving one attachment two blob ids.
+/// The message's header block, straight from the server.
+///
+/// `BODY[HEADER]` — [`BodyPart::Headers`], which every backend already
+/// implements. Best-effort on purpose: a payload that arrived is worth
+/// storing whether or not the block came with it, and the repair pass will
+/// come back for a block that did not. Failing the whole fetch over it would
+/// trade an attachment the user asked for against an index entry nobody is
+/// waiting on.
+async fn fetch_header_block(
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    cancel: &CancelToken,
+) -> Option<postio_model::headers::Block> {
+    let mut sink = VecSink::new();
+    let fetched = backend
+        .fetch_part(
+            &request.path,
+            &request.remote_id,
+            &BodyPart::Headers,
+            &mut sink,
+            cancel,
+        )
+        .await;
+    if let Err(error) = fetched {
+        // Ids and outcomes only: the bytes are somebody's mail.
+        tracing::debug!(
+            message = request.message.get(),
+            %error,
+            "the header block did not come with the payloads"
+        );
+        return None;
+    }
+    if !sink.is_finished() {
+        return None;
+    }
+    postio_model::headers::block_of(&sink.into_inner())
+}
+
 async fn fetch_section(
     blobs: &BlobStore,
     backend: &dyn MailBackend,

@@ -1922,3 +1922,93 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
     );
     assert_eq!(stored.sync.body_state, BodyState::Partial);
 }
+
+// ---------------------------------------------------------------------------
+// The header block — ADR 0025, #884
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
+    // `header:` has nowhere to match against until this happens. The column
+    // has existed since migration 0001 and both backfill paths passed
+    // `headers: None` on purpose -- "a copy nobody reads is a copy that can go
+    // stale" -- which was right until ADR 0025 gave it a reader.
+    let backend = server(1).await;
+    let local = local();
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, HUGE),
+        policy().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .body(id)
+        .expect("body")
+        .expect("the row");
+    let block = stored
+        .headers
+        .expect("the block the message arrived with, or header: has nothing to match");
+    assert!(block.contains("Subject: Note 1"), "got: {block:?}");
+    assert!(
+        !block.contains("The body of note 1"),
+        "the body is not a header and must not reach the index: {block:?}"
+    );
+    assert!(!stored.headers_truncated, "a note is not pathological");
+}
+
+#[tokio::test]
+async fn a_payload_fetch_stores_the_header_block_too() {
+    // The `partial` path -- ~15% of ADR 0017's reference mailbox -- never
+    // fetches a raw blob at all, so without this it is the one state where
+    // `header:` would answer "no such mail" for mail that is right there.
+    // `BODY[HEADER]` is one more section on a fetch already happening.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_payload(1, "statement.pdf"));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    let (id, _uid) = a_partial_message(&local, &backend).await;
+
+    let mut backfill = Backfill::new(policy());
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).expect("ask");
+    let claim = backfill.next_body().expect("a claim");
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
+        &claim.cancel,
+    )
+    .await
+    .expect("fetch");
+
+    let messages = MessageRepository::new(&local.connection);
+    let stored = messages.body(id).expect("body").expect("the row");
+    let block = stored
+        .headers
+        .expect("a payload fetch has to bring the block, because nothing else will");
+    assert!(
+        block.contains("statement.pdf") || block.contains("Subject"),
+        "got: {block:?}"
+    );
+    assert!(
+        messages
+            .get(id)
+            .expect("get")
+            .expect("row")
+            .raw_blob_id
+            .is_none(),
+        "this path stores no raw blob, which is exactly why it must store the block"
+    );
+}
