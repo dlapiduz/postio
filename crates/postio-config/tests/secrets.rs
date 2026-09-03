@@ -116,14 +116,10 @@ fn keyring_entry_is_not_mistaken_for_a_secret() {
         "#,
     )
     .unwrap();
-    assert_eq!(
-        cfg.account("personal")
-            .unwrap()
-            .imap
-            .keyring_entry
-            .as_deref(),
-        Some("postio:personal:imap")
-    );
+    // Read back through the round-trip rather than a typed accessor:
+    // `[accounts]` is retired (#470) and now survives as an unknown table.
+    // The subject of this test is unchanged -- a keyring *reference* is not
+    // a secret and must not be stripped.
     assert!(
         cfg.to_toml_string().unwrap().contains("keyring_entry"),
         "a keyring reference is not a secret and must persist"

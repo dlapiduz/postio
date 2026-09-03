@@ -209,6 +209,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
     };
 
     check_secrets(&map, errors);
+    check_retired_accounts(&map, errors);
 
     let config = match Config::parse_raw(text) {
         Ok(config) => Some(config),
@@ -220,7 +221,6 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
 
     if let Some(config) = &config {
         check_keys(config, &map, errors);
-        check_accounts(config, &map, errors);
         check_sync(config, &map, errors);
         check_filters(config, &map, errors);
         check_mailboxes(config, &map, errors);
@@ -342,6 +342,43 @@ fn push(
     });
 }
 
+/// `[accounts.<id>]` parses and is not read by anything (#470).
+///
+/// It described a real-looking editing path for an existing account's host,
+/// port, security and display name. `postio-app` takes all of those from
+/// SQLite, written once by onboarding, so editing the section saved,
+/// re-parsed without complaint, and changed nothing about the account that
+/// was running. A schema that round-trips and does nothing is worse than no
+/// schema, because it looks editable.
+///
+/// Reported rather than rejected: `Semantic`, so the file still loads and
+/// every other setting in it still applies. The section is also preserved on
+/// round-trip like any unknown key, so retiring it does not eat what is
+/// already in somebody's file.
+fn check_retired_accounts(map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let mut seen: Vec<&str> = Vec::new();
+    for path in map.paths() {
+        let Some(rest) = path.strip_prefix("accounts.") else {
+            continue;
+        };
+        // One report per account table, at the table, not one per leaf key.
+        let id = rest.split('.').next().unwrap_or(rest);
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let table = format!("accounts.{id}");
+        let (line, column) = map.locate_key(&table);
+        errors.push(ValidationError {
+            kind: ErrorKind::Semantic,
+            path: table.clone(),
+            line,
+            column,
+            message: format!("`[{table}]` is ignored — accounts are managed in the list above"),
+        });
+    }
+}
+
 /// A secret in the file is a problem to fix, never a value to echo back.
 fn check_secrets(map: &SourceMap, errors: &mut Vec<ValidationError>) {
     for path in map.paths() {
@@ -408,79 +445,6 @@ fn check_keys(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError
                     "all of"
                 },
                 and_list(&commands)
-            ),
-        );
-    }
-}
-
-fn check_accounts(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
-    for (id, account) in &config.accounts {
-        let base = format!("accounts.{id}");
-        if account.email.trim().is_empty() {
-            push(
-                errors,
-                map,
-                format!("{base}.email"),
-                false,
-                format!("account `{id}` has no `email` address"),
-            );
-        } else if !looks_like_an_address(&account.email) {
-            push(
-                errors,
-                map,
-                format!("{base}.email"),
-                true,
-                format!("`{}` is not an email address", account.email),
-            );
-        }
-
-        for (service, host, port) in [
-            ("imap", &account.imap.host, account.imap.port),
-            ("smtp", &account.smtp.host, account.smtp.port),
-        ] {
-            if host.trim().is_empty() {
-                push(
-                    errors,
-                    map,
-                    format!("{base}.{service}.host"),
-                    false,
-                    format!("account `{id}` has no `{service}.host` to connect to"),
-                );
-            }
-            if port == 0 {
-                push(
-                    errors,
-                    map,
-                    format!("{base}.{service}.port"),
-                    true,
-                    format!("`{service}.port` for account `{id}` is 0, which is not a port"),
-                );
-            }
-        }
-    }
-
-    let defaults: Vec<&str> = config
-        .accounts
-        .iter()
-        .filter(|(_, account)| account.is_default)
-        .map(|(id, _)| id.as_str())
-        .collect();
-    if defaults.len() > 1 {
-        let path = defaults
-            .iter()
-            .map(|id| format!("accounts.{id}.default"))
-            .filter(|path| map.key_offset(path).is_some())
-            .max_by_key(|path| map.key_offset(path).unwrap_or(0))
-            .unwrap_or_else(|| format!("accounts.{}.default", defaults[0]));
-        push(
-            errors,
-            map,
-            path,
-            false,
-            format!(
-                "accounts {} are {} marked `default`; only one account can be",
-                and_list(&defaults),
-                if defaults.len() == 2 { "both" } else { "all" }
             ),
         );
     }
@@ -571,19 +535,6 @@ fn check_filters(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
     }
 }
 
-/// Deliberately loose: `postmaster@localhost` is a real address, and this is a
-/// validity hint, not RFC 5322.
-fn looks_like_an_address(email: &str) -> bool {
-    let email = email.trim();
-    let Some((local, domain)) = email.split_once('@') else {
-        return false;
-    };
-    !local.is_empty()
-        && !domain.is_empty()
-        && !domain.contains('@')
-        && !email.chars().any(char::is_whitespace)
-}
-
 fn and_list(items: &[&str]) -> String {
     let quoted: Vec<String> = items.iter().map(|item| format!("`{item}`")).collect();
     match quoted.split_last() {
@@ -596,16 +547,6 @@ fn and_list(items: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn addresses_are_checked_loosely() {
-        assert!(looks_like_an_address("ada@example.com"));
-        assert!(looks_like_an_address("postmaster@localhost"));
-        assert!(!looks_like_an_address("ada-at-example"));
-        assert!(!looks_like_an_address("@example.com"));
-        assert!(!looks_like_an_address("person@"));
-        assert!(!looks_like_an_address("two ada@example.com"));
-    }
 
     #[test]
     fn lists_read_like_prose() {

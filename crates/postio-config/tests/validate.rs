@@ -20,21 +20,6 @@ theme = "dark"
 archive = "x"
 summarize = "g s"
 
-[accounts.personal]
-email = "ada@example.com"
-display_name = "Person"
-default = true
-
-[accounts.personal.imap]
-host = "imap.example.com"
-port = 993
-security = "implicit-tls"
-
-[accounts.personal.smtp]
-host = "smtp.example.com"
-port = 465
-security = "implicit-tls"
-
 [filters.needs-reply]
 query = "is:unread from:team"
 pinned = true
@@ -231,14 +216,6 @@ fn every_enum_field_is_checked() {
             "sync.attachment_fetch",
             "[sync]\nattachment_fetch = \"sometimes\"\n",
         ),
-        (
-            "accounts.a.imap.security",
-            "[accounts.a.imap]\nsecurity = \"maybe-tls\"\n",
-        ),
-        (
-            "accounts.a.smtp.auth",
-            "[accounts.a.smtp]\nauth = \"kerberos\"\n",
-        ),
     ] {
         let checked = check(snippet);
         let err = checked
@@ -249,100 +226,7 @@ fn every_enum_field_is_checked() {
     }
 }
 
-#[test]
-fn a_forgiving_enum_spelling_is_still_valid() {
-    for text in ["tls", "ssl", "starttls", "start_tls", "implicit_tls"] {
-        let checked = check(&format!(
-            "[accounts.a]\nemail = \"a@example.com\"\n[accounts.a.imap]\nhost = \"i.b.co\"\nsecurity = \"{text}\"\n[accounts.a.smtp]\nhost = \"s.b.co\"\n"
-        ));
-        assert!(
-            checked.validation.is_valid(),
-            "{text}: {:?}",
-            checked.validation.errors()
-        );
-    }
-}
-
 // ------------------------------------------------------ account completeness --
-
-#[test]
-fn a_host_without_an_email_is_reported_against_the_account() {
-    let text = r#"[accounts.personal]
-display_name = "Person"
-
-[accounts.personal.imap]
-host = "imap.example.com"
-
-[accounts.personal.smtp]
-host = "smtp.example.com"
-"#;
-    let checked = check(text);
-    let err = checked.validation.first_error().expect("an error");
-    assert_eq!(err.line, 1, "point at the account table: {err:?}");
-    assert_eq!(err.path, "accounts.personal.email");
-    assert!(err.message.contains("personal"), "{}", err.message);
-    assert!(err.message.contains("email"), "{}", err.message);
-    // The config still parsed: the app keeps running and shows the line.
-    assert!(checked.config.is_some());
-}
-
-#[test]
-fn an_email_that_is_not_an_address_is_reported() {
-    let msg = first_message(
-        "[accounts.a]\nemail = \"ada-at-example\"\n[accounts.a.imap]\nhost = \"i\"\n[accounts.a.smtp]\nhost = \"s\"\n",
-    );
-    assert!(msg.contains("ada-at-example"), "{msg}");
-}
-
-#[test]
-fn a_missing_imap_host_is_reported() {
-    let text = "[accounts.a]\nemail = \"p@example.com\"\n[accounts.a.smtp]\nhost = \"s.b.co\"\n";
-    let checked = check(text);
-    let err = checked.validation.first_error().expect("an error");
-    assert_eq!(err.path, "accounts.a.imap.host");
-    assert!(err.message.contains("imap"), "{}", err.message);
-}
-
-#[test]
-fn a_missing_smtp_host_is_reported() {
-    let text = "[accounts.a]\nemail = \"p@example.com\"\n[accounts.a.imap]\nhost = \"i.b.co\"\n";
-    let checked = check(text);
-    let err = checked.validation.first_error().expect("an error");
-    assert_eq!(err.path, "accounts.a.smtp.host");
-}
-
-#[test]
-fn a_zero_port_is_reported() {
-    let text = "[accounts.a]\nemail = \"p@example.com\"\n[accounts.a.imap]\nhost = \"i\"\nport = 0\n[accounts.a.smtp]\nhost = \"s\"\n";
-    let checked = check(text);
-    let err = checked.validation.first_error().expect("an error");
-    assert_eq!(err.path, "accounts.a.imap.port");
-    assert_eq!(err.line, 5);
-}
-
-#[test]
-fn two_default_accounts_is_ambiguous() {
-    let text = r#"[accounts.one]
-email = "one@example.com"
-default = true
-
-[accounts.two]
-email = "two@example.com"
-default = true
-
-[accounts.one.imap]
-host = "i"
-[accounts.one.smtp]
-host = "s"
-[accounts.two.imap]
-host = "i"
-[accounts.two.smtp]
-host = "s"
-"#;
-    let msg = first_message(text);
-    assert!(msg.contains("one") && msg.contains("two"), "{msg}");
-    assert!(msg.contains("default"), "{msg}");
-}
 
 // ------------------------------------------------------------ sync, filters --
 
@@ -557,5 +441,46 @@ fn a_real_mailbox_mapping_validates_clean() {
             .any(|error| error.path.starts_with("mailboxes.")),
         "a valid mapping was reported as a problem: {:?}",
         checked.validation.errors()
+    );
+}
+
+#[test]
+fn a_retired_accounts_table_is_reported_without_blocking_the_file() {
+    // #470 / ADR 0005 Q6b. `[accounts.<id>]` parsed, validated and
+    // round-tripped, and nothing read it: an account's host, port, security
+    // and name come from the store, written once by onboarding. Editing the
+    // section saved, re-parsed with no error, and changed nothing about the
+    // running account.
+    //
+    // Semantic, not Schema: the file still loads and everything else in it
+    // still applies. What is wrong is that this one section means nothing,
+    // which is exactly the non-blocking kind.
+    let checked = check(
+        r#"[ui]
+density = "compact"
+
+[accounts.personal]
+email = "ada@example.com"
+"#,
+    );
+    let retired = checked
+        .validation
+        .errors()
+        .iter()
+        .find(|e| e.path.starts_with("accounts"))
+        .expect("the retired section is reported");
+
+    assert!(
+        !retired.kind.is_blocking(),
+        "the config still loads; only this section does nothing"
+    );
+    assert!(
+        retired.message.contains("is ignored"),
+        "the message has to say the edit does nothing: {:?}",
+        retired.message
+    );
+    assert!(
+        retired.line >= 4,
+        "it should point at the table, not the top of the file"
     );
 }

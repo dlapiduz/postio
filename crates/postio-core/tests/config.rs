@@ -275,7 +275,6 @@ fn only_the_sections_that_changed_are_reported() {
 
     assert!(update.changed.ui);
     assert!(!update.changed.keys, "the keymap need not be rebuilt");
-    assert!(!update.changed.accounts);
     assert!(!update.changed.sync);
     assert!(!update.changed.filters);
 }
