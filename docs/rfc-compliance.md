@@ -159,9 +159,10 @@ not found twice:
   none. Whether that matters is an SMTP question, not a 5322 one: the `DATA`
   terminator is `CRLF "." CRLF`, and a correct sender appends the CRLF the
   body lacks before it. Postio hands the bytes to `io-smtp`'s `SmtpData`,
-  which owns dot-stuffing and the terminator. **#682 should confirm it**
-  against a body whose last line has no CRLF and a body containing a line that
-  is a bare `.` — both of which `postio-model` will happily produce.
+  which owns dot-stuffing and the terminator. **#682 confirmed both** against
+  the wire — the missing CRLF is supplied before the terminator, and a
+  bare-dot body line (which `postio-model` really does produce) is stuffed.
+  See the RFC 5321 section.
 - **`Content-Transfer-Encoding` selection and `format=flowed`.** The generator
   declares `text/plain; charset=utf-8; format=flowed` unconditionally (ADR
   0017, #333) and lets `mail-builder` choose the encoding. That is **#680**'s.
@@ -190,13 +191,70 @@ CONDSTORE/QRESYNC, RFC 6851 MOVE.
 
 ## RFC 5321 — SMTP
 
-**Not yet reviewed.** [#682](https://github.com/dlapiduz/postio/issues/682).
+**Reviewed:** 2026-09-03, against `postio-smtp`'s `session`, `error` and
+`transport`, and the `postio-model` generator whose bytes they carry. #673 had
+landed, which is what unblocked the response-code half — auditing the error
+classification before ADR 0021's boundary existed would have documented a
+classification that was about to change.
 
-Covers envelope versus header address handling and response-code handling
-beyond the happy path — temporary versus permanent failure, which is #461's
-retry question. The two concrete checks the 5322 pass routed here are in
-"Routed to the sub-issues" above: the missing final CRLF, and a body line that
-is a bare `.`.
+Backed one-test-per-row by `crates/postio-smtp/tests/rfc5321.rs`, which runs
+every exchange against `io-smtp`'s sans-I/O transport with no socket involved.
+
+### Verdicts
+
+| § | What it says | Verdict |
+|---|---|---|
+| **§4.1.1.4** `DATA` terminator | The payload ends `CRLF "." CRLF` | **Compliant.** The generator produces a message whose last body line has *no* CRLF; `io-smtp` supplies it before the terminator, so the dot begins its own line. Asserted against the bytes on the wire, not read from the crate. |
+| **§4.5.2** Transparency | A line beginning `.` is stuffed to `..` | **Compliant.** `postio-model` really will produce a body line that is a bare `.`; it reaches the wire as `..`. Unstuffed it *is* the terminator, and the message would be delivered truncated with no error anywhere. |
+| **§3.3, §4.1.1.2–3** Envelope versus headers | The reverse-path and forward-paths are the transaction's addresses, independent of the message's own headers | **Compliant.** Every `To`, `Cc` *and* `Bcc` address gets its own `RCPT TO`; the `DATA` bytes carry no `Bcc` header and not the bcc'd address. See below — this one is a privacy claim, so it earns more than a row. |
+| **§4.5.3.1.6** Line length | 1000 octets including CRLF | **Compliant.** Nothing folds the body, so this holds because `mail-builder` picks a transfer encoding that bounds the line: a 1,200-character line and a 4,000-character unbroken word both come out quoted-printable under 78. |
+| **§4.2.1** Reply codes | The first digit decides retryability | **Compliant.** `classify` branches on `code / 100 == 4` and nothing else; `smtp_session.rs` covers a rejection at each step — auth, sender, recipient, payload — and ADR 0021's "was the payload on the wire" question separately. |
+| **§4.2.1** Multiline replies | A reply is one *or more* lines carrying the same code | **Gap — [#921](https://github.com/dlapiduz/postio/issues/921).** Classification is right and the first line survives; every continuation line is dropped. That is where the large providers put the part that says what to do about the rejection. |
+| **RFC 3463** Enhanced status codes | A supplementary `class.subject.detail` code | **Compliant, with a named exception:** parsed by nobody. The code reaches the reason as text — `450 4.2.1 …` and `550 5.2.1 …` both keep it — and the *basic* first digit is what decides retries, which is what §4.2.1 makes decisive. See below. |
+| **RFC 1870** `SIZE` | Declare the message size if the server offers it | **Compliant.** Postio reads no capability list and passes no ESMTP parameter on `MAIL FROM` or `RCPT TO`, so it cannot rely on an extension the server did not advertise. Asserted by checking the commands carry no `SIZE=`, `BODY=`, `SMTPUTF8`, `RET=` or `ENVID=`. |
+| **RFC 6152** `8BITMIME` | 8-bit content requires the server to advertise it | **Compliant.** The generator encodes anything needing 8 bits — a body of `Grüße, Grace — φ ≈ 1.618` goes out base64 — so no octet above 127 reaches a connection that never negotiated one. |
+| **RFC 6531** `SMTPUTF8` | A non-ASCII address requires the server to advertise it | **Gap — [#922](https://github.com/dlapiduz/postio/issues/922).** `RCPT TO:<grüße@example.net>` goes out as typed: raw UTF-8, no capability read, and no punycode conversion anywhere in the workspace. |
+
+### The envelope/header split, and why it is a privacy verdict
+
+`PRODUCT.md` §21 says a bcc'd address never travels inside the message. That is
+two claims, and only both together are the feature:
+
+- **It must not be in the headers.** `postio-model::outgoing` has two entry
+  points rather than a boolean — `build` omits `Bcc`, `build_draft` includes it
+  — because the wrong answer to that boolean discloses a bcc'd address to every
+  other recipient. The Drafts copy needs the header (a draft picked up on a
+  phone would otherwise silently send to fewer people); the sent bytes must not
+  have it.
+- **It must be in the envelope.** `Draft::all_recipients` chains `to`, `cc` and
+  `bcc`, and that list is what the send path hands to `RCPT TO`. Drop it here
+  and the message is simply not delivered to the person, with nothing to show
+  for it.
+
+Neither half was tested before this audit. The failure modes are opposite —
+one discloses, one silently under-delivers — and each looks correct from the
+other's side, which is why the row is a verdict rather than a reading of the
+code.
+
+### The named exception: enhanced status codes are carried, not parsed
+
+RFC 3463 gives a server a second, finer code (`5.1.1` — "bad destination
+mailbox address") beside the basic three-digit one. Postio does not parse it,
+and that is deliberate rather than an oversight:
+
+- §4.2.1 makes the **first digit of the basic code** the retry decision, and
+  that is the decision Postio has to make. A `4.x.x` inside a `550` does not
+  make the rejection temporary.
+- The distinctions Postio acts on beyond retryability — is this an
+  authentication failure, was the payload already on the wire — are answered by
+  which `SmtpError` variant was built and by ADR 0021's boundary, not by a
+  subject code.
+
+What the exception costs: nothing today, because the enhanced code is preserved
+verbatim in the reason a log or a person sees. It would start costing something
+the day Postio wanted to act on a specific subject code — "mailbox full" versus
+"no such user" are both `550` and differ only in the enhanced code — and that
+day the parse is a small addition, not a redesign.
 
 ---
 
