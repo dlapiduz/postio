@@ -12,10 +12,10 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use postio_imap::backend::{
+use postio_account::backend::{
     AppendMessage, BodyPart, FlagChange, MailBackend, MailboxFilter, SelectMode, VecSink,
 };
-use postio_imap::cancel::CancelToken;
+use postio_account::cancel::CancelToken;
 use postio_jmap::JmapBackend;
 use postio_model::{Flag, FlagSet, MailboxRole, RemoteId, Uid};
 

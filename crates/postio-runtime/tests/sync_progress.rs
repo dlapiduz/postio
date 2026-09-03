@@ -26,9 +26,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::{BlobStore, test_support};
 
@@ -102,8 +102,8 @@ async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),

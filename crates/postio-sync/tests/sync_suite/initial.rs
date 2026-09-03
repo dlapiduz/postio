@@ -2,10 +2,10 @@
 //!
 //! No network and no server: `MockBackend` is the in-memory mail store the
 //! whole sync engine is developed against (see
-//! `crates/postio-imap/src/backend/mod.rs`).
+//! `crates/postio-account/src/backend/mod.rs`).
 
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Mailbox, MailboxId, Uid};
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;

@@ -1148,7 +1148,7 @@ impl From<Message> for Envelope {
 ///
 /// # Read when it is there, derived otherwise
 ///
-/// `BODYSTRUCTURE` says what it is and `postio-imap` records it in
+/// `BODYSTRUCTURE` says what it is and `postio-account` records it in
 /// [`Message::content_type`] at fetch time (`postio-roj4`), so `stored` is
 /// the honest answer whenever a sync has actually filled it in. `stored` is
 /// `None` for a row synced before that column existed and never refetched
@@ -1552,7 +1552,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
+    use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_model::MailboxRole;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
@@ -1713,8 +1713,8 @@ mod tests {
             backend: Arc::new(MockBackend::builder().mailbox(mailbox).build()),
             // Never dialled: nothing here queues a send.
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                postio_imap::secret::MemorySecretStore::default(),
+            tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                postio_account::secret::MemorySecretStore::default(),
             ))),
             events: sink,
             retry: Default::default(),

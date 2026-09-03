@@ -47,8 +47,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_model::{Flag, FlagSet, Message};
 use postio_storage::repository::{FlagSource, MessageRepository};
 use postio_storage::test_support;

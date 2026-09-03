@@ -22,7 +22,7 @@ io-gmail = { version = "0.3", default-features = false, features = ["client"] }
 pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
 
 # The MailBackend seam and nothing else.
-postio-imap = { version = "0.2.0", path = "../postio-imap", default-features = false }
+postio-account = { version = "0.2.0", path = "../postio-account", default-features = false }
 postio-model = { version = "0.2.0", path = "../postio-model" }
 
 secrecy = { version = "0.10", default-features = false }

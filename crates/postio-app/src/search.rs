@@ -876,7 +876,7 @@ mod interactive_read {
     //! `postio-storage/tests/write_gate.rs` underlies #425's
     //! `postio-session/tests/interactive_write.rs`. This is that end-to-end
     //! claim for the read side: the engine is real, its backend is
-    //! `postio_imap::backend::MockBackend` (the seam CLAUDE.md names for
+    //! `postio_account::backend::MockBackend` (the seam CLAUDE.md names for
     //! exactly this), and the pool is left at its ordinary size — see
     //! `engine_over` for why shrinking it is the wrong way to reproduce
     //! exhaustion here.
@@ -899,8 +899,8 @@ mod interactive_read {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_core::bridge::event_channel;
-    use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_model::ids::MessageId;
     use postio_runtime::Engine;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
@@ -971,8 +971,8 @@ mod interactive_read {
             blobs,
             backend,
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                postio_imap::secret::MemorySecretStore::default(),
+            tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                postio_account::secret::MemorySecretStore::default(),
             ))),
             events: sink,
             retry: Default::default(),

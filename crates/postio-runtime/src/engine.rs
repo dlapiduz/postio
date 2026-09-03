@@ -40,9 +40,9 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use postio_account::auth::TokenSource;
+use postio_account::backend::{BackendError, MailBackend};
 use postio_core::event::MailFootprint;
-use postio_imap::auth::TokenSource;
-use postio_imap::backend::{BackendError, MailBackend};
 use postio_model::RoleOverrides;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
@@ -2007,7 +2007,7 @@ async fn drain(
 /// with one spoken for by `IDLE`, so a fourth concurrent mailbox would not
 /// get a connection of its own — it would take turns on somebody else's and
 /// pay a `SELECT` on every batch for the privilege (see
-/// `postio_imap::imap::selection`). More lanes than the server will give
+/// `postio_account::imap::selection`). More lanes than the server will give
 /// connections is slower than fewer.
 ///
 /// **It does not bind today, and that is worth knowing before touching it.**
@@ -2133,7 +2133,7 @@ async fn sync_wave(
     // is waiting on must not queue behind three mailboxes. A cancelled pass
     // keeps everything it committed and resumes from there, so this costs at
     // most the batch that was on the wire.
-    let cancel = postio_imap::cancel::CancelToken::new();
+    let cancel = postio_account::cancel::CancelToken::new();
 
     // Cloned, not borrowed: every pass folds its own batches into this for as
     // long as it runs (`Committed::batch`, never across an await), and below
@@ -2270,7 +2270,7 @@ async fn sync_pass(
     connection: &PooledConnection,
     status: &RefCell<StatusTracker>,
     mailbox: MailboxId,
-    cancel: &postio_imap::cancel::CancelToken,
+    cancel: &postio_account::cancel::CancelToken,
 ) -> PassOutcome {
     let failed = |failure: PassFailure| PassOutcome {
         mailbox,
@@ -2517,7 +2517,7 @@ async fn sync(
     let connection = pool
         .get()
         .map_err(|error| EngineError::new(error.to_string()))?;
-    let cancel = postio_imap::cancel::CancelToken::new();
+    let cancel = postio_account::cancel::CancelToken::new();
     let outcome = sync_pass(parts, &connection, &state.status, mailbox, &cancel).await;
     settle_pass(parts, state, &connection, outcome)
 }
@@ -2914,10 +2914,10 @@ mod tests {
             account: account.id,
             database,
             blobs,
-            backend: Arc::new(postio_imap::backend::MockBackend::new()),
+            backend: Arc::new(postio_account::backend::MockBackend::new()),
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                postio_imap::secret::MemorySecretStore::default(),
+            tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                postio_account::secret::MemorySecretStore::default(),
             ))),
             events: sink,
             retry: RetryPolicy::default(),

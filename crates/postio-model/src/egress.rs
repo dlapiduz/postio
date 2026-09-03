@@ -5,7 +5,7 @@
 //! **proven with a request log rather than asserted** (CLAUDE.md's privacy
 //! section, ADR 0003 requirement 7, ADR 0009 Q6). These types are that log's
 //! vocabulary, defined here because the crates that open connections
-//! (`postio-imap`, `postio-smtp`) and the crate that stores rows
+//! (`postio-account`, `postio-smtp`) and the crate that stores rows
 //! (`postio-storage`) may not depend on each other; this one is beneath
 //! both.
 //!

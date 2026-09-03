@@ -19,7 +19,7 @@
 //! - A target that no longer exists — folder deleted, account removed
 //!   mid-saga — aborts the saga with the source intact (Q13).
 
-use postio_imap::backend::{AppendMessage, MailBackend};
+use postio_account::backend::{AppendMessage, MailBackend};
 use postio_model::ids::CrossAccountMoveId;
 use postio_storage::BlobStore;
 use postio_storage::repository::{
@@ -215,7 +215,7 @@ pub(crate) async fn remove(
         .store_flags(
             &path,
             &ids,
-            &postio_imap::backend::FlagChange::Add(deleted_flag()),
+            &postio_account::backend::FlagChange::Add(deleted_flag()),
         )
         .await
     {

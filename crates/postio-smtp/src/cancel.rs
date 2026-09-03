@@ -5,7 +5,7 @@
 //! shares one cancelled flag, cancelling is idempotent, and awaiting an
 //! already-cancelled token returns immediately.
 //!
-//! Duplicated from `postio-imap::cancel` rather than shared: the two crates
+//! Duplicated from `postio-account::cancel` rather than shared: the two crates
 //! are deliberately independent siblings under `postio-sync` (see
 //! CLAUDE.md's architecture diagram), and this type is small enough that
 //! duplication costs less than a cross-protocol dependency would.

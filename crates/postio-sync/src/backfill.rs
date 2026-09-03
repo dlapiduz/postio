@@ -45,8 +45,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
-use postio_imap::backend::{BackendError, BodyPart, MailBackend, VecSink};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{BackendError, BodyPart, MailBackend, VecSink};
+use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
 use postio_storage::repository::{

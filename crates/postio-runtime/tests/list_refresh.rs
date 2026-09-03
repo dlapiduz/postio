@@ -41,9 +41,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_runtime::engine::{Clock, Engine, EngineParts, NetworkSource};
 use postio_storage::{BlobStore, test_support};
@@ -136,8 +136,8 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
         blobs,
         backend: Arc::new(server()),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),

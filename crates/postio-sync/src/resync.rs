@@ -67,8 +67,8 @@
 use std::collections::BTreeSet;
 
 use chrono::Utc;
-use postio_imap::backend::{MailBackend, MailboxStatus as ServerStatus, SelectMode, UidSet};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{MailBackend, MailboxStatus as ServerStatus, SelectMode, UidSet};
+use postio_account::cancel::CancelToken;
 use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
     ResyncPlan, Uid,
@@ -241,7 +241,7 @@ pub async fn resync_mailbox(
                     // The integrity guard firing: io-imap dropped a response
                     // line the incremental pull was counting on, so the answer
                     // cannot be trusted. Loud, because it means a delta was
-                    // silently lost — see postio-imap's skip counter.
+                    // silently lost — see postio-account's skip counter.
                     tracing::error!(
                         mailbox = mailbox.id.get(),
                         %error,
@@ -462,7 +462,7 @@ async fn incremental(
 /// conforming case, and the common one — produces an empty range and no second
 /// round trip.
 fn unaccounted_arrivals(
-    reported: &[postio_imap::backend::FetchedMessage],
+    reported: &[postio_account::backend::FetchedMessage],
     selected: &ServerStatus,
     previous_uid_next: Option<Uid>,
 ) -> Option<Uid> {

@@ -6,8 +6,8 @@
 //! never tears a connection in the middle of a body, never emits a sequence
 //! number no decoder can read, and never goes quiet holding a connection open.
 //!
-//! So these run `postio_imap::imap::ImapBackend` — real `io-imap`, real
-//! session, real bytes — against `postio_imap::test_server::TestServer` on an
+//! So these run `postio_account::imap::ImapBackend` — real `io-imap`, real
+//! session, real bytes — against `postio_account::test_server::TestServer` on an
 //! ephemeral loopback port, with the same [`Quirk`] and [`Fault`] injection
 //! that suite uses. Nothing here touches the network.
 //!
@@ -18,11 +18,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
-use postio_imap::backend::MailBackend;
-use postio_imap::cancel::CancelToken;
-use postio_imap::imap::{ImapBackend, PoolConfig, RustlsConnector};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{Fault, Quirk, TestMailbox, TestMessage, TestServer};
+use postio_account::backend::MailBackend;
+use postio_account::cancel::CancelToken;
+use postio_account::imap::{ImapBackend, PoolConfig, RustlsConnector};
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{Fault, Quirk, TestMailbox, TestMessage, TestServer};
 use postio_model::{
     AccountId, BodyState, Flag, FlagSet, FullResyncReason, Mailbox, MessageId, ModSeq, Operation,
     OperationTarget, Uid, UidValidity,
@@ -250,7 +250,7 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
     // At least one mainstream provider has shipped `* -1 FETCH (…)` under
     // QRESYNC. io-imap skips a line it cannot decode and completes the command
     // `Ok`, so the pull looks whole while a message's flags never arrived —
-    // which is why postio-imap counts the skips and refuses the result. The
+    // which is why postio-account counts the skips and refuses the result. The
     // engine's answer has to be a full pass: the same incremental pull would
     // lose the same line again.
     let server = server().await;

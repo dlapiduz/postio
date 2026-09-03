@@ -28,16 +28,16 @@ use std::sync::{Arc, Mutex};
 use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
+use postio_account::discovery::{
+    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
+    TransportError,
+};
+use postio_account::secret::MemorySecretStore;
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::discovery::{
-    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
-    TransportError,
-};
-use postio_imap::secret::MemorySecretStore;
 use postio_session::Wiring;
 use postio_storage::{BlobStore, test_support};
 
@@ -204,7 +204,7 @@ fn onboard(
         notifier,
         None,
         transport,
-        std::sync::Arc::new(postio_imap::oauth::browser::SystemBrowserOpener),
+        std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
     );
 
     let screen = window

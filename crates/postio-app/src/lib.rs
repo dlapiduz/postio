@@ -137,8 +137,8 @@ pub fn run() -> glib::ExitCode {
     // An installation has exactly one keyring, and every credential read goes
     // to the same instance: the store key here, and every account password
     // through `Wiring::secrets`.
-    let secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore> =
-        std::sync::Arc::new(postio_imap::secret::KeyringSecretStore::default());
+    let secrets: std::sync::Arc<dyn postio_account::secret::SecretStore> =
+        std::sync::Arc::new(postio_account::secret::KeyringSecretStore::default());
 
     // `[mailboxes]`, read once here alongside `[sync]` and for the same
     // reason `notifications::config_at` gives. Which folder this server calls
@@ -319,10 +319,10 @@ pub fn open_or_onboard(
                     notifier,
                     repairing.map(|account| *account),
                     std::sync::Arc::new(
-                        postio_imap::discovery::PimalayaTransport::new()
+                        postio_account::discovery::PimalayaTransport::new()
                             .with_egress(wiring.egress.clone()),
                     ),
-                    std::sync::Arc::new(postio_imap::oauth::browser::SystemBrowserOpener),
+                    std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
                 ),
             }
         }
@@ -927,7 +927,7 @@ const BACKFILL_PER_MAILBOX: u32 = 200;
 /// keyring, which folder is the archive, how hard to sync. None of it depends
 /// on the store, which is exactly why it survives the store not opening.
 struct Installation {
-    secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore>,
+    secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
     state: SharedState,
     mailbox_roles: postio_model::RoleOverrides,
     sync_config: postio_config::SyncConfig,
@@ -1172,13 +1172,13 @@ fn reap_pending_accounts(database: &Database) {
 /// and an error means onboarding rather than a window that never decides.
 pub async fn startup_route(
     database: &Database,
-    secrets: &dyn postio_imap::secret::SecretStore,
+    secrets: &dyn postio_account::secret::SecretStore,
 ) -> Startup {
     reap_pending_accounts(database);
     let Some(account) = first_account(database) else {
         return Startup::Onboard(None);
     };
-    let key = postio_imap::secret::AccountKey::new(account.address.address.clone());
+    let key = postio_account::secret::AccountKey::new(account.address.address.clone());
     // The account's domain, never the local part, for the same reason
     // `feed_the_window` logs only that.
     let domain = account.address.domain().unwrap_or("unknown").to_owned();
@@ -1206,7 +1206,7 @@ mod tests {
     //! on a real first run.
 
     use super::*;
-    use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+    use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 
     /// A store with one enabled account in it, and the key its credential
     /// would be filed under.

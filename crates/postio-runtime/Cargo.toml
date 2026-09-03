@@ -18,7 +18,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # once. Already in the lock file via `zbus`, so it costs no extra compile.
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 postio-core.workspace = true
-postio-imap.workspace = true
+postio-account.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true

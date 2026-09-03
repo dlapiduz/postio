@@ -1,6 +1,6 @@
 //! The SMTP connector reports every connection to the egress sink (#151).
 //!
-//! Same contract as `postio-imap`'s transport, tested the same way: a
+//! Same contract as `postio-account`'s transport, tested the same way: a
 //! loopback listener stands in for the server, so nothing here touches the
 //! network. Success and failure both reach the sink — the log proves the
 //! privacy claim only if it is complete.

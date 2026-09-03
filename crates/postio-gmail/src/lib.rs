@@ -29,7 +29,7 @@
 //! (ADR 0006): the user's own client or a broker until #195 clears CASA,
 //! which is why the preset row keeps IMAP first (a data flip later).
 //!
-//! [`MailBackend`]: postio_imap::backend::MailBackend
+//! [`MailBackend`]: postio_account::backend::MailBackend
 
 pub mod backend;
 mod connection;

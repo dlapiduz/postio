@@ -10,14 +10,14 @@ use io_gmail::v1::rest::labels::GmailLabel;
 use io_gmail::v1::rest::messages::insert::GmailMessageInsert;
 use io_gmail::v1::rest::messages::list::GmailMessagesListParams;
 use io_gmail::v1::rest::messages::{GmailMessage, GmailMessageFormat, decode_raw, encode_raw};
-use postio_imap::auth::TokenSource;
-use postio_imap::backend::{
+use postio_account::auth::TokenSource;
+use postio_account::backend::{
     AppendMessage, BackendError, BackendResult, BodyPart, BodySink, Capabilities, FetchedBody,
     FetchedMessage, FlagChange, FlagUpdate, MailBackend, MailboxEvent, MailboxFilter,
     MailboxStatus, MailboxSummary, SelectMode, UidMapping, UidSet,
 };
-use postio_imap::cancel::CancelToken;
-use postio_imap::secret::AccountKey;
+use postio_account::cancel::CancelToken;
+use postio_account::secret::AccountKey;
 use postio_model::{Flag, FlagSet, Generation, ModSeq, RemoteId, Uid, UidValidity};
 
 use crate::connection::GmailConnection;
@@ -242,7 +242,7 @@ impl MailBackend for GmailBackend {
     ) -> BackendResult<Vec<FetchedMessage>> {
         if changed_since.is_some() {
             return Err(BackendError::Unsupported {
-                capability: postio_imap::backend::Capability::CondStore,
+                capability: postio_account::backend::Capability::CondStore,
             });
         }
         let mut positions = uids.uids();
@@ -294,7 +294,7 @@ impl MailBackend for GmailBackend {
     ) -> BackendResult<FetchedBody> {
         if !matches!(part, BodyPart::Whole) {
             return Err(BackendError::Unsupported {
-                capability: postio_imap::backend::Capability::Binary,
+                capability: postio_account::backend::Capability::Binary,
             });
         }
         let message = self

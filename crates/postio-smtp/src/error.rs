@@ -1,6 +1,6 @@
 //! What can go wrong sending mail, expressed without naming a provider.
 //!
-//! Mirrors `postio_imap::backend::BackendError`'s shape: callers branch on
+//! Mirrors `postio_account::backend::BackendError`'s shape: callers branch on
 //! [`SmtpError::is_transient`] and [`is_authentication_failure`
 //! ](SmtpError::is_authentication_failure), never on the variant, so a new
 //! variant cannot silently change how existing code retries. No variant

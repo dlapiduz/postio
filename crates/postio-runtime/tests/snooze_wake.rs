@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use postio_account::backend::{MockBackend, MockMailbox};
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_imap::backend::{MockBackend, MockMailbox};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::MessageRepository;
 use postio_storage::{BlobStore, test_support};
@@ -68,8 +68,8 @@ async fn a_due_snooze_wakes_and_repaints_without_being_asked() {
                 .build(),
         ),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),

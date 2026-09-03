@@ -5,8 +5,8 @@
 //!   cargo test -p postio-gmail --test gmail_live -- --ignored
 //! ```
 
+use postio_account::backend::{MailBackend, MailboxFilter};
 use postio_gmail::GmailBackend;
-use postio_imap::backend::{MailBackend, MailboxFilter};
 use postio_model::MailboxRole;
 
 #[tokio::test]

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use io_gmail::v1::rest::labels::GmailLabel;
 use io_gmail::v1::rest::labels::GmailLabelType;
 use io_gmail::v1::rest::messages::{GmailMessage, GmailMessageHeader};
-use postio_imap::backend::{Envelope, FetchedMessage, FlagChange, MailboxSummary};
+use postio_account::backend::{Envelope, FetchedMessage, FlagChange, MailboxSummary};
 use postio_model::{EmailAddress, Flag, FlagSet, RemoteId, RfcMessageId, Uid, UidValidity};
 
 /// The synthetic generation every Gmail message reports: ids never

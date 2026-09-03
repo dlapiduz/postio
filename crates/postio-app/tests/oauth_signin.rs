@@ -30,18 +30,18 @@ use std::thread;
 use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
+use postio_account::discovery::{
+    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
+    TransportError,
+};
+use postio_account::oauth::BrowserOpener;
+use postio_account::secret::{AccountKey, MemorySecretStore, SecretStore};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::discovery::{
-    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
-    TransportError,
-};
-use postio_imap::oauth::BrowserOpener;
-use postio_imap::secret::{AccountKey, MemorySecretStore, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::AuthMethod;
 use postio_session::Wiring;
 use postio_storage::repository::AccountRepository;

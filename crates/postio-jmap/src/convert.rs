@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use io_jmap::rfc8621::email::JmapEmail;
 use io_jmap::rfc8621::mailbox::{JmapMailbox, JmapMailboxRole};
-use postio_imap::backend::{Envelope, FetchedMessage, MailboxSummary};
+use postio_account::backend::{Envelope, FetchedMessage, MailboxSummary};
 use postio_model::{EmailAddress, Flag, FlagSet, RemoteId, RfcMessageId, Uid, UidValidity};
 
 /// The synthetic generation every JMAP message reports.

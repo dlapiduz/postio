@@ -3,7 +3,7 @@
 //! ADR 0014 Q3. One 32-byte key per store, generated from the OS RNG on first
 //! open and kept in the Secret Service keyring beside the account credentials
 //! — the same seam, the same locked-keyring behaviour, and the same
-//! **no-plaintext-fallback** rule `postio_imap::secret` already enforces for
+//! **no-plaintext-fallback** rule `postio_account::secret` already enforces for
 //! passwords. A locked keyring means the mail does not open; there is no
 //! "open it read-only anyway".
 //!
@@ -111,7 +111,7 @@ pub enum KeyError {
 /// Zeroized on drop, and never rendered: [`Debug`] says only that it exists.
 /// Reach for [`expose`](Self::expose) or [`to_hex`](Self::to_hex) at the
 /// moment the bytes are actually needed, so every use is short and obvious in
-/// review — the discipline `postio_imap::secret::Password` already keeps.
+/// review — the discipline `postio_account::secret::Password` already keeps.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StoreKey(Zeroizing<[u8; KEY_BYTES]>);
 

@@ -78,9 +78,9 @@ fn main() {
 /// business making that judgement, so this only ever reads — a store that has
 /// no key yet is one the application has not opened, and the fix is to open it.
 fn read_store_key() -> Option<postio_storage::key::StoreKey> {
-    use postio_imap::secret::{AccountKey, SecretStore};
+    use postio_account::secret::{AccountKey, SecretStore};
 
-    let secrets = postio_imap::secret::KeyringSecretStore::default();
+    let secrets = postio_account::secret::KeyringSecretStore::default();
     let entry = AccountKey::new(postio_storage::key::STORE_KEY_ENTRY);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

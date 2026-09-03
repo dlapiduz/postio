@@ -109,8 +109,8 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_model::{Account, Mailbox};
 use postio_storage::{Database, PooledConnection, test_support};
 use postio_sync::sync_mailbox;

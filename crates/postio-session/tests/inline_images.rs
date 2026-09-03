@@ -22,10 +22,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use postio_imap::backend::{
+use postio_account::backend::{
     BodyStructure, Disposition, MailBackend, MockBackend, MockMailbox, MockMessage, PartNode,
 };
-use postio_imap::cancel::CancelToken;
+use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, Uid, UidValidity};
 use postio_storage::repository::MessageRepository;
 use postio_storage::{BlobStore, test_support};

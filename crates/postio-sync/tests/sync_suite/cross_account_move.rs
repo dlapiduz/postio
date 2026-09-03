@@ -7,7 +7,7 @@
 //! confirmed copy in the target.**
 
 use chrono::{DateTime, TimeZone, Utc};
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::ids::{AccountId, MailboxId, MessageId, Uid, UidValidity};
 use postio_model::{Message, Operation, OperationTarget, RfcMessageId};
 use postio_storage::repository::{

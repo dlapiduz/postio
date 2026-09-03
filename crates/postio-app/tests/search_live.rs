@@ -88,7 +88,7 @@ fn a_real_account_answers_a_real_query() {
     // The key comes from the real keyring, because a real store is encrypted
     // under a real key (ADR 0014) and there is no other way in. A locked
     // keyring is a skip and not a failure — this test is about search.
-    let secrets = postio_imap::secret::KeyringSecretStore::default();
+    let secrets = postio_account::secret::KeyringSecretStore::default();
     let Ok(store_key) = postio_session::store_key_blocking(&secrets) else {
         eprintln!("skipping: the store key is not readable (is the keyring unlocked?)");
         return;

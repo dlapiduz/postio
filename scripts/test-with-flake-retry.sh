@@ -30,7 +30,7 @@ fi
 # cargo's own summary of what didn't compile or run, one backtick-quoted
 # invocation per line:
 #   error: 2 targets failed:
-#       `-p postio-imap --lib`
+#       `-p postio-account --lib`
 #       `-p postio-sync --test sync_suite`
 mapfile -t TARGETS < <(
     sed -n '/^error: [0-9]* targets\? failed:$/,$ {

@@ -17,7 +17,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
+use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::seed::seed_small;
@@ -112,8 +112,8 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
         backend: backend.clone(),
         // Never dialled: nothing here queues a send.
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),

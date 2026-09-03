@@ -753,7 +753,7 @@ seam — the composition root decides what kind of credential an account has,
 and nothing downstream asks again.
 
 **What a refused credential means is decided in exactly one place**,
-`postio_imap::auth::with_credential`: invalidate, ask once more, and *do not
+`postio_account::auth::with_credential`: invalidate, ask once more, and *do not
 retry at all* if the source hands back the same bytes. That last clause is the
 one that goes missing when the paragraph is written twice — and without it a
 wrong password is an endless pair of round trips. The pool and the SMTP send
@@ -1027,7 +1027,7 @@ arbitrary:
 - *More lanes than IMAP connections is slower, not faster.* The IMAP pool
   defaults to four with one lane held by `IDLE`, and a pass that does not get
   a connection of its own shares one — paying a `SELECT` per batch, because
-  `postio_imap::imap::selection` caches the selection *per connection*.
+  `postio_account::imap::selection` caches the selection *per connection*.
 - *Passes are concurrent, never parallel.* The engine's runtime is
   current-thread and the futures are polled by one `FuturesUnordered` on one
   task, so two passes cannot both be inside `initial::enumerate`'s batch
@@ -1828,7 +1828,7 @@ the machine.
 tested.** A proposal to add one was closed as not-needed after being written
 on a wrong premise. `Engine::spawn` takes
 `EngineParts { backend: Arc<dyn MailBackend>, .. }` — it never constructs a
-transport, it is handed one. `postio_imap::backend::MockBackend` is a
+transport, it is handed one. `postio_account::backend::MockBackend` is a
 complete in-memory `MailBackend` including bodies. So a real `Engine` over a
 mock does full syncs, backfills and body fetches with no network and no
 display, in the default suite. Proof already in the tree:
@@ -1982,13 +1982,13 @@ still be torn by a concurrent `git pull`.** Observed 2026-08-25 verifying
 `main` after the postio-session refactor: `cargo test --workspace
 --no-fail-fast` was run against `~/src/postio` with its *own*
 `CARGO_TARGET_DIR`, specifically to dodge the hazard above. Twenty minutes
-into a cold build it failed anyway — `postio-imap` used
+into a cold build it failed anyway — `postio-account` used
 `Message::content_type`, but the `postio-model` rlib it linked against had
 no such field. Both true at once only makes sense if the two crates were
 compiled from different moments of the same tree, and `git reflog` said
 so: `pull: Fast-forward` had landed five commits, including the one adding
 `content_type`, while the build was still running. Cargo had already
-compiled and cached `postio-model` from before the pull; `postio-imap`'s
+compiled and cached `postio-model` from before the pull; `postio-account`'s
 source was read from disk after it, use-site and definition torn across
 the same invocation.
 
@@ -2067,7 +2067,7 @@ waiting (#57, found by the `postio-iigq` audit).
 The way out, where the blocking work is somebody else's crate: take the
 stream. `io-pim-discovery`'s `DiscoveryStream` is `Read + Write` and nothing
 more, and both of its std clients expose `with_factory(scheme, ..)` — so
-`postio-imap`'s `discovery::transport` hands them a wrapper that checks the
+`postio-account`'s `discovery::transport` hands them a wrapper that checks the
 token before every read and write and fails with
 `io::ErrorKind::ConnectionAborted`. The detached task then unwinds through
 the client's own error path and drops the socket. The protocol stays
@@ -2367,7 +2367,7 @@ sharing nothing with a session's own workstation.
 ## Logging & privacy
 
 **`Zeroizing<String>` protects the password; the buffers around it are where
-it escapes.** `postio_imap::secret::Password` was always the right shape, and
+it escapes.** `postio_account::secret::Password` was always the right shape, and
 #144's security review still found live copies that were freed without being
 overwritten — all of them on the way *into* a `Password`, and the worst of
 them on error paths where the secret never became one at all. Two rules came
@@ -2387,7 +2387,7 @@ out of it:
   does zeroize on drop, but it is built through `String::into_boxed_str`,
   which calls `shrink_to_fit` — so a `String` with spare capacity is copied to
   a fresh allocation and the old one is freed with the password still in it.
-  The copies handed to io-sasl (`postio-imap/src/imap/mod.rs`'s
+  The copies handed to io-sasl (`postio-account/src/imap/mod.rs`'s
   `credential_copy`) and to io-smtp (`postio-sync/src/send.rs`) are single
   `str::to_owned` calls for exactly this reason: `to_owned` allocates `len`,
   so the buffer moves. A `String::with_capacity`, a `push_str` or a `format!`
@@ -2402,7 +2402,7 @@ zeroized.
 
 
 **Logger installation order.** `log::set_logger` succeeds *once* per
-process. `postio-imap`'s `skip_counter` watches io-imap's
+process. `postio-account`'s `skip_counter` watches io-imap's
 `debug!("skipping undecodable untagged response")` and turns it into
 `BackendError::ResyncIntegrityLost` — an integrity check, not a log line.
 `tracing-subscriber`'s `SubscriberInitExt::init()`/`try_init()` calls
@@ -2411,7 +2411,7 @@ that one slot and leaves the counter inert: a `CHANGEDSINCE` fetch that
 silently dropped deltas is then reported as a complete incremental pull.
 **Never use `.init()` on the subscriber in `postio-app`.** Use
 `tracing::subscriber::set_global_default()`, and install the bridge *first*
-via `postio_imap::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())))`,
+via `postio_account::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())))`,
 which composes the counter and the bridge into the one logger the process is
 allowed. `skip_counter_is_counting()` reports whether it worked, and
 `logging.rs` warns at startup when it didn't. The warning caught this exact
@@ -2447,7 +2447,7 @@ generous, because in `config.toml` a false positive costs a renamed key and
 a false negative writes a password to disk. That generosity assumes nothing
 legitimate in the document ever needs those words as substrings, which held
 for `config.toml` and stopped holding the moment `providers.toml`
-(`postio-imap/src/discovery/providers_toml.rs`) needed fields named
+(`postio-account/src/discovery/providers_toml.rs`) needed fields named
 `requires_app_password`, `password_help_url`, and — worse — the OAuth token
 *endpoint*'s own field, `token`, all of which are perfectly ordinary,
 non-secret data that the marker list matches anyway. Stripping the whole
@@ -3410,7 +3410,7 @@ exists.
 ## Cross-platform dependencies and what a Linux box can prove (2026-08-28, #642)
 
 `main` spent a day unbuildable on Linux because a macOS dependency section
-swallowed fifteen entries of `postio-imap`'s `[dependencies]` (#642). The
+swallowed fifteen entries of `postio-account`'s `[dependencies]` (#642). The
 diff looked tidy — `security-framework` sorts between
 `rustls-platform-verifier` and `secrecy`, so it read as an alphabetical
 insert — and a TOML table runs until the next header, so everything below it

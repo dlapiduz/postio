@@ -10,11 +10,11 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use postio_imap::backend::{
+use postio_account::backend::{
     AppendMessage, Capabilities, Fault, MailBackend, MailboxEvent, MockBackend, MockMailbox,
     MockMessage,
 };
-use postio_imap::cancel::CancelToken;
+use postio_account::cancel::CancelToken;
 use postio_model::{Mailbox, MailboxId, UidValidity};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;

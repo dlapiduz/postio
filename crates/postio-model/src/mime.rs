@@ -37,7 +37,7 @@
 //!
 //! CLAUDE.md keeps this crate free of storage and protocol dependencies, and
 //! [`mail_parser`] is neither: it is a pure format parser with no I/O, no
-//! sockets and no state. Putting the mapping here is what lets `postio-imap`
+//! sockets and no state. Putting the mapping here is what lets `postio-account`
 //! (which must not depend on `postio-storage`) turn a `FETCH` response into a
 //! [`Message`] — see the architecture diagram in CLAUDE.md.
 //!
@@ -326,7 +326,7 @@ pub fn decode_header_text(raw: &[u8]) -> String {
 /// `None` once nothing is left to keep.
 ///
 /// This is text-processing only — no `mail_parser` call, so no panic
-/// surface — and is shared with `postio-imap`, whose `ENVELOPE` fetch reads
+/// surface — and is shared with `postio-account`, whose `ENVELOPE` fetch reads
 /// `List-Id` as its own isolated header value the same way it reads the
 /// subject.
 pub fn list_id_from_text(raw: &str) -> Option<String> {

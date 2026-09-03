@@ -2,11 +2,11 @@
 //!
 //! No network and no server: `MockBackend` is an in-memory mail store with
 //! injectable faults, which is how the whole sync engine is developed
-//! (`crates/postio-imap/src/backend/mod.rs`). Every conflict below is a thing a
+//! (`crates/postio-account/src/backend/mod.rs`). Every conflict below is a thing a
 //! real server does.
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
+use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage, UidSet};
 use postio_model::{
     AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationState,
     OperationTarget, Uid, UidValidity,
@@ -111,7 +111,7 @@ async fn server_flags(backend: &MockBackend, mailbox: &str, uid: u32) -> Option<
             mailbox,
             &UidSet::single(Uid::new(uid)),
             None,
-            &postio_imap::cancel::CancelToken::new(),
+            &postio_account::cancel::CancelToken::new(),
         )
         .await
         .expect("fetch")

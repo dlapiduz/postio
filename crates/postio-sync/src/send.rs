@@ -71,9 +71,9 @@
 //! [`Draft::rfc_message_id`]: postio_model::Draft::rfc_message_id
 
 use chrono::Utc;
-use postio_imap::auth::{TokenSource, with_credential};
-use postio_imap::backend::{AppendMessage, MailBackend};
-use postio_imap::secret::AccountKey;
+use postio_account::auth::{TokenSource, with_credential};
+use postio_account::backend::{AppendMessage, MailBackend};
+use postio_account::secret::AccountKey;
 use postio_model::ids::{AccountId, DraftId};
 use postio_model::{
     Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, OutgoingAttachment, mime,
@@ -332,7 +332,7 @@ pub(crate) async fn send(
         &key,
         postio_smtp::error::SmtpError::is_authentication_failure,
         |credential| async move {
-            // Exactly one `to_owned`, for the reason `postio_imap`'s own
+            // Exactly one `to_owned`, for the reason `postio_account`'s own
             // credential copy gives: `SecretString::from` goes through
             // `String::into_boxed_str`, which reallocates whenever capacity
             // exceeds length and frees the buffer holding the password

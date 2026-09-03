@@ -55,7 +55,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use postio_imap::backend::{BackendError, MailBackend};
+use postio_account::backend::{BackendError, MailBackend};
 
 // ---------------------------------------------------------------------------
 // Policy

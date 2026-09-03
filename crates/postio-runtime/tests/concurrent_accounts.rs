@@ -17,8 +17,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_core::bridge::event_channel;
-use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_model::AccountId;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
@@ -74,8 +74,8 @@ fn engine_for(
         blobs,
         backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
