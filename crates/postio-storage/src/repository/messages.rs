@@ -199,6 +199,26 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
+    /// Every message in each of these accounts, less the rows taken back out
+    /// of the selection.
+    ///
+    /// The unified view's half of the predicate story (#811). The accounts
+    /// are named rather than implied by "all of them" because the aggregate
+    /// list can be showing fewer than it has: an account Postio cannot
+    /// currently reach is drawn — its synced mail is real mail — and is
+    /// deliberately *not* part of a whole-view selection made while it was
+    /// away (ADR 0005 Q10).
+    ///
+    /// The list is the one the view was scoped to **when the gesture was
+    /// made**, carried here rather than looked up on the way past. Resolving
+    /// it late would let an account that reconnected between the `Ctrl+A` and
+    /// the `a` join a selection the user was never shown.
+    InAccounts {
+        /// The accounts the predicate is about, in the sidebar's order.
+        accounts: Vec<AccountId>,
+        /// Rows the user deselected. Built by clicking, so it is short.
+        except: Vec<MessageId>,
+    },
     /// Every message a run of queue rows named.
     ///
     /// This is how undo takes back a bulk action without naming its rows: the
@@ -250,8 +270,11 @@ impl MessageSet {
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
-            // A smart folder is not a folder, here as everywhere else.
-            MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
+            // A smart folder is not a folder, here as everywhere else --
+            // and an aggregate over accounts is further from one still.
+            MessageSet::Flagged { .. } | MessageSet::Queued(_) | MessageSet::InAccounts { .. } => {
+                None
+            }
             MessageSet::InSourceMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::WithFlag { set, .. } => set.mailbox(),
         }
@@ -298,30 +321,20 @@ impl MessageSet {
             MessageSet::InMailbox { mailbox, except } => {
                 let mut sql =
                     format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
-                if !except.is_empty() {
-                    // Excepted by *conversation*, not by row (ADR 0015 Q3,
-                    // #468). A folder shows one row per thread, so the id in
-                    // `except` is a row the user took back out of a select-all
-                    // -- and that row is a conversation. Excepting only the id
-                    // would leave the rest of it in the set, so `Ctrl+A` then
-                    // deselecting one thread would archive all of it but its
-                    // newest message: the worst of both readings.
-                    //
-                    // The `IS NULL` arm keeps the comparison total. A message
-                    // with no thread is only ever excepted by its own id, and
-                    // `NOT IN` against a set containing NULL is NULL -- which
-                    // would quietly drop every unthreaded message from the
-                    // set rather than keep it.
-                    let ids = placeholders(except.len(), first + 1);
-                    sql.push_str(&format!(
-                        " AND messages.id NOT IN ({ids}) \
-                          AND (messages.thread_id IS NULL \
-                               OR messages.thread_id NOT IN \
-                                  (SELECT thread_id FROM messages \
-                                    WHERE id IN ({ids}) AND thread_id IS NOT NULL))"
-                    ));
-                }
+                sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
+                arguments.extend(except.iter().map(|id| id.get()));
+                (sql, arguments)
+            }
+            // The unified view's rows are conversations too, so the
+            // exceptions are excepted the same way -- by conversation, not by
+            // the one message a row is drawn from.
+            MessageSet::InAccounts { accounts, except } => {
+                let ids = placeholders(accounts.len(), first);
+                let mut sql =
+                    format!("messages.account_id IN ({ids}) AND messages.deleted_locally = 0");
+                sql.push_str(&without_conversations(except, first + accounts.len()));
+                let mut arguments: Vec<i64> = accounts.iter().map(|id| id.get()).collect();
                 arguments.extend(except.iter().map(|id| id.get()));
                 (sql, arguments)
             }
@@ -1898,6 +1911,35 @@ fn page_arguments(query: &ListQuery) -> Vec<i64> {
         arguments.push(cursor.id.get());
     }
     arguments
+}
+
+/// ` AND ...` excluding every conversation `except` names, or nothing at all.
+///
+/// Excepted by *conversation*, not by row (ADR 0015 Q3, #468). A list of mail
+/// shows one row per thread, so an id in `except` is a row the user took back
+/// out of a select-all -- and that row is a conversation. Excepting only the
+/// id would leave the rest of it in the set, so `Ctrl+A` then deselecting one
+/// thread would archive all of it but its newest message: the worst of both
+/// readings.
+///
+/// The `IS NULL` arm keeps the comparison total. A message with no thread is
+/// only ever excepted by its own id, and `NOT IN` against a set containing
+/// NULL is NULL -- which would quietly drop every unthreaded message from the
+/// set rather than keep it.
+///
+/// The caller binds one argument per exception, from `first` upwards.
+fn without_conversations(except: &[MessageId], first: usize) -> String {
+    if except.is_empty() {
+        return String::new();
+    }
+    let ids = placeholders(except.len(), first);
+    format!(
+        " AND messages.id NOT IN ({ids}) \
+          AND (messages.thread_id IS NULL \
+               OR messages.thread_id NOT IN \
+                  (SELECT thread_id FROM messages \
+                    WHERE id IN ({ids}) AND thread_id IS NOT NULL))"
+    )
 }
 
 /// `?n, ?n+1, ...` for `count` parameters starting at `first`.

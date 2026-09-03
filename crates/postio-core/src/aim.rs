@@ -48,7 +48,7 @@
 //! [ADR 0015]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0015-threaded-list.md
 //! [ADR 0019]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0019-macos-frontend.md
 
-use postio_model::{ListScope, MessageId, ThreadId};
+use postio_model::{AccountId, ListScope, MessageId, ThreadId};
 
 use crate::bridge::EventSink;
 use crate::command::{Command, CommandId, MessageTarget};
@@ -135,14 +135,21 @@ pub struct Aim<'a> {
 /// something to apply the rule to. `ViewScope`'s smaller variant set stays —
 /// see `docs/engineering-notes.md`'s "Six types are called *Scope*" — this
 /// is the function that produces it.
-pub fn view_scope(scope: ListScope) -> Option<ViewScope> {
+pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope> {
     match scope {
         ListScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
         ListScope::Flagged(account) => Some(ViewScope::Flagged(account)),
-        ListScope::Account(_)
-        | ListScope::Unified
-        | ListScope::Snoozed(_)
-        | ListScope::Thread(_) => None,
+        // The aggregate is the one scope that needs something from the
+        // caller, and `reachable` is deliberately not optional: a frontend
+        // that has not decided which accounts its list could show has not
+        // decided what `Ctrl+A` there means either. Empty is an answer --
+        // nothing is reachable, so there is no view for a selection to be
+        // relative to, and the verb rejects as it did before (#811).
+        ListScope::Unified if reachable.is_empty() => None,
+        ListScope::Unified => Some(ViewScope::Unified {
+            accounts: reachable.to_vec(),
+        }),
+        ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => None,
     }
 }
 
@@ -256,7 +263,7 @@ fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>
 pub fn mirror(state: &SharedState, quiet: &EventSink, aim: &Aim<'_>) {
     state.update(quiet, |app| {
         let mut events = Vec::new();
-        if let Some(scope) = aim.scope {
+        if let Some(scope) = aim.scope.clone() {
             // Opening a different view drops the selection with it, on both
             // sides — the list does the same. So this goes first, or it
             // would throw away the selection just mirrored.
@@ -477,27 +484,46 @@ mod tests {
         use postio_model::{AccountId, MailboxId};
 
         assert_eq!(
-            view_scope(ListScope::Mailbox(MailboxId::new(4))),
+            view_scope(ListScope::Mailbox(MailboxId::new(4)), &[]),
             Some(ViewScope::Mailbox(MailboxId::new(4))),
         );
         assert_eq!(
-            view_scope(ListScope::Flagged(AccountId::new(1))),
+            view_scope(ListScope::Flagged(AccountId::new(1)), &[]),
             Some(ViewScope::Flagged(AccountId::new(1))),
         );
         assert_eq!(
-            view_scope(ListScope::Account(AccountId::new(1))),
+            view_scope(ListScope::Account(AccountId::new(1)), &[]),
             None,
             "nothing needs an account-wide `MessageSet` predicate yet",
         );
         assert_eq!(
-            view_scope(ListScope::Snoozed(AccountId::new(1))),
+            view_scope(ListScope::Snoozed(AccountId::new(1)), &[]),
             None,
             "nothing needs a `MessageSet::Snoozed` predicate yet (#493)",
         );
         assert_eq!(
-            view_scope(ListScope::Thread(ThreadId::new(3))),
+            view_scope(ListScope::Thread(ThreadId::new(3)), &[]),
             None,
             "`Ctrl+A` inside a conversation is not a gesture",
+        );
+    }
+
+    /// #811: the aggregate is the sixth shape, and the only one whose scope
+    /// carries something the list has to tell it.
+    #[test]
+    fn the_unified_view_is_relative_to_the_accounts_it_could_actually_show() {
+        use postio_model::AccountId;
+
+        assert_eq!(
+            view_scope(ListScope::Unified, &[AccountId::new(1), AccountId::new(3)]),
+            Some(ViewScope::Unified {
+                accounts: vec![AccountId::new(1), AccountId::new(3)],
+            }),
+        );
+        assert_eq!(
+            view_scope(ListScope::Unified, &[]),
+            None,
+            "no account is reachable, so there is no view to be relative to",
         );
     }
 

@@ -58,8 +58,16 @@ pub fn install(
             let list = window.list();
             let rows = list.model();
             let selection = list.selection().selection();
+            // The accounts this selection was scoped to when it was made,
+            // not the ones reachable now. The list froze them at the gesture;
+            // reading them again here is the time-of-check/time-of-use hole
+            // #811 exists to close.
+            let reach = list.selection().reach();
             let aim = Aim {
-                scope: feeds.messages.scope().and_then(aim::view_scope),
+                scope: feeds
+                    .messages
+                    .scope()
+                    .and_then(|scope| aim::view_scope(scope, &reach.accounts)),
                 selection: &selection,
                 cursor: list.cursor_id(),
                 rows: &rows,

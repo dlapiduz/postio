@@ -198,6 +198,11 @@ pub fn derive(
 
 /// Whether an account's contribution to an aggregate can be vouched for.
 ///
+/// Public because it is also what a whole-view selection is scoped by: the
+/// accounts the banner does *not* name are exactly the accounts `Ctrl+A` here
+/// is about, and two spellings of "reachable" would let the banner and the
+/// selection disagree about which account is which (#811).
+///
 /// [`ConnectionState::Connecting`] is deliberately *not* a reason to name an
 /// account. The single-account states fold it into
 /// [`State::Offline`](State::Offline) because from the user's chair both mean
@@ -206,7 +211,7 @@ pub fn derive(
 /// names an account, and one that appears for the two seconds an account
 /// takes to connect — on every launch, for every account — is how people
 /// learn to stop reading banners.
-fn is_current(status: &SyncStatus) -> bool {
+pub fn is_current(status: &SyncStatus) -> bool {
     match status.state {
         ConnectionState::Online | ConnectionState::Connecting => true,
         ConnectionState::Offline | ConnectionState::Failing { .. } => false,
@@ -397,12 +402,10 @@ fn describe(state: &State, now: Instant) -> Content {
 /// configures.
 fn naming(accounts: &[String]) -> String {
     let verb = if accounts.len() == 1 { "is" } else { "are" };
-    let names = match accounts {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    };
-    format!("{names} {verb}")
+    // The joining itself is `postio_ui::format::names`, shared with the
+    // selection summary: the banner and the summary name the same absent
+    // accounts and must spell the list the same way (#811).
+    format!("{} {verb}", postio_ui::format::names(accounts))
 }
 
 mod imp {

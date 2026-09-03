@@ -61,6 +61,7 @@ mod thread_dwell;
 mod thread_keystroke;
 mod unconfirmed_send;
 mod unified_list;
+mod unified_select_all;
 mod window_drain;
 mod wiring;
 
@@ -134,6 +135,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it",
         degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it
+            as fn(),
+    ),
+    (
+        "unified_select_all::select_all_in_a_degraded_unified_view_archives_only_what_it_could_see",
+        unified_select_all::select_all_in_a_degraded_unified_view_archives_only_what_it_could_see
             as fn(),
     ),
     (
