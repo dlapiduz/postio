@@ -2175,3 +2175,73 @@ fn a_whole_header_block_is_not_marked_truncated() {
             .headers_truncated
     );
 }
+
+#[test]
+fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped() {
+    // `ParsedMessage::into_message` has always filled `Message.headers`, and
+    // the repository has never read or written them -- so a `Message` loaded
+    // from the store came back with an empty block however much mail was in
+    // it. That asymmetry is what #479's differential test exists to catch: the
+    // in-memory matcher and the index have to be looking at the same headers.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+    let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    let id = messages.create(&mut message).expect("create");
+
+    messages
+        .set_body(
+            id,
+            &StoredBody {
+                text: Some("the body".to_owned()),
+                html: None,
+                headers: Some(
+                    concat!(
+                        "Received: from a.example.com\r\n",
+                        // No leading whitespace on these: a continuation line
+                        // is exactly how RFC 5322 folds one value across two
+                        // lines, so an indented "X-Mailer:" here would be part
+                        // of the Received above rather than a field of its own.
+                        // rustfmt joining a line-continuation literal is what
+                        // made that mistake the first time.
+                        "X-Mailer: mutt 1.5.24\r\n",
+                        "Received: from b.example.com",
+                    )
+                    .to_owned(),
+                ),
+                headers_truncated: false,
+            },
+            BodyState::Full,
+        )
+        .expect("set");
+
+    let headers = messages.headers(id).expect("headers").expect("the row");
+
+    assert_eq!(headers.get("x-mailer"), Some("mutt 1.5.24"));
+    assert_eq!(
+        headers.get_all("received").len(),
+        2,
+        "a hop chain is the reason duplicates are kept at all"
+    );
+    assert!(
+        headers.contains("X-MAILER"),
+        "RFC 5322 field names are case-insensitive on the way in too"
+    );
+}
+
+#[test]
+fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
+    // Every message in every store today, until the repair pass reaches it.
+    // "Nothing downloaded yet" is not a fault.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let messages = MessageRepository::new(&connection);
+    let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    let id = messages.create(&mut message).expect("create");
+
+    let headers = messages.headers(id).expect("headers").expect("the row");
+
+    assert!(headers.is_empty());
+}

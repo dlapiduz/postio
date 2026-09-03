@@ -1299,6 +1299,61 @@ impl<'a> MessageRepository<'a> {
         }))
     }
 
+    /// A message's header block, parsed.
+    ///
+    /// The other half of the round trip `Message.headers` never had:
+    /// `ParsedMessage::into_message` has always filled that field and this
+    /// repository has never read or written it, so a `Message` loaded from the
+    /// store came back with an empty block however much mail was in it. That
+    /// asymmetry is what #479's differential test exists to catch — the
+    /// in-memory matcher and the index have to be looking at the same headers,
+    /// and they cannot be if one of them is always looking at nothing.
+    ///
+    /// # Why it is here and not on [`get`](Self::get)
+    ///
+    /// `get` deliberately does not carry the body, and the block is part of
+    /// the body: it is one of the three compressed columns [`body`](Self::body)
+    /// reads, written by [`set_body`](Self::set_body) in the same statement.
+    /// Every list row and every reading-pane open would pay a decompression
+    /// for a field only the indexer and `header:` want. The parse is not free
+    /// either — this is a whole header block, not a column.
+    ///
+    /// So the round trip is `set_body` out and here back, and callers that
+    /// want headers ask for them.
+    ///
+    /// `None` when there is no such message. A message whose block has never
+    /// been stored — every message in every store until the repair pass
+    /// reaches it — answers `Some` with an empty block, because "nothing
+    /// downloaded yet" is not a fault.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnreadableBody`] if the stored block will not decode, for the
+    /// reason [`body`](Self::body) gives: an absent block and an unreadable
+    /// one are opposite facts to a caller deciding whether a header is missing.
+    pub fn headers(&self, id: MessageId) -> Result<Option<postio_model::Headers>> {
+        let Some(body) = self.body(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(match body.headers {
+            None => postio_model::Headers::new(),
+            // `parse_headers` rather than `parse`: there is no body here to
+            // find, and it is the hardened entry point either way (#277).
+            //
+            // Terminated first. The block is stored without the blank line
+            // that ended it on the wire -- that line is the separator, not a
+            // header -- and a parser handed an unterminated block reads the
+            // last field as still being folded and drops it. The same
+            // terminator `mime::decode_header_text` appends, for the same
+            // reason, and the round-trip test is what caught it.
+            Some(block) => {
+                let mut terminated = block.into_bytes();
+                terminated.extend_from_slice(b"\r\n\r\n");
+                postio_model::mime::parse_headers(&terminated).headers
+            }
+        }))
+    }
+
     /// Stores a message's decoded content on its row, compressed.
     ///
     /// Takes the new [`BodyState`] with it: the content and "how much of this
