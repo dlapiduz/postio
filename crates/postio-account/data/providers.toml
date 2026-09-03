@@ -74,6 +74,31 @@ issuer = "https://accounts.google.com"
 scopes = ["https://mail.google.com/"]
 sources = ["own-client", "broker"]
 
+[provider.office365]
+display_name = "Outlook / Microsoft 365"
+domains = ["outlook.com", "hotmail.com", "live.com", "msn.com"]
+# A Microsoft 365 tenant on a custom domain (the mockup's own "contoso.com
+# uses Microsoft 365" scenario) publishes this as its MX (#94); matched on a
+# label boundary like every other provider's suffix.
+mx_suffixes = ["mail.protection.outlook.com"]
+imap_host = "outlook.office365.com"
+imap_port = 993
+imap_security = "tls"
+smtp_host = "smtp.office365.com"
+smtp_port = 587
+smtp_security = "start-tls"
+# Basic auth is retired tenant by tenant across Microsoft 365; oauth2 is the
+# only method this row offers rather than a fallback nobody can rely on.
+auth = ["oauth2"]
+
+[provider.office365.oauth]
+# RFC 8414 discovery from the common (multi-tenant) v2 issuer -- works for
+# both a personal Microsoft account and any work/school tenant, without
+# Postio having to know which in advance.
+issuer = "https://login.microsoftonline.com/common/v2.0"
+scopes = ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send", "offline_access"]
+sources = ["own-client", "broker"]
+
 [provider.fastmail]
 display_name = "Fastmail"
 domains = ["fastmail.com", "fastmail.fm"]

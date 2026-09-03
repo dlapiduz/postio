@@ -478,6 +478,50 @@ mod tests {
         }
     }
 
+    // -- Acceptance: office365/outlook preset (#868) ------------------------
+
+    #[test]
+    fn a_microsoft_365_domain_resolves_to_the_office365_preset() {
+        for domain in ["outlook.com", "hotmail.com", "live.com"] {
+            let settings = lookup(&address_in(domain), "a", domain)
+                .unwrap_or_else(|| panic!("{domain} is not in the table"));
+            assert_eq!(settings.imap.host, "outlook.office365.com");
+            assert_eq!(settings.smtp.host, "smtp.office365.com");
+            assert_eq!(
+                settings.display_name.as_deref(),
+                Some("Outlook / Microsoft 365")
+            );
+        }
+    }
+
+    #[test]
+    fn a_custom_domain_delegated_to_microsoft_365_resolves_by_its_mx_suffix() {
+        // The mockup's own scenario (Design/screens/14-add-account.png):
+        // "contoso.com uses Microsoft 365" -- a custom domain has no reason
+        // to appear in `domains`, so this has to work through the MX-suffix
+        // path every other custom-domain provider already uses (#94).
+        let preset =
+            preset_for_mx_host("contoso-com.mail.protection.outlook.com").unwrap_or_else(|| {
+                panic!("a Microsoft 365 MX host should resolve to the office365 preset")
+            });
+        assert_eq!(preset.display_name(), "Outlook / Microsoft 365");
+    }
+
+    #[test]
+    fn the_office365_preset_prefers_oauth_and_names_its_issuer() {
+        let preset = presets()
+            .iter()
+            .find(|p| p.display_name() == "Outlook / Microsoft 365")
+            .expect("the office365 row");
+        assert_eq!(preset.auth(), ["oauth2"]);
+        assert!(!preset.requires_app_password());
+        let oauth = preset.oauth().expect("an oauth table");
+        assert_eq!(
+            oauth.issuer.as_deref(),
+            Some("https://login.microsoftonline.com/common/v2.0")
+        );
+    }
+
     #[test]
     fn no_domain_is_claimed_by_two_providers() {
         // Two rows matching one domain is a silent bug: `lookup` takes the
