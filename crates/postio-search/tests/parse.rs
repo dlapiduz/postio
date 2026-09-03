@@ -1116,7 +1116,7 @@ fn parentheses_come_away_from_the_words_they_touch() {
 }
 
 #[test]
-fn body_matches_the_text_rather_than_the_metadata() {
+fn body_narrows_a_term_to_the_message_text() {
     // `header:`'s own parsing is covered by the block of tests beside the
     // other operators, which is where it landed with its executor (#926);
     // this slice's remaining half is `body:`.
@@ -1126,8 +1126,14 @@ fn body_matches_the_text_rather_than_the_metadata() {
         [Filter::Body("quarterly report".into())],
         "a quoted body value is one phrase"
     );
-    assert_eq!(Field::parse("header"), Some(Field::Header));
     assert_eq!(Field::parse("body"), Some(Field::Body));
+    assert_eq!(
+        Field::parse("header"),
+        Some(Field::Header),
+        "`header:` was held back from this slice for want of somewhere to \
+         match against, and asserted here as free text until it had one. It \
+         has one now: #926 landed `message_headers` and the executor with it."
+    );
 }
 
 #[test]

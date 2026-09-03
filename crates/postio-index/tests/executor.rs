@@ -1443,3 +1443,170 @@ fn a_message_whose_headers_are_not_indexed_yet_is_not_a_false_negative_for_prese
         "and once it is indexed it is found -- nothing else had to change"
     );
 }
+
+// ── #478: OR, grouping, and `body:` ─────────────────────────────────────
+
+/// Every message id a query returns, so a boolean expectation reads as the
+/// set it is asserting rather than as an index into a result vector.
+fn matching(
+    connection: &Connection,
+    account: &postio_model::Account,
+    query: &str,
+) -> Vec<postio_model::MessageId> {
+    let parsed = parse(query, at(12).date_naive());
+    let request = SearchRequest {
+        account: AccountScope::Account(account.id),
+        query: &parsed,
+        scope: Scope::AllMail,
+        limit: 50,
+        order: postio_search::ResultOrder::Newest,
+    };
+    let mut ids: Vec<_> = search(connection, &request, at(12))
+        .expect("search")
+        .hits
+        .into_iter()
+        .map(|hit| hit.message_id)
+        .collect();
+    ids.sort_by_key(|id| id.get());
+    ids
+}
+
+fn sorted(ids: &[postio_model::MessageId]) -> Vec<postio_model::MessageId> {
+    let mut ids = ids.to_vec();
+    ids.sort_by_key(|id| id.get());
+    ids
+}
+
+#[test]
+fn or_returns_the_union_and_and_still_binds_tighter() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let ada = message(&connection, &account, mailbox, "ada", "Report", at(9));
+    let mut grace_with = message(&connection, &account, mailbox, "grace", "Report", at(8));
+    grace_with.attachments = vec![Attachment::new(grace_with.id, "application/pdf", 1024)];
+    MessageRepository::new(&connection)
+        .update(&mut grace_with)
+        .expect("update");
+    let _grace_without = message(&connection, &account, mailbox, "grace", "Report", at(7));
+    let _bob = message(&connection, &account, mailbox, "bob", "Report", at(6));
+
+    assert_eq!(
+        matching(&connection, &account, "from:ada OR from:grace").len(),
+        3,
+        "the union of both senders, and nobody else"
+    );
+
+    // `AND` binds tighter, so this is ada OR (grace AND has:attach) -- the
+    // grace with no attachment is out.
+    assert_eq!(
+        matching(&connection, &account, "from:ada OR from:grace has:attach"),
+        sorted(&[ada.id, grace_with.id])
+    );
+    assert_eq!(
+        matching(&connection, &account, "from:ada OR (from:grace has:attach)"),
+        sorted(&[ada.id, grace_with.id]),
+        "the parentheses write out what the precedence already does"
+    );
+}
+
+#[test]
+fn grouping_overrides_the_precedence_in_sql_too() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let mut ada = message(&connection, &account, mailbox, "ada", "Report", at(9));
+    ada.attachments = vec![Attachment::new(ada.id, "application/pdf", 10)];
+    MessageRepository::new(&connection)
+        .update(&mut ada)
+        .expect("update");
+    let _ada_no_attachment = message(&connection, &account, mailbox, "ada", "Report", at(8));
+    let mut grace = message(&connection, &account, mailbox, "grace", "Report", at(7));
+    grace.attachments = vec![Attachment::new(grace.id, "application/pdf", 10)];
+    MessageRepository::new(&connection)
+        .update(&mut grace)
+        .expect("update");
+
+    assert_eq!(
+        matching(&connection, &account, "(from:ada OR from:grace) has:attach"),
+        sorted(&[ada.id, grace.id]),
+        "both senders, but only the ones carrying an attachment"
+    );
+}
+
+#[test]
+fn a_negated_arm_of_a_disjunction_is_negated_only_within_that_arm() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let ada = message(&connection, &account, mailbox, "ada", "Report", at(9));
+    let bob = message(&connection, &account, mailbox, "bob", "Report", at(8));
+
+    // `-from:bob` excludes bob; the `OR` puts him back via the other arm.
+    assert_eq!(
+        matching(&connection, &account, "-from:bob OR from:bob"),
+        sorted(&[ada.id, bob.id]),
+        "a negation binds to its own arm, not to the whole query"
+    );
+}
+
+#[test]
+fn free_text_composes_with_or_across_both_indexes() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let in_subject = message(&connection, &account, mailbox, "ada", "Kestrel", at(9));
+    let in_body = message(&connection, &account, mailbox, "bob", "Nothing", at(8));
+    postio_index::index::index_body(&connection, in_body.id.get(), Some("a word about petrels"))
+        .expect("index body");
+    let _neither = message(&connection, &account, mailbox, "carol", "Lunch", at(7));
+
+    assert_eq!(
+        matching(&connection, &account, "kestrel OR petrels"),
+        sorted(&[in_subject.id, in_body.id]),
+        "a free-text arm still reaches the metadata index and the body index"
+    );
+}
+
+#[test]
+fn body_narrows_a_term_to_the_message_text() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    // The word is in the body of one and only in the subject of the other.
+    // Plain free text finds both; `body:` is what tells them apart.
+    let in_body = message(&connection, &account, mailbox, "ada", "Tuesday", at(9));
+    postio_index::index::index_body(
+        &connection,
+        in_body.id.get(),
+        Some("the invoice is attached"),
+    )
+    .expect("index body");
+    let subject_only = message(&connection, &account, mailbox, "bob", "Invoice", at(8));
+
+    assert_eq!(
+        matching(&connection, &account, "invoice"),
+        sorted(&[in_body.id, subject_only.id]),
+        "free text reaches both indexes, as it always has"
+    );
+    assert_eq!(
+        matching(&connection, &account, "body:invoice"),
+        sorted(&[in_body.id]),
+        "`body:` is the message text and not its metadata"
+    );
+    assert_eq!(
+        matching(&connection, &account, "-body:invoice"),
+        sorted(&[subject_only.id]),
+        "and it negates like every other operator"
+    );
+}

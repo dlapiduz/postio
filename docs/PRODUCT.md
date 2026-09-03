@@ -187,9 +187,26 @@ from:ada after:2026-01-01 has:attach
 subject:invoice -in:archive
 ```
 
-`from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
-`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
-`group:` `header:`
+`from:` `to:` `subject:` `body:` `in:` `list:` `filename:` `has:attach`
+`is:unread` `is:read` `is:flagged` `before:` `after:` `larger:` `smaller:`
+`account:` `group:` `header:`
+
+Adjacent operators mean **and**. `OR` — uppercase, always — joins alternatives,
+and parentheses group them:
+
+```
+from:ada OR from:grace
+(from:ada OR from:grace) has:attach
+```
+
+`OR` binds *looser* than the space between two operators, so
+`from:ada OR from:grace has:attach` is *ada, or grace-with-an-attachment*.
+There is no `AND` keyword: adjacency already means it. `OR` is uppercase only
+because "cats or dogs" is three words somebody is searching for.
+
+`body:` narrows a term to the message text. Plain free text already searches
+the body *and* the metadata, so `invoice` finds a message whose subject says
+so; `body:invoice` finds the ones that say it in the message.
 
 `header:` reaches any RFC 5322 field the envelope does not carry:
 `header:x-mailer` asks whether a message has that field at all,
@@ -201,7 +218,7 @@ case-insensitive substring, like `from:` and `subject:`. `=` rather than a
 second colon, split at the first one, so `header:authentication-results=spf=pass`
 asks what it looks like it asks.
 
-It answers over indexed mail, exactly as `body:` will: headers arrive with the
+It answers over indexed mail, exactly as `body:` does: headers arrive with the
 body, so a message whose body has not been fetched yet is not a hit — not a
 message that lacks the field ([ADR 0025](decisions/0025-arbitrary-headers-are-indexed-rows.md)).
 Every header is indexed, with no list of names: a curated list is maintained
