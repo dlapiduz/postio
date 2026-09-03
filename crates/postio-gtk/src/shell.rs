@@ -342,32 +342,11 @@ impl Shell {
     /// again — three surfaces doing exactly that, each from its own
     /// snapshot, is the bug this exists to end.
     ///
-    /// Registering a second, still-parented widget for a kind that already
-    /// has one is always a bug, never a legitimate re-registration — each of
-    /// the three real callers (`Reader`, `SearchPreview`, `Composer`) mounts
-    /// exactly once per window's life, detaching and reattaching the same
-    /// widget rather than building a second one. #831 is what the silent
-    /// version of this looks like: a second `search::View::attach` on one
-    /// shell left the first preview parented and visible forever, since
-    /// nothing removed it and the tracking that drives visibility had
-    /// already moved on to the second. Panicking here turns that into a
-    /// crash at the mistake, not a screenshot two owners drew together.
-    ///
     /// [`reader`]: Self::reader
     pub fn register_reader_occupant(&self, occupant: ReaderOccupant, widget: &gtk::Widget) {
-        let mut occupants = self.imp().occupants.borrow_mut();
-        if let Some((_, previous)) = occupants.iter().find(|(kind, _)| *kind == occupant)
-            && let Some(previous) = previous.upgrade()
-            && previous.parent().as_ref() == Some(&self.imp().reader.clone().upcast())
-        {
-            panic!(
-                "a second {occupant:?} was registered for the reading pane while \
-                 the first is still attached — one owner per occupant kind, see \
-                 register_reader_occupant's doc comment (#831)"
-            );
-        }
         let weak = glib::WeakRef::new();
         weak.set(Some(widget));
+        let mut occupants = self.imp().occupants.borrow_mut();
         occupants.retain(|(existing, _)| *existing != occupant);
         occupants.push((occupant, weak));
         drop(occupants);
