@@ -38,7 +38,7 @@
 
 use postio_account::backend::{MailBackend, MailboxFilter, MailboxSummary};
 use postio_model::{AccountId, Mailbox, MailboxId, MailboxRole, RoleOverrides};
-use postio_storage::repository::MailboxRepository;
+use postio_storage::repository::{MailboxRepository, MailboxRoleRepository};
 use rusqlite::Connection;
 
 use crate::drain::Result;
@@ -71,6 +71,12 @@ impl DiscoveryReport {
 ///
 /// One `LIST` and a reconciliation; no mailbox is opened and no message is
 /// touched. Safe to run on every reconnection, which is what the engine does.
+///
+/// `overrides` is the configuration tier -- `[mailboxes]`, one table for
+/// every account. The account's own map (ADR 0025) is read from the store
+/// here, on every pass, and laid over it: nothing about which folder plays
+/// which part is frozen at startup, so a choice made in settings is honoured
+/// by the next pass with the engine untouched.
 pub async fn discover(
     connection: &Connection,
     backend: &dyn MailBackend,
@@ -93,6 +99,8 @@ pub fn reconcile(
     overrides: &RoleOverrides,
 ) -> std::result::Result<DiscoveryReport, postio_storage::Error> {
     let mailboxes = MailboxRepository::new(connection);
+    let chosen = MailboxRoleRepository::new(connection).for_account(account)?;
+    let overrides = &overrides.over(chosen);
     let mut report = DiscoveryReport::default();
 
     for summary in listed {
