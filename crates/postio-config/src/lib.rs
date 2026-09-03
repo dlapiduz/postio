@@ -74,7 +74,7 @@ use toml::{Table, Value};
 pub use change::ConfigChanged;
 pub use compose::{ComposeConfig, SignaturePlacement};
 pub use error::{ConfigError, Result};
-pub use filters::FilterConfig;
+pub use filters::{FilterConfig, patch_filters};
 pub use keys::KeyBindings;
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
@@ -292,10 +292,15 @@ impl Config {
         }
     }
 
+    /// Writes already-rendered TOML text to `path`, creating parent
+    /// directories and setting `0600` on Unix.
+    ///
     /// Shared by [`Config::save_to_path`] and [`Config::seed_if_missing`],
-    /// which write different text to the same place under the same rules:
-    /// parent directories created, `0600` on Unix.
-    fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
+    /// which write different text to the same place under the same rules —
+    /// and by [`patch_filters`]'s callers, which write a *patched* text
+    /// rather than a freshly serialized `Config` and so cannot go through
+    /// `save_to_path` without undoing the whole point of patching.
+    pub fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
                 path: parent.to_path_buf(),
