@@ -527,6 +527,8 @@ pub enum KeyContext {
     Parts,
     /// The account list in settings, once the keyboard is in it.
     Accounts,
+    /// The keybinding list in settings, once the keyboard is in it.
+    Keys,
 }
 
 impl KeyContext {
@@ -560,6 +562,10 @@ impl KeyContext {
             // a fall-through that let a mail binding fire while the keyboard
             // sits on an account row would act on something off-screen.
             Self::Accounts => &[Self::Accounts, Self::Global],
+            // Same reasoning as `Accounts`: `[keys]`'s own raw-TOML escape
+            // hatch sits in the same panel, and a fall-through here would
+            // let a mail binding fire while the keyboard is on a rebind row.
+            Self::Keys => &[Self::Keys, Self::Global],
         }
     }
 }
@@ -582,6 +588,7 @@ impl From<Context> for KeyContext {
             Context::Sidebar => Self::Sidebar,
             Context::Parts => Self::Parts,
             Context::Accounts => Self::Accounts,
+            Context::Keys => Self::Keys,
         }
     }
 }
