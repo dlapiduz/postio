@@ -116,6 +116,7 @@ fn what_the_header_blocks_cost_next_to_the_text() {
                         html: parsed.body.html.clone(),
                         headers: Some(block.text),
                         headers_truncated: block.truncated,
+                        encoding_problems: false,
                     },
                     BodyState::Full,
                 )

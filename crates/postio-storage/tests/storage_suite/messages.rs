@@ -341,6 +341,7 @@ fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
                 html: Some("<p>the html</p>".to_owned()),
                 headers: Some("Subject: hello\r\n".to_owned()),
                 headers_truncated: false,
+                encoding_problems: false,
             },
             BodyState::Full,
         )
@@ -2130,6 +2131,7 @@ fn a_truncated_header_block_says_so_when_it_is_read_back() {
                 html: None,
                 headers: Some("X-Mailer: mutt".to_owned()),
                 headers_truncated: true,
+                encoding_problems: false,
             },
             BodyState::Full,
         )
@@ -2162,6 +2164,7 @@ fn a_whole_header_block_is_not_marked_truncated() {
                 html: None,
                 headers: Some("X-Mailer: mutt".to_owned()),
                 headers_truncated: false,
+                encoding_problems: false,
             },
             BodyState::Full,
         )
@@ -2211,6 +2214,7 @@ fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped()
                     .to_owned(),
                 ),
                 headers_truncated: false,
+                encoding_problems: false,
             },
             BodyState::Full,
         )
@@ -2268,6 +2272,7 @@ fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
                 html: None,
                 headers: None,
                 headers_truncated: false,
+                encoding_problems: false,
             },
             BodyState::Full,
         )
@@ -2364,6 +2369,7 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
                 html: Some("<p>and the html</p>".to_owned()),
                 headers: None,
                 headers_truncated: false,
+                encoding_problems: false,
             },
             BodyState::Full,
         )
