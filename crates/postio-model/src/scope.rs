@@ -39,6 +39,35 @@ pub enum ListScope {
 }
 
 impl ListScope {
+    /// Whether the list is showing something out of `mailboxes`.
+    ///
+    /// The question a frontend asks when a folder tree arrives and it has to
+    /// decide whether to open a default folder: is there already something
+    /// on screen that belongs to *this* tree?
+    ///
+    /// "Something is open" on its own cannot answer it, and #813 is both
+    /// halves of that. A smart folder is open and names no `MailboxId`, so a
+    /// frontend testing for one concluded nothing was showing and opened the
+    /// inbox over the top on every reload. A folder left behind by the
+    /// *previous* account names one perfectly well, so the same test
+    /// concluded something was showing and never opened the new account's
+    /// inbox. Asking which tree the scope comes from separates them.
+    ///
+    /// [`Unified`](Self::Unified) and [`Thread`](Self::Thread) always answer
+    /// yes: neither is a folder in any one tree, and both are somewhere a
+    /// person went deliberately, so a reload has no business replacing them.
+    pub fn is_drawn_from(&self, mailboxes: &[crate::mailbox::Mailbox]) -> bool {
+        let account_present =
+            |account: AccountId| mailboxes.iter().any(|folder| folder.account_id == account);
+        match self {
+            Self::Mailbox(id) => mailboxes.iter().any(|folder| folder.id == *id),
+            Self::Account(account) | Self::Flagged(account) | Self::Snoozed(account) => {
+                account_present(*account)
+            }
+            Self::Unified | Self::Thread(_) => !mailboxes.is_empty(),
+        }
+    }
+
     /// The folder this scope names, when it names one.
     ///
     /// `None` for a smart folder or a thread — load-bearing wherever the
@@ -337,6 +366,67 @@ mod reaction_tests {
                 "{arrival:?}: a drill-in reads its own thread directly and \
                  never routes through here"
             );
+        }
+    }
+
+    /// #813's question: is the list already showing something out of the
+    /// folder tree that just arrived?
+    mod is_drawn_from {
+        use super::*;
+        use crate::mailbox::Mailbox;
+
+        fn folder(account: AccountId, id: i64) -> Mailbox {
+            let mut mailbox = Mailbox::new(account, "INBOX", Some('/'));
+            mailbox.id = MailboxId::new(id);
+            mailbox
+        }
+
+        fn home_tree() -> Vec<Mailbox> {
+            vec![folder(HOME, 1), folder(HOME, 2)]
+        }
+
+        #[test]
+        fn a_folder_in_the_tree_is_drawn_from_it() {
+            assert!(ListScope::Mailbox(MailboxId::new(2)).is_drawn_from(&home_tree()));
+        }
+
+        #[test]
+        fn a_folder_from_another_account_is_not() {
+            // The account switch. The folder the previous account left on
+            // screen is not part of the tree that just replaced it, and
+            // treating it as "something is already open" is what stopped the
+            // new account's inbox from ever opening.
+            assert!(!ListScope::Mailbox(MailboxId::new(9)).is_drawn_from(&home_tree()));
+        }
+
+        #[test]
+        fn a_smart_folder_belongs_to_its_account() {
+            assert!(ListScope::Flagged(HOME).is_drawn_from(&home_tree()));
+            assert!(ListScope::Snoozed(HOME).is_drawn_from(&home_tree()));
+            assert!(ListScope::Account(HOME).is_drawn_from(&home_tree()));
+        }
+
+        #[test]
+        fn a_smart_folder_of_an_absent_account_does_not() {
+            let other = AccountId::new(HOME.get() + 1);
+            assert!(!ListScope::Flagged(other).is_drawn_from(&home_tree()));
+        }
+
+        #[test]
+        fn the_unified_view_and_a_drill_in_are_never_overridden() {
+            // Neither is a folder in the tree, and both are somewhere the
+            // user went deliberately. A reload that replaced them would be
+            // the bug this predicate exists to prevent.
+            assert!(ListScope::Unified.is_drawn_from(&home_tree()));
+            assert!(ListScope::Thread(crate::ids::ThreadId::new(1)).is_drawn_from(&home_tree()));
+        }
+
+        #[test]
+        fn nothing_is_drawn_from_an_empty_tree() {
+            // An account whose first read came back empty has nothing open
+            // and nothing to open, so the caller is still owed a pick.
+            assert!(!ListScope::Mailbox(MailboxId::new(1)).is_drawn_from(&[]));
+            assert!(!ListScope::Flagged(HOME).is_drawn_from(&[]));
         }
     }
 }
