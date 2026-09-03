@@ -506,6 +506,77 @@ async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
 }
 
 #[tokio::test]
+async fn a_flag_changing_on_the_server_repaints_the_row_and_not_the_list() {
+    // Issue #946: "when an email is marked read it looks like there is a
+    // full repaint". The dwell timer sets `\Seen` locally and enqueues the
+    // change; the drain pushes it; the server's answer (or IDLE) brings it
+    // straight back on the next resync as one *changed* message. Nothing
+    // arrived, nothing vanished, nothing moved -- but `changed == 1` and
+    // `arrived == 0` is not "only arrivals", so the pass still emits
+    // `MessageListChanged`, the blunt instrument #72 reserved for a resort,
+    // and the view discards and rebuilds every visible row a beat after
+    // the message was marked read.
+    //
+    // A pass whose only news is flags on messages already in the store must
+    // say exactly that, so the list repaints those rows and nothing else.
+    let database = test_support::memory();
+    let account =
+        postio_storage::test_support::account(&database.connection().expect("a connection"));
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+
+    engine.sync(mailbox.id).await.expect("a first sync");
+    let _ = announced(&events);
+
+    // Another client -- or Postio's own drain echoing back -- marks one
+    // message read on the server.
+    let status = backend.status("INBOX").await.expect("status");
+    let first = postio_model::RemoteId::new(format!("{}:1", status.generation));
+    let updates = backend
+        .store_flags(
+            "INBOX",
+            &[first],
+            &postio_account::backend::FlagChange::Add(postio_model::FlagSet::from_iter([
+                postio_model::Flag::Seen,
+            ])),
+        )
+        .await
+        .expect("the server changes a flag");
+    assert_eq!(
+        updates.len(),
+        1,
+        "the fixture did not change exactly one message"
+    );
+
+    engine.sync(mailbox.id).await.expect("a resync");
+
+    let seen = announced(&events);
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            Event::MessageListChanged { mailbox: changed, .. } if *changed == mailbox.id
+        )),
+        "a pass that only changed a flag demanded a full reload, which throws \
+         away every visible row widget while the user is reading: {seen:?}"
+    );
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            Event::MessagesChanged { messages, .. } if messages.len() == 1
+        )),
+        "the row whose flag changed still has to be repainted: {seen:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_finished_sync_queues_the_bodies_it_just_learned_about() {
     // The last piece of postio-26c: a sync is exactly when the set of
     // messages missing a body changes, so it is exactly when the backfill is
