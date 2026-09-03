@@ -373,4 +373,10 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // The server's runtime must not block teardown on its live sessions.
     server_runtime.shutdown_background();
+
+    // The window this test built joins GTK's toplevel list at
+    // construction and stays there, holding a WebProcess, until it is
+    // destroyed -- which at exit() is a segfault after a passing test
+    // (#794). No harness here to sweep, so the test does it.
+    postio_gtk::window::close_all_windows();
 }

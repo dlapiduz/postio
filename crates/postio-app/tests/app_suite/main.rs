@@ -365,6 +365,19 @@ fn main() {
             println!("test {name} ... ok");
         }
     }
+    // Once, after every case -- not after each one.
+    //
+    // Per-case sweeping here segfaulted at exit: this suite's cases each
+    // stand up a full window with a live engine, and repeatedly tearing
+    // WebKit down mid-run left the process crashing in `Error releasing
+    // name …WebProcess…` on the way out. `gtk_suite` tolerates the per-case
+    // form and these do not, which is worth knowing before someone
+    // "unifies" the two harnesses.
+    //
+    // Once is enough for what #794 is about: nothing should still be
+    // attached when `exit()` runs.
+    postio_gtk::window::close_all_windows();
+
     if failed.is_empty() {
         println!("\ntest result: ok. {ran} passed; 0 failed");
     } else {
