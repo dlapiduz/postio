@@ -64,7 +64,7 @@ SKIP_PATHS = (
     # Hook sources and their test fixtures must name what they forbid.
     ".claude/",
     "Design/",
-    "crates/postio-gtk/data/fonts/",
+    "crates/postio-ui/data/fonts/",
     # Same font files, copied for the landing page (#24) rather than shared
     # at build time -- see site/assets/css/site.css.
     "site/assets/fonts/",
