@@ -26,7 +26,7 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::Context;
-use postio_gtk::parts::Node;
+use postio_gtk::parts::{Ask, Node};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::Attachment;
@@ -38,6 +38,14 @@ use postio_model::ids::{AttachmentId, MessageId};
 /// would deliver to — see [`Window::handle_key`].
 fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
+}
+
+/// Which question the panel asked, without carrying the `Node` into the
+/// assertion — the node is `connect_save`'s business and is checked there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AskShape {
+    Part,
+    Everything,
 }
 
 pub fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
@@ -73,6 +81,19 @@ pub fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
     panel.connect_save_all({
         let asked = asked.clone();
         move |_| asked.borrow_mut().push("save-all".to_owned())
+    });
+    // Stands in for the file dialog. With this installed the panel asks and
+    // builds nothing, which is what keeps a `GtkFileChooserNative` from
+    // outliving the case (#988).
+    let wanted: Rc<RefCell<Vec<AskShape>>> = Rc::new(RefCell::new(Vec::new()));
+    panel.connect_ask({
+        let wanted = wanted.clone();
+        move |ask: &Ask| {
+            wanted.borrow_mut().push(match ask {
+                Ask::Part(_) => AskShape::Part,
+                Ask::Everything => AskShape::Everything,
+            })
+        }
     });
 
     // -- opening it shows the structure, and starts on a part --------------
@@ -171,26 +192,42 @@ pub fn the_parts_panel_walks_a_message_without_fetching_any_of_it() {
         );
     }
 
-    // `s` and `S` put a real GtkFileDialog up, which nothing in a test can
-    // answer — so what is checked here is that the key is taken and that the
-    // panel still asked for nothing by itself. What the dialog hands back is
-    // `connect_save`'s business, and its shape is checked by the compiler.
+    // `s` and `S` ask where to put the bytes. What this case is for is that
+    // the key is taken, that the panel asks, and that it saves nothing until
+    // the question is answered — `connect_save` is what carries the answer,
+    // and its shape is checked by the compiler.
     //
-    // They must also be closed again. An unanswered dialog outlives the test:
-    // it was landing on the maintainer's desktop on every run and staying
-    // there, because a test process exiting does not dismiss a window the
-    // display server is already showing.
+    // Through `connect_ask` rather than a real `GtkFileDialog`, because one
+    // cannot safely be opened in this suite (#988). The dialog outlived the
+    // case that opened it, and dismissing the stray window freed memory the
+    // `GtkFileChooserNative` behind it finalized onto later — a SIGSEGV that
+    // landed six cases downstream, in whichever one next turned the main
+    // loop, and read as flakiness in code that was fine.
     let before = asked.borrow().len();
     assert!(press(&window, gdk::Key::s));
+    assert_eq!(
+        wanted.borrow().last(),
+        Some(&AskShape::Part),
+        "`s` did not ask where to put the part"
+    );
     assert!(press(&window, gdk::Key::S));
+    assert_eq!(
+        wanted.borrow().last(),
+        Some(&AskShape::Everything),
+        "`S` did not ask for a folder for every part"
+    );
     assert_eq!(
         asked.borrow().len(),
         before,
         "nothing is saved until the user has said where"
     );
-    assert!(
-        dismiss_dialogs(&window) > 0,
-        "pressing s should have opened a dialog to dismiss"
+    // Nothing was put on the display, which is the whole point: a toplevel
+    // beyond the window under test is the leak that became the crash.
+    assert_eq!(
+        strays(&window),
+        0,
+        "a file dialog reached the display server, so the use-after-free \
+         #988 is about is back"
     );
 
     // -- and every one of them only *asked* ---------------------------------
@@ -322,20 +359,22 @@ fn note_text(window: &Window) -> String {
 /// Closing every other toplevel rather than naming the dialog is deliberate:
 /// the test never constructed it and has no handle on it, and any *other*
 /// stray toplevel is equally something this test should not leave behind.
-fn dismiss_dialogs(keep: &Window) -> usize {
-    let mut closed = 0;
-    let toplevels = gtk::Window::toplevels();
+/// Toplevels beyond the window under test.
+///
+/// Was `dismiss_dialogs`, which destroyed them — and destroying the stray
+/// file dialog is what turned a leak into a use-after-free (#988): the
+/// `GtkFileChooserNative` behind `GtkFileDialog` still held that window, and
+/// its finalize called `gtk_window_destroy` on freed memory a few cases
+/// later. Now that the panel is asked through `connect_ask` there is nothing
+/// to dismiss, so this counts rather than closes: zero is the assertion.
+fn strays(keep: &Window) -> usize {
     let keep_window: gtk::Window = keep.clone().upcast();
-    for item in toplevels.into_iter().flatten() {
-        if let Ok(window) = item.downcast::<gtk::Window>()
-            && window != keep_window
-        {
-            window.destroy();
-            closed += 1;
-        }
-    }
-    pump();
-    closed
+    gtk::Window::toplevels()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.downcast::<gtk::Window>().ok())
+        .filter(|window| *window != keep_window)
+        .count()
 }
 
 /// Depth-first search of a widget tree.
