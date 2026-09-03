@@ -112,6 +112,7 @@ mod gtk_search_panel;
 mod gtk_search_preview;
 mod gtk_selection;
 mod gtk_settings;
+mod gtk_settings_account_detail;
 mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
@@ -439,6 +440,30 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::activating_a_row_opens_the_detail_view_with_its_current_settings",
+        gtk_settings_account_detail::activating_a_row_opens_the_detail_view_with_its_current_settings
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::the_back_button_returns_to_the_account_list",
+        gtk_settings_account_detail::the_back_button_returns_to_the_account_list as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::editing_the_display_name_reports_the_account_and_the_new_value",
+        gtk_settings_account_detail::editing_the_display_name_reports_the_account_and_the_new_value
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::editing_the_imap_port_reports_the_account_and_the_new_value",
+        gtk_settings_account_detail::editing_the_imap_port_reports_the_account_and_the_new_value
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::opening_a_second_account_populates_its_own_settings_not_the_firsts",
+        gtk_settings_account_detail::opening_a_second_account_populates_its_own_settings_not_the_firsts
             as fn(),
     ),
     (

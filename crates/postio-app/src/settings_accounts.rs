@@ -26,7 +26,7 @@
 //! (`postio_app::reap_pending_accounts`).
 
 use gtk::glib;
-use postio_gtk::settings::AccountAction;
+use postio_gtk::settings::{AccountAction, AccountEdit};
 use postio_gtk::window::Window;
 use postio_runtime::AttachmentPolicy;
 use postio_storage::repository::{AccountRepository, MessageRepository};
@@ -64,6 +64,43 @@ pub fn install(window: &Window, wiring: &Wiring) {
             }
         }
     });
+
+    panel.connect_account_edited({
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move |id, edit| {
+            edit_account(&wiring, id, edit);
+            refresh(&window, &wiring);
+        }
+    });
+}
+
+/// Applies one field's new value to `id`'s stored account (#880).
+///
+/// An account is database state, not `config.toml` preference (ADR 0005
+/// Q6b), so this reads the current row, changes the one field the detail
+/// view reported, and writes the whole thing back through
+/// [`AccountRepository::update`] — the same read-mutate-write shape
+/// `remove`'s `mark_pending_deletion` skips only because it is a single
+/// column with its own dedicated method.
+fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: AccountEdit) {
+    let Ok(connection) = wiring.database.connection() else {
+        return;
+    };
+    let repository = AccountRepository::new(&connection);
+    let Ok(Some(mut account)) = repository.get(id) else {
+        return;
+    };
+    match edit {
+        AccountEdit::DisplayName(value) => account.display_name = value,
+        AccountEdit::ImapHost(value) => account.incoming.host = value,
+        AccountEdit::ImapPort(value) => account.incoming.port = value,
+        AccountEdit::SmtpHost(value) => account.outgoing.host = value,
+        AccountEdit::SmtpPort(value) => account.outgoing.port = value,
+    }
+    if let Err(error) = repository.update(&mut account) {
+        tracing::warn!(%error, "could not save an account detail edit");
+    }
 }
 
 /// Reads every account and redraws the panel's rows from it.
