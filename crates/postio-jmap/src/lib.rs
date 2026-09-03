@@ -1,7 +1,7 @@
 //! JMAP [`MailBackend`] adapter over Pimalaya's `io-jmap` (#544, ADR 0018).
 //!
 //! The second implementation of the seam ADR 0001 drew: everything above
-//! `postio-imap`'s `backend` module keeps its one code path, and this crate
+//! `postio-account`'s `backend` module keeps its one code path, and this crate
 //! answers it in RFC 8620/8621 — Fastmail's native protocol — instead of
 //! IMAP.
 //!
@@ -20,14 +20,14 @@
 //!   seam (ADR 0018 Q3), a resync is a full re-enumeration — correct, and
 //!   cheap enough over `Email/query`'s windowing.
 //! * **No sectioned body fetches**: `fetch_part` serves
-//!   [`BodyPart::Whole`](postio_imap::backend::BodyPart) from the raw-blob
+//!   [`BodyPart::Whole`](postio_account::backend::BodyPart) from the raw-blob
 //!   download. Fetched headers carry no `BODYSTRUCTURE`, so the backfill
 //!   takes its documented no-sections path and fetches the whole message.
 //! * **No `find_by_message_id`**: io-jmap 0.3's `Email/query` filter has no
 //!   header condition; the trait default ("this backend cannot search")
 //!   stands, which the cross-account saga reads as *unconfirmed*.
 //!
-//! [`MailBackend`]: postio_imap::backend::MailBackend
+//! [`MailBackend`]: postio_account::backend::MailBackend
 
 pub mod backend;
 mod convert;

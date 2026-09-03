@@ -38,15 +38,15 @@ use std::sync::{Arc, Mutex};
 use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::gdk;
+use postio_account::discovery::{
+    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
+    TransportError,
+};
+use postio_account::secret::MemorySecretStore;
 use postio_app::feed_the_window;
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::discovery::{
-    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
-    TransportError,
-};
-use postio_imap::secret::MemorySecretStore;
 use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};

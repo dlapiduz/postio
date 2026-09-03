@@ -5,8 +5,8 @@
 //! deterministic clock), this proves the tracker sees the same events a real
 //! caller wiring it around [`sync_mailbox`] would.
 
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_storage::test_support;
 use postio_sync::{StatusTracker, SyncStatus, sync_mailbox_with_batch_size};
 

@@ -12,7 +12,7 @@
 //!
 //! Which UIDs those are comes from the server when it will say
 //! ([`MailBackend::existing_uids`]), and otherwise from walking
-//! `1..=`[`uid_next`](postio_imap::backend::MailboxStatus::uid_next)`-1` as
+//! `1..=`[`uid_next`](postio_account::backend::MailboxStatus::uid_next)`-1` as
 //! this always did. The difference matters more than it looks: a long-lived
 //! folder's UID space is mostly gaps, and walking it costs a round trip per
 //! chunk of *UIDs* rather than per chunk of mail (#727).
@@ -57,7 +57,7 @@ use std::pin::Pin;
 use std::task::Poll;
 
 use chrono::Utc;
-use postio_imap::backend::{
+use postio_account::backend::{
     BackendError, BackendResult, FetchedMessage, MailBackend, SelectMode, UidSet,
 };
 use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
@@ -68,7 +68,7 @@ use postio_storage::{PooledConnection, WritePriority};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::drain::SyncError;
-use postio_imap::cancel::CancelToken;
+use postio_account::cancel::CancelToken;
 
 /// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;

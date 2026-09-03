@@ -1,8 +1,8 @@
 //! Fetched bytes going straight to disk — ADR 0017, axis 2.
 
-use postio_imap::backend::BodyPart;
-use postio_imap::backend::{BodySink, MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::BodyPart;
+use postio_account::backend::{BodySink, MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_model::UidValidity;
 use postio_storage::BlobStore;
 use postio_sync::blob_sink::BlobSink;

@@ -295,7 +295,7 @@ server or to disk:
 - **`postio-index`** — the full-text search index (built on a SQLite feature
   called FTS5) and the code that actually executes a parsed query against
   it.
-- **`postio-imap`**, **`postio-jmap`**, **`postio-gmail`** — three different
+- **`postio-account`**, **`postio-jmap`**, **`postio-gmail`** — three different
   implementations of talking to a mail server, one per protocol (the
   traditional IMAP protocol; the newer JMAP protocol used natively by
   Fastmail; and Gmail's own REST API). All three implement the same trait

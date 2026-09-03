@@ -4,7 +4,7 @@
 //! an empty mailbox: every layer read the local `mailboxes` table, and nothing
 //! ever wrote it. See `postio-755`.
 
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, EmailAddress, MailboxRole, Message, RoleOverrides};
 use postio_storage::repository::{AccountRepository, MailboxRepository, MessageRepository};
 use postio_storage::test_support;

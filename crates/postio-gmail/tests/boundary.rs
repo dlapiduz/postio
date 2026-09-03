@@ -24,8 +24,8 @@ fn the_backend_seam_is_taken_without_its_protocol_features() {
     let manifest = manifest();
     let line = manifest
         .lines()
-        .find(|line| line.trim_start().starts_with("postio-imap ="))
-        .expect("postio-gmail depends on postio-imap for the seam");
+        .find(|line| line.trim_start().starts_with("postio-account ="))
+        .expect("postio-gmail depends on postio-account for the seam");
     assert!(
         line.contains("default-features = false"),
         "postio-gmail wants the MailBackend seam, not io-imap: {line}"

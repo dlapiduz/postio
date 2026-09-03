@@ -45,16 +45,16 @@ impl SessionError {
     ///
     /// A match rather than `to_string`, and that is the entire point of this
     /// function. ADR 0014's rule is that
-    /// [`SecretError::Locked`](postio_imap::secret::SecretError::Locked) must survive
+    /// [`SecretError::Locked`](postio_account::secret::SecretError::Locked) must survive
     /// to the surface that asks the user to unlock, rather than being
     /// flattened into "something went wrong" and sent to onboarding — which
     /// would ask somebody with perfectly good mail to set up an account they
     /// already have. Every other keyring failure is a store that will not
     /// open, which is the honest reading: no key, no store.
-    fn from_secret_error(error: postio_imap::secret::SecretError) -> Self {
+    fn from_secret_error(error: postio_account::secret::SecretError) -> Self {
         let message = error.to_string();
         match error {
-            postio_imap::secret::SecretError::Locked { .. } => {
+            postio_account::secret::SecretError::Locked { .. } => {
                 SessionError::KeyringLocked { message }
             }
             _ => SessionError::StoreUnavailable { message },
@@ -71,7 +71,7 @@ impl SessionError {
 pub struct SessionOptions {
     store_path: Option<std::path::PathBuf>,
     bridge: Option<(tokio::runtime::Handle, CommandSender)>,
-    secrets: Option<Arc<dyn postio_imap::secret::SecretStore>>,
+    secrets: Option<Arc<dyn postio_account::secret::SecretStore>>,
     #[cfg(feature = "testing")]
     in_memory: bool,
     #[cfg(feature = "testing")]
@@ -115,7 +115,7 @@ impl SessionOptions {
     /// login keyring would prompt on a developer's machine and hang on a
     /// headless one. It is also how the locked-keyring path is exercised at
     /// all, since a working keyring cannot be asked to refuse.
-    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
+    pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = Some(secrets);
         self
     }
@@ -556,9 +556,9 @@ impl Session {
         // Asking in this order is what makes that true rather than merely
         // intended: nothing has touched the database by the time the key is
         // refused, so a locked keyring leaves no half-made store behind.
-        let secrets: Arc<dyn postio_imap::secret::SecretStore> = match options.secrets {
+        let secrets: Arc<dyn postio_account::secret::SecretStore> = match options.secrets {
             Some(secrets) => secrets,
-            None => postio_imap::secret::platform_keyring(),
+            None => postio_account::secret::platform_keyring(),
         };
         let key = postio_session::store_key_blocking(secrets.as_ref())
             .map_err(SessionError::from_secret_error)?;
@@ -1047,10 +1047,10 @@ impl Session {
             account: 1.into(),
             database: wiring.database.clone(),
             blobs: wiring.blobs.clone(),
-            backend: Arc::new(postio_imap::backend::MockBackend::new()),
+            backend: Arc::new(postio_account::backend::MockBackend::new()),
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                postio_imap::secret::MemorySecretStore::default(),
+            tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                postio_account::secret::MemorySecretStore::default(),
             ))),
             events: wiring.events.clone(),
             mailbox_roles: wiring.mailbox_roles.clone(),

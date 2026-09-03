@@ -40,10 +40,10 @@
 use std::sync::Arc;
 
 use adw::prelude::*;
+use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_core::CommandId;
 use postio_gtk::onboarding::Onboarding;
 use postio_gtk::window::Window;
-use postio_imap::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;

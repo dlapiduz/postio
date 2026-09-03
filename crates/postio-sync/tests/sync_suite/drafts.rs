@@ -5,7 +5,7 @@
 //! server ends up holding after the queue goes out.
 
 use chrono::{DateTime, TimeZone, Utc};
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
@@ -345,13 +345,13 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
         .expect("the draft");
     let remote_id = stored.server.remote_id.expect("the copy landed");
 
-    let mut sink = postio_imap::backend::VecSink::new();
+    let mut sink = postio_account::backend::VecSink::new();
     backend
         .fetch_body(
             "Drafts",
             &remote_id,
             &mut sink,
-            &postio_imap::cancel::CancelToken::new(),
+            &postio_account::cancel::CancelToken::new(),
         )
         .await
         .expect("read the copy back");
@@ -403,7 +403,7 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     let blobs = TempBlobs::new();
     let backend = MockBackend::builder()
         .mailbox(
-            MockMailbox::new("Drafts").message(postio_imap::backend::MockMessage::new(
+            MockMailbox::new("Drafts").message(postio_account::backend::MockMessage::new(
                 b"From: Ada Lovelace <ada@example.com>\r\n\
                   Subject: Written on the phone\r\n\r\nStarted elsewhere.\r\n"
                     .to_vec(),
@@ -431,7 +431,7 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
         &connection,
         &backend,
         &mailbox,
-        &postio_imap::cancel::CancelToken::new(),
+        &postio_account::cancel::CancelToken::new(),
         |_progress: postio_sync::Progress| {},
     )
     .await

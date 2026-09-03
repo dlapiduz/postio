@@ -37,8 +37,8 @@
 
 use std::process::ExitCode;
 
+use postio_account::secret::{AccountKey, KeyringSecretStore, Password, SecretStore};
 use postio_app::paths::store_path;
-use postio_imap::secret::{AccountKey, KeyringSecretStore, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
 use postio_model::{Account, EmailAddress, Identity};
@@ -76,7 +76,7 @@ fn main() -> ExitCode {
     // Explicit settings still win, so a custom domain works without teaching
     // the table about it. The real autoconfig probe belongs to the first-run
     // screen; this helper is not the place to reimplement it.
-    let preset = postio_imap::discovery::preset_for_domain(&domain);
+    let preset = postio_account::discovery::preset_for_domain(&domain);
     let imap_host =
         match env("POSTIO_IMAP_HOST").or_else(|| preset.map(|p| p.imap_host().to_owned())) {
             Some(host) => host,
@@ -120,7 +120,7 @@ fn main() -> ExitCode {
 
     // The store is encrypted under the keyring's key (ADR 0014), so
     // provisioning an account needs it exactly as the application does.
-    let secrets = postio_imap::secret::KeyringSecretStore::default();
+    let secrets = postio_account::secret::KeyringSecretStore::default();
     let store_key = match postio_session::store_key_blocking(&secrets) {
         Ok(key) => key,
         Err(error) => {

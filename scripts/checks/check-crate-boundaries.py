@@ -32,7 +32,7 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
 
 Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
 ``io-imap``/``io-sasl``. Cargo unifies features workspace-wide, so
-``postio-imap``'s default ``imap`` feature is active in the resolved graph
+``postio-account``'s default ``imap`` feature is active in the resolved graph
 regardless of what ``postio-sync`` asks for -- a graph-based rule here would
 fail on a manifest that is entirely correct. `crates/postio-sync/tests/boundary.rs`
 holds that line instead, by reading the manifest text directly; see its own

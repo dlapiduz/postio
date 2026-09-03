@@ -6,7 +6,7 @@
 //! which is the right tool for `postio-core` and `postio-gtk` — neither may
 //! reach GTK or SQLite by any route, transitive ones included. It cannot
 //! express *this* invariant, because cargo unifies features across a workspace:
-//! `postio-imap` is itself a workspace member and builds with its default
+//! `postio-account` is itself a workspace member and builds with its default
 //! `imap` feature on, so `io-imap` appears in the resolved graph whatever this
 //! crate asks for, and a graph check would fail on a crate that is entirely
 //! correct.
@@ -16,7 +16,7 @@
 //! compiler is the enforcement. This test guards the manifest itself, which is
 //! the one thing a well-meaning edit could quietly change.
 //!
-//! See ADR 0001 and the feature comment in `crates/postio-imap/Cargo.toml`.
+//! See ADR 0001 and the feature comment in `crates/postio-account/Cargo.toml`.
 
 use std::path::PathBuf;
 
@@ -44,8 +44,8 @@ fn the_backend_seam_is_taken_without_its_protocol_features() {
     let manifest = manifest();
     let line = manifest
         .lines()
-        .find(|line| line.trim_start().starts_with("postio-imap ="))
-        .expect("postio-sync depends on postio-imap");
+        .find(|line| line.trim_start().starts_with("postio-account ="))
+        .expect("postio-sync depends on postio-account");
 
     assert!(
         line.contains("default-features = false"),
@@ -57,10 +57,10 @@ fn the_backend_seam_is_taken_without_its_protocol_features() {
 fn the_mock_backend_is_reachable_without_the_protocol_feature() {
     // The point of the arrangement above: the whole engine is testable with no
     // server and no network. If this stops compiling, the seam has moved.
-    let backend = postio_imap::backend::MockBackend::new();
+    let backend = postio_account::backend::MockBackend::new();
 
     assert_eq!(
-        postio_imap::backend::MailBackend::describe(&backend),
+        postio_account::backend::MailBackend::describe(&backend),
         "mock"
     );
 }

@@ -15,7 +15,7 @@
 //! [`crate::composer`] has with `postio-app`'s `compose.rs`.
 //!
 //! That is also why the settings this shows are [`Settings`] and not
-//! `postio_imap::discovery::AccountSettings`: a plain shape the view layer
+//! `postio_account::discovery::AccountSettings`: a plain shape the view layer
 //! owns, filled in by whoever ran the probe, exactly as [`crate::list::Row`]
 //! stands in for a stored message.
 //!

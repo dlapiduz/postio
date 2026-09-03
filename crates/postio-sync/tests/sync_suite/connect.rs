@@ -7,7 +7,7 @@
 //! dead.
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox};
+use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox};
 use postio_sync::connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 
 /// A fixed entropy, so every delay below is exactly the midpoint of its jitter
@@ -525,10 +525,10 @@ async fn a_network_nobody_reported_on_is_still_worth_trying() {
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use postio_imap::auth::TokenSource;
-use postio_imap::imap::{ConnectionPool, ImapBackend, PoolConfig, RustlsConnector};
-use postio_imap::secret::{AccountKey, Password, SecretError};
-use postio_imap::test_server::{TestMailbox, TestServer};
+use postio_account::auth::TokenSource;
+use postio_account::imap::{ConnectionPool, ImapBackend, PoolConfig, RustlsConnector};
+use postio_account::secret::{AccountKey, Password, SecretError};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_model::AuthMethod;
 
 /// A source whose grant is gone: every token it can mint is refused, and

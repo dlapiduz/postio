@@ -24,7 +24,7 @@ graph TD
     subgraph engine ["the database half"]
         runtime["<b>postio-runtime</b><br/>queue drainer · body backfill · reconnect"]
         sync["<b>postio-sync</b><br/>operation queue · QRESYNC · IDLE · backoff"]
-        imap["<b>postio-imap</b><br/>io-imap behind MailBackend"]
+        imap["<b>postio-account</b><br/>io-imap behind MailBackend"]
         smtp["<b>postio-smtp</b><br/>io-smtp"]
         storage["<b>postio-storage</b><br/>SQLite · migrations · blob store"]
         index["<b>postio-index</b><br/>FTS5 index · executor"]
@@ -270,7 +270,7 @@ quirk ("some servers spell it `Sent Messages`").
 ### 8. The protocol crate is held at arm's length
 
 `postio-sync` talks to the `MailBackend` trait and never to `io-imap` types.
-`postio-imap`'s `imap` feature is on by default but `postio-sync` depends on it
+`postio-account`'s `imap` feature is on by default but `postio-sync` depends on it
 with `default-features = false`, so the pre-1.0 protocol crate and its TLS
 stack are **not in the sync engine's dependency graph at all** — what is left is
 the seam, its mock, autoconfig discovery and the keyring.
@@ -279,7 +279,7 @@ the seam, its mock, autoconfig discovery and the keyring.
 was adopted (ADR 0001). It is pinned `=0.6.0`. The seam means a breaking
 release costs one adapter rather than the engine.
 
-This is also why `postio-imap`'s in-process test server is written **against
+This is also why `postio-account`'s in-process test server is written **against
 the wire** rather than against `io-imap`: a bug in the protocol crate cannot
 hide inside the thing meant to catch it.
 

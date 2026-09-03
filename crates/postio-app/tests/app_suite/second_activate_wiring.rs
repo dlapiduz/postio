@@ -34,13 +34,13 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::gdk;
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::{Account, EmailAddress, Flag, Message, TransportSecurity};
 use postio_session::{Wiring, actions};
 use postio_storage::repository::{AccountRepository, MessageRepository};

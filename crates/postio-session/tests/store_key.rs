@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 use postio_session::{STORE_KEY_ENTRY, store_key};
 
 fn entry() -> AccountKey {

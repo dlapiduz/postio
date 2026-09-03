@@ -36,7 +36,7 @@
 //! `Sent Messages` — or anything at all in any language — file its mail in the
 //! right place.
 
-use postio_imap::backend::{MailBackend, MailboxFilter, MailboxSummary};
+use postio_account::backend::{MailBackend, MailboxFilter, MailboxSummary};
 use postio_model::{AccountId, Mailbox, MailboxId, RoleOverrides};
 use postio_storage::repository::MailboxRepository;
 use rusqlite::Connection;

@@ -3,10 +3,10 @@
 //!
 //! No network and no server: `MockBackend` is the in-memory mail store the
 //! whole sync engine is developed against (see
-//! `crates/postio-imap/src/backend/mock.rs`).
+//! `crates/postio-account/src/backend/mock.rs`).
 
-use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
 use postio_storage::PooledConnection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
@@ -106,7 +106,7 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
         .store_flags(
             INBOX,
             &[rid(2)],
-            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
         .expect("flag");
@@ -115,7 +115,7 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
         .store_flags(
             INBOX,
             &[rid(3)],
-            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
         )
         .await
         .expect("mark deleted");
@@ -186,7 +186,7 @@ async fn a_flag_only_change_does_not_double_count_the_correspondent() {
         .store_flags(
             INBOX,
             &[rid(2)],
-            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
         .expect("flag");
@@ -216,7 +216,7 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
     // RFC 7162 §3.1.2.1 says this cannot happen; servers say otherwise, and a
     // message that never appears is the worst failure a mail client has.
     backend
-        .append(INBOX, &postio_imap::backend::AppendMessage::new(note(3)))
+        .append(INBOX, &postio_account::backend::AppendMessage::new(note(3)))
         .await
         .expect("deliver");
 
@@ -258,7 +258,7 @@ async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
     assert_eq!(times_ada_was_seen(&connection, account_id), 2);
 
     backend
-        .append(INBOX, &postio_imap::backend::AppendMessage::new(note(3)))
+        .append(INBOX, &postio_account::backend::AppendMessage::new(note(3)))
         .await
         .expect("deliver");
 
@@ -286,7 +286,7 @@ async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
         .store_flags(
             INBOX,
             &[rid(1)],
-            &postio_imap::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Seen])),
         )
         .await
         .expect("flag");
@@ -445,7 +445,7 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
         .store_flags(
             INBOX,
             &[rid(1)],
-            &postio_imap::backend::FlagChange::Add(flagged),
+            &postio_account::backend::FlagChange::Add(flagged),
         )
         .await
         .expect("the other client's STORE");

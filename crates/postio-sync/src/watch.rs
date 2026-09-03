@@ -52,8 +52,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use postio_imap::backend::{Capabilities, Capability, MailboxEvent, MailboxStatus};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{Capabilities, Capability, MailboxEvent, MailboxStatus};
+use postio_account::cancel::CancelToken;
 use postio_model::{MailboxId, ModSeq, Uid};
 
 // ---------------------------------------------------------------------------

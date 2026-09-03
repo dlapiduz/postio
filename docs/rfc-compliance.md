@@ -210,7 +210,7 @@ the point of having both is that neither can drift alone.
 
 ## RFC 4315 — UIDPLUS
 
-**Reviewed:** 2026-09-02, against `postio-imap`'s `dispatch` and `mutate`, and
+**Reviewed:** 2026-09-02, against `postio-account`'s `dispatch` and `mutate`, and
 `postio-sync`'s `drain`. This is the first slice of #681; **CONDSTORE/QRESYNC
 (7162), MOVE (6851), List-Id (2919) and the base protocol (3501/9051) are not
 reviewed yet** and no verdict below should be read as covering them.

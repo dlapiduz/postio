@@ -9,7 +9,7 @@
 //! instances). This file is that lesson applied to the last unjoined seam.
 //!
 //! It starts the way the binary starts: an account row whose server settings
-//! point at [`postio_imap::test_server::TestServer`] on an ephemeral loopback
+//! point at [`postio_account::test_server::TestServer`] on an ephemeral loopback
 //! port, a password in a [`MemorySecretStore`], a real [`Window`], and then
 //! [`postio_app::start_syncing`] — the production path, which builds the real
 //! connector, the real `io-imap` pool, and the real engine from that account
@@ -45,14 +45,14 @@ use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{TestMailbox, TestMessage, TestServer};
 use postio_app::{commands, feed_the_window, start_syncing};
 use postio_core::CommandId;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestMessage, TestServer};
 use postio_model::TransportSecurity;
 use postio_session::{Wiring, actions};
 use postio_storage::repository::AccountRepository;

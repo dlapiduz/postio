@@ -29,7 +29,7 @@ gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
-postio-imap.workspace = true
+postio-account.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
 postio-runtime.workspace = true

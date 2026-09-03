@@ -3,7 +3,7 @@
 
 `0.1.0` panicked on the main thread the instant a login succeeded:
 
-    thread 'main' panicked at postio-imap/src/secret.rs:314:
+    thread 'main' panicked at postio-account/src/secret.rs:314:
     there is no reactor running, must be called from the context of a
     Tokio 1.x runtime
 

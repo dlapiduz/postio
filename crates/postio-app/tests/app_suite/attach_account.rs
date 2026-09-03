@@ -33,11 +33,11 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::gdk;
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::{attach_account, feed_the_window};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::{Account, EmailAddress, TransportSecurity};
 use postio_session::Wiring;
 use postio_storage::repository::{AccountRepository, MailboxRepository};

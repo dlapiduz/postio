@@ -1,7 +1,7 @@
 //! Where and how to reach a submission server.
 //!
 //! Carries no secret. The password comes from wherever the caller keeps it
-//! (the Secret Service keyring, via `postio-imap::secret` — the same
+//! (the Secret Service keyring, via `postio-account::secret` — the same
 //! account password serves both protocols) at the moment a connection is
 //! opened, and is never stored beside the host name.
 

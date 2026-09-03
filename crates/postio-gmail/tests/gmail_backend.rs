@@ -10,11 +10,11 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use postio_gmail::GmailBackend;
-use postio_imap::backend::{
+use postio_account::backend::{
     AppendMessage, BodyPart, FlagChange, MailBackend, MailboxFilter, VecSink,
 };
-use postio_imap::cancel::CancelToken;
+use postio_account::cancel::CancelToken;
+use postio_gmail::GmailBackend;
 use postio_model::{Flag, FlagSet, MailboxRole, RemoteId, Uid};
 
 /// `(method, path-prefix, response-json)` rules, matched in order; a rule

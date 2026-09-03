@@ -17,7 +17,7 @@ const FORBIDDEN: &[&str] = &[
     "lettre",
     "postio-storage",
     "postio-search",
-    "postio-imap",
+    "postio-account",
     "postio-smtp",
     "postio-sync",
     "postio-core",

@@ -3,8 +3,8 @@
 //! this crate is developed against `MockBackend`.
 
 use chrono::{DateTime, TimeZone, Utc};
-use postio_imap::backend::{MailBackend, MockBackend, MockMailbox};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::{
     Account, Draft, DraftId, EmailAddress, Identity, MailboxId, Operation, OperationTarget,
     TransportSecurity, Uid,
@@ -94,15 +94,15 @@ fn a_draft(account: &Account, to: &str) -> Draft {
 /// The password world behind the [`TokenSource`] seam, which is what a
 /// password account's composition root builds.
 ///
-/// [`TokenSource`]: postio_imap::auth::TokenSource
-async fn a_password_source(account: &Account) -> postio_imap::auth::StoredPasswordSource {
+/// [`TokenSource`]: postio_account::auth::TokenSource
+async fn a_password_source(account: &Account) -> postio_account::auth::StoredPasswordSource {
     let secrets = std::sync::Arc::new(MemorySecretStore::new());
     let key = AccountKey::new(&account.address.address);
     secrets
         .store(&key, &Password::new("app-specific-password"))
         .await
         .expect("store the password");
-    postio_imap::auth::StoredPasswordSource::new(secrets)
+    postio_account::auth::StoredPasswordSource::new(secrets)
 }
 
 /// A transcript that accepts everything: `EHLO`, `AUTH PLAIN`, the mail
@@ -545,7 +545,7 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
 
 /// Hands out `first` until invalidated, then `second`, counting both.
 ///
-/// The same shape `postio-imap`'s pool tests use, because it is the same
+/// The same shape `postio-account`'s pool tests use, because it is the same
 /// discipline being asserted on the other side of the account.
 #[derive(Debug)]
 struct RotatingSource {
@@ -565,11 +565,11 @@ impl RotatingSource {
 }
 
 #[async_trait::async_trait]
-impl postio_imap::auth::TokenSource for RotatingSource {
+impl postio_account::auth::TokenSource for RotatingSource {
     async fn access_token(
         &self,
         _account: &AccountKey,
-    ) -> Result<Password, postio_imap::secret::SecretError> {
+    ) -> Result<Password, postio_account::secret::SecretError> {
         Ok(Password::new(
             if self.invalidated.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                 &self.first
@@ -610,7 +610,7 @@ fn presented_credentials(connector: &ScriptedConnector) -> Vec<String> {
 /// Queues one send and drains it, so the tests below differ only in the
 /// credential and the transcript.
 async fn send_with(
-    tokens: &dyn postio_imap::auth::TokenSource,
+    tokens: &dyn postio_account::auth::TokenSource,
     connector: &ScriptedConnector,
 ) -> postio_sync::DrainReport {
     let database = test_support::memory();

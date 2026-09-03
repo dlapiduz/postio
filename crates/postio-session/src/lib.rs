@@ -157,11 +157,11 @@ pub use postio_storage::key::STORE_KEY_ENTRY;
 /// onboarding, which would ask them to set up an account they already have.
 ///
 /// [`postio_app::startup_route`]: https://github.com/dlapiduz/postio
-/// [`SecretError::Locked`]: postio_imap::secret::SecretError::Locked
+/// [`SecretError::Locked`]: postio_account::secret::SecretError::Locked
 pub async fn store_key(
-    secrets: &dyn postio_imap::secret::SecretStore,
-) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
-    use postio_imap::secret::{AccountKey, SecretError};
+    secrets: &dyn postio_account::secret::SecretStore,
+) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
+    use postio_account::secret::{AccountKey, SecretError};
     use postio_storage::key::StoreKey;
 
     let entry = AccountKey::new(STORE_KEY_ENTRY);
@@ -190,16 +190,16 @@ pub async fn store_key(
 /// The order matters: a key handed back and never stored would encrypt a
 /// store nobody can open again, so the write is what makes the key real.
 async fn mint(
-    secrets: &dyn postio_imap::secret::SecretStore,
-    entry: &postio_imap::secret::AccountKey,
-) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    secrets: &dyn postio_account::secret::SecretStore,
+    entry: &postio_account::secret::AccountKey,
+) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
     let key = postio_storage::key::StoreKey::generate();
     // The one place the key becomes text. `to_hex` hands back a buffer that
     // overwrites itself, and `Password` keeps that discipline from here on.
     secrets
         .store(
             entry,
-            &postio_imap::secret::Password::new(key.to_hex().as_str()),
+            &postio_account::secret::Password::new(key.to_hex().as_str()),
         )
         .await?;
     // No key material, no length, nothing derived from it. That the store is
@@ -221,15 +221,15 @@ async fn mint(
 /// Service that never answers into an error rather than a hang, which is what
 /// keeps a broken keyring costing the window a moment instead of the session.
 pub fn store_key_blocking(
-    secrets: &dyn postio_imap::secret::SecretStore,
-) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    secrets: &dyn postio_account::secret::SecretStore,
+) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            return Err(postio_imap::secret::SecretError::Backend {
+            return Err(postio_account::secret::SecretError::Backend {
                 account: STORE_KEY_ENTRY.to_owned(),
                 reason: format!("no runtime to read the keyring with: {error}"),
             });
@@ -270,7 +270,7 @@ pub struct Wiring {
     /// be driven by a test without a Secret Service session. Both credential
     /// paths — the one onboarding writes and the one startup reads — hang
     /// off this.
-    pub secrets: Arc<dyn postio_imap::secret::SecretStore>,
+    pub secrets: Arc<dyn postio_account::secret::SecretStore>,
     /// Folders the user assigned a role to by hand, from `[mailboxes]`.
     ///
     /// A part, like `secrets`, and for the same reason: which folder is this
@@ -311,7 +311,7 @@ impl Wiring {
             events,
             commands,
             engine: refresh::EngineSlot::default(),
-            secrets: postio_imap::secret::platform_keyring(),
+            secrets: postio_account::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
         }
@@ -342,7 +342,7 @@ impl Wiring {
     /// The seam a test needs: `MemorySecretStore` stands in for a keyring
     /// that has no D-Bus session behind it, and `MemorySecretStore::locked`
     /// for one nobody has unlocked.
-    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
+    pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = secrets;
         self
     }

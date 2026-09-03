@@ -14,8 +14,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 use postio_ffi::{Session, SessionError, SessionOptions};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 
 /// A keyring that is present and refuses, which is the case ADR 0014 cares
 /// about: not "there is no key" but "there is a key and you cannot have it".

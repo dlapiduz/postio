@@ -1,15 +1,15 @@
 //! The sync engine, against a mock server.
 //!
 //! Nothing here touches the network: the backend is
-//! `postio_imap::backend::MockBackend`, and no SMTP transport is given, so
+//! `postio_account::backend::MockBackend`, and no SMTP transport is given, so
 //! nothing is ever dialled.
 
 use std::sync::Arc;
 
 use chrono::Utc;
+use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
-use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_model::operation::{Operation, OperationTarget};
 use postio_runtime::engine::{Engine, EngineParts, Link, NetworkSource, NetworkState, SystemClock};
@@ -101,8 +101,8 @@ fn engine_with_backfill(
         // Never dialled: nothing in these tests queues a send, and the
         // connector is only consulted when one does.
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
@@ -422,7 +422,7 @@ async fn a_resync_that_finds_new_mail_announces_it() {
     backend
         .append(
             "INBOX",
-            &postio_imap::backend::AppendMessage::new(arriving_message()),
+            &postio_account::backend::AppendMessage::new(arriving_message()),
         )
         .await
         .expect("the server takes delivery");
@@ -480,7 +480,7 @@ async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
     backend
         .append(
             "INBOX",
-            &postio_imap::backend::AppendMessage::new(arriving_message()),
+            &postio_account::backend::AppendMessage::new(arriving_message()),
         )
         .await
         .expect("the server takes delivery");
@@ -591,7 +591,7 @@ async fn mail_that_arrives_while_the_app_is_open_turns_up() {
     backend
         .append(
             "INBOX",
-            &postio_imap::backend::AppendMessage::new(arriving_message()),
+            &postio_account::backend::AppendMessage::new(arriving_message()),
         )
         .await
         .expect("the server takes delivery");
@@ -891,8 +891,8 @@ fn engine_over_arc(
         blobs,
         backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
@@ -1052,8 +1052,8 @@ async fn a_draft_saved_while_connected_reaches_the_server_without_being_asked() 
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
@@ -1159,8 +1159,8 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
         blobs,
         backend,
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
@@ -1420,8 +1420,8 @@ fn engine_seeding_in_batches(
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
@@ -1540,7 +1540,7 @@ async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
     backend
         .append(
             "INBOX",
-            &postio_imap::backend::AppendMessage::new(
+            &postio_account::backend::AppendMessage::new(
                 b"From: Ada Lovelace <ada@example.com>\r\n\
                   To: Postio <postio@example.net>\r\n\
                   Subject: after the fact\r\n\
@@ -1617,8 +1617,8 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
         blobs,
         backend: backend.clone(),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),
@@ -1653,7 +1653,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     backend
         .append(
             "INBOX",
-            &postio_imap::backend::AppendMessage::new(
+            &postio_account::backend::AppendMessage::new(
                 format!(
                     "From: Ada Lovelace <ada@example.com>\r\n\
                      Subject: big 7\r\n\
@@ -1713,13 +1713,13 @@ const PDF_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
 /// A server holding one message whose text is section 1 and whose payload is
 /// section 2 — text plain, payload base64, and a `BODYSTRUCTURE` that says so.
 fn server_with_an_attachment() -> MockBackend {
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
-            postio_imap::backend::PartNode::new("1", "text/plain", 27)
+            postio_account::backend::PartNode::new("1", "text/plain", 27)
                 .with_charset("utf-8")
                 .with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
+            postio_account::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
                 .with_encoding("base64")
                 .with_filename("statement.pdf"),
         ],
@@ -1778,8 +1778,8 @@ fn engine_over_a_real_sync(
         blobs,
         backend: Arc::new(server_with_an_attachment()),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),

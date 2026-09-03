@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! [`VecSink`](postio_imap::backend::VecSink) collects a fetch into a
+//! [`VecSink`](postio_account::backend::VecSink) collects a fetch into a
 //! `Vec<u8>`, which is fine for a test and fine for a small part, and wrong for
 //! a message. A `Vec` grows by doubling, so a 40 MB attachment peaks well above
 //! 40 MB and copies itself a dozen times on the way there — and the background
@@ -19,7 +19,7 @@
 //!
 //! # Why it lives here and not in `postio-storage`
 //!
-//! [`BodySink`] belongs to `postio-imap` and [`BlobStore`] to
+//! [`BodySink`] belongs to `postio-account` and [`BlobStore`] to
 //! `postio-storage`; making either depend on the other to join them would
 //! invert the layering (`postio-storage` is *below* the protocol, not beside
 //! it). `postio-sync` is the crate whose whole job is joining protocol to
@@ -36,7 +36,7 @@
 //! unfinished write.
 
 use async_trait::async_trait;
-use postio_imap::backend::{BackendError, BackendResult, BodySink};
+use postio_account::backend::{BackendError, BackendResult, BodySink};
 use postio_model::BlobId;
 use postio_storage::{BlobStore, BlobWriter};
 

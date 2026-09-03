@@ -7,7 +7,7 @@
 //!   cargo test -p postio-jmap --test fastmail_live -- --ignored
 //! ```
 
-use postio_imap::backend::{MailBackend, MailboxFilter};
+use postio_account::backend::{MailBackend, MailboxFilter};
 use postio_jmap::JmapBackend;
 use postio_model::MailboxRole;
 

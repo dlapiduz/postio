@@ -11,10 +11,10 @@
 //! Because it cannot be done there, and the bead's own notes record the dead
 //! end in detail: Cargo resolves one feature set per package across the
 //! workspace, so a `default-features = false` edge from `postio-core` to
-//! `postio-imap` does not stop `io-imap` reaching `postio-gtk` through it,
+//! `postio-account` does not stop `io-imap` reaching `postio-gtk` through it,
 //! and `scripts/checks/check-crate-boundaries.py` fails. That is a real constraint
 //! and it is not worked around here — it is simply the wrong place to have
-//! looked. The composition root already depends on `postio-imap` with its
+//! looked. The composition root already depends on `postio-account` with its
 //! default features, is guarded against nothing, and is where `compose.rs`
 //! and `feed.rs` already join the two halves.
 //!
@@ -39,18 +39,18 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::glib;
+use postio_account::cancel::CancelToken;
+use postio_account::discovery::{
+    AccountSettings, DiscoveryOutcome, DiscoveryReport, DiscoveryTransport, Encryption, Probe,
+    ProbeOptions,
+};
+use postio_account::imap::{ConnectionSettings, ImapSession, RustlsConnector};
+use postio_account::secret::{AccountKey, Password, SecretStore};
 use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
 use postio_gtk::onboarding::{Onboarding, Server, Settings, Status, Submission};
 use postio_gtk::window::Window;
-use postio_imap::cancel::CancelToken;
-use postio_imap::discovery::{
-    AccountSettings, DiscoveryOutcome, DiscoveryReport, DiscoveryTransport, Encryption, Probe,
-    ProbeOptions,
-};
-use postio_imap::imap::{ConnectionSettings, ImapSession, RustlsConnector};
-use postio_imap::secret::{AccountKey, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
 use postio_model::{Account, EmailAddress, Identity};
@@ -111,7 +111,7 @@ pub fn install(
     notifier: crate::notifications::Notifier,
     repairing: Option<Account>,
     transport: Arc<dyn DiscoveryTransport>,
-    opener: Arc<dyn postio_imap::oauth::BrowserOpener>,
+    opener: Arc<dyn postio_account::oauth::BrowserOpener>,
 ) {
     let screen = Onboarding::new();
     let previous = window.content();
@@ -138,7 +138,7 @@ pub fn install(
         account
             .oauth
             .as_ref()
-            .map(|oauth| postio_imap::discovery::OAuthOffer {
+            .map(|oauth| postio_account::discovery::OAuthOffer {
                 issuer: None,
                 authorize: Some(oauth.authorize_url.clone()),
                 token: Some(oauth.token_url.clone()),
@@ -150,7 +150,7 @@ pub fn install(
         Rc::new(RefCell::new(repairing.as_ref().and_then(
             |account| match &account.backend {
                 postio_model::account::Backend::Jmap { session_url } => {
-                    Some(postio_imap::discovery::JmapOffer {
+                    Some(postio_account::discovery::JmapOffer {
                         session_url: session_url.clone(),
                     })
                 }
@@ -298,7 +298,7 @@ impl ProbeCancellation {
 
 /// How this application probes, as against how the crate probes by default.
 ///
-/// The one difference is `guess_common_names`, which `postio-imap` ships off
+/// The one difference is `guess_common_names`, which `postio-account` ships off
 /// because "an unverified guess presented as a *discovery* is worse than an
 /// empty form" — and it is right about that. The composition root turns it on
 /// because it controls what the guess is presented *as*: [`status_for`] can
@@ -362,13 +362,13 @@ pub(crate) fn probe(
 /// probe that writes it and the submit that reads it (#534). The screen's
 /// form fields cannot carry it — endpoints and scopes are protocol data
 /// the widget deliberately does not know.
-pub(crate) type OAuthOfferSlot = Rc<RefCell<Option<postio_imap::discovery::OAuthOffer>>>;
+pub(crate) type OAuthOfferSlot = Rc<RefCell<Option<postio_account::discovery::OAuthOffer>>>;
 
 /// The JMAP offer a preset row advertised (#545, ADR 0018 Q5) — parked at
 /// probe time for the same reason as [`OAuthOfferSlot`]: endpoints are
 /// protocol data the form fields deliberately do not carry. Present only
 /// when the row's preference order puts `jmap` first.
-pub(crate) type JmapOfferSlot = Rc<RefCell<Option<postio_imap::discovery::JmapOffer>>>;
+pub(crate) type JmapOfferSlot = Rc<RefCell<Option<postio_account::discovery::JmapOffer>>>;
 
 /// [`probe`], also parking the discovered OAuth offer in `offer` for the
 /// submit handler to sign in with.
@@ -437,7 +437,7 @@ pub(crate) fn submit(
     screen: &Onboarding,
     wiring: &Wiring,
     submission: Submission,
-    jmap: Option<postio_imap::discovery::JmapOffer>,
+    jmap: Option<postio_account::discovery::JmapOffer>,
     on_saved: impl Fn() + 'static,
 ) {
     screen.set_status(Status::Connecting);
@@ -456,7 +456,7 @@ pub(crate) fn submit(
             && let Ok(url) = offer.session_url.parse()
         {
             let proof = postio_jmap::JmapBackend::new(url, password.expose());
-            match postio_imap::backend::MailBackend::connect(&proof).await {
+            match postio_account::backend::MailBackend::connect(&proof).await {
                 Ok(_) => {
                     let backend = postio_model::account::Backend::Jmap {
                         session_url: offer.session_url.clone(),
@@ -532,7 +532,7 @@ pub(crate) fn submit(
 }
 
 /// The browser sign-in, end to end (#534, ADR 0006 Q3): resolve the
-/// endpoints, run [`postio_imap::oauth::authorize`] through the system
+/// endpoints, run [`postio_account::oauth::authorize`] through the system
 /// browser, prove the token against the IMAP server, and only then
 /// persist — the same nothing-stranded order the password path keeps.
 ///
@@ -544,9 +544,9 @@ pub(crate) fn submit_oauth(
     screen: &Onboarding,
     wiring: &Wiring,
     submission: Submission,
-    offer: postio_imap::discovery::OAuthOffer,
+    offer: postio_account::discovery::OAuthOffer,
     cancel: CancelToken,
-    opener: Arc<dyn postio_imap::oauth::BrowserOpener>,
+    opener: Arc<dyn postio_account::oauth::BrowserOpener>,
     on_saved: impl Fn() + 'static,
 ) {
     let Some(client) = submission.oauth_client.clone() else {
@@ -626,17 +626,17 @@ enum SignInError {
 async fn run_sign_in(
     settings: &ConnectionSettings,
     client: &postio_gtk::onboarding::OAuthClientSubmission,
-    offer: &postio_imap::discovery::OAuthOffer,
-    opener: &dyn postio_imap::oauth::BrowserOpener,
+    offer: &postio_account::discovery::OAuthOffer,
+    opener: &dyn postio_account::oauth::BrowserOpener,
     cancel: &CancelToken,
 ) -> Result<
     (
-        postio_imap::oauth::Endpoints,
-        postio_imap::oauth::TokenResponse,
+        postio_account::oauth::Endpoints,
+        postio_account::oauth::TokenResponse,
     ),
     SignInError,
 > {
-    use postio_imap::oauth;
+    use postio_account::oauth;
 
     let cancelled = |error: &oauth::OAuthError| matches!(error, oauth::OAuthError::Cancelled);
 
@@ -725,16 +725,16 @@ async fn persist_oauth(
     database: &Database,
     secrets: Arc<dyn SecretStore>,
     submission: &Submission,
-    endpoints: &postio_imap::oauth::Endpoints,
+    endpoints: &postio_account::oauth::Endpoints,
     scopes: &[String],
-    tokens: postio_imap::oauth::TokenResponse,
+    tokens: postio_account::oauth::TokenResponse,
 ) -> Result<(), String> {
     let Some(client) = submission.oauth_client.clone() else {
         return Err("The sign-in lost its client on the way to the store.".to_owned());
     };
     let key = AccountKey::new(submission.address.clone());
 
-    let source = postio_imap::oauth::OwnClientTokenSource::new(
+    let source = postio_account::oauth::OwnClientTokenSource::new(
         secrets.clone(),
         endpoints.token.clone(),
         client.client_id.clone(),
@@ -771,7 +771,7 @@ fn save_oauth(
     database: &Database,
     submission: &Submission,
     client: &postio_gtk::onboarding::OAuthClientSubmission,
-    endpoints: &postio_imap::oauth::Endpoints,
+    endpoints: &postio_account::oauth::Endpoints,
     scopes: &[String],
 ) -> Result<(), String> {
     // A browser sign-in is an IMAP account today; the Gmail REST backend
@@ -972,7 +972,7 @@ pub(crate) fn configured(account: &Account) -> Settings {
 
 /// What the screen shows, from what the probe found.
 fn shown(settings: &AccountSettings) -> Settings {
-    let server = |server: &postio_imap::discovery::ServerSettings| Server {
+    let server = |server: &postio_account::discovery::ServerSettings| Server {
         host: server.host.clone(),
         port: server.port,
         security: match server.encryption {
@@ -1016,8 +1016,8 @@ fn connection_settings(submission: &Submission) -> ConnectionSettings {
 ///
 /// No variant of `BackendError` carries a password, so these are safe to show
 /// and safe to log.
-fn explain(error: &postio_imap::backend::BackendError) -> String {
-    use postio_imap::backend::BackendError as E;
+fn explain(error: &postio_account::backend::BackendError) -> String {
+    use postio_account::backend::BackendError as E;
     match error {
         E::Auth { .. } => "The server rejected that address and password.\n\n\
              If this is iCloud, Google or another provider with two-factor \
@@ -1051,7 +1051,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    use postio_imap::discovery::{DiscoveryReport, ServerSettings, SettingsSource};
+    use postio_account::discovery::{DiscoveryReport, ServerSettings, SettingsSource};
 
     // -- Cancelling the probe that is in flight (#57) ---------------------
     //
@@ -1125,12 +1125,12 @@ mod tests {
             imap: ServerSettings {
                 host: "imap.example.com".to_owned(),
                 port: 993,
-                encryption: postio_imap::discovery::Encryption::Tls,
+                encryption: postio_account::discovery::Encryption::Tls,
             },
             smtp: ServerSettings {
                 host: "smtp.example.com".to_owned(),
                 port: 465,
-                encryption: postio_imap::discovery::Encryption::Tls,
+                encryption: postio_account::discovery::Encryption::Tls,
             },
             email: "lena@example.com".to_owned(),
             login: "lena@example.com".to_owned(),
@@ -1145,7 +1145,7 @@ mod tests {
         }
     }
 
-    use postio_imap::secret::MemorySecretStore;
+    use postio_account::secret::MemorySecretStore;
 
     /// The account the store holds, if it holds one.
     fn stored(database: &Database) -> Option<Account> {
@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn a_rejected_password_says_what_to_do_about_it() {
-        let reason = explain(&postio_imap::backend::BackendError::Auth {
+        let reason = explain(&postio_account::backend::BackendError::Auth {
             account: "lena@example.com".to_owned(),
             reason: "AUTHENTICATIONFAILED".to_owned(),
         });
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn a_timeout_names_the_budget_it_blew() {
-        let reason = explain(&postio_imap::backend::BackendError::TimedOut {
+        let reason = explain(&postio_account::backend::BackendError::TimedOut {
             context: "login".to_owned(),
             after: Duration::from_secs(30),
         });
@@ -1233,7 +1233,7 @@ mod tests {
 
     #[test]
     fn tls_failure_says_postio_will_not_downgrade() {
-        let reason = explain(&postio_imap::backend::BackendError::Tls {
+        let reason = explain(&postio_account::backend::BackendError::Tls {
             host: "imap.example.com".to_owned(),
             reason: "certificate expired".to_owned(),
         });
@@ -1457,7 +1457,7 @@ mod tests {
         // `postio-69`: the screen handed the user five empty boxes for the
         // one domain shape least able to fill them in — a custom domain that
         // publishes no autoconfig. The guess is off by default in
-        // `postio-imap` on purpose (an unverified guess presented as a
+        // `postio-account` on purpose (an unverified guess presented as a
         // *discovery* is worse than nothing); the composition root turns it
         // on because `Status::Manual` presents it as a starting point to
         // edit, which is a different claim.

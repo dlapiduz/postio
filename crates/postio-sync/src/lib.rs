@@ -3,10 +3,10 @@
 //! # Where this sits
 //!
 //! Everything below is reached through
-//! [`MailBackend`](postio_imap::backend::MailBackend); nothing here names a
+//! [`MailBackend`](postio_account::backend::MailBackend); nothing here names a
 //! protocol type. That is ADR 0001's requirement and it is what makes the whole
 //! engine testable against
-//! [`MockBackend`](postio_imap::backend::MockBackend) with no server and no
+//! [`MockBackend`](postio_account::backend::MockBackend) with no server and no
 //! network — every test in this crate does exactly that.
 //!
 //! # Local-first, drained later

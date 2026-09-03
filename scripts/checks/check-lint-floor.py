@@ -5,7 +5,7 @@ The floor used to be set per crate with `#![forbid(unsafe_code)]` and
 `#![warn(missing_docs)]` attributes, and it drifted exactly the way three
 hand-maintained lists always do: `forbid(unsafe_code)` reached seven crates
 of twelve, `warn(missing_docs)` nine, and the crates it missed were missing
-it for no reason anybody had decided. `postio-config`, `postio-imap` and
+it for no reason anybody had decided. `postio-config`, `postio-account` and
 `postio-smtp` contained no `unsafe` at all and still did not forbid it.
 
 `[workspace.lints]` is the one place. This check is what keeps it the one
@@ -60,7 +60,7 @@ EXCEPTIONS: dict[str, str] = {
     # trait is `unsafe impl` by definition. No library code in this crate uses
     # `unsafe` -- and note that a test target cannot opt out of `forbid`, which
     # is why this is an exception rather than a local allow.
-    "postio-imap": "deny",
+    "postio-account": "deny",
     # One FFI call, in `db.rs`: `OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT)`,
     # behind a `Once` and a documented `# Safety`. SQLCipher pulls libcrypto
     # in, libcrypto registers an `atexit` handler that frees its own state,

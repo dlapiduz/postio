@@ -31,9 +31,9 @@
 use std::sync::Arc;
 
 use adw::prelude::*;
+use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
-use postio_imap::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_model::ids::AccountId;
 use postio_storage::repository::AccountRepository;
 

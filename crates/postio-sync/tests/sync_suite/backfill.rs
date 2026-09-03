@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use postio_imap::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, Mailbox, MessageId, Uid, UidValidity};
 use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
@@ -785,13 +785,13 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
 const HUGE: u64 = 40 * 1024 * 1024;
 
 fn with_a_big_attachment(uid: u32) -> MockMessage {
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
-            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+            postio_account::backend::PartNode::new("1", "text/plain", 26)
                 .with_charset("utf-8")
                 .with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "application/pdf", HUGE)
+            postio_account::backend::PartNode::new("2", "application/pdf", HUGE)
                 .with_filename("statement.pdf"),
         ],
     );
@@ -880,10 +880,12 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
         .message(
             MockMessage::new(note(1))
                 .with_internal_date(at(1))
-                .with_structure(postio_imap::backend::BodyStructure::from_parts(
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
                     "text/plain",
-                    [postio_imap::backend::PartNode::new("1", "text/plain", 26)
-                        .with_charset("utf-8")],
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
                 ))
                 .with_part("1", &b"The body of note 1.\r\n"[..]),
         );
@@ -1039,13 +1041,13 @@ async fn text_that_is_not_part_one_is_still_found() {
     //
     // Only `2.1` and `2.2` are seeded, so a fetch of part 1 fails the test
     // rather than silently costing the bandwidth this exists to save.
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
-            postio_imap::backend::PartNode::new("1", "application/pdf", HUGE)
+            postio_account::backend::PartNode::new("1", "application/pdf", HUGE)
                 .with_filename("scan.pdf"),
-            postio_imap::backend::PartNode::new("2.1", "text/plain", 20).with_charset("utf-8"),
-            postio_imap::backend::PartNode::new("2.2", "text/html", 40).with_charset("utf-8"),
+            postio_account::backend::PartNode::new("2.1", "text/plain", 20).with_charset("utf-8"),
+            postio_account::backend::PartNode::new("2.2", "text/html", 40).with_charset("utf-8"),
         ],
     );
     let inbox = MockMailbox::new(INBOX)
@@ -1167,13 +1169,13 @@ const PDF_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
 /// both seeded on the server the way a real one would be: the text plain, the
 /// payload base64, and `BODYSTRUCTURE` saying so.
 fn with_a_payload(uid: u32, filename: &str) -> MockMessage {
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
-            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+            postio_account::backend::PartNode::new("1", "text/plain", 26)
                 .with_charset("utf-8")
                 .with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
+            postio_account::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
                 .with_encoding("base64")
                 .with_filename(filename),
         ],
@@ -1457,16 +1459,16 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
 
 #[tokio::test]
 async fn a_message_is_full_only_once_its_last_payload_is_local() {
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
-            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+            postio_account::backend::PartNode::new("1", "text/plain", 26)
                 .with_charset("utf-8")
                 .with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
+            postio_account::backend::PartNode::new("2", "application/pdf", PDF.len() as u64)
                 .with_encoding("base64")
                 .with_filename("first.pdf"),
-            postio_imap::backend::PartNode::new("3", "text/csv", 10).with_filename("rows.csv"),
+            postio_account::backend::PartNode::new("3", "text/csv", 10).with_filename("rows.csv"),
         ],
     );
     let inbox = MockMailbox::new(INBOX)
@@ -1609,21 +1611,21 @@ const SMALL_INLINE: &str = "UE5HQllURVM=";
 /// nobody seeded, so a fetch that reached for the oversized part fails the
 /// test rather than quietly costing forty megabytes no assertion can see.
 fn with_inline_images(uid: u32) -> MockMessage {
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/related",
         [
-            postio_imap::backend::PartNode::new("1", "text/html", 64)
+            postio_account::backend::PartNode::new("1", "text/html", 64)
                 .with_charset("utf-8")
                 .with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "image/png", 8)
+            postio_account::backend::PartNode::new("2", "image/png", 8)
                 .with_encoding("base64")
                 // Brackets and all, exactly as `BODYSTRUCTURE` reports it.
                 .with_content_id("<logo@example.com>")
-                .with_disposition(postio_imap::backend::Disposition::Inline),
-            postio_imap::backend::PartNode::new("3", "image/png", HUGE)
+                .with_disposition(postio_account::backend::Disposition::Inline),
+            postio_account::backend::PartNode::new("3", "image/png", HUGE)
                 .with_encoding("base64")
                 .with_content_id("<banner@example.com>")
-                .with_disposition(postio_imap::backend::Disposition::Inline),
+                .with_disposition(postio_account::backend::Disposition::Inline),
         ],
     );
     MockMessage::new(
@@ -1721,14 +1723,14 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
     // The other side of the cap: when nothing was left on the server, the
     // message is `full`, so the reader offers "open" rather than "download"
     // and search knows it is answering from a complete corpus.
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/related",
         [
-            postio_imap::backend::PartNode::new("1", "text/html", 64).with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "image/png", 8)
+            postio_account::backend::PartNode::new("1", "text/html", 64).with_encoding("7bit"),
+            postio_account::backend::PartNode::new("2", "image/png", 8)
                 .with_encoding("base64")
                 .with_content_id("<logo@example.com>")
-                .with_disposition(postio_imap::backend::Disposition::Inline),
+                .with_disposition(postio_account::backend::Disposition::Inline),
         ],
     );
     let inbox = MockMailbox::new(INBOX)
@@ -1771,13 +1773,13 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
     // payload however little it weighs, or `attachment_fetch = "on_open"`
     // would quietly stop meaning anything. The mock has no bytes seeded for
     // section 2, so reaching for it fails this test.
-    let structure = postio_imap::backend::BodyStructure::from_parts(
+    let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
-            postio_imap::backend::PartNode::new("1", "text/plain", 26)
+            postio_account::backend::PartNode::new("1", "text/plain", 26)
                 .with_charset("utf-8")
                 .with_encoding("7bit"),
-            postio_imap::backend::PartNode::new("2", "application/pdf", 512)
+            postio_account::backend::PartNode::new("2", "application/pdf", 512)
                 .with_encoding("base64")
                 .with_filename("receipt.pdf"),
         ],

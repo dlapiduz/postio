@@ -21,7 +21,7 @@ blake3 = "1.8.7"
 # it to be reproduced.
 getrandom = "0.3.4"
 # Key material overwrites itself when it drops, the same discipline
-# `postio-imap`'s `Password` already keeps.
+# `postio-account`'s `Password` already keeps.
 zeroize = "1.9.0"
 # Blob contents are XChaCha20-Poly1305 (ADR 0014 Q2). Pure Rust, no new
 # native dependency, and the 24-byte nonce is what makes a random per-blob
