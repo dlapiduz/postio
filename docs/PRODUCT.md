@@ -187,8 +187,26 @@ from:ada after:2026-01-01 has:attach
 subject:invoice -in:archive
 ```
 
-`from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
-`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
+`from:` `to:` `subject:` `body:` `in:` `list:` `filename:` `has:attach`
+`is:unread` `is:read` `is:flagged` `before:` `after:` `larger:` `smaller:`
+`account:` `group:`
+
+Adjacent operators mean **and**. `OR` — uppercase, always — joins alternatives,
+and parentheses group them:
+
+```
+from:ada OR from:grace
+(from:ada OR from:grace) has:attach
+```
+
+`OR` binds *looser* than the space between two operators, so
+`from:ada OR from:grace has:attach` is *ada, or grace-with-an-attachment*.
+There is no `AND` keyword: adjacency already means it. `OR` is uppercase only
+because "cats or dogs" is three words somebody is searching for.
+
+`body:` narrows a term to the message text. Plain free text already searches
+the body *and* the metadata, so `invoice` finds a message whose subject says
+so; `body:invoice` finds the ones that say it in the message.
 
 `account:` names an account by the name it shows in the sidebar or by its
 address, and composes with everything else — `account:work is:unread` is one

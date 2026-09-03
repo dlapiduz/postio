@@ -75,14 +75,6 @@ pub enum Field {
     Smaller,
     /// `list:` — `List-Id` mailing list.
     List,
-    /// `header:` — an arbitrary header, `header:x-mailer=mutt`.
-    ///
-    /// The escape hatch the other operators are shortcuts for. ADR 0008 asks
-    /// for rule conditions on headers Postio has no dedicated operator for,
-    /// and `ARCHITECTURE.md` §6 says every one of those is added to *the*
-    /// query language rather than to a rules-only dialect — so this is in the
-    /// search bar too, and works there today.
-    Header,
     /// `body:` — words in the message text, as opposed to its metadata.
     ///
     /// Free text already searches the body; this narrows a term to it, so
@@ -138,7 +130,6 @@ impl Field {
             Field::Larger => "larger",
             Field::Smaller => "smaller",
             Field::List => "list",
-            Field::Header => "header",
             Field::Body => "body",
             Field::Account => "account",
             Field::Group => "group",
@@ -161,7 +152,6 @@ impl Field {
             "larger" | "bigger" | "size" => Some(Field::Larger),
             "smaller" => Some(Field::Smaller),
             "list" => Some(Field::List),
-            "header" => Some(Field::Header),
             "body" => Some(Field::Body),
             "account" => Some(Field::Account),
             "group" => Some(Field::Group),
@@ -183,7 +173,6 @@ impl Field {
                 | Field::List
                 | Field::Account
                 | Field::Group
-                | Field::Header
                 | Field::Body
         )
     }
@@ -234,17 +223,6 @@ pub enum Filter {
     /// member addresses needs the store, which this crate does not have.
     /// `postio-index` does the resolving.
     Group(String),
-    /// `header:x-mailer=mutt` — an arbitrary header, by name and value.
-    ///
-    /// An empty `value` is `header:x-mailer` with no `=`, which asks whether
-    /// the header is there at all. Both halves stay text: which headers a
-    /// message carries is the index's question, not this crate's.
-    Header {
-        /// The header name, lowercased — header names are case-insensitive.
-        name: String,
-        /// What it must contain, or empty for "present at all".
-        value: String,
-    },
     /// `body:invoice` — a word in the message text rather than its metadata.
     Body(String),
     /// `has:attach`
@@ -273,7 +251,6 @@ impl Filter {
             Filter::List(_) => Field::List,
             Filter::Account(_) => Field::Account,
             Filter::Group(_) => Field::Group,
-            Filter::Header { .. } => Field::Header,
             Filter::Body(_) => Field::Body,
             Filter::HasAttachment => Field::Has,
             Filter::Is(_) => Field::Is,

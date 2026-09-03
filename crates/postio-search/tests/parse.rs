@@ -981,30 +981,21 @@ fn parentheses_come_away_from_the_words_they_touch() {
 }
 
 #[test]
-fn header_matches_a_named_header_and_body_matches_the_text() {
-    assert_eq!(
-        filters("header:x-mailer=mutt"),
-        [Filter::Header {
-            name: "x-mailer".into(),
-            value: "mutt".into()
-        }]
-    );
-    assert_eq!(
-        filters("header:x-mailer"),
-        [Filter::Header {
-            name: "x-mailer".into(),
-            value: String::new()
-        }],
-        "a header with no `=` asks whether it is present at all"
-    );
+fn body_narrows_a_term_to_the_message_text() {
     assert_eq!(filters("body:invoice"), [Filter::Body("invoice".into())]);
     assert_eq!(
         filters("body:\"quarterly report\""),
         [Filter::Body("quarterly report".into())],
         "a quoted body value is one phrase"
     );
-    assert_eq!(Field::parse("header"), Some(Field::Header));
     assert_eq!(Field::parse("body"), Some(Field::Body));
+    assert_eq!(
+        Field::parse("header"),
+        None,
+        "`header:` waits for somewhere to match against -- see the issue \
+         filed alongside #478; until then it is free text, like any other \
+         unknown operator"
+    );
 }
 
 #[test]

@@ -30,7 +30,7 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
 
 use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
-use postio_search::query::{Filter, ParsedQuery, fts_literal};
+use postio_search::query::{Filter, ParsedQuery, QueryTree, fts_literal};
 use postio_search::results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
 
 use crate::error::Result;
@@ -498,6 +498,38 @@ impl Plan {
         let account = request.account;
         let mut has_match = false;
         let mut match_param = None;
+
+        // A query containing `OR` cannot use any of what follows. The free
+        // text below is *hoisted* out of the query and into the join, which
+        // is what makes a ranked search fast (see `HITS_JOIN`) -- and a
+        // hoisted term is implicitly ANDed with everything else, which is
+        // exactly what a disjunction is not. So the two paths are separate on
+        // purpose rather than by omission: a conjunctive query, which is
+        // every query anyone wrote before #478, takes the plan and the
+        // measurements it always did, and only a query that actually asks for
+        // a disjunction pays for one.
+        //
+        // The price of the second path is ranking: with nothing hoisted there
+        // is no `bm25` to rank by, so an `OR` query is ordered the way a
+        // filter-only query already is. Worth stating rather than hiding --
+        // it is the one behavioural difference between the two.
+        let tree = request.query.tree();
+        if !tree.is_conjunctive() {
+            if let Some((sql, mut values)) = scope_condition(request.scope, request.account) {
+                conditions.push(sql);
+                params.append(&mut values);
+            }
+            let (sql, mut values) = tree_condition(&tree);
+            conditions.push(sql);
+            params.append(&mut values);
+            return Self {
+                conditions,
+                params,
+                account,
+                has_match,
+                match_param,
+            };
+        }
 
         // Negated terms are excluded across the whole union rather than
         // folded into each index's own `MATCH`, and that is a correctness
@@ -1017,6 +1049,59 @@ fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<V
     })
 }
 
+/// Compiles a [`QueryTree`] into one self-contained SQL boolean, plus its
+/// bound parameters in the order the `?` placeholders appear.
+///
+/// Only reached for a query containing `OR`. Every leaf has to stand on its
+/// own here -- including free text, which in the conjunctive path is hoisted
+/// into the join instead -- because an operand of an `OR` cannot be a
+/// constraint applied to the whole statement.
+fn tree_condition(tree: &QueryTree) -> (String, Vec<Value>) {
+    match tree {
+        // An empty conjunction constrains nothing and an empty disjunction
+        // matches nothing. Neither is reachable from `tree()` inside a larger
+        // tree -- it drops empty arms -- but writing the identity is cheaper
+        // than proving it stays unreachable.
+        QueryTree::All(children) => combine(children, " AND ", "1"),
+        QueryTree::Any(children) => combine(children, " OR ", "0"),
+        QueryTree::Filter(clause) => {
+            let (sql, values) = filter_condition(&clause.filter);
+            match clause.negated {
+                true => (format!("NOT ({sql})"), values),
+                false => (sql, values),
+            }
+        }
+        QueryTree::Text(term) => {
+            // The correlated form, for the reason `CORRELATED_MATCH` gives:
+            // `rowid = m.id AND ... MATCH ?` is a docid seek, where the
+            // `IN (SELECT rowid ...)` spelling builds an ephemeral b-tree of
+            // every posting. Inside a disjunction that cost would be paid per
+            // arm.
+            let literal = Value::Text(fts_literal(&term.value));
+            let params = vec![literal.clone(), literal];
+            match term.negated {
+                true => (format!("NOT {CORRELATED_MATCH}"), params),
+                false => (CORRELATED_MATCH.to_string(), params),
+            }
+        }
+    }
+}
+
+/// Joins compiled children with `operator`, or yields `identity` for none.
+fn combine(children: &[QueryTree], operator: &str, identity: &str) -> (String, Vec<Value>) {
+    if children.is_empty() {
+        return (identity.to_string(), Vec::new());
+    }
+    let mut parts = Vec::with_capacity(children.len());
+    let mut params = Vec::new();
+    for child in children {
+        let (sql, mut values) = tree_condition(child);
+        parts.push(sql);
+        params.append(&mut values);
+    }
+    (format!("({})", parts.join(operator)), params)
+}
+
 /// Translates one structured filter into a SQL condition (unnegated) plus its
 /// bound parameters, in the order the `?` placeholders appear.
 fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
@@ -1068,6 +1153,15 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
         // identifier `postio-model::mime::list_id_from_text` extracts and
         // `messages.list_id` stores, indexed here the same way `subject` is.
         Filter::List(value) => fts_column_condition("list_id", value),
+        // `body:` reaches the other index. Free text already searches the
+        // body; this narrows a term *to* it, so `body:invoice` skips the
+        // message whose only "invoice" is in its subject (#478).
+        Filter::Body(value) => (
+            "m.id IN (SELECT rowid FROM message_bodies_fts \
+             WHERE message_bodies_fts MATCH ?)"
+                .to_string(),
+            vec![Value::Text(fts_literal(value))],
+        ),
         Filter::HasAttachment => ("m.has_attachments = 1".to_string(), Vec::new()),
         Filter::Is(state) => {
             use postio_search::query::State;

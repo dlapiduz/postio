@@ -208,23 +208,6 @@ fn operator(negated: bool, field: Field, value: String, today: NaiveDate) -> Tok
         Field::Account => filter(Filter::Account(value)),
         Field::Group => filter(Filter::Group(value)),
         Field::Body => filter(Filter::Body(value)),
-        // `header:x-mailer=mutt` splits on the first `=`; `header:x-mailer`
-        // with no `=` asks whether the header is there at all, which is a
-        // complete question and so a filter rather than a partial. Names are
-        // lowercased because header names are case-insensitive (RFC 5322).
-        Field::Header => {
-            let (name, header_value) = match value.split_once('=') {
-                Some((name, header_value)) => (name, header_value),
-                None => (value.as_str(), ""),
-            };
-            if name.is_empty() {
-                return partial(value);
-            }
-            filter(Filter::Header {
-                name: name.to_ascii_lowercase(),
-                value: header_value.to_string(),
-            })
-        }
         Field::Has => match value.to_ascii_lowercase().as_str() {
             "attach" | "attachment" | "attachments" | "file" | "files" => {
                 filter(Filter::HasAttachment)
