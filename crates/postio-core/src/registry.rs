@@ -680,7 +680,15 @@ static SPECS: &[CommandSpec] = &[
         title: "Undo",
         default_binding: "u",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        // Plus the account list. #464 built account removal as a soft delete
+        // with a toast wired straight to AccountRepository::restore rather
+        // than through the global stack, and said so because Remove was not a
+        // command then. Registering it with Recovery::Undo makes that a
+        // declaration, and a declaration nothing backs from the keyboard is
+        // what ADR 0005 keeps refusing to ship -- so `u` reaches the toast
+        // while it is up. Context-local state, context-local binding; the
+        // global stack is untouched (ADR 0005 Q6c).
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -888,6 +896,51 @@ static SPECS: &[CommandSpec] = &[
         // so like `DiscardDraft` this asks first rather than offering undo.
         destructive: true,
         recovery: Recovery::Confirm,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleAccountEnabled,
+        title: "Enable or disable account",
+        default_binding: "Return",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // Pressing it again is the reversal, so there is nothing for the undo
+        // stack to hold (ADR 0005 Q6c).
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::RemoveAccount,
+        title: "Remove account",
+        default_binding: "d",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: true,
+        // Unlike DeleteSavedSearch, which is a config edit with no undo stack
+        // to reach: #464 built removal as a soft delete with a toast wired to
+        // AccountRepository::restore, and reaped at the next start. So there
+        // is something to undo for as long as the toast is up, and declaring
+        // it here is what the registry enforces a keyboard path for.
+        recovery: Recovery::Undo,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::UpdateCredential,
+        title: "Update account credential",
+        // `c` for credential. ADR 0005 Q6c wanted this one palette-only, on
+        // the grounds that "ten commands already have none" -- but none do,
+        // and PRODUCT.md §8 makes a shortcut a structural requirement that
+        // `every_command_has_an_id_a_title_and_a_default_binding` enforces.
+        // The ADR's actual point was discoverability, which the palette entry
+        // gives it either way; the exemption was the part resting on a wrong
+        // count. Nothing is shadowed: Compose's `c` is scoped to the message
+        // surfaces, and this context layers over Global alone.
+        default_binding: "c",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        recovery: Recovery::None,
         requires: None,
     },
     CommandSpec {

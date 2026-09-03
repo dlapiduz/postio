@@ -83,7 +83,7 @@ command from inside a text field.
 | `ctrl+shift+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` | Quote block | Composer |  | `quote_block` |
-| `u` | Undo | List, thread, reader |  | `undo` |
+| `u` | Undo | List, thread, reader, account list |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |
 | `ctrl+comma` | Settings | Everywhere |  | `settings` |
@@ -100,6 +100,9 @@ command from inside a text field.
 | `shift+Up` | Move saved search up | Folder list |  | `move_saved_search_up` |
 | `shift+Down` | Move saved search down | Folder list |  | `move_saved_search_down` |
 | `d` | Delete saved search | Folder list | Asks first | `delete_saved_search` |
+| `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
+| `d` | Remove account | Account list | Undoable | `remove_account` |
+| `c` | Update account credential | Account list |  | `update_credential` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |

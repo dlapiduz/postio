@@ -57,6 +57,9 @@ rename_saved_search	r
 move_saved_search_up	shift+Up
 move_saved_search_down	shift+Down
 delete_saved_search	d
+toggle_account_enabled	Return
+remove_account	d
+update_credential	c
 next_scope	g a
 refresh	F5 | R
 open_parts	p

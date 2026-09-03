@@ -173,6 +173,12 @@ command_ids! {
     MoveSavedSearchDown => "move_saved_search_down",
     /// Delete the focused saved search.
     DeleteSavedSearch => "delete_saved_search",
+    /// Enable or disable the focused account.
+    ToggleAccountEnabled => "toggle_account_enabled",
+    /// Remove the focused account.
+    RemoveAccount => "remove_account",
+    /// Update the focused account's stored credential.
+    UpdateCredential => "update_credential",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -567,6 +573,17 @@ pub enum Command {
     MoveSavedSearchDown,
     /// Delete the focused saved search.
     DeleteSavedSearch,
+    /// Enable or disable the focused account.
+    ///
+    /// No payload, like the saved-search verbs above and for the same reason:
+    /// these are only ever offered while `Context::Accounts` is active, which
+    /// means an account row has focus, which means the target is that row --
+    /// exactly as `Archive`'s target is the current selection (ADR 0005 Q6c).
+    ToggleAccountEnabled,
+    /// Remove the focused account.
+    RemoveAccount,
+    /// Update the focused account's stored credential.
+    UpdateCredential,
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -713,6 +730,9 @@ impl Command {
             Command::MoveSavedSearchUp => CommandId::MoveSavedSearchUp,
             Command::MoveSavedSearchDown => CommandId::MoveSavedSearchDown,
             Command::DeleteSavedSearch => CommandId::DeleteSavedSearch,
+            Command::ToggleAccountEnabled => CommandId::ToggleAccountEnabled,
+            Command::RemoveAccount => CommandId::RemoveAccount,
+            Command::UpdateCredential => CommandId::UpdateCredential,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -811,6 +831,9 @@ impl Command {
             CommandId::MoveSavedSearchUp => Command::MoveSavedSearchUp,
             CommandId::MoveSavedSearchDown => Command::MoveSavedSearchDown,
             CommandId::DeleteSavedSearch => Command::DeleteSavedSearch,
+            CommandId::ToggleAccountEnabled => Command::ToggleAccountEnabled,
+            CommandId::RemoveAccount => Command::RemoveAccount,
+            CommandId::UpdateCredential => Command::UpdateCredential,
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,

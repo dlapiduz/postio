@@ -182,6 +182,16 @@ impl ContextSet {
         ContextSet(context.bit())
     }
 
+    /// This set plus one more context, usable in a `const` table.
+    ///
+    /// For the entries that are "one of the named groups, and also somewhere
+    /// else" -- `Undo` over the message surfaces plus the account list. The
+    /// alternative is a second slice constant named for a single use, which
+    /// reads worse at the call site than the sentence it is standing in for.
+    pub const fn with(self, context: Context) -> ContextSet {
+        ContextSet(self.0 | context.bit())
+    }
+
     /// A set built from a slice, usable in a `const` table.
     pub const fn from_slice(contexts: &[Context]) -> ContextSet {
         let mut bits = 0u16;
