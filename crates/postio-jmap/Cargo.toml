@@ -23,8 +23,8 @@ pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
 
 # The MailBackend seam and nothing else: default-features = false leaves
 # io-imap and the IMAP TLS stack out of this crate's tree entirely.
-postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
-postio-model = { version = "0.1.0", path = "../postio-model" }
+postio-imap = { version = "0.2.0", path = "../postio-imap", default-features = false }
+postio-model = { version = "0.2.0", path = "../postio-model" }
 
 secrecy = { version = "0.10", default-features = false }
 serde_json = "1"

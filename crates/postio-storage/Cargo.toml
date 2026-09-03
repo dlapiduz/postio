@@ -28,7 +28,7 @@ zeroize = "1.9.0"
 # nonce safe without a counter to keep.
 chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-postio-model = { version = "0.1.0", path = "../postio-model" }
+postio-model = { version = "0.2.0", path = "../postio-model" }
 # SQLCipher, not plain SQLite (ADR 0014 Q1). `bundled-sqlcipher-vendored-openssl`
 # keeps the Flatpak and contributor machines hermetic; the system-libcrypto
 # variant is the recorded alternative if vendored OpenSSL's build cost ever

@@ -17,7 +17,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # Spelled as a path rather than inherited from the workspace: cargo will not
 # let an inherited dependency turn default features off, and turning them off
 # is the entire point here.
-postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
+postio-imap = { version = "0.2.0", path = "../postio-imap", default-features = false }
 # The search index's body column. A body is only ever indexable at the moment
 # it lands, and this crate is where it lands -- see `fetch_body` (#327).
 postio-index.workspace = true
