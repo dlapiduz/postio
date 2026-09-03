@@ -177,12 +177,24 @@ pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
     // ── and the clean one does not ───────────────────────────────────────
     // The control, and the reason the assertion above can fail: without it a
     // notice pinned visible would satisfy this file.
+    //
+    // Waited for the *repaint*, not for the caveat to go away. `settle_until`
+    // on a negation returns the moment it holds, and it holds during the
+    // transition -- `render` clears the notice before the new body is drawn
+    // -- so a version of this that waited for `!shows_encoding_problems`
+    // would pass without the clean message ever reaching the pane, and would
+    // go on passing if the caveat were never set again for anything.
+    let painted = window.reader().paints();
     window.list().next_row();
     assert!(
-        settle_until(|| !window.reader().shows_encoding_problems()),
-        "a message that decoded cleanly is still carrying the previous \
-         message's caveat; a warning that is sometimes wrong is one people \
-         learn to ignore"
+        settle_until(|| window.reader().paints() > painted),
+        "moving to the second message never repainted the reading pane, so \
+         the assertion below would be about the first one"
+    );
+    assert!(
+        !window.reader().shows_encoding_problems(),
+        "a message that decoded cleanly is carrying a decode caveat; a \
+         warning that is sometimes wrong is one people learn to ignore"
     );
 
     bridge.shutdown();
