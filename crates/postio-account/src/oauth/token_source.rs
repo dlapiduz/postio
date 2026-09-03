@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use url::Url;
@@ -47,6 +47,94 @@ fn refresh_token_key(account: &AccountKey) -> AccountKey {
 /// refresh token: a distinct secret under a distinct key.
 fn client_secret_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-client-secret", account.account()))
+}
+
+/// Where an account's access-token expiry lives, alongside its refresh
+/// token — the settings redesign's own account row (#878) wants to show
+/// "token valid 41d" / "token expired", which needs this to survive past
+/// the process that minted it, and `CachedAccessToken::expires_at`'s
+/// [`Instant`] does not: a monotonic clock has no fixed epoch, so it
+/// cannot be written down and read back after a restart.
+///
+/// Alongside the credential in the keyring, not in `config.toml` (#870,
+/// per the maintainer): `crates/postio-config/src/secrets.rs` already
+/// strips anything password/token/secret-shaped out of that file on the
+/// way in and out, and an expiry timestamp naming exactly when a token
+/// (and, by the same shape, the account) is good for is the kind of thing
+/// that rule exists to keep off disk in plain text next to everything
+/// else config.toml holds.
+///
+/// Not a real secret — a timestamp is not sensitive the way a token is —
+/// but the keyring is where every other derived fact about this
+/// credential already lives, and a second storage mechanism for one
+/// string would be a second thing to keep working, not a smaller one.
+fn oauth_expiry_key(account: &AccountKey) -> AccountKey {
+    AccountKey::new(format!("{}#oauth-expiry", account.account()))
+}
+
+/// Persists `expires_at` for `account`, or clears whatever was there when
+/// there is nothing to persist — a provider that stops saying `expires_in`
+/// must not leave a stale timestamp behind for the account row to read as
+/// current.
+///
+/// Best-effort: a store this fails on already logged why through `store`'s
+/// own error path when the refresh token next needs it, and losing the
+/// expiry costs a wrong "valid for" line in a settings pane, not a broken
+/// login — worth a warning, not worth failing the refresh that got a
+/// caller a working token.
+async fn persist_expiry(
+    store: &dyn SecretStore,
+    account: &AccountKey,
+    expires_at: Option<Instant>,
+) {
+    let key = oauth_expiry_key(account);
+    match expires_at {
+        Some(at) => {
+            // `Instant` has no fixed epoch; the wall-clock instant this
+            // many seconds from now, on the other hand, is exactly what a
+            // later, possibly-restarted process needs to compare itself
+            // against.
+            let wall_clock = SystemTime::now() + at.saturating_duration_since(Instant::now());
+            let Ok(since_epoch) = wall_clock.duration_since(UNIX_EPOCH) else {
+                return;
+            };
+            if let Err(error) = store
+                .store(&key, &Password::new(since_epoch.as_secs().to_string()))
+                .await
+            {
+                tracing::warn!(
+                    account = %account.account(),
+                    %error,
+                    "could not persist the OAuth token's expiry"
+                );
+            }
+        }
+        // Best-effort, and silently so: a provider that never sends
+        // `expires_in` clears nothing on every single refresh, which
+        // would otherwise warn on every one of them for having nothing to
+        // clear — `SecretStore::delete` has no "there was nothing there"
+        // variant distinct from a real failure to tell those apart by.
+        None => {
+            let _ = store.delete(&key).await;
+        }
+    }
+}
+
+/// The persisted expiry for `account`'s OAuth access token, if
+/// [`OwnClientTokenSource`] has ever recorded one — what an account row
+/// reads to show "token valid 41d" without holding a live token source of
+/// its own (#870, #878).
+///
+/// `None` covers every reason there is nothing to show: no OAuth account
+/// under this key, no token minted yet, a provider that never said
+/// `expires_in`, or a keyring this call cannot open — the caller's answer
+/// is the same either way, since there is nothing here to act on it (a
+/// genuinely locked keyring is loud enough elsewhere, on the read that
+/// actually needs the credential).
+pub async fn stored_expiry(store: &dyn SecretStore, account: &AccountKey) -> Option<SystemTime> {
+    let raw = store.retrieve(&oauth_expiry_key(account)).await.ok()?;
+    let seconds: u64 = raw.expose().parse().ok()?;
+    Some(UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
 struct CachedAccessToken {
@@ -171,11 +259,13 @@ impl OwnClientTokenSource {
                 .store(&refresh_token_key(account), refresh)
                 .await?;
         }
+        let expires_at = response.expires_in.map(|d| Instant::now() + d);
+        persist_expiry(self.store.as_ref(), account, expires_at).await;
         self.cache.lock().expect("token cache mutex").insert(
             account.clone(),
             CachedAccessToken {
                 token: response.access_token,
-                expires_at: response.expires_in.map(|d| Instant::now() + d),
+                expires_at,
             },
         );
         Ok(())
@@ -230,11 +320,13 @@ impl OwnClientTokenSource {
         }
 
         let access_token = response.access_token.clone();
+        let expires_at = response.expires_in.map(|d| Instant::now() + d);
+        persist_expiry(self.store.as_ref(), account, expires_at).await;
         self.cache.lock().expect("token cache mutex").insert(
             account.clone(),
             CachedAccessToken {
                 token: response.access_token,
-                expires_at: response.expires_in.map(|d| Instant::now() + d),
+                expires_at,
             },
         );
         Ok(access_token)
@@ -548,6 +640,189 @@ mod tests {
             served.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "and the endpoint was asked once"
+        );
+    }
+
+    // -- Acceptance: the expiry survives past the process that minted it (#870) --
+
+    #[tokio::test]
+    async fn seeding_with_an_expiry_makes_it_readable_afterwards() {
+        let store = Arc::new(MemorySecretStore::new());
+        let source = OwnClientTokenSource::new(
+            store.clone(),
+            "http://127.0.0.1:1/token".parse().unwrap(),
+            "client-1",
+            None,
+        );
+        let before = SystemTime::now();
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("seeded-token"),
+                    refresh_token: Some(Password::new("seeded-refresh")),
+                    expires_in: Some(Duration::from_secs(3600)),
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+
+        let expiry = stored_expiry(store.as_ref(), &account())
+            .await
+            .expect("an expiry was persisted");
+        let elapsed = expiry
+            .duration_since(before)
+            .expect("the stored expiry is not before the call that produced it");
+        // 3600s from `before`, give or take the time this test itself took
+        // and the second the stored value is truncated to.
+        assert!(
+            (3595..=3605).contains(&elapsed.as_secs()),
+            "expected roughly 3600s out, got {}s",
+            elapsed.as_secs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_response_with_no_expires_in_leaves_nothing_to_read() {
+        let store = Arc::new(MemorySecretStore::new());
+        let source = OwnClientTokenSource::new(
+            store.clone(),
+            "http://127.0.0.1:1/token".parse().unwrap(),
+            "client-1",
+            None,
+        );
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("seeded-token"),
+                    refresh_token: Some(Password::new("seeded-refresh")),
+                    expires_in: None,
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+
+        assert!(
+            stored_expiry(store.as_ref(), &account()).await.is_none(),
+            "a provider that never said expires_in has nothing to show as a validity"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_grant_with_no_expiry_clears_the_first_ones() {
+        let store = Arc::new(MemorySecretStore::new());
+        let source = OwnClientTokenSource::new(
+            store.clone(),
+            "http://127.0.0.1:1/token".parse().unwrap(),
+            "client-1",
+            None,
+        );
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("first"),
+                    refresh_token: Some(Password::new("refresh-1")),
+                    expires_in: Some(Duration::from_secs(3600)),
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+        assert!(stored_expiry(store.as_ref(), &account()).await.is_some());
+
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("second"),
+                    refresh_token: Some(Password::new("refresh-2")),
+                    expires_in: None,
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+
+        assert!(
+            stored_expiry(store.as_ref(), &account()).await.is_none(),
+            "a stale expiry from the earlier grant must not outlive it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refresh_updates_the_persisted_expiry_too() {
+        let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":60}"#);
+        let store = Arc::new(MemorySecretStore::new());
+        let source = OwnClientTokenSource::new(store.clone(), url, "client-1", None);
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("stale"),
+                    refresh_token: Some(Password::new("the-refresh-token")),
+                    expires_in: Some(Duration::from_secs(0)), // already stale
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+        let seeded_expiry = stored_expiry(store.as_ref(), &account()).await;
+
+        source
+            .access_token(&account())
+            .await
+            .expect("refresh succeeds");
+
+        let refreshed_expiry = stored_expiry(store.as_ref(), &account())
+            .await
+            .expect("the refresh persisted its own expiry");
+        assert!(
+            refreshed_expiry >= seeded_expiry.unwrap_or(UNIX_EPOCH),
+            "the refreshed expiry (60s out) must not read as earlier than the \
+             stale one it replaced (already past)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_expiry_survives_a_fresh_token_source_over_the_same_store() {
+        // The property this whole issue is about: `Instant` cannot cross a
+        // process restart, so a second `OwnClientTokenSource` -- standing in
+        // for a fresh launch -- must still be able to read what the first
+        // one wrote.
+        let store = Arc::new(MemorySecretStore::new());
+        let first = OwnClientTokenSource::new(
+            store.clone(),
+            "http://127.0.0.1:1/token".parse().unwrap(),
+            "client-1",
+            None,
+        );
+        first
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("seeded-token"),
+                    refresh_token: Some(Password::new("seeded-refresh")),
+                    expires_in: Some(Duration::from_secs(3600)),
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+        drop(first);
+
+        assert!(
+            stored_expiry(store.as_ref(), &account()).await.is_some(),
+            "a fresh source over the same keyring must still see the earlier one's expiry"
         );
     }
 }
