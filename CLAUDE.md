@@ -89,6 +89,31 @@ per-crate integration suites. That default exists because several sessions
 share this machine with `jobs = 2`, so landing had become something you
 queued for.
 
+**Land on the default. `--full` needs a specific reason, and "this change is
+about wiring" is not one** (maintainer, 2026-09-03: *"dont run the full gate
+if you dont need to"*). Before landing, run the suites your diff actually
+touches — `cargo test -p <crate> --test <suite>` — which is seconds, aimed at
+what changed, and re-runnable; then let CI run the rest. `--full` re-runs what
+you already ran, inside a ~25-minute chain where any unrelated flake restarts
+the whole thing.
+
+#901 is the worked example: three consecutive `--full` runs failed, none of
+them on a defect in the change — a `gtk_suite` segfault (#988), an `e2e`
+timeout at 121s that passed in 12s alone, and four SQLCipher `PRAGMA key`
+failures (the documented #710/#699). The fourth attempt, on the default,
+found a **real** compile error in two minutes: another session had landed a
+second construction site for a struct the branch had added a field to. Note
+what that means — `--full` could not have caught it and the default did not
+need to. **The rebase is what finds a shared type's new callers**, and
+`issue-land.sh` rebases on every attempt whatever the tier.
+
+**A gate failure in code your diff does not touch is probably not yours.**
+Check before re-running: reproduce it alone, read the backtrace
+(`coredumpctl debug` for a segfault), search for prior art in the issues and
+in `docs/engineering-notes.md`. Three of #901's four gate failures were
+pre-existing and two of them became issues. Re-running without looking turns
+somebody else's bug into your twenty-five minutes, repeatedly.
+
 **It is safe only because CI still runs the whole workspace on every pull
 request**, and the nightly job runs it again. Unit tests are precisely the
 tier that cannot see this project's characteristic bug — layers that each
@@ -203,6 +228,14 @@ one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 - Providers are data, not code: server settings live in the preset table,
   never as named constants or special-cased branches. Postio is not built
   for any one provider and the code must not say otherwise.
+- **No backwards compatibility** (maintainer, 2026-09-03): *"we shouldnt
+  worry about backwards compatibility, im the only user so far."* There are
+  no deployed installs to protect, so write the clean version. A new column
+  takes a plain default and old rows may be rebuilt or resynced — say that in
+  one line rather than arguing it at length; no compatibility shims, no
+  deprecation paths, no "in case something relied on this" branches. Still
+  write the migration, and still explain what a column *means*: what goes is
+  the argument about not disturbing what came before.
 - **Pimalaya first** (maintainer, 2026-08-27): when a protocol or format
   need appears, check the Pimalaya family before writing wire code —
   Postio already stands on io-imap/io-smtp/io-http/io-sasl/io-oauth/

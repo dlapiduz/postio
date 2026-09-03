@@ -200,13 +200,20 @@ commits, pushes the branch, opens a PR whose body says `Closes #<n>`,
 **waits for CI, and merges it**.
 
 `--full` adds the per-crate integration suites, which is what this used to
-always do. It is worth reaching for when your change is about wiring rather
-than logic; otherwise let CI run them, which it does on every pull request.
+always do. **Land on the default; `--full` needs a specific reason, and "my
+change is about wiring" is not one** — that was this file's own advice until
+#901 spent three ~25-minute runs on it and failed all three on other
+people's bugs. Run the suites your diff touches directly instead
+(`cargo test -p <crate> --test <suite>`) and let CI run the rest, which it
+does on every pull request. CLAUDE.md's "Build & test" section has the
+worked example.
+
 The default is fast because a `postio-app` integration binary is an
 ~11-minute compile and link and several sessions share this machine — not
 because integration tests stopped mattering. They are how this project
 catches the bug it actually ships: layers that each pass and are not joined
-up.
+up. Which is an argument for *writing* them, and for running the ones your
+change is about; it is not an argument for running all of them twice.
 
 That last part is not optional and not someone else's job. A PR nobody merges
 is work that looks finished and is not: the branch goes stale, it conflicts
