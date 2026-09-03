@@ -52,7 +52,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_config::filters::{FilterConfig, Reorder};
-use postio_config::{Config, patch_filters};
+use postio_config::sync::{AttachmentFetch, CheckForMail};
+use postio_config::{Config, SyncConfig, patch_filters, patch_sync};
 use postio_model::{Account, AccountId};
 
 /// How long to let typing settle before writing the buffer back to disk.
@@ -354,6 +355,10 @@ mod imp {
         /// yet — canvas's "empty is never blank" rule; see
         /// `SettingsPanel::redraw_filters`.
         pub filters_empty: gtk::Label,
+        /// `[sync]`'s structured rows (#874) — always exactly five rows, so
+        /// no empty state to draw, the same shape `[ui]`'s own pane (#873)
+        /// established.
+        pub sync_box: gtk::Box,
     }
 
     impl Default for SettingsPanel {
@@ -387,6 +392,7 @@ mod imp {
                 filters_empty: gtk::Label::new(Some(
                     "No saved searches yet — press Ctrl+S in search to save one.",
                 )),
+                sync_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
             }
         }
     }
@@ -454,6 +460,7 @@ impl SettingsPanel {
 
         self.refresh_validity();
         self.redraw_filters();
+        self.redraw_sync();
         if postio_config::validate::check_str(&text)
             .validation
             .is_valid()
@@ -479,8 +486,16 @@ impl SettingsPanel {
     /// validity line recomputes and a write is scheduled, same as any other
     /// edit. A test seam, in the same spirit as `crate::palette::Palette`'s
     /// `set_query`.
+    ///
+    /// Redraws explicitly rather than leaning on `connect_changed` alone: a
+    /// fresh buffer is already empty, so `set_text("")` is a no-op edit that
+    /// never fires `changed`, and a structured pane would stay unpopulated.
     pub fn set_text(&self, text: &str) {
         self.imp().buffer.set_text(text);
+        self.refresh_validity();
+        self.redraw_filters();
+        self.redraw_sync();
+        self.schedule_write();
     }
 
     /// The footer line exactly as shown: the validity line, or — after
@@ -1005,6 +1020,204 @@ impl SettingsPanel {
         }
     }
 
+    /// Rebuilds `[sync]`'s five rows from the buffer's current text — the
+    /// same fresh-widgets-each-time shape [`redraw_filters`](Self::redraw_filters)
+    /// and [`redraw_ui`] use.
+    ///
+    /// [`redraw_ui`]: crate::settings::SettingsPanel
+    fn redraw_sync(&self) {
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        while let Some(child) = imp.sync_box.first_child() {
+            imp.sync_box.remove(&child);
+        }
+        imp.sync_box
+            .append(&self.sync_check_for_mail_row(config.sync.check_for_mail));
+        imp.sync_box
+            .append(&self.sync_poll_interval_row(config.sync.poll_interval_secs));
+        imp.sync_box
+            .append(&self.sync_attachment_fetch_row(config.sync.attachment_fetch));
+        imp.sync_box.append(&self.sync_notify_row(&config.sync));
+    }
+
+    /// Applies `mutate` to the buffer's current `[sync]` state and writes
+    /// the result back into the buffer, the same way
+    /// [`apply_filters_mutation`](Self::apply_filters_mutation) does for
+    /// `[filters]`.
+    fn apply_sync_mutation(&self, mutate: impl FnOnce(&mut SyncConfig)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        mutate(&mut config.sync);
+        match patch_sync(&original, &config.sync) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [sync]"),
+        }
+    }
+
+    /// How Postio learns about new mail: `Idle`/`Poll`/`Manual`, in that
+    /// order — the same order [`CheckForMail`]'s own declaration gives.
+    fn sync_check_for_mail_row(&self, current: CheckForMail) -> gtk::Box {
+        let dropdown = gtk::DropDown::from_strings(&["IMAP IDLE", "Poll only", "Manual"]);
+        dropdown.set_selected(match current {
+            CheckForMail::Idle => 0,
+            CheckForMail::Poll => 1,
+            CheckForMail::Manual => 2,
+        });
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let check_for_mail = match dropdown.selected() {
+                    1 => CheckForMail::Poll,
+                    2 => CheckForMail::Manual,
+                    _ => CheckForMail::Idle,
+                };
+                panel.apply_sync_mutation(move |sync| sync.check_for_mail = check_for_mail);
+            }
+        ));
+        Self::sync_row(
+            "Check for mail",
+            "IMAP IDLE for push, polling only, or never on its own",
+            &dropdown,
+        )
+    }
+
+    /// Polling interval, in seconds — the fallback under IDLE and the only
+    /// mechanism under Poll. 30 seconds to an hour covers every real
+    /// server; a person who wants more has [`CheckForMail::Manual`].
+    fn sync_poll_interval_row(&self, current: u64) -> gtk::Box {
+        let spin = gtk::SpinButton::with_range(30.0, 3600.0, 30.0);
+        spin.set_value(current as f64);
+        spin.connect_value_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |spin| {
+                let seconds = spin.value() as u64;
+                panel.apply_sync_mutation(move |sync| sync.poll_interval_secs = seconds);
+            }
+        ));
+        Self::sync_row(
+            "Poll interval (seconds)",
+            "How often a mailbox without IDLE, or every mailbox under Poll, is reconciled",
+            &spin,
+        )
+    }
+
+    /// When attachment payloads download: on open, eagerly, or never — ADR
+    /// 0017's payload axis, in [`AttachmentFetch`]'s own declared order.
+    fn sync_attachment_fetch_row(&self, current: AttachmentFetch) -> gtk::Box {
+        let dropdown = gtk::DropDown::from_strings(&["On open", "Eager", "Never"]);
+        dropdown.set_selected(match current {
+            AttachmentFetch::OnOpen => 0,
+            AttachmentFetch::Eager => 1,
+            AttachmentFetch::Never => 2,
+        });
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let attachment_fetch = match dropdown.selected() {
+                    1 => AttachmentFetch::Eager,
+                    2 => AttachmentFetch::Never,
+                    _ => AttachmentFetch::OnOpen,
+                };
+                panel.apply_sync_mutation(move |sync| sync.attachment_fetch = attachment_fetch);
+            }
+        ));
+        Self::sync_row(
+            "Download attachments",
+            "On open is local-first: metadata syncs for every part, nothing downloads until opened",
+            &dropdown,
+        )
+    }
+
+    /// One row for both notification fields: the master switch, and which
+    /// mailbox roles it covers as a comma-separated list — a plain text
+    /// field rather than a multi-select, since the role names are the same
+    /// stable identifiers the file already spells them with.
+    fn sync_notify_row(&self, current: &SyncConfig) -> gtk::Box {
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+
+        let switch = gtk::Switch::new();
+        switch.set_active(current.notify);
+        switch.set_valign(gtk::Align::Center);
+        switch.update_property(&[gtk::accessible::Property::Label(
+            "Desktop notifications for new mail",
+        )]);
+        switch.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |switch| {
+                let active = switch.is_active();
+                panel.apply_sync_mutation(move |sync| sync.notify = active);
+            }
+        ));
+
+        let roles = gtk::Entry::new();
+        roles.set_text(&current.notify_roles.join(", "));
+        roles.set_valign(gtk::Align::Center);
+        roles.set_width_chars(18);
+        roles.update_property(&[gtk::accessible::Property::Label(
+            "Mailbox roles that notify",
+        )]);
+        roles.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                let roles: Vec<String> = entry
+                    .text()
+                    .split(',')
+                    .map(|role| role.trim().to_owned())
+                    .filter(|role| !role.is_empty())
+                    .collect();
+                panel.apply_sync_mutation(move |sync| sync.notify_roles = roles);
+            }
+        ));
+
+        controls.append(&switch);
+        controls.append(&roles);
+        Self::sync_row(
+            "Notify for new mail",
+            "Desktop notification, and which mailbox roles' arrivals notify",
+            &controls,
+        )
+    }
+
+    /// One labeled row: a title, a description, and a control at the end —
+    /// the shape every structured settings row shares. `[ui]`'s own pane
+    /// (#873) defines the same helper as `ui_row`; copied here rather than
+    /// shared for the same reason `gtk_settings_filters.rs`'s own `collect`
+    /// helper is copied instead of imported across test files: these are
+    /// two sibling branches with no dependency between them yet, and a
+    /// four-line layout helper is cheaper to duplicate once than to add a
+    /// cross-issue dependency for.
+    fn sync_row(title: &str, description: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        lines.set_hexpand(true);
+        let title_label = gtk::Label::new(Some(title));
+        title_label.set_xalign(0.0);
+        title_label.add_css_class("postio-settings-ui-title");
+        lines.append(&title_label);
+        let desc_label = gtk::Label::new(Some(description));
+        desc_label.set_xalign(0.0);
+        desc_label.add_css_class("postio-settings-ui-description");
+        lines.append(&desc_label);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.add_css_class("postio-settings-ui-row");
+        row.set_margin_top(7);
+        row.set_margin_bottom(7);
+        row.set_margin_start(18);
+        row.set_margin_end(18);
+        row.append(&lines);
+        row.append(control);
+        row
+    }
+
     /// One saved search's row: its name (editable), its query (for context,
     /// not editable here — renaming a filter's query is not a feature this
     /// pane offers), whether it shows in the sidebar, reorder, and delete.
@@ -1319,6 +1532,11 @@ impl SettingsPanel {
         imp.filters_empty.set_wrap(true);
         imp.filters_empty.set_visible(false);
 
+        // ── sync: five rows, always present (#874) ────────────────────────
+        imp.sync_box.add_css_class("postio-settings-sync");
+        imp.sync_box
+            .update_property(&[gtk::accessible::Property::Label("Sync & storage")]);
+
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
         imp.nav.set_selection_mode(gtk::SelectionMode::Single);
@@ -1415,6 +1633,7 @@ impl SettingsPanel {
         column.append(&imp.egress_scroller);
         column.append(&imp.filters_scroller);
         column.append(&imp.filters_empty);
+        column.append(&imp.sync_box);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);
@@ -1429,6 +1648,7 @@ impl SettingsPanel {
                 }
                 panel.refresh_validity();
                 panel.redraw_filters();
+                panel.redraw_sync();
                 panel.schedule_write();
             }
         ));

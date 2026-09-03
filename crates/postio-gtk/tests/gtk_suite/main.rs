@@ -111,6 +111,7 @@ mod gtk_settings;
 mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
+mod gtk_settings_sync;
 mod gtk_shell;
 mod gtk_sidebar;
 mod gtk_sidebar_accounts;
@@ -447,6 +448,23 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends",
         gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends as fn(),
+    ),
+    (
+        "gtk_settings_sync::the_rows_render_from_a_given_config",
+        gtk_settings_sync::the_rows_render_from_a_given_config as fn(),
+    ),
+    (
+        "gtk_settings_sync::the_default_config_renders_the_default_row_values",
+        gtk_settings_sync::the_default_config_renders_the_default_row_values as fn(),
+    ),
+    (
+        "gtk_settings_sync::picking_manual_writes_straight_to_the_buffer_and_leaves_everything_else_alone",
+        gtk_settings_sync::picking_manual_writes_straight_to_the_buffer_and_leaves_everything_else_alone
+            as fn(),
+    ),
+    (
+        "gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list",
+        gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
     ),
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
