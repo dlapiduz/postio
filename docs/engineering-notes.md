@@ -3104,6 +3104,39 @@ way, so the suite gives no signal at all. The tests that catch this class live
 at the far end, in `crates/postio-app/tests/app_suite/`, and assert *"a store
 this application opened has had X done to it"* rather than *"X works"*.
 
+**And `scripts/checks/check-uncalled-pub-fn.py` now catches it before a
+person has to (#421).** Run against the commit before #327 it names
+`index_body`; against the commit before #416 it names all three sweeps. It
+counts *names*, not resolved types — a call through `dyn MailBackend` still
+writes `backend.list_mailboxes(...)`, so the name is what a caller leaves
+behind, and the cost of two functions sharing one name is a false negative
+rather than the false positive that would get the check switched off.
+
+Two things it must keep getting right, because getting either wrong
+reproduces the bug exactly:
+
+- **Doc comments are not calls.** All three failures were thoroughly
+  documented, and `collect_garbage` was named in three doc comments as *the*
+  mechanism that prevents leaks. Comments and string literals are blanked
+  before anything is counted.
+- **Tests are not calls.** `tests/`, `benches/`, `examples/` and every
+  `#[cfg(test)]` item come out of the caller side. All three had passing
+  tests the whole time; that is the entire point.
+
+It carries a **baseline**, not an allow-list. The check arrived long after
+the code, and about a hundred `pub fn` on `main` have no in-workspace caller
+— mostly ordinary public API, some not. A hundred invented reasons is how an
+allow-list gets silenced wholesale, so the existing set is recorded as debt in
+`uncalled-pub-fn-baseline.txt` and the check guards the derivative: becoming
+uncalled *today* fails, on the day it is cheap. The list is verified in both
+directions — an entry that has gained a caller, or lost its definition, also
+fails — so it can only shrink and cannot rot into a list of things that used
+to be true.
+
+`evict_to_fit` is the one baseline entry whose reason is known: #416 scoped it
+out on purpose, because it needs a `[storage] max_bytes` to read before
+anything can call it (#862).
+
 **The grace period is load-bearing, and a test that shortens it tests nothing.**
 `GarbageCollection::min_age` (one hour, `postio_session::BLOB_GRACE_PERIOD`)
 exists because a blob is written *before* the row that references it is
