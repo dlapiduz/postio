@@ -26,11 +26,20 @@ and work can be shipping fast into a backlog nobody has read.
 ```
 Read CLAUDE.md, then run the /issue skill.
 
-Take work with scripts/issue-claim.sh. It picks the highest-priority
-issue that is open, labelled `ready`, unassigned, and blocked by nothing
-still open — and it tells you what it passed over and why. Trust it. If
-it says there is nothing ready, stop and say so; do not go looking in
-the backlog.
+Take work with scripts/issue-claim.sh --label opus (or --label sonnet,
+whichever you are). It picks the highest-priority issue that is open,
+labelled `ready`, unassigned, sized for your model, and blocked by
+nothing still open — and it tells you what it passed over and why.
+Trust it. If it says there is nothing ready, stop and say so; do not go
+looking in the backlog, and do not drop the label to find more.
+
+Batch when you can. Landing has a fixed cost — the gates, the rebase,
+the CI run — so three small issues on one branch is most of the
+throughput available to you. Claim the riders with `gh issue edit <n>
+--add-assignee @me --add-label in-progress` and a plain `mkdir
+~/.cache/postio/claims/issue-<n>`, not `mkdir -p`: the lock has to fail
+if somebody else holds it. Batch small and compatible, and let the PR
+still read as one change.
 
 Work in the worktree it gives you. Inside that tree the git commands
 CLAUDE.md forbids in the shared checkout are safe, and you are not
@@ -43,16 +52,47 @@ closed a bug on four green runs of a test that failed half the time —
 four coin flips. An await-for-condition test can silently become a test
 that cannot fail.
 
-Run GTK tests with scripts/test-headless.sh, so they stop throwing
-windows onto the maintainer's desktop. It is ~3.5x faster than a live
-session and will expose races a real compositor hides; if something
-passes on the desktop and fails there, suspect the code first.
+Iterate at the cheapest tier that can fail:
 
-Land with scripts/issue-land.sh. It gates, commits, pushes, opens a PR
-that closes the issue, waits for CI, and merges. Landing means merged. A
-green PR left open is not finished work — if a check fails, that is
-yours, on that branch. Then scripts/issue-release.sh <n> and claim the
+    scripts/test-fast.sh      between edits — changed crates, --lib
+    scripts/test-sanity.sh    before landing — whole workspace, --lib,
+                              1,313 tests in about five seconds
+
+Tests are headless automatically; scripts/test-headless.sh --status
+tells you whether the private compositor is up. Headless is ~3.5x faster
+than a live session and exposes races a real compositor hides, so if
+something passes on the desktop and fails there, suspect the code first.
+
+Tests live in suites now, one binary per crate rather than one per file
+— 197 test binaries became about 100, because linking is where the
+suite's time goes. A new test file belongs in the suite directory and
+must be named by a `mod` line in its main.rs: an undeclared file is not
+an error, it is silence, and check-suite-modules.py exists because that
+silence is indistinguishable from passing. If it acquires the default
+GLib main context it belongs in a `harness = false` suite, which
+check-parallel-main-context.py enforces.
+
+**Wait for conditions, never for durations or turn counts.** Every
+intermittent CI failure this project has had was a sleep or a fixed
+pump that was long enough on an idle workstation and not on a loaded
+runner. Use the shared settle_until, which says what it was waiting for
+when it times out. If a machine is genuinely slow, raise
+POSTIO_TEST_PATIENCE — that is the dial, and it exists so nobody edits a
+constant and slows the suite for everyone.
+
+Land with scripts/issue-land.sh. It gates on the sanity tier, commits,
+pushes, opens a PR that closes the issue, waits for CI, and merges.
+`--full` adds the per-crate integration suites, and is worth reaching
+for when your change is about wiring or test structure rather than
+logic; otherwise let CI run them, which it does on every PR. Landing
+means merged. A green PR left open is not finished work — if a check
+fails, that is yours, on that branch, even when the failing test is in a
+crate you never touched. Then scripts/issue-release.sh <n> and claim the
 next one. Finishing an issue is not finishing a session.
+
+If a PR auto-closes an issue whose acceptance is not met, reopen it and
+say what landed and what remains. A closed issue claiming finished work
+is worse than an open one.
 
 Write things down where they belong, not in the terminal: why a change
 is shaped the way it is goes in the commit body, what you discovered
@@ -88,9 +128,16 @@ that reason:
 
     gh issue list --label needs-architecture --state open
 
-Take one. Read the code it touches before proposing anything; several
-of these have a real constraint already sitting in the tree that makes
-the obvious answer wrong. Then write the decision down:
+Take one. **Check whether an ADR already decides it before you decide
+anything** — `grep -rn "#<issue>" docs/decisions/` and read the section,
+not just the filename. A session spent an afternoon deriving a decision
+that ADR 0005 Q6b had already made in full, and its implementation then
+diverged from the written one in two places. The label means nobody has
+decided *and recorded* it here; it does not always mean nobody decided.
+
+Then read the code it touches before proposing anything; several of
+these have a real constraint already sitting in the tree that makes the
+obvious answer wrong. Then write the decision down:
 
   * A decision that shapes the codebase becomes an ADR in
     docs/decisions/, numbered in sequence, in the form the existing
@@ -157,9 +204,15 @@ contradicts one is a real finding rather than a difference of opinion.
 ## What you are checking
 
 Priority. Every open issue should carry exactly one of p0..p4, and it
-should be defensible against the others at that level. As of this
-writing 33 open issues carry no priority at all — mostly the post-v1
-roadmap, which was written before the labels existed.
+should be defensible against the others at that level. Count them
+rather than trusting this paragraph — the number moves, and a stale
+figure in a prompt is how a run starts by chasing something already
+fixed.
+
+Model sizing. Every claimable `ready` issue should also carry `opus` or
+`sonnet`, since `issue-claim.sh --label` filters on it and an unlabelled
+issue is invisible to every session. That is your labelling to keep
+current; a gap there looks exactly like an empty queue.
 
 Coherence. Read for the things only a whole-backlog pass finds:
   * Duplicates. Two sessions have independently filed the same bug
@@ -184,7 +237,9 @@ documents never asked for. The second kind is as important as the first
 
 ## Versions
 
-Set them with GitHub milestones. There are none today.
+Set them with GitHub milestones. Some exist; read them before adding
+one, and check whether the ones that exist still describe what is
+actually being built.
 
 A milestone is a coherent thing a user would notice, not a date and not
 a bucket. "You can read and reply to mail without touching the mouse" is
@@ -278,10 +333,19 @@ A PR that is green and unmerged is different — landing means merged, so
 one sitting for hours is work nobody finished. Find out why it stopped.
 
 CI:
-    gh run list --limit 5 --workflow=CI
+    gh run list --limit 5 --workflow=ci.yml --branch=main
+    gh run list --limit 3 --workflow=nightly.yml
 Read conclusions, not colours. `cancelled` usually means a push
 superseded it, which hides whether the code was ever green — if the last
-few runs are all cancelled, nobody knows the state of main. Say so.
+few runs are all cancelled, nobody knows the state of main. Say so. A
+`failure` is not automatically the branch's fault either: one recent red
+tick was a runner that received a shutdown signal, and it sat looking
+broken for ten hours.
+
+The nightly workflow carries what left the merge path — coverage, the
+rustdoc build, and the whole-workspace suite. It is the second reader,
+so a nightly that has been red for days matters even while every PR is
+green.
 
 The tree:
     git status --porcelain          # in the shared checkout: should be empty
@@ -294,8 +358,11 @@ The machine:
 Four concurrent builds saturate this box. Test binaries that outlive
 their run have hung four-plus times — `gtk_reader` every time; since
 #272 the headless runner kills that binary's whole process group after
-`POSTIO_TEST_WATCHDOG` (default 300s) and dumps thread wchans first, so
-a hang you find in `pgrep` now is news worth pasting into that issue.
+`POSTIO_TEST_WATCHDOG` (default 900s, and scaled by
+`POSTIO_TEST_PATIENCE`) and dumps thread wchans first, so a hang you
+find in `pgrep` now is news worth pasting into that issue. It was 300s
+until gtk_suite absorbed 45 more files and started taking ~220s
+legitimately — a watchdog sized close to real runtime kills real work.
 
 ## Read the work, not the labels
 
@@ -364,6 +431,15 @@ gh issue list --label needs-architecture --state open --json number \
 ```bash
 gh issue list --state open --limit 200 --json milestone \
   --jq '[.[]|select(.milestone==null)]|length'      # unreleased-to-anything
+```
+
+Most sessions want `--label opus` or `--label sonnet` on the first of those:
+the pool is split by model, and "nothing ready" for one can sit beside a dozen
+issues for the other.
+
+```bash
+gh issue list --label ready --state open --limit 200 --json labels \
+  --jq '[.[]|select([.labels[].name]|index("opus"))]|length'   # opus-sized
 ```
 
 Run an architect session when `needs-architecture` is deep, or when developers
