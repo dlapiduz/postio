@@ -37,6 +37,7 @@ mod migrations;
 mod operations;
 mod schema_fidelity;
 mod seed_is_honest;
+mod sql_counters;
 mod store_key;
 mod sync_state;
 mod threading;
