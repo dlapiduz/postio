@@ -183,12 +183,20 @@ evidence that the user wants to write to it.
 **Bands, then score within a band:**
 
 1. `user` and `import` contacts, and group names.
-2. `mail` sightings, ranked by the existing `(times_seen DESC, last_seen_at
-   DESC)` index.
+2. `mail` sightings, most recently seen first (`last_seen_at DESC`), with
+   `times_seen DESC` breaking a tie on recency.
 
 Suppressed rows appear in neither. Match quality (prefix beats substring, name
 beats address) applies within a band, never across one, so a contact the user
 deliberately created is never pushed below a robot they have never replied to.
+
+Recency led frequency after #424: a correspondent written to once yesterday
+belongs above one written to fifty times last year, and the earlier
+`(times_seen DESC, last_seen_at DESC)` ordering said the opposite. Frequency
+still settles a tie on the same day — see
+`frequency_decides_between_addresses_used_equally_recently` in
+`crates/postio-storage/tests/storage_suite/contacts.rs` — which is the whole
+of what it is for now.
 
 ---
 
