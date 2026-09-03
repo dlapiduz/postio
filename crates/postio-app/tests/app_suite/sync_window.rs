@@ -17,6 +17,25 @@
 //!
 //! One test function, for the reason `onboarding_probe.rs` gives: GTK is
 //! initialised once, per process, from one thread.
+//!
+//! # Why this shares `app_suite`'s process (#973)
+//!
+//! None of the three reasons a test stays out of the suite applies. It is
+//! not in the headless runner's watchdog name list (#272) -- of this
+//! crate's tests only `e2e*` is. It needs no display of its own
+//! (#45/#114): the suite already runs under the compositor and
+//! initialises GTK once, which is the arrangement this wants too. And it
+//! asserts no wall-clock budget (#841) -- every `Instant` here is a
+//! settle deadline, which a shared process does not change.
+//!
+//! No server and no network: it writes a `config.toml` and reads
+//! it back.
+//!
+//! It does set process-global environment -- its own XDG directories
+//! -- and that is safe for the reason the modules beside it already
+//! rely on: the harness runs one case at a time on one thread,
+//! `postio_config::paths` caches nothing, and each case sets its
+//! directories before it uses them.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
@@ -72,8 +91,7 @@ impl DiscoveryTransport for UnusedTransport {
     }
 }
 
-#[test]
-fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() {
+pub fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     let config_path = state_dir.path().join("config.toml");
     // A comment on an unrelated section, the same shape `patch_sync`'s own

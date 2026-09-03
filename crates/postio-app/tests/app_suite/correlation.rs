@@ -16,6 +16,19 @@
 //! Nothing here touches the network. `Actions` is local-first by construction:
 //! it writes SQLite and enqueues an operation for the sync engine, which is
 //! never started.
+//!
+//! # Why this shares `app_suite`'s process (#973)
+//!
+//! None of the three reasons a test stays out of the suite applies. It is
+//! not in the headless runner's watchdog name list (#272) -- of this
+//! crate's tests only `e2e*` is. It needs no display of its own
+//! (#45/#114): the suite already runs under the compositor and
+//! initialises GTK once, which is the arrangement this wants too. And it
+//! asserts no wall-clock budget (#841) -- every `Instant` here is a
+//! settle deadline, which a shared process does not change.
+//!
+//! It opens no server, needs no display and sets no environment:
+//! a store and a bridge, both built inside the case.
 
 use chrono::Utc;
 use postio_core::bridge::Bridge;
@@ -65,8 +78,7 @@ impl World {
     }
 }
 
-#[test]
-fn a_programmatic_caller_gets_the_answer_to_its_own_archive() {
+pub fn a_programmatic_caller_gets_the_answer_to_its_own_archive() {
     let world = world();
     let before = world.mailbox_of(world.message);
 
@@ -108,8 +120,7 @@ fn a_programmatic_caller_gets_the_answer_to_its_own_archive() {
     );
 }
 
-#[test]
-fn a_caller_is_told_when_the_application_refuses() {
+pub fn a_caller_is_told_when_the_application_refuses() {
     // Nothing is selected and no message is named, so the verb has no target.
     // A programmatic caller must hear that rather than wait for it.
     let world = world();
@@ -141,8 +152,7 @@ fn a_caller_is_told_when_the_application_refuses() {
     );
 }
 
-#[test]
-fn the_frontends_own_sends_are_unaffected() {
+pub fn the_frontends_own_sends_are_unaffected() {
     // The GTK window sends fire-and-forget and must see exactly the stream it
     // saw before this feature existed: no origins, no completions.
     let world = world();

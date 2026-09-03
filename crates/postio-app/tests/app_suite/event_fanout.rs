@@ -16,6 +16,19 @@
 //!
 //! Nothing here touches the network: `Actions` is local-first, and the sync
 //! engine is never started.
+//!
+//! # Why this shares `app_suite`'s process (#973)
+//!
+//! None of the three reasons a test stays out of the suite applies. It is
+//! not in the headless runner's watchdog name list (#272) -- of this
+//! crate's tests only `e2e*` is. It needs no display of its own
+//! (#45/#114): the suite already runs under the compositor and
+//! initialises GTK once, which is the arrangement this wants too. And it
+//! asserts no wall-clock budget (#841) -- every `Instant` here is a
+//! settle deadline, which a shared process does not change.
+//!
+//! It opens no server, needs no display and sets no environment:
+//! a store and a bridge, both built inside the case.
 
 use chrono::Utc;
 use postio_core::bridge::{Bridge, EventHub, EventStream};
@@ -76,8 +89,7 @@ fn engine_noise() -> Event {
     }
 }
 
-#[test]
-fn a_second_frontend_sees_everything_the_window_sees() {
+pub fn a_second_frontend_sees_everything_the_window_sees() {
     let world = world();
     let before = world.mailbox_of(world.message);
 
@@ -144,8 +156,7 @@ fn a_second_frontend_sees_everything_the_window_sees() {
     }
 }
 
-#[test]
-fn one_subscription_carries_both_of_the_applications_producers() {
+pub fn one_subscription_carries_both_of_the_applications_producers() {
     // The fan-in half, and the reason the `Vec<Option<EventStream>>` handoff
     // could go: the window used to collect one stream per producer by hand.
     let world = world();
