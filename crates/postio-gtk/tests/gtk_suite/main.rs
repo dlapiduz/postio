@@ -115,6 +115,7 @@ mod gtk_settings;
 mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
+mod gtk_settings_privacy;
 mod gtk_settings_sync;
 mod gtk_settings_ui;
 mod gtk_shell;
@@ -428,6 +429,14 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts::an_account_row_says_what_its_mail_weighs as fn(),
     ),
     (
+        "gtk_settings_accounts::an_account_row_says_how_it_connects",
+        gtk_settings_accounts::an_account_row_says_how_it_connects as fn(),
+    ),
+    (
+        "gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good",
+        gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good as fn(),
+    ),
+    (
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
             as fn(),
@@ -453,6 +462,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends",
         gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends as fn(),
+    ),
+    (
+        "gtk_settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none",
+        gtk_settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none as fn(),
+    ),
+    (
+        "gtk_settings_privacy::every_allowed_sender_gets_its_own_row",
+        gtk_settings_privacy::every_allowed_sender_gets_its_own_row as fn(),
+    ),
+    (
+        "gtk_settings_privacy::revoking_a_sender_removes_its_row_and_persists",
+        gtk_settings_privacy::revoking_a_sender_removes_its_row_and_persists as fn(),
     ),
     (
         "gtk_settings_sync::the_rows_render_from_a_given_config",

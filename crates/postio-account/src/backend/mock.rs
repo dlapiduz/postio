@@ -953,13 +953,18 @@ impl MailBackend for MockBackend {
         let state = self.state();
         state.require_connected("LIST")?;
 
-        Ok(state
+        let mut listed: Vec<MailboxSummary> = state
             .mailboxes
             .iter()
             .map(|mailbox| mailbox.summary.clone())
             .filter(|summary| !filter.subscribed_only || summary.subscribed)
             .filter(|summary| matches_pattern(&filter.pattern, &summary.path))
-            .collect())
+            .collect();
+        // What the IMAP edge does to a listing, the mock does too: a test
+        // that hands discovery two folders wearing one role is testing a
+        // state no real backend produces.
+        super::resolve_roles(&mut listed);
+        Ok(listed)
     }
 
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus> {

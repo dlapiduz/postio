@@ -23,9 +23,15 @@
 //! ([`SettingsPanel::apply_filters_mutation`],
 //! [`SettingsPanel::apply_ui_mutation`]), and the result is written into
 //! *this* buffer, so it reaches disk through the exact same debounced write
-//! every raw edit already does. `[keys]`, `[sync]`, `[accounts]` and
-//! `[filters]`'s advanced escape hatch stay on the raw view below until their
-//! own issues convert them the same way.
+//! every raw edit already does. `[keys]` and `[filters]`'s advanced escape
+//! hatch stay on the raw view below until their own issues convert them the
+//! same way.
+//!
+//! [`Section::Privacy`] is a third, stranger kind: not a form over a table,
+//! because there is no table — the remote-image allow-list it manages lives
+//! entirely outside `config.toml` (see [`Section::key`]'s own doc). It reads
+//! and writes [`crate::reader::RemoteImageAllowList`] directly, with nothing
+//! for the debounced buffer write to do.
 //!
 //! # Two halves
 //!
@@ -123,7 +129,7 @@ type AccountEnabledHandler = Box<dyn Fn(AccountId, bool)>;
 // Sections — pure, no GTK
 // ---------------------------------------------------------------------------
 
-/// One of the five sections the nav lists, in canvas order.
+/// One of the six sections the nav lists, in canvas order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     /// `[ui]` — density, theme, hover actions, thread drill-in.
@@ -136,23 +142,31 @@ pub enum Section {
     Sync,
     /// `[filters]` — named saved queries.
     Filters,
+    /// The remote-image allow-list (#871) — never a `config.toml` table at
+    /// all, unlike every other section here: it is view state, kept in its
+    /// own `$XDG_STATE_HOME` key-file (see
+    /// [`crate::reader::RemoteImageAllowList`]'s own module doc for why).
+    Privacy,
 }
 
 impl Section {
     /// Every section, in nav order.
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Ui,
         Section::Keys,
         Section::Accounts,
         Section::Sync,
         Section::Filters,
+        Section::Privacy,
     ];
 
     /// The top-level TOML key this section's headers start with.
     ///
     /// `[accounts]` and `[filters]` never appear as a bare header — every
     /// account and filter is its own dotted table, `[accounts.personal]` —
-    /// so matching is by prefix, not by literal line.
+    /// so matching is by prefix, not by literal line. `Privacy` never
+    /// appears at all, the same as `Accounts` since #470: the nav item
+    /// stays and points at a structured widget instead of any text.
     fn key(self) -> &'static str {
         match self {
             Section::Ui => "ui",
@@ -160,10 +174,13 @@ impl Section {
             Section::Accounts => "accounts",
             Section::Sync => "sync",
             Section::Filters => "filters",
+            Section::Privacy => "privacy",
         }
     }
 
-    /// The nav label, exactly as canvas 3f draws it.
+    /// The nav label. `Privacy` deliberately drops the `[table]` bracket
+    /// style the others use — see [`key`](Self::key): it would claim a
+    /// `config.toml` table this section has never had.
     pub fn label(self) -> &'static str {
         match self {
             Section::Ui => "[ui]",
@@ -171,6 +188,7 @@ impl Section {
             Section::Accounts => "[accounts]",
             Section::Sync => "[sync]",
             Section::Filters => "[filters]",
+            Section::Privacy => "Privacy",
         }
     }
 }
@@ -299,6 +317,25 @@ fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
     }
 }
 
+/// An account row's connection-type and auth-method badge — "IMAP ·
+/// password", "Gmail · OAuth 2" — both already on the account itself, so
+/// unlike the mail weight and the token validity this needs nothing handed
+/// in from the composition root (#878).
+fn account_badge(account: &Account) -> String {
+    let backend = match &account.backend {
+        postio_model::account::Backend::Imap => "IMAP",
+        postio_model::account::Backend::Jmap { .. } => "JMAP",
+        postio_model::account::Backend::Gmail => "Gmail",
+    };
+    let auth = match account.auth {
+        postio_model::account::AuthMethod::Password => "password",
+        postio_model::account::AuthMethod::AppPassword => "app password",
+        postio_model::account::AuthMethod::OAuth2 => "OAuth 2",
+        postio_model::account::AuthMethod::XOAuth2 => "OAuth 2",
+    };
+    format!("{backend} · {auth}")
+}
+
 // ---------------------------------------------------------------------------
 // The widget
 // ---------------------------------------------------------------------------
@@ -353,6 +390,15 @@ mod imp {
         /// runs after the other (#411).
         pub weights: RefCell<Vec<(AccountId, postio_core::event::MailFootprint)>>,
         pub attachments_included: std::cell::Cell<bool>,
+        /// Every OAuth account's persisted token expiry, as of the last read
+        /// (#878, on top of #870's persistence). An id present with `None`
+        /// is a real answer — a provider that has a token on file but never
+        /// said `expires_in`, so there is nothing to count down. An id
+        /// simply absent is a different fact: a password account, or an
+        /// OAuth account fed by an external broker (which never persists
+        /// an expiry at all), so the row shows no validity line rather
+        /// than a wrong one.
+        pub token_expiries: RefCell<Vec<(AccountId, Option<std::time::SystemTime>)>>,
         /// The account row context menu currently open, if one is — tracked
         /// so a second right click closes the first, the same reason
         /// `Sidebar` tracks `saved_search_menu`.
@@ -375,6 +421,20 @@ mod imp {
         /// `[ui]`'s structured rows (#873) — unlike filters and accounts,
         /// always exactly six rows, so no empty state to draw.
         pub ui_box: gtk::Box,
+        /// One row per sender with a standing remote-image exception (#871).
+        pub privacy_list: gtk::ListBox,
+        /// Hidden entirely when nobody is allow-listed.
+        pub privacy_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `privacy_scroller` when the list is empty —
+        /// same "empty is never blank" rule `filters_empty` follows.
+        pub privacy_empty: gtk::Label,
+        /// The allow-list this panel is showing, and the path a revoke
+        /// writes back to — handed in by `window.rs`'s
+        /// [`super::SettingsPanel::set_remote_image_allowlist`] rather than
+        /// loaded here, the same reason `Window::new_reader` takes its own
+        /// path rather than hardcoding [`crate::reader::RemoteImageAllowList::path`]:
+        /// a test needs a scratch path, not the real state directory.
+        pub remote_image_allowlist: RefCell<Option<(crate::reader::RemoteImageAllowList, PathBuf)>>,
     }
 
     impl Default for SettingsPanel {
@@ -398,6 +458,7 @@ mod imp {
                 egress_scroller: gtk::ScrolledWindow::new(),
                 accounts_scroller: gtk::ScrolledWindow::new(),
                 accounts: RefCell::new(Vec::new()),
+                token_expiries: RefCell::new(Vec::new()),
                 weights: RefCell::new(Vec::new()),
                 attachments_included: Cell::new(false),
                 account_menu: RefCell::new(None),
@@ -410,6 +471,12 @@ mod imp {
                 )),
                 sync_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                privacy_list: gtk::ListBox::new(),
+                privacy_scroller: gtk::ScrolledWindow::new(),
+                privacy_empty: gtk::Label::new(Some(
+                    "No senders are always allowed to load remote images.",
+                )),
+                remote_image_allowlist: RefCell::new(None),
             }
         }
     }
@@ -558,6 +625,10 @@ impl SettingsPanel {
             imp.accounts_scroller.grab_focus();
             return;
         }
+        if section == Section::Privacy {
+            imp.privacy_scroller.grab_focus();
+            return;
+        }
         let text = self.text();
         let mut iter = match find_section(&text, section).and_then(|line| {
             imp.buffer
@@ -660,6 +731,144 @@ impl SettingsPanel {
         *imp.weights.borrow_mut() = weights.to_vec();
         imp.attachments_included.set(attachments_included);
         self.redraw_accounts();
+    }
+
+    /// Every OAuth account's persisted token expiry (#878) — an id present
+    /// with `None` means a token is on file but no provider-stated expiry
+    /// is, which is a real answer distinct from having nothing to say at
+    /// all: this panel may not link `postio-account` to fetch the keyring
+    /// itself (the crate-boundary rule this widget's own module doc
+    /// explains), so the composition root reads it and hands the result
+    /// back the same way it hands back [`set_mail_weights`](Self::set_mail_weights)'s
+    /// figures.
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts), for the
+    /// same reason `set_mail_weights` is.
+    pub fn set_token_expiries(&self, expiries: &[(AccountId, Option<std::time::SystemTime>)]) {
+        *self.imp().token_expiries.borrow_mut() = expiries.to_vec();
+        self.redraw_accounts();
+    }
+
+    /// The validity line this account's row carries under its badge, if it
+    /// has one to carry — `None` for a password account, an OAuth account
+    /// fed by an external broker, or one [`set_token_expiries`](Self::set_token_expiries)
+    /// has not been told about yet.
+    fn token_validity(&self, account: AccountId) -> Option<String> {
+        let expiry = self
+            .imp()
+            .token_expiries
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, expiry)| *expiry)?;
+        let at = expiry?;
+        match at.duration_since(std::time::SystemTime::now()) {
+            Ok(remaining) => {
+                let days = remaining.as_secs() / (24 * 60 * 60);
+                Some(if days == 0 {
+                    "token valid less than a day".to_owned()
+                } else {
+                    format!("token valid {days}d")
+                })
+            }
+            Err(_) => Some("token expired — re-authorization needed".to_owned()),
+        }
+    }
+
+    /// Shows one row per sender with a standing remote-image exception,
+    /// each with a way to revoke it (#871).
+    ///
+    /// `path` is where a revoke writes back to — `window.rs` hands in the
+    /// same path [`Window::new_reader`](super::window::Window::new_reader)
+    /// loads fresh on every call, so a revoke here reaches the next reader
+    /// built after it. Already-open readers keep whatever they last loaded,
+    /// same as any other file the watcher does not follow into a widget's
+    /// own cache.
+    pub fn set_remote_image_allowlist(
+        &self,
+        list: crate::reader::RemoteImageAllowList,
+        path: PathBuf,
+    ) {
+        *self.imp().remote_image_allowlist.borrow_mut() = Some((list, path));
+        self.redraw_privacy();
+    }
+
+    /// Rebuilds the privacy rows from whatever allow-list is held.
+    fn redraw_privacy(&self) {
+        let imp = self.imp();
+        while let Some(row) = imp.privacy_list.row_at_index(0) {
+            imp.privacy_list.remove(&row);
+        }
+        let senders: Vec<String> = imp
+            .remote_image_allowlist
+            .borrow()
+            .as_ref()
+            .map(|(list, _)| list.senders().map(str::to_owned).collect())
+            .unwrap_or_default();
+        for sender in &senders {
+            imp.privacy_list.append(&self.privacy_row(sender));
+        }
+        imp.privacy_scroller.set_visible(!senders.is_empty());
+        imp.privacy_empty.set_visible(senders.is_empty());
+    }
+
+    /// Revokes `sender`'s remote-image exception and writes the allow-list
+    /// straight back — no debounce, unlike the config buffer: this is its
+    /// own small file, not a keystroke-by-keystroke edit.
+    fn revoke_remote_image_sender(&self, sender: &str) {
+        let imp = self.imp();
+        let mut guard = imp.remote_image_allowlist.borrow_mut();
+        let Some((list, path)) = guard.as_mut() else {
+            return;
+        };
+        list.revoke(sender);
+        if let Err(error) = list.save_to(path) {
+            tracing::error!(%error, "could not save the remote-image allow-list");
+        }
+        drop(guard);
+        self.redraw_privacy();
+    }
+
+    /// One allow-listed sender, with a button to revoke it.
+    fn privacy_row(&self, sender: &str) -> gtk::ListBoxRow {
+        let sender = sender.to_string();
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-privacy-row");
+        row.set_selectable(false);
+
+        let label = gtk::Label::new(Some(&sender));
+        label.add_css_class("postio-settings-privacy-sender");
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let revoke = gtk::Button::from_icon_name("user-trash-symbolic");
+        revoke.add_css_class("postio-settings-privacy-revoke");
+        revoke.add_css_class("flat");
+        revoke.set_tooltip_text(Some("Always ask again"));
+        revoke.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Stop always allowing remote images from {sender}"
+        ))]);
+        revoke.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            sender,
+            move |_| panel.revoke_remote_image_sender(&sender)
+        ));
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&label);
+        box_.append(&revoke);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{sender}, always allowed to load remote images"
+        ))]);
+        row
     }
 
     /// Rebuilds the account rows from whatever accounts and weights are held.
@@ -776,6 +985,22 @@ impl SettingsPanel {
             lines.append(&size);
         }
 
+        let badge_text = account_badge(account);
+        let badge = gtk::Label::new(Some(&badge_text));
+        badge.add_css_class("postio-settings-account-badge");
+        badge.set_xalign(0.0);
+        badge.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        lines.append(&badge);
+
+        let validity = self.token_validity(account.id);
+        if let Some(text) = &validity {
+            let line = gtk::Label::new(Some(text));
+            line.add_css_class("postio-settings-account-validity");
+            line.set_xalign(0.0);
+            line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lines.append(&line);
+        }
+
         let enabled = gtk::Switch::new();
         enabled.set_active(account.enabled);
         enabled.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -801,15 +1026,16 @@ impl SettingsPanel {
         box_.append(&lines);
         box_.append(&enabled);
         row.set_child(Some(&box_));
-        // The row is announced as a unit, so the size has to be part of the
-        // announcement or a screen reader never reaches it.
-        let announcement = match &weight {
-            Some(weight) => format!(
-                "{}, {}, {weight}",
-                account.display_name, account.address.address
-            ),
-            None => format!("{}, {}", account.display_name, account.address.address),
-        };
+        // The row is announced as a unit, so every line has to be part of
+        // the announcement or a screen reader never reaches it.
+        let mut announcement = format!("{}, {}", account.display_name, account.address.address);
+        if let Some(weight) = &weight {
+            announcement.push_str(&format!(", {weight}"));
+        }
+        announcement.push_str(&format!(", {badge_text}"));
+        if let Some(validity) = &validity {
+            announcement.push_str(&format!(", {validity}"));
+        }
         row.update_property(&[gtk::accessible::Property::Label(&announcement)]);
         row
     }
@@ -1726,6 +1952,32 @@ impl SettingsPanel {
         imp.ui_box
             .update_property(&[gtk::accessible::Property::Label("Appearance")]);
 
+        // ── privacy: one row per allow-listed sender (#871) ───────────────
+        imp.privacy_list
+            .add_css_class("postio-settings-privacy-list");
+        imp.privacy_list
+            .set_selection_mode(gtk::SelectionMode::None);
+        imp.privacy_list
+            .update_property(&[gtk::accessible::Property::Label(
+                "Senders always allowed to load remote images",
+            )]);
+
+        imp.privacy_scroller.set_child(Some(&imp.privacy_list));
+        imp.privacy_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.privacy_scroller
+            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
+        imp.privacy_scroller.set_propagate_natural_height(true);
+        imp.privacy_scroller
+            .add_css_class("postio-settings-privacy");
+        imp.privacy_scroller.set_visible(false);
+
+        imp.privacy_empty
+            .add_css_class("postio-settings-privacy-empty");
+        imp.privacy_empty.set_xalign(0.0);
+        imp.privacy_empty.set_wrap(true);
+        imp.privacy_empty.set_visible(false);
+
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
         imp.nav.set_selection_mode(gtk::SelectionMode::Single);
@@ -1824,6 +2076,8 @@ impl SettingsPanel {
         column.append(&imp.filters_empty);
         column.append(&imp.sync_box);
         column.append(&imp.ui_box);
+        column.append(&imp.privacy_scroller);
+        column.append(&imp.privacy_empty);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);
@@ -1953,6 +2207,14 @@ idle = true
     #[test]
     fn find_section_is_none_for_a_section_not_written_yet() {
         assert_eq!(find_section(SAMPLE, Section::Filters), None);
+    }
+
+    #[test]
+    fn find_section_is_none_for_privacy_no_matter_what_the_file_says() {
+        // Privacy never has a `[privacy]` header to find, in any file --
+        // it is not a table at all, unlike `Filters` above which simply
+        // has not been written yet.
+        assert_eq!(find_section(SAMPLE, Section::Privacy), None);
     }
 
     // -- section_at_line --------------------------------------------------

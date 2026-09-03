@@ -16,7 +16,7 @@
 //! [`MailboxSummary`] per folder, with its role, its hierarchy and whether the
 //! account is subscribed to it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use io_imap::client::ImapClientAsync;
 use io_imap::types::core::QuotedChar;
@@ -24,7 +24,7 @@ use io_imap::types::flag::FlagNameAttribute;
 use io_imap::types::mailbox::{ListMailbox, Mailbox};
 use postio_model::MailboxRole;
 
-use crate::backend::{BackendError, BackendResult, MailboxFilter, MailboxSummary};
+use crate::backend::{BackendError, BackendResult, MailboxFilter, MailboxSummary, resolve_roles};
 
 use super::{ConnectionPool, Dispatch, ImapSession, ListingStrategy, Priority};
 
@@ -123,72 +123,6 @@ fn finish(mut mailboxes: Vec<MailboxSummary>, filter: &MailboxFilter) -> Vec<Mai
     resolve_roles(&mut mailboxes);
     sort_listing(&mut mailboxes);
     mailboxes
-}
-
-/// Settles which folder actually holds each special-use role.
-///
-/// Two rules, in order:
-///
-/// 1. **The server wins.** A folder the server marked `\Sent` is the sent
-///    folder, whatever it is called and whatever else looks like one.
-/// 2. **Otherwise, the shallowest name match wins.** `Sent Messages` at the
-///    top level beats `Projects/Sent`, and the loser goes back to being an
-///    ordinary folder. Ties break alphabetically so a listing resolves the
-///    same way every time.
-///
-/// [`MailboxRole::Inbox`] is exempt: `INBOX` is reserved by RFC 3501 and
-/// cannot be contested.
-fn resolve_roles(mailboxes: &mut [MailboxSummary]) {
-    let mut winners: BTreeMap<MailboxRole, usize> = BTreeMap::new();
-
-    for (index, mailbox) in mailboxes.iter().enumerate() {
-        let role = mailbox.role;
-        if !role.is_special() || role == MailboxRole::Inbox {
-            continue;
-        }
-        match winners.get(&role) {
-            None => {
-                winners.insert(role, index);
-            }
-            Some(&held) => {
-                if beats(mailbox, &mailboxes[held]) {
-                    winners.insert(role, index);
-                }
-            }
-        }
-    }
-
-    for (index, mailbox) in mailboxes.iter_mut().enumerate() {
-        let role = mailbox.role;
-        if !role.is_special() || role == MailboxRole::Inbox {
-            continue;
-        }
-        if winners.get(&role) != Some(&index) {
-            mailbox.role = MailboxRole::Regular;
-        }
-    }
-}
-
-/// Whether `candidate` has a better claim to its role than `held`.
-fn beats(candidate: &MailboxSummary, held: &MailboxSummary) -> bool {
-    let candidate_declared = declares_role(candidate);
-    let held_declared = declares_role(held);
-    if candidate_declared != held_declared {
-        return candidate_declared;
-    }
-    match candidate.depth().cmp(&held.depth()) {
-        std::cmp::Ordering::Less => true,
-        std::cmp::Ordering::Greater => false,
-        std::cmp::Ordering::Equal => candidate.path < held.path,
-    }
-}
-
-/// Whether the server itself named this folder's role.
-fn declares_role(mailbox: &MailboxSummary) -> bool {
-    mailbox
-        .attributes
-        .iter()
-        .any(|attribute| MailboxRole::from_special_use(attribute).is_some())
 }
 
 /// Orders a listing predictably: `INBOX`, then the rest by path.

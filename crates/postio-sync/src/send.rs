@@ -32,7 +32,7 @@
 //!
 //! The durable fact that stopped a resend was the **deletion of the draft
 //! row**, because [`resolve`] reads a missing draft as obsolete. That deletion
-//! is the second-to-last thing [`file_sent_copy`] does — behind `QUIT`, an
+//! is the second-to-last thing [`confirm_sent_copy`] does — behind `QUIT`, an
 //! `APPEND` of the whole message to the Sent mailbox, a blob write, a
 //! `messages.create`, threading and a body write. On a slow link the `APPEND`
 //! alone is seconds. It was the largest single piece of network work in the
@@ -76,8 +76,8 @@ use postio_account::backend::{AppendMessage, MailBackend};
 use postio_account::secret::AccountKey;
 use postio_model::ids::{AccountId, DraftId};
 use postio_model::{
-    Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, OutgoingAttachment, mime,
-    outgoing,
+    Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, Message, OutgoingAttachment,
+    mime, outgoing,
 };
 use postio_smtp::cancel::CancelToken;
 use postio_smtp::session::SmtpSession;
@@ -321,6 +321,29 @@ pub(crate) async fn send(
     resync: &mut BTreeSet<i64>,
     job: &SendJob,
 ) -> Outcome {
+    // Local-first, like every other mutating verb (#942). The row is in Sent
+    // before the socket is opened, so the message is somewhere the user can
+    // see it for the whole time it is on its way rather than only afterwards.
+    let filed = file_sent_locally(connection, smtp, job);
+    let outcome = submit(connection, backend, smtp, resync, job, filed.clone()).await;
+    // `Failed` is the one outcome ADR 0021 lets us say "nothing was delivered"
+    // about. A `Retry` is still in progress and an `Uncertain` may have gone,
+    // and a Sent row is the honest thing to show for both.
+    if matches!(outcome, Outcome::Failed { .. }) {
+        unfile_sent_copy(connection, filed.as_ref());
+    }
+    outcome
+}
+
+/// The submission itself, from opening the connection to filing the copy.
+async fn submit(
+    connection: &Connection,
+    backend: &dyn MailBackend,
+    smtp: &SmtpContext<'_>,
+    resync: &mut BTreeSet<i64>,
+    job: &SendJob,
+    filed: Option<Message>,
+) -> Outcome {
     let key = AccountKey::new(&job.account_address);
     // The same invalidate-and-try-once-more the IMAP pool keeps, from the
     // same place (ADR 0006 Q5). An access token that expired between the last
@@ -412,7 +435,7 @@ pub(crate) async fn send(
     // Delivered, and the second mark is the very next thing that happens —
     // ahead of `QUIT`, the `APPEND`, the blob write and the local row. Before
     // ADR 0021 the fact that stopped a resend was the draft's *deletion* at
-    // the end of `file_sent_copy`, which put a whole IMAP round trip inside
+    // the end of `confirm_sent_copy`, which put a whole IMAP round trip inside
     // the window a crash could reopen. Now the window is one local commit.
     //
     // A failure here cannot become anything but `Applied`, for the same
@@ -420,7 +443,7 @@ pub(crate) async fn send(
     let _ = mark(connection, job, DraftState::Sent);
 
     let _ = session.quit().await;
-    file_sent_copy(connection, backend, smtp, resync, job).await;
+    confirm_sent_copy(connection, backend, smtp, resync, job, filed).await;
     Outcome::Applied
 }
 
@@ -463,46 +486,45 @@ fn release(connection: &Connection, job: &SendJob) {
 /// instead — the message still gets a local row, so nothing is lost from
 /// the user's own view of Postio even if the row has no server `UID` until
 /// a later sync reconciles it.
-async fn file_sent_copy(
+/// Writes the Sent row before anything touches the network.
+///
+/// **The whole point of #942.** Every other mutating verb in Postio is
+/// local-first — SQLite write, enqueue, emit, repaint, and the UI never awaits
+/// the network (`CLAUDE.md`). Send was the exception: the Sent row was written
+/// at the *end* of the job, after SMTP delivery and the IMAP `APPEND` had both
+/// come back, so between pressing send and delivery completing there was
+/// nothing in Sent at all. A user reported it as mail going "into the ether".
+///
+/// The row has no server identity yet — the `APPEND` has not happened — which
+/// is what [`confirm_sent_copy`] attaches, and what
+/// `local_copies_awaiting_identity` lets a resync of Sent adopt rather than
+/// duplicate.
+///
+/// Best-effort like everything else on this path: a row that cannot be written
+/// is not a reason to refuse to send. The send proceeds and
+/// [`confirm_sent_copy`] writes the row at the end, which is exactly the
+/// behaviour this replaced.
+fn file_sent_locally(
     connection: &Connection,
-    backend: &dyn MailBackend,
     smtp: &SmtpContext<'_>,
-    resync: &mut BTreeSet<i64>,
     job: &SendJob,
-) {
+) -> Option<Message> {
     let mut flags = FlagSet::new();
     flags.insert(Flag::Seen);
-
-    let append = AppendMessage::new(job.raw.clone()).with_flags(flags.clone());
-    let mapping = backend
-        .append(&job.sent_mailbox_path, &append)
-        .await
-        .ok()
-        .flatten();
-    if mapping.is_none() {
-        resync.insert(job.sent_mailbox.get());
-    }
 
     let mut message = mime::parse(&job.raw).into_message(job.account, job.sent_mailbox, Utc::now());
     message.flags = flags;
     message.bcc = job.bcc.clone();
     message.attachments = job.attachments.clone();
     message.raw_blob_id = smtp.blobs.put(&job.raw).ok();
-    if let Some(mapping) = mapping {
-        message.server.uid = Some(mapping.destination);
-        message.server.uid_validity = Some(mapping.uid_validity);
-        message.server.remote_id = Some(mapping.destination_remote_id());
-    }
 
     let messages = MessageRepository::new(connection);
     if messages.create(&mut message).is_err() {
-        return;
+        return None;
     }
     let _ = ThreadingRepository::new(connection, job.account).thread(&message);
-    // No recount needed here: the schema's `messages_count_insert` trigger
-    // already updated Sent's cached counts the instant `create` inserted the
-    // row. A call here would only redo what the trigger just did -- see
-    // `MailboxRepository::recount`'s own docs. postio-qhz.8.
+    // No recount needed: `messages_count_insert` already moved Sent's cached
+    // counts when `create` inserted the row.
 
     // The block of what was actually sent, from the same bytes the raw blob
     // was written from. Mail Postio sent is mail `header:` has to be able to
@@ -517,6 +539,106 @@ async fn file_sent_copy(
         headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
     };
     let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
+    Some(message)
+}
+
+/// Takes back the Sent row [`file_sent_locally`] wrote, after a failed send.
+///
+/// Only for [`Outcome::Failed`], which ADR 0021 defines as the outcomes where
+/// *nothing was delivered* is true rather than hopeful — the draft becomes
+/// editable again and belongs in Drafts, so a copy in Sent would be claiming
+/// something that did not happen. A `Retry` keeps the row, because the send
+/// has not finished; `Uncertain` keeps it precisely because it may have gone,
+/// which is the whole of #674.
+fn unfile_sent_copy(connection: &Connection, filed: Option<&Message>) {
+    let Some(message) = filed else {
+        return;
+    };
+    if let Err(error) = MessageRepository::new(connection).delete(&[message.id]) {
+        tracing::warn!(
+            %error,
+            "could not remove the Sent copy of a send that failed; it will \
+             show as sent until the folder is resynced"
+        );
+    }
+}
+
+/// Attaches the server's identity to the row [`file_sent_locally`] wrote.
+///
+/// The `APPEND` is what gives the sent copy a place on the server. Until it
+/// lands the local row stands on its own, which is deliberate — see
+/// [`file_sent_locally`].
+///
+/// Writes the row here after all if the early write failed, so the message is
+/// filed either way.
+async fn confirm_sent_copy(
+    connection: &Connection,
+    backend: &dyn MailBackend,
+    smtp: &SmtpContext<'_>,
+    resync: &mut BTreeSet<i64>,
+    job: &SendJob,
+    filed: Option<Message>,
+) {
+    let mut flags = FlagSet::new();
+    flags.insert(Flag::Seen);
+
+    let append = AppendMessage::new(job.raw.clone()).with_flags(flags.clone());
+    let mapping = backend
+        .append(&job.sent_mailbox_path, &append)
+        .await
+        .ok()
+        .flatten();
+    if mapping.is_none() {
+        resync.insert(job.sent_mailbox.get());
+    }
+
+    let messages = MessageRepository::new(connection);
+    match filed {
+        // The ordinary path: the row is already in Sent and has been since
+        // before the connection opened. Only the server's coordinates are new.
+        Some(mut message) => {
+            if let Some(mapping) = mapping {
+                message.server.uid = Some(mapping.destination);
+                message.server.uid_validity = Some(mapping.uid_validity);
+                message.server.remote_id = Some(mapping.destination_remote_id());
+                if let Err(error) = messages.update(&mut message) {
+                    tracing::warn!(
+                        %error,
+                        "could not record where the Sent copy landed; a resync \
+                         of Sent adopts the row by its Message-ID instead"
+                    );
+                    resync.insert(job.sent_mailbox.get());
+                }
+            }
+        }
+        // The early write did not happen, so this is the old behaviour:
+        // file it now, with whatever identity the append produced.
+        None => {
+            let mut message =
+                mime::parse(&job.raw).into_message(job.account, job.sent_mailbox, Utc::now());
+            message.flags = flags;
+            message.bcc = job.bcc.clone();
+            message.attachments = job.attachments.clone();
+            message.raw_blob_id = smtp.blobs.put(&job.raw).ok();
+            if let Some(mapping) = mapping {
+                message.server.uid = Some(mapping.destination);
+                message.server.uid_validity = Some(mapping.uid_validity);
+                message.server.remote_id = Some(mapping.destination_remote_id());
+            }
+            if messages.create(&mut message).is_err() {
+                return;
+            }
+            let _ = ThreadingRepository::new(connection, job.account).thread(&message);
+            let block = postio_model::headers::block_of(&job.raw);
+            let body = StoredBody {
+                text: stored_text(message.body.text.as_deref()),
+                html: stored_text(message.body.html.as_deref()),
+                headers: block.as_ref().map(|block| block.text.clone()),
+                headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
+            };
+            let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
+        }
+    }
 
     let _ = DraftRepository::new(connection).delete(job.draft);
     remove_drafts_copy(backend, resync, job).await;
