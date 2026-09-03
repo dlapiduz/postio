@@ -372,6 +372,8 @@ corpus! {
         "No Message-ID, no Date, no To: storage has to synthesize an identity and the list has to sort it anyway.",
     "multipart-alternative": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
         "The canonical text/plain + text/html pair, with a preamble and an epilogue that must both be discarded.",
+    "multipart-boundary-never-appears": [MalformedStructure, MultipartAlternative] =>
+        "A multipart whose boundary parameter names a delimiter that appears nowhere in the body, which is what a gateway that rewrote one and not the other leaves behind.",
     "nested-multipart": [NestedMultipart, MultipartMixed, MultipartAlternative, MultipartRelated, InlineImage, Attachment] =>
         "mixed > alternative > related, three levels deep, with an inline image and a trailing attachment.",
     "pgp-encrypted": [Pgp, MultipartMixed] =>

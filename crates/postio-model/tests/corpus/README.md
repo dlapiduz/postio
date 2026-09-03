@@ -116,6 +116,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | File | Exercises |
 |---|---|
 | `multipart-alternative.eml` | The canonical text + HTML pair, with a preamble before the first boundary and an epilogue after the closing one; both must be discarded. |
+| `multipart-boundary-never-appears.eml` | A `multipart/alternative` whose `boundary` parameter names a delimiter that appears nowhere in the body — what a gateway that rewrote one and not the other leaves behind. RFC 2046 §5.1.1 says an unrecognisable boundary must be treated as `text/plain`; #680 records what Postio does instead. |
 | `nested-multipart.eml` | `mixed` > `alternative` > `related`, three levels deep, with an inline PNG in the innermost part and an attachment after the whole nest. |
 | `inline-image-cid.eml` | Two inline PNGs addressed by `cid:`, one with `name=` and one without, plus a third `cid:` reference with **no matching part** — the dangling case. |
 | `inline-disposed-body.eml` | Both alternatives carry `Content-Disposition: inline` — the part that *is* the message, marked the way an attachment is. The IMAP header sync used to demote such a part to an attachment, leaving `html_part_id` unset, so the text axis fetched only the plain-text alternative and the pane rendered a body with no images and no links (#751). |

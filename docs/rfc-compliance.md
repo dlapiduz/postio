@@ -171,14 +171,96 @@ not found twice:
 
 ## RFC 2045–2049 — MIME
 
-**Not yet reviewed.** [#680](https://github.com/dlapiduz/postio/issues/680).
+**Reviewed:** 2026-09-03, over `postio-model`'s `mime` module — the parser
+every other crate's view of a message comes through. Backed by
+`crates/postio-model/tests/rfc2045.rs`, one test per row.
 
-Add verdicts in the table format above, covering content-type and
-transfer-encoding correctness, multipart boundary handling, and charset
-declaration versus the actual bytes. Two things are already waiting for this
-section: the unconditional `format=flowed` declaration described above, and
-`crates/postio-model/tests/corpus/`'s charset fixtures, which exist precisely
-because mislabelled charsets are the ordinary case rather than the exception.
+Parsing is `mail-parser` 0.11.8, which was the latest published version at the
+time of the review; the mapping into the domain model is Postio's. Where a row
+says the fix is upstream, that is why.
+
+### Verdicts
+
+| § | What it says | Verdict |
+|---|---|---|
+| **2045 §5.1** Content-Type parameters | Quoted values, `;` inside quotes | **Compliant.** A boundary containing a semicolon and a space round-trips, which is the case a splitter that splits before it looks at quotes gets wrong. |
+| **2045 §5.2** Default type | Absent `Content-Type` is `text/plain; charset=us-ascii` | **Compliant**, for the message and for a part inside a multipart alike. |
+| **2231** Parameter continuations | `name*0*=`/`name*1*=`, charset-tagged values | **Compliant.** Continuations reassemble and percent-decode against the declared charset; the corpus already carries the three spellings a non-ASCII filename arrives in. |
+| **2045 §6.7** quoted-printable | Soft line breaks, undecodable sequences | **Compliant.** A soft break joins with nothing between; `=ZZ` survives as itself, which is what "show what arrived" means. |
+| **2045 §6.8** base64 | Illegal characters, bad padding | **Compliant, with a named exception:** an undecodable payload degrades to its own raw text and sets `encoding_problems`. The degradation is right — raw text beats an empty body — but see the gap below on where that flag goes. |
+| **2045 §6.2, §6.8** `8bit` / `binary` | Not encoded | **Compliant.** Both arrive as their own bytes. |
+| **2045 §6.4** unknown `Content-Transfer-Encoding` | Treat as `application/octet-stream` | **Compliant, with a named exception:** shown verbatim as text instead, and **not** flagged. Recorded on [#901](https://github.com/dlapiduz/postio/issues/901) as the second half of that fix. |
+| **2046 §5.1.1** Delimiter placement | `CRLF "--" boundary` — the delimiter begins a line | **Gap — [#899](https://github.com/dlapiduz/postio/issues/899).** `--boundary` **anywhere on a line** ends the part, so a body quoting one mid-line is silently truncated. |
+| **2046 §5.1.1** Unusable boundary | Missing or unrecognisable ⇒ treat the entity as `text/plain` | **Gap — [#900](https://github.com/dlapiduz/postio/issues/900).** The body is lost and the container is offered as an attachment. |
+| **2046 §5.1.1** Preamble and epilogue | Not part of any body | **Compliant.** `multipart-alternative.eml` carries both so it cannot regress unnoticed. |
+| **2046 §5.1** Transport padding | Whitespace after a delimiter is not part of it | **Compliant.** |
+| **2046 §5.1** Nesting | Arbitrary depth | **Compliant.** Forty levels deep neither panics nor loses the leaf — the correctness half of the surface #147's fuzzer treats as adversarial. |
+| **2046 §4.1.2 / 2049** Charset versus bytes | A declared charset that does not match | **Compliant, with a named exception:** mojibake rather than an error, and silent. See below. |
+
+### The gaps
+
+Three, and the third is what makes the first two feel worse than they are.
+
+**A `--boundary` mid-line truncates the body ([#899](https://github.com/dlapiduz/postio/issues/899)).**
+RFC 2046 puts the delimiter at the start of a line; the parser matches the
+two-dash sequence wherever it falls. `one\r\nnot --SEP here\r\ntwo` keeps
+`one\r\nnot `. Real boundaries are long random tokens, so this is not an
+everyday message — but the mail that embeds *another* message's delimiters is a
+bounce, a digest, a forwarded raw source, or mail about MIME, which is to say
+mail somebody is reading because something already went wrong. The fix is
+upstream in `mail-parser`; there is no newer version to move to.
+
+**An unusable boundary loses the body and offers the container as an
+attachment ([#900](https://github.com/dlapiduz/postio/issues/900)).** RFC 2046
+says a multipart whose boundary is missing or unrecognisable must be treated as
+`text/plain`. Postio produces no body and one part typed `multipart/mixed` —
+not a file, no name, opens in nothing. Of the three spellings (absent, empty,
+never appears) the last is the one that will actually arrive: it is a message
+that was well-formed when it left and met a gateway that rewrote the header and
+not the body. `multipart-boundary-never-appears.eml` is the fixture. This one
+is Postio's to fix, not the parser's: it is a fallback decision, and
+`parse_inner` can see the case exactly.
+
+**`encoding_problems` is computed and read by nothing
+([#901](https://github.com/dlapiduz/postio/issues/901)).** Two occurrences in
+the whole workspace — the field, and the line that sets it. `into_message` does
+not carry it, so there is no column, no event and no surface. It is the only
+signal Postio has that a message did not decode cleanly, and it is what every
+correct-but-lossy degradation above depends on: the base64 case hands a person
+`aGVsbG8g*d29ybGQ` with nothing to say those were meant to be words. Same
+failure the reading pane already learned once in #70 — *"nothing rendered"* and
+*"nothing was there"* look identical and are opposite facts. Same shape as
+#327, #416 and #421 one step down, and #421's own check cannot see it: that
+counts `pub fn`, and this is a `pub` field.
+
+### The named exception worth reading twice
+
+**A mislabelled charset produces mojibake, silently, and that is the right
+answer.** UTF-8 bytes labelled `us-ascii` come back as `Ã©tÃ©`; Latin-1 bytes
+labelled `utf-8` come back with replacement characters; a charset nothing has
+heard of falls through as UTF-8. None of them errors and none of them is empty,
+which is the property that matters: an empty reading pane is the one answer
+worse than wrong characters, because it cannot be told from a message that had
+nothing in it. The corpus says the same thing from the other side —
+`charset-windows-1252-mislabeled.eml` exists because *"the mislabelling every
+real client silently forgives"* is the ordinary case rather than the exception.
+
+What it costs is that Postio cannot tell the user their message is being shown
+in the wrong encoding. That is the same surface #901 is about, and if that flag
+ever grows a home this is the second thing to report through it.
+
+### Routed elsewhere
+
+- **`format=flowed` is declared unconditionally on outgoing text** (ADR 0017,
+  #333) and `mail-builder` chooses the transfer encoding. Correct per RFC 3676
+  because `postio_body::render` is the only path that fills `draft.body.text`,
+  but it is a claim about a caller rather than about the bytes — worth
+  restating here rather than leaving it in the RFC 5322 section where the
+  generator was audited.
+- **The body renderer** (`postio-body`) turns a decoded body into what the
+  reading pane draws. Nothing in it decides a MIME question — by the time it
+  runs, the charset and the transfer encoding are already resolved — so it is
+  out of scope for this section and belongs with the reader's own surfaces.
 
 ## RFC 3501 / RFC 9051 — IMAP, and the extensions in use
 
