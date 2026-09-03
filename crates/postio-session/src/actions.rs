@@ -658,6 +658,7 @@ impl Actions {
             // and the one they moved into is as changed as the ones they left.
             reloaded,
             changed: Vec::new(),
+            mailboxes_changed: false,
             inverse,
         })
     }
