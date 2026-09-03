@@ -146,6 +146,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | File | Exercises |
 |---|---|
 | `encoded-word-subject-and-names.eml` | The correct cases: adjacent encoded words that must be joined **without** a space, two charsets in one field, a folded `Subject` whose continuation begins with an encoded word, B and Q encodings side by side, and one plain ASCII display name. |
+| `encoded-word-crlf-in-header.eml` | An encoded word whose *decoded* text contains CR and LF, in both a `Subject` and a display name. Unfolding cannot remove them — the octets were never folding whitespace — so a decoded header value reaches the model with line breaks inside it, and anything that writes one back into a header has to say what it does about that. |
 | `encoded-word-broken.eml` | The hostile cases: unterminated, invalid base64 payload, unknown charset, unknown encoding letter, and one that blows past the 75-character limit. Every one must degrade to raw text rather than failing the message. |
 
 ### Malformed and missing
