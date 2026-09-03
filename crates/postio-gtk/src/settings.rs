@@ -82,10 +82,14 @@ const ACCOUNTS_MAX_HEIGHT: i32 = 160;
 
 /// What an account row's context menu asked for (#464, ADR 0005 Q6a).
 ///
-/// Not a `CommandId`: both need a specific account as their payload with no
-/// keystroke-derived default, and there is no `Context::Settings` for the
-/// keymap to reach them in — see the ADR. `SavedSearchAction` (#292) is the
-/// same shape for the same reason.
+/// Not itself a `CommandId`: both need a specific account as their payload,
+/// which a keystroke carries no default for. `CommandId::RemoveAccount` and
+/// `CommandId::UpdateCredential` (#471) reach the keyboard path by resolving
+/// [`SettingsPanel::focused_account`] and calling
+/// [`SettingsPanel::request_account_action`] with the same variant the
+/// context menu would have -- one payload type either entry point ends in,
+/// rather than a second one the registry would have to know about.
+/// `SavedSearchAction` (#292) is the same shape for the same reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountAction {
     /// Open the reauthenticate screen for this account.
