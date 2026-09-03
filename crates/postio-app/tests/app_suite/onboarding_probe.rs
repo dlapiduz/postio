@@ -17,6 +17,25 @@
 //!
 //! Nothing here dials anything: the transport is a mock, the keyring is a
 //! `MemorySecretStore`, and the command handler is a no-op.
+//!
+//! # Why this shares `app_suite`'s process (#973)
+//!
+//! None of the three reasons a test stays out of the suite applies. It is
+//! not in the headless runner's watchdog name list (#272) -- of this
+//! crate's tests only `e2e*` is. It needs no display of its own
+//! (#45/#114): the suite already runs under the compositor and
+//! initialises GTK once, which is the arrangement this wants too. And it
+//! asserts no wall-clock budget (#841) -- every `Instant` here is a
+//! settle deadline, which a shared process does not change.
+//!
+//! A mock transport, built per case: no server, and no real
+//! network at all.
+//!
+//! It does set process-global environment -- its own XDG directories
+//! -- and that is safe for the reason the modules beside it already
+//! rely on: the harness runs one case at a time on one thread,
+//! `postio_config::paths` caches nothing, and each case sets its
+//! directories before it uses them.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
@@ -219,8 +238,7 @@ fn onboard(
     (window, screen, bridge, directory)
 }
 
-#[test]
-fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
+pub fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
