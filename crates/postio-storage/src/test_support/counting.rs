@@ -22,7 +22,7 @@
 //!   returns fifty rows returns fifty rows either way, and only the number
 //!   SQLite *produced* tells the two apart.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use rusqlite::Connection;
 use rusqlite::trace::{TraceEvent, TraceEventCodes};
@@ -45,10 +45,54 @@ pub struct Counts {
     pub rows: usize,
 }
 
+thread_local! {
+    /// One entry per statement currently running, innermost last, `true` if it
+    /// is one the code under test asked for.
+    ///
+    /// A `Row` event names no statement — `StmtRef` keeps its pointer private
+    /// — so which statement produced a row has to be inferred from the events
+    /// around it. A bare "was the last `Stmt` ours" flag is not enough: a
+    /// virtual table runs its own statements *while* the outer one is being
+    /// stepped, so an inner lookup between two rows would silently drop the
+    /// rest of the outer statement's rows. Statements nest properly and
+    /// SQLite reports the end of each one, so a stack is exact where a flag
+    /// is approximate.
+    static RUNNING: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Whether `sql` is a statement the code under test issued.
+///
+/// SQLite reports a nested or internal invocation — a trigger body, a virtual
+/// table's own machinery — as an SQL *comment* rather than as statement text.
+/// FTS5 is the reason this matters here: one search of a common word showed
+/// 1,111 invocations of `SELECT pgno FROM messages_fts_idx ...`, its b-tree
+/// segment lookups, which is 2,524 of the 2,584 rows a page of 25 appeared to
+/// cost. That number tracks how the index happens to be segmented, not the
+/// shape of the query, so counting it would make a budget that fails when
+/// SQLite merges segments differently and passes when the application starts
+/// reading whole mailboxes.
+fn is_application_statement(sql: &str) -> bool {
+    !sql.trim_start().starts_with("--")
+}
+
 fn record(event: TraceEvent<'_>) {
     match event {
-        TraceEvent::Stmt(..) => STATEMENTS.with(|seen| seen.set(seen.get() + 1)),
-        TraceEvent::Row(..) => ROWS.with(|seen| seen.set(seen.get() + 1)),
+        TraceEvent::Stmt(_, sql) => {
+            let ours = is_application_statement(sql);
+            RUNNING.with(|running| running.borrow_mut().push(ours));
+            if ours {
+                STATEMENTS.with(|seen| seen.set(seen.get() + 1));
+            }
+        }
+        TraceEvent::Row(..) => {
+            let ours = RUNNING.with(|running| running.borrow().last().copied().unwrap_or(false));
+            if ours {
+                ROWS.with(|seen| seen.set(seen.get() + 1));
+            }
+        }
+        TraceEvent::Profile(..) => {
+            RUNNING.with(|running| running.borrow_mut().pop());
+        }
         _ => {}
     }
 }
@@ -57,7 +101,12 @@ fn record(event: TraceEvent<'_>) {
 /// counted, so install it on the connection the code under test will use.
 pub fn install(connection: &Connection) {
     connection.trace_v2(
-        TraceEventCodes::SQLITE_TRACE_STMT | TraceEventCodes::SQLITE_TRACE_ROW,
+        TraceEventCodes::SQLITE_TRACE_STMT
+            | TraceEventCodes::SQLITE_TRACE_ROW
+            // Not for its timing, which is the thing this module exists to
+            // avoid depending on: it is the only event that says a statement
+            // finished, which is what keeps `RUNNING` balanced.
+            | TraceEventCodes::SQLITE_TRACE_PROFILE,
         Some(record),
     );
 }
@@ -69,7 +118,15 @@ pub fn install(connection: &Connection) {
 pub fn counted(body: impl FnOnce()) -> Counts {
     STATEMENTS.with(|seen| seen.set(0));
     ROWS.with(|seen| seen.set(0));
+    RUNNING.with(|running| running.borrow_mut().clear());
     body();
+    let still_running = RUNNING.with(|running| running.borrow().len());
+    assert_eq!(
+        still_running, 0,
+        "{still_running} statements were still running when the body \
+         returned, so rows were attributed against a stack that never \
+         unwound. The counts below cannot be trusted."
+    );
     let counts = Counts {
         statements: STATEMENTS.with(Cell::get),
         rows: ROWS.with(Cell::get),

@@ -1,6 +1,7 @@
 //! Listing costs the same whatever the mailbox holds — counted, not timed.
 //!
-//! The reasoning behind counting rather than timing is in [`sql_counters`];
+//! The reasoning behind counting rather than timing is in
+//! [`postio_storage::test_support::counting`];
 //! this is where the message-list path is held to it. Two budgets, both from
 //! `docs/PRODUCT.md` §18: an interaction stays under 16ms, and "a mailbox is
 //! never loaded into memory".
@@ -10,7 +11,7 @@ use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::{seed_large, seed_small};
 use postio_storage::test_support;
 
-use super::sql_counters::{counted, install};
+use postio_storage::test_support::counting::{counted, install};
 
 #[test]
 fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns() {
