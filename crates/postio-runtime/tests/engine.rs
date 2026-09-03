@@ -1975,3 +1975,134 @@ async fn eager_drains_the_payloads_with_nobody_asking() {
     );
     drop(engine);
 }
+
+// ---------------------------------------------------------------------------
+// A queued action must not wait out a sync wave — #944
+// ---------------------------------------------------------------------------
+
+/// A server with enough folders that syncing them all takes several waves.
+fn a_server_with_many_folders() -> MockBackend {
+    let message = |n: u32| {
+        format!(
+            "From: Ada Lovelace <ada@example.com>\r\n\
+             Subject: note {n}\r\n\
+             Message-ID: <note-{n}@example.com>\r\n\
+             \r\n\
+             The bytes that had to travel to get here.\r\n"
+        )
+        .into_bytes()
+    };
+    let mut builder = MockBackend::builder();
+    for folder in ["INBOX", "Archive", "Sent", "Drafts", "Trash", "Junk"] {
+        let mut mailbox = MockMailbox::new(folder);
+        for n in 1..=8 {
+            mailbox = mailbox.message(MockMessage::new(message(n)));
+        }
+        builder = builder.mailbox(mailbox);
+    }
+    builder.build()
+}
+
+/// Poll `done` until it holds, or give up after `bound`.
+///
+/// A condition rather than a duration, for the reason every wait in this
+/// repository is: a fixed pump is long enough on an idle workstation and not
+/// on a loaded runner.
+async fn within(bound: std::time::Duration, done: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + bound;
+    while std::time::Instant::now() < deadline {
+        if done() {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    done()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_action_does_not_wait_out_a_sync_wave() {
+    // #944, reported as "when I send an email I still have to wait a couple
+    // minutes until it is sent. The same with marking an email read or moved."
+    //
+    // Every background loop in the engine yields to a *job*. The backfill
+    // loops and the idle watcher additionally yield to *queued work*, because
+    // -- as `interruption`'s own comment puts it -- "a local mutation is not a
+    // job: nobody tells this thread that a row was written". The sync wave is
+    // the one place that second half was never applied, so an action taken
+    // while the engine is working through `to_sync` waits for every folder in
+    // it. `queue_every_mailbox` refills `to_sync` with *every* selectable
+    // folder on each link transition, which is why this shows up after a
+    // laptop wakes rather than in steady state.
+    //
+    // Latency, so a wave is long enough to see into. The margins are wide on
+    // purpose: the whole sequence is six folders of eight messages at 120ms a
+    // call, and the assertion below allows three seconds -- so this is not a
+    // bet about scheduling, it is the difference between "at the next
+    // opportunity" and "after everything else".
+    let database = test_support::memory();
+    let report = seed_small(&database, 11);
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+    let (sink, _events) = event_channel();
+    let backend = Arc::new(a_server_with_many_folders());
+    backend.set_latency(std::time::Duration::from_millis(120));
+
+    let _engine = Engine::spawn(EngineParts {
+        account: report.account.id,
+        database: database.clone(),
+        blobs,
+        backend: backend.clone(),
+        smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
+        ))),
+        events: sink,
+        retry: Default::default(),
+        backfill: Default::default(),
+        reconnect: Default::default(),
+        watch: Default::default(),
+        network: NetworkSource::Ignored,
+        mailbox_roles: Default::default(),
+        clock: Arc::new(SystemClock),
+    })
+    .expect("the engine starts");
+
+    // Wait for the wave to be genuinely under way, so the action below is
+    // enqueued during one rather than before it. Before the first SELECT the
+    // engine is still connecting, and a queue drained then would prove
+    // nothing -- `handle_link_transition` drains before it queues the
+    // folders, which is the path that already works.
+    assert!(
+        within(std::time::Duration::from_secs(20), || backend.calls() >= 8).await,
+        "the engine never started syncing folders, so there is no wave to interrupt"
+    );
+
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+    queue_a_flag_change(&database, &report, inbox.id);
+
+    // The user's action, while the engine is mid-wave. It has to reach the
+    // wire at the next opportunity -- not after every remaining folder. The
+    // queue emptying is what says it went: `drain` removes a row only once
+    // the server has taken it.
+    let drained = within(std::time::Duration::from_secs(3), || {
+        let Ok(connection) = database.connection() else {
+            return false;
+        };
+        OperationQueueRepository::new(&connection)
+            .pending(report.account.id, Utc::now())
+            .is_ok_and(|due| due.is_empty())
+    })
+    .await;
+    assert!(
+        drained,
+        "a flag set during a sync wave never reached the server. The wave \
+         yields to a job but not to queued work, so a send, a mark-read or a \
+         move waits out every folder still in `to_sync` -- which after a link \
+         transition is all of them. Backend calls so far: {}",
+        backend.calls()
+    );
+}
