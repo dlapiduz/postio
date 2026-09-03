@@ -25,7 +25,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use postio_model::{AccountId, DraftId, LabelId, MailboxId, MessageId, OperationRange, ThreadId};
+use postio_model::{
+    AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {
@@ -195,6 +197,8 @@ command_ids! {
     RebuildAccountIndex => "rebuild_account_index",
     /// Make the focused account the one new messages come from.
     SetDefaultAccount => "set_default_account",
+    /// Point one of an account's roles at one of its folders.
+    MapMailboxRole => "map_mailbox_role",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -673,6 +677,22 @@ pub enum Command {
     /// particular not a reply's from address, which
     /// [`postio_model::reply`] decides from the message being replied to.
     SetDefaultAccount,
+    /// Point one of an account's roles at one of its folders (ADR 0035).
+    ///
+    /// The one verb whose `None` does not always mean "ask": `account` and
+    /// `role` follow the rule at the top of this enum -- a keystroke cannot
+    /// supply them, so `None` asks -- but `path: None` is a value in its own
+    /// right, **back to automatic**, because "stop choosing" is exactly what
+    /// a person picking the first entry of the pane's dropdown means, and a
+    /// second command for it would be a key in the reference for nothing.
+    MapMailboxRole {
+        /// Whose map; `None` means the focused account row.
+        account: Option<AccountId>,
+        /// Which role is being pointed somewhere; `None` asks.
+        role: Option<MailboxRole>,
+        /// The folder's server path, or `None` for automatic.
+        path: Option<String>,
+    },
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -832,6 +852,7 @@ impl Command {
             Command::UpdateCredential => CommandId::UpdateCredential,
             Command::RebuildAccountIndex => CommandId::RebuildAccountIndex,
             Command::SetDefaultAccount => CommandId::SetDefaultAccount,
+            Command::MapMailboxRole { .. } => CommandId::MapMailboxRole,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -945,6 +966,11 @@ impl Command {
             CommandId::UpdateCredential => Command::UpdateCredential,
             CommandId::RebuildAccountIndex => Command::RebuildAccountIndex,
             CommandId::SetDefaultAccount => Command::SetDefaultAccount,
+            CommandId::MapMailboxRole => Command::MapMailboxRole {
+                account: None,
+                role: None,
+                path: None,
+            },
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,
