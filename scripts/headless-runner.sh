@@ -132,11 +132,22 @@ if [ ! -S "$SOCKET" ]; then
         setsid mutter --headless --wayland-display="$DISPLAY_NAME" \
             --virtual-monitor "${POSTIO_TEST_GEOMETRY:-1280x800}" \
             >"$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" 2>&1 </dev/null &
-        for _ in $(seq 1 40); do [ -S "$SOCKET" ] && break; sleep 0.25; done
+        # Ten seconds on an idle machine, scaled by POSTIO_TEST_PATIENCE like
+        # every other deadline. A runner that is slow to start mutter is the
+        # ordinary case, not a broken one: a CI run failed with mutter's log
+        # saying only "Running Mutter … as a Wayland display server" -- it was
+        # coming up, and the wait gave up first. Everything then skipped for
+        # want of a display and `gtk_display_required` failed the run, which
+        # is the loud failure #114 asked for but not for this reason.
+        TICKS=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
+            'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 40 * factor }')
+        for _ in $(seq 1 "$TICKS"); do [ -S "$SOCKET" ] && break; sleep 0.25; done
         rmdir "$LOCK" 2>/dev/null || true
     else
         # Someone else is starting it; wait for them rather than racing.
-        for _ in $(seq 1 60); do [ -S "$SOCKET" ] && break; sleep 0.25; done
+        WAIT=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
+            'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 60 * factor }')
+        for _ in $(seq 1 "$WAIT"); do [ -S "$SOCKET" ] && break; sleep 0.25; done
     fi
 fi
 

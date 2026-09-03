@@ -105,10 +105,12 @@ pub fn ci_has_a_display_to_run_the_gtk_suites_on() {
         "CI has no display, so every GTK test in this workspace returned \
          early and reported success — including the accessibility audit that \
          docs/PRODUCT.md §20 depends on. This is not a failure of the code \
-         under test; it is the workflow. CI runs the suites on Xvfb with \
-         POSTIO_HEADLESS=0, so `scripts/headless-runner.sh` stands aside \
-         instead of starting a nested mutter and unsetting DISPLAY -- check \
-         that the Xvfb step still runs and exports DISPLAY, and that \
-         POSTIO_HEADLESS is still 0 for the test step."
+         under test; it is the display. There is no Xvfb to fall back to any \
+         more (#830: X11 is not a supported configuration), so the nested \
+         `mutter --headless` is the only display and it did not come up. \
+         `scripts/headless-runner.sh` says which fallback it took and prints \
+         mutter\'s own log — read that first. A mutter that logged \"Running \
+         Mutter\" and nothing else was still starting when the runner gave up \
+         waiting; that wait scales with POSTIO_TEST_PATIENCE."
     );
 }
