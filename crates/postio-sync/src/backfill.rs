@@ -1180,6 +1180,7 @@ pub async fn fetch_body(
         html: stored_text(parsed.body.html.as_deref()),
         headers: block.as_ref().map(|block| block.text.clone()),
         headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
+        encoding_problems: parsed.encoding_problems,
     };
 
     message.raw_blob_id = Some(blob);
@@ -1285,6 +1286,10 @@ async fn fetch_text_parts(
 
     let mut body = postio_model::MessageBody::default();
     let mut preview = None;
+    // Accumulated across sections rather than read off the last one: each
+    // part is parsed on its own here, and a message is a guess if *any* of
+    // its parts was one (#901).
+    let mut encoding_problems = false;
     let mut bytes = 0u64;
 
     for (section, headers) in wanted {
@@ -1328,6 +1333,7 @@ async fn fetch_text_parts(
             body.html = parsed.body.html;
         }
         preview = preview.or(parsed.preview);
+        encoding_problems |= parsed.encoding_problems;
     }
 
     // ADR 0017's "inline parts ride with the text". A `cid:` image is not an
@@ -1381,6 +1387,7 @@ async fn fetch_text_parts(
         html: stored_text(body.html.as_deref()),
         headers: block.as_ref().map(|block| block.text.clone()),
         headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
+        encoding_problems,
     };
 
     if message.preview.is_none() {

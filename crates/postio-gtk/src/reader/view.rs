@@ -35,7 +35,7 @@ use webkit6::prelude::*;
 
 use super::actions::ReaderActions;
 use super::allowlist::RemoteImageAllowList;
-use super::banner::RemoteImageBanner;
+use super::banner::{DecodeNotice, RemoteImageBanner};
 use super::message_header::MessageHeader;
 use super::scheme::{self, BlobSource};
 use postio_body::sanitize::RemoteImages;
@@ -71,6 +71,7 @@ pub struct Reader {
     view: webkit6::WebView,
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
+    decode_notice: Rc<DecodeNotice>,
     actions: Rc<ReaderActions>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
@@ -200,6 +201,7 @@ impl Reader {
 
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
+        let decode_notice = Rc::new(DecodeNotice::new());
         let actions = ReaderActions::new();
 
         let chips = crate::parts::Chips::new();
@@ -211,6 +213,7 @@ impl Reader {
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
         container.append(&banner.widget());
+        container.append(&decode_notice.widget());
         container.append(&view);
         container.append(&chips.widget());
         container.append(&actions.widget());
@@ -220,6 +223,7 @@ impl Reader {
             view,
             header,
             banner,
+            decode_notice,
             actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
@@ -425,6 +429,13 @@ impl Reader {
     pub fn render(&self, body: &MessageBody, sender: Option<&str>) {
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
+        // Cleared here rather than left to the caller. A caveat that outlived
+        // the message it was about would be worse than never showing one --
+        // it would put "these may not be the sender's words" over mail that
+        // decoded perfectly, and a warning that is sometimes wrong is one
+        // people learn to ignore. Callers turn it back on for the message
+        // they are showing, through `set_encoding_problems`.
+        self.decode_notice.set_visible(false);
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
@@ -600,12 +611,34 @@ impl Reader {
     }
 
     /// Empty the pane — nothing selected, or the selection closed.
+    /// Say whether the body on screen is a guess rather than what was sent.
+    ///
+    /// The end of the road for `ParsedMessage::encoding_problems`, which was
+    /// computed and read by nothing (#901): base64 outside its alphabet
+    /// arriving as raw base64 text, an unknown `Content-Transfer-Encoding`
+    /// shown verbatim per RFC 2045 §6.4, a charset that lost octets to
+    /// U+FFFD. Each is a defensible degradation and each is indistinguishable
+    /// from a message that simply said that, which is the same failure as
+    /// #70's blank column: "nothing rendered" and "nothing was there" are
+    /// opposite facts that looked identical.
+    ///
+    /// Call it after [`render`](Self::render), which clears it.
+    pub fn set_encoding_problems(&self, problems: bool) {
+        self.decode_notice.set_visible(problems);
+    }
+
+    /// Whether the decode caveat is on screen.
+    pub fn shows_encoding_problems(&self) -> bool {
+        self.decode_notice.is_visible()
+    }
+
     pub fn clear(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
         self.header.clear();
         self.actions.set_visible(false);
         self.banner.set_visible(false);
+        self.decode_notice.set_visible(false);
         load_document(&self.canvas(), &wrap_document("", RemoteImages::Blocked));
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());

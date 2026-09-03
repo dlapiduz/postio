@@ -52,7 +52,19 @@ pub fn load_body(connection: &postio_storage::PooledConnection, id: MessageId) -
 /// something.
 pub enum Body {
     /// Bytes are on this machine, and these are them.
-    Ready(postio_model::MessageBody),
+    Ready {
+        /// The words.
+        body: postio_model::MessageBody,
+        /// Whether those words are a guess rather than what was sent.
+        ///
+        /// Carried here rather than dropped at this boundary, which is where
+        /// it used to go: `StoredBody` knows, `MessageBody` has nowhere to
+        /// put it, and the reading pane is the only place that can say so.
+        /// That is the same loss this enum already exists to prevent one
+        /// level up — four kinds of "no body" rendered as one blank column
+        /// (#70) — applied to "a body, but not the sender's" (#901).
+        encoding_problems: bool,
+    },
     /// There are none, for this reason.
     Absent(Absent),
 }
@@ -96,7 +108,12 @@ pub fn load_body_or_reason(
     // would say "still downloading" about words the user is looking at in
     // another pane. #166.
     if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id) {
-        return Body::Ready(draft.body);
+        // A draft is the user's own text in Postio's own buffer: nothing
+        // decoded it from anything, so there is nothing to caveat.
+        return Body::Ready {
+            body: draft.body,
+            encoding_problems: false,
+        };
     }
 
     let repository = MessageRepository::new(connection);
@@ -148,10 +165,13 @@ pub fn load_body_or_reason(
         return Body::Absent(Absent::Empty);
     }
 
-    Body::Ready(postio_model::MessageBody {
-        text: stored.text,
-        html: stored.html,
-    })
+    Body::Ready {
+        encoding_problems: stored.encoding_problems,
+        body: postio_model::MessageBody {
+            text: stored.text,
+            html: stored.html,
+        },
+    }
 }
 
 /// Where a rendered message resolves its `cid:` parts from.

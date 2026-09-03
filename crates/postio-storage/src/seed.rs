@@ -427,6 +427,11 @@ fn write_body(connection: &Connection, id: MessageId, body: &postio_model::Messa
                 // reader in a seeded store.
                 headers: None,
                 headers_truncated: false,
+                // The corpus fixtures the seed draws on decode cleanly; the
+                // ones that do not are `postio-model`'s to test, and a seeded
+                // store claiming a decode problem would put a caveat over
+                // demo mail (#901).
+                encoding_problems: false,
             },
             BodyState::Full,
         )

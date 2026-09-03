@@ -126,3 +126,71 @@ impl Default for RemoteImageBanner {
 // real display and GTK's single, main-thread initialization — see
 // `tests/gtk_reader.rs`, which follows the same one-test-function convention
 // as `tests/gtk_shell.rs` and the other display-backed suites.
+
+/// "Parts of this message could not be decoded" — `#901`.
+///
+/// A sibling of [`RemoteImageBanner`] and native for the same reason: it
+/// reports *on* the document below it, so it cannot live inside it. Where
+/// that banner offers two ways out, this one offers none — there is nothing
+/// the reader can do about a charset the sender mislabelled, and a button
+/// that re-decoded with a different guess would be inventing a second answer
+/// to go with the first.
+///
+/// # Why it says so little
+///
+/// The three degradations behind it are different — base64 outside its
+/// alphabet, an unknown `Content-Transfer-Encoding`, a charset that lost
+/// octets to U+FFFD — and naming which one happened would be a sentence
+/// about MIME in the middle of somebody's mail. What a reader needs is the
+/// one fact that changes what they do with it: the words below may not be
+/// the words that were sent, so the original is worth checking before acting
+/// on it.
+pub struct DecodeNotice {
+    root: gtk::Box,
+}
+
+impl DecodeNotice {
+    /// Build the notice, hidden.
+    pub fn new() -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        root.add_css_class("postio-decode-notice");
+        root.set_visible(false);
+        root.set_accessible_role(gtk::AccessibleRole::Group);
+
+        let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+        root.append(&icon);
+
+        let label = gtk::Label::new(Some(
+            "Parts of this message could not be decoded, so what is shown \
+             may not be what was sent",
+        ));
+        label.set_hexpand(true);
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.add_css_class("postio-decode-notice-label");
+        root.append(&label);
+
+        DecodeNotice { root }
+    }
+
+    /// The widget to place above the reading pane's `WebView`.
+    pub fn widget(&self) -> gtk::Widget {
+        self.root.clone().upcast()
+    }
+
+    /// Show or hide it.
+    pub fn set_visible(&self, visible: bool) {
+        self.root.set_visible(visible);
+    }
+
+    /// Whether it is showing — what a test asserts on.
+    pub fn is_visible(&self) -> bool {
+        self.root.get_visible()
+    }
+}
+
+impl Default for DecodeNotice {
+    fn default() -> Self {
+        Self::new()
+    }
+}

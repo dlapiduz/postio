@@ -21,6 +21,7 @@ mod conversation_by_default;
 mod conversation_recipients;
 mod correlation;
 mod cursor_preview;
+mod decode_notice;
 mod degraded_unified;
 mod drag_out_portal;
 mod drag_out_wiring;
@@ -133,6 +134,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "drag_out_wiring::a_message_in_the_list_can_be_dragged_out_as_a_file",
         drag_out_wiring::a_message_in_the_list_can_be_dragged_out_as_a_file as fn(),
+    ),
+    (
+        "decode_notice::a_body_that_did_not_decode_cleanly_says_so_in_the_pane",
+        decode_notice::a_body_that_did_not_decode_cleanly_says_so_in_the_pane as fn(),
     ),
     (
         "degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it",
