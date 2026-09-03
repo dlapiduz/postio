@@ -78,8 +78,8 @@
   --postio-surface: var(--postio-color-surface);
   --postio-ink: var(--postio-color-text);
   --postio-ink-secondary: rgba(29, 31, 32, 0.8);
-  --postio-dim: rgba(29, 31, 32, 0.55);
-  --postio-faint: rgba(29, 31, 32, 0.45);
+  --postio-dim: rgba(29, 31, 32, 0.64);
+  --postio-faint: rgba(29, 31, 32, 0.51);
 
   /* Hairlines — the only edge this design draws */
   --postio-hairline: var(--postio-color-divider);
