@@ -2610,6 +2610,16 @@ impl Window {
         // Only one overlay at a time.
         self.close_finder();
         self.close_cheatsheet();
+        // Read fresh on every open rather than cached, the same reason
+        // `new_reader` loads its own copy each time rather than keeping one
+        // long-lived: whatever the reader last wrote should show up here
+        // without this panel needing to watch the file (#871).
+        if let Some(path) = self.imp().allowlist_path.borrow().clone() {
+            self.settings().set_remote_image_allowlist(
+                crate::reader::RemoteImageAllowList::load_from(&path),
+                path,
+            );
+        }
         self.settings().set_visible(true);
         self.settings().grab_focus();
     }

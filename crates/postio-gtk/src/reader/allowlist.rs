@@ -82,6 +82,20 @@ impl RemoteImageAllowList {
         self.senders.is_empty()
     }
 
+    /// Every sender with a standing exception, address order (`BTreeSet`
+    /// already keeps it sorted) — what a settings pane lists to manage
+    /// (#871).
+    pub fn senders(&self) -> impl Iterator<Item = &str> {
+        self.senders.iter().map(String::as_str)
+    }
+
+    /// Revokes `sender`'s standing exception, in memory only — same split
+    /// as [`allow`](Self::allow): the caller decides whether and when to
+    /// persist with [`save`](Self::save)/[`save_to`](Self::save_to).
+    pub fn revoke(&mut self, sender: &str) {
+        self.senders.remove(&normalize(sender));
+    }
+
     /// Persist to `$XDG_STATE_HOME/postio/remote-images.ini`.
     pub fn save(&self) -> Result<(), glib::Error> {
         self.save_to(&Self::path())
@@ -200,5 +214,33 @@ mod tests {
             path.display()
         );
         assert!(!path.to_string_lossy().contains("/.config/"));
+    }
+
+    #[test]
+    fn senders_lists_everyone_allowed_in_sorted_order() {
+        let mut list = RemoteImageAllowList::default();
+        list.allow("zed@example.com");
+        list.allow("ada@example.com");
+        assert_eq!(
+            list.senders().collect::<Vec<_>>(),
+            vec!["ada@example.com", "zed@example.com"]
+        );
+    }
+
+    #[test]
+    fn revoking_a_sender_removes_the_exception() {
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.revoke("ada@example.com");
+        assert!(!list.is_allowed("ada@example.com"));
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn revoking_a_sender_not_on_the_list_is_a_no_op() {
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.revoke("nobody@example.com");
+        assert!(list.is_allowed("ada@example.com"));
     }
 }
