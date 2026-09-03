@@ -860,8 +860,13 @@ fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
     // something linear in the size of the mailbox, this is where it shows —
     // the correlated subqueries are per row of the page, so twenty-five
     // thousand conversations must not cost more than a handful.
-    use std::time::Instant;
-
+    //
+    // Counted rather than timed (#100). This used to compare wall-clock
+    // durations and allow the deep page a factor of ten plus 50ms, which is
+    // the width a shared runner forces on a timing assertion — wide enough
+    // that it would not have caught much short of the linear case it names.
+    // Rows produced is the same number on any machine, so it can be held to
+    // the actual claim: a page of fifty costs a page of fifty, ten pages in.
     let database = postio_storage::test_support::temp();
     let report = postio_storage::seed::seed_large(&database, 7, 100_000);
     let inbox = report
@@ -874,32 +879,47 @@ fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
     let threads = ThreadRepository::new(&connection);
     let query = ThreadListQuery::in_mailbox(report.account.id, inbox).limit(50);
 
-    let time = |query: &ThreadListQuery| {
-        let start = Instant::now();
-        let page = threads.page(query).expect("a page of threads");
-        (start.elapsed(), page)
+    postio_storage::test_support::counting::install(&connection);
+    let read = |query: &ThreadListQuery| {
+        let mut page = Vec::new();
+        let counts = postio_storage::test_support::counting::counted(|| {
+            page = threads.page(query).expect("a page of threads");
+        });
+        (counts, page)
     };
 
-    let (first_duration, first) = time(&query);
-    assert_eq!(first.len(), 50, "a page is a window, never the folder");
+    let (first, first_page) = read(&query);
+    assert_eq!(first_page.len(), 50, "a page is a window, never the folder");
 
     // Ten pages in, which for messages is the same cost as the first.
-    let mut cursor = first.last().expect("a last row").cursor();
-    let mut deep_duration = first_duration;
+    let mut cursor = first_page.last().expect("a last row").cursor();
+    let mut deep = first;
     for _ in 0..10 {
-        let (duration, page) = time(&query.clone().after(cursor));
+        let (counts, page) = read(&query.clone().after(cursor));
         assert_eq!(page.len(), 50);
         cursor = page.last().expect("a last row").cursor();
-        deep_duration = duration;
+        deep = counts;
     }
 
-    // Generous, because this is wall-clock on a shared machine: the point is
-    // that paging is not *linear*, and linear here would be orders of
-    // magnitude rather than a factor of ten.
+    // Not exact equality: the correlated subqueries return a row per message
+    // in each thread on the page, so the count moves a little with the shape
+    // of the conversations that happen to be there — 246 and 252 as this
+    // landed. Doubling is far more slack than that needs and still leaves
+    // this two orders of magnitude away from the linear case it rules out.
     assert!(
-        deep_duration < first_duration * 10 + std::time::Duration::from_millis(50),
-        "a deep page of threads cost {deep_duration:?} against {first_duration:?} \
-         for the first, which is paging that grows with the folder"
+        deep.rows <= first.rows * 2,
+        "the eleventh page of threads produced {} rows where the first \
+         produced {}, over a folder of a hundred thousand messages. Paging \
+         that grows with the depth is what ADR 0015's claim rules out, and at \
+         the bottom of a real mailbox it is the whole folder.",
+        deep.rows,
+        first.rows
+    );
+    assert_eq!(
+        deep.statements, first.statements,
+        "the eleventh page issued {} statements where the first issued {}, \
+         which is a query per row of the page rather than a window.",
+        deep.statements, first.statements
     );
 }
 
