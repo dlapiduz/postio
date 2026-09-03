@@ -66,9 +66,7 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_config::filters::{FilterConfig, Reorder};
 use postio_config::sync::{AttachmentFetch, CheckForMail};
-use postio_config::{
-    Config, Density, SyncConfig, Theme, patch_filters, patch_sync, patch_ui,
-};
+use postio_config::{Config, Density, SyncConfig, Theme, patch_filters, patch_sync, patch_ui};
 use postio_model::{Account, AccountId};
 
 /// How long to let typing settle before writing the buffer back to disk.
@@ -515,6 +513,7 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         self.redraw_sync();
+        self.redraw_ui();
         self.schedule_write();
     }
 
@@ -1872,8 +1871,17 @@ impl SettingsPanel {
 
         self.refresh_validity();
         self.redraw_filters();
-        self.redraw_sync();
-        self.redraw_ui();
+        // Deliberately not redraw_sync()/redraw_ui() here: `Window::new`
+        // constructs a `SettingsPanel` as a hidden overlay child while it is
+        // still wiring up its own overlay siblings and shortcut controllers
+        // (window.rs), and building a `gtk::DropDown` mid-construction there
+        // was found to corrupt keyboard routing for the rest of that same
+        // window -- gtk_finder, gtk_finder_focus, gtk_move_picker and
+        // gtk_toggle_sidebar all failed until this was removed (#873). Both
+        // panes populate lazily instead, from `load()`/`set_text()` once the
+        // window construction they're part of has finished; `redraw_filters`
+        // stays here because it builds no `DropDown` and never reproduced
+        // the corruption.
     }
 }
 
