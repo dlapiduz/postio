@@ -490,4 +490,94 @@ mod tests {
         assert!(!Field::Is.takes_free_text());
         assert!(!Field::After.takes_free_text());
     }
+
+    /// Every `Filter` variant names the `Field` it actually came from --
+    /// checked one at a time rather than trusting the `match`'s exhaustiveness
+    /// to mean the mapping is right. The compiler only proves every arm is
+    /// present, not that `Filter::List` does not answer `Field::From` by a
+    /// copy-paste from the arm above it.
+    #[test]
+    fn every_filter_names_its_own_field() {
+        let cases = [
+            (Filter::From("a".into()), Field::From),
+            (Filter::To("a".into()), Field::To),
+            (Filter::Subject("a".into()), Field::Subject),
+            (Filter::In("a".into()), Field::In),
+            (Filter::Filename("a".into()), Field::Filename),
+            (Filter::List("a".into()), Field::List),
+            (Filter::Account("a".into()), Field::Account),
+            (Filter::Group("a".into()), Field::Group),
+            (Filter::HasAttachment, Field::Has),
+            (Filter::Is(State::Unread), Field::Is),
+            (
+                Filter::After(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
+                Field::After,
+            ),
+            (
+                Filter::Before(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
+                Field::Before,
+            ),
+            (Filter::Larger(1024), Field::Larger),
+            (Filter::Smaller(1024), Field::Smaller),
+        ];
+        for (filter, field) in cases {
+            assert_eq!(filter.field(), field, "{filter:?} should name {field:?}");
+        }
+    }
+
+    fn token(kind: TokenKind) -> Token {
+        Token {
+            span: Span::new(0, 0),
+            raw: String::new(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn negated_reads_the_matching_variant_not_a_fixed_one() {
+        // Each arm reads a different struct's own `negated` field; a token
+        // built from the *other* two kinds proves this is not one field
+        // three names all happen to resolve to.
+        let filter_token = token(TokenKind::Filter(Clause {
+            negated: true,
+            filter: Filter::HasAttachment,
+        }));
+        let partial_token = token(TokenKind::Partial(Partial {
+            negated: false,
+            field: Field::Is,
+            value: String::new(),
+        }));
+        let text_token = token(TokenKind::Text(TextTerm {
+            negated: true,
+            value: "docker".into(),
+        }));
+
+        assert!(filter_token.negated());
+        assert!(!partial_token.negated());
+        assert!(text_token.negated());
+    }
+
+    #[test]
+    fn only_free_text_is_not_an_operator() {
+        let filter_token = token(TokenKind::Filter(Clause {
+            negated: false,
+            filter: Filter::HasAttachment,
+        }));
+        let text_token = token(TokenKind::Text(TextTerm {
+            negated: false,
+            value: "docker".into(),
+        }));
+
+        assert!(filter_token.is_operator());
+        assert!(!text_token.is_operator());
+    }
+
+    #[test]
+    fn a_parsed_query_hands_back_the_string_it_was_parsed_from() {
+        let parsed = ParsedQuery {
+            input: "from:ada docker".to_owned(),
+            tokens: Vec::new(),
+        };
+        assert_eq!(parsed.input(), "from:ada docker");
+    }
 }
