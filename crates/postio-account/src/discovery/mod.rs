@@ -51,7 +51,7 @@
 //! * **Only the typed domain.** Every step above derives its request from
 //!   [`Address::domain`] (and, for step 3, the local part — some providers
 //!   key per-user autoconfig on it) — never a *different* domain, and never
-//!   anything guessed. [`ProbeStep::ORDER`]'s four steps are the only
+//!   anything guessed. [`ProbeStep::ORDER`]'s five steps are the only
 //!   requests this module makes for a real lookup; [`builtin`]'s table costs
 //!   no I/O, and [`ProbeOptions::guess_common_names`]'s suggestion costs none
 //!   either — see the next point. `only_the_domain_the_user_typed_is_ever_probed`
@@ -132,16 +132,23 @@ pub enum ProbeStep {
     AutoconfigSubdomain,
     /// The Thunderbird ISPDB.
     Ispdb,
+    /// The domain's MX records, matched against the preset table (#94).
+    Mx,
     /// RFC 6186 SRV records.
     Srv,
 }
 
 impl ProbeStep {
     /// The chain, in order.
-    pub const ORDER: [ProbeStep; 4] = [
+    pub const ORDER: [ProbeStep; 5] = [
         ProbeStep::WellKnown,
         ProbeStep::AutoconfigSubdomain,
         ProbeStep::Ispdb,
+        // After the three that read something the domain *published about
+        // mail configuration*, and before SRV, which publishes the same kind
+        // of fact: MX says where mail is delivered, which is strong evidence
+        // and still an inference (#94).
+        ProbeStep::Mx,
         ProbeStep::Srv,
     ];
 
@@ -151,6 +158,7 @@ impl ProbeStep {
             Self::WellKnown => "well-known autoconfig",
             Self::AutoconfigSubdomain => "autoconfig subdomain",
             Self::Ispdb => "Thunderbird ISPDB",
+            Self::Mx => "MX records",
             Self::Srv => "SRV records",
         }
     }
@@ -160,6 +168,7 @@ impl ProbeStep {
             Self::WellKnown => SettingsSource::WellKnown,
             Self::AutoconfigSubdomain => SettingsSource::Autoconfig,
             Self::Ispdb => SettingsSource::Ispdb,
+            Self::Mx => SettingsSource::Mx,
             Self::Srv => SettingsSource::Srv,
         }
     }
@@ -402,6 +411,20 @@ impl Probe {
         }
 
         match step {
+            ProbeStep::Mx => {
+                let raced = race!(self.transport.mx(&address.domain, cancel));
+                Ok(match raced {
+                    Err(_elapsed) => (AttemptOutcome::TimedOut, None),
+                    Ok(Err(err)) => (AttemptOutcome::Failed(err.message().to_owned()), None),
+                    Ok(Ok(hosts)) => match settings_from_mx(address, &hosts) {
+                        Some(settings) => (AttemptOutcome::Hit, Some(settings)),
+                        // A domain that publishes MX Postio has no row for is
+                        // a miss, not a failure: the records answered, they
+                        // just named nobody known.
+                        None => (AttemptOutcome::Miss, None),
+                    },
+                })
+            }
             ProbeStep::Srv => {
                 let raced = race!(self.transport.srv(&address.domain, cancel));
                 Ok(match raced {
@@ -592,6 +615,31 @@ fn login_for(server: &DiscoveryServer, address: &Address) -> String {
 /// Prefers the implicit-TLS records (`_imaps`, `_submissions`) over the
 /// STARTTLS ones, and treats a report with no IMAP or no submission record
 /// as a miss.
+/// The settings a domain's MX records imply, when they name a provider
+/// Postio ships a row for (#94).
+///
+/// `hosts` is in preference order, and the first host that matches a row
+/// wins: a domain's primary exchanger is the one that says where its mail
+/// actually lives, and a lower-preference backup MX at some third party is
+/// not evidence about the mailbox.
+///
+/// **The login is deliberately not derived.** #69 records the trap: an
+/// iCloud custom domain authenticates as the Apple ID, which no MX lookup
+/// can guess, so prefilling a login from an MX hit would be confidently
+/// wrong in exactly the case this step exists for. The address is offered
+/// because it is what the user typed, not because the records implied it.
+fn settings_from_mx(address: &Address, hosts: &[String]) -> Option<AccountSettings> {
+    let preset = hosts
+        .iter()
+        .find_map(|host| builtin::preset_for_mx_host(host))?;
+    let mut settings = preset.settings_for(&address.email);
+    // The row is real and its servers are right; what is inferred is that
+    // *this domain* belongs to it, so the source says MX rather than the
+    // `Builtin` the row would otherwise claim.
+    settings.source = SettingsSource::Mx;
+    Some(settings)
+}
+
 fn settings_from_srv(address: &Address, report: &DiscoverySrvReport) -> Option<AccountSettings> {
     let imap = match (&report.imaps, &report.imap) {
         (Some(service), _) => ServerSettings::new(&service.host, service.port, Encryption::Tls),
@@ -703,6 +751,7 @@ mod tests {
                 ProbeStep::WellKnown,
                 ProbeStep::AutoconfigSubdomain,
                 ProbeStep::Ispdb,
+                ProbeStep::Mx,
                 ProbeStep::Srv,
             ]
         );

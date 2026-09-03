@@ -124,6 +124,11 @@ impl DiscoveryTransport for MockTransport {
         self.observe(cancel);
         Err(TransportError::new("NXDOMAIN"))
     }
+
+    async fn mx(&self, _domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError> {
+        self.observe(cancel);
+        Err(TransportError::new("NXDOMAIN"))
+    }
 }
 
 fn autoconfig_xml() -> String {

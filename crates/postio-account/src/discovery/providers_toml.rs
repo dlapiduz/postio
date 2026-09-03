@@ -47,6 +47,19 @@ pub struct ProviderRow {
     pub display_name: String,
     #[serde(default)]
     pub domains: Vec<String>,
+    /// MX host suffixes that identify this provider (#94).
+    ///
+    /// A custom domain delegated to a provider usually says so in its MX
+    /// records, and that is exactly the case the convention guess gets
+    /// wrong: mail for a custom domain hosted elsewhere is not at
+    /// `imap.<that-domain>`.
+    ///
+    /// Data, like `domains`, for the same reason -- an MX suffix is a fact
+    /// about a provider, and a provider is a row rather than a branch
+    /// (`PRODUCT.md` §3). Matched as a suffix on a label boundary, never as
+    /// a whole host: providers hand out one inbound host per customer.
+    #[serde(default)]
+    pub mx_suffixes: Vec<String>,
     pub imap_host: String,
     pub imap_port: u16,
     pub imap_security: Security,
@@ -270,6 +283,7 @@ mod tests {
         ProviderRow {
             display_name: "Test".to_string(),
             domains: vec!["example.com".to_string()],
+            mx_suffixes: Vec::new(),
             imap_host: "imap.example.com".to_string(),
             imap_port: 993,
             imap_security: Security::Tls,

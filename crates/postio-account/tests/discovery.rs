@@ -20,6 +20,8 @@ use postio_account::discovery::{
 struct MockTransport {
     autoconfig: HashMap<ProbeStep, String>,
     srv: Option<DiscoverySrvReport>,
+    /// The MX hostnames the domain publishes, best preference first (#94).
+    mx: Option<Vec<String>>,
     calls: Mutex<Vec<ProbeStep>>,
     /// Every domain (and, for the subdomain step, local part) a request was
     /// actually made for — `postio-iigq`'s "only the domain the user typed"
@@ -51,6 +53,12 @@ impl MockTransport {
 
     fn with_srv(mut self, report: DiscoverySrvReport) -> Self {
         self.srv = Some(report);
+        self
+    }
+
+    /// The MX hostnames the domain publishes, best preference first (#94).
+    fn with_mx(mut self, hosts: &[&str]) -> Self {
+        self.mx = Some(hosts.iter().map(|h| (*h).to_owned()).collect());
         self
     }
 
@@ -143,6 +151,21 @@ impl DiscoveryTransport for MockTransport {
             None => Err(TransportError::new("NXDOMAIN")),
         }
     }
+
+    async fn mx(&self, domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError> {
+        self.observe(cancel);
+        self.calls.lock().unwrap().push(ProbeStep::Mx);
+        self.requested
+            .lock()
+            .unwrap()
+            .push((ProbeStep::Mx, domain.to_owned(), None));
+        self.maybe_stall().await;
+
+        match &self.mx {
+            Some(hosts) => Ok(hosts.clone()),
+            None => Err(TransportError::new("NXDOMAIN")),
+        }
+    }
 }
 
 /// A transport that fails the test if the probe ever reaches the network.
@@ -163,6 +186,14 @@ impl DiscoveryTransport for UnreachableTransport {
         _domain: &str,
         _cancel: &CancelToken,
     ) -> Result<DiscoverySrvReport, TransportError> {
+        panic!("the probe must not hit the network for a known provider");
+    }
+
+    async fn mx(
+        &self,
+        _domain: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<String>, TransportError> {
         panic!("the probe must not hit the network for a known provider");
     }
 }
@@ -662,7 +693,7 @@ async fn only_the_domain_the_user_typed_is_ever_probed() {
     let requested = transport.requested();
     assert_eq!(
         requested.len(),
-        4,
+        5,
         "every step should have made exactly one request: {requested:?}"
     );
     for (step, domain, local_part) in &requested {
@@ -713,9 +744,9 @@ async fn a_guessed_suggestion_is_built_after_every_step_missed_not_instead_of_th
         other => panic!("expected a guessed suggestion, got {other:?}"),
     }
 
-    // The guess itself is string formatting, not a fifth request: every
-    // call the mock saw was a step, and there are only four of those.
-    assert_eq!(transport.requested().len(), 4);
+    // The guess itself is string formatting, not a further request: every
+    // call the mock saw was a step, and there are only five of those.
+    assert_eq!(transport.requested().len(), 5);
 }
 
 // --- live probe ---------------------------------------------------------
@@ -740,5 +771,99 @@ async fn live_probe_against_the_thunderbird_ispdb() {
             .imap
             .host
             .contains(domain.split('.').next().unwrap())
+    );
+}
+
+// ── #94: MX records name a provider Postio ships settings for ───────────
+
+#[tokio::test]
+async fn mx_records_naming_a_known_provider_prefill_that_providers_servers() {
+    // The case the convention guess gets wrong: a custom domain delegated to
+    // a provider is not reachable at `imap.<that-domain>`. Its MX says where
+    // its mail actually goes, and the preset table knows whose host that is.
+    let transport =
+        Arc::new(MockTransport::new().with_mx(&["mx01.mail.icloud.com", "mx02.mail.icloud.com"]));
+    let probe = Probe::with_options(transport.clone(), fast_options());
+    let report = probe
+        .run("user@example.org", &CancelToken::new())
+        .await
+        .unwrap();
+
+    let settings = settings(&report.outcome);
+    assert_eq!(
+        settings.source,
+        SettingsSource::Mx,
+        "the servers come from the row, but *that this domain is theirs* is \
+         inferred from MX -- the source has to say which"
+    );
+    assert_eq!(settings.imap.host, "imap.mail.me.com");
+    assert_eq!(settings.smtp.host, "smtp.mail.me.com");
+
+    // #69's trap: an iCloud custom domain authenticates as the Apple ID, and
+    // no MX lookup can know it. Prefilling a login from an MX hit would be
+    // confidently wrong in exactly the case this step exists for.
+    assert_eq!(
+        settings.login, "user@example.org",
+        "the login is the address the user typed, never one MX implied"
+    );
+
+    assert_eq!(
+        transport.calls(),
+        vec![
+            ProbeStep::WellKnown,
+            ProbeStep::AutoconfigSubdomain,
+            ProbeStep::Ispdb,
+            ProbeStep::Mx,
+        ],
+        "MX runs after everything the domain published about mail \
+         configuration, and before SRV"
+    );
+}
+
+#[tokio::test]
+async fn mx_records_naming_nobody_known_are_a_miss_and_the_probe_carries_on() {
+    // Plenty of domains publish MX for a host Postio ships no row for. That
+    // is an answer, not a failure, and SRV still gets its turn.
+    let transport = Arc::new(
+        MockTransport::new()
+            .with_mx(&["mail.some-host.example"])
+            .with_srv(srv_report()),
+    );
+    let probe = Probe::with_options(transport.clone(), fast_options());
+    let report = probe
+        .run("user@example.org", &CancelToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(settings(&report.outcome).source, SettingsSource::Srv);
+    let mx = report
+        .attempts
+        .iter()
+        .find(|attempt| attempt.step == ProbeStep::Mx)
+        .expect("the MX step is reported like every other");
+    assert!(
+        mx.is_miss(),
+        "MX that names nobody known is a miss, not a failure: the records \
+         answered, they just named nobody in the table"
+    );
+}
+
+#[tokio::test]
+async fn an_mx_hit_prefills_the_manual_form_rather_than_claiming_a_discovery() {
+    // It is inference, not publication — the same reason `guess_common_names`
+    // is off by default. A domain that delegates its mail somewhere has not
+    // said anything about *how to log in*, so this must not present itself as
+    // a discovered account.
+    let transport = Arc::new(MockTransport::new().with_mx(&["mx01.mail.icloud.com"]));
+    let probe = Probe::with_options(transport.clone(), fast_options());
+    let report = probe
+        .run("user@example.org", &CancelToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !settings(&report.outcome).source.is_authoritative(),
+        "MX is better evidence than a convention guess and still not \
+         authoritative"
     );
 }

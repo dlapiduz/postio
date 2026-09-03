@@ -68,6 +68,50 @@ impl Preset {
         &self.row.domains
     }
 
+    /// MX host suffixes that identify this provider (#94).
+    pub fn mx_suffixes(&self) -> &[String] {
+        &self.row.mx_suffixes
+    }
+
+    /// Whether `host` is one of this provider's inbound mail exchangers.
+    ///
+    /// A **suffix** match, unlike [`claims`](Self::claims), and the
+    /// difference is the point. A domain is issued to a person and is
+    /// theirs, so a lookalike must never inherit a real provider's servers.
+    /// An MX host is the provider's own name for its own edge, and providers
+    /// hand out one per customer -- `alice-com.mail.protection.example` --
+    /// so whole-host equality would match nothing.
+    ///
+    /// The match stops at a **label boundary**, which is what keeps it from
+    /// being the substring match `claims` refuses to be: without it,
+    /// `evil-mail.protection.example` inherits `mail.protection.example`.
+    /// The length of the longest suffix of this row that `host` matches, or
+    /// `None` for no match. Length is what orders two rows that both match.
+    fn mx_match_len(&self, host: &str) -> Option<usize> {
+        let host = host.trim_end_matches('.');
+        if host.is_empty() {
+            return None;
+        }
+        self.row
+            .mx_suffixes
+            .iter()
+            .filter_map(|suffix| {
+                let suffix = suffix.trim_end_matches('.');
+                if suffix.is_empty() {
+                    return None;
+                }
+                if host.eq_ignore_ascii_case(suffix) {
+                    return Some(suffix.len());
+                }
+                let boundary = host.len().checked_sub(suffix.len())?;
+                (boundary > 0
+                    && host[boundary..].eq_ignore_ascii_case(suffix)
+                    && host.as_bytes()[boundary - 1] == b'.')
+                    .then_some(suffix.len())
+            })
+            .max()
+    }
+
     /// The provider's IMAP host.
     pub fn imap_host(&self) -> &str {
         &self.row.imap_host
@@ -264,6 +308,19 @@ pub fn preset_for_domain(domain: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|preset| preset.claims(domain))
 }
 
+/// The preset whose MX suffixes cover `host`, if Postio ships one (#94).
+///
+/// The longest suffix wins, so a provider that publishes both a general
+/// suffix and a more specific one under it resolves to the specific row
+/// rather than to whichever happens to be earlier in the table.
+pub fn preset_for_mx_host(host: &str) -> Option<&'static Preset> {
+    PRESETS
+        .iter()
+        .filter_map(|preset| preset.mx_match_len(host).map(|len| (len, preset)))
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, preset)| preset)
+}
+
 /// Returns settings for `domain` when Postio ships them, without any I/O.
 ///
 /// `domain` is matched case-insensitively.
@@ -280,6 +337,56 @@ mod tests {
     /// "No personal data".
     fn address_in(domain: &str) -> String {
         format!("a@{domain}")
+    }
+
+    /// #94: an MX host resolves to the provider that publishes that suffix.
+    #[test]
+    fn an_mx_host_resolves_to_the_provider_whose_suffix_it_ends_with() {
+        // Suffix rather than equality, unlike `claims`, and the difference is
+        // the point: a domain is issued to a person and is theirs, so a
+        // lookalike must never inherit a provider's servers. An MX *host* is
+        // the provider's own name for its own inbound edge, and providers
+        // hand out one per customer -- `alice-com.mail.protection.example`.
+        // Matching the whole host would match nothing.
+        for preset in presets() {
+            for suffix in preset.mx_suffixes() {
+                let host = format!("something.{suffix}");
+                let found = preset_for_mx_host(&host).expect("a table row");
+                assert_eq!(
+                    found.display_name(),
+                    preset.display_name(),
+                    "`{host}` should resolve to the row that published `{suffix}`"
+                );
+            }
+        }
+    }
+
+    /// The suffix must be a *label* boundary, not a string suffix, or
+    /// `evil-mail.protection.example` inherits `mail.protection.example`.
+    #[test]
+    fn a_suffix_match_stops_at_a_label_boundary() {
+        let Some((preset, suffix)) = presets()
+            .iter()
+            .find_map(|p| p.mx_suffixes().first().map(|s| (p, s.clone())))
+        else {
+            return; // no row publishes one yet
+        };
+        assert!(
+            preset_for_mx_host(&format!("evil{suffix}")).is_none(),
+            "`evil{suffix}` is a different host and must not inherit \
+             {}'s servers",
+            preset.display_name()
+        );
+        assert!(
+            preset_for_mx_host(&suffix).is_some(),
+            "the suffix on its own is that provider's own host"
+        );
+    }
+
+    #[test]
+    fn an_mx_host_nothing_publishes_resolves_to_nothing() {
+        assert!(preset_for_mx_host("mx.example.invalid").is_none());
+        assert!(preset_for_mx_host("").is_none());
     }
 
     #[test]
