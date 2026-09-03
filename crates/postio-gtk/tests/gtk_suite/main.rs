@@ -851,41 +851,6 @@ pub fn settle() {
     while glib::MainContext::default().iteration(false) {}
 }
 
-/// Destroy every window the case left behind, before the next one runs.
-///
-/// A `GtkWindow` joins the toplevel list when it is **constructed**, not when
-/// it is presented, and leaves it on `destroy()`. So a case that builds a
-/// window and drops the handle leaves it alive — and with it its `Reader`,
-/// its `WebContext`, and the WebProcess that `WebContext` is. Two hundred
-/// cases each leaving one is two hundred WebProcesses still attached when
-/// `exit()` starts tearing their connections down, which is #794's segfault.
-///
-/// This could not have worked before #794's cycle fix: three
-/// `Window -> … -> Window` cycles meant `destroy()` freed nothing. Now it
-/// does, so the cheapest place to spend it is here, once per case, rather
-/// than asking every case to remember.
-///
-/// Panics are already caught above, so a case that failed still gets swept —
-/// which matters, because the harness's own header warns that toolkit state
-/// left by a panicking case is what fails the next one.
-fn close_windows() {
-    use gtk::prelude::*;
-    // A case that skipped for want of a display never initialised GTK, and
-    // `toplevels()` panics rather than returning empty in that state.
-    if !gtk::is_initialized() {
-        return;
-    }
-    let toplevels = gtk::Window::toplevels();
-    let windows: Vec<gtk::Window> = (0..toplevels.n_items())
-        .filter_map(|i| toplevels.item(i))
-        .filter_map(|object| object.downcast::<gtk::Window>().ok())
-        .collect();
-    for window in windows {
-        window.destroy();
-    }
-    settle();
-}
-
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {
@@ -916,7 +881,7 @@ fn main() {
         } else {
             println!("test {name} ... ok");
         }
-        close_windows();
+        postio_gtk::window::close_all_windows();
     }
     if failed.is_empty() {
         println!("\ntest result: ok. {ran} passed; 0 failed");

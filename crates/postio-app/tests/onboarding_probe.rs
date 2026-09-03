@@ -309,4 +309,10 @@ fn the_probe_call_site_drives_the_screen_from_a_transport_it_was_given() {
     );
 
     bridge.shutdown();
+
+    // The window this test built joins GTK's toplevel list at
+    // construction and stays there, holding a WebProcess, until it is
+    // destroyed -- which at exit() is a segfault after a passing test
+    // (#794). No harness here to sweep, so the test does it.
+    postio_gtk::window::close_all_windows();
 }

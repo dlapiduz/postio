@@ -2562,6 +2562,39 @@ impl Window {
     }
 }
 
+/// Destroy every window that still exists, for a test binary's teardown.
+///
+/// A `GtkWindow` joins the toplevel list when it is **constructed**, not when
+/// it is presented, and leaves it on `destroy()`. So a test that builds a
+/// window and drops the handle leaves it alive — and with it its `Reader`,
+/// its `WebContext`, and the WebProcess that `WebContext` *is*. At `exit()`
+/// the UI process tears those connections down underneath processes that are
+/// still running, WebKit says so once per live view, and the binary
+/// segfaults after every test in it has passed (#794).
+///
+/// Public because the fix has to reach binaries that have no harness to hang
+/// it on: `gtk_suite` and `app_suite` sweep after every case, but
+/// `backend_choice`, `e2e` and their neighbours are one test each with
+/// nothing between them and `exit()`.
+///
+/// Does nothing if GTK was never initialized — a test that skipped for want
+/// of a display has no windows, and `toplevels()` panics rather than
+/// answering in that state.
+pub fn close_all_windows() {
+    if !gtk::is_initialized() {
+        return;
+    }
+    let toplevels = gtk::Window::toplevels();
+    let windows: Vec<gtk::Window> = (0..toplevels.n_items())
+        .filter_map(|item| toplevels.item(item))
+        .filter_map(|object| object.downcast::<gtk::Window>().ok())
+        .collect();
+    for window in windows {
+        window.destroy();
+    }
+    while glib::MainContext::default().iteration(false) {}
+}
+
 impl Default for Window {
     fn default() -> Self {
         glib::Object::new()
