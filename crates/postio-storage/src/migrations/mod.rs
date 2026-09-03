@@ -85,7 +85,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 16] = [
+static MIGRATIONS: [Migration; 17] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -165,6 +165,11 @@ static MIGRATIONS: [Migration; 16] = [
         version: 16,
         name: "account_max_message_size",
         sql: include_str!("0016_account_max_message_size.sql"),
+    },
+    Migration {
+        version: 17,
+        name: "mailbox_roles",
+        sql: include_str!("0017_mailbox_roles.sql"),
     },
 ];
 
