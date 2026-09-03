@@ -793,6 +793,21 @@ rather than from `MailboxRole::resolve`'s own call site at the IMAP edge,
 because that layer parses what the *server* said and has no business reading a
 config file.
 
+**One folder per role comes out of discovery, and it is the backend's verdict.**
+A listing can hold two folders that both look like the sent folder — iCloud's
+own `Sent Messages` beside a `Sent` some other client created — and
+`resolve_roles` (in `postio-account`'s backend module, run by the IMAP edge
+*and* the mock) settles which one holds the role: the server's claim, then the
+shallowest name, then the alphabet. Discovery applies the user's mapping **on
+top of that settled role** (`RoleOverrides::settle`) and never re-derives it
+from the name, because re-deriving is exactly how one account ended up with
+two `sent` rows and its sent mail filed into the wrong one (#943). Two more
+rules from the same issue: retiring a folder the server stopped listing clears
+its role as well as `selectable`, and `by_role` never answers with a retired
+row — a role only a vanished folder still wears is a role the account does not
+have, and saying so is better than an APPEND the server refuses and nobody
+hears about.
+
 `[mailboxes]` is read once at startup, so a mapping edited while Postio is
 running takes effect at the next start. The engine is spawned with its parts
 and folder discovery runs inside it, so applying a change live means reaching

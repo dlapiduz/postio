@@ -14,6 +14,7 @@ use postio_model::{
     AccountId, Attachment, BodyState, Disposition, EmailAddress, FlagSet, Mailbox, MailboxId,
     MailboxRole, Message, MessageId, ModSeq, RfcMessageId, Uid, UidValidity,
 };
+use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
 // Mailboxes
@@ -744,4 +745,75 @@ pub enum MailboxEvent {
         /// Its flags now.
         flags: FlagSet,
     },
+}
+
+/// Settles which folder actually holds each special-use role.
+///
+/// Every backend runs this over its listing before handing it on -- the IMAP
+/// edge and the mock alike -- so that what discovery receives is already
+/// settled and it never has to guess again. #943 was discovery re-deriving
+/// roles from names and handing a look-alike its role straight back.
+///
+/// Two rules, in order:
+///
+/// 1. **The server wins.** A folder the server marked `\Sent` is the sent
+///    folder, whatever it is called and whatever else looks like one.
+/// 2. **Otherwise, the shallowest name match wins.** `Sent Messages` at the
+///    top level beats `Projects/Sent`, and the loser goes back to being an
+///    ordinary folder. Ties break alphabetically so a listing resolves the
+///    same way every time.
+///
+/// [`MailboxRole::Inbox`] is exempt: `INBOX` is reserved by RFC 3501 and
+/// cannot be contested.
+pub fn resolve_roles(mailboxes: &mut [MailboxSummary]) {
+    let mut winners: BTreeMap<MailboxRole, usize> = BTreeMap::new();
+
+    for (index, mailbox) in mailboxes.iter().enumerate() {
+        let role = mailbox.role;
+        if !role.is_special() || role == MailboxRole::Inbox {
+            continue;
+        }
+        match winners.get(&role) {
+            None => {
+                winners.insert(role, index);
+            }
+            Some(&held) => {
+                if beats(mailbox, &mailboxes[held]) {
+                    winners.insert(role, index);
+                }
+            }
+        }
+    }
+
+    for (index, mailbox) in mailboxes.iter_mut().enumerate() {
+        let role = mailbox.role;
+        if !role.is_special() || role == MailboxRole::Inbox {
+            continue;
+        }
+        if winners.get(&role) != Some(&index) {
+            mailbox.role = MailboxRole::Regular;
+        }
+    }
+}
+
+/// Whether `candidate` has a better claim to its role than `held`.
+fn beats(candidate: &MailboxSummary, held: &MailboxSummary) -> bool {
+    let candidate_declared = declares_role(candidate);
+    let held_declared = declares_role(held);
+    if candidate_declared != held_declared {
+        return candidate_declared;
+    }
+    match candidate.depth().cmp(&held.depth()) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => candidate.path < held.path,
+    }
+}
+
+/// Whether the server itself named this folder's role.
+fn declares_role(mailbox: &MailboxSummary) -> bool {
+    mailbox
+        .attributes
+        .iter()
+        .any(|attribute| MailboxRole::from_special_use(attribute).is_some())
 }

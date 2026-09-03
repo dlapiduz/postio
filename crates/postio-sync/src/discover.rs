@@ -37,7 +37,7 @@
 //! right place.
 
 use postio_account::backend::{MailBackend, MailboxFilter, MailboxSummary};
-use postio_model::{AccountId, Mailbox, MailboxId, RoleOverrides};
+use postio_model::{AccountId, Mailbox, MailboxId, MailboxRole, RoleOverrides};
 use postio_storage::repository::MailboxRepository;
 use rusqlite::Connection;
 
@@ -139,12 +139,16 @@ fn apply(mailbox: &mut Mailbox, summary: &MailboxSummary, overrides: &RoleOverri
     mailbox.path = summary.path.clone();
     mailbox.delimiter = summary.delimiter;
     // The user's own mapping outranks both tiers the summary already went
-    // through -- see `RoleOverrides`. Resolved here rather than at the IMAP
-    // edge where `MailboxRole::resolve` runs, because that layer parses what
-    // the *server* said and has no business reading a config file. Written
-    // on every reconcile, so a mapping edited between runs takes effect on
-    // the next discovery without anything having to notice it changed.
-    mailbox.role = overrides.resolve(&summary.attributes, &summary.path);
+    // through -- see `RoleOverrides`. Applied here rather than at the IMAP
+    // edge, because that layer parses what the *server* said and has no
+    // business reading a config file. Written on every reconcile, so a
+    // mapping edited between runs takes effect on the next discovery without
+    // anything having to notice it changed.
+    //
+    // On top of `summary.role`, never re-derived from the name: the backend
+    // has already settled which of two look-alikes holds a role, and that
+    // verdict is the whole reason only one row per role comes out of here.
+    mailbox.role = overrides.settle(summary.role, &summary.path);
     mailbox.selectable = summary.selectable;
     mailbox.subscribed = summary.subscribed;
 }
@@ -197,12 +201,21 @@ fn retire_missing(
         if listed.iter().any(|summary| summary.path == local.path) {
             continue;
         }
-        if !local.selectable {
+        // A folder the server does not have cannot be where a role files
+        // its mail: the role goes with the folder, or `by_role` answers with
+        // a row that APPEND will refuse (#943). `INBOX` is exempt -- RFC 3501
+        // reserves it, and a listing without it is a broken listing, not a
+        // renamed inbox.
+        let unrole = local.role.is_special() && local.role != MailboxRole::Inbox;
+        if !local.selectable && !unrole {
             // Already retired, or a `\Noselect` level in the hierarchy. Either
             // way there is nothing to write.
             continue;
         }
         local.selectable = false;
+        if unrole {
+            local.role = MailboxRole::Regular;
+        }
         mailboxes.update(&local)?;
         retired += 1;
     }

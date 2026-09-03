@@ -196,10 +196,15 @@ impl<'a> MailboxRepository<'a> {
     /// `Sent Messages` and advertises no `SPECIAL-USE` attribute for it. When a
     /// server has somehow reported two, the first by path wins, so the answer
     /// is at least stable.
+    ///
+    /// Never a retired row. A folder the server no longer lists is one an
+    /// APPEND or a MOVE will be refused for, so a role that only a retired row
+    /// still wears is a role this account does not have (#943).
     pub fn by_role(&self, account_id: AccountId, role: MailboxRole) -> Result<Option<Mailbox>> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
-              WHERE m.account_id = ?1 AND m.role = ?2 ORDER BY m.path LIMIT 1"
+              WHERE m.account_id = ?1 AND m.role = ?2 AND m.selectable = 1
+              ORDER BY m.path LIMIT 1"
         ))?;
         let mut rows = statement.query(params![account_id.get(), role.as_str()])?;
         rows.next()?
