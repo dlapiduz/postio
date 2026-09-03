@@ -5,13 +5,13 @@
 //! rather than becoming a wrong sentence in a file nobody re-reads. Same
 //! arrangement as `rfc5322.rs`.
 //!
-//! **What is not here.** The three gaps the audit found have no test asserting
-//! the fix, because a test that asserts a bug is worthless and one that
-//! asserts the fix cannot pass before it: #899 (a `--boundary` mid-line
-//! truncates the body), #900 (an unusable boundary loses the body and offers
-//! the container as an attachment) and #901 (`encoding_problems` reaches
-//! nobody). The *inputs* are here and in the corpus, so the case each fix has
-//! to handle is pinned even while the behaviour is wrong.
+//! **What is not here.** Two of the three gaps the audit found have no test
+//! asserting the fix, because a test that asserts a bug is worthless and one
+//! that asserts the fix cannot pass before it: #899 (a `--boundary` mid-line
+//! truncates the body) and #901 (`encoding_problems` reaches nobody). Their
+//! *inputs* are here and in the corpus, so the case each fix has to handle is
+//! pinned even while the behaviour is wrong. #900 (an unusable boundary loses
+//! the body and offers the container as an attachment) is fixed below.
 
 use postio_model::{mime, test_corpus};
 
@@ -187,6 +187,79 @@ fn a_delimiter_needs_its_own_line_and_may_carry_transport_padding() {
         Some("one"),
         "a delimiter's trailing whitespace is transport padding"
     );
+}
+
+#[test]
+fn a_multipart_whose_boundary_never_appears_falls_back_to_its_own_text() {
+    // #900, RFC 2046 §5.1.1: a multipart entity whose boundary parameter is
+    // "unrecognisable" must be treated as `text/plain`. The header names a
+    // boundary that was rewritten and the body still uses the old one, so
+    // `mail_parser` cannot split it into parts at all -- the whole entity
+    // comes back as a single part typed `multipart/alternative`, and the
+    // fix is Postio's to read that raw content as the body rather than as a
+    // nameless attachment (see the module docs above).
+    let raw = test_corpus::load("multipart-boundary-never-appears").bytes();
+    let parsed = mime::parse(raw);
+
+    let text = parsed
+        .body
+        .text
+        .expect("the fallback should have produced a body");
+    assert!(
+        text.contains("The body a person is supposed to read"),
+        "the body text was not recovered: {text:?}"
+    );
+    assert!(
+        parsed.parts.is_empty(),
+        "the container must not be offered as an attachment: {:?}",
+        parsed.parts
+    );
+}
+
+#[test]
+fn a_multipart_with_no_boundary_parameter_at_all_falls_back_to_its_own_text() {
+    let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed\r\n\r\n--SEP\r\nContent-Type: text/plain\r\n\r\nthe body\r\n--SEP--\r\n";
+    let parsed = mime::parse(raw);
+
+    assert_eq!(
+        parsed.body.text.as_deref(),
+        Some("--SEP\r\nContent-Type: text/plain\r\n\r\nthe body\r\n--SEP--\r\n")
+    );
+    assert!(parsed.parts.is_empty(), "{:?}", parsed.parts);
+}
+
+#[test]
+fn a_multipart_with_an_empty_boundary_parameter_falls_back_to_its_own_text() {
+    let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"\"\r\n\r\n--SEP\r\nContent-Type: text/plain\r\n\r\nthe body\r\n--SEP--\r\n";
+    let parsed = mime::parse(raw);
+
+    assert_eq!(
+        parsed.body.text.as_deref(),
+        Some("--SEP\r\nContent-Type: text/plain\r\n\r\nthe body\r\n--SEP--\r\n")
+    );
+    assert!(parsed.parts.is_empty(), "{:?}", parsed.parts);
+}
+
+#[test]
+fn a_multipart_fallback_body_is_not_flagged_as_flowed() {
+    // `text_is_flowed` reads the part's own `format` attribute, and the
+    // fallback part has none of the ones a real `text/plain` would -- it is
+    // still the whole `multipart/*` header. False is the honest answer, not
+    // a guess.
+    let raw = test_corpus::load("multipart-boundary-never-appears").bytes();
+    let parsed = mime::parse(raw);
+
+    assert!(!parsed.text_is_flowed);
+}
+
+#[test]
+fn an_ordinary_multipart_is_unaffected_by_the_fallback() {
+    // The fallback triggers on the shape (multipart-typed, no children), not
+    // on every multipart -- a message whose boundary actually works must
+    // keep going through the ordinary path.
+    let parsed = mime::parse(&multipart("hello"));
+
+    assert_eq!(parsed.body.text.as_deref(), Some("hello"));
 }
 
 #[test]
