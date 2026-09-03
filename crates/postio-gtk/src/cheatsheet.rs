@@ -88,6 +88,10 @@ fn heading(context: Context) -> &'static str {
         // the pane.
         Context::Sidebar => "Folders",
         Context::Parts => "Parts",
+        // "Accounts" rather than "Settings": the section is about the account
+        // list, which is the only part of the settings panel these keys reach
+        // (ADR 0005 Q6c).
+        Context::Accounts => "Accounts",
     }
 }
 
