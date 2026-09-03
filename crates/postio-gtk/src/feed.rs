@@ -1171,10 +1171,20 @@ impl Folders {
     /// into no folder has asked the user a question before saying hello.
     pub fn default_mailbox(&self) -> Option<MailboxId> {
         let mailboxes = self.0.mailboxes.borrow();
-        mailboxes
-            .iter()
+        // Real folders only. The synthetic rows are in this list too --
+        // `arrived` appends Flagged and Snoozed before anything else sees it,
+        // and it does so even when the account has no folders yet -- so
+        // `first()` on an unsynced account was the Flagged sentinel, and this
+        // answered "open Flagged" to a question that means "which folder".
+        //
+        // That is #813's second half. The caller opened the sentinel, counted
+        // its turn as spent, and never opened the inbox when the first sync
+        // finally delivered the tree; `postio-app`'s `e2e` sees it as a
+        // window that syncs three messages and lists none.
+        let real = || mailboxes.iter().filter(|mailbox| mailbox.id.get() > 0);
+        real()
             .find(|mailbox| mailbox.role == postio_model::mailbox::MailboxRole::Inbox)
-            .or_else(|| mailboxes.first())
+            .or_else(|| real().next())
             .map(|mailbox| mailbox.id)
     }
 

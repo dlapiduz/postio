@@ -27,7 +27,7 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
@@ -62,11 +62,20 @@ struct Store {
     /// Every folder read, so a test can tell a reload actually happened
     /// rather than assert on the absence of an effect that never ran.
     reads: RefCell<u32>,
+    /// Whether the first sync has landed. A real account has no folders at
+    /// all until one has: `postio-app`'s `e2e` opens a window over an empty
+    /// store and the tree arrives afterwards, so a handler that only ever
+    /// sees a populated first read is not being tested against the case
+    /// that matters.
+    empty_until_synced: Cell<bool>,
 }
 
 impl MailboxSource for Store {
     fn mailboxes(&self, account: AccountId) -> MailboxFuture {
         *self.reads.borrow_mut() += 1;
+        if self.empty_until_synced.get() {
+            return Box::pin(async move { Ok(Vec::new()) });
+        }
         let folder = |id: i64, path: &str, role| {
             let mut mailbox = Mailbox::new(account, path, Some('/'));
             mailbox.id = MailboxId::new(id);
@@ -364,6 +373,52 @@ pub fn switching_accounts_still_opens_the_new_accounts_inbox() {
         feeds.messages.mailbox(),
         Some(MailboxId::new(OTHER_INBOX)),
         "switching accounts must open the new account's inbox"
+    );
+    window.destroy();
+}
+
+pub fn an_account_whose_folders_arrive_after_the_first_sync_still_opens_its_inbox() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    let store = Rc::new(Store {
+        reads: RefCell::new(0),
+        empty_until_synced: Cell::new(true),
+    });
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "lena@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    // The window opens over an empty store: there is no tree yet, so there is
+    // nothing to pick and the handler must not count that as its turn.
+    settle_until(|| *store.reads.borrow() > 0);
+    settle();
+    assert_eq!(
+        feeds.messages.mailbox(),
+        None,
+        "there were no folders to open yet"
+    );
+
+    // The first sync lands, and with it the folders.
+    store.empty_until_synced.set(false);
+    resync_finishes(&feeds, &store);
+    settle_until(|| feeds.messages.mailbox().is_some());
+
+    assert_eq!(
+        feeds.messages.mailbox(),
+        Some(MailboxId::new(INBOX)),
+        "the folders arrived and nothing opened one: an account whose first \
+         read came back empty has not had its turn yet, and is still owed a \
+         pick when the tree shows up"
     );
     window.destroy();
 }

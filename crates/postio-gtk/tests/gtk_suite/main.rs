@@ -688,6 +688,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox as fn(),
     ),
     (
+        "gtk_folder_reload_scope::an_account_whose_folders_arrive_after_the_first_sync_still_opens_its_inbox",
+        gtk_folder_reload_scope::an_account_whose_folders_arrive_after_the_first_sync_still_opens_its_inbox as fn(),
+    ),
+    (
         "gtk_folder_sections::the_feed_reads_every_account_it_is_given_and_keeps_their_order",
         gtk_folder_sections::the_feed_reads_every_account_it_is_given_and_keeps_their_order as fn(),
     ),
