@@ -83,3 +83,88 @@ fn a_typo_in_a_role_name_maps_nothing() {
         "a misspelled role must not be guessed into the nearest real one"
     );
 }
+
+// ── The command and discovery agree (#965 over #964) ────────────────────
+
+/// A choice made through the verb survives the next discovery pass, and the
+/// pass agrees with it -- the seam ADR 0025 lives on. The verb re-roles the
+/// rows locally; discovery reads the same map and must reach the same
+/// answer, or the sidebar would say one thing until the next reconnection
+/// and another after it.
+#[tokio::test]
+async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() {
+    use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
+    use postio_core::Command;
+    use postio_core::bridge::event_channel;
+    use postio_core::state::SharedState;
+    use postio_model::RoleOverrides;
+    use postio_session::actions::Actions;
+    use postio_storage::repository::MailboxRepository;
+    use postio_storage::test_support;
+    use postio_sync::discover::discover;
+
+    let database = test_support::memory();
+    let account = {
+        let connection = database.connection().expect("a connection");
+        test_support::account(&connection)
+    };
+    // iCloud's shape: the provider's own Sent folder beside one another
+    // client made, nothing declared, so the alphabet picks `Sent`.
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Sent"))
+        .mailbox(MockMailbox::new("Sent Messages"))
+        .build();
+    backend.connect().await.expect("connect");
+    let sent_paths = |database: &postio_storage::Database| -> Vec<String> {
+        let connection = database.connection().expect("a connection");
+        MailboxRepository::new(&connection)
+            .list_for_account(account.id)
+            .expect("list")
+            .into_iter()
+            .filter(|mailbox| mailbox.role == MailboxRole::Sent && mailbox.selectable)
+            .map(|mailbox| mailbox.path)
+            .collect()
+    };
+
+    {
+        let connection = database.connection().expect("a connection");
+        discover(&connection, &backend, account.id, &RoleOverrides::default())
+            .await
+            .expect("first pass");
+    }
+    assert_eq!(
+        sent_paths(&database),
+        vec!["Sent".to_owned()],
+        "the automatic answer"
+    );
+
+    let (sink, _events) = event_channel();
+    Actions::new(database.clone(), SharedState::default())
+        .run(
+            &Command::MapMailboxRole {
+                account: Some(account.id),
+                role: Some(MailboxRole::Sent),
+                path: Some("Sent Messages".to_owned()),
+            },
+            &sink,
+        )
+        .expect("the verb");
+    assert_eq!(
+        sent_paths(&database),
+        vec!["Sent Messages".to_owned()],
+        "the verb re-roles the rows at once"
+    );
+
+    {
+        let connection = database.connection().expect("a connection");
+        discover(&connection, &backend, account.id, &RoleOverrides::default())
+            .await
+            .expect("second pass");
+    }
+    assert_eq!(
+        sent_paths(&database),
+        vec!["Sent Messages".to_owned()],
+        "and the next discovery pass reaches the same answer from the same map"
+    );
+}
