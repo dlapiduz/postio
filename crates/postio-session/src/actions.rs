@@ -47,8 +47,8 @@ use postio_model::{
     OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, DraftRepository, FlagSource, MailboxRepository, MessageRepository, MessageSet,
-    OperationQueueRepository, ThreadOrder, ThreadRepository,
+    ColumnFlag, DraftRepository, FlagSource, MailboxRepository, MailboxRoleRepository,
+    MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
 
@@ -68,6 +68,7 @@ const WIRED: &[CommandId] = &[
     CommandId::Unsnooze,
     CommandId::MarkSent,
     CommandId::Undo,
+    CommandId::MapMailboxRole,
 ];
 
 /// How long [`Command::Snooze`] hides a message for, with no duration picker
@@ -166,6 +167,9 @@ struct Applied {
     reloaded: Vec<MailboxId>,
     /// Rows that changed in place: flags, read state.
     changed: Vec<MessageId>,
+    /// Whether the account's folder tree itself changed -- a role moved from
+    /// one folder to another -- so the sidebar has to re-read it.
+    mailboxes_changed: bool,
     /// What takes it back.
     inverse: Vec<Command>,
 }
@@ -271,6 +275,11 @@ impl Actions {
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkSent { draft } => vec![self.mark_sent(*draft)?],
+            Command::MapMailboxRole {
+                account,
+                role,
+                path,
+            } => vec![self.map_mailbox_role(*account, *role, path.as_deref())?],
             Command::MarkReadOnDwell { message } => vec![self.set_flag(
                 &MessageTarget::Messages(vec![*message]),
                 Flag::Seen,
@@ -607,6 +616,7 @@ impl Actions {
             // and the one they moved into is as changed as the ones they left.
             reloaded,
             changed: Vec::new(),
+            mailboxes_changed: false,
             inverse,
         })
     }
@@ -703,6 +713,7 @@ impl Actions {
             kind,
             count: messages.len(),
             messages,
+            mailboxes_changed: false,
             inverse: removed
                 .iter()
                 .map(|(source, ids)| Command::Move {
@@ -819,6 +830,7 @@ impl Actions {
             messages: moved,
             // Deliberately empty: see the doc comment. `u` says "nothing to
             // undo" rather than pretending a saga is a move.
+            mailboxes_changed: false,
             inverse: Vec::new(),
             arrived: None,
             reloaded: Vec::new(),
@@ -874,6 +886,7 @@ impl Actions {
             arrived: None,
             reloaded: Vec::new(),
             changed: Vec::new(),
+            mailboxes_changed: false,
             inverse: vec![Command::Unsnooze {
                 target: MessageTarget::Messages(ids),
             }],
@@ -915,6 +928,7 @@ impl Actions {
             arrived: None,
             reloaded,
             changed: Vec::new(),
+            mailboxes_changed: false,
             inverse: vec![Command::Snooze {
                 target: MessageTarget::Messages(ids),
             }],
@@ -1066,6 +1080,7 @@ impl Actions {
             // folders rather than being handed eighty thousand ids.
             reloaded,
             changed: Vec::new(),
+            mailboxes_changed: false,
             inverse: vec![inverse],
         })
     }
@@ -1182,6 +1197,7 @@ impl Actions {
             arrived: None,
             reloaded: Vec::new(),
             changed: repaint,
+            mailboxes_changed: false,
             inverse: vec![inverse],
         })
     }
@@ -1215,6 +1231,9 @@ impl Actions {
                 account,
                 messages: applied.changed.clone(),
             });
+        }
+        if applied.mailboxes_changed {
+            events.emit(Event::MailboxesChanged { account });
         }
         if !recording.records() {
             return;
@@ -1351,6 +1370,96 @@ impl Actions {
     ///
     /// `None` means the draft the list is on, resolved through the message
     /// its row carries, so the palette entry works where a draft is visible.
+    /// Point one of `account`'s roles at the folder at `path`, or back to
+    /// automatic (ADR 0025).
+    ///
+    /// Local-first and complete in one transaction: the account's map is
+    /// written, the chosen row takes the role, and every other selectable
+    /// row wearing it goes back to `Regular` -- so exactly one folder wears
+    /// the role from this moment, without waiting for discovery. Discovery
+    /// agrees on its next pass because it reads the same map (#964).
+    ///
+    /// Back to automatic clears the map and leaves the rows as they are: the
+    /// store keeps no server attributes to re-derive a role from, so the
+    /// honest local answer is "what you last chose, until the next pass",
+    /// and the pane labels that state. Mail is never moved (#164).
+    fn map_mailbox_role(
+        &self,
+        account: Option<AccountId>,
+        role: Option<MailboxRole>,
+        path: Option<&str>,
+    ) -> Result<Applied, CommandError> {
+        let Some(account) = account else {
+            return Err(CommandError::rejected("Pick an account first"));
+        };
+        let Some(role) = role else {
+            return Err(CommandError::rejected("Pick a role to map"));
+        };
+        if !role.is_special() || matches!(role, MailboxRole::Inbox | MailboxRole::Flagged) {
+            return Err(CommandError::rejected(
+                "That is not a role a folder can be mapped to",
+            ));
+        }
+
+        let (mut connection, _permit) = self.connect()?;
+        let previous = MailboxRoleRepository::new(&connection)
+            .for_account(account)
+            .map_err(store_failure)?
+            .into_iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path);
+        if previous.as_deref() == path {
+            return Err(CommandError::rejected("Already mapped there"));
+        }
+
+        let transaction = connection.transaction().map_err(store_failure)?;
+        let roles = MailboxRoleRepository::new(&transaction);
+        let mailboxes = MailboxRepository::new(&transaction);
+        match path {
+            Some(path) => {
+                let chosen = mailboxes
+                    .by_path(account, path)
+                    .map_err(store_failure)?
+                    .filter(|mailbox| mailbox.selectable)
+                    .ok_or_else(|| CommandError::rejected("This account has no such folder"))?;
+                roles.set(account, role, path).map_err(store_failure)?;
+                for mut mailbox in mailboxes.list_for_account(account).map_err(store_failure)? {
+                    let wanted = if mailbox.id == chosen.id {
+                        role
+                    } else if mailbox.role == role {
+                        MailboxRole::Regular
+                    } else {
+                        continue;
+                    };
+                    if mailbox.role != wanted {
+                        mailbox.role = wanted;
+                        mailboxes.update(&mailbox).map_err(store_failure)?;
+                    }
+                }
+            }
+            None => roles.clear(account, role).map_err(store_failure)?,
+        }
+        transaction.commit().map_err(store_failure)?;
+
+        Ok(Applied {
+            account,
+            kind: UndoKind::MapMailboxRole,
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            mailboxes_changed: true,
+            // The command is its own inverse: what was mapped before.
+            inverse: vec![Command::MapMailboxRole {
+                account: Some(account),
+                role: Some(role),
+                path: previous,
+            }],
+        })
+    }
+
     fn mark_sent(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
         let (connection, _permit) = self.connect()?;
         let drafts = DraftRepository::new(&connection);
@@ -1413,6 +1522,7 @@ impl Actions {
             // was wrong, the honest correction is to send the message again,
             // which is a real act with a real effect, not to un-know
             // something.
+            mailboxes_changed: false,
             inverse: Vec::new(),
         })
     }
@@ -1694,6 +1804,45 @@ mod tests {
                 events.push(event);
             }
             events
+        }
+
+        /// Two folders that both look like the sent folder, #943's shape.
+        fn two_sent_folders(&self) -> (MailboxId, MailboxId) {
+            let connection = self.database.connection().expect("a connection");
+            let sent = test_support::mailbox(&connection, &self.account, "Sent");
+            let sent_messages = test_support::mailbox(&connection, &self.account, "Sent Messages");
+            (sent.id, sent_messages.id)
+        }
+
+        /// The selectable rows wearing `role`, by path.
+        fn wearing(&self, role: postio_model::MailboxRole) -> Vec<MailboxId> {
+            let connection = self.database.connection().expect("a connection");
+            MailboxRepository::new(&connection)
+                .list_for_account(self.account.id)
+                .expect("a read")
+                .into_iter()
+                .filter(|mailbox| mailbox.role == role && mailbox.selectable)
+                .map(|mailbox| mailbox.id)
+                .collect()
+        }
+
+        /// What the account's own map says for `role`.
+        fn mapped(&self, role: postio_model::MailboxRole) -> Option<String> {
+            let connection = self.database.connection().expect("a connection");
+            postio_storage::repository::MailboxRoleRepository::new(&connection)
+                .for_account(self.account.id)
+                .expect("a read")
+                .into_iter()
+                .find(|(mapped, _)| *mapped == role)
+                .map(|(_, path)| path)
+        }
+
+        fn map_sent_to(&self, path: Option<&str>) -> Result<(), CommandError> {
+            self.run(Command::MapMailboxRole {
+                account: Some(self.account.id),
+                role: Some(postio_model::MailboxRole::Sent),
+                path: path.map(str::to_owned),
+            })
         }
 
         fn mailbox_of(&self, message: MessageId) -> MailboxId {
@@ -3390,5 +3539,98 @@ mod tests {
                 "`{id}` is registered on the bus but `act` has no arm for it"
             );
         }
+    }
+
+    // ── Mapping a role to a folder (ADR 0025, #965) ──────────────────────
+
+    #[test]
+    fn mapping_a_role_points_it_at_one_folder_and_says_so() {
+        let world = world();
+        let (_sent, sent_messages) = world.two_sent_folders();
+        assert_eq!(
+            world.wearing(postio_model::MailboxRole::Sent).len(),
+            2,
+            "the fixture starts in #943's state: two folders wearing one role"
+        );
+
+        world.map_sent_to(Some("Sent Messages")).expect("map");
+
+        let events = world.drained();
+        assert!(
+            events.contains(&Event::MailboxesChanged {
+                account: world.account.id
+            }),
+            "the sidebar has to relabel: {events:?}"
+        );
+        assert_eq!(completion(&events), Some(("Changed a folder's role", true)));
+        assert_eq!(
+            world.wearing(postio_model::MailboxRole::Sent),
+            vec![sent_messages],
+            "exactly one selectable row wears the role, and it is the chosen one"
+        );
+        assert_eq!(
+            world.mapped(postio_model::MailboxRole::Sent).as_deref(),
+            Some("Sent Messages"),
+            "and the choice is written down where discovery reads it"
+        );
+    }
+
+    #[test]
+    fn undoing_a_mapping_restores_the_one_before_it() {
+        let world = world();
+        let (sent, sent_messages) = world.two_sent_folders();
+
+        world
+            .map_sent_to(Some("Sent Messages"))
+            .expect("first choice");
+        world.map_sent_to(Some("Sent")).expect("second choice");
+        let _ = world.drained();
+        assert_eq!(world.wearing(postio_model::MailboxRole::Sent), vec![sent]);
+
+        world.run(Command::Undo).expect("undo");
+
+        let events = world.drained();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::UndoPerformed { .. })),
+            "{events:?}"
+        );
+        assert_eq!(
+            world.mapped(postio_model::MailboxRole::Sent).as_deref(),
+            Some("Sent Messages"),
+            "undo is the previous entry, not the absence of one"
+        );
+        assert_eq!(
+            world.wearing(postio_model::MailboxRole::Sent),
+            vec![sent_messages]
+        );
+
+        world.run(Command::Undo).expect("undo again");
+        assert_eq!(
+            world.mapped(postio_model::MailboxRole::Sent),
+            None,
+            "and undoing the first choice is back to automatic"
+        );
+    }
+
+    #[test]
+    fn mapping_to_a_folder_the_account_does_not_have_is_refused() {
+        let world = world();
+        let (sent, sent_messages) = world.two_sent_folders();
+
+        let outcome = world.map_sent_to(Some("Nowhere"));
+
+        assert!(
+            matches!(outcome, Err(CommandError::Rejected(_))),
+            "a folder the server never listed is not a place mail can go: {outcome:?}"
+        );
+        assert_eq!(world.mapped(postio_model::MailboxRole::Sent), None);
+        assert_eq!(
+            world.wearing(postio_model::MailboxRole::Sent),
+            vec![sent, sent_messages],
+            "nothing moved"
+        );
+        assert!(world.drained().is_empty(), "and nothing was announced");
     }
 }

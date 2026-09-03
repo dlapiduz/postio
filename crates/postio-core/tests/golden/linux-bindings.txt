@@ -60,6 +60,7 @@ delete_saved_search	d
 toggle_account_enabled	Return
 remove_account	d
 update_credential	c
+map_mailbox_role	m
 next_scope	g a
 refresh	F5 | R
 open_parts	p

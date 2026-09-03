@@ -65,6 +65,8 @@ pub enum UndoKind {
     Unsnooze,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
+    /// One of an account's roles was pointed at a folder (ADR 0025).
+    MapMailboxRole,
 }
 
 impl UndoKind {
@@ -83,6 +85,8 @@ impl UndoKind {
             // Never plural: this settles one draft, because the question it
             // answers was asked about one message.
             UndoKind::MarkedSent => "Marked as sent".to_owned(),
+            // Never counted either: it is about a folder, not about messages.
+            UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
         }
