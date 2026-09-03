@@ -240,6 +240,35 @@ mod tests {
         ])
     }
 
+    /// RFC 4315 §2.1, and the reason the fallback is shaped the way it is.
+    ///
+    /// > If the server does not support the UIDPLUS capability, the client
+    /// > should fall back to using the STORE command to temporarily remove
+    /// > the \Deleted flag from messages it does not want to remove.
+    ///
+    /// The hazard the RFC is naming is a bare `EXPUNGE`, which removes every
+    /// `\Deleted` message in the mailbox and not just the ones this move
+    /// touched. Postio avoids it from the other side: with UIDPLUS it uses
+    /// `UID EXPUNGE`, which names its victims, and without UIDPLUS it does
+    /// not expunge at all — see `mutate::CopyThenDelete`. Asserted here
+    /// because "we never send a bare EXPUNGE after a move" is a claim that
+    /// should fail a run if it stops being true (#681).
+    #[test]
+    fn a_move_never_falls_back_to_an_untargeted_expunge() {
+        assert_eq!(
+            dispatch(&["IMAP4rev1", "UIDPLUS"]).move_strategy(),
+            MoveStrategy::CopyThenDelete { uid_expunge: true },
+            "with UIDPLUS the removal names the UIDs it means"
+        );
+        assert_eq!(
+            dispatch(&["IMAP4rev1"]).move_strategy(),
+            MoveStrategy::CopyThenDelete { uid_expunge: false },
+            "without it Postio declines to expunge rather than expunging the \
+             whole mailbox — the source copy is left flagged `\\Deleted`, \
+             which is the named exception in docs/rfc-compliance.md"
+        );
+    }
+
     #[test]
     fn a_full_featured_server_gets_every_fast_path() {
         let dispatch = full_featured();

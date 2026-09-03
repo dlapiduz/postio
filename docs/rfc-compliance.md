@@ -205,3 +205,49 @@ is a bare `.`.
 Add to a section rather than starting a new document. A verdict that changes
 changes here and in `crates/postio-model/tests/rfc5322.rs` in the same commit —
 the point of having both is that neither can drift alone.
+
+---
+
+## RFC 4315 — UIDPLUS
+
+**Reviewed:** 2026-09-02, against `postio-imap`'s `dispatch` and `mutate`, and
+`postio-sync`'s `drain`. This is the first slice of #681; **CONDSTORE/QRESYNC
+(7162), MOVE (6851), List-Id (2919) and the base protocol (3501/9051) are not
+reviewed yet** and no verdict below should be read as covering them.
+
+### Verdicts
+
+| § | What it says | Verdict |
+|---|---|---|
+| **2.1** Removal without UIDPLUS | Fall back so a removal does not take other `\Deleted` messages with it | **Compliant, with a named exception.** With UIDPLUS the removal is `UID EXPUNGE`, which names its UIDs. Without it Postio does not expunge at all rather than doing the RFC's STORE-dance — safer, and it leaves the source copy behind flagged `\Deleted`. See below. |
+| **2.1** `UID EXPUNGE` gating | Only meaningful when the capability is present | **Compliant.** `Dispatch::move_strategy` gates on it, asserted by `a_move_never_falls_back_to_an_untargeted_expunge`. |
+| **3** `COPYUID` on a copy | A UIDPLUS server *SHOULD* return it; **MAY** omit it for a `UIDNOTSTICKY` mailbox, and **SHOULD NOT** send it without `SELECT`/`EXAMINE` rights | **Gap — [#903](https://github.com/dlapiduz/postio/issues/903).** An empty mapping from a UIDPLUS server is read as "the message is no longer in that mailbox on the server". See below. |
+| **3** Absent response code | "If the server does not return the APPENDUID or COPYUID response codes, the client can discover this information by selecting the destination mailbox" | **Gap — [#903](https://github.com/dlapiduz/postio/issues/903).** Absence means the UIDs are unknown; Postio treats it as evidence about where the message *is*. |
+
+### The named exception: a move without UIDPLUS leaves the source behind
+
+`MoveStrategy::CopyThenDelete { uid_expunge: false }` copies, sets `\Deleted`,
+and stops. The RFC suggests a client instead clear `\Deleted` from everything
+it does *not* want removed, expunge, and put the flags back — a dance that is
+correct and races every other client touching that mailbox.
+
+Postio declines the dance. Nothing in the tree enqueues an untargeted
+`EXPUNGE` after a move, so no message a person marked `\Deleted` elsewhere can
+be removed by a move they made here. The cost is that the move is incomplete
+on the server: the source copy remains, flagged, until something expunges that
+mailbox. Another client will show the message in both places until then.
+
+That is a deliberate trade — an incomplete move is recoverable and a
+collaterally-expunged message is not.
+
+### The gap: an absent COPYUID is not a missing message ([#903](https://github.com/dlapiduz/postio/issues/903))
+
+`drain` reads an empty mapping from a UIDPLUS server as proof the source
+message was already gone, settles the operation as obsolete, and records that
+sentence as the reason. RFC 4315 §3 licenses neither half: the server is
+allowed to omit the code for a `UIDNOTSTICKY` destination or one the account
+cannot `SELECT`, and absence says only that the UIDs are unknown.
+
+Two ordinary server configurations therefore produce a successful move that
+Postio files as "already gone" — and, more importantly, a move that genuinely
+failed looks identical, so it is dropped rather than retried.
