@@ -33,6 +33,7 @@ mod contacts;
 mod cross_account;
 mod drafts;
 mod egress;
+mod mailbox_roles;
 mod mailboxes;
 mod messages;
 mod operations;
@@ -49,6 +50,7 @@ pub use cross_account::{
 };
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
+pub use mailbox_roles::MailboxRoleRepository;
 pub use mailboxes::MailboxRepository;
 pub use operations::{OperationQueueRepository, QueuedOperation};
 pub use settings::SettingsRepository;
