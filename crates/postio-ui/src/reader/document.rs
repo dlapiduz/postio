@@ -186,12 +186,12 @@ pub fn wrap_document(content: &str, remote: RemoteImages) -> String {
 /// The stylesheet [`wrap_document`] inlines: the generated token palette,
 /// the structural rules, and the embedded font faces.
 ///
-/// `include_str!` from the design data both frontends share — compiled in,
-/// so a frontend cannot render with a stale or missing stylesheet.
+/// `include_str!` from this crate's own data directory — compiled in, so a
+/// frontend cannot render with a stale or missing stylesheet.
 fn reader_css() -> String {
     let mut css = embedded_font_faces().to_owned();
-    css.push_str(include_str!("../../../postio-gtk/data/reader-tokens.css"));
-    css.push_str(include_str!("../../../postio-gtk/data/reader.css"));
+    css.push_str(include_str!("../../data/reader-tokens.css"));
+    css.push_str(include_str!("../../data/reader.css"));
     css
 }
 
@@ -210,7 +210,7 @@ fn reader_css() -> String {
 /// and a second copy would be one that could silently drift from the design
 /// system the first is regenerated from.
 pub fn reader_ground(dark: bool) -> &'static str {
-    const PALETTE: &str = include_str!("../../../postio-gtk/data/reader-tokens.css");
+    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
     const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
 
     let (light, dark_block) = PALETTE
@@ -259,71 +259,98 @@ pub struct Face {
 /// ever resolve to one of eight files this project vendored" a property of
 /// the type system rather than of a handler remembering to check. Nothing
 /// here is a path, so there is no traversal to get wrong.
-pub const FACES: &[Face] = &[
+///
+/// The bytes have one owner (#799): `postio-gtk`'s Pango integration
+/// (`fonts::install_into`) reads them from here rather than keeping a second
+/// copy in its own `GResource` bundle.
+///
+/// `static`, not `const`: a `const` is re-evaluated at every use site, so a
+/// second crate reading `FACES` would get its own freshly promoted copy of
+/// every byte array — the exact duplication this table exists to remove, just
+/// moved from the `GResource` bundle into the linker's `.rodata` instead. A
+/// `static` has one address for the life of the binary, so `postio-gtk`
+/// referencing it costs a pointer, not 909 KB.
+///
+/// Provenance — https://github.com/google/fonts, `main`, fetched 2026-08-22:
+///   fonts/barlow/            ofl/barlow/            © 2017 The Barlow Project Authors
+///   fonts/barlow-condensed/  ofl/barlowcondensed/   © 2017 The Barlow Project Authors
+///   fonts/ibm-plex-mono/     ofl/ibmplexmono/       © 2017 IBM Corp. ("Plex")
+pub static FACES: &[Face] = &[
     Face {
         name: "Barlow-Regular.ttf",
         family: "Barlow",
         weight: 400,
         style: "normal",
-        bytes: include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Regular.ttf"),
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Regular.ttf"),
     },
     Face {
         name: "Barlow-Medium.ttf",
         family: "Barlow",
         weight: 500,
         style: "normal",
-        bytes: include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Medium.ttf"),
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Medium.ttf"),
     },
     Face {
         name: "Barlow-Bold.ttf",
         family: "Barlow",
         weight: 700,
         style: "normal",
-        bytes: include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Bold.ttf"),
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Bold.ttf"),
     },
     Face {
         name: "Barlow-Italic.ttf",
         family: "Barlow",
         weight: 400,
         style: "italic",
-        bytes: include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Italic.ttf"),
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Italic.ttf"),
     },
     Face {
         name: "BarlowCondensed-Regular.ttf",
         family: "Barlow Condensed",
         weight: 400,
         style: "normal",
-        bytes: include_bytes!(
-            "../../../postio-gtk/data/fonts/barlow-condensed/BarlowCondensed-Regular.ttf"
-        ),
+        bytes: include_bytes!("../../data/fonts/barlow-condensed/BarlowCondensed-Regular.ttf"),
     },
     Face {
         name: "BarlowCondensed-SemiBold.ttf",
         family: "Barlow Condensed",
         weight: 600,
         style: "normal",
-        bytes: include_bytes!(
-            "../../../postio-gtk/data/fonts/barlow-condensed/BarlowCondensed-SemiBold.ttf"
-        ),
+        bytes: include_bytes!("../../data/fonts/barlow-condensed/BarlowCondensed-SemiBold.ttf"),
     },
     Face {
         name: "IBMPlexMono-Regular.ttf",
         family: "IBM Plex Mono",
         weight: 400,
         style: "normal",
-        bytes: include_bytes!(
-            "../../../postio-gtk/data/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf"
-        ),
+        bytes: include_bytes!("../../data/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf"),
     },
     Face {
         name: "IBMPlexMono-Medium.ttf",
         family: "IBM Plex Mono",
         weight: 500,
         style: "normal",
-        bytes: include_bytes!(
-            "../../../postio-gtk/data/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf"
-        ),
+        bytes: include_bytes!("../../data/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf"),
     },
+];
+
+/// Each vendored family's licence text, as `(family, OFL text)` — the same
+/// families [`FACES`] embeds, read from beside them so the licence a family
+/// ships under can never drift from the bytes it names.
+///
+/// `postio-gtk`'s About dialog (`fonts::licenses`) attributes the fonts from
+/// here rather than from a copy that could go stale. `static` for the same
+/// reason as [`FACES`].
+pub static LICENSES: &[(&str, &str)] = &[
+    ("Barlow", include_str!("../../data/fonts/barlow/OFL.txt")),
+    (
+        "Barlow Condensed",
+        include_str!("../../data/fonts/barlow-condensed/OFL.txt"),
+    ),
+    (
+        "IBM Plex Mono",
+        include_str!("../../data/fonts/ibm-plex-mono/OFL.txt"),
+    ),
 ];
 
 /// The face `name` refers to, or `None`.
@@ -587,7 +614,7 @@ mod tests {
                 ground.starts_with('#'),
                 "the ground should be a hex literal the frontend can parse: {ground}"
             );
-            let palette = include_str!("../../../postio-gtk/data/reader-tokens.css");
+            let palette = include_str!("../../data/reader-tokens.css");
             assert!(
                 palette.contains(&format!("--r-ground: {ground};")),
                 "reader_ground({dark}) returned {ground}, which the generated \

@@ -1,9 +1,10 @@
-//! The reader's `--r-*` palette (`postio-gtk/data/reader-tokens.css`) is a
-//! build artefact of the same `Tokens` pipeline `tests/tokens.rs` checks —
-//! see `postio_ui::tokens::generate_reader`. These tests are what stops it
-//! drifting. The checks over `postio-gtk/data/reader.css` itself — the
-//! hand-authored consumer stylesheet, not a generated artefact — stay in
-//! `postio-gtk/tests/reader_tokens.rs`, where that file lives (#569).
+//! The reader's `--r-*` palette (`data/reader-tokens.css`, in this crate's
+//! own data directory since #799) is a build artefact of the same `Tokens`
+//! pipeline `tests/tokens.rs` checks — see `postio_ui::tokens::generate_reader`.
+//! These tests are what stops it drifting. The checks over `data/reader.css`
+//! itself — the hand-authored consumer stylesheet, not a generated artefact —
+//! stay in `postio-gtk/tests/reader_tokens.rs`, which reads it from here
+//! (#569, #799).
 //!
 //! No display to guard: this crate has no toolkit dependency at all.
 
@@ -13,14 +14,6 @@ use postio_ui::tokens::{self, Tokens};
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// `postio-gtk`'s own directory, a sibling under `crates/`.
-fn gtk_dir() -> PathBuf {
-    manifest_dir()
-        .parent()
-        .expect("crates/postio-ui")
-        .join("postio-gtk")
 }
 
 /// The same discovery `build.rs` does, so the two cannot disagree.
@@ -65,7 +58,7 @@ fn label(path: &std::path::Path) -> String {
 }
 
 fn generated() -> String {
-    std::fs::read_to_string(gtk_dir().join("data").join("reader-tokens.css"))
+    std::fs::read_to_string(manifest_dir().join("data").join("reader-tokens.css"))
         .expect("data/reader-tokens.css is missing; run `cargo build -p postio-gtk`")
 }
 

@@ -1,5 +1,7 @@
-//! The compiled GResource bundle: the generated stylesheet and the vendored
-//! fonts, linked into the binary by `build.rs`.
+//! The compiled GResource bundle: the generated stylesheet, the app icons and
+//! desktop metadata, linked into the binary by `build.rs`. The vendored fonts
+//! and the reader's own stylesheets are not in here — they are `postio-ui`'s
+//! data (#799), embedded directly where that crate reads them.
 //!
 //! Registration is idempotent and never touches the filesystem or the network.
 
@@ -13,21 +15,6 @@ pub const TOKENS_CSS: &str = "/dev/postio/Postio/tokens.css";
 
 /// Postio's own widget styles, layered on top of the tokens.
 pub const SHELL_CSS: &str = "/dev/postio/Postio/shell.css";
-
-/// The reading pane's generated palette (#296): the `--r-*` custom
-/// properties [`READER_CSS`]'s structural rules reference, computed from the
-/// same design tokens as [`TOKENS_CSS`] but as literal values, since a
-/// `WebView`'s CSS engine cannot see GTK's `--postio-*` variables.
-pub const READER_TOKENS_CSS: &str = "/dev/postio/Postio/reader-tokens.css";
-
-/// The reading pane's stylesheet, injected into the `WebView` — see
-/// `reader::view`. Separate from [`SHELL_CSS`] because it targets a
-/// different CSS engine entirely and cannot use the GTK `--postio-*`
-/// variables `tokens.css` defines.
-pub const READER_CSS: &str = "/dev/postio/Postio/reader.css";
-
-/// The directory holding the vendored font families, each next to its licence.
-pub const FONTS: &str = "/dev/postio/Postio/fonts";
 
 /// The bundled icon theme, laid out the way `GtkIconTheme` expects a resource
 /// path to be: `<size>/<context>/<name>.svg` beneath this directory.

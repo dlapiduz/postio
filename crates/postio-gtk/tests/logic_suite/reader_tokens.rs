@@ -1,27 +1,36 @@
-//! `data/reader.css`'s own discipline: it holds only structure, referencing
-//! the generated `--r-*` palette rather than restating a colour by hand
-//! (#296). The checks that the generated palette itself faithfully
-//! reproduces the design system live with the generator, in
-//! `postio-ui/tests/reader_tokens.rs` (#569) — this file is what is left
-//! once those move: tests about `reader.css`, the hand-authored file this
-//! crate owns, not about the `Tokens` pipeline that produces its palette.
+//! `reader.css`'s own discipline: it holds only structure, referencing the
+//! generated `--r-*` palette rather than restating a colour by hand (#296).
+//! The checks that the generated palette itself faithfully reproduces the
+//! design system live with the generator, in `postio-ui/tests/reader_tokens.rs`
+//! (#569) — this file is what is left once those move: tests about
+//! `reader.css`, the hand-authored file, not about the `Tokens` pipeline that
+//! produces its palette.
+//!
+//! Both files live in `postio-ui`'s own data directory (#799) — the faces and
+//! the reader stylesheets are `postio-ui`'s data, read here by relative path
+//! across crates the same way `postio-ui`'s own tests do.
 //!
 //! No GTK here — see `gtk_reader.rs` for the checks that need a display.
 
 use std::path::PathBuf;
 
-fn manifest_dir() -> PathBuf {
+/// `postio-ui`'s data directory, a sibling under `crates/`.
+fn ui_data_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates/postio-gtk")
+        .join("postio-ui")
+        .join("data")
 }
 
 fn generated() -> String {
-    std::fs::read_to_string(manifest_dir().join("data").join("reader-tokens.css"))
-        .expect("data/reader-tokens.css is missing; run `cargo build -p postio-gtk`")
+    std::fs::read_to_string(ui_data_dir().join("reader-tokens.css"))
+        .expect("postio-ui/data/reader-tokens.css is missing; run `cargo build -p postio-gtk`")
 }
 
 fn reader_css() -> String {
-    std::fs::read_to_string(manifest_dir().join("data").join("reader.css"))
-        .expect("data/reader.css is missing")
+    std::fs::read_to_string(ui_data_dir().join("reader.css"))
+        .expect("postio-ui/data/reader.css is missing")
 }
 
 /// The dark scheme is a real `@media` query — WebKit, unlike an
