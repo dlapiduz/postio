@@ -23,7 +23,13 @@ jobs:
     name: Flatpak bundle
     runs-on: ubuntu-26.04
     steps:
+      # Full history, not the default single commit: bumping the version
+      # below needs `git log`/`git describe` against the *previous* tag to
+      # write the changelog, and pushing the bump needs real ancestry to
+      # rebase onto if `main` moves while this job runs.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       # A cold debug build already ran a runner out of disk once and killed lld
       # with SIGBUS mid-link. This build is --release and additionally needs the
@@ -35,6 +41,99 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
                       /usr/local/share/boost /usr/local/.ghcup
           df -h /
+
+      # #886: pushing a tag is the whole trigger for a release, not a script
+      # a session runs by hand first. Everything from here down to "Commit
+      # and push the version bump" is skipped on a `workflow_dispatch` rerun
+      # (github.ref_type != 'tag'), which still wants to rebuild whatever is
+      # already checked out, unbumped.
+      #
+      # This has to be the same job the Flatpak build runs in, not a job of
+      # its own: the bump below lands as a commit to `main`, and the build
+      # further down needs to see that commit's Cargo.toml without a second
+      # checkout, which is the only way the bundle it produces and the
+      # version it claims to be never disagree.
+      - uses: ./.github/actions/rust-workspace
+        if: github.ref_type == 'tag'
+
+      - name: Generate release notes since the last tag
+        if: github.ref_type == 'tag'
+        run: |
+          : > release-notes.txt
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
+          if [ -n "$LAST_TAG" ]; then
+            git log "$LAST_TAG"..HEAD --no-merges --format='- %s' \
+              | grep -v '^- chore(release):' >> release-notes.txt || true
+          fi
+          [ -s release-notes.txt ] || echo "- Maintenance release" >> release-notes.txt
+          echo "--- release-notes.txt ---"
+          cat release-notes.txt
+
+      # The mechanical half of what cutting v0.2.0 by hand required: the
+      # workspace version, every internal path-dependency pin that names it,
+      # and the AppStream changelog. See scripts/release-bump.py and #886.
+      - name: Bump the workspace version for this release
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 scripts/release-bump.py "$VERSION" --notes-file release-notes.txt
+
+      # Also regenerates Cargo.lock for the bumped internal versions -- the
+      # same side effect this had by hand.
+      - name: Verify the bump compiles
+        if: github.ref_type == 'tag'
+        run: cargo check --workspace --all-targets
+
+      # Same reasoning and the same mechanism as ci.yml's `test` job: no
+      # display means the GTK suites skip themselves and report a false
+      # green, so the release gate gets the real compositor, not a weaker
+      # substitute. See that job's comments for the "why" in full.
+      - name: Give the GTK suites a runtime directory
+        if: github.ref_type == 'tag'
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      # A release does not ship on a test that only failed because this
+      # runner was busy. See scripts/test-with-flake-retry.sh -- a target
+      # that fails once is retried alone before it is allowed to block
+      # anything; one that fails twice still blocks the release.
+      - name: Run the release gate
+        if: github.ref_type == 'tag'
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- scripts/test-with-flake-retry.sh
+
+      - name: Run repository invariant checks
+        if: github.ref_type == 'tag'
+        run: bash scripts/check.sh
+
+      # `main` moves while this job runs -- it did, three times, cutting
+      # v0.2.0 by hand. A push rejected as non-fast-forward means exactly
+      # that; the fix is to rebase the one bump commit onto wherever `main`
+      # ended up and try again, not to fail a release over an ordinary
+      # landing that happened at the wrong moment.
+      - name: Commit and push the version bump
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git config user.name "postio-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock crates/*/Cargo.toml \
+            crates/postio-gtk/data/dev.postio.Postio.metainfo.xml
+          git commit -m "chore(release): bump workspace to ${VERSION}"
+
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected -- main moved, rebasing and retrying ($attempt/5)" >&2
+            git fetch origin main
+            git rebase origin/main
+          done
+          echo "::error::could not push the version bump after 5 attempts" >&2
+          exit 1
 
       - name: Install flatpak
         run: |
@@ -122,6 +221,25 @@ jobs:
           output-file: ${{ env.SBOM }}
           upload-artifact: false
           upload-release-assets: false
+
+      # A tag push does not create a GitHub Release on its own -- nothing
+      # here ever did, so `gh release upload` below always failed with
+      # "release not found" the one time this workflow ran from an actual
+      # tag push (v0.2.0's own: the bundle, SBOM and attestations all built
+      # clean and were never published anywhere a person would find them).
+      # Guarded on not existing yet, unlike `gh release upload --clobber`
+      # below it: `create` has no clobber flag, and a rerun (workflow_dispatch
+      # against the same tag, after some earlier step failed) must not error
+      # out here just because this step already succeeded once.
+      - name: Create the release
+        if: github.ref_type == 'tag'
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Attach to the release
         if: github.ref_type == 'tag'

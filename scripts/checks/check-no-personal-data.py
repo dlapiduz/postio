@@ -80,6 +80,12 @@ SKIP_PATHS = (
 # Upstream/maintainer addresses that belong in a licence or manifest.
 ALLOW_EXACT = {
     "noreply@anthropic.com",
+    # release.yml's bot commit identity for the version-bump it pushes
+    # (#886). A `users.noreply.github.com` address is deliberate privacy,
+    # not a leak -- the git-config-specific check below already treats it
+    # that way; this is the same domain, named exactly, for the one place
+    # it appears as plain text rather than as a `user.email` value.
+    "release-bot@users.noreply.github.com",
 }
 
 
