@@ -527,6 +527,44 @@ with tempfile.TemporaryDirectory(
         "deny",
     )
 
+    # A `cd` inside a quoted string is prose, not a destination (#889). This
+    # bit within an hour of #412 landing: a `gh issue comment` whose body
+    # quoted the command that had just been refused was itself refused, twice,
+    # because the body contained the words `&& cd <worktree> &&`.
+    #
+    # What matters is whether the `cd` *keyword* is quoted, never whether its
+    # argument is -- `cd '<worktree>' && …` is a correct invocation and is
+    # covered above.
+    for cmd in [
+        # The exact shape that was refused: a shell operator before the `cd`,
+        # which is what makes it look like a command position, inside a
+        # quoted argument that is only ever text.
+        f'gh issue comment 412 -b "my next command was scripts/issue-claim.sh 478 '
+        f'&& cd {mine.root} && wc -l"',
+        f"git commit -m 'reproduced with: cd {mine.root}; cargo test'",
+        f'echo "run it as | cd {mine.root} | and see"',
+    ]:
+        claim_case(
+            f"prose mentioning a cd: {cmd[:60]!r}…",
+            decide(cmd, cwd=SHARED, session="gamma"),
+            "allow",
+        )
+
+    # The same weakness pointing the other way, which was latent rather than
+    # harmless: before #889 a quoted `cd` could *grant* the worktree exemption
+    # on the strength of a commit message, in the shared checkout where every
+    # rule in `RULES` applies.
+    quoted_cd_out = os.path.join(WORKTREES, "issue-9003")
+    claim_case(
+        "a quoted cd does not grant the exemption either",
+        decide(
+            f"git commit -m 'as we did in && cd {quoted_cd_out}' && git add -A",
+            cwd=SHARED,
+            session="gamma",
+        ),
+        "deny",
+    )
+
     # Fail open where there is nothing to arbitrate: no session id (the hook
     # run by hand, or by these very tests above), and a directory under the
     # worktrees root that no `git worktree add` ever made.

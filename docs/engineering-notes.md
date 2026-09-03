@@ -2949,6 +2949,26 @@ Three things about it are worth knowing before changing it:
   hand and by its own tests without arbitrating between sessions that do not
   exist.
 
+**Making a guard's answer load-bearing in a new direction re-prices every
+weakness in how it computes that answer.** #889, an hour after #412. Before
+#412, `cd_destination` misreading a `cd` inside a quoted string could only
+*grant* the worktree exemption, so a commit message that mentioned one made
+the guard more permissive on a command that was going to run in the shared
+tree anyway — invisible in practice, and its docstring said it stripped
+heredocs and said nothing about quotes. #412 made the same function decide a
+*refusal*, and it immediately refused a `gh issue comment` whose body quoted
+the command that had just been refused. Twice.
+
+The fix is worth knowing precisely, because the obvious one is wrong:
+`strip_quoted` on the whole command blanks quoted *arguments*, and
+`cd '<worktree>' && cargo fmt --all` is a correct invocation the suite already
+covers — it would be left with an empty target. What matters is whether the
+`cd` **keyword** sits inside a quoted span, never whether its argument does.
+The same pass taught the reach-in path scan to skip quoted spans, which costs
+a real miss (`rm -rf "<worktree>"` with the path quoted) and is the right way
+round: that half is defence in depth behind the cwd rule, which quoting cannot
+hide from.
+
 **Git history was rewritten in place once, before any remote existed**, with
 `git filter-repo --replace-text` to scrub personal addresses from every
 commit. Every commit SHA changed as a result. Old notes citing pre-rewrite
