@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::Extras;
+use crate::{ConfigError, Extras};
 
 /// How Postio learns about new mail (#867).
 ///
@@ -230,6 +230,40 @@ impl Default for SyncConfig {
     }
 }
 
+/// Rewrites `text`'s `[sync]` table to match `sync`, leaving every *other*
+/// section — and any comment attached to one — untouched. The structured
+/// Sync & Storage pane's write path (#874), the same `patch_filters` (#869)
+/// and `patch_ui` (#873) already established for exactly this reason.
+///
+/// `[sync]` itself is regenerated whole on every call, so a comment attached
+/// directly to `[sync]` — its own header, or one of its own keys — does not
+/// survive; see `patch_ui`'s own doc for why that half of the promise is
+/// deliberate rather than an oversight.
+pub fn patch_sync(text: &str, sync: &SyncConfig) -> crate::Result<String> {
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ConfigError::parse(None, &err))?;
+    doc.as_table_mut().remove("sync");
+
+    let fragment = toml::to_string(&SyncOnly { sync })
+        .map_err(|err| ConfigError::Serialize(err.to_string()))?;
+    let fragment_doc = fragment
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ConfigError::parse(None, &err))?;
+    if let Some(item) = fragment_doc.as_table().get("sync") {
+        doc.as_table_mut().insert("sync", item.clone());
+    }
+    Ok(doc.to_string())
+}
+
+/// Serializes as just a `[sync]` table, with no other section — [`patch_sync`]'s
+/// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
+/// splice in.
+#[derive(Serialize)]
+struct SyncOnly<'a> {
+    sync: &'a SyncConfig,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +363,51 @@ mod tests {
             "the retired key must not survive a write: {written}"
         );
         assert!(written.contains("check_for_mail = \"poll\""), "{written}");
+    }
+
+    // -- Acceptance: the Sync & Storage pane patches [sync] only (#874) -----
+
+    #[test]
+    fn patch_sync_rewrites_only_the_sync_table_leaving_everything_else_verbatim() {
+        let original = "\
+# a hand-written comment nobody wants to lose
+[ui]
+theme = \"dark\" # inline comment, also not to be lost
+
+[sync]
+check_for_mail = \"idle\"
+poll_interval_secs = 300
+";
+        let mut sync: SyncConfig =
+            toml::from_str("check_for_mail = \"idle\"\npoll_interval_secs = 300\n").expect("parse");
+        sync.check_for_mail = CheckForMail::Manual;
+        sync.notify = false;
+
+        let patched = patch_sync(original, &sync).expect("patches");
+
+        assert!(
+            patched.contains("# a hand-written comment nobody wants to lose"),
+            "a comment outside [sync] must survive verbatim: {patched}"
+        );
+        assert!(
+            patched.contains("theme = \"dark\" # inline comment, also not to be lost"),
+            "an unrelated section's own formatting must survive verbatim: {patched}"
+        );
+
+        let reparsed: SyncConfig =
+            toml::from_str(patched.split("[sync]").nth(1).unwrap_or_default())
+                .expect("the patched [sync] table still parses");
+        assert_eq!(reparsed.check_for_mail, CheckForMail::Manual);
+        assert!(!reparsed.notify);
+    }
+
+    #[test]
+    fn patch_sync_adds_the_table_when_it_did_not_exist_before() {
+        let original = "[ui]\ntheme = \"dark\"\n";
+        let sync = SyncConfig::default();
+
+        let patched = patch_sync(original, &sync).expect("patches");
+        assert!(patched.contains("[sync]"));
+        assert!(patched.contains("theme = \"dark\""));
     }
 }

@@ -79,7 +79,7 @@ pub use keys::KeyBindings;
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
 pub use storage::StorageConfig;
-pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig};
+pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 pub use ui::{Density, Theme, UiConfig};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
