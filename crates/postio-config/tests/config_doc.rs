@@ -70,6 +70,12 @@ const ENTRIES: &[Entry] = &[
                        Off leaves every binding in force -- this only stops the row from \
                        naming them.",
     },
+    Entry {
+        path: "ui.sender_avatars",
+        kind: "boolean",
+        default: "true",
+        description: "Show each row's sender-initials chip.",
+    },
     // ── [sync] ────────────────────────────────────────────────────────
     Entry {
         path: "sync.idle",
