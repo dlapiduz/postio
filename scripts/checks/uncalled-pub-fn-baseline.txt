@@ -32,10 +32,6 @@ config_dir                        # crates/postio-config/src/paths.rs:83
 conformance_cases                 # crates/postio-core/src/aim.rs:346
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 enqueue_inverse                   # crates/postio-storage/src/repository/operations.rs:375
-# Deferred on purpose by #416, which wired the other two sweeps and called
-# this one "arguably fine as-is, since it is opt-in": it needs `[storage]
-# max_bytes` to exist before anything can call it. Tracked separately.
-evict_to_fit                      # crates/postio-storage/src/blob.rs:390
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tcp                       # crates/postio-account/src/imap/transport.rs:624

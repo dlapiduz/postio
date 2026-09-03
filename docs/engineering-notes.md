@@ -3185,8 +3185,10 @@ The consequence was not subtle: `MessageRepository::delete` removes a
 message's row and deliberately does *not* touch its blobs, because the
 schema delegates reclamation to the sweep, so **deleting mail freed nothing,
 ever**. The worst case needs no user at all — a `UIDVALIDITY` reset wipes and
-re-syncs a whole mailbox, orphaning every blob in it at once. They are wired
-now from `postio_app::reclaim_disk`, beside the body-index catch-up.
+re-syncs a whole mailbox, orphaning every blob in it at once. All three are
+wired now from `postio_app::reclaim_disk`, beside the body-index catch-up —
+the first two by #416, `evict_to_fit` by #862, which had to invent the caller
+*and* the ceiling it reads.
 
 This is the **third recorded instance** of the same shape, after
 `MailBackend::list_mailboxes` (no production caller for the life of the
@@ -3228,9 +3230,20 @@ directions — an entry that has gained a caller, or lost its definition, also
 fails — so it can only shrink and cannot rot into a list of things that used
 to be true.
 
-`evict_to_fit` is the one baseline entry whose reason is known: #416 scoped it
-out on purpose, because it needs a `[storage] max_bytes` to read before
-anything can call it (#862).
+`evict_to_fit` was the one baseline entry whose reason was known: #416 scoped
+it out on purpose, because it needed a `[storage] max_bytes` to read before
+anything could call it. #862 wired it — `postio_session::enforce_storage_ceiling`,
+spawned from `postio_app::reclaim_disk` behind the two free sweeps — and its
+line is gone from the baseline, which is the only way a line there may leave.
+
+**A setting that parses and does nothing is its own failure mode.** The other
+two sweeps leaked; this one did not, which is exactly why it sat uncalled for
+longer. `[storage] max_bytes` deserialized, validated, round-tripped through
+an unknown-key test and was compared against by `StorageConfig::is_over` —
+every layer green — while nothing anywhere read it. A user who set a ceiling
+had stopped worrying about their disk on the strength of a value that reached
+no code. When judging whether an uncalled `pub fn` is urgent, "it only fails
+silently" is not the mitigating half of the sentence.
 
 **The grace period is load-bearing, and a test that shortens it tests nothing.**
 `GarbageCollection::min_age` (one hour, `postio_session::BLOB_GRACE_PERIOD`)

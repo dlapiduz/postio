@@ -121,3 +121,112 @@ pub fn opening_a_store_reclaims_what_nothing_references() {
         "opening the store left debris from a fetch that never finished"
     );
 }
+
+/// The third sweep, and the one that carries a policy (#862).
+///
+/// `BlobStore::evict_to_fit` was the one #416 left behind — deliberately,
+/// because it is opt-in and so was the least urgent of the three. It stayed
+/// uncalled, and the consequence is a different shape from the other two:
+/// nothing leaked, but `[storage] max_bytes` was a setting that parsed,
+/// validated and round-tripped while doing **nothing whatever to somebody's
+/// disk**. A ceiling that is silently decoration is worse than no ceiling,
+/// because a user who set one has stopped worrying about the thing it does
+/// not do.
+///
+/// So, as with its sibling above, the assertion is not "eviction works" —
+/// `postio-storage` proves that five times over, and proved it while this was
+/// broken. It is **"a store this application opened, with a ceiling set, has
+/// been brought under it"**, which is the sentence that was false.
+///
+/// Both blobs here are *referenced*: a row points at each. That is what makes
+/// this test about eviction rather than about the garbage collector running a
+/// moment earlier — a sweep that only takes what nothing wants would leave
+/// both, and both are seconds old, so the grace period would spare them even
+/// if they were orphans.
+pub fn opening_a_store_with_a_ceiling_evicts_down_to_it() {
+    let state_dir = tempfile::tempdir().expect("a state directory");
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let database = test_support::memory();
+    let seeded = seed_small(&database, 11);
+    let inbox = seeded
+        .mailbox(postio_model::MailboxRole::Inbox)
+        .expect("the seed makes an inbox")
+        .clone();
+
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    // Two messages, each holding its raw source. Different fill bytes because
+    // the store is content-addressed: the same bytes twice would be one blob,
+    // and a test about *which* one goes would be testing nothing.
+    let connection = database.connection().expect("checkout");
+    let messages = postio_storage::repository::MessageRepository::new(&connection);
+    let mut written = Vec::new();
+    for (index, second) in [1_000_i64, 9_000].into_iter().enumerate() {
+        let blob = blobs
+            .put(&vec![b'a' + index as u8; 40_000])
+            .expect("put a raw source");
+        let received = chrono::TimeZone::timestamp_opt(&chrono::Utc, second, 0)
+            .single()
+            .expect("a timestamp");
+        let mut message = postio_model::Message::new(seeded.account.id, inbox.id, received);
+        message.server.uid = Some(postio_model::Uid::new(9_000 + index as u32));
+        message.server.uid_validity = Some(postio_model::UidValidity::new(1));
+        message.raw_blob_id = Some(blob.clone());
+        messages.create(&mut message).expect("create");
+        written.push(blob);
+    }
+    drop(connection);
+
+    let (old, new) = (written[0].clone(), written[1].clone());
+    assert!(blobs.contains(&old) && blobs.contains(&new));
+
+    // Room for the newer blob and nothing else.
+    let ceiling = blobs.len_of(&new).expect("len") + 16;
+
+    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, _events) = event_channel();
+    let wiring = Wiring::new(
+        database,
+        blobs.clone(),
+        bridge.handle(),
+        sink,
+        bridge.commands(),
+    )
+    // What `open_with` does with `[storage] max_bytes` out of config.toml.
+    .with_storage_ceiling(Some(ceiling));
+
+    let window = Window::default();
+    window.present();
+    while glib::MainContext::default().iteration(false) {}
+
+    // The same call `run` makes.
+    let feeds = feed_the_window(&window, &wiring)
+        .expect("the seeded store has an account")
+        .feeds;
+    let _ = feeds;
+
+    assert!(
+        settle_until(|| !blobs.contains(&old)),
+        "opening the store left it over the ceiling its config asked for"
+    );
+    assert!(
+        blobs.contains(&new),
+        "eviction took more than the ceiling required: this week's mail stays"
+    );
+}
