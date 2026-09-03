@@ -37,6 +37,7 @@ fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
                     text: None,
                     html: Some(html.to_owned()),
                     headers: None,
+                    headers_truncated: false,
                 },
                 postio_model::message::BodyState::Full,
             )
