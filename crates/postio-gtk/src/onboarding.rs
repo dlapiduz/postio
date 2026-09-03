@@ -1,8 +1,11 @@
-//! First run: one screen, an address and a password.
+//! First run: one screen, an address and a password, then how far back to
+//! sync.
 //!
-//! Canvas 3e. Type an address, Postio finds the servers, you confirm. Step 1
-//! of 1 — the canvas draws a local-store picker beside it and `postio-hiy`
-//! records that decision as dropped, so it is not here.
+//! Canvas 3e. Type an address, Postio finds the servers, you confirm, then
+//! choose a sync window (#876) — the canvas draws a local-store format
+//! picker beside that step and `postio-hiy` records that decision as
+//! dropped, so it is not here: every account is single SQLite/SQLCipher
+//! store (ADR 0014), and there is no format to choose.
 //!
 //! # What this widget will not do
 //!
@@ -155,6 +158,9 @@ pub enum Status {
     /// because the form is empty until something fills it, and the thing
     /// that knows them is the account row.
     Reauthenticate(Settings),
+    /// The account is saved; the last question before Postio starts talking
+    /// to the server on its own is how far back the first sync reaches.
+    SyncWindow,
     /// The account exists and the password is in the keyring.
     Saved,
 }
@@ -188,6 +194,79 @@ impl Status {
     }
 }
 
+/// How far back the first sync reaches, chosen once per account on the
+/// [`Status::SyncWindow`] step (#876).
+///
+/// Coarser than [`postio_config::sync::SyncConfig::initial_sync_messages`]
+/// itself — a person thinks in a window of time, not a message count — so
+/// each variant maps to a fixed count rather than to anything measured: no
+/// per-account mailbox statistics exist at this point in onboarding
+/// (discovery does not report message counts). `LastYear`'s count matches
+/// that field's own default, so picking it changes nothing a fresh install
+/// would not already do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncWindow {
+    /// Roughly a month of ordinary mail.
+    LastMonth,
+    /// A year — [`SyncConfig`](postio_config::sync::SyncConfig)'s own
+    /// default depth.
+    #[default]
+    LastYear,
+    /// No cap: the highest count the field can hold.
+    Everything,
+}
+
+impl SyncWindow {
+    /// Every choice, in the order the picker offers them.
+    pub const ALL: [SyncWindow; 3] = [
+        SyncWindow::LastMonth,
+        SyncWindow::LastYear,
+        SyncWindow::Everything,
+    ];
+
+    /// What this writes to `SyncConfig::initial_sync_messages`.
+    pub fn message_count(self) -> u32 {
+        match self {
+            SyncWindow::LastMonth => 500,
+            SyncWindow::LastYear => 5_000,
+            SyncWindow::Everything => u32::MAX,
+        }
+    }
+
+    /// The picker's own label for this choice.
+    pub fn label(self) -> &'static str {
+        match self {
+            SyncWindow::LastMonth => "Last 30 days",
+            SyncWindow::LastYear => "Last year",
+            SyncWindow::Everything => "Everything",
+        }
+    }
+
+    /// A rough size/time readout under the picker.
+    ///
+    /// Built from a flat per-message estimate (75 KiB — ADR 0017 puts most
+    /// of a message's bytes on the lazy attachment axis, so a synced-but-
+    /// unopened message is mostly headers and text) and a flat fetch rate,
+    /// for the same reason [`message_count`](Self::message_count) is a flat
+    /// map rather than a measurement: nothing has synced yet to measure.
+    pub fn estimate(self) -> String {
+        const AVERAGE_MESSAGE_BYTES: u64 = 75 * 1024;
+        const MESSAGES_PER_MINUTE: u64 = 120;
+        if self == SyncWindow::Everything {
+            return "Downloads everything the server has — size and time depend \
+                     on the mailbox."
+                .to_owned();
+        }
+        let count = u64::from(self.message_count());
+        let megabytes = (count * AVERAGE_MESSAGE_BYTES) / (1024 * 1024);
+        let minutes = count.div_ceil(MESSAGES_PER_MINUTE).max(1);
+        format!(
+            "About {megabytes} MB, {minutes} minute{} to sync",
+            if minutes == 1 { "" } else { "s" }
+        )
+    }
+}
+
 /// How tall the form gets before it scrolls instead of growing.
 ///
 /// Chosen so the whole plate — header, body and all — still fits inside the
@@ -196,6 +275,7 @@ const BODY_MAX_HEIGHT: i32 = 520;
 
 type SubmitHandler = Box<dyn Fn(&Submission)>;
 type ProbeHandler = Box<dyn Fn(&str)>;
+type StartSyncHandler = Box<dyn Fn(SyncWindow)>;
 
 mod imp {
     use super::*;
@@ -239,6 +319,22 @@ mod imp {
         /// the word *and* its `Ret` key hint.
         pub(super) connect_label: gtk::Label,
         pub(super) edit: gtk::Button,
+        /// Connect, Cancel sign-in, Edit manually and the tab hint — hidden
+        /// as one row on [`Status::SyncWindow`], where none of them apply.
+        pub(super) buttons: gtk::Box,
+        /// "step 1 of 2" / "step 2 of 2" — [`Status::SyncWindow`] is the
+        /// only status past the first, so this is exactly that check, not a
+        /// counter.
+        pub(super) step: gtk::Label,
+        /// The sync-window picker, its estimate, and its own Start sync
+        /// button — shown only on [`Status::SyncWindow`].
+        pub(super) sync_window_box: gtk::Box,
+        /// Built with `DropDown::from_strings`, which takes no default, so
+        /// this fills in during `build()` the way `password_row` does.
+        pub(super) sync_window_dropdown: std::cell::OnceCell<gtk::DropDown>,
+        pub(super) sync_estimate: gtk::Label,
+        pub(super) start_sync: gtk::Button,
+        pub(super) on_start_sync: RefCell<Vec<StartSyncHandler>>,
         pub(super) status_line: gtk::Label,
         pub(super) status: RefCell<Status>,
         /// The last settings the screen was shown, kept across `Connecting`,
@@ -436,6 +532,41 @@ impl Onboarding {
         self.imp().on_submit.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called when `Start sync` is pressed on the [`Status::SyncWindow`]
+    /// step, with the window the picker was showing at the time.
+    pub fn connect_start_sync(&self, handler: impl Fn(SyncWindow) + 'static) {
+        self.imp()
+            .on_start_sync
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// The picker's current choice.
+    pub fn sync_window(&self) -> SyncWindow {
+        SyncWindow::ALL
+            .get(
+                self.imp()
+                    .sync_window_dropdown
+                    .get()
+                    .map_or(0, |dropdown| dropdown.selected() as usize),
+            )
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Fire `Start sync` for whatever the picker is showing.
+    ///
+    /// Public for the same reason [`Onboarding::probe`] is.
+    pub fn start_sync(&self) {
+        if !matches!(self.status(), Status::SyncWindow) {
+            return;
+        }
+        let window = self.sync_window();
+        for handler in self.imp().on_start_sync.borrow().iter() {
+            handler(window);
+        }
+    }
+
     /// Run the probe for whatever is in the address field.
     ///
     /// Public so a test can drive it without synthesizing a focus change,
@@ -586,6 +717,35 @@ impl Onboarding {
             })
     }
 
+    /// Sets the sync-window picker's selection, as a click on the dropdown
+    /// would — the same test-seam shape [`Onboarding::test_activate_name`]
+    /// and its siblings use for a field GTK4 gives no supported way to
+    /// synthesize a real interaction on.
+    #[doc(hidden)]
+    pub fn test_select_sync_window(&self, window: SyncWindow) {
+        if let (Some(dropdown), Some(index)) = (
+            self.imp().sync_window_dropdown.get(),
+            SyncWindow::ALL
+                .iter()
+                .position(|candidate| *candidate == window),
+        ) {
+            dropdown.set_selected(index as u32);
+        }
+    }
+
+    /// Whether the sync-window step's own section — the picker, its
+    /// estimate and `Start sync` — is the one currently showing.
+    #[doc(hidden)]
+    pub fn test_sync_window_shown(&self) -> bool {
+        self.imp().sync_window_box.is_visible()
+    }
+
+    /// The estimate line under the picker, exactly as shown.
+    #[doc(hidden)]
+    pub fn test_sync_estimate(&self) -> String {
+        self.imp().sync_estimate.text().to_string()
+    }
+
     // -- internals ---------------------------------------------------------
 
     fn fill_manual(&self, settings: &Settings) {
@@ -667,7 +827,9 @@ impl Onboarding {
                 "Waiting for your browser…".to_owned(),
                 "content-loading-symbolic",
             ),
-            Status::Saved => (true, "Account added".to_owned(), "object-select-symbolic"),
+            Status::SyncWindow | Status::Saved => {
+                (true, "Account added".to_owned(), "object-select-symbolic")
+            }
         };
         imp.card.set_visible(card);
         imp.card_heading.set_text(&heading);
@@ -742,6 +904,20 @@ impl Onboarding {
         if let Some(message) = status.message() {
             imp.status_line.set_text(message);
         }
+
+        // The sync-window step replaces Connect/Cancel/Edit with its own
+        // picker and Start sync button — none of the credential buttons
+        // apply once the account is already saved.
+        let on_sync_window = matches!(status, Status::SyncWindow);
+        imp.buttons.set_visible(!on_sync_window);
+        imp.sync_window_box.set_visible(on_sync_window);
+        imp.sync_estimate.set_text(&self.sync_window().estimate());
+        imp.step.set_text(if on_sync_window {
+            "step 2 of 2"
+        } else {
+            "step 1 of 2"
+        });
+
         self.update_property(&[gtk::accessible::Property::Label(&heading)]);
     }
 
@@ -758,14 +934,15 @@ impl Onboarding {
         kicker.set_hexpand(true);
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
-        let step = gtk::Label::new(Some("step 1 of 1"));
-        step.add_css_class("postio-onboarding-step");
-        step.set_accessible_role(gtk::AccessibleRole::Presentation);
+        imp.step.set_text("step 1 of 2");
+        imp.step.add_css_class("postio-onboarding-step");
+        imp.step
+            .set_accessible_role(gtk::AccessibleRole::Presentation);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         header.add_css_class("postio-onboarding-header");
         header.append(&kicker);
-        header.append(&step);
+        header.append(&imp.step);
 
         imp.name.set_placeholder_text(Some("Ada Lovelace"));
         imp.name.set_hexpand(true);
@@ -979,11 +1156,53 @@ impl Onboarding {
         hint.set_xalign(1.0);
         hint.set_accessible_role(gtk::AccessibleRole::Presentation);
 
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        buttons.append(&imp.connect);
-        buttons.append(&imp.cancel_sign_in);
-        buttons.append(&imp.edit);
-        buttons.append(&hint);
+        imp.buttons.set_orientation(gtk::Orientation::Horizontal);
+        imp.buttons.set_spacing(12);
+        imp.buttons.append(&imp.connect);
+        imp.buttons.append(&imp.cancel_sign_in);
+        imp.buttons.append(&imp.edit);
+        imp.buttons.append(&hint);
+
+        // -- the sync-window step (#876) ------------------------------------
+
+        let labels: Vec<&str> = SyncWindow::ALL
+            .iter()
+            .map(|window| window.label())
+            .collect();
+        let dropdown = gtk::DropDown::from_strings(&labels);
+        dropdown.set_selected(
+            SyncWindow::ALL
+                .iter()
+                .position(|window| *window == SyncWindow::default())
+                .unwrap_or(0) as u32,
+        );
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.render()
+        ));
+        let _ = imp.sync_window_dropdown.set(dropdown.clone());
+
+        imp.sync_estimate.add_css_class("postio-onboarding-note");
+        imp.sync_estimate.set_xalign(0.0);
+        imp.sync_estimate.set_wrap(true);
+
+        imp.start_sync.set_label("Start sync");
+        imp.start_sync.add_css_class("suggested-action");
+        imp.start_sync.connect_clicked(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.start_sync()
+        ));
+
+        imp.sync_window_box
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.sync_window_box.set_spacing(9);
+        imp.sync_window_box.set_visible(false);
+        imp.sync_window_box
+            .append(&field("How far back to sync", &dropdown));
+        imp.sync_window_box.append(&imp.sync_estimate);
+        imp.sync_window_box.append(&imp.start_sync);
 
         imp.status_line.add_css_class("postio-onboarding-failed");
         imp.status_line.set_xalign(0.0);
@@ -1020,8 +1239,9 @@ impl Onboarding {
         let _ = imp.oauth_rows.set(oauth_rows);
         body.append(&imp.card);
         body.append(&imp.manual);
+        body.append(&imp.sync_window_box);
         body.append(&imp.status_line);
-        body.append(&buttons);
+        body.append(&imp.buttons);
 
         // The body scrolls; the header does not. With the server fields open
         // the form is taller than a small window, and a first-run screen that
