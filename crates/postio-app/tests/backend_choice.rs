@@ -256,12 +256,12 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.test_set_password("the-api-token");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Saved | Status::Failed(_))),
+        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
         "the add never settled: {:?}",
         screen.status()
     );
     assert!(
-        matches!(screen.status(), Status::Saved),
+        matches!(screen.status(), Status::SyncWindow),
         "the JMAP add failed: {:?}",
         screen.status()
     );
@@ -278,12 +278,12 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.test_set_password("imap-only-password");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Saved | Status::Failed(_))),
+        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
         "the fallback add never settled: {:?}",
         screen.status()
     );
     assert!(
-        matches!(screen.status(), Status::Saved),
+        matches!(screen.status(), Status::SyncWindow),
         "a credential that only speaks IMAP must still land: {:?}",
         screen.status()
     );
