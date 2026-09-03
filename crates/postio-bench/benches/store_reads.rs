@@ -88,7 +88,7 @@ fn bench_message_page(c: &mut Criterion) {
         .expect("a runtime");
 
     let (small, small_inbox, _small_dir) = seeded(SMALL);
-    let (huge, huge_inbox, _huge_dir) = seeded(HUGE);
+    let (huge, huge_inbox, huge_dir) = seeded(HUGE);
 
     c.bench_function("message page, 1k mailbox", |b| {
         b.iter(|| read(&runtime, &small, small_inbox, 0))
@@ -114,14 +114,9 @@ fn bench_message_page(c: &mut Criterion) {
     // Criterion reports; these fail. A budget nobody notices breaking is not
     // a budget, which is why `postio-core`'s own benches assert as well as
     // measure.
-    // Criterion reports; this fails. A budget nobody notices breaking is not
-    // a budget, which is why `postio-core`'s own benches assert as well as
-    // measure.
     //
-    // Both the pages a user actually meets: the top of the folder, and one
-    // reached by scrolling. A *jump* to a page nobody has visited still walks
-    // — that is the `OFFSET` fallback, it happens once per jump, and every
-    // page after it is the warm case measured here.
+    // The two pages a user meets by scrolling: the top of the folder, and one
+    // reached from it.
     let deep = (HUGE / 2) as u32;
     read(&runtime, &huge, huge_inbox, deep); // leaves a boundary at deep + PAGE
     for (what, offset) in [("the first page", 0), ("a page scrolled to", deep + PAGE)] {
@@ -132,6 +127,30 @@ fn bench_message_page(c: &mut Criterion) {
         if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
             panic!("{what} of a {HUGE}-message mailbox is over budget: {exceeded:?}");
         }
+    }
+
+    // And the jump, which now belongs here too. It was left unasserted
+    // because it measured 233ms and could not have met any budget worth
+    // setting; #638 found why — the list indexes did not carry the two
+    // columns every list query filters on, so the OFFSET skip fetched every
+    // row it discarded, and under SQLCipher paid a decrypt for each. With
+    // migration 0005 it measures single-digit milliseconds, so a jump is
+    // held to the same 16ms as every other thing a person does.
+    //
+    // A store of its own, because "cold" here means the boundary cache is
+    // empty rather than the page cache: `SqliteStore` remembers where each
+    // page it has read began, and the reads above have populated it.
+    let cold = SqliteStore::new(&huge_dir);
+    let start = Instant::now();
+    read(&runtime, &cold, huge_inbox, deep);
+    let measured = start.elapsed();
+    if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
+        panic!(
+            "a cold jump halfway down a {HUGE}-message mailbox is over \
+             budget: {exceeded:?}. The list indexes carry `deleted_locally` \
+             and `snoozed_until` so the skip stays inside the index -- see \
+             migration 0005 and #638."
+        );
     }
 }
 

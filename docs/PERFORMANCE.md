@@ -100,7 +100,7 @@ and a screenful of rows drawn.
 |---|---|---|
 | Message page, top of the folder | 249 µs | 302 µs |
 | Message page, scrolled to the middle | — | 343 µs |
-| Message page, *jumped* to the middle | — | 233 ms |
+| Message page, *jumped* to the middle | — | 3.58 ms |
 | Thread page, top of the folder | 1.14 ms | 1.40 ms |
 | Thread page, ten pages down | — | 1.42 ms |
 | Unified page, two accounts | — | 18.7 ms |
@@ -113,10 +113,24 @@ Two exceptions, both real:
 
 - **A *jump* to a page nobody has scrolled through** — the store has no
   boundary to seek from and falls back to walking. It happens once per jump,
-  and every page after it is the 343 µs row. It is far more expensive than it
-  was when this document last recorded it (28 ms), and under page encryption
-  a walk pays a decrypt per page, so this is the case where the cipher costs
-  most. [#638](https://github.com/dlapiduz/postio/issues/638).
+  and every page after it is the 343 µs row. It used to cost 233 ms, and this
+  document blamed the cipher: a walk pays a decrypt per page, and measured
+  against a plaintext store the same jump took 59 ms, so encryption really
+  was 71% of it.
+
+  It was 71% of work that should not have happened. The four list indexes
+  supplied the scope column and the sort order but neither of the two columns
+  every list query *filters* on — `deleted_locally` and `snoozed_until`. Only
+  rows that pass the `WHERE` count toward an `OFFSET`, so SQLite fetched every
+  row it was about to discard in order to test them: fifty thousand table
+  reads to return fifty rows, each one a page decrypt. Migration 0005 put
+  those columns in the indexes and the jump became **3.58 ms**, a 98%
+  reduction, now inside the 16 ms interaction budget and asserted by
+  `store_reads` rather than merely reported.
+
+  `cache_size` was not the lever, despite `db.rs` naming it the first one to
+  reach for: 16 MiB to 256 MiB moved the encrypted case from 207 ms to 213 ms.
+  [#638](https://github.com/dlapiduz/postio/issues/638).
 - **The unified page is over budget** at 18.7 ms against 16 ms, and encryption
   is not why: the same bench against a plaintext store measures 18.1 ms, and
   raising `cache_size` from 16 MiB to 64 MiB changes nothing measurable
