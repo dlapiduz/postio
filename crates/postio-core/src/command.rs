@@ -185,22 +185,6 @@ command_ids! {
     UpdateCredential => "update_credential",
     /// Point one of an account's roles at one of its folders.
     MapMailboxRole => "map_mailbox_role",
-    /// Point one of an account's roles at one of its folders (ADR 0025).
-    ///
-    /// The one verb whose `None` does not always mean "ask": `account` and
-    /// `role` follow the rule at the top of this enum -- a keystroke cannot
-    /// supply them, so `None` asks -- but `path: None` is a value in its own
-    /// right, **back to automatic**, because "stop choosing" is exactly what
-    /// a person picking the first entry of the pane's dropdown means, and a
-    /// second command for it would be a key in the reference for nothing.
-    MapMailboxRole {
-        /// Whose map; `None` means the focused account row.
-        account: Option<AccountId>,
-        /// Which role is being pointed somewhere; `None` asks.
-        role: Option<MailboxRole>,
-        /// The folder's server path, or `None` for automatic.
-        path: Option<String>,
-    },
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -622,6 +606,22 @@ pub enum Command {
     RemoveAccount,
     /// Update the focused account's stored credential.
     UpdateCredential,
+    /// Point one of an account's roles at one of its folders (ADR 0025).
+    ///
+    /// The one verb whose `None` does not always mean "ask": `account` and
+    /// `role` follow the rule at the top of this enum -- a keystroke cannot
+    /// supply them, so `None` asks -- but `path: None` is a value in its own
+    /// right, **back to automatic**, because "stop choosing" is exactly what
+    /// a person picking the first entry of the pane's dropdown means, and a
+    /// second command for it would be a key in the reference for nothing.
+    MapMailboxRole {
+        /// Whose map; `None` means the focused account row.
+        account: Option<AccountId>,
+        /// Which role is being pointed somewhere; `None` asks.
+        role: Option<MailboxRole>,
+        /// The folder's server path, or `None` for automatic.
+        path: Option<String>,
+    },
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
