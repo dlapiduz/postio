@@ -513,6 +513,15 @@ pub struct StoredBody {
     /// block and the fact that it is partial are one piece of information, and
     /// a writer that could set them apart would eventually set one.
     pub headers_truncated: bool,
+    /// Whether this body is a guess rather than what was sent.
+    ///
+    /// [`postio_model::mime::ParsedMessage::encoding_problems`], carried
+    /// through so a reader can say so. Here for the same reason
+    /// `headers_truncated` is: a body and the fact that it may not be the
+    /// sender's words are one piece of information, and a `StoredBody` that
+    /// could be built without answering this is one somebody eventually
+    /// builds without answering it (#901).
+    pub encoding_problems: bool,
 }
 
 /// One message whose header block was never stored, and what can be done
@@ -1320,7 +1329,7 @@ impl<'a> MessageRepository<'a> {
     pub fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         let mut statement = self.connection.prepare(
             "SELECT body_text, body_html, body_headers, body_dictionary_id,
-                    body_headers_truncated
+                    body_headers_truncated, body_encoding_problems
                FROM messages WHERE id = ?1",
         )?;
         let mut rows = statement.query([id.get()])?;
@@ -1332,6 +1341,7 @@ impl<'a> MessageRepository<'a> {
         let headers: Option<Vec<u8>> = row.get(2)?;
         let dictionary_id: Option<i64> = row.get(3)?;
         let headers_truncated: bool = row.get(4)?;
+        let encoding_problems: bool = row.get(5)?;
         drop(rows);
         drop(statement);
 
@@ -1357,6 +1367,7 @@ impl<'a> MessageRepository<'a> {
             html: decode(html)?,
             headers: decode(headers)?,
             headers_truncated,
+            encoding_problems,
         }))
     }
 
@@ -1583,7 +1594,7 @@ impl<'a> MessageRepository<'a> {
             "UPDATE messages
                 SET body_text = ?2, body_html = ?3, body_headers = ?4,
                     body_dictionary_id = ?5, body_state = ?6,
-                    body_headers_truncated = ?7
+                    body_headers_truncated = ?7, body_encoding_problems = ?8
               WHERE id = ?1",
             params![
                 id.get(),
@@ -1593,6 +1604,7 @@ impl<'a> MessageRepository<'a> {
                 dictionary_id,
                 body_state.as_str(),
                 body.headers_truncated,
+                body.encoding_problems,
             ],
         )?;
         if changed == 0 {

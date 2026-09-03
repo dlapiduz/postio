@@ -217,6 +217,7 @@ fn store_body(database: &Database, message: MessageId, text: &str) {
                 html: None,
                 headers: None,
                 headers_truncated: false,
+                encoding_problems: false,
             },
             BodyState::Full,
         )

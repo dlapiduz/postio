@@ -922,7 +922,15 @@ impl Session {
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
         match postio_session::reading::load_body_or_reason(&connection, message.into(), offline) {
-            postio_session::reading::Body::Ready(body) => {
+            // `encoding_problems` is bound and not used here, and that is a
+            // gap rather than a decision: this frontend renders a document
+            // and has no native strip to put a caveat in, the way the GTK
+            // reader's `DecodeNotice` is (#901). Named rather than elided so
+            // whoever gives this frontend a notice surface finds it.
+            postio_session::reading::Body::Ready {
+                body,
+                encoding_problems: _,
+            } => {
                 let (content, _held_back) = body_html(&body, remote);
                 document_for(&content, remote)
             }

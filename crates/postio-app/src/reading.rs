@@ -698,10 +698,16 @@ impl Fill {
                     );
                 }
                 match loaded.body {
-                    crate::compose::Body::Ready(body) => {
+                    crate::compose::Body::Ready {
+                        body,
+                        encoding_problems,
+                    } => {
                         let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
                         reader.set_attachments(&root, &loaded.parts);
                         reader.render(&body, loaded.sender.as_deref());
+                        // After `render`, which clears it: the caveat belongs
+                        // to this message and must not outlive it (#901).
+                        reader.set_encoding_problems(encoding_problems);
                     }
                     crate::compose::Body::Absent(reason) => {
                         let root = root_type(
@@ -1023,7 +1029,10 @@ fn paint(
             .set_account(named.map(|(_, name)| name), named.map_or(0, |(h, _)| h));
     }
     match loaded.body {
-        crate::compose::Body::Ready(body) => {
+        crate::compose::Body::Ready {
+            body,
+            encoding_problems,
+        } => {
             let root = root_type(loaded.content_type.as_deref(), &body, &loaded.parts);
             window.reader().set_attachments(&root, &loaded.parts);
             *opened.borrow_mut() = Some(Opened {
@@ -1035,6 +1044,11 @@ fn paint(
             if !already_showing {
                 window.show_message(&body, loaded.sender.as_deref());
             }
+            // Outside the `already_showing` guard on purpose. That guard is
+            // about not repainting a document that has not changed, and this
+            // is not part of the document -- a repaint suppressed there would
+            // otherwise leave the caveat off a message that needs it.
+            window.reader().set_encoding_problems(encoding_problems);
         }
         crate::compose::Body::Absent(reason) => {
             // The chips still go on. They are drawn from `BODYSTRUCTURE`
@@ -1100,10 +1114,17 @@ fn document_signature(body: &crate::compose::Body, sender: Option<&str>, offline
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     offline.hash(&mut hasher);
     match body {
-        crate::compose::Body::Ready(body) => {
+        crate::compose::Body::Ready {
+            body,
+            encoding_problems,
+        } => {
             0u8.hash(&mut hasher);
             body.text.hash(&mut hasher);
             body.html.hash(&mut hasher);
+            // Part of the signature, so a body that gained or lost the caveat
+            // counts as a different document. Without it a reparse that
+            // changed only this would be suppressed as "already showing".
+            encoding_problems.hash(&mut hasher);
         }
         crate::compose::Body::Absent(reason) => {
             1u8.hash(&mut hasher);
