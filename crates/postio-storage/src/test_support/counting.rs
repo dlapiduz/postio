@@ -22,7 +22,7 @@
 //!   returns fifty rows returns fifty rows either way, and only the number
 //!   SQLite *produced* tells the two apart.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 
 use rusqlite::Connection;
 use rusqlite::trace::{TraceEvent, TraceEventCodes};
@@ -42,22 +42,40 @@ pub struct Counts {
     /// Statements that began running — the unit an N+1 multiplies.
     pub statements: usize,
     /// Rows those statements produced, whether or not the caller kept them.
+    ///
+    /// Undercounts on a full-text path; see [`LAST_WAS_OURS`].
     pub rows: usize,
+    /// Invocations SQLite reported as nested: trigger bodies, and the
+    /// statements a virtual table runs for itself.
+    ///
+    /// Per-row work that no other count can see. A trigger fires once per
+    /// affected row and produces no result rows, so an index rebuild over a
+    /// mailbox shows up here and nowhere else.
+    pub nested: usize,
 }
 
 thread_local! {
-    /// One entry per statement currently running, innermost last, `true` if it
-    /// is one the code under test asked for.
+    /// Statements SQLite reported as nested — see [`is_application_statement`].
+    static NESTED: Cell<usize> = const { Cell::new(0) };
+    /// Whether the last statement to start was one the code under test asked
+    /// for. A `Row` event names no statement — `StmtRef` keeps its pointer
+    /// private — so a row is attributed to the statement that most recently
+    /// began.
     ///
-    /// A `Row` event names no statement — `StmtRef` keeps its pointer private
-    /// — so which statement produced a row has to be inferred from the events
-    /// around it. A bare "was the last `Stmt` ours" flag is not enough: a
-    /// virtual table runs its own statements *while* the outer one is being
-    /// stepped, so an inner lookup between two rows would silently drop the
-    /// rest of the outer statement's rows. Statements nest properly and
-    /// SQLite reports the end of each one, so a stack is exact where a flag
-    /// is approximate.
-    static RUNNING: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+    /// This is exact wherever nothing nests, which is every plain SQL read.
+    /// Where something does nest it *under*-counts: an FTS5 cursor runs its
+    /// own lookups between two rows of the statement being stepped, and the
+    /// rows after one of those are attributed to the lookup instead. That is
+    /// the safe direction for a ceiling to be wrong in, and it is why the
+    /// search budget is expressed in statements rather than rows.
+    ///
+    /// A stack would be exact, and cannot be built: it would have to be
+    /// unwound by `Profile`, and while SQLite fires `Profile` for the
+    /// separately-prepared statements a virtual table runs, it does not fire
+    /// one for a trigger body. Trying it left 4,000 statements unclosed over
+    /// a 2,000-message index build. Triggers emit no result rows, so nothing
+    /// is lost by treating them as an ordinary nested statement here.
+    static LAST_WAS_OURS: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Whether `sql` is a statement the code under test issued.
@@ -79,19 +97,15 @@ fn record(event: TraceEvent<'_>) {
     match event {
         TraceEvent::Stmt(_, sql) => {
             let ours = is_application_statement(sql);
-            RUNNING.with(|running| running.borrow_mut().push(ours));
+            LAST_WAS_OURS.with(|last| last.set(ours));
             if ours {
                 STATEMENTS.with(|seen| seen.set(seen.get() + 1));
+            } else {
+                NESTED.with(|seen| seen.set(seen.get() + 1));
             }
         }
-        TraceEvent::Row(..) => {
-            let ours = RUNNING.with(|running| running.borrow().last().copied().unwrap_or(false));
-            if ours {
-                ROWS.with(|seen| seen.set(seen.get() + 1));
-            }
-        }
-        TraceEvent::Profile(..) => {
-            RUNNING.with(|running| running.borrow_mut().pop());
+        TraceEvent::Row(..) if LAST_WAS_OURS.with(Cell::get) => {
+            ROWS.with(|seen| seen.set(seen.get() + 1));
         }
         _ => {}
     }
@@ -101,12 +115,7 @@ fn record(event: TraceEvent<'_>) {
 /// counted, so install it on the connection the code under test will use.
 pub fn install(connection: &Connection) {
     connection.trace_v2(
-        TraceEventCodes::SQLITE_TRACE_STMT
-            | TraceEventCodes::SQLITE_TRACE_ROW
-            // Not for its timing, which is the thing this module exists to
-            // avoid depending on: it is the only event that says a statement
-            // finished, which is what keeps `RUNNING` balanced.
-            | TraceEventCodes::SQLITE_TRACE_PROFILE,
+        TraceEventCodes::SQLITE_TRACE_STMT | TraceEventCodes::SQLITE_TRACE_ROW,
         Some(record),
     );
 }
@@ -118,18 +127,13 @@ pub fn install(connection: &Connection) {
 pub fn counted(body: impl FnOnce()) -> Counts {
     STATEMENTS.with(|seen| seen.set(0));
     ROWS.with(|seen| seen.set(0));
-    RUNNING.with(|running| running.borrow_mut().clear());
+    NESTED.with(|seen| seen.set(0));
+    LAST_WAS_OURS.with(|last| last.set(false));
     body();
-    let still_running = RUNNING.with(|running| running.borrow().len());
-    assert_eq!(
-        still_running, 0,
-        "{still_running} statements were still running when the body \
-         returned, so rows were attributed against a stack that never \
-         unwound. The counts below cannot be trusted."
-    );
     let counts = Counts {
         statements: STATEMENTS.with(Cell::get),
         rows: ROWS.with(Cell::get),
+        nested: NESTED.with(Cell::get),
     };
     assert!(
         counts.statements > 0,
