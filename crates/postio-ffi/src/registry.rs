@@ -46,6 +46,8 @@ pub enum UiContext {
     Sidebar,
     /// The parts panel: a message's MIME tree.
     Parts,
+    /// The account list in settings.
+    Accounts,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -60,6 +62,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Palette => UiContext::Palette,
             Context::Sidebar => UiContext::Sidebar,
             Context::Parts => UiContext::Parts,
+            Context::Accounts => UiContext::Accounts,
         }
     }
 }

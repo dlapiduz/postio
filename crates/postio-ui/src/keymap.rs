@@ -525,6 +525,8 @@ pub enum KeyContext {
     Sidebar,
     /// The parts panel, once the keyboard is in it.
     Parts,
+    /// The account list in settings, once the keyboard is in it.
+    Accounts,
 }
 
 impl KeyContext {
@@ -553,6 +555,11 @@ impl KeyContext {
             // `a` fall through to `archive` would act on the message
             // underneath while the user's eyes are on its parts.
             Self::Parts => &[Self::Parts, Self::Global],
+            // Not layered over anything, for the same reason as the two
+            // above and one of its own: `d` here removes an *account*, and
+            // a fall-through that let a mail binding fire while the keyboard
+            // sits on an account row would act on something off-screen.
+            Self::Accounts => &[Self::Accounts, Self::Global],
         }
     }
 }
@@ -574,6 +581,7 @@ impl From<Context> for KeyContext {
             Context::Palette => Self::Palette,
             Context::Sidebar => Self::Sidebar,
             Context::Parts => Self::Parts,
+            Context::Accounts => Self::Accounts,
         }
     }
 }
