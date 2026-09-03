@@ -47,7 +47,7 @@ fn ui_defaults_match_the_design_canvas() {
 #[test]
 fn sync_defaults_are_sane() {
     let sync = Config::default().sync;
-    assert!(sync.idle);
+    assert_eq!(sync.check_for_mail, postio_config::CheckForMail::Idle);
     assert!(sync.sync_on_startup);
     assert!(sync.poll_interval_secs > 0);
     assert!(sync.max_connections >= 1);
@@ -173,7 +173,7 @@ fn parses_the_sync_section() {
     let cfg = Config::from_toml_str(
         r#"
         [sync]
-        idle = false
+        check_for_mail = "poll"
         poll_interval_secs = 60
         max_connections = 3
         sync_on_startup = false
@@ -181,7 +181,7 @@ fn parses_the_sync_section() {
         "#,
     )
     .unwrap();
-    assert!(!cfg.sync.idle);
+    assert_eq!(cfg.sync.check_for_mail, postio_config::CheckForMail::Poll);
     assert_eq!(cfg.sync.poll_interval_secs, 60);
     assert_eq!(cfg.sync.max_connections, 3);
     assert!(!cfg.sync.sync_on_startup);
