@@ -42,7 +42,7 @@ landed and is what was audited; #673 had not, and nothing here depends on it.
 |---|---|---|
 | **2.1** Line endings | Every line ends CRLF | **Compliant.** Nothing generated carries a bare CR or LF. |
 | **2.1.1** Line length | 998 octets MUST, 78 SHOULD | **Compliant.** Forty recipients with long display names and a 26-deep `References` chain both fold below 78. |
-| **2.2** Field bodies | No CR or LF in a field body except folding | **Gap — [#864](https://github.com/dlapiduz/postio/issues/864).** A header value reaching the generator with a line break in it is written verbatim, so the rest of that value becomes additional headers. See below. |
+| **2.2** Field bodies | No CR or LF in a field body except folding | **Compliant.** A line break in an unstructured value folds to a single space on the way into the generator — which is what unfolding a legitimately folded header produces — so nothing after it can become a header. A `Message-ID` carrying one is dropped instead of folded, since a space inside `<...>` makes a different invalid id rather than a valid one. Was a gap ([#864](https://github.com/dlapiduz/postio/issues/864)); see below for what it cost and why folding rather than refusing. |
 | **2.2.3** Folding | Long fields fold; a reader unfolds them | **Compliant.** Received chains and folded subjects unfold to one line with each fold as a single space, in the parsed value *and* in the raw header block the reader shows under "view source". |
 | **3.3** Date | `date-time` with a zone | **Compliant.** UTC, `+0000`, from `mail-builder`. |
 | **3.4** Address specification | `mailbox` / `group`, US-ASCII only | **Compliant.** A display name needing quotes round-trips; non-ASCII names and subjects are RFC 2047 encoded, and the generated header block is pure ASCII. |
@@ -52,29 +52,47 @@ landed and is what was audited; #673 had not, and nothing here depends on it.
 | **3.6.2** `Reply-To` | Present when the author suggests a different address | **Compliant, with a named exception:** written on every message, even when it equals `From`. See below. |
 | **RFC 2047** encoded words in headers | Adjacent encoded words join without the whitespace between them | **Compliant.** Both the folded and the same-line spelling decode without an inserted space, and ordinary text between two encoded words keeps its spaces. |
 
-### The gap: a line break in a header value ([#864](https://github.com/dlapiduz/postio/issues/864))
+### The fix: a line break in a header value ([#864](https://github.com/dlapiduz/postio/issues/864))
 
-The audit found one thing that can reach a person, and it is worth stating
-precisely because the obvious route is closed and the real one is not.
+**What it was.** A value reaching `postio_model::outgoing` with a CR or LF in
+it was written into the message verbatim, so everything after the break became
+an additional *header*. Not a theoretical shape: replying to the corpus'
+`encoded-word-crlf-in-header.eml` generated a message with a **`Bcc` header the
+draft never set** — a copy of the reply going somewhere the sender did not
+choose, which the composer's own recipient chips could not show, because it was
+never in `draft.to`, `draft.cc` or `draft.bcc`.
 
-A subject cannot acquire a line break from the composer — that field is a
-single-line entry. It can acquire one from **received mail**: RFC 2047 encodes
-arbitrary octets, CR and LF among them, so a `Subject` can arrive whose
-*decoded* value contains real line breaks. That is not a parser bug. Unfolding
-cannot remove them, because those octets were never folding whitespace, and
-`mime::parse` promises to report what arrived. Reply copies the subject into a
-draft; the draft is built; the text after the break is written as a header.
+**How it was reachable.** Not through the composer, whose subject field is a
+single-line entry. Through received mail: an RFC 2047 encoded word encodes
+arbitrary octets, CR and LF included, so a `Subject` arrives whose *decoded*
+value has real line breaks in it. That is not a parser bug — those octets were
+never folding whitespace, and reporting what arrived is what the parser
+promises — and `reply` then copies that subject into a draft. The same shape
+reaches a draft from its stored row, a `mailto:` URL, a rules action, and the
+FFI and MCP surfaces.
 
-The consequence is not cosmetic: the injected line is a *header*, so a message
-can acquire a recipient the sender never saw — one the composer's own
-recipient chips could not show, because it was never in `draft.to`,
-`draft.cc` or `draft.bcc`.
+**Folded, not refused, and that is a decision.** Refusing reads as the safer
+answer and is the wrong one: the hostile value arrives from somebody else's
+message, so refusing would mean a message you cannot reply to — handing the
+sender a veto over your mail client. A single space is what unfolding a
+legitimately folded header produces (§2.2.3), so a value that only ever
+contained folding whitespace is unchanged in meaning, and a hostile one
+becomes visible text in the subject rather than a header. A run of breaks and
+the whitespace around them collapses to one space; a break at either end adds
+nothing.
 
-The fixture is `crates/postio-model/tests/corpus/encoded-word-crlf-in-header.eml`
-and `rfc5322.rs` asserts the *input* half — that a decoded header value really
-does arrive with line breaks in it. The outgoing half lands with the fix,
-because a test that asserts the bug is worthless and a test that asserts the
-fix cannot pass before it.
+**In one place.** `outgoing::assemble` applies it to every unstructured value
+handed to the builder, rather than at each caller — sanitising in the composer
+would have left every other source open, and those are the ones nobody thinks
+of.
+
+**`Message-ID` is dropped rather than folded.** It is structured, so a space
+inside `<...>` makes a different invalid id, not a valid one; and one hostile
+id reaches both `In-Reply-To` and `References`. Dropping loses nothing, since
+a threading header naming a malformed id threads nothing. This one is not
+reachable through `mime::parse` today — a `Message-ID` header with a literal
+break ends at the break — and is defended anyway, because the parser is not
+the only way a `Message` is built.
 
 ### The named exceptions, and what each costs
 

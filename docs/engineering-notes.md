@@ -2908,8 +2908,12 @@ generator, because both look like bugs and are not:
   behaving correctly.** RFC 2047 encodes octets, `=0D=0A` is two of them, and
   unfolding cannot remove them because they were never folding whitespace.
   Anything that writes such a value back into a header has to say what it does
-  about that — which is #864, and which is why
-  `encoded-word-crlf-in-header.eml` exists.
+  about that. #864 is what happened when nothing did: replying to
+  `encoded-word-crlf-in-header.eml` generated a `Bcc` header the draft never
+  set. `outgoing::header_text` now folds such a break into a single space —
+  what unfolding a legitimately folded header produces — rather than refusing,
+  because the value arrives from somebody else's message and refusing would
+  hand its sender a veto over replying at all.
 
 **A worktree holds one session, and the guard is what makes that true.**
 #412. `issue-claim.sh` takes an atomic lock and refuses to adopt an existing
