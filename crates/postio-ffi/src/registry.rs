@@ -48,6 +48,8 @@ pub enum UiContext {
     Parts,
     /// The account list in settings.
     Accounts,
+    /// The keybinding list in settings.
+    Keys,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -63,6 +65,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Sidebar => UiContext::Sidebar,
             Context::Parts => UiContext::Parts,
             Context::Accounts => UiContext::Accounts,
+            Context::Keys => UiContext::Keys,
         }
     }
 }

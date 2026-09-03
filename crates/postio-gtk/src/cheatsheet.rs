@@ -92,6 +92,9 @@ fn heading(context: Context) -> &'static str {
         // list, which is the only part of the settings panel these keys reach
         // (ADR 0005 Q6c).
         Context::Accounts => "Accounts",
+        // Same reasoning as `Accounts`, one section down: these keys reach
+        // only the keybinding list, not the whole settings panel.
+        Context::Keys => "Keybindings",
     }
 }
 
