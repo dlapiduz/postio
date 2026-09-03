@@ -17,14 +17,17 @@
 //! **Statements, not rows.** The obvious measure for "does not read the whole
 //! match set" is rows produced, and it is the right one on plain SQL — see
 //! `postio-storage`'s `list_statement_count.rs`. It does not survive contact
-//! with FTS5: measured here, the same page cost 39 rows for a query matching
-//! one message and 1,467 for one matching 2,500, because SQLite's row
-//! callback fires as the full-text cursor steps its own b-tree segments
-//! rather than only as results come back. That number tracks how the index
-//! happens to be segmented — it moves when SQLite merges segments — so a
-//! ceiling on it would fail for reasons that have nothing to do with the
-//! query. The count of statements the executor issues does not move: it is
-//! four, and it is four for both.
+//! with FTS5, whose cursor runs lookups of its own between two rows of the
+//! statement being stepped. That leaves a row count dependent on how those
+//! nested lookups are attributed: this same page measured 1,467 rows when
+//! they were credited to the statement that was running and 51 when they were
+//! not, and the count in between moves with how the index happens to be
+//! segmented. `test_support::counting` takes the second reading and says so;
+//! either way it is not a number to hang a budget on.
+//!
+//! The count of application statements does not move. It is four here — for a
+//! query matching one message, for one matching 2,500, and for a page four
+//! times wider.
 
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
