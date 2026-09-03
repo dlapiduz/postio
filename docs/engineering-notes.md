@@ -808,10 +808,13 @@ row — a role only a vanished folder still wears is a role the account does not
 have, and saying so is better than an APPEND the server refuses and nobody
 hears about.
 
-`[mailboxes]` is read once at startup, so a mapping edited while Postio is
-running takes effect at the next start. The engine is spawned with its parts
-and folder discovery runs inside it, so applying a change live means reaching
-into a running task.
+`[mailboxes]` is read once at startup and is the *configuration* tier: one
+table for every account. Since ADR 0025 each account also has its own map in
+the store (`mailbox_roles`), and discovery reads it on every pass and lays it
+over the file's table -- so a choice made in settings is honoured by the next
+pass with the engine untouched, and the file is what an installation with one
+account and a hand-edited `config.toml` keeps working with. Only the file
+still needs a restart; nothing in the store does.
 
 
 **A `oneshot`-reply `Job` on the engine is a fact nobody will ever hear.**

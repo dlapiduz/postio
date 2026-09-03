@@ -205,6 +205,37 @@ impl RoleOverrides {
         self.by_path.is_empty()
     }
 
+    /// Every mapping, as `(role, path)` pairs in role order.
+    pub fn pairs(&self) -> impl Iterator<Item = (MailboxRole, &str)> {
+        let mut pairs: Vec<(MailboxRole, &str)> = self
+            .by_path
+            .iter()
+            .map(|(path, role)| (*role, path.as_str()))
+            .collect();
+        pairs.sort_by_key(|(role, _)| *role);
+        pairs.into_iter()
+    }
+
+    /// These mappings with `pairs` laid over them: a role `pairs` names is
+    /// theirs, every other role stays as it was.
+    ///
+    /// How an account's own map (ADR 0025) sits on `[mailboxes]`: the file is
+    /// one table for every account and the store holds what the user said
+    /// about this one, so the store wins where it speaks and the file fills in
+    /// where it does not. One folder per role survives, because
+    /// [`from_pairs`](Self::from_pairs) keeps the last pair for a role.
+    pub fn over<I, S>(&self, pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (MailboxRole, S)>,
+        S: Into<String>,
+    {
+        Self::from_pairs(
+            self.pairs()
+                .map(|(role, path)| (role, path.to_owned()))
+                .chain(pairs.into_iter().map(|(role, path)| (role, path.into()))),
+        )
+    }
+
     /// The role the user assigned to `path`, if they assigned one.
     pub fn role_for(&self, path: &str) -> Option<MailboxRole> {
         self.by_path.get(path).copied()
