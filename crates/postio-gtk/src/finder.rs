@@ -25,6 +25,7 @@
 //! | anything | [`Mode::Search`] | searches mail, operators become chips |
 //! | `>` | [`Mode::Command`] | fuzzy-matches the command registry |
 //! | `#` | [`Mode::Mailbox`] | jumps to a folder |
+//! | `+` | [`Mode::Label`] | puts a label on the selection |
 //! | `@` | [`Mode::Contact`] | finds a correspondent, and searches their mail |
 //!
 //! Every one of them answers the same question — *where is the thing I am
@@ -54,9 +55,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
 use postio_core::{ActionId, Context, Keymap, Scope};
-use postio_model::Contact;
-use postio_model::ids::MailboxId;
+use postio_model::ids::{LabelId, MailboxId};
 use postio_model::mailbox::Mailbox;
+use postio_model::{Contact, Label};
 use postio_search::ParsedQuery;
 
 use crate::palette::{Entry, entries, highlight, score};
@@ -74,11 +75,19 @@ pub enum Mode {
     Mailbox,
     /// Find a correspondent, and search their mail.
     Contact,
+    /// Pick a label to put on the selection (#780).
+    Label,
 }
 
 impl Mode {
     /// Every mode, in the order the cheat sheet should list them.
-    pub const ALL: [Mode; 4] = [Mode::Search, Mode::Command, Mode::Mailbox, Mode::Contact];
+    pub const ALL: [Mode; 5] = [
+        Mode::Search,
+        Mode::Command,
+        Mode::Mailbox,
+        Mode::Contact,
+        Mode::Label,
+    ];
 
     /// The character that switches into this mode from an empty box.
     ///
@@ -90,6 +99,7 @@ impl Mode {
             Mode::Command => Some('>'),
             Mode::Mailbox => Some('#'),
             Mode::Contact => Some('@'),
+            Mode::Label => Some('+'),
         }
     }
 
@@ -109,6 +119,7 @@ impl Mode {
             Mode::Command => ">",
             Mode::Mailbox => "#",
             Mode::Contact => "@",
+            Mode::Label => "+",
         }
     }
 
@@ -119,6 +130,7 @@ impl Mode {
             Mode::Command => "Run a command",
             Mode::Mailbox => "Go to a folder",
             Mode::Contact => "Find a correspondent",
+            Mode::Label => "Add a label",
         }
     }
 
@@ -130,7 +142,7 @@ impl Mode {
     pub const fn context(self) -> Context {
         match self {
             Mode::Search => Context::Search,
-            Mode::Command | Mode::Mailbox | Mode::Contact => Context::Palette,
+            Mode::Command | Mode::Mailbox | Mode::Contact | Mode::Label => Context::Palette,
         }
     }
 
@@ -222,6 +234,44 @@ pub struct FolderHit {
     pub positions: Vec<usize>,
     /// How well it matched. Rows come out highest first.
     pub score: i32,
+}
+
+/// One label the `+` box can offer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelHit {
+    /// The label to apply.
+    pub id: LabelId,
+    /// Its name, which is also what travels as an IMAP keyword.
+    pub name: String,
+    /// Byte indices in `name` the query matched, for highlighting.
+    pub positions: Vec<usize>,
+    /// How well it matched. Rows come out highest first.
+    pub score: i32,
+}
+
+/// The labels matching `query`, best first.
+///
+/// The same matcher `folders` and the command palette use, so `wk` finds
+/// `Work` here exactly as `cp` finds "Command palette" there.
+pub fn labels(labels: &[Label], query: &str) -> Vec<LabelHit> {
+    let query = query.trim();
+    let mut found: Vec<LabelHit> = labels
+        .iter()
+        .filter_map(|label| {
+            let matched = score(query, &label.name)?;
+            Some(LabelHit {
+                id: label.id,
+                name: label.name.clone(),
+                positions: matched.positions,
+                score: matched.score,
+            })
+        })
+        .collect();
+    // Stable, so an empty query leaves the repository's own order -- by name
+    // -- alone, which is what makes the list scannable.
+    found.sort_by_key(|hit| std::cmp::Reverse(hit.score));
+    found.truncate(crate::palette::MAX_ROWS);
+    found
 }
 
 /// The folders matching `query`, best first.
@@ -370,6 +420,7 @@ pub struct Field {
 
 type CommandHandler = Box<dyn Fn(ActionId)>;
 type FolderHandler = Box<dyn Fn(MailboxId)>;
+type LabelHandler = Box<dyn Fn(LabelId)>;
 type ContactHandler = Box<dyn Fn(&ContactHit)>;
 type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
 
@@ -401,6 +452,8 @@ mod imp {
         pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<ActionId>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
+        pub(super) available_labels: RefCell<Vec<Label>>,
+        pub(super) labels: RefCell<Vec<LabelId>>,
         pub(super) matched: RefCell<Vec<ContactHit>>,
         pub(super) open: Cell<bool>,
         /// Set while the box is rewriting its own entry, so absorbing a
@@ -408,6 +461,7 @@ mod imp {
         pub(super) echoing: Cell<bool>,
         pub(super) on_command: RefCell<Vec<CommandHandler>>,
         pub(super) on_folder: RefCell<Vec<FolderHandler>>,
+        pub(super) on_label: RefCell<Vec<LabelHandler>>,
         pub(super) on_contact: RefCell<Vec<ContactHandler>>,
         pub(super) on_search: RefCell<Vec<QueryHandler>>,
         pub(super) on_changed: RefCell<Vec<QueryHandler>>,
@@ -436,11 +490,14 @@ mod imp {
                 live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
+                available_labels: RefCell::new(Vec::new()),
+                labels: RefCell::new(Vec::new()),
                 matched: RefCell::new(Vec::new()),
                 open: Cell::new(false),
                 echoing: Cell::new(false),
                 on_command: RefCell::new(Vec::new()),
                 on_folder: RefCell::new(Vec::new()),
+                on_label: RefCell::new(Vec::new()),
                 on_contact: RefCell::new(Vec::new()),
                 on_search: RefCell::new(Vec::new()),
                 on_changed: RefCell::new(Vec::new()),
@@ -593,6 +650,16 @@ impl Finder {
     /// The folders `#` can jump to.
     pub fn set_mailboxes(&self, mailboxes: &[Mailbox]) {
         *self.imp().mailboxes.borrow_mut() = mailboxes.to_vec();
+        self.refresh();
+    }
+
+    /// The labels `+` can put on the selection (#780).
+    ///
+    /// The whole set for the account, like `set_contacts`: the matcher is a
+    /// subsequence one, so `wk` has to be able to reach `Work`, and an
+    /// account's labels are a handful rather than a table worth paging.
+    pub fn set_labels(&self, labels: &[Label]) {
+        *self.imp().available_labels.borrow_mut() = labels.to_vec();
         self.refresh();
     }
 
@@ -797,6 +864,17 @@ impl Finder {
                     handler(id);
                 }
             }
+            Mode::Label => {
+                let Some(id) = self
+                    .selected_index()
+                    .and_then(|index| imp.labels.borrow().get(index).copied())
+                else {
+                    return;
+                };
+                for handler in imp.on_label.borrow().iter() {
+                    handler(id);
+                }
+            }
             Mode::Contact => {
                 let Some(hit) = self
                     .selected_index()
@@ -867,6 +945,11 @@ impl Finder {
     }
 
     /// Called when a folder is chosen.
+    /// Called with the label `+` picked.
+    pub fn connect_label(&self, handler: impl Fn(LabelId) + 'static) {
+        self.imp().on_label.borrow_mut().push(Box::new(handler));
+    }
+
     pub fn connect_folder(&self, handler: impl Fn(MailboxId) + 'static) {
         self.imp().on_folder.borrow_mut().push(Box::new(handler));
     }
@@ -991,6 +1074,7 @@ impl Finder {
             Mode::Command => imp.commands.borrow().len(),
             Mode::Mailbox => imp.folders.borrow().len(),
             Mode::Contact => imp.matched.borrow().len(),
+            Mode::Label => imp.labels.borrow().len(),
         }
     }
 
@@ -1120,6 +1204,16 @@ impl Finder {
                 }
                 *imp.folders.borrow_mut() = found.iter().map(|hit| hit.id).collect();
             }
+            Mode::Label => {
+                if let Some(live) = imp.live.borrow().as_ref() {
+                    live.clear();
+                }
+                let found = labels(&imp.available_labels.borrow(), &query.text);
+                for hit in &found {
+                    imp.list.append(&label_row(hit));
+                }
+                *imp.labels.borrow_mut() = found.iter().map(|hit| hit.id).collect();
+            }
             Mode::Contact => {
                 if let Some(live) = imp.live.borrow().as_ref() {
                     live.clear();
@@ -1194,6 +1288,7 @@ impl Finder {
             imp.empty.set_text(&match query.mode {
                 Mode::Command => format!("No command matches “{}”", query.text),
                 Mode::Mailbox => format!("No folder matches “{}”", query.text),
+                Mode::Label => format!("No label matches “{}”", query.text),
                 // Two different empties. Postio has no address book: contacts
                 // accumulate from the addresses that have come through the
                 // mailbox, so a box with none is a mailbox that has not synced
@@ -1249,6 +1344,17 @@ fn folder_row(hit: &FolderHit) -> gtk::ListBoxRow {
         0 => hit.name.clone(),
         unread => format!("{}, {unread} unread", hit.name),
     })]);
+    row
+}
+
+/// One label: its name, and nothing else.
+///
+/// No count in the trailing slot the folder and contact rows use: a label's
+/// message count is not something the picker has, and a blank column reads as
+/// "nothing to say here" rather than as a zero.
+fn label_row(hit: &LabelHit) -> gtk::ListBoxRow {
+    let row = row_shell(&highlight(&hit.name, &hit.positions), None);
+    row.update_property(&[gtk::accessible::Property::Label(&hit.name)]);
     row
 }
 
@@ -1610,5 +1716,47 @@ mod tests {
         // dividing by it would panic.
         assert_eq!(whole_rows(360, 0), 360);
         assert_eq!(whole_rows(360, -1), 360);
+    }
+    #[test]
+    fn the_label_box_subsequence_matches_and_orders_by_score() {
+        let account = postio_model::AccountId::new(1);
+        let set = [
+            Label::new(account, "Work"),
+            Label::new(account, "Weekend reading"),
+            Label::new(account, "Receipts"),
+        ];
+
+        // Subsequence, like every other mode's matcher: `wk` reaches `Work`.
+        let found = labels(&set, "wk");
+        assert_eq!(
+            found
+                .iter()
+                .map(|hit| hit.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Work", "Weekend reading"],
+            "the closer match has to come first, or the first Return picks \
+             the wrong label"
+        );
+
+        // An empty query offers everything, in the order the repository gave
+        // them -- which is by name, so the list does not reshuffle as the box
+        // opens.
+        assert_eq!(labels(&set, "").len(), 3);
+        assert!(labels(&set, "zzz").is_empty());
+    }
+
+    #[test]
+    fn every_mode_with_a_prefix_has_its_own() {
+        // `+` must not collide with `>`/`#`/`@`, or one of them becomes
+        // unreachable from an empty box and the collision is silent.
+        let prefixes: Vec<char> = Mode::ALL.into_iter().filter_map(Mode::prefix).collect();
+        let mut unique = prefixes.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            prefixes.len(),
+            unique.len(),
+            "two modes share a prefix: {prefixes:?}"
+        );
     }
 }

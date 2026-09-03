@@ -74,7 +74,11 @@ args=(issue list --state open --limit 200
 [ -n "$MILESTONE" ] && args+=(--milestone "$MILESTONE")
 [ -n "$LABEL" ]     && args+=(--label "$LABEL")
 
-CANDIDATES=$(gh "${args[@]}" | WANT="$WANT" READY_LABEL="$READY_LABEL" python3 -c '
+# A function rather than a one-shot pipeline, because the self-heal below
+# needs to run this exact query twice: once before the stale sweep, once
+# after, with nothing free to drift between the two calls.
+fetch_candidates() {
+    gh "${args[@]}" | WANT="$WANT" READY_LABEL="$READY_LABEL" python3 -c '
 import json, os, re, sys
 
 want = os.environ.get("WANT") or ""
@@ -126,7 +130,42 @@ if not want and ranked:
 
 for i in ranked:
     print(i["number"], i["title"], sep="\t")
-')
+'
+}
+
+CANDIDATES=$(fetch_candidates)
+
+# The ready queue only ever shrinks unless something reclaims a dead
+# session's claim: nothing else runs the stale sweep on its own, so a
+# session that dies mid-work (crashes, runs out of context, gets
+# interrupted) leaves its lock -- and its GitHub assignee and
+# `in-progress` label -- exactly where it was, forever (#924). This is
+# the one moment "nothing is ready" is about to become the answer, which
+# makes it the right moment to check whether that is only true because of
+# a lock nobody is behind any more, and the only moment: sweeping on every
+# claim would mean every session pays for a check it almost never needs.
+#
+# `issue-release.sh --stale`'s own worktree-existence check is what keeps
+# this safe -- a live claim is never touched, however quiet -- so this
+# reuses that logic rather than duplicating its judgment about what counts
+# as abandoned.
+#
+# Skipped for `--dry-run`: the sweep is a real mutation (it removes a
+# GitHub assignee and a label), and a dry run's whole contract elsewhere in
+# this script is that it previews and does not act. Skipped for a specific
+# `WANT`ed issue too -- that failure means something else (not open, does
+# not exist, or genuinely still claimed), not an empty ready queue.
+if [ -z "$CANDIDATES" ] && [ -z "$WANT" ] && [ "$DRY" = 0 ]; then
+    STALE_OUTPUT=$("$(dirname "${BASH_SOURCE[0]}")/issue-release.sh" --stale 2>&1) || true
+    # The literal sentinel `issue-release.sh --stale` prints when it swept
+    # nothing at all -- anything else means a lock was cleared or released,
+    # which is worth a retry (and worth showing, since it is the reason the
+    # answer below might now be different).
+    if ! printf '%s\n' "$STALE_OUTPUT" | grep -q '^nothing to release\.$'; then
+        echo "$STALE_OUTPUT" >&2
+        CANDIDATES=$(fetch_candidates)
+    fi
+fi
 
 if [ -z "$CANDIDATES" ]; then
     if [ -n "$WANT" ]; then

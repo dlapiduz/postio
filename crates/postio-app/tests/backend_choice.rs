@@ -11,6 +11,30 @@
 //!    credential that only speaks IMAP still lands, no dead ends.
 //!
 //! One test function, for the reason `wiring.rs` gives.
+//!
+//! # Why this needs its own process (#973)
+//!
+//! It cannot share `app_suite`. The test writes user-overlay preset rows advertising `backend = ["jmap", "imap"]`
+//! into a temporary `XDG_CONFIG_HOME` and needs discovery to read it, and
+//! the table discovery reads is a `LazyLock` in
+//! `postio_account::discovery::builtin` whose own doc says it is "computed
+//! once and shared for the life of the process". The first case in a process
+//! to resolve a preset fixes that table for every case after it, overlay and
+//! all -- so a second case with a different overlay silently gets the first
+//! one's, discovery answers `Manual` with a guessed suggestion, and the test
+//! fails on something that has nothing to do with what it is testing.
+//!
+//! That is a fourth reason to stay out, beside the watchdog (#272), a private
+//! display (#45/#114) and a wall-clock budget (#841): **process-global state
+//! computed once from the environment**. #973 moved five of this crate's
+//! seven top-level tests into the suite and found this one by moving it and
+//! watching it fail; it is recorded here so the next person does not repeat
+//! the experiment.
+//!
+//! Making the overlay injectable -- `builtin::overlay_rows_from` already
+//! takes a lookup closure, so the seam exists -- would let this move too,
+//! but that is a change to production code for a test's benefit and belongs
+//! in its own issue rather than in a mechanical consolidation.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe; these run before the app starts.

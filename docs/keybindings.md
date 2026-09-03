@@ -67,6 +67,7 @@ command from inside a text field.
 | `U` | Mark unread | List, thread, reader | Undoable | `mark_unread` |
 | `b` | Snooze | List, thread, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, thread, reader | Undoable | `unsnooze` |
+| `L` | Add label… | List, thread, reader | Undoable | `add_label` |
 | `/` | Search | List, thread, reader |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, thread, reader |  | `compose` |

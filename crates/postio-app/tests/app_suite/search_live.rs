@@ -35,6 +35,19 @@
 //! assertion here is a number.
 //!
 //! Nothing here touches the network.
+//!
+//! # Why this shares `app_suite`'s process (#973)
+//!
+//! None of the three reasons a test stays out of the suite applies. It is
+//! not in the headless runner's watchdog name list (#272) -- of this
+//! crate's tests only `e2e*` is. It needs no display of its own
+//! (#45/#114): the suite already runs under the compositor and
+//! initialises GTK once, which is the arrangement this wants too. And it
+//! asserts no wall-clock budget (#841) -- every `Instant` here is a
+//! settle deadline, which a shared process does not change.
+//!
+//! It returns before it touches anything unless `POSTIO_TEST_STORE`
+//! names a store, and reads that store without writing to it.
 
 use gtk::{gdk, glib};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -63,9 +76,7 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     done()
 }
 
-#[test]
-#[ignore = "needs a real synced store; set POSTIO_TEST_STORE"]
-fn a_real_account_answers_a_real_query() {
+pub fn a_real_account_answers_a_real_query() {
     let Ok(path) = std::env::var(STORE) else {
         eprintln!("skipping: set {STORE} to a synced store to exercise this");
         return;

@@ -209,7 +209,7 @@ says the fix is upstream, that is why.
 | **2045 §6.2, §6.8** `8bit` / `binary` | Not encoded | **Compliant.** Both arrive as their own bytes. |
 | **2045 §6.4** unknown `Content-Transfer-Encoding` | Treat as `application/octet-stream` | **Compliant, with a named exception:** shown verbatim as text instead, and **not** flagged. Recorded on [#901](https://github.com/dlapiduz/postio/issues/901) as the second half of that fix. |
 | **2046 §5.1.1** Delimiter placement | `CRLF "--" boundary` — the delimiter begins a line | **Gap — [#899](https://github.com/dlapiduz/postio/issues/899).** `--boundary` **anywhere on a line** ends the part, so a body quoting one mid-line is silently truncated. |
-| **2046 §5.1.1** Unusable boundary | Missing or unrecognisable ⇒ treat the entity as `text/plain` | **Gap — [#900](https://github.com/dlapiduz/postio/issues/900).** The body is lost and the container is offered as an attachment. |
+| **2046 §5.1.1** Unusable boundary | Missing or unrecognisable ⇒ treat the entity as `text/plain` | **Compliant.** All three spellings (absent, empty, never appears) fall back to the entity's own content as the text body; the container is never offered as an attachment. Was a gap ([#900](https://github.com/dlapiduz/postio/issues/900)). |
 | **2046 §5.1.1** Preamble and epilogue | Not part of any body | **Compliant.** `multipart-alternative.eml` carries both so it cannot regress unnoticed. |
 | **2046 §5.1** Transport padding | Whitespace after a delimiter is not part of it | **Compliant.** |
 | **2046 §5.1** Nesting | Arbitrary depth | **Compliant.** Forty levels deep neither panics nor loses the leaf — the correctness half of the surface #147's fuzzer treats as adversarial. |
@@ -217,7 +217,7 @@ says the fix is upstream, that is why.
 
 ### The gaps
 
-Three, and the third is what makes the first two feel worse than they are.
+Two, plus one closed one worth reading for what it explains about the others.
 
 **A `--boundary` mid-line truncates the body ([#899](https://github.com/dlapiduz/postio/issues/899)).**
 RFC 2046 puts the delimiter at the start of a line; the parser matches the
@@ -227,17 +227,6 @@ everyday message — but the mail that embeds *another* message's delimiters is 
 bounce, a digest, a forwarded raw source, or mail about MIME, which is to say
 mail somebody is reading because something already went wrong. The fix is
 upstream in `mail-parser`; there is no newer version to move to.
-
-**An unusable boundary loses the body and offers the container as an
-attachment ([#900](https://github.com/dlapiduz/postio/issues/900)).** RFC 2046
-says a multipart whose boundary is missing or unrecognisable must be treated as
-`text/plain`. Postio produces no body and one part typed `multipart/mixed` —
-not a file, no name, opens in nothing. Of the three spellings (absent, empty,
-never appears) the last is the one that will actually arrive: it is a message
-that was well-formed when it left and met a gateway that rewrote the header and
-not the body. `multipart-boundary-never-appears.eml` is the fixture. This one
-is Postio's to fix, not the parser's: it is a fallback decision, and
-`parse_inner` can see the case exactly.
 
 **`encoding_problems` is computed and read by nothing
 ([#901](https://github.com/dlapiduz/postio/issues/901)).** Two occurrences in

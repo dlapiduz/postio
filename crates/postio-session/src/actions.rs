@@ -43,12 +43,13 @@ use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
-    AccountId, DraftState, Flag, FlagSet, MailboxId, Message, MessageId, Operation,
+    AccountId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message, MessageId, Operation,
     OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, DraftRepository, FlagSource, MailboxRepository, MailboxRoleRepository,
-    MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder, ThreadRepository,
+    ColumnFlag, DraftRepository, FlagSource, LabelRepository, MailboxRepository,
+    MailboxRoleRepository, MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder,
+    ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
 
@@ -66,6 +67,10 @@ const WIRED: &[CommandId] = &[
     CommandId::MarkUnread,
     CommandId::Snooze,
     CommandId::Unsnooze,
+    // After Unsnooze, matching the registry's own order: `bus.wired()`
+    // reports in registry order and `every_wired_command_has_a_handler_and_an_arm`
+    // compares the two lists directly.
+    CommandId::AddLabel,
     CommandId::MarkSent,
     CommandId::Undo,
     CommandId::MapMailboxRole,
@@ -123,20 +128,30 @@ enum Destination {
 enum Aim {
     /// These messages, read out of the store.
     Rows(Vec<Message>),
-    /// A predicate the store resolves in one statement.
-    Bulk {
-        /// What to act on.
-        set: MessageSet,
-        /// Whose account it is. Read from the mailbox, or carried by a scope
-        /// that already knows it, because there is no row to read.
-        account: AccountId,
-        /// The folder those messages are in now, when they are all in one.
-        ///
-        /// `None` for a smart folder, whose rows are spread across the
-        /// account's folders — a move out of one has to be grouped by source
-        /// before it can be enqueued (#52).
-        from: Option<MailboxId>,
-    },
+    /// One predicate per account, each resolved in one statement.
+    ///
+    /// Split by account here rather than further down because everything
+    /// below this line is an account's: which folder `Archive` names, which
+    /// queue the rows go on, which run `u` takes back, and which account the
+    /// events announcing the work say it happened in (ADR 0005 Q11). A
+    /// single-account view yields exactly one unit and costs nothing; the
+    /// unified view is why the shape is a list (#811).
+    Bulk(Vec<BulkUnit>),
+}
+
+/// One account's share of a bulk aim.
+struct BulkUnit {
+    /// What to act on, within this account.
+    set: MessageSet,
+    /// Whose account it is. Read from the mailbox, or carried by a scope
+    /// that already knows it, because there is no row to read.
+    account: AccountId,
+    /// The folder those messages are in now, when they are all in one.
+    ///
+    /// `None` for a smart folder or the aggregate, whose rows are spread
+    /// across folders — a move out of one has to be grouped by source
+    /// before it can be enqueued (#52).
+    from: Option<MailboxId>,
 }
 
 /// What a verb did, once it had done it.
@@ -262,13 +277,18 @@ impl Actions {
                 })?;
                 self.relocate(target, Destination::Mailbox(to), UndoKind::Move)?
             }
-            Command::Flag { target, flagged } => {
-                vec![self.set_flag(target, Flag::Flagged, *flagged)?]
-            }
+            Command::Flag { target, flagged } => self.set_flag(target, Flag::Flagged, *flagged)?,
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
             Command::MarkUnread { target, unread } => {
-                vec![self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?]
+                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?
+            }
+            Command::AddLabel { target, label, on } => {
+                // `None` is half a request, not a failure: ADR 0005's picker
+                // case, the same shape `Move { to: None }` has. The window
+                // opens the picker before this is reached.
+                let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
+                vec![self.set_label(target, label, *on)?]
             }
             Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE)?],
             Command::Unsnooze { target } => vec![self.unsnooze(target)?],
@@ -280,11 +300,11 @@ impl Actions {
                 role,
                 path,
             } => vec![self.map_mailbox_role(*account, *role, path.as_deref())?],
-            Command::MarkReadOnDwell { message } => vec![self.set_flag(
+            Command::MarkReadOnDwell { message } => self.set_flag(
                 &MessageTarget::Messages(vec![*message]),
                 Flag::Seen,
                 Some(true),
-            )?],
+            )?,
             other => {
                 return Err(CommandError::rejected(format!(
                     "`{}` is not wired up yet",
@@ -493,16 +513,38 @@ impl Actions {
                     _ => Ok(units),
                 }
             }
-            // A bulk action is already one account's: the predicate names a
-            // mailbox, and a mailbox belongs to one account.
-            Aim::Bulk { set, account, from } => Ok(vec![self.relocate_set(
-                &mut connection,
-                set,
-                account,
-                from,
-                to,
-                kind,
-            )?]),
+            // One unit per account, for the same reason the rows path
+            // groups: `to` names a *role*, and the folder it resolves to is a
+            // different one in each account.
+            Aim::Bulk(units) => {
+                // Same pre-flight as the rows path, and for the same reason:
+                // each unit commits its own transaction, so an account with
+                // no Archive has to stop the action while stopping it is
+                // still free.
+                for unit in &units {
+                    mailbox_for(&connection, unit.account, to)?;
+                }
+                let mut applied = Vec::with_capacity(units.len());
+                let mut nothing_to_do = None;
+                for unit in units {
+                    match self.relocate_set(
+                        &mut connection,
+                        unit.set,
+                        unit.account,
+                        unit.from,
+                        to,
+                        kind,
+                    ) {
+                        Ok(one) => applied.push(one),
+                        Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
+                        Err(error) => return Err(error),
+                    }
+                }
+                match (applied.is_empty(), nothing_to_do) {
+                    (true, Some(reason)) => Err(CommandError::Rejected(reason)),
+                    _ => Ok(applied),
+                }
+            }
         }
     }
 
@@ -616,7 +658,6 @@ impl Actions {
             // and the one they moved into is as changed as the ones they left.
             reloaded,
             changed: Vec::new(),
-            mailboxes_changed: false,
             inverse,
         })
     }
@@ -860,7 +901,7 @@ impl Actions {
         let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, target)? {
             Aim::Rows(rows) => rows,
-            Aim::Bulk { .. } => {
+            Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to snooze"));
             }
         };
@@ -903,7 +944,7 @@ impl Actions {
         let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, target)? {
             Aim::Rows(rows) => rows,
-            Aim::Bulk { .. } => {
+            Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to unsnooze"));
             }
         };
@@ -935,6 +976,130 @@ impl Actions {
         })
     }
 
+    /// Put a label on the selection, or take it off (#780).
+    ///
+    /// `Flag`'s shape, deliberately: a label is *stored* as a row in
+    /// `message_labels` and *travels* as an IMAP keyword, so this writes both
+    /// — the join the list and reader render from, and the flag the queue
+    /// carries to the server. Writing only the join would show a label that
+    /// no other client ever sees; writing only the keyword would leave the
+    /// label with no name or colour to draw.
+    ///
+    /// `want` of `None` toggles, exactly as `Flag` does.
+    fn set_label(
+        &self,
+        target: &MessageTarget,
+        label: LabelId,
+        want: Option<bool>,
+    ) -> Result<Applied, CommandError> {
+        let (mut connection, _permit) = self.connect()?;
+        let rows = match self.aim(&connection, target)? {
+            Aim::Rows(rows) => rows,
+            // A whole mailbox at once would need the counted, three-statement
+            // shape `set_flag_set` has, and there is no verb that asks for it
+            // yet: `L` labels a selection.
+            Aim::Bulk { .. } => {
+                return Err(CommandError::rejected(
+                    "Labelling a whole mailbox at once is not supported yet",
+                ));
+            }
+        };
+        let account = rows[0].account_id;
+
+        let name = {
+            let repository = LabelRepository::new(&connection);
+            repository
+                .get(label)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That label no longer exists"))?
+                .name
+        };
+        let keyword = Flag::Keyword(name);
+
+        let carried: Vec<bool> = {
+            let repository = LabelRepository::new(&connection);
+            rows.iter()
+                .map(|message| {
+                    repository
+                        .for_message(message.id)
+                        .map(|labels| labels.contains(&label))
+                        .map_err(store_failure)
+                })
+                .collect::<Result<_, _>>()?
+        };
+        let wanted = want.unwrap_or_else(|| !carried.iter().all(|has| *has));
+
+        let touched: Vec<&Message> = rows
+            .iter()
+            .zip(&carried)
+            .filter(|(_, has)| **has != wanted)
+            .map(|(message, _)| message)
+            .collect();
+        if touched.is_empty() {
+            return Err(CommandError::rejected("Already set"));
+        }
+
+        let one: FlagSet = std::iter::once(keyword.clone()).collect();
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        {
+            let labels = LabelRepository::new(&transaction);
+            let messages = MessageRepository::new(&transaction);
+            let queue = OperationQueueRepository::new(&transaction);
+            for message in &touched {
+                if wanted {
+                    labels.attach(message.id, label).map_err(store_failure)?;
+                } else {
+                    labels.detach(message.id, label).map_err(store_failure)?;
+                }
+                let mut flags = message.flags.clone();
+                if wanted {
+                    flags.insert(keyword.clone());
+                } else {
+                    flags.remove(&keyword);
+                }
+                messages
+                    .set_flags(message.id, &flags, FlagSource::Local)
+                    .map_err(store_failure)?;
+                let operation = if wanted {
+                    Operation::SetFlags { flags: one.clone() }
+                } else {
+                    Operation::ClearFlags { flags: one.clone() }
+                };
+                queue
+                    .enqueue(
+                        account,
+                        OperationTarget::Message(message.id),
+                        &operation,
+                        at,
+                    )
+                    .map_err(store_failure)?;
+            }
+        }
+        transaction.commit().map_err(store_failure)?;
+
+        let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
+        // Every touched row held the opposite value, so one command takes all
+        // of them back — the same argument `set_flag_rows` makes.
+        let inverse = Command::AddLabel {
+            target: MessageTarget::Messages(changed.clone()),
+            label: Some(label),
+            on: Some(!wanted),
+        };
+        Ok(Applied {
+            account,
+            kind: UndoKind::Label,
+            count: changed.len(),
+            messages: changed.clone(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed,
+            mailboxes_changed: false,
+            inverse: vec![inverse],
+        })
+    }
+
     /// Set or clear one flag across the target.
     ///
     /// `want` of `None` toggles, and a toggle over more than one row means
@@ -942,19 +1107,81 @@ impl Actions {
     /// them all, otherwise it goes onto them all. The alternative — flipping
     /// each row independently — turns one keystroke over a mixed selection
     /// into a result nobody can predict without reading every row first.
+    ///
+    /// **Across accounts that is still one decision.** A unified selection
+    /// arrives as one bulk unit per account, and deciding the toggle inside
+    /// each of them would let a single keystroke flag one account while
+    /// unflagging another — the unpredictable result the rule above exists to
+    /// prevent, one level up (#811).
     fn set_flag(
         &self,
         target: &MessageTarget,
         flag: Flag,
         want: Option<bool>,
-    ) -> Result<Applied, CommandError> {
+    ) -> Result<Vec<Applied>, CommandError> {
         let (mut connection, _permit) = self.connect()?;
         match self.aim(&connection, target)? {
-            Aim::Rows(rows) => self.set_flag_rows(&mut connection, rows, flag, want),
-            Aim::Bulk { set, account, from } => {
-                self.set_flag_set(&mut connection, set, account, from, flag, want)
+            Aim::Rows(rows) => self
+                .set_flag_rows(&mut connection, rows, flag, want)
+                .map(|one| vec![one]),
+            Aim::Bulk(units) => {
+                let wanted = match want {
+                    Some(wanted) => wanted,
+                    None => self.agreeing_on(&connection, &units, &flag)?,
+                };
+                let mut applied = Vec::with_capacity(units.len());
+                let mut nothing_to_do = None;
+                for unit in units {
+                    match self.set_flag_set(
+                        &mut connection,
+                        unit.set,
+                        unit.account,
+                        unit.from,
+                        flag.clone(),
+                        Some(wanted),
+                    ) {
+                        Ok(one) => applied.push(one),
+                        // This account already agreed. That is not a failure
+                        // for the accounts that did not — but if none of them
+                        // had anything to do, the user still deserves the
+                        // sentence.
+                        Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
+                        Err(error) => return Err(error),
+                    }
+                }
+                match (applied.is_empty(), nothing_to_do) {
+                    (true, Some(reason)) => Err(CommandError::Rejected(reason)),
+                    _ => Ok(applied),
+                }
             }
         }
+    }
+
+    /// Which way a toggle over `units` goes: on, unless they all carry it.
+    ///
+    /// One `count(*)` over an index per unit, never a read — the same trick
+    /// [`set_flag_set`] uses within one account, asked across the whole
+    /// selection so the answer is one answer.
+    ///
+    /// [`set_flag_set`]: Actions::set_flag_set
+    fn agreeing_on(
+        &self,
+        connection: &PooledConnection,
+        units: &[BulkUnit],
+        flag: &Flag,
+    ) -> Result<bool, CommandError> {
+        let column = ColumnFlag::of(flag)
+            .ok_or_else(|| CommandError::rejected("That flag does not work on a whole mailbox"))?;
+        let repository = MessageRepository::new(connection);
+        for unit in units {
+            let disagreeing = repository
+                .count_set(&unit.set.clone().with_flag(column, false))
+                .map_err(store_failure)?;
+            if disagreeing > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Set or clear one flag across a whole mailbox, without naming a row.
@@ -1299,7 +1526,7 @@ impl Actions {
             .state
             .read(|app| app.resolve(target))
             .ok_or_else(|| CommandError::rejected("Nothing selected"))?;
-        let (set, account, from) = match resolved {
+        let units = match resolved {
             Resolved::Messages(ids) => return self.rows(connection, ids).map(Aim::Rows),
             Resolved::Thread(thread) => {
                 let ids = thread_messages(connection, thread)?;
@@ -1316,27 +1543,55 @@ impl Actions {
                 return self.rows(connection, ids).map(Aim::Rows);
             }
             Resolved::Everything { scope, except } => match scope {
-                ViewScope::Mailbox(mailbox) => (
-                    MessageSet::InMailbox { mailbox, except },
+                ViewScope::Mailbox(mailbox) => vec![BulkUnit {
+                    set: MessageSet::InMailbox { mailbox, except },
                     // One row read, and it is a folder rather than a message:
                     // the account is needed to find the Archive, and there is
                     // no message to ask.
-                    account_of(connection, mailbox)?,
-                    Some(mailbox),
-                ),
+                    account: account_of(connection, mailbox)?,
+                    from: Some(mailbox),
+                }],
                 // A smart folder carries its own account, so there is no
                 // folder to read one off — and no one folder its rows are in.
-                ViewScope::Flagged(account) => {
-                    (MessageSet::Flagged { account, except }, account, None)
-                }
+                ViewScope::Flagged(account) => vec![BulkUnit {
+                    set: MessageSet::Flagged { account, except },
+                    account,
+                    from: None,
+                }],
+                // The aggregate, split into one predicate per account it was
+                // scoped to. The accounts come off the scope and are not
+                // looked up again: they are what the view could show when the
+                // gesture was made, and an account that has reconnected since
+                // was not part of the selection the user was shown (#811).
+                ViewScope::Unified { accounts } => accounts
+                    .into_iter()
+                    .map(|account| BulkUnit {
+                        set: MessageSet::InAccounts {
+                            accounts: vec![account],
+                            except: except.clone(),
+                        },
+                        account,
+                        from: None,
+                    })
+                    .collect(),
             },
             Resolved::Batch {
                 range,
                 account,
                 from,
-            } => (MessageSet::Queued(range), account, from),
+            } => vec![BulkUnit {
+                set: MessageSet::Queued(range),
+                account,
+                from,
+            }],
         };
-        Ok(Aim::Bulk { set, account, from })
+        // An aggregate that could reach no account at all resolves to no
+        // units, and a verb that quietly did nothing would be exactly the
+        // silence this issue is about.
+        if units.is_empty() {
+            return Err(CommandError::rejected("Nothing selected"));
+        }
+        Ok(Aim::Bulk(units))
     }
 
     /// The thread `A` means: the one the focused message belongs to.
@@ -1348,7 +1603,7 @@ impl Actions {
         let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, &MessageTarget::Selection)? {
             Aim::Rows(rows) => rows,
-            Aim::Bulk { .. } => {
+            Aim::Bulk(_) => {
                 return Err(CommandError::rejected(
                     "Pick a message, and `A` archives its thread",
                 ));
@@ -1705,6 +1960,13 @@ mod tests {
         quiet: EventSink,
     }
 
+    /// A second account, for the tests that are about which one a row is in.
+    struct Elsewhere {
+        account: Account,
+        inbox: MailboxId,
+        archive: MailboxId,
+    }
+
     fn world() -> World {
         let database = test_support::memory();
         let (account, inbox, archive, trash) = {
@@ -1758,6 +2020,57 @@ mod tests {
         fn everything_in(&self, mailbox: MailboxId) {
             self.state
                 .update(&self.quiet, |app: &mut AppState| app.open_mailbox(mailbox));
+            self.state
+                .update(&self.quiet, |app: &mut AppState| app.select_all());
+        }
+
+        /// A second account with its own INBOX and Archive.
+        ///
+        /// The unified view's whole subject is which account a row belongs
+        /// to, so these tests need two — and `test_support::account` builds
+        /// every one of them at the same address, which the accounts table
+        /// will not have twice.
+        fn second_account(&self) -> Elsewhere {
+            let connection = self.database.connection().expect("a connection");
+            let mut account = Account::new(
+                "Away",
+                postio_model::EmailAddress::new(Some("Away User"), "away@example.com"),
+            );
+            account.incoming.host = "imap.example.com".to_owned();
+            account.outgoing.host = "smtp.example.com".to_owned();
+            AccountRepository::new(&connection)
+                .create(&mut account)
+                .expect("a second account");
+            let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+            let archive = test_support::mailbox(&connection, &account, "Archive").id;
+            Elsewhere {
+                account,
+                inbox,
+                archive,
+            }
+        }
+
+        /// A message in another account's `mailbox`.
+        fn message_for(&self, account: &Account, mailbox: MailboxId, flags: &[Flag]) -> MessageId {
+            let connection = self.database.connection().expect("a connection");
+            let mut message = Message::new(account.id, mailbox, Utc::now());
+            for flag in flags {
+                message.flags.insert(flag.clone());
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message")
+        }
+
+        /// What `Ctrl+A` mirrors in the unified view: the aggregate open over
+        /// exactly the accounts it could show, and the predicate over that.
+        fn everything_unified(&self, accounts: &[AccountId]) {
+            let accounts = accounts.to_vec();
+            self.state.update(&self.quiet, |app: &mut AppState| {
+                app.open_view(ViewScope::Unified {
+                    accounts: accounts.clone(),
+                })
+            });
             self.state
                 .update(&self.quiet, |app: &mut AppState| app.select_all());
         }
@@ -1852,6 +2165,22 @@ mod tests {
                 .expect("a read")
                 .expect("the message is still there")
                 .mailbox_id
+        }
+
+        /// A label on this world's account.
+        fn label(&self, name: &str) -> postio_model::LabelId {
+            let connection = self.database.connection().expect("a connection");
+            let mut label = postio_model::Label::new(self.account.id, name);
+            postio_storage::repository::LabelRepository::new(&connection)
+                .create(&mut label)
+                .expect("create a label")
+        }
+
+        fn labels_of(&self, message: MessageId) -> Vec<postio_model::LabelId> {
+            let connection = self.database.connection().expect("a connection");
+            postio_storage::repository::LabelRepository::new(&connection)
+                .for_message(message)
+                .expect("a read")
         }
 
         fn flags_of(&self, message: MessageId) -> postio_model::FlagSet {
@@ -2676,6 +3005,116 @@ mod tests {
             6,
             "one queue row per message, written before the write emptied the \
              predicate they were selected by"
+        );
+    }
+
+    // ── The unified view (#811) ──────────────────────────────────────
+
+    #[test]
+    fn a_unified_archive_leaves_out_an_account_the_selection_was_not_scoped_to() {
+        // The account was away when `Ctrl+A` was pressed, so it is not in the
+        // scope -- and it is deliberately not consulted again here. Were
+        // reachability read at verb time instead, an account that reconnected
+        // in between would join a selection the user was never shown, which
+        // is the same defect pointing the other way (ADR 0005 Q10, #811).
+        let world = world();
+        let away = world.second_account();
+        let mine = world.message(world.inbox, &[]);
+        let theirs = world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id]);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("Ctrl+A in the unified view then archive must not reject");
+
+        assert_eq!(world.mailbox_of(mine), world.archive);
+        assert_eq!(
+            world.mailbox_of(theirs),
+            away.inbox,
+            "an account the selection was never scoped to must not be archived"
+        );
+    }
+
+    #[test]
+    fn a_unified_archive_files_each_account_in_its_own_archive() {
+        // A bulk verb across accounts is not one action with one destination:
+        // "the Archive" is a different folder in each account, and a single
+        // `Applied` naming one account could not describe it either.
+        let world = world();
+        let away = world.second_account();
+        let mine = world.message(world.inbox, &[]);
+        let theirs = world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id, away.account.id]);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("an archive across both accounts");
+
+        assert_eq!(world.mailbox_of(mine), world.archive);
+        assert_eq!(
+            world.mailbox_of(theirs),
+            away.archive,
+            "each account's mail goes to that account's own Archive"
+        );
+    }
+
+    #[test]
+    fn a_unified_flag_write_only_touches_the_accounts_the_scope_names() {
+        let world = world();
+        let away = world.second_account();
+        let mine = world.message(world.inbox, &[]);
+        let theirs = world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id]);
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            })
+            .expect("a bulk flag over the reachable accounts");
+
+        assert!(world.flags_of(mine).contains(&Flag::Flagged));
+        assert!(
+            !world.flags_of(theirs).contains(&Flag::Flagged),
+            "an account the selection was never scoped to must not be flagged"
+        );
+    }
+
+    #[test]
+    fn a_unified_bulk_action_announces_itself_once_per_account() {
+        // ADR 0005 Q11: every event announcing work names the account it
+        // happened in. One event for two accounts would have to name one of
+        // them, and the list showing the other would never repaint.
+        let world = world();
+        let away = world.second_account();
+        world.message(world.inbox, &[]);
+        world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id, away.account.id]);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("an archive across both accounts");
+
+        let accounts: Vec<AccountId> = world
+            .drained()
+            .into_iter()
+            .filter_map(|event| match event {
+                // A bulk unit reports a folder that changed wholesale rather
+                // than naming the rows that left it -- that read is the one
+                // the predicate exists to avoid.
+                Event::MessageListChanged { account, .. } => Some(account),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            accounts.contains(&world.account.id) && accounts.contains(&away.account.id),
+            "both accounts' lists have to hear about it: {accounts:?}"
         );
     }
 
@@ -3540,7 +3979,134 @@ mod tests {
             );
         }
     }
+    // ── Labels (#780) ────────────────────────────────────────────────────
 
+    #[test]
+    fn the_bus_answers_add_label() {
+        // The gap this test exists for: `AddLabel` has a handler *and* an
+        // arm, and was still unanswered, because `WIRED` is what subscribes
+        // it to the bus and it was not in the list. `command_wiring.rs`'s
+        // sweep did not catch that either -- the window intercepts
+        // `AddLabel { label: None }` to open the picker, which satisfies
+        // "handled locally", so only the *answered* form was adrift.
+        let world = world();
+        let bus = dispatcher(world.actions.clone());
+        assert!(
+            bus.wired().any(|id| id == CommandId::AddLabel),
+            "AddLabel is not on the bus, so a command carrying a label \
+             reaches nothing that writes"
+        );
+    }
+
+    #[test]
+    fn a_label_goes_on_the_selection_and_undo_takes_it_off() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+
+        world
+            .run(Command::AddLabel {
+                target: MessageTarget::Messages(vec![message]),
+                label: Some(work),
+                on: None,
+            })
+            .expect("label it");
+
+        assert_eq!(world.labels_of(message), vec![work]);
+        // The wire form of a label is an IMAP keyword, so the flag the server
+        // will be told about is on the row too -- otherwise the next resync
+        // would disagree with what the user is looking at.
+        assert!(
+            world
+                .flags_of(message)
+                .contains(&Flag::Keyword("Work".to_owned())),
+            "the label is not on the message as a keyword: {:?}",
+            world.flags_of(message)
+        );
+
+        world.run(Command::Undo).expect("undo");
+        assert!(
+            world.labels_of(message).is_empty(),
+            "`u` left the label on, and the registry promises Recovery::Undo"
+        );
+        assert!(
+            !world
+                .flags_of(message)
+                .contains(&Flag::Keyword("Work".to_owned())),
+            "the keyword outlived the label it stands for"
+        );
+    }
+
+    #[test]
+    fn labelling_tells_the_server_and_undo_tells_it_the_other_thing() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+        let keyword: postio_model::FlagSet =
+            std::iter::once(Flag::Keyword("Work".to_owned())).collect();
+
+        world
+            .run(Command::AddLabel {
+                target: MessageTarget::Messages(vec![message]),
+                label: Some(work),
+                on: None,
+            })
+            .expect("label it");
+
+        let connection = world.database.connection().expect("a connection");
+        let queued = OperationQueueRepository::new(&connection)
+            .pending(world.account.id, Utc::now())
+            .expect("the queue");
+        assert_eq!(
+            queued
+                .iter()
+                .map(|row| row.operation.clone())
+                .collect::<Vec<_>>(),
+            vec![Operation::SetFlags {
+                flags: keyword.clone()
+            }],
+            "a label is a keyword on the wire, and the queue is how it gets there"
+        );
+    }
+
+    #[test]
+    fn a_label_already_on_the_message_is_not_applied_twice() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+        let on = |on| Command::AddLabel {
+            target: MessageTarget::Messages(vec![message]),
+            label: Some(work),
+            on: Some(on),
+        };
+
+        world.run(on(true)).expect("label it");
+        assert_eq!(
+            world.run(on(true)),
+            Err(CommandError::rejected("Already set")),
+            "a second `L` on a labelled message must not enqueue a second \
+             operation, or `u` would take back something nobody did"
+        );
+        assert_eq!(world.labels_of(message), vec![work]);
+    }
+
+    #[test]
+    fn a_label_with_no_label_asks_rather_than_failing() {
+        // `None` is half a request -- ADR 0005's picker case, the same shape
+        // `Move { to: None }` has. The window opens the picker before this is
+        // ever reached; what it must not do is look like an error nobody can
+        // act on.
+        let world = world();
+        world.message(world.inbox, &[]);
+        assert_eq!(
+            world.run(Command::AddLabel {
+                target: MessageTarget::Selection,
+                label: None,
+                on: None,
+            }),
+            Err(CommandError::rejected("Pick a label to add"))
+        );
+    }
     // ── Mapping a role to a folder (ADR 0025, #965) ──────────────────────
 
     #[test]

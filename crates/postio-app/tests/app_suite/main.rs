@@ -19,14 +19,18 @@ mod compose_typing;
 mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_recipients;
+mod correlation;
 mod cursor_preview;
 mod degraded_unified;
 mod drag_out_portal;
 mod drag_out_wiring;
 mod dwell_wiring;
 mod egress_wiring;
+mod event_fanout;
 mod keystroke;
+mod label_wiring;
 mod manual_sync;
+mod onboarding_probe;
 mod parts_open_wiring;
 mod reader_loads;
 mod reading;
@@ -37,6 +41,7 @@ mod reply_source;
 mod resume_draft;
 mod resume_queued_draft;
 mod search_index;
+mod search_live;
 mod search_open;
 mod search_results;
 mod search_return_and_tab;
@@ -44,18 +49,21 @@ mod search_wiring;
 mod second_activate_wiring;
 mod send_later_wiring;
 mod send_wiring;
+mod settings_account_detail_wiring;
 mod settings_accounts_token_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
 mod sidebar_backfill_wiring;
 mod signature_default_wiring;
 mod startup_repair;
+mod sync_window;
 mod thread_bulk_keystroke;
 mod thread_cursor_preview;
 mod thread_dwell;
 mod thread_keystroke;
 mod unconfirmed_send;
 mod unified_list;
+mod unified_select_all;
 mod window_drain;
 mod wiring;
 
@@ -129,6 +137,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it",
         degraded_unified::the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it
+            as fn(),
+    ),
+    (
+        "unified_select_all::select_all_in_a_degraded_unified_view_archives_only_what_it_could_see",
+        unified_select_all::select_all_in_a_degraded_unified_view_archives_only_what_it_could_see
             as fn(),
     ),
     (
@@ -231,6 +244,11 @@ const CASES: &[(&str, fn())] = &[
         send_wiring::ctrl_return_queues_the_draft_for_sending as fn(),
     ),
     (
+        "settings_account_detail_wiring::editing_the_detail_view_writes_straight_to_the_accounts_table",
+        settings_account_detail_wiring::editing_the_detail_view_writes_straight_to_the_accounts_table
+            as fn(),
+    ),
+    (
         "settings_accounts_wiring::account_rows_persist_enable_and_mark_removal",
         settings_accounts_wiring::account_rows_persist_enable_and_mark_removal as fn(),
     ),
@@ -289,6 +307,46 @@ const CASES: &[(&str, fn())] = &[
     (
         "wiring::a_window_over_a_populated_store_lists_its_mail",
         wiring::a_window_over_a_populated_store_lists_its_mail as fn(),
+    ),
+    (
+        "correlation::a_programmatic_caller_gets_the_answer_to_its_own_archive",
+        correlation::a_programmatic_caller_gets_the_answer_to_its_own_archive as fn(),
+    ),
+    (
+        "correlation::a_caller_is_told_when_the_application_refuses",
+        correlation::a_caller_is_told_when_the_application_refuses as fn(),
+    ),
+    (
+        "correlation::the_frontends_own_sends_are_unaffected",
+        correlation::the_frontends_own_sends_are_unaffected as fn(),
+    ),
+    (
+        "event_fanout::a_second_frontend_sees_everything_the_window_sees",
+        event_fanout::a_second_frontend_sees_everything_the_window_sees as fn(),
+    ),
+    (
+        "event_fanout::one_subscription_carries_both_of_the_applications_producers",
+        event_fanout::one_subscription_carries_both_of_the_applications_producers as fn(),
+    ),
+    (
+        "onboarding_probe::the_probe_call_site_drives_the_screen_from_a_transport_it_was_given",
+        onboarding_probe::the_probe_call_site_drives_the_screen_from_a_transport_it_was_given as fn(),
+    ),
+    (
+        "search_live::a_real_account_answers_a_real_query",
+        search_live::a_real_account_answers_a_real_query as fn(),
+    ),
+    (
+        "sync_window::picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml",
+        sync_window::picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml as fn(),
+    ),
+    (
+        "label_wiring::a_label_command_puts_a_label_on_the_message_it_names",
+        label_wiring::a_label_command_puts_a_label_on_the_message_it_names as fn(),
+    ),
+    (
+        "label_wiring::a_label_command_with_no_label_opens_the_picker",
+        label_wiring::a_label_command_with_no_label_opens_the_picker as fn(),
     ),
 ];
 

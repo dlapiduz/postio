@@ -1348,6 +1348,23 @@ impl Window {
             let finder = self.finder();
             move |mailboxes| finder.set_mailboxes(mailboxes)
         });
+        // A picked label goes onto whatever the box was opened over. The
+        // selection is resolved here rather than captured when the box
+        // opened, for the reason `Move`'s own pick does it this way: the box
+        // is modal over the list, so the selection cannot have moved, and
+        // reading it now is one fewer piece of state to keep true.
+        self.finder().connect_label(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |label| {
+                window.close_finder();
+                window.act(postio_core::Command::AddLabel {
+                    target: postio_core::MessageTarget::Selection,
+                    label: Some(label),
+                    on: None,
+                });
+            }
+        ));
         self.finder().connect_folder(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -1482,7 +1499,7 @@ impl Window {
         // about every account when only one of them is away. Named from the
         // sidebar's own list so the name in the banner and the hue on the
         // account's row are the same account in the same order.
-        let aggregate = matches!(feed.scope(), Some(postio_model::ListScope::Unified)).then(|| {
+        let drawn = matches!(feed.scope(), Some(postio_model::ListScope::Unified)).then(|| {
             let names = self.sidebar().account_names();
             folders
                 .statuses()
@@ -1492,8 +1509,35 @@ impl Window {
                         .iter()
                         .find(|(candidate, _)| *candidate == id)
                         .map(|(_, name)| name.clone())?;
-                    Some((name, status))
+                    Some((id, name, status))
                 })
+                .collect::<Vec<_>>()
+        });
+        // The same accounts, twice over, from one reading of one rule: the
+        // banner names the ones the view cannot vouch for, and a whole-view
+        // selection is scoped to the ones it can. Deriving those separately
+        // is how the disclosure and the selection would come to disagree
+        // about which account is which (#811, ADR 0005 Q10).
+        self.list().set_reach(match &drawn {
+            Some(accounts) => crate::selection::Reach {
+                accounts: accounts
+                    .iter()
+                    .filter(|(_, _, status)| crate::list_state::is_current(status))
+                    .map(|(id, _, _)| *id)
+                    .collect(),
+                omitted: accounts
+                    .iter()
+                    .filter(|(_, _, status)| !crate::list_state::is_current(status))
+                    .map(|(_, name, _)| name.clone())
+                    .collect(),
+            },
+            // Not an aggregate: one account, nothing left out.
+            None => crate::selection::Reach::default(),
+        });
+        let aggregate = drawn.map(|accounts| {
+            accounts
+                .into_iter()
+                .map(|(_, name, status)| (name, status))
                 .collect::<Vec<_>>()
         });
         self.list_state().set_accounts(aggregate);
@@ -2436,6 +2480,15 @@ impl Window {
         if matches!(command, postio_core::Command::Move { to: None, .. }) {
             self.open_finder(Mode::Mailbox);
             self.imp().pending_move.set(true);
+            return;
+        }
+        // The same shape for a label (#780, ADR 0005): `None` means "ask",
+        // and an answered `AddLabel` -- from the pick below -- carries its
+        // label and goes straight out. Without this the command reaches the
+        // dispatcher, which rejects it with "Pick a label to add", and the
+        // menu item is the dead end #766 removed it for being.
+        if matches!(command, postio_core::Command::AddLabel { label: None, .. }) {
+            self.open_finder(Mode::Label);
             return;
         }
         // Opening a message is navigation, not a store verb: it changes what

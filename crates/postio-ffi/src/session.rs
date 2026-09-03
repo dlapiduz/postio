@@ -239,6 +239,16 @@ pub struct Session {
     /// thing this list exists not to do. So the predicate stays on this side,
     /// and Swift moves it with the same small verbs `postio-ui` gives GTK.
     selection: Mutex<postio_core::state::Selection>,
+    /// The accounts an aggregate view could show when `Ctrl+A` was pressed.
+    ///
+    /// The other half of the same predicate: in the unified list a whole-view
+    /// selection is about the accounts the view could actually vouch for, and
+    /// that set is fixed at the gesture rather than looked up when the verb
+    /// runs (#811, ADR 0005 Q10). Empty until a frontend says otherwise,
+    /// which makes `Ctrl+A` in the aggregate a rejection rather than an
+    /// action over accounts nobody vouched for — the behaviour this boundary
+    /// had before the scope could carry them at all.
+    reachable: Mutex<Vec<postio_model::ids::AccountId>>,
     /// The row the keyboard is on, as the frontend last reported it.
     cursor: Mutex<Option<postio_model::ids::MessageId>>,
     /// Page reads still in flight, and how many have been issued in total.
@@ -372,6 +382,17 @@ impl Session {
     #[uniffi::method(name = "selectAll")]
     pub fn select_all_ffi(&self) {
         self.select_all();
+    }
+
+    /// Report which accounts the aggregate view can currently vouch for.
+    ///
+    /// Call it whenever a connection changes, from the same states the
+    /// "showing local mail" disclosure is drawn from: it is what a whole-view
+    /// selection in the unified list is scoped to, and it is read when the
+    /// selection is *made* rather than when a verb runs (#811).
+    #[uniffi::method(name = "setReachableAccounts")]
+    pub fn set_reachable_accounts_ffi(&self, accounts: Vec<i64>) {
+        self.set_reachable_accounts(&accounts);
     }
 
     /// Unmark everything.
@@ -536,6 +557,7 @@ impl Session {
                 keys: load_key_bindings(options.config_text.as_deref()),
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 selection: Mutex::new(postio_core::state::Selection::default()),
+                reachable: Mutex::new(Vec::new()),
                 cursor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
@@ -581,6 +603,7 @@ impl Session {
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
             selection: Mutex::new(postio_core::state::Selection::default()),
+            reachable: Mutex::new(Vec::new()),
             cursor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
@@ -656,11 +679,9 @@ impl Session {
             // The shared conversion, not a second one: `ScopeFfi` becomes a
             // `ListScope` on the way in, and `aim::view_scope` is the one
             // rule for what a whole-view gesture is relative to (#670).
-            scope: self
-                .scope
-                .lock()
-                .expect("scope lock")
-                .and_then(postio_core::aim::view_scope),
+            scope: self.scope.lock().expect("scope lock").and_then(|scope| {
+                postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
+            }),
             selection: &selection,
             cursor: *self.cursor.lock().expect("cursor lock"),
             rows: &*list,
@@ -716,6 +737,21 @@ impl Session {
     pub fn select_all(&self) {
         *self.selection.lock().expect("selection lock") =
             postio_core::state::Selection::Everything { except: Vec::new() };
+    }
+
+    /// Say which accounts the aggregate view can currently vouch for.
+    ///
+    /// Reported by the frontend, from the same connection states its own
+    /// "showing local mail" banner is drawn from, and read at the moment a
+    /// whole-view selection is *made*. A frontend that never calls this gets
+    /// the safe answer: `Ctrl+A` in the unified list selects nothing rather
+    /// than acting on accounts nothing vouched for (#811).
+    pub fn set_reachable_accounts(&self, accounts: &[i64]) {
+        *self.reachable.lock().expect("reachable lock") = accounts
+            .iter()
+            .copied()
+            .map(postio_model::ids::AccountId::new)
+            .collect();
     }
 
     /// Unmark everything.

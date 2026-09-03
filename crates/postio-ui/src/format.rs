@@ -7,6 +7,26 @@
 
 use postio_core::event::MailFootprint;
 
+/// "Personal", "Personal and Work", "Personal, Work and Archive".
+///
+/// The one place Postio joins a list of account names, because the surfaces
+/// that name absent accounts have to name them the same way: the list pane's
+/// banner says which accounts a unified view could not reach, and the
+/// selection summary says which ones a whole-view selection therefore left
+/// out. Two spellings of the same list read as two different lists (#811,
+/// ADR 0005 Q10).
+///
+/// Every name, never "and 2 others": naming one of three absent accounts is
+/// its own omission, and the list is bounded by how many accounts a person
+/// configures.
+pub fn names(accounts: &[String]) -> String {
+    match accounts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 /// A size, the way the canvas writes it: `11 KB`, `1.1 MB`.
 ///
 /// Binary units, matching `postio-search`'s `larger:`/`smaller:` parser — a

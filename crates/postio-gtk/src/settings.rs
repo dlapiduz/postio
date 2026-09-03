@@ -63,7 +63,7 @@
 //! what makes the panel itself reachable from a binding and the palette,
 //! alongside the main menu.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -124,6 +124,30 @@ type AccountActionHandler = Box<dyn Fn(AccountId, AccountAction)>;
 /// What to call when an account row's enabled switch is flipped by hand —
 /// never fired for the initial state [`SettingsPanel::set_accounts`] sets.
 type AccountEnabledHandler = Box<dyn Fn(AccountId, bool)>;
+
+/// One field of the account detail view (#880) committed to a new value.
+///
+/// An account is database state, not `config.toml` preference (ADR 0005
+/// Q6b), so this panel cannot patch a buffer the way [`Section::Filters`]
+/// and [`Section::Ui`] do — it only reports what changed, the same split
+/// [`AccountAction`] already uses, and `postio-app`'s `settings_accounts`
+/// module is what actually calls `AccountRepository::update`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountEdit {
+    /// The name shown in the sidebar and this row.
+    DisplayName(String),
+    /// The IMAP server's hostname.
+    ImapHost(String),
+    /// The IMAP server's port.
+    ImapPort(u16),
+    /// The SMTP server's hostname.
+    SmtpHost(String),
+    /// The SMTP server's port.
+    SmtpPort(u16),
+}
+
+/// What to call when a field in the account detail view is committed.
+type AccountEditHandler = Box<dyn Fn(AccountId, AccountEdit)>;
 
 // ---------------------------------------------------------------------------
 // Sections — pure, no GTK
@@ -336,6 +360,22 @@ fn account_badge(account: &Account) -> String {
     format!("{backend} · {auth}")
 }
 
+/// One labeled field in the account detail view (#880) — a plain label over
+/// the control, the simplest shape that fits an `Entry` or a `SpinButton`
+/// equally well. Unlike [`SettingsPanel::sync_row`], there is no second
+/// description line: a host or a port names itself.
+fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let title = gtk::Label::new(Some(label));
+    title.set_xalign(0.0);
+    title.add_css_class("postio-settings-account-detail-label");
+
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    row.add_css_class("postio-settings-account-detail-row");
+    row.append(&title);
+    row.append(control);
+    row
+}
+
 // ---------------------------------------------------------------------------
 // The widget
 // ---------------------------------------------------------------------------
@@ -405,6 +445,28 @@ mod imp {
         pub account_menu: RefCell<Option<gtk::PopoverMenu>>,
         pub account_action: RefCell<Vec<AccountActionHandler>>,
         pub account_enabled_changed: RefCell<Vec<AccountEnabledHandler>>,
+        /// The account detail view (#880): editable display name, IMAP and
+        /// SMTP host/port, over an account's real settings. Hidden until
+        /// [`super::SettingsPanel::open_account_detail`] is called.
+        pub account_detail: gtk::Box,
+        /// Which account the detail view is currently open on, if any —
+        /// what an edit's committed value is reported against.
+        pub account_detail_id: RefCell<Option<AccountId>>,
+        /// Built on first use by
+        /// [`super::SettingsPanel::ensure_account_detail_fields`], never in
+        /// `build()` or this struct's own `Default` — see that method's
+        /// doc for why.
+        pub account_detail_display_name: OnceCell<gtk::Entry>,
+        pub account_detail_imap_host: OnceCell<gtk::Entry>,
+        pub account_detail_imap_port: OnceCell<gtk::SpinButton>,
+        pub account_detail_smtp_host: OnceCell<gtk::Entry>,
+        pub account_detail_smtp_port: OnceCell<gtk::SpinButton>,
+        /// Set while [`super::SettingsPanel::open_account_detail`] is
+        /// populating the fields above, so setting an `Entry`'s text does
+        /// not itself fire an edit — the same guard [`SettingsPanel::load`]
+        /// uses on the raw buffer, for the same reason.
+        pub account_detail_loading: Cell<bool>,
+        pub account_edited: RefCell<Vec<AccountEditHandler>>,
         /// One row per saved search, pinned or not (#869) — the structured
         /// pane [`Section::Filters`] now shows instead of only jumping the
         /// raw text view to `[filters]`.
@@ -464,6 +526,15 @@ mod imp {
                 account_menu: RefCell::new(None),
                 account_action: RefCell::new(Vec::new()),
                 account_enabled_changed: RefCell::new(Vec::new()),
+                account_detail: gtk::Box::new(gtk::Orientation::Vertical, 8),
+                account_detail_id: RefCell::new(None),
+                account_detail_display_name: OnceCell::new(),
+                account_detail_imap_host: OnceCell::new(),
+                account_detail_imap_port: OnceCell::new(),
+                account_detail_smtp_host: OnceCell::new(),
+                account_detail_smtp_port: OnceCell::new(),
+                account_detail_loading: Cell::new(false),
+                account_edited: RefCell::new(Vec::new()),
                 filters_list: gtk::ListBox::new(),
                 filters_scroller: gtk::ScrolledWindow::new(),
                 filters_empty: gtk::Label::new(Some(
@@ -880,8 +951,23 @@ impl SettingsPanel {
         for account in imp.accounts.borrow().iter() {
             imp.accounts_list.append(&self.account_row(account));
         }
-        imp.accounts_scroller
-            .set_visible(!imp.accounts.borrow().is_empty());
+        // A refresh can land while the detail view is open on an account
+        // this same redraw just found gone -- removed from another window,
+        // most likely -- and showing an editable form over settings that no
+        // longer exist would let an edit resurrect a deleted account.
+        if let Some(id) = *imp.account_detail_id.borrow()
+            && !imp.accounts.borrow().iter().any(|account| account.id == id)
+        {
+            self.close_account_detail();
+            return;
+        }
+        // The detail view, not the list, owns this section's visibility
+        // while it is open (#880) -- an ordinary refresh must not pop the
+        // list back in front of it.
+        if imp.account_detail_id.borrow().is_none() {
+            imp.accounts_scroller
+                .set_visible(!imp.accounts.borrow().is_empty());
+        }
     }
 
     /// The sentence this account's row carries under its name, if it has one
@@ -1136,6 +1222,177 @@ impl SettingsPanel {
             .account_enabled_changed
             .borrow_mut()
             .push(Box::new(handler));
+    }
+
+    /// Opens the detail view on `id`'s current settings, as activating its
+    /// row does. Does nothing if `id` is not one of the accounts
+    /// [`SettingsPanel::set_accounts`] last gave this panel.
+    pub fn open_account_detail(&self, id: AccountId) {
+        let imp = self.imp();
+        let Some(account) = imp
+            .accounts
+            .borrow()
+            .iter()
+            .find(|account| account.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        self.ensure_account_detail_fields();
+        imp.account_detail_loading.set(true);
+        imp.account_detail_display_name
+            .get()
+            .expect("built above")
+            .set_text(&account.display_name);
+        imp.account_detail_imap_host
+            .get()
+            .expect("built above")
+            .set_text(&account.incoming.host);
+        imp.account_detail_imap_port
+            .get()
+            .expect("built above")
+            .set_value(f64::from(account.incoming.port));
+        imp.account_detail_smtp_host
+            .get()
+            .expect("built above")
+            .set_text(&account.outgoing.host);
+        imp.account_detail_smtp_port
+            .get()
+            .expect("built above")
+            .set_value(f64::from(account.outgoing.port));
+        imp.account_detail_loading.set(false);
+        *imp.account_detail_id.borrow_mut() = Some(id);
+        imp.account_detail.set_visible(true);
+        imp.accounts_scroller.set_visible(false);
+    }
+
+    /// Builds the detail view's five field widgets, the first time any
+    /// account's detail is opened — never during `build()` or this
+    /// widget's own construction.
+    ///
+    /// `SettingsPanel` is built as a hidden overlay child while `Window::new`
+    /// is still wiring up its own overlay siblings and shortcut controllers
+    /// (`window.rs`), and constructing a widget with its own internal event
+    /// controllers there was found to corrupt keyboard routing for the rest
+    /// of that window (#873, about a `gtk::DropDown`) — `gtk::Entry` and
+    /// `gtk::SpinButton` carry the same kind of internal `GtkText`
+    /// key/IM controllers a `DropDown`'s type-ahead does, so they get the
+    /// same treatment: built only once a real interaction (opening an
+    /// account's detail) proves the window has long since finished
+    /// constructing.
+    fn ensure_account_detail_fields(&self) {
+        let imp = self.imp();
+        if imp.account_detail_display_name.get().is_some() {
+            return;
+        }
+
+        let display_name = gtk::Entry::new();
+        display_name.add_css_class("postio-settings-account-detail-display-name");
+        display_name.update_property(&[gtk::accessible::Property::Label("Display name")]);
+        display_name.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::DisplayName(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("Display name", &display_name));
+        let _ = imp.account_detail_display_name.set(display_name);
+
+        let imap_host = gtk::Entry::new();
+        imap_host.add_css_class("postio-settings-account-detail-imap-host");
+        imap_host.update_property(&[gtk::accessible::Property::Label("IMAP host")]);
+        imap_host.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::ImapHost(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("IMAP host", &imap_host));
+        let _ = imp.account_detail_imap_host.set(imap_host);
+
+        let imap_port = gtk::SpinButton::with_range(1.0, 65535.0, 1.0);
+        imap_port.add_css_class("postio-settings-account-detail-imap-port");
+        imap_port.update_property(&[gtk::accessible::Property::Label("IMAP port")]);
+        imap_port.connect_value_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |spin| {
+                panel.commit_account_edit(AccountEdit::ImapPort(spin.value() as u16));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("IMAP port", &imap_port));
+        let _ = imp.account_detail_imap_port.set(imap_port);
+
+        let smtp_host = gtk::Entry::new();
+        smtp_host.add_css_class("postio-settings-account-detail-smtp-host");
+        smtp_host.update_property(&[gtk::accessible::Property::Label("SMTP host")]);
+        smtp_host.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::SmtpHost(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("SMTP host", &smtp_host));
+        let _ = imp.account_detail_smtp_host.set(smtp_host);
+
+        let smtp_port = gtk::SpinButton::with_range(1.0, 65535.0, 1.0);
+        smtp_port.add_css_class("postio-settings-account-detail-smtp-port");
+        smtp_port.update_property(&[gtk::accessible::Property::Label("SMTP port")]);
+        smtp_port.connect_value_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |spin| {
+                panel.commit_account_edit(AccountEdit::SmtpPort(spin.value() as u16));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("SMTP port", &smtp_port));
+        let _ = imp.account_detail_smtp_port.set(smtp_port);
+    }
+
+    /// Closes the detail view and shows the account list again, as the
+    /// back button does.
+    pub fn close_account_detail(&self) {
+        let imp = self.imp();
+        *imp.account_detail_id.borrow_mut() = None;
+        imp.account_detail.set_visible(false);
+        imp.accounts_scroller
+            .set_visible(!imp.accounts.borrow().is_empty());
+    }
+
+    /// Called when a field in the account detail view is committed —
+    /// `Enter` in an `Entry`, or any change to a `SpinButton`.
+    pub fn connect_account_edited(&self, handler: impl Fn(AccountId, AccountEdit) + 'static) {
+        self.imp()
+            .account_edited
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires every `account_edited` handler with `edit`, against whichever
+    /// account the detail view is currently open on. Silently does nothing
+    /// while [`SettingsPanel::open_account_detail`] is populating the
+    /// fields, and if the detail view is not open on anything at all —
+    /// neither should happen from a real field commit, but a stray signal
+    /// during a redraw is cheaper to ignore than to chase.
+    fn commit_account_edit(&self, edit: AccountEdit) {
+        let imp = self.imp();
+        if imp.account_detail_loading.get() {
+            return;
+        }
+        let Some(id) = *imp.account_detail_id.borrow() else {
+            return;
+        };
+        for callback in imp.account_edited.borrow().iter() {
+            callback(id, edit.clone());
+        }
     }
 
     /// Opens an account row's context menu exactly as a right-click would,
@@ -1908,6 +2165,22 @@ impl SettingsPanel {
         ));
         imp.accounts_list.add_controller(accounts_menu);
 
+        // Activating a row (click, or Enter/Space when focused) opens the
+        // detail view (#880) -- the switch and the context menu each
+        // consume their own click before it would reach the row, so this
+        // does not fire when either of those is what was actually pressed.
+        imp.accounts_list.set_activate_on_single_click(true);
+        imp.accounts_list.connect_row_activated(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let id = row_account_id(row);
+                if id.is_assigned() {
+                    panel.open_account_detail(id);
+                }
+            }
+        ));
+
         imp.accounts_scroller.set_child(Some(&imp.accounts_list));
         imp.accounts_scroller
             .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -1917,6 +2190,27 @@ impl SettingsPanel {
         imp.accounts_scroller
             .add_css_class("postio-settings-accounts");
         imp.accounts_scroller.set_visible(false);
+
+        // ── account detail: display name, IMAP/SMTP host+port (#880) ─────
+        imp.account_detail
+            .add_css_class("postio-settings-account-detail");
+        imp.account_detail.set_visible(false);
+
+        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        back.add_css_class("postio-settings-account-detail-back");
+        back.add_css_class("flat");
+        back.set_halign(gtk::Align::Start);
+        back.set_tooltip_text(Some("Back to accounts"));
+        back.update_property(&[gtk::accessible::Property::Label("Back to accounts")]);
+        back.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.close_account_detail()
+        ));
+        imp.account_detail.append(&back);
+        // The five field widgets (Entry/SpinButton) are deliberately NOT
+        // built here -- see `ensure_account_detail_fields`'s own doc for
+        // why constructing them this early would repeat #873.
 
         // ── filters: one row each, name/query, pinned, reorder, delete ───
         imp.filters_list
@@ -2071,6 +2365,7 @@ impl SettingsPanel {
         column.append(&header);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&imp.accounts_scroller);
+        column.append(&imp.account_detail);
         column.append(&imp.egress_scroller);
         column.append(&imp.filters_scroller);
         column.append(&imp.filters_empty);

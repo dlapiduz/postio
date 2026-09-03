@@ -470,7 +470,14 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             .is_some_and(|format| format.eq_ignore_ascii_case("flowed"))
     });
     message.body = MessageBody {
-        text: text_part.map(|(_, text)| text),
+        // RFC 2046 §5.1.1: a multipart whose boundary could not be used has
+        // no parts to have found a text body among, and is read as this
+        // entity's own content instead. `text_is_flowed` is correctly left
+        // `false` above -- the fallback part carries no `format` attribute
+        // of its own to answer that from.
+        text: text_part
+            .map(|(_, text)| text)
+            .or_else(|| multipart_boundary_fallback(&source)),
         html: source.html_bodies().find_map(|part| match &part.body {
             PartType::Html(html) => Some(html.to_string()),
             _ => None,
@@ -494,6 +501,13 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         .iter()
         .filter_map(|id| {
             let part = source.parts.get(*id as usize)?;
+            // A `multipart/*` part is a container, not a file: RFC 2046
+            // §5.1.1's fallback above is what happens when one has to be
+            // read anyway, and it must not also show up here as a nameless,
+            // typeless attachment (#900).
+            if is_multipart_type(part) {
+                return None;
+            }
             Some(parsed_part(*id, part, &paths))
         })
         .collect();
@@ -655,6 +669,42 @@ fn preview(text: &str) -> Option<String> {
         out.push('\u{2026}');
     }
     Some(out)
+}
+
+/// Whether `part`'s own `Content-Type` is `multipart/*`.
+fn is_multipart_type(part: &MessagePart<'_>) -> bool {
+    part.content_type()
+        .is_some_and(|content_type| content_type.ctype().eq_ignore_ascii_case("multipart"))
+}
+
+/// RFC 2046 §5.1.1's fallback: a multipart entity whose boundary parameter is
+/// missing, empty, or unrecognisable "must be treated as text/plain".
+///
+/// `mail_parser` cannot split such an entity into children — there is no
+/// boundary left to split on — so it leaves the whole thing as one part typed
+/// `multipart/*`, holding the entity's own content as [`PartType::Text`] or
+/// [`PartType::Binary`] rather than [`PartType::Multipart`]'s list of
+/// children. That shape can only be the message's own root: an ordinary
+/// multipart's root part is always `Multipart`, holding its children's ids —
+/// so `source.parts.first()` is the one part this can ever be true of.
+///
+/// No charset decoding to do here beyond what `mail_parser` already gives:
+/// RFC 2046 defines no `charset` parameter for a multipart type — it belongs
+/// to `text/*` — so a [`PartType::Binary`] root decodes as UTF-8 with
+/// replacement, the same default `mail_parser` itself falls back to for a
+/// `text/plain` part with none declared.
+fn multipart_boundary_fallback(source: &MpMessage<'_>) -> Option<String> {
+    let root = source.parts.first()?;
+    if !is_multipart_type(root) {
+        return None;
+    }
+    match &root.body {
+        PartType::Text(text) => Some(text.to_string()),
+        PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
+            Some(String::from_utf8_lossy(bytes).into_owned())
+        }
+        PartType::Multipart(_) | PartType::Html(_) | PartType::Message(_) => None,
+    }
 }
 
 /// Maps every leaf part to its MIME part path (`2.1`), the way IMAP numbers
