@@ -168,3 +168,44 @@ fn deleting_a_label_takes_it_off_every_message_carrying_it() {
         "deleting a label that is not there is not a change"
     );
 }
+
+#[test]
+fn a_resync_does_not_take_a_label_off_a_message() {
+    // The hazard that decides how labels are designed (#780). `write_update`
+    // -- which `upsert_batch` uses for every message a sync already knows --
+    // replaces a message's whole label set from `message.labels`, and a
+    // `Message` built from the wire carries none. So a label attached locally
+    // was deleted by the next resync of its mailbox: a feature that works, is
+    // tested, and is quietly undone by another layer, which is this
+    // repository's characteristic bug.
+    let database = test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let labels = LabelRepository::new(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    message.server.uid = Some(postio_model::Uid::new(1));
+    message.server.uid_validity = Some(postio_model::UidValidity::new(100));
+    message.server.remote_id = Some(postio_model::RemoteId::new("100:1"));
+    messages.create(&mut message).expect("create");
+
+    let mut work = Label::new(account.id, "Work");
+    labels.create(&mut work).expect("create");
+    labels.attach(message.id, work.id).expect("attach");
+
+    // The same message coming back from the server, as a sync builds it:
+    // flags and coordinates, and no idea about labels.
+    let mut fetched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+    fetched.server = message.server.clone();
+    messages
+        .upsert_batch(&mut vec![fetched])
+        .expect("the resync");
+
+    assert_eq!(
+        labels.for_message(message.id).expect("read back"),
+        vec![work.id],
+        "the resync took the label off; a label a person put on a message \
+         must survive the next sync of its mailbox"
+    );
+}

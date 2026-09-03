@@ -470,6 +470,12 @@ pub struct UpsertReport {
     /// is: a number that moves is how "the resync undid my read" gets
     /// diagnosed next time without a debugger.
     pub flags_preserved: usize,
+    /// Messages whose local labels the sync carried forward rather than
+    /// clearing, because nothing on the wire carries a label yet (#780).
+    ///
+    /// Reported for the same reason `flags_preserved` is: it is the number
+    /// that says "the resync did not eat my labels" without a debugger.
+    pub labels_preserved: usize,
     /// Messages this store already holds as a draft of its own, and therefore
     /// did not store a second time. See [`MessageRepository::upsert_batch`].
     pub own_drafts: usize,
@@ -807,6 +813,24 @@ impl<'a> MessageRepository<'a> {
                     if let Some(changes) = unacknowledged.get(&id) {
                         message.flags = with_unacknowledged(&message.flags, changes);
                         report.flags_preserved += 1;
+                    }
+                    // Labels are local-only today: nothing on the wire
+                    // carries them, so a `Message` built from a fetch has
+                    // none, and `write_update` replaces the whole set. That
+                    // deleted every label a person had put on a message the
+                    // next time its mailbox synced (#780) -- a feature undone
+                    // by a layer that never knew about it, which is the shape
+                    // `postio-bl2` names.
+                    //
+                    // An empty set therefore means "this sync has nothing to
+                    // say about labels", not "the server says none". When a
+                    // sync does learn to carry them it will supply a set, and
+                    // that set wins here without this needing to change.
+                    if message.labels.is_empty() {
+                        message.labels = read_labels(&transaction, id)?;
+                        if !message.labels.is_empty() {
+                            report.labels_preserved += 1;
+                        }
                     }
                     write_update(&transaction, message)?;
                     report.updated += 1;
