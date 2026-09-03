@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use postio_config::{
-    Config, Density, MailSecurity, Theme,
+    Config, Density, Theme,
     keys::{self, KeyBindings},
 };
 
@@ -26,7 +26,7 @@ fn empty_file_yields_defaults() {
 
 #[test]
 fn empty_sections_yield_defaults() {
-    let cfg = Config::from_toml_str("[ui]\n[keys]\n[accounts]\n[sync]\n[filters]\n")
+    let cfg = Config::from_toml_str("[ui]\n[keys]\n[sync]\n[filters]\n")
         .expect("empty sections must parse");
     assert_eq!(cfg, Config::default());
 }
@@ -166,115 +166,6 @@ port = 465
 security = "implicit-tls"
 "#;
 
-#[test]
-fn parses_the_personal_account() {
-    let cfg = Config::from_toml_str(ICLOUD).unwrap();
-    let acct = cfg.account("personal").expect("account by table key");
-    assert_eq!(acct.id, "personal", "the table key becomes the account id");
-    assert_eq!(acct.email, "ada@example.com");
-    assert_eq!(acct.display_name.as_deref(), Some("Person"));
-    assert!(acct.is_default);
-    assert_eq!(acct.imap.host, "imap.example.com");
-    assert_eq!(acct.imap.port, 993);
-    assert_eq!(acct.imap.security, MailSecurity::ImplicitTls);
-    assert_eq!(acct.smtp.host, "smtp.example.com");
-    assert_eq!(acct.smtp.port, 465);
-    assert_eq!(acct.smtp.security, MailSecurity::ImplicitTls);
-}
-
-#[test]
-fn account_ports_default_to_the_implicit_tls_ports() {
-    let cfg = Config::from_toml_str(
-        r#"
-        [accounts.work]
-        email = "a@b.c"
-        [accounts.work.imap]
-        host = "imap.b.c"
-        [accounts.work.smtp]
-        host = "smtp.b.c"
-        "#,
-    )
-    .unwrap();
-    let acct = cfg.account("work").unwrap();
-    assert_eq!(acct.imap.port, 993);
-    assert_eq!(acct.smtp.port, 465);
-    assert_eq!(acct.imap.security, MailSecurity::ImplicitTls);
-    assert_eq!(acct.smtp.security, MailSecurity::ImplicitTls);
-}
-
-#[test]
-fn security_spellings_are_forgiving() {
-    for text in ["implicit-tls", "implicit_tls", "tls", "ssl"] {
-        let cfg =
-            Config::from_toml_str(&format!("[accounts.a.imap]\nsecurity = \"{text}\"\n")).unwrap();
-        assert_eq!(
-            cfg.account("a").unwrap().imap.security,
-            MailSecurity::ImplicitTls,
-            "{text}"
-        );
-    }
-    for text in ["starttls", "start-tls", "start_tls"] {
-        let cfg =
-            Config::from_toml_str(&format!("[accounts.a.imap]\nsecurity = \"{text}\"\n")).unwrap();
-        assert_eq!(
-            cfg.account("a").unwrap().imap.security,
-            MailSecurity::StartTls,
-            "{text}"
-        );
-    }
-    let cfg = Config::from_toml_str("[accounts.a.imap]\nsecurity = \"none\"\n").unwrap();
-    assert_eq!(cfg.account("a").unwrap().imap.security, MailSecurity::None);
-}
-
-#[test]
-fn the_keyring_entry_is_derived_when_absent() {
-    let cfg = Config::from_toml_str(ICLOUD).unwrap();
-    let acct = cfg.account("personal").unwrap();
-    assert_eq!(acct.imap_keyring_entry(), "postio:personal:imap");
-    assert_eq!(acct.smtp_keyring_entry(), "postio:personal:smtp");
-}
-
-#[test]
-fn an_explicit_keyring_entry_is_honored() {
-    let cfg = Config::from_toml_str(
-        r#"
-        [accounts.personal.imap]
-        keyring_entry = "my-own-entry"
-        "#,
-    )
-    .unwrap();
-    assert_eq!(
-        cfg.account("personal").unwrap().imap_keyring_entry(),
-        "my-own-entry"
-    );
-}
-
-#[test]
-fn the_default_account_is_the_flagged_one_then_the_first() {
-    let cfg = Config::from_toml_str(ICLOUD).unwrap();
-    assert_eq!(cfg.default_account().unwrap().id, "personal");
-
-    let cfg = Config::from_toml_str(
-        r#"
-        [accounts.aaa]
-        email = "a@x.c"
-        [accounts.zzz]
-        email = "z@x.c"
-        default = true
-        "#,
-    )
-    .unwrap();
-    assert_eq!(cfg.default_account().unwrap().id, "zzz");
-}
-
-#[test]
-fn a_missing_email_is_left_for_the_validation_pass() {
-    // Typed deserialization is deliberately lenient; human-readable validation
-    // is a separate bead (postio-9xj).
-    let cfg = Config::from_toml_str("[accounts.broken]\n").expect("must still parse");
-    assert_eq!(cfg.account("broken").unwrap().email, "");
-}
-
 // ------------------------------------------------------- [sync] / [filters] --
 
 #[test]
@@ -410,7 +301,15 @@ fn loads_from_a_real_file_and_saves_back() {
     std::fs::write(&path, ICLOUD).unwrap();
 
     let cfg = Config::load_from_path(&path).unwrap();
-    assert_eq!(cfg.account("personal").unwrap().imap.port, 993);
+    // `[accounts]` is retired (#470), so this file's account tables now
+    // round-trip as unknown keys rather than parsing into a schema. That is
+    // the property worth asserting here: the file survives a load and save
+    // without losing what it holds.
+    let out = cfg.to_toml_string().unwrap();
+    assert!(
+        out.contains("[accounts.personal]"),
+        "a retired section must still survive the round trip: {out}"
+    );
 
     let reread = Config::from_toml_str(&cfg.to_toml_string().unwrap()).unwrap();
     assert_eq!(reread, cfg);

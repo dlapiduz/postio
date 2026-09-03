@@ -43,8 +43,6 @@ pub struct ConfigChanged {
     pub ui: bool,
     /// `[keys]` — bindings, so the keymap must be rebuilt.
     pub keys: bool,
-    /// `[accounts]` — a server, a login or a whole account changed.
-    pub accounts: bool,
     /// `[sync]` — IDLE, polling, connection budget.
     pub sync: bool,
     /// `[filters]` — the saved queries in the sidebar.
@@ -70,7 +68,6 @@ impl ConfigChanged {
     pub fn any(&self) -> bool {
         self.ui
             || self.keys
-            || self.accounts
             || self.sync
             || self.filters
             || self.logging
@@ -90,7 +87,6 @@ impl ConfigChanged {
         ConfigChanged {
             ui: old.ui != new.ui,
             keys: old.keys != new.keys,
-            accounts: old.accounts != new.accounts,
             sync: old.sync != new.sync,
             filters: old.filters != new.filters,
             logging: old.logging != new.logging,
@@ -118,7 +114,6 @@ mod tests {
         assert!(changed.ui);
         assert!(changed.any());
         assert!(!changed.keys);
-        assert!(!changed.accounts);
         assert!(!changed.sync);
         assert!(!changed.filters);
     }
@@ -171,10 +166,7 @@ mod tests {
         );
         assert_eq!(
             ConfigChanged::between(&old, &new_accounts),
-            ConfigChanged {
-                accounts: true,
-                ..Default::default()
-            }
+            ConfigChanged::default()
         );
     }
 

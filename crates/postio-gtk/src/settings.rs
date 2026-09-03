@@ -475,6 +475,15 @@ impl SettingsPanel {
     /// instead — a reasonable place to start typing it in.
     fn jump_to(&self, section: Section) {
         let imp = self.imp();
+        // `[accounts]` is retired from the file (#470, ADR 0005 Q6b), so the
+        // nav item stays and points at the thing that does work. The nav is
+        // the panel's table of contents: someone who clicks `[accounts]`
+        // wants accounts, and scrolling them to a section the validity line
+        // calls ignored is the same lie one step further on.
+        if section == Section::Accounts {
+            imp.accounts_scroller.grab_focus();
+            return;
+        }
         let text = self.text();
         let mut iter = match find_section(&text, section).and_then(|line| {
             imp.buffer

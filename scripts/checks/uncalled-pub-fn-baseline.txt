@@ -30,7 +30,6 @@ check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-imap/src/imap/transport.rs:634
 config_dir                        # crates/postio-config/src/paths.rs:83
 conformance_cases                 # crates/postio-core/src/aim.rs:346
-default_account                   # crates/postio-config/src/lib.rs:335
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 enqueue_inverse                   # crates/postio-storage/src/repository/operations.rs:375
 # Deferred on purpose by #416, which wired the other two sweeps and called
@@ -49,8 +48,6 @@ has_name                          # crates/postio-imap/src/backend/capability.rs
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idle_connections                  # crates/postio-storage/src/db.rs:728
 idles                             # crates/postio-sync/src/watch.rs:290
-imap_keyring_entry                # crates/postio-config/src/accounts.rs:184
-imap_username                     # crates/postio-config/src/accounts.rs:200
 immediate                         # crates/postio-storage/src/blob.rs:551
 in_thread                         # crates/postio-storage/src/repository/drafts.rs:459
 interactive_is_waiting            # crates/postio-storage/src/db.rs:469
@@ -128,8 +125,6 @@ set_metered                       # crates/postio-sync/src/backfill.rs:478
 set_name                          # crates/postio-storage/src/repository/contact_groups.rs:66
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
-smtp_keyring_entry                # crates/postio-config/src/accounts.rs:192
-smtp_username                     # crates/postio-config/src/accounts.rs:205
 suspend                           # crates/postio-sync/src/watch.rs:510
 takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145
