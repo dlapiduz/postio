@@ -44,6 +44,7 @@ mod search_wiring;
 mod second_activate_wiring;
 mod send_later_wiring;
 mod send_wiring;
+mod settings_accounts_token_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
 mod sidebar_backfill_wiring;
@@ -232,6 +233,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_accounts_wiring::account_rows_persist_enable_and_mark_removal",
         settings_accounts_wiring::account_rows_persist_enable_and_mark_removal as fn(),
+    ),
+    (
+        "settings_accounts_token_wiring::an_oauth_accounts_row_shows_its_real_persisted_expiry",
+        settings_accounts_token_wiring::an_oauth_accounts_row_shows_its_real_persisted_expiry
+            as fn(),
     ),
     (
         "settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window",

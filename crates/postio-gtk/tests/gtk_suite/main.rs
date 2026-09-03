@@ -428,6 +428,14 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts::an_account_row_says_what_its_mail_weighs as fn(),
     ),
     (
+        "gtk_settings_accounts::an_account_row_says_how_it_connects",
+        gtk_settings_accounts::an_account_row_says_how_it_connects as fn(),
+    ),
+    (
+        "gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good",
+        gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good as fn(),
+    ),
+    (
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
             as fn(),

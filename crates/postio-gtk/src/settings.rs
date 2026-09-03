@@ -299,6 +299,25 @@ fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
     }
 }
 
+/// An account row's connection-type and auth-method badge — "IMAP ·
+/// password", "Gmail · OAuth 2" — both already on the account itself, so
+/// unlike the mail weight and the token validity this needs nothing handed
+/// in from the composition root (#878).
+fn account_badge(account: &Account) -> String {
+    let backend = match &account.backend {
+        postio_model::account::Backend::Imap => "IMAP",
+        postio_model::account::Backend::Jmap { .. } => "JMAP",
+        postio_model::account::Backend::Gmail => "Gmail",
+    };
+    let auth = match account.auth {
+        postio_model::account::AuthMethod::Password => "password",
+        postio_model::account::AuthMethod::AppPassword => "app password",
+        postio_model::account::AuthMethod::OAuth2 => "OAuth 2",
+        postio_model::account::AuthMethod::XOAuth2 => "OAuth 2",
+    };
+    format!("{backend} · {auth}")
+}
+
 // ---------------------------------------------------------------------------
 // The widget
 // ---------------------------------------------------------------------------
@@ -353,6 +372,15 @@ mod imp {
         /// runs after the other (#411).
         pub weights: RefCell<Vec<(AccountId, postio_core::event::MailFootprint)>>,
         pub attachments_included: std::cell::Cell<bool>,
+        /// Every OAuth account's persisted token expiry, as of the last read
+        /// (#878, on top of #870's persistence). An id present with `None`
+        /// is a real answer — a provider that has a token on file but never
+        /// said `expires_in`, so there is nothing to count down. An id
+        /// simply absent is a different fact: a password account, or an
+        /// OAuth account fed by an external broker (which never persists
+        /// an expiry at all), so the row shows no validity line rather
+        /// than a wrong one.
+        pub token_expiries: RefCell<Vec<(AccountId, Option<std::time::SystemTime>)>>,
         /// The account row context menu currently open, if one is — tracked
         /// so a second right click closes the first, the same reason
         /// `Sidebar` tracks `saved_search_menu`.
@@ -398,6 +426,7 @@ mod imp {
                 egress_scroller: gtk::ScrolledWindow::new(),
                 accounts_scroller: gtk::ScrolledWindow::new(),
                 accounts: RefCell::new(Vec::new()),
+                token_expiries: RefCell::new(Vec::new()),
                 weights: RefCell::new(Vec::new()),
                 attachments_included: Cell::new(false),
                 account_menu: RefCell::new(None),
@@ -662,6 +691,48 @@ impl SettingsPanel {
         self.redraw_accounts();
     }
 
+    /// Every OAuth account's persisted token expiry (#878) — an id present
+    /// with `None` means a token is on file but no provider-stated expiry
+    /// is, which is a real answer distinct from having nothing to say at
+    /// all: this panel may not link `postio-account` to fetch the keyring
+    /// itself (the crate-boundary rule this widget's own module doc
+    /// explains), so the composition root reads it and hands the result
+    /// back the same way it hands back [`set_mail_weights`](Self::set_mail_weights)'s
+    /// figures.
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts), for the
+    /// same reason `set_mail_weights` is.
+    pub fn set_token_expiries(&self, expiries: &[(AccountId, Option<std::time::SystemTime>)]) {
+        *self.imp().token_expiries.borrow_mut() = expiries.to_vec();
+        self.redraw_accounts();
+    }
+
+    /// The validity line this account's row carries under its badge, if it
+    /// has one to carry — `None` for a password account, an OAuth account
+    /// fed by an external broker, or one [`set_token_expiries`](Self::set_token_expiries)
+    /// has not been told about yet.
+    fn token_validity(&self, account: AccountId) -> Option<String> {
+        let expiry = self
+            .imp()
+            .token_expiries
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, expiry)| *expiry)?;
+        let at = expiry?;
+        match at.duration_since(std::time::SystemTime::now()) {
+            Ok(remaining) => {
+                let days = remaining.as_secs() / (24 * 60 * 60);
+                Some(if days == 0 {
+                    "token valid less than a day".to_owned()
+                } else {
+                    format!("token valid {days}d")
+                })
+            }
+            Err(_) => Some("token expired — re-authorization needed".to_owned()),
+        }
+    }
+
     /// Rebuilds the account rows from whatever accounts and weights are held.
     fn redraw_accounts(&self) {
         let imp = self.imp();
@@ -776,6 +847,22 @@ impl SettingsPanel {
             lines.append(&size);
         }
 
+        let badge_text = account_badge(account);
+        let badge = gtk::Label::new(Some(&badge_text));
+        badge.add_css_class("postio-settings-account-badge");
+        badge.set_xalign(0.0);
+        badge.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        lines.append(&badge);
+
+        let validity = self.token_validity(account.id);
+        if let Some(text) = &validity {
+            let line = gtk::Label::new(Some(text));
+            line.add_css_class("postio-settings-account-validity");
+            line.set_xalign(0.0);
+            line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lines.append(&line);
+        }
+
         let enabled = gtk::Switch::new();
         enabled.set_active(account.enabled);
         enabled.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -801,15 +888,16 @@ impl SettingsPanel {
         box_.append(&lines);
         box_.append(&enabled);
         row.set_child(Some(&box_));
-        // The row is announced as a unit, so the size has to be part of the
-        // announcement or a screen reader never reaches it.
-        let announcement = match &weight {
-            Some(weight) => format!(
-                "{}, {}, {weight}",
-                account.display_name, account.address.address
-            ),
-            None => format!("{}, {}", account.display_name, account.address.address),
-        };
+        // The row is announced as a unit, so every line has to be part of
+        // the announcement or a screen reader never reaches it.
+        let mut announcement = format!("{}, {}", account.display_name, account.address.address);
+        if let Some(weight) = &weight {
+            announcement.push_str(&format!(", {weight}"));
+        }
+        announcement.push_str(&format!(", {badge_text}"));
+        if let Some(validity) = &validity {
+            announcement.push_str(&format!(", {validity}"));
+        }
         row.update_property(&[gtk::accessible::Property::Label(&announcement)]);
         row
     }
