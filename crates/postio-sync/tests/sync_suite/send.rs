@@ -1346,3 +1346,79 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
         "a send still in flight keeps its draft"
     );
 }
+
+#[tokio::test]
+async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
+    // #943. The account's Sent folder was renamed on the server: discovery
+    // retired the old `Sent` row (unselectable, role kept) and added `Sent
+    // Items` with the same role. The copy has to be filed where the server
+    // can take it. Today it is appended to `Sent`, the server refuses, the
+    // refusal is dropped on the floor, and a local row pretends otherwise.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, stale_sent) = account_with_sent(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+    let mut retired = mailboxes
+        .get(stale_sent)
+        .expect("get")
+        .expect("the stale row");
+    retired.selectable = false;
+    mailboxes.update(&retired).expect("retire it");
+    let live = test_support::mailbox(&connection, &account, "Sent Items");
+    assert_eq!(
+        live.role,
+        postio_model::MailboxRole::Sent,
+        "named for the role"
+    );
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent Items"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let status = backend.status("Sent Items").await.expect("status");
+    assert_eq!(
+        status.exists, 1,
+        "the sent copy is filed in the Sent folder the server has"
+    );
+    let counts = |id| mailboxes.get(id).expect("get").expect("row").counts.total;
+    assert_eq!(
+        counts(live.id),
+        1,
+        "and the local row for that folder holds it"
+    );
+    assert_eq!(
+        counts(stale_sent),
+        0,
+        "nothing is filed into a folder the server no longer has"
+    );
+}

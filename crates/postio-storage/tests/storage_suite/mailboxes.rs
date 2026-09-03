@@ -513,3 +513,33 @@ fn reading_a_mailbox_that_is_not_there_is_none() {
             .is_empty()
     );
 }
+
+#[test]
+fn by_role_never_answers_with_a_folder_the_server_no_longer_has() {
+    // #943. Discovery retires a folder the server stopped listing by clearing
+    // `selectable` and nothing else, so a retired row keeps its role. The
+    // role lookup is what the send path files a copy through; answering with
+    // a retired row sends the copy to a folder that does not exist.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account_id = seeded_account(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+
+    // Sorts first, so it is what `ORDER BY path LIMIT 1` would pick.
+    let mut retired = Mailbox::new(account_id, "Sent", Some('/'));
+    retired.role = MailboxRole::Sent;
+    retired.selectable = false;
+    mailboxes.create(&mut retired).expect("create");
+    let mut live = Mailbox::new(account_id, "Sent Items", Some('/'));
+    live.role = MailboxRole::Sent;
+    mailboxes.create(&mut live).expect("create");
+
+    assert_eq!(
+        mailboxes
+            .by_role(account_id, MailboxRole::Sent)
+            .expect("by role")
+            .map(|mailbox| mailbox.path),
+        Some("Sent Items".to_owned()),
+        "a role points at a folder that can be opened, or at nothing"
+    );
+}
