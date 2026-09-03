@@ -464,6 +464,16 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::Undo,
         requires: None,
     },
+    CommandSpec {
+        id: CommandId::AddLabel,
+        title: "Add label…",
+        default_binding: "L",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: None,
+    },
     // -- Search ----------------------------------------------------------
     CommandSpec {
         id: CommandId::Search,
