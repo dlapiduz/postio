@@ -80,7 +80,7 @@ pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
 pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
-pub use ui::{Density, Theme, UiConfig};
+pub use ui::{Density, Theme, UiConfig, patch_ui};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
 

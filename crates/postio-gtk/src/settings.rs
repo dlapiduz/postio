@@ -1,18 +1,31 @@
 //! The settings panel: canvas 3f — `config.toml` *is* the settings UI.
 //!
 //! There is no second store and no OK/Cancel. The panel shows the real file
-//! in a text view, section navigation on the left jumps to a header, and a
-//! validity line along the foot replaces a dialog's buttons. Typing here and
-//! typing in `$EDITOR` produce the same bytes on disk, because both write the
-//! same thing: the literal text in the buffer, verbatim.
+//! — a [`gtk::TextView`] over its raw text, the only pane left that still
+//! works that way (see below) — section navigation on the left jumps to a
+//! header, and a validity line along the foot replaces a dialog's buttons.
+//! Typing here and typing in `$EDITOR` produce the same bytes on disk,
+//! because both write the same thing: the literal text in the buffer,
+//! verbatim.
 //!
-//! That last point is why this is a [`gtk::TextView`] over raw text rather
-//! than a form built from `postio_config::Config` — a form would have to
-//! serialize back through [`postio_config::Config::to_toml_string`], which
-//! reorders keys and drops comments (see that type's own doc comment: unknown
-//! keys survive, but there is no promise about layout). Editing the actual
-//! characters is what makes "comments and ordering survive a round trip" true
-//! by construction instead of by careful reserialization.
+//! # Structured panes patch, they never reserialize
+//!
+//! [`Section::Filters`] and [`Section::Ui`] are *forms* over the same file —
+//! not the raw-text exception the rest of this doc describes. Building one
+//! by serializing a whole `postio_config::Config` back through
+//! [`postio_config::Config::to_toml_string`] would reorder every key and drop
+//! every comment in the file, not only in the one table the pane owns (see
+//! that method's own doc comment: unknown keys survive, but there is no
+//! promise about layout) — which is exactly the trap a raw-text view avoids
+//! by construction and a naive form would fall straight into. So a structured
+//! pane never reserializes: [`patch_filters`] and [`patch_ui`] rewrite only
+//! their own table with `toml_edit`'s format-preserving document model
+//! ([`SettingsPanel::apply_filters_mutation`],
+//! [`SettingsPanel::apply_ui_mutation`]), and the result is written into
+//! *this* buffer, so it reaches disk through the exact same debounced write
+//! every raw edit already does. `[keys]`, `[sync]`, `[accounts]` and
+//! `[filters]`'s advanced escape hatch stay on the raw view below until their
+//! own issues convert them the same way.
 //!
 //! # Two halves
 //!
@@ -53,7 +66,9 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_config::filters::{FilterConfig, Reorder};
 use postio_config::sync::{AttachmentFetch, CheckForMail};
-use postio_config::{Config, SyncConfig, patch_filters, patch_sync};
+use postio_config::{
+    Config, Density, SyncConfig, Theme, patch_filters, patch_sync, patch_ui,
+};
 use postio_model::{Account, AccountId};
 
 /// How long to let typing settle before writing the buffer back to disk.
@@ -359,6 +374,9 @@ mod imp {
         /// no empty state to draw, the same shape `[ui]`'s own pane (#873)
         /// established.
         pub sync_box: gtk::Box,
+        /// `[ui]`'s structured rows (#873) — unlike filters and accounts,
+        /// always exactly six rows, so no empty state to draw.
+        pub ui_box: gtk::Box,
     }
 
     impl Default for SettingsPanel {
@@ -393,6 +411,7 @@ mod imp {
                     "No saved searches yet — press Ctrl+S in search to save one.",
                 )),
                 sync_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
             }
         }
     }
@@ -461,6 +480,7 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         self.redraw_sync();
+        self.redraw_ui();
         if postio_config::validate::check_str(&text)
             .validation
             .is_valid()
@@ -1022,9 +1042,7 @@ impl SettingsPanel {
 
     /// Rebuilds `[sync]`'s five rows from the buffer's current text — the
     /// same fresh-widgets-each-time shape [`redraw_filters`](Self::redraw_filters)
-    /// and [`redraw_ui`] use.
-    ///
-    /// [`redraw_ui`]: crate::settings::SettingsPanel
+    /// and [`redraw_ui`](Self::redraw_ui) use.
     fn redraw_sync(&self) {
         let imp = self.imp();
         let Ok(config) = Config::from_toml_str(&self.text()) else {
@@ -1216,6 +1234,173 @@ impl SettingsPanel {
         row.append(&lines);
         row.append(control);
         row
+    }
+
+    /// Rebuilds `[ui]`'s six rows from the buffer's current text — the same
+    /// shape [`redraw_filters`](Self::redraw_filters) uses, and for the same
+    /// reason: fresh widgets each time means the initial value never fires
+    /// its own change handler (set before connect, the way `account_row`'s
+    /// switch already does), so there is no separate "is this a programmatic
+    /// update" guard to keep in step.
+    fn redraw_ui(&self) {
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        while let Some(child) = imp.ui_box.first_child() {
+            imp.ui_box.remove(&child);
+        }
+        imp.ui_box.append(&self.ui_density_row(config.ui.density));
+        imp.ui_box.append(&self.ui_theme_row(config.ui.theme));
+        imp.ui_box.append(&self.ui_switch_row(
+            "Show hover actions",
+            "Reveal per-row actions when the pointer rests over a row",
+            config.ui.show_hover_actions,
+            |ui, value| ui.show_hover_actions = value,
+        ));
+        imp.ui_box.append(&self.ui_switch_row(
+            "Drill into threads with t",
+            "Let t turn the list column into the focused thread",
+            config.ui.thread_drill,
+            |ui, value| ui.thread_drill = value,
+        ));
+        imp.ui_box.append(&self.ui_switch_row(
+            "Show key hints",
+            "The focused row's own keyboard hints",
+            config.ui.show_key_hints,
+            |ui, value| ui.show_key_hints = value,
+        ));
+        imp.ui_box.append(&self.ui_switch_row(
+            "Show sender avatars",
+            "An initials chip per row",
+            config.ui.sender_avatars,
+            |ui, value| ui.sender_avatars = value,
+        ));
+    }
+
+    /// Applies `mutate` to the buffer's current `[ui]` state and writes the
+    /// result back into the buffer, the same way
+    /// [`apply_filters_mutation`](Self::apply_filters_mutation) does for
+    /// `[filters]`.
+    fn apply_ui_mutation(&self, mutate: impl FnOnce(&mut postio_config::UiConfig)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        mutate(&mut config.ui);
+        match patch_ui(&original, &config.ui) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [ui]"),
+        }
+    }
+
+    /// One labeled row: a title, a description, and a control at the end —
+    /// the shape every `[ui]` row shares, whether the control is a dropdown
+    /// or a switch.
+    fn ui_row(title: &str, description: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        lines.set_hexpand(true);
+        let title_label = gtk::Label::new(Some(title));
+        title_label.set_xalign(0.0);
+        title_label.add_css_class("postio-settings-ui-title");
+        lines.append(&title_label);
+        let desc_label = gtk::Label::new(Some(description));
+        desc_label.set_xalign(0.0);
+        desc_label.add_css_class("postio-settings-ui-description");
+        lines.append(&desc_label);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.add_css_class("postio-settings-ui-row");
+        row.set_margin_top(7);
+        row.set_margin_bottom(7);
+        row.set_margin_start(18);
+        row.set_margin_end(18);
+        row.append(&lines);
+        row.append(control);
+        row
+    }
+
+    /// Message-list row height: `Airy`/`Comfortable`/`Compact`, in that
+    /// order — the same order [`Density`]'s own default-first declaration
+    /// gives, so the dropdown's index and the enum's discriminant agree
+    /// without a lookup table.
+    fn ui_density_row(&self, current: Density) -> gtk::Box {
+        let dropdown = gtk::DropDown::from_strings(&["Airy", "Comfortable", "Compact"]);
+        dropdown.set_selected(match current {
+            Density::Airy => 0,
+            Density::Comfortable => 1,
+            Density::Compact => 2,
+        });
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let density = match dropdown.selected() {
+                    1 => Density::Comfortable,
+                    2 => Density::Compact,
+                    _ => Density::Airy,
+                };
+                panel.apply_ui_mutation(move |ui| ui.density = density);
+            }
+        ));
+        Self::ui_row(
+            "Message-list row height",
+            "Airy, comfortable, or compact",
+            &dropdown,
+        )
+    }
+
+    /// Light/dark preference: `System`/`Light`/`Dark`, same index convention
+    /// as [`ui_density_row`](Self::ui_density_row).
+    fn ui_theme_row(&self, current: Theme) -> gtk::Box {
+        let dropdown = gtk::DropDown::from_strings(&["System", "Light", "Dark"]);
+        dropdown.set_selected(match current {
+            Theme::System => 0,
+            Theme::Light => 1,
+            Theme::Dark => 2,
+        });
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let theme = match dropdown.selected() {
+                    1 => Theme::Light,
+                    2 => Theme::Dark,
+                    _ => Theme::System,
+                };
+                panel.apply_ui_mutation(move |ui| ui.theme = theme);
+            }
+        ));
+        Self::ui_row(
+            "Theme",
+            "System follows the desktop's light/dark setting",
+            &dropdown,
+        )
+    }
+
+    /// One boolean `[ui]` row: a switch whose initial state is set before
+    /// its change handler is connected, so redrawing from a fresh read
+    /// never writes back the value it just read.
+    fn ui_switch_row(
+        &self,
+        title: &str,
+        description: &str,
+        value: bool,
+        apply: impl Fn(&mut postio_config::UiConfig, bool) + 'static,
+    ) -> gtk::Box {
+        let switch = gtk::Switch::new();
+        switch.set_active(value);
+        switch.set_valign(gtk::Align::Center);
+        switch.update_property(&[gtk::accessible::Property::Label(title)]);
+        switch.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |switch| {
+                let active = switch.is_active();
+                panel.apply_ui_mutation(|ui| apply(ui, active));
+            }
+        ));
+        Self::ui_row(title, description, &switch)
     }
 
     /// One saved search's row: its name (editable), its query (for context,
@@ -1537,6 +1722,11 @@ impl SettingsPanel {
         imp.sync_box
             .update_property(&[gtk::accessible::Property::Label("Sync & storage")]);
 
+        // ── ui: six rows, always present (#873) ───────────────────────────
+        imp.ui_box.add_css_class("postio-settings-ui");
+        imp.ui_box
+            .update_property(&[gtk::accessible::Property::Label("Appearance")]);
+
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
         imp.nav.set_selection_mode(gtk::SelectionMode::Single);
@@ -1634,6 +1824,7 @@ impl SettingsPanel {
         column.append(&imp.filters_scroller);
         column.append(&imp.filters_empty);
         column.append(&imp.sync_box);
+        column.append(&imp.ui_box);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);
@@ -1649,6 +1840,7 @@ impl SettingsPanel {
                 panel.refresh_validity();
                 panel.redraw_filters();
                 panel.redraw_sync();
+                panel.redraw_ui();
                 panel.schedule_write();
             }
         ));
@@ -1680,6 +1872,8 @@ impl SettingsPanel {
 
         self.refresh_validity();
         self.redraw_filters();
+        self.redraw_sync();
+        self.redraw_ui();
     }
 }
 

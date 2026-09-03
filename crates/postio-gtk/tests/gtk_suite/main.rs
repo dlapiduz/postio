@@ -112,6 +112,7 @@ mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
 mod gtk_settings_sync;
+mod gtk_settings_ui;
 mod gtk_shell;
 mod gtk_sidebar;
 mod gtk_sidebar_accounts;
@@ -465,6 +466,23 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list",
         gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
+    ),
+    (
+        "gtk_settings_ui::the_six_rows_render_from_a_given_config",
+        gtk_settings_ui::the_six_rows_render_from_a_given_config as fn(),
+    ),
+    (
+        "gtk_settings_ui::the_default_config_renders_the_default_row_values",
+        gtk_settings_ui::the_default_config_renders_the_default_row_values as fn(),
+    ),
+    (
+        "gtk_settings_ui::toggling_a_switch_writes_straight_to_the_buffer_and_leaves_everything_else_alone",
+        gtk_settings_ui::toggling_a_switch_writes_straight_to_the_buffer_and_leaves_everything_else_alone
+            as fn(),
+    ),
+    (
+        "gtk_settings_ui::picking_a_theme_writes_the_new_value",
+        gtk_settings_ui::picking_a_theme_writes_the_new_value as fn(),
     ),
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
