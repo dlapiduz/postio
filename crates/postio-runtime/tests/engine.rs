@@ -307,14 +307,24 @@ async fn a_backfill_says_how_far_it_has_got_without_being_asked() {
         "a drained queue must report done == total, or the sidebar reads \
          `downloading` for as long as the account stays connected"
     );
-    // The queue announces itself when it is filled, not after the first body
-    // has been and gone. Seeding is when the denominator becomes known, and
-    // a line that appears only once a fetch has completed is silent for
-    // exactly the stretch someone is most likely to be watching it.
-    assert_eq!(
-        reports[0].0, 0,
-        "the first report already had bodies settled, so nothing was said \
-         when the queue was filled: {reports:?}"
+    // The queue announces itself while there is still something to announce,
+    // not once the last body has been and gone. A line that appears only
+    // after a fetch has completed is silent for exactly the stretch someone
+    // is most likely to be watching it.
+    //
+    // Deliberately not `reports[0].0 == 0`, which is the third ordering race
+    // this file has had against the loop `engine()` already started (#851,
+    // and the two commits before this one). That asserted the *seed* event
+    // reached the frontend before the running loop settled anything, which
+    // nothing guarantees and CI has now disproved: `[(1, 10), (11, 11),
+    // (11, 34), (34, 34)]` -- one body home before the first report went out,
+    // and nine still outstanding, which is a status line doing its job.
+    // What the test is about is that the first thing said is not "finished".
+    let (first_done, first_total) = reports[0];
+    assert!(
+        first_done < first_total,
+        "the first report already claimed the queue was drained, so nothing \
+         was said while there was anything to say: {reports:?}"
     );
 
     // A denominator that only ever equals the numerator is not a
