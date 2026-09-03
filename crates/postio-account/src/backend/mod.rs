@@ -66,7 +66,7 @@ pub use self::error::{BackendError, BackendResult};
 pub use self::message::{
     AppendMessage, BodyPart, BodyStructure, Envelope, FetchedBody, FetchedMessage, FlagChange,
     FlagUpdate, MailboxEvent, MailboxFilter, MailboxStatus, MailboxSummary, PartNode, SelectMode,
-    UidMapping,
+    UidMapping, resolve_roles,
 };
 pub use self::mock::{
     Fault, FetchEvent, MockBackend, MockBackendBuilder, MockMailbox, MockMessage,
