@@ -50,6 +50,7 @@ fn a_store_from_before() -> (
                 html: None,
                 headers: None,
                 headers_truncated: false,
+                encoding_problems: false,
             },
             postio_model::BodyState::Full,
         )

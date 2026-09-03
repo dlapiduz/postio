@@ -787,6 +787,7 @@ mod tests {
                     // A search excerpt writes text, never a block.
                     headers: None,
                     headers_truncated: false,
+                    encoding_problems: false,
                 },
                 postio_model::BodyState::Full,
             )
