@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Extras;
+use crate::{ConfigError, Extras, Result};
 
 /// Message-list row height. The PLATE design is airy (40px rows); the other two
 /// tighten the same row anatomy rather than changing it.
@@ -83,9 +83,51 @@ impl Default for UiConfig {
     }
 }
 
+/// Rewrites `text`'s `[ui]` table to match `ui`, leaving every *other*
+/// section — and any comment attached to one — untouched. The structured
+/// Appearance pane's write path (#873): the same `patch_filters` (#869)
+/// already established for exactly this reason — `Config::to_toml_string`
+/// reserializes the whole file and would drop a hand-written comment
+/// anywhere in it, not only in `[ui]`.
+///
+/// `[ui]` itself is regenerated whole on every call, the same tradeoff
+/// `patch_filters` makes for a changed entry: a comment attached directly to
+/// `[ui]` — its own header, or one of its own keys — does not survive,
+/// because there is no per-field diff here, only "this table, freshly
+/// written". Six settings a person picks from a dropdown or flips a switch
+/// on are not the kind of TOML anyone hand-annotates the way a whole section
+/// might be, so that is the deliberate half of the promise, not an
+/// oversight.
+pub fn patch_ui(text: &str, ui: &UiConfig) -> Result<String> {
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ConfigError::parse(None, &err))?;
+    doc.as_table_mut().remove("ui");
+
+    let fragment =
+        toml::to_string(&UiOnly { ui }).map_err(|err| ConfigError::Serialize(err.to_string()))?;
+    let fragment_doc = fragment
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ConfigError::parse(None, &err))?;
+    if let Some(item) = fragment_doc.as_table().get("ui") {
+        doc.as_table_mut().insert("ui", item.clone());
+    }
+    Ok(doc.to_string())
+}
+
+/// Serializes as just a `[ui]` table, with no other section — [`patch_ui`]'s
+/// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
+/// splice in.
+#[derive(Serialize)]
+struct UiOnly<'a> {
+    ui: &'a UiConfig,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Config;
+
+    use super::*;
 
     #[test]
     fn sender_avatars_round_trips_through_the_config_file() {
@@ -108,5 +150,50 @@ mod tests {
         // the same default a brand new file gets.
         let config = Config::from_toml_str("[ui]\ntheme = \"dark\"\n").expect("parses");
         assert!(config.ui.sender_avatars);
+    }
+
+    // -- Acceptance: the Appearance pane patches [ui] only (#873) -----------
+
+    #[test]
+    fn patch_ui_rewrites_only_the_ui_table_leaving_everything_else_verbatim() {
+        let original = "\
+# a hand-written comment nobody wants to lose
+[filters.old]
+query = \"is:unread\"
+pinned = true
+
+[ui]
+theme = \"system\" # inline comment, also not to be lost
+density = \"airy\"
+";
+        let mut config = Config::from_toml_str(original).expect("parses");
+        config.ui.theme = super::Theme::Dark;
+        config.ui.density = super::Density::Compact;
+
+        let patched = patch_ui(original, &config.ui).expect("patches");
+
+        assert!(
+            patched.contains("# a hand-written comment nobody wants to lose"),
+            "a comment outside [ui] must survive verbatim: {patched}"
+        );
+        assert!(
+            patched.contains("[filters.old]") && patched.contains("query = \"is:unread\""),
+            "an unrelated section must survive untouched: {patched}"
+        );
+
+        let reparsed = Config::from_toml_str(&patched).expect("still parses");
+        assert_eq!(reparsed.ui.theme, super::Theme::Dark);
+        assert_eq!(reparsed.ui.density, super::Density::Compact);
+        assert_eq!(reparsed.filters["old"].query, "is:unread");
+    }
+
+    #[test]
+    fn patch_ui_adds_the_table_when_it_did_not_exist_before() {
+        let original = "[sync]\ncheck_for_mail = \"poll\"\n";
+        let config = Config::from_toml_str(original).expect("parses");
+
+        let patched = patch_ui(original, &config.ui).expect("patches");
+        assert!(patched.contains("[ui]"));
+        assert!(patched.contains("check_for_mail = \"poll\""));
     }
 }
