@@ -944,6 +944,20 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::MapMailboxRole,
+        title: "Map mailbox role",
+        // `m` for map. Move's `m` is scoped to the message surfaces, and this
+        // context layers over Global alone, so nothing is shadowed.
+        default_binding: "m",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // The previous mapping is the inverse, and a wrong pick costs one
+        // keystroke rather than a dialog (ADR 0025).
+        recovery: Recovery::Undo,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is

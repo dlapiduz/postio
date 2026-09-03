@@ -103,6 +103,7 @@ command from inside a text field.
 | `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
 | `d` | Remove account | Account list | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
+| `m` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` or `R` | Refresh | List, thread, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |
