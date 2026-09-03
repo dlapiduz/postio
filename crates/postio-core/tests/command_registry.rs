@@ -376,3 +376,46 @@ fn adding_an_account_is_reachable_wherever_settings_is() {
     );
     assert_eq!(spec.requires, None, "any scope can gain an account");
 }
+
+#[test]
+fn the_account_row_actions_are_commands_in_the_account_list() {
+    // ADR 0005 Q6c, #471. #464 gave each account row three affordances as a
+    // GtkSimpleActionGroup, reachable by mouse and by Tab but not by the
+    // palette, the cheat sheet or a bindable key -- because none of them were
+    // registry entries. The registry is what makes those three surfaces work,
+    // so the fix is entries, and this is the table the ADR settled.
+    let expected = [
+        (
+            CommandId::ToggleAccountEnabled,
+            "Return",
+            false,
+            Recovery::None,
+        ),
+        // Destructive, and the only one of the three that is: it soft-deletes
+        // an account. `d` matches DeleteSavedSearch's spelling in the
+        // neighbouring list, which is the same verb on the same shape of row.
+        (CommandId::RemoveAccount, "d", true, Recovery::Undo),
+        // `c` for credential. ADR 0005 Q6c asked for no binding at all; that
+        // rested on "ten commands already have none", and none do. PRODUCT.md
+        // §8 requires one of every command, so it has one.
+        (CommandId::UpdateCredential, "c", false, Recovery::None),
+    ];
+
+    for (id, binding, destructive, recovery) in expected {
+        let spec = registry::all()
+            .find(|spec| spec.id == id)
+            .unwrap_or_else(|| panic!("{id} is not in the registry"));
+        assert_eq!(spec.default_binding, binding, "{id}'s default binding");
+        assert_eq!(spec.destructive, destructive, "{id}'s destructiveness");
+        assert_eq!(spec.recovery, recovery, "{id}'s recovery");
+        assert!(
+            spec.contexts.contains(Context::Accounts),
+            "{id} must be reachable in the account list"
+        );
+        assert!(
+            !spec.contexts.contains(Context::List),
+            "{id} must not be reachable from the message list: its target is \
+             the focused account row, and there is no such row there"
+        );
+    }
+}
