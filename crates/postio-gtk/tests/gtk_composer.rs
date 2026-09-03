@@ -24,7 +24,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -34,9 +33,6 @@ use postio_gtk::shell::Pane;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft, DraftKind, EmailAddress, MessageBody};
-
-/// The interaction budget from CLAUDE.md. A ceiling here, not a benchmark.
-const INTERACTION_BUDGET: std::time::Duration = std::time::Duration::from_millis(16);
 
 fn settle() {
     while glib::MainContext::default().iteration(false) {}
@@ -155,24 +151,58 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
 
     // ── …and it costs a dispatch, not a rebuild ──────────────────────────
     //
-    // What is timed here is the key press itself, not the frame after it: the
-    // widgets already exist and opening is a `set_visible`, so `c` must return
-    // well inside the interaction budget with nothing built and nothing
-    // animated. The frame's own paint cost is a benchmark's business, and
-    // timing it here would only measure how loaded the machine running the
-    // test suite is.
+    // This used to time the key press and assert it under the 16ms budget,
+    // and it failed whenever another worktree was compiling (#796). A budget
+    // asserted inside `cargo test` measures the machine, and this machine's
+    // normal state is several sessions building at once — so the failure
+    // arrived at the last gate before a merge and read as "the change I am
+    // landing broke the composer".
+    //
+    // What the test can hold regardless of load is the *reason* the budget
+    // holds, which is what the old comment here already said it was checking:
+    // the widgets exist already and opening is a `set_visible`. Both halves
+    // of that are asserted below, and the number itself now lives in
+    // `postio-bench`'s `composer_open`, where a measurement is deliberate and
+    // nothing is blocked on the result.
     press(&window, "Escape", gdk::ModifierType::empty());
-    let start = Instant::now();
+
+    // The composer's own child, before. Widget equality in gtk-rs is object
+    // identity, so this is "the same widget", not "a widget that looks the
+    // same".
+    let built_before = composer
+        .first_child()
+        .expect("the composer has its widgets before `c` is ever pressed");
+
     window.handle_key(
         gdk::Key::from_name("c").unwrap(),
         gdk::ModifierType::empty(),
     );
-    let elapsed = start.elapsed();
+
+    // Deliberately before `settle()`: opening is a `set_visible`, so it has
+    // happened by the time the key handler returns. If it ever became a
+    // transition, a revealer or anything deferred to a frame, this is where
+    // that shows — and *that* is what would put opening over the budget, on
+    // any machine, load or no load.
+    assert!(
+        composer.is_open(),
+        "the composer was not open when the key handler returned, so opening \
+         is waiting for a frame -- an animation or an idle callback -- rather \
+         than being the `set_visible` the interaction budget assumes"
+    );
+    assert!(
+        composer.is_visible(),
+        "the composer is open but not visible, which means something is \
+         revealing it over time"
+    );
+
     settle();
     assert!(composer.is_open());
-    assert!(
-        elapsed < INTERACTION_BUDGET,
-        "opening the composer took {elapsed:?}, over the {INTERACTION_BUDGET:?} budget"
+    assert_eq!(
+        composer.first_child().as_ref(),
+        Some(&built_before),
+        "opening the composer replaced its widgets instead of showing the \
+         ones that were already there; a rebuild is what the interaction \
+         budget cannot absorb, and it is invisible in a screenshot"
     );
 
     // ── An untouched composer closes with nothing to keep ────────────────
