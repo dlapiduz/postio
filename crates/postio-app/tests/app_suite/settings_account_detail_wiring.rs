@@ -21,11 +21,9 @@ use postio_app::feed_the_window;
 use postio_gtk::settings::SettingsPanel;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_session::Wiring;
 use postio_model::MailboxRole;
-use postio_storage::repository::{
-    AccountRepository, MailboxRepository, MailboxRoleRepository,
-};
+use postio_session::Wiring;
+use postio_storage::repository::{AccountRepository, MailboxRepository, MailboxRoleRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
@@ -61,9 +59,24 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         .id;
     drop(connection);
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
+    // The real bus over the real store, composed the way `run` composes it:
+    // a role mapping is a command, so a no-op handler here would make the
+    // second half of this test assert nothing (`keystroke.rs`'s own reason).
+    let bus = postio_session::actions::wire(
+        postio_core::dispatch::DispatcherBuilder::new(),
+        postio_session::actions::Actions::new(
+            database.clone(),
+            postio_core::state::SharedState::default(),
+        ),
+    )
+    .build();
+    assert!(
+        bus.wired()
+            .any(|id| id == postio_core::CommandId::MapMailboxRole),
+        "the bus does not answer a role mapping, so this test cannot mean anything"
+    );
+    let bus_wired: Vec<postio_core::CommandId> = bus.wired().collect();
+    let (bridge, _replies) = postio_core::bridge::Bridge::new(bus).expect("a runtime");
     let (sink, _events) = postio_core::bridge::event_channel();
     let wiring = Wiring::new(
         database.clone(),
@@ -81,7 +94,17 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
     // iterations on a runner slow to map a brand new window (matches
     // `settings_accounts_wiring.rs`'s own `window.present(); settle();`).
     pump();
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    // What `run` does on the line after this one: without it every gesture
+    // the window produces resolves correctly and then reaches nothing, which
+    // is precisely what the role-mapping half below is about.
+    postio_app::commands::install(
+        &window,
+        &wired.feeds,
+        postio_core::state::SharedState::default(),
+        wiring.commands.clone(),
+        bus_wired.clone(),
+    );
     let panel = window.settings();
 
     assert!(
