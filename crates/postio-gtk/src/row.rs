@@ -1560,7 +1560,6 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
     use postio_model::ids::MessageId;
 
-
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
     }

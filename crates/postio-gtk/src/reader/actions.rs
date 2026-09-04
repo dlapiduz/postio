@@ -26,8 +26,16 @@ pub const ACTIONS: [Action; 4] = [
         "Reply all",
         "postio-reader-action-reply-all",
     ),
-    Action::new(CommandId::Forward, "Forward", "postio-reader-action-forward"),
-    Action::new(CommandId::Archive, "Archive", "postio-reader-action-archive"),
+    Action::new(
+        CommandId::Forward,
+        "Forward",
+        "postio-reader-action-forward",
+    ),
+    Action::new(
+        CommandId::Archive,
+        "Archive",
+        "postio-reader-action-archive",
+    ),
 ];
 
 /// Build the reading pane's bar, hidden.
@@ -46,7 +54,6 @@ pub fn new() -> Rc<ActionBar> {
     bar.append_trailing(&gtk::Box::new(gtk::Orientation::Horizontal, 0));
     bar
 }
-
 
 #[cfg(test)]
 mod tests {
