@@ -301,6 +301,55 @@ fn settle(window: &Window) {
     heartbeat.remove();
 }
 
+/// What to say when the size a `WxH` argument asked for and the size the
+/// compositor actually gave the window disagree (#933).
+///
+/// `set_default_size` is a hint: a toplevel larger than the monitor is
+/// clamped, and the height is clamped further by whatever the session
+/// reserves. `capture::png` reports the size it actually got, so this is the
+/// one place that can compare it against what was asked for and say so --
+/// silently handing over a smaller picture under a size that looks honoured
+/// is the same shape as #599, an argument that looks applied and was not.
+///
+/// `None` when nothing was requested, or when the compositor gave back
+/// exactly what was asked for -- the ordinary case, which must stay silent.
+fn size_mismatch(requested: Option<(i32, i32)>, got: (i32, i32)) -> Option<String> {
+    let requested = requested?;
+    if requested == got {
+        return None;
+    }
+    let (want_w, want_h) = requested;
+    let (got_w, got_h) = got;
+    Some(format!(
+        "asked for {want_w}x{want_h} but the compositor gave {got_w}x{got_h} -- \
+         the picture below is at the size it actually got, not the size named \
+         on the command line"
+    ))
+}
+
+#[cfg(test)]
+mod size_mismatch_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_requested_is_silent() {
+        assert_eq!(size_mismatch(None, (1280, 800)), None);
+    }
+
+    #[test]
+    fn the_size_asked_for_is_silent() {
+        assert_eq!(size_mismatch(Some((1280, 800)), (1280, 800)), None);
+    }
+
+    #[test]
+    fn a_clamped_size_is_reported() {
+        let message = size_mismatch(Some((1600, 900)), (1280, 800))
+            .expect("a clamped size should be reported");
+        assert!(message.contains("1600x900"), "{message}");
+        assert!(message.contains("1280x800"), "{message}");
+    }
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
@@ -391,6 +440,9 @@ fn main() -> glib::ExitCode {
         Ok(written) => {
             let (width, height) = (written.width, written.height);
             println!("surface: {width}x{height} -> {path}");
+            if let Some(message) = size_mismatch(size, (width, height)) {
+                eprintln!("surface: {message}");
+            }
             if written.stalled {
                 // Said out loud because the picture is misleading in one
                 // specific way, and silently handing it over is how a
