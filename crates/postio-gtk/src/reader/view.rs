@@ -35,7 +35,7 @@ use webkit6::prelude::*;
 
 use super::actions::ReaderActions;
 use super::allowlist::RemoteImageAllowList;
-use super::banner::{DecodeNotice, RemoteImageBanner};
+use super::banner::{DecodeNotice, RemoteImageBanner, UnsubscribeBanner};
 use super::message_header::MessageHeader;
 use super::scheme::{self, BlobSource};
 use postio_body::sanitize::RemoteImages;
@@ -59,6 +59,10 @@ struct Open {
 /// back, every time a render decides that count anew.
 type RenderedHandler = Box<dyn Fn(HeldBack)>;
 
+/// Called with the list identifier [`Reader::set_unsubscribe`] last set, when
+/// the unsubscribe banner's button is activated.
+type UnsubscribeHandler = Box<dyn Fn(&str)>;
+
 /// The reading pane: a hardened `WebView`, and the remote-image banner
 /// (`postio-xxz`) that sits above it.
 ///
@@ -72,6 +76,13 @@ pub struct Reader {
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
     decode_notice: Rc<DecodeNotice>,
+    unsubscribe_banner: Rc<UnsubscribeBanner>,
+    /// The list identifier [`Reader::set_unsubscribe`] last set — what a
+    /// click on the banner's button reports to
+    /// [`connect_unsubscribe_activated`](Reader::connect_unsubscribe_activated),
+    /// since the click itself carries no data.
+    unsubscribe_list: Rc<RefCell<Option<String>>>,
+    on_unsubscribe: Rc<RefCell<Vec<UnsubscribeHandler>>>,
     actions: Rc<ReaderActions>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
@@ -202,6 +213,7 @@ impl Reader {
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
         let decode_notice = Rc::new(DecodeNotice::new());
+        let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
         let actions = ReaderActions::new();
 
         let chips = crate::parts::Chips::new();
@@ -214,6 +226,7 @@ impl Reader {
         container.append(&header.widget());
         container.append(&banner.widget());
         container.append(&decode_notice.widget());
+        container.append(&unsubscribe_banner.widget());
         container.append(&view);
         container.append(&chips.widget());
         container.append(&actions.widget());
@@ -224,6 +237,9 @@ impl Reader {
             header,
             banner,
             decode_notice,
+            unsubscribe_banner,
+            unsubscribe_list: Rc::new(RefCell::new(None)),
+            on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
             actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
@@ -311,6 +327,22 @@ impl Reader {
             });
         }
 
+        // No cycle risk here the way the two banner wirings above have to
+        // guard against: this closure never calls back into
+        // `unsubscribe_banner` itself, only reads `unsubscribe_list` and
+        // fires the handlers `connect_unsubscribe_activated` collects.
+        {
+            let unsubscribe_list = Rc::clone(&reader.unsubscribe_list);
+            let on_unsubscribe = Rc::clone(&reader.on_unsubscribe);
+            reader.unsubscribe_banner.connect_unsubscribe(move || {
+                if let Some(list) = unsubscribe_list.borrow().clone() {
+                    for handler in on_unsubscribe.borrow().iter() {
+                        handler(&list);
+                    }
+                }
+            });
+        }
+
         reader.clear();
         reader
     }
@@ -386,6 +418,23 @@ impl Reader {
         self.banner.emit_show_once();
     }
 
+    /// Whether the unsubscribe banner is currently on screen.
+    pub fn unsubscribe_banner_visible(&self) -> bool {
+        self.unsubscribe_banner.is_visible()
+    }
+
+    /// The unsubscribe banner's label text — names the list a click would
+    /// leave. Test-facing.
+    pub fn unsubscribe_banner_label(&self) -> String {
+        self.unsubscribe_banner.label()
+    }
+
+    /// Simulate clicking "unsubscribe" — what a test uses in place of a
+    /// synthesized pointer click.
+    pub fn click_unsubscribe(&self) {
+        self.unsubscribe_banner.emit_unsubscribe();
+    }
+
     /// Fills in the header (#319): sender, recipients, subject, date — the
     /// three questions a reader asks first, put on screen before the body
     /// even arrives.
@@ -436,6 +485,7 @@ impl Reader {
         // people learn to ignore. Callers turn it back on for the message
         // they are showing, through `set_encoding_problems`.
         self.decode_notice.set_visible(false);
+        self.set_unsubscribe(None);
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
@@ -632,6 +682,25 @@ impl Reader {
         self.decode_notice.is_visible()
     }
 
+    /// Name the list this message belongs to, or say it belongs to none.
+    ///
+    /// `#971`: `list_identifier` is a `List-Id` header when the message had
+    /// one, or the sender's domain otherwise — whichever the caller found;
+    /// this only shows what it is handed. Call it after
+    /// [`render`](Self::render), which clears it, same convention as
+    /// [`set_encoding_problems`](Self::set_encoding_problems).
+    pub fn set_unsubscribe(&self, list_identifier: Option<&str>) {
+        *self.unsubscribe_list.borrow_mut() = list_identifier.map(str::to_owned);
+        self.unsubscribe_banner.set_list(list_identifier);
+    }
+
+    /// Called with the list identifier when the unsubscribe banner's button
+    /// is activated — the reader only asks; a caller decides what leaving a
+    /// list means (`postio-gtk` has no SQL to log the activation itself).
+    pub fn connect_unsubscribe_activated(&self, handler: impl Fn(&str) + 'static) {
+        self.on_unsubscribe.borrow_mut().push(Box::new(handler));
+    }
+
     pub fn clear(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
@@ -639,6 +708,7 @@ impl Reader {
         self.actions.set_visible(false);
         self.banner.set_visible(false);
         self.decode_notice.set_visible(false);
+        self.set_unsubscribe(None);
         load_document(&self.canvas(), &wrap_document("", RemoteImages::Blocked));
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());
