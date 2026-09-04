@@ -40,6 +40,9 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
 WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"; REUSE=0
+# Why each candidate was passed over, so the message at the end can say which
+# of the three it was rather than guessing (#1077).
+SKIPPED_CLAIMED=""; SKIPPED_BRANCH=""; SKIPPED_WORKTREE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --milestone) MILESTONE="$2"; shift 2 ;;
@@ -264,12 +267,14 @@ while IFS=$'\t' read -r NUM TITLE; do
     # because every session authenticates as the same GitHub user.
     if ! mkdir "$CLAIMS/issue-$NUM" 2>/dev/null; then
         echo "#$NUM is claimed by another session, trying the next one." >&2
+        SKIPPED_CLAIMED="$SKIPPED_CLAIMED $NUM"
         continue
     fi
     # Cross-machine backstop: someone already pushed a branch for it.
     if git -C "$REPO_ROOT" ls-remote --exit-code --heads origin "issue-$NUM-*" >/dev/null 2>&1; then
         rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
         echo "#$NUM already has a remote branch, trying the next one." >&2
+        SKIPPED_BRANCH="$SKIPPED_BRANCH $NUM"
         continue
     fi
 
@@ -286,6 +291,7 @@ while IFS=$'\t' read -r NUM TITLE; do
             exit 2
         fi
         echo "trying the next candidate." >&2
+        SKIPPED_WORKTREE="$SKIPPED_WORKTREE $NUM"
         continue
     fi
     git -C "$REPO_ROOT" fetch --quiet origin "$BASE"
@@ -333,5 +339,34 @@ while IFS=$'\t' read -r NUM TITLE; do
     exit 0
 done <<< "$CANDIDATES"
 
-echo "Every candidate was already claimed. Nothing to do." >&2
+# Why nothing was taken, in the words of what actually happened.
+#
+# This used to say "Every candidate was already claimed. Nothing to do." for
+# all three reasons, and only one of them is that. The other two are
+# recoverable, and the wording matters more than it looks: it is nearly the
+# sentence `/issue` uses for the genuine stop condition, so a session that
+# reads it stops with work still available (#1077, seen after a leftover
+# branch blocked the top candidate while two dozen issues were free).
+echo "Nothing was claimed. Why, per candidate:" >&2
+[ -n "$SKIPPED_CLAIMED" ] && \
+    echo "  claimed by another session:${SKIPPED_CLAIMED}" >&2
+[ -n "$SKIPPED_WORKTREE" ] && \
+    echo "  a worktree already exists:${SKIPPED_WORKTREE}" >&2
+if [ -n "$SKIPPED_BRANCH" ]; then
+    echo "  already has a branch on origin:${SKIPPED_BRANCH}" >&2
+    echo >&2
+    echo "A branch on origin blocks its issue for good -- it is the" >&2
+    echo "cross-machine backstop, and a landing killed after its merge" >&2
+    echo "leaves one behind. If the work really landed, this removes it:" >&2
+    for blocked in $SKIPPED_BRANCH; do
+        echo "    scripts/issue-release.sh $blocked" >&2
+    done
+fi
+echo >&2
+if [ -z "$SKIPPED_BRANCH$SKIPPED_WORKTREE" ]; then
+    echo "Every candidate is genuinely taken. Stop here and say so." >&2
+else
+    echo "This is NOT the \"nothing is ready\" case: some of the above are" >&2
+    echo "recoverable, and other sessions free theirs as they finish." >&2
+fi
 exit 1

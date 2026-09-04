@@ -81,6 +81,63 @@ print(int((now - since).total_seconds()) // 86400)' "$since")
     exit 0
 fi
 
+# Delete the issue's branch from `origin`, if its landing did not get to it.
+#
+# `issue-land.sh` deletes the branch as its **last** step, after the merge, so
+# a run killed in between leaves it on `origin` for ever -- and this
+# workstation kills long commands (docs/engineering-notes.md; #742 built the
+# gate cache for the same reason). Measured when this was written: 36
+# `issue-*` branches on origin, 30 of them for issues that were closed.
+#
+# It is not only untidiness. `issue-claim.sh` refuses an issue that has a
+# remote branch -- a deliberate cross-machine backstop -- so a leftover branch
+# makes that issue permanently unclaimable. Harmless while it stays closed,
+# and not harmless the moment one is reopened, which is an ordinary thing to
+# do when an acceptance criterion turns out to be unmet.
+#
+# **`git cherry`, not "the issue is closed".** The question is whether *this
+# branch's commits* are upstream, and only a patch-id comparison answers it:
+# the landing rebases, so the shas never match even when the content did land.
+# A `+` line is a commit that is genuinely not there, which is somebody's
+# unlanded work and is left exactly where it is.
+sweep_remote_branch() {
+    local num=$1 base=$2 branch unlanded
+    # `|| true` because there may be no `origin` at all -- a sandbox, a
+    # clone somebody made by hand -- and `set -o pipefail` would turn that
+    # into an abort halfway through a cleanup that had already worked.
+    # Nothing here is worth failing a release for.
+    branch=$(git -C "$REPO_ROOT" ls-remote --heads origin "issue-$num-*" 2>/dev/null \
+             | sed 's|.*refs/heads/||' | head -1 || true)
+    [ -n "$branch" ] || return 0
+
+    # Fetched to a ref of its own, not read off `FETCH_HEAD`. Fetching two
+    # refs writes two lines there and `FETCH_HEAD` resolves to the *first*,
+    # which is the base -- so the comparison became "is main on main", every
+    # branch looked landed, and the first run of this self-test watched it
+    # delete somebody's unlanded work.
+    local scratch="refs/postio-sweep/$branch"
+    if ! git -C "$REPO_ROOT" fetch --quiet --force origin \
+        "+refs/heads/$base:refs/remotes/origin/$base" \
+        "+refs/heads/$branch:$scratch" 2>/dev/null; then
+        echo "left $branch on origin: could not fetch it to check whether it landed." >&2
+        return 0
+    fi
+    unlanded=$(git -C "$REPO_ROOT" cherry "origin/$base" "$scratch" 2>/dev/null \
+               | grep -c '^+' || true)
+    git -C "$REPO_ROOT" update-ref -d "$scratch" 2>/dev/null || true
+    if [ "${unlanded:-0}" -ne 0 ]; then
+        echo "left $branch on origin: $unlanded commit(s) on it are not on $base." >&2
+        echo "That is unlanded work, and this branch may be the only copy." >&2
+        return 0
+    fi
+
+    if git -C "$REPO_ROOT" push origin --delete "$branch" >/dev/null 2>&1; then
+        echo "deleted the merged remote branch $branch"
+    else
+        echo "warning: could not delete $branch on origin -- it may already be gone." >&2
+    fi
+}
+
 NUM="${1:?usage: issue-release.sh <issue-number> [--abandon]}"
 ABANDON=0
 [ "${2:-}" = "--abandon" ] && ABANDON=1
@@ -95,6 +152,11 @@ if [ -d "$TREE" ]; then
         exit 1
     fi
     BRANCH=$(git -C "$TREE" rev-parse --abbrev-ref HEAD)
+    # Read before the tree goes: the base a worktree was cut from is recorded
+    # in its git dir, and `--base` initiatives land onto something that is not
+    # `main`. Asking after the removal would answer `main` for every one of
+    # them and leave their branches behind.
+    BASE=$(cat "$(git -C "$TREE" rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
     git -C "$REPO_ROOT" worktree remove "$TREE"
     echo "removed $TREE"
     # Only after the worktree is gone: git refuses to delete a branch a
@@ -121,6 +183,7 @@ else
         remove_args+=(--remove-label "$label")
     done
     gh issue edit "$NUM" "${remove_args[@]}" >/dev/null 2>&1 || true
+    sweep_remote_branch "$NUM" "${BASE:-main}"
     echo "#$NUM cleaned up."
     echo "(Work not actually landed? Release with --abandon instead -- this path assumes it did.)"
 fi
