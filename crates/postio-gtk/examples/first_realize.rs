@@ -129,7 +129,11 @@ fn present_next(application: &adw::Application, remaining: &Rc<RefCell<Vec<Kind>
         let application = application.clone();
         let remaining = Rc::clone(remaining);
         move || {
-            println!("{:>6}  {:.1}ms", kind.label(), started.elapsed().as_secs_f64() * 1000.0);
+            println!(
+                "{:>6}  {:.1}ms",
+                kind.label(),
+                started.elapsed().as_secs_f64() * 1000.0
+            );
             // Let this frame finish before the next window is built, so the
             // measurement that follows is not timing this one's tail.
             glib::idle_add_local_once({
