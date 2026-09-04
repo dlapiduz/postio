@@ -39,7 +39,7 @@ FIXTURE_ISSUES = [
         "milestone": None,
         "blockedBy": {"nodes": []},
     }
-    for number in (4242, 4243, 4244, 4245)
+    for number in (4242, 4243, 4244, 4245, 4246, 4247)
 ]
 
 GH_STUB = """#!/bin/bash
@@ -47,6 +47,11 @@ if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; f
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then cat "$STUB_DIR/issues.json"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then echo "OPEN ready,p2"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ -f "$STUB_DIR/open-prs" ] && grep -qx -- "$3" "$STUB_DIR/open-prs"; then
+    echo "OPEN"; exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then exit 1; fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then echo "[]"; exit 0; fi
 if [ "$1" = "api" ]; then echo "null"; exit 0; fi
 exit 1
 """
@@ -210,6 +215,39 @@ def main() -> int:
             fail("fresh", "no fresh worktree was claimed", result)
         elif not moved.is_dir() or not (moved / "target" / "warm").is_file():
             fail("fresh", "--fresh moved or emptied the tree it was run from", result)
+
+        # ── pushed, with a PR open: reuse goes ahead (#1107) ─────────────
+        #
+        # With auto-merge the session does not wait for the merge, so the
+        # tree it wants to reuse holds commits that are not on the base yet.
+        # They are on origin, on a branch with an open PR, so nothing is
+        # stranded by moving on; the old branch stays in the repository for
+        # `--resume` if CI turns it red.
+        pushed = worktrees / "issue-4244"
+        (pushed / "pushed.txt").write_text("on its way\n", encoding="utf-8")
+        git("add", "-A", cwd=pushed)
+        git("commit", "-q", "-m", "feat: pushed, PR open", cwd=pushed)
+        pushed_branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=pushed).stdout.strip()
+        git("push", "-q", "-u", "origin", pushed_branch, cwd=pushed)
+        (stub_dir / "open-prs").write_text(pushed_branch + "\n", encoding="utf-8")
+        result = claim(repo, base, stub_dir, "4245", cwd=pushed)
+        if result.returncode != 0:
+            fail("pushed-open-pr", "the claim failed", result)
+        elif not (worktrees / "issue-4245").is_dir() or pushed.exists():
+            fail("pushed-open-pr", "did not reuse a tree whose work is pushed with a PR open", result)
+        elif not git("branch", "--list", pushed_branch, cwd=repo).stdout.strip():
+            fail("pushed-open-pr", "the pushed branch was deleted locally; --resume needs it", result)
+        (stub_dir / "open-prs").unlink()
+
+        # ── pushed, but no PR: that is unlanded work, still refused ──────
+        moved2 = worktrees / "issue-4245"
+        (moved2 / "nopr.txt").write_text("pushed, no PR\n", encoding="utf-8")
+        git("add", "-A", cwd=moved2)
+        git("commit", "-q", "-m", "feat: pushed without a PR", cwd=moved2)
+        git("push", "-q", "-u", "origin", git("rev-parse", "--abbrev-ref", "HEAD", cwd=moved2).stdout.strip(), cwd=moved2)
+        result = claim(repo, base, stub_dir, "--reuse", "4246", cwd=moved2)
+        if result.returncode == 0:
+            fail("pushed-no-pr", "reused a tree whose commits have no PR to land them", result)
 
         # ── the shared checkout never reuses, flag or no flag ────────────
         result = claim(repo, base, stub_dir, "--dry-run", cwd=repo)
