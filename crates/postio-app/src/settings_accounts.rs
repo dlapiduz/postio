@@ -56,8 +56,13 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
     refresh(window, wiring);
 
     let panel = window.settings();
+    // Weak throughout: the window owns the settings panel that owns every
+    // handler below, so a strong clone is a cycle and the window never frees
+    // (#1072). A window that has gone has no panel to refresh and no screen
+    // to open, so each upgrade failure is simply nothing to do.
+    let weak = glib::object::ObjectExt::downgrade(window);
     panel.connect_account_enabled_changed({
-        let window = window.clone();
+        let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, enabled| {
             if let Ok(connection) = wiring.database.connection()
@@ -65,36 +70,48 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
             {
                 tracing::warn!(%error, "could not change whether an account is enabled");
             }
-            refresh(&window, &wiring);
+            if let Some(window) = weak.upgrade() {
+                refresh(&window, &wiring);
+            }
         }
     });
 
     panel.connect_account_action({
-        let window = window.clone();
+        let weak = weak.clone();
         let wiring = wiring.clone();
         let reindexing = reindexing.clone();
-        move |id, action| match action {
-            AccountAction::Remove => remove(&window, &wiring, id),
-            AccountAction::UpdateCredential => {
-                crate::settings_credential::install(&window, &wiring, id)
+        move |id, action| {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match action {
+                AccountAction::Remove => remove(&window, &wiring, id),
+                AccountAction::UpdateCredential => {
+                    crate::settings_credential::install(&window, &wiring, id)
+                }
+                AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
             }
-            AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
         }
     });
 
     panel.connect_account_edited({
-        let window = window.clone();
+        let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, edit| {
             edit_account(&wiring, id, edit);
-            refresh(&window, &wiring);
+            if let Some(window) = weak.upgrade() {
+                refresh(&window, &wiring);
+            }
         }
     });
 
     panel.connect_test_connection({
-        let window = window.clone();
         let wiring = wiring.clone();
-        move |id| test_connection(&window, &wiring, id)
+        move |id| {
+            if let Some(window) = weak.upgrade() {
+                test_connection(&window, &wiring, id);
+            }
+        }
     });
 
     panel.connect_signature_saved({

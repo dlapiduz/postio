@@ -77,6 +77,7 @@ mod unified_search_reach;
 mod unified_select_all;
 mod unsubscribe_wiring;
 mod window_drain;
+mod window_teardown;
 mod wiring;
 
 /// Cases held out of a default run, by name.
@@ -84,7 +85,15 @@ mod wiring;
 /// libtest spells this `#[ignore]`; a table-driven harness needs a table. A
 /// name here still runs when asked for explicitly, and still appears in
 /// `--list`, exactly as an ignored libtest case does.
-const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
+const IGNORED: &[&str] = &[
+    "parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop",
+    // Held out by **#1072**, which takes it back. A reproduction rather than
+    // a regression: the window still does not free after `feed_the_window`,
+    // and nine strong captures have been made weak without moving it. Kept
+    // runnable so the next session starts from a red assertion instead of
+    // building one.
+    "window_teardown::a_window_the_composition_root_wired_still_frees_when_destroyed",
+];
 
 const CASES: &[(&str, fn())] = &[
     (
@@ -384,6 +393,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "unified_list::picking_unified_lists_mail_from_every_account",
         unified_list::picking_unified_lists_mail_from_every_account as fn(),
+    ),
+    (
+        "window_teardown::a_window_the_composition_root_wired_still_frees_when_destroyed",
+        window_teardown::a_window_the_composition_root_wired_still_frees_when_destroyed as fn(),
     ),
     (
         "wiring::a_window_over_a_populated_store_lists_its_mail",

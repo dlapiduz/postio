@@ -137,17 +137,32 @@ pub fn install(
 /// registration order and stop at the first one that claims the keyboard, so
 /// a refine chip still wins when there is one to move to.
 fn install_leave_to_list(window: &Window, finder: &Finder) {
+    // Weak, for the reason `install_run` states below and this function did
+    // not follow: the window owns the finder that owns these handlers, so a
+    // strong clone is a cycle and the window never frees (#1072, and the
+    // three #794 catalogued).
+    //
+    // A window that has gone is not a focus destination, so an upgrade that
+    // fails means there is nothing left to do rather than something to
+    // report. `connect_tab` answers `false` in that case — it did not claim
+    // the keyboard — which is the honest answer and lets any later handler
+    // try, exactly as if this one had never been registered.
+    let weak = glib::object::ObjectExt::downgrade(window);
     finder.connect_search({
-        let window = window.clone();
+        let weak = weak.clone();
         move |_parsed| {
-            window.list().grab_focus();
+            if let Some(window) = weak.upgrade() {
+                window.list().grab_focus();
+            }
         }
     });
     finder.connect_tab({
-        let window = window.clone();
-        move || {
-            window.list().grab_focus();
-            true
+        move || match weak.upgrade() {
+            Some(window) => {
+                window.list().grab_focus();
+                true
+            }
+            None => false,
         }
     });
 }
@@ -259,8 +274,11 @@ type Order = Rc<std::cell::Cell<postio_search::ResultOrder>>;
 /// while the list is showing results: over a mailbox there is no other order
 /// to offer, and the control is inert.
 fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: Order) {
+    // Weak, for the reason `install_run` states: this handler is stored on
+    // the window itself, so a strong clone is a cycle with no third party in
+    // it at all -- the window holding a closure holding the window (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.connect_command({
-        let window = window.clone();
         let finder = finder.clone();
         let feeds = feeds.clone();
         move |id| {
@@ -268,6 +286,9 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
             {
                 return;
             }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
             let next = order.get().toggled();
             order.set(next);
             window.list().set_result_order(Some(next));
