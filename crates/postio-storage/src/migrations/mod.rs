@@ -85,7 +85,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 7] = [
+static MIGRATIONS: [Migration; 8] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -120,6 +120,11 @@ static MIGRATIONS: [Migration; 7] = [
         version: 7,
         name: "body_encoding_problems",
         sql: include_str!("0007_body_encoding_problems.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "unsubscribe_activations",
+        sql: include_str!("0008_unsubscribe_activations.sql"),
     },
 ];
 
