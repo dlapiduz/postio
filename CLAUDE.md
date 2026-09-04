@@ -11,8 +11,10 @@ history and reasoning behind every rule here lives in
 ```bash
 scripts/issue-claim.sh                  # next ready issue → your worktree, reused or seeded
 cd ~/src/postio-worktrees/issue-<n>     # work there, not in ~/src/postio
-scripts/issue-land.sh                   # gates, commit, push, PR, merge
+scripts/issue-land.sh --detach          # gates, commit, push, PR; GitHub merges when CI is green
+scripts/issue-land.sh --status          # what the detached landing did
 scripts/issue-claim.sh                  # from inside the worktree: reuses it for the next issue
+scripts/issue-claim.sh --resume <n>     # back to a branch whose PR went red
 scripts/issue-release.sh <n>            # only when you stop; the next claim is the release otherwise
 ```
 
@@ -135,7 +137,7 @@ eleven minutes was a **cold worktree**, and a claim now reuses the tree you
 are in or seeds a new one (#1102): the sanity tier in a reused or seeded
 tree is **about a minute** — Postio's own crates rebuild, the ~470
 dependencies do not — against 19 minutes cold. The measurements, and the sccache finding
-behind them, are in `docs/engineering-notes.md` ("Where the waiting went").
+behind them, are in `docs/notes/` ("Where the waiting went", 2026-09-04).
 
 **Integration suites run under nextest.** `cargo nextest run -p <crate>
 --test <suite>` runs one binary's tests as separate processes, in parallel;
@@ -159,13 +161,15 @@ formatter, not verification: inside your worktree
 `cargo fmt --all` is fine (the land script runs it); in the shared checkout
 format only files you changed, by name: `rustfmt --edition 2024 <paths>`.
 
-**Run `issue-land.sh` in the background, always** — a full gate chain can
-outlive a foreground tool call's 10-minute cap, and a run killed mid-gates
-commits nothing and leaks every live test's `/dev/shm` scratch. Launch it
-backgrounded, do something else or nothing, and act on the completion
-notification; never poll for it and never re-run it because it is quiet. A
-run that *was* killed is cheap to retry: green gates are recorded against
-the exact tree, so an unchanged retry skips straight to the landing.
+**Land with `--detach`, always.** A gate chain can outlive a tool call's
+cap, and a killed run commits nothing; `--detach` runs it in a process of
+its own and returns, `--status` reads its log, and the hook refuses a
+foreground landing. The script pushes, opens the PR and arms GitHub's
+auto-merge: CI decides, nobody waits, and you claim the next issue at once.
+A check that fails afterwards shows up at your next claim and in
+`/steward`; `scripts/issue-claim.sh --resume <n>` returns to that branch so
+the fix lands on the same PR. `--wait` is the old watching behaviour, for a
+landing you want to see through.
 
 - **Tests are headless automatically.** The cargo runner puts test binaries on
   a private mutter compositor; `cargo run -p postio-app` and examples reach
@@ -202,6 +206,10 @@ the exact tree, so an unchanged retry skips straight to the landing.
 - A test that needs a display goes in `tests/`, never in `src/` — a second
   `adw::init()` in a unit-test binary kills the whole process
   (`scripts/checks/check-no-gtk-init-in-unit-tests.py` enforces this).
+- **The hook refuses the two habits the transcripts show most**: a
+  whole-workspace test run (`cargo test --workspace` without `--lib`; use
+  the tiers, or `POSTIO_WORKSPACE_TESTS=1` when you are the steward) and a
+  foreground `issue-land.sh` (use `--detach`). Each refusal says what to run.
 
 System deps (Fedora 40+): see README. Rust is pinned by
 `rust-toolchain.toml`; sccache is wired in via `.cargo/config.toml`, nothing
@@ -347,7 +355,7 @@ for a stranger who can't ask follow-ups:
 | Work this revealed | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
 | Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
 | Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
-| A constraint future sessions must respect | `docs/engineering-notes.md` |
+| A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
 
 **File through the script, because you will not think to search.** One bug
@@ -366,12 +374,15 @@ is genuinely different, and `--search-only` just looks.
 targets nightly. Both were `workflow_dispatch`-only while this repository was
 private and paying for its own minutes — that ended when it went public.
 
-**`issue-land.sh` waits for the checks and merges when they pass.** Do not add
-a wait of your own, and do not merge around a red one: a check that fails on
-your PR is your work to fix, on the same branch, however green the crates you
-touched were locally. The gate chain proves the crates a branch changed; CI is
-the only thing that proves the *combination*, which is the failure two branches
-that are each green alone can produce together.
+**The ruleset requires CI's checks, and `issue-land.sh` arms auto-merge.**
+Every pull request runs `ci.yml`; its `changes` job decides what the diff
+obliges it to build, and the compile jobs skip themselves for docs and
+tooling (a skipped job counts as passed). Do not merge around a red check:
+a check that fails on your PR is your work to fix, on the same branch,
+however green the crates you touched were locally. The gate chain proves
+the crates a branch changed; CI is the only thing that proves the
+*combination*, which is the failure two branches that are each green alone
+can produce together.
 
 The steward loop's periodic `cargo check --workspace --all-targets` and
 `cargo test --workspace --no-fail-fast` against `main` are now a backstop
