@@ -47,6 +47,12 @@ pub struct ConfigChanged {
     pub sync: bool,
     /// `[filters]` — the saved queries in the sidebar.
     pub filters: bool,
+    /// `[[rules]]` — the filing rules, and the order they run in.
+    ///
+    /// Compared as a whole ordered array, so reordering two rules is a change
+    /// even though the set is the same: the order *is* the meaning here (ADR
+    /// 0008 Q4), unlike every other section, where it is a map or a scalar.
+    pub rules: bool,
     /// `[logging]` — the level, so a running app can be made louder without
     /// being restarted. This is the one section whose whole point is to be
     /// changed while something is going wrong.
@@ -70,6 +76,7 @@ impl ConfigChanged {
             || self.keys
             || self.sync
             || self.filters
+            || self.rules
             || self.logging
             || self.compose
             || self.storage
@@ -89,6 +96,7 @@ impl ConfigChanged {
             keys: old.keys != new.keys,
             sync: old.sync != new.sync,
             filters: old.filters != new.filters,
+            rules: old.rules != new.rules,
             logging: old.logging != new.logging,
             compose: old.compose != new.compose,
             storage: old.storage != new.storage,
@@ -102,6 +110,33 @@ mod tests {
 
     fn config(toml: &str) -> Config {
         Config::from_toml_str(toml).expect("valid")
+    }
+
+    #[test]
+    fn editing_a_rule_is_a_change_the_engine_can_see() {
+        // `[[rules]]` is live-reloadable like every other section here, and
+        // a section missing from this struct reports "nothing changed" for
+        // every edit to it -- so the rule the user just wrote never runs and
+        // nothing says why.
+        let old = config("[[rules]]\nname = \"r\"\nquery = \"from:ada\"\nactions = [\"flag\"]\n");
+        let new = config("[[rules]]\nname = \"r\"\nquery = \"from:bob\"\nactions = [\"flag\"]\n");
+        let changed = ConfigChanged::between(&old, &new);
+        assert!(changed.rules);
+        assert!(changed.any());
+        assert!(!changed.filters, "and nothing else was disturbed");
+        assert!(!changed.ui);
+    }
+
+    #[test]
+    fn reordering_two_rules_is_a_change() {
+        // The order *is* the meaning (ADR 0008 Q4), so two files with the
+        // same rules in a different order are two different configurations.
+        // A comparison that sorted, or that compared as a set, would miss it.
+        let first = "[[rules]]\nname = \"a\"\nquery = \"from:ada\"\nactions = [\"flag\"]\n";
+        let second = "[[rules]]\nname = \"b\"\nquery = \"from:bob\"\nactions = [\"trash\"]\n";
+        let old = config(&format!("{first}\n{second}"));
+        let new = config(&format!("{second}\n{first}"));
+        assert!(ConfigChanged::between(&old, &new).rules);
     }
 
     #[test]

@@ -56,6 +56,7 @@ pub mod keys;
 pub mod live;
 pub mod logging;
 pub mod paths;
+pub mod rules;
 pub mod secrets;
 mod source;
 pub mod storage;
@@ -78,6 +79,7 @@ pub use filters::{FilterConfig, patch_filters};
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
+pub use rules::RuleConfig;
 pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 pub use ui::{Density, Theme, UiConfig, patch_ui};
@@ -131,6 +133,10 @@ pub struct Config {
     /// `[filters]` — named saved queries.
     #[serde(default)]
     pub filters: BTreeMap<String, FilterConfig>,
+    /// `[[rules]]` — ordered filing rules. An array, so the file is the
+    /// order (ADR 0008 Q4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<RuleConfig>,
     /// `[mailboxes]` — role to the server's own folder path.
     ///
     /// Keyed by role and valued by path, the way `[keys]` is keyed by the
