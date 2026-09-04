@@ -134,6 +134,80 @@ async fn a_sink_that_never_finished_has_no_blob_to_offer() {
 }
 
 #[tokio::test]
+async fn a_chunk_after_finish_is_an_error() {
+    // The contract `finish` makes: once it has run, the sink is done. A
+    // chunk that arrives after that is not a fragment of the next fetch --
+    // there is no next fetch on this sink -- it is a caller that kept using
+    // one it should have dropped.
+    let (_database, blobs) = store();
+    let mut sink = BlobSink::new(&blobs).expect("a sink");
+    sink.chunk(b"the whole body").await.expect("a chunk");
+    sink.finish().await.expect("finish");
+
+    let error = sink
+        .chunk(b"arrives too late")
+        .await
+        .expect_err("a chunk after finish must be refused");
+    assert!(
+        format!("{error}").contains("arrived after the fetch was finished"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn finishing_twice_is_an_error() {
+    // `finish` takes the writer, which is what makes it exactly-once: a
+    // second call has nothing left to finish and must say so rather than
+    // silently doing nothing or reusing state that has already moved on.
+    let (_database, blobs) = store();
+    let mut sink = BlobSink::new(&blobs).expect("a sink");
+    sink.chunk(b"the whole body").await.expect("a chunk");
+    sink.finish().await.expect("the first finish");
+
+    let error = sink
+        .finish()
+        .await
+        .expect_err("a second finish must be refused");
+    assert!(format!("{error}").contains("finished twice"), "{error}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_storage_failure_while_finishing_reaches_the_caller_as_a_fetch_failure() {
+    // The sink sits on the protocol side of the seam (`storage_error`'s own
+    // doc comment): whatever `postio_storage` says when the disk refuses the
+    // bytes has to arrive here as an ordinary fetch failure, not as a type
+    // the caller does not import and cannot handle.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_database, blobs) = store();
+    let mut sink = BlobSink::new(&blobs).expect("a sink");
+    // Short: under the probe size, so nothing has touched the store's shard
+    // directories yet and `finish` is where the write actually lands.
+    sink.chunk(b"a body that never gets to land")
+        .await
+        .expect("a chunk");
+
+    // The root loses its write bit, so the shard directory `finish` creates
+    // for a blob nothing has stored yet cannot be created. Restored before
+    // the temp directory this guards has to be cleaned up.
+    let root = blobs.root().to_path_buf();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500))
+        .expect("remove the store's write bit");
+
+    let result = sink.finish().await;
+
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+        .expect("restore the write bit so the temp directory can be cleaned up");
+
+    let error = result.expect_err("a store that refuses the write must not report success");
+    assert!(
+        format!("{error}").contains("the blob store refused the fetched bytes"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
 async fn the_same_bytes_streamed_and_stored_at_once_are_one_blob() {
     // Content addressing has to survive the push form, or a body fetched by
     // the sync path and the same body written by any other path would be two

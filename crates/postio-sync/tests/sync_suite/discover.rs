@@ -62,6 +62,8 @@ async fn discovery_writes_the_servers_folders_into_the_local_table() {
         paths(&connection, &account),
         vec!["Archive", "Deleted Messages", "INBOX", "Sent Messages"]
     );
+    assert_eq!(report.known(), 4, "every folder just added is known now");
+    assert!(report.changed(), "a first discovery is never a no-op");
 }
 
 #[tokio::test]
@@ -127,6 +129,11 @@ async fn discovering_twice_keeps_the_same_rows() {
     assert_eq!(
         before, after,
         "the ids everything else points at must not move"
+    );
+    assert_eq!(
+        report.known(),
+        4,
+        "the account still has the same four folders the second time"
     );
 }
 
@@ -326,7 +333,55 @@ async fn a_child_folder_is_linked_to_its_parent() {
         .expect("the child");
 
     assert_eq!(child.parent_id, Some(inbox.id));
+
+    // A second pass over the same hierarchy: the link is already correct,
+    // so `link_parents` has nothing to write this time -- reconnecting must
+    // not re-link (and re-write) every folder on every account it touches.
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("a second discovery");
+    let child_again = mailboxes
+        .by_path(account.id, "INBOX/Receipts")
+        .expect("by path")
+        .expect("the child");
+    assert_eq!(
+        child_again.id, child.id,
+        "an already-linked child keeps its row"
+    );
+    assert_eq!(child_again.parent_id, Some(inbox.id));
     assert_eq!(child.name, "Receipts", "the leaf, not the whole path");
+}
+
+#[tokio::test]
+async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
+    // The server lists a leaf two levels deep but never lists the level in
+    // between -- a hierarchy IMAP allows and some servers produce. The leaf
+    // is still a perfectly good folder; it just has nowhere local to sit
+    // under, so it sits at the top rather than failing discovery outright.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX").delimiter('/'))
+        .mailbox(MockMailbox::new("INBOX/Archive/2026").delimiter('/'))
+        .build();
+    backend.connect().await.expect("connect");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    let mailboxes = MailboxRepository::new(&connection);
+    let leaf = mailboxes
+        .by_path(account.id, "INBOX/Archive/2026")
+        .expect("by path")
+        .expect("the leaf, listed even though its parent was never named");
+    assert_eq!(
+        leaf.parent_id, None,
+        "with no local row for INBOX/Archive to point at, the leaf has no \
+         parent rather than a fabricated one"
+    );
 }
 
 #[tokio::test]
