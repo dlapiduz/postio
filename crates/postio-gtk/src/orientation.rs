@@ -99,8 +99,8 @@ pub struct OrientationStrip {
     hints: gtk::Box,
     dismiss: gtk::Button,
     /// Whether the keymap in force gives it anything to teach. A strip with
-    /// no keys on it is an empty box with a button, so it stays hidden
-    /// however loudly it is asked to show.
+    /// no keys on it is a title and a "Got it" button over somebody's mail,
+    /// so it stays hidden however loudly it is asked to show.
     taught: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
@@ -175,17 +175,17 @@ impl OrientationStrip {
         self.root
             .update_property(&[gtk::accessible::Property::Label(&spoken(&hints))]);
         self.taught.set(!hints.is_empty());
-        if hints.is_empty() {
+        if !self.taught.get() {
             self.root.set_visible(false);
         }
     }
 
     /// Show or hide it.
     ///
-    /// Showing is a request, not a command: with no keys to teach — every
-    /// binding it would name rebound away — there is nothing to put on
-    /// screen, and an empty strip over the mail would be worse than no
-    /// strip at all.
+    /// Showing is a request rather than a command: with nothing to teach —
+    /// every key it would have named rebound away — there is nothing to put
+    /// on screen, and a strip that appeared anyway would be a title and a
+    /// button sitting on top of the mail.
     pub fn set_visible(&self, visible: bool) {
         self.root.set_visible(visible && self.taught.get());
     }
