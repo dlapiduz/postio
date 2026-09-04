@@ -73,6 +73,41 @@ fn the_token_never_crosses_to_swift() {
 }
 
 #[test]
+fn a_non_default_sync_section_actually_reaches_the_engine_this_session_starts() {
+    // #1014: `Session::open` used to build every `Wiring` with
+    // `BackfillPolicy::default()`/`WatchPolicy::default()` regardless of what
+    // `[sync]` said, so this has to prove the engine was actually handed a
+    // *different* policy -- not merely that the session opened.
+    let text = "[sync]\n\
+                check_for_mail = \"manual\"\n\
+                poll_interval_secs = 42\n\
+                body_fetch = \"eager\"\n";
+    let session = Session::open(SessionOptions::in_memory().with_config_for_test(text))
+        .expect("a session with a non-default [sync]");
+
+    let expected: postio_config::SyncConfig = postio_config::Config::from_toml_str(text)
+        .expect("parses")
+        .sync;
+    assert_ne!(
+        expected,
+        postio_config::SyncConfig::default(),
+        "the fixture must actually differ from the default, or this proves nothing"
+    );
+    assert!(
+        session.honors_sync_config_for_test(&expected),
+        "the wiring's backfill/watch policy does not match what [sync] asked for"
+    );
+    session.shutdown();
+}
+
+#[test]
+fn a_file_that_says_nothing_leaves_the_built_in_sync_defaults_standing() {
+    let session = session();
+    assert!(session.honors_sync_config_for_test(&postio_config::SyncConfig::default()));
+    session.shutdown();
+}
+
+#[test]
 fn a_mod_override_reaches_swift_as_this_platforms_accelerator() {
     // A `config.toml` written on Linux and synced to a Mac. The file says
     // `mod+shift+a` on both machines; the menu says Command here.
