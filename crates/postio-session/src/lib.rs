@@ -112,6 +112,46 @@ pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPol
     backfill_policy(&sync)
 }
 
+/// Read `[sync]` from `path` and turn it into the policy the engine watches
+/// under.
+///
+/// The join `idle`/`poll_interval_secs` never had (#932): `WatchPolicy`
+/// has documented `idle` as "`[sync] idle` in `config.toml`" since it was
+/// written, and `engine::start` spawned `EngineParts { watch:
+/// Default::default(), .. }` -- so turning push off, or changing how often
+/// the rest of the mailbox is reconciled, did nothing at all.
+///
+/// Read once at startup rather than kept live, for the same reason
+/// [`backfill_policy_at`] gives: the engine is spawned with its parts, so a
+/// change applies at the next start. A file that will not parse leaves the
+/// defaults standing.
+pub fn watch_policy_at(path: &std::path::Path) -> postio_sync::WatchPolicy {
+    let sync = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .map(|config| config.sync)
+        .unwrap_or_default();
+    watch_policy(&sync)
+}
+
+/// [`watch_policy_at`], for a `[sync]` section already in hand.
+///
+/// `Manual` is the one `check_for_mail` value this cannot answer faithfully
+/// yet: `WatchPolicy` has no "do not check automatically at all" state,
+/// only *how* to check, so it gets the closest available answer -- no push
+/// connection, the same interval polling as `Poll` -- rather than a config
+/// value this function silently ignores. Suppressing the periodic poll too
+/// needs a change to the scheduling loop itself
+/// ([`postio_sync::Watcher`]/`postio-runtime`'s engine loop), which
+/// is its own, separately-scoped piece of work.
+pub fn watch_policy(sync: &postio_config::SyncConfig) -> postio_sync::WatchPolicy {
+    postio_sync::WatchPolicy {
+        idle: matches!(sync.check_for_mail, postio_config::CheckForMail::Idle),
+        poll_interval: std::time::Duration::from_secs(sync.poll_interval_secs),
+        ..postio_sync::WatchPolicy::default()
+    }
+}
+
 /// [`backfill_policy_at`], for a `[sync]` section already in hand.
 pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::BackfillPolicy {
     postio_runtime::BackfillPolicy {
@@ -299,6 +339,13 @@ pub struct Wiring {
     /// and `engine::start` reading the file itself could not be driven by a
     /// test.
     pub backfill: postio_runtime::BackfillPolicy,
+    /// How the engine watches for new mail, from `[sync]`.
+    ///
+    /// A part, like `backfill`, and for the same reason: whether this
+    /// installation holds an `IDLE` connection open and how often it polls
+    /// is a choice about *this installation*, and `engine::start` reading
+    /// the file itself could not be driven by a test.
+    pub watch: postio_sync::WatchPolicy,
     /// The ceiling on the blob store, from `[storage] max_bytes`.
     ///
     /// A part, like `backfill`, and for the same reason: how much of this
@@ -337,6 +384,7 @@ impl Wiring {
             secrets: postio_account::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
+            watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
         }
     }
@@ -358,6 +406,13 @@ impl Wiring {
     /// built-in default.
     pub fn with_backfill(mut self, backfill: postio_runtime::BackfillPolicy) -> Self {
         self.backfill = backfill;
+        self
+    }
+
+    /// The same wiring, watching under `[sync]`'s answer rather than the
+    /// built-in default.
+    pub fn with_watch(mut self, watch: postio_sync::WatchPolicy) -> Self {
+        self.watch = watch;
         self
     }
 
