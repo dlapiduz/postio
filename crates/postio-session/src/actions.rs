@@ -369,9 +369,9 @@ impl Actions {
         use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
 
         let (mut connection, _permit) = self.connect()?;
-        // Wider than `open_for_sources`: a move that *finished* is exactly
-        // the one somebody is most likely to take back, and `done` is not
-        // open by any other definition (#531).
+        // `done` included: a move that *finished* is exactly the one
+        // somebody is most likely to take back, and the forward path never
+        // had a reason to look at one (#531).
         let sagas = CrossAccountMoveRepository::new(&connection)
             .for_sources(
                 messages,
@@ -1993,6 +1993,14 @@ fn invert_one(
 
 #[cfg(test)]
 mod tests {
+    /// The phases a saga can still be walked out of — what the tests below
+    /// mean when they ask for "the" saga mid-flight.
+    const OPEN_PHASES: &[postio_storage::repository::MovePhase] = &[
+        postio_storage::repository::MovePhase::Copying,
+        postio_storage::repository::MovePhase::Unconfirmed,
+        postio_storage::repository::MovePhase::Confirmed,
+    ];
+
     use super::*;
 
     use chrono::Utc;
@@ -3873,7 +3881,7 @@ mod tests {
         let connection = world.database.connection().expect("a connection");
         let sagas = CrossAccountMoveRepository::new(&connection);
         let id = sagas
-            .open_for_sources(&[source])
+            .for_sources(&[source], OPEN_PHASES)
             .expect("a read")
             .first()
             .expect("a saga")
@@ -3992,7 +4000,7 @@ mod tests {
         // ── and the saga that will make the servers agree ────────────────
         let sagas = CrossAccountMoveRepository::new(&connection);
         let inverse = sagas
-            .open_for_sources(&[copy])
+            .for_sources(&[copy], OPEN_PHASES)
             .expect("a read")
             .into_iter()
             .find(|saga| saga.id != forward.id)
@@ -4229,7 +4237,7 @@ mod tests {
             let connection = world.database.connection().expect("a connection");
             let sagas = CrossAccountMoveRepository::new(&connection);
             let id = sagas
-                .open_for_sources(&[second_message])
+                .for_sources(&[second_message], OPEN_PHASES)
                 .expect("a read")
                 .first()
                 .expect("the second saga")
@@ -4306,7 +4314,7 @@ mod tests {
             let connection = world.database.connection().expect("a connection");
             let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&connection);
             let id = sagas
-                .open_for_sources(&[message])
+                .for_sources(&[message], OPEN_PHASES)
                 .expect("read")
                 .first()
                 .expect("a saga")
