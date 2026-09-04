@@ -204,7 +204,8 @@ render-to-PNG loop — are in `/gtk-design`. This skill decides *what the
 experience should be*; that one gets it built correctly.
 
 When you make an experience decision that future surfaces should follow,
-record it in `docs/engineering-notes.md`, or as a comment on the issue. An
+record it as a new file under `docs/notes/` (listed in
+`docs/engineering-notes.md`), or as a comment on the issue. An
 invariant nobody wrote down
 lasts exactly as long as the session that invented it.
 
