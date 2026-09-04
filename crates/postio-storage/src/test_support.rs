@@ -248,11 +248,13 @@ pub fn unconverted_store(path: &Path) -> Database {
             .execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))
             .expect("the store key");
         drop(hex);
-        // Every pragma the pool applies except the one under test, so what
-        // this differs from a real store in is exactly one line.
+        // Every pragma the pool applies. What makes this store the old
+        // shape is what is *missing*: `Database::from_location_with_guard`
+        // asks for `auto_vacuum = INCREMENTAL` before it migrates, and this
+        // migrates without ever asking.
         connection
-            .execute_batch(&crate::db::PRAGMAS.replace("PRAGMA auto_vacuum = INCREMENTAL;\n", ""))
-            .expect("the pragmas as they were");
+            .execute_batch(crate::db::PRAGMAS)
+            .expect("the pragmas the pool applies");
         crate::migrate(&mut connection).expect("migrate");
     }
     Database::open(path, &key()).expect("the store reopens")
