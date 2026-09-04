@@ -773,7 +773,10 @@ mod tests {
         // invariant silently weakening in one of two modes.
         let mut html = campaign();
         html.push_str(r#"<img src="https://tracker.example.org/o.gif">"#);
-        let body = MessageBody { text: None, html: Some(html) };
+        let body = MessageBody {
+            text: None,
+            html: Some(html),
+        };
         let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
         assert_eq!(rendered.held_back.total(), 1);
     }

@@ -10,6 +10,7 @@ select_all	ctrl+a
 prev_view	h | Left
 back	Escape
 toggle_result_order	o
+view_original	ctrl+o
 reply	e
 reply_all	E
 forward	f

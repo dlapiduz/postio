@@ -37,7 +37,17 @@ use markup5ever_rcdom::{Handle, NodeData, RcDom};
 /// its own box does not — so a sentence inside six nested `<td>`s comes out
 /// as a sentence rather than disappearing with the table.
 const KEPT: [&str; 11] = [
-    "b", "strong", "i", "em", "code", "a", "ul", "ol", "li", "blockquote", "p",
+    "b",
+    "strong",
+    "i",
+    "em",
+    "code",
+    "a",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "p",
 ];
 
 /// The one void element worth keeping: a line break carries meaning that
@@ -98,7 +108,14 @@ pub fn reduce(html: &str) -> Reduced {
 
     let mut out = String::new();
     let mut links = Links::default();
-    walk(&dom.document, &kept, &void, &attributes, &mut links, &mut out);
+    walk(
+        &dom.document,
+        &kept,
+        &void,
+        &attributes,
+        &mut links,
+        &mut out,
+    );
 
     Reduced {
         html: out.trim().to_owned(),
@@ -342,7 +359,8 @@ mod tests {
     fn the_first_link_is_kept_and_the_rest_are_counted() {
         // A campaign has one thing it wants you to do and twenty-two ways to
         // say it. `1 link kept of 23` is the canvas's own wording.
-        let mut html = String::from(r#"<p><a href="https://example.com/track">Track delivery</a></p>"#);
+        let mut html =
+            String::from(r#"<p><a href="https://example.com/track">Track delivery</a></p>"#);
         for index in 0..22 {
             html.push_str(&format!(
                 r#"<p><a href="https://example.com/{index}">more</a></p>"#
@@ -370,7 +388,9 @@ mod tests {
                       <p>Read our <a href="https://example.com/policy">privacy notice</a> today</p>"#;
         let reduced = reduce(html);
         assert!(
-            reduced.html.contains(r#"<a href="https://example.com/track">Track delivery</a>"#),
+            reduced
+                .html
+                .contains(r#"<a href="https://example.com/track">Track delivery</a>"#),
             "the first link is the call to action and keeps its href: {}",
             reduced.html
         );
