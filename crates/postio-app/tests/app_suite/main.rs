@@ -41,6 +41,7 @@ mod reply_identity;
 mod reply_source;
 mod resume_draft;
 mod resume_queued_draft;
+mod search_close_without_escape;
 mod search_index;
 mod search_live;
 mod search_open;
@@ -222,6 +223,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",
         search_open::opening_a_previewed_result_shows_it_in_the_reading_pane as fn(),
+    ),
+    (
+        "search_close_without_escape::closing_the_finder_without_pressing_escape_still_restores_the_folder",
+        search_close_without_escape::closing_the_finder_without_pressing_escape_still_restores_the_folder
+            as fn(),
     ),
     (
         "search_results::a_query_puts_the_matching_messages_in_the_list",
