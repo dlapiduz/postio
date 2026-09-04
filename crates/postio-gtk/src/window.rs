@@ -125,6 +125,10 @@ mod imp {
         pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
+        /// ADR 0012's first-run keyboard orientation. This crate builds and
+        /// places it; `postio-app` decides whether it has anything to say,
+        /// because that answer lives in the store.
+        pub orientation: OnceCell<crate::orientation::OrientationStrip>,
         /// Installed lazily, on first [`Window::composer`] — nothing before
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
@@ -1645,6 +1649,15 @@ impl Window {
         list_overlay.add_overlay(&list_state);
         shell.list().append(&list_overlay);
 
+        // ADR 0012 Q4: above the column rather than over it, so the rows it
+        // is talking about stay visible and scrollable underneath — the
+        // same arrangement `ListStateView`'s banner placement makes, and
+        // for the same reason. Prepended, because the list and the thread
+        // are already in this box and the strip belongs above whichever of
+        // them has the column. Hidden until `postio-app` says otherwise.
+        let orientation = crate::orientation::OrientationStrip::new();
+        shell.list().prepend(&orientation.widget());
+
         // Canvas 3a: `t` turns this column into the thread. Built alongside
         // the list rather than lazily, because the swap has to be a
         // `set_visible` and nothing else — a pane that had to be constructed
@@ -1759,6 +1772,7 @@ impl Window {
         let _ = self.imp().list.set(list_view);
         let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
+        let _ = self.imp().orientation.set(orientation);
         // The context follows the keyboard into the account list, the same
         // way it follows it into the folders — and scoped to that list
         // rather than to the panel, because the panel also holds a TextView
@@ -1809,6 +1823,7 @@ impl Window {
         // gets around to being read. `apply_keymap` replaces them if it
         // says something different.
         self.finder().set_keymap(keymap.clone());
+        self.orientation().set_keymap(&keymap);
         self.cheatsheet().set_keymap(keymap);
 
         let finder = self.finder();
@@ -2642,6 +2657,15 @@ impl Window {
             .clone()
     }
 
+    /// ADR 0012's first-run keyboard orientation, above the message list.
+    pub fn orientation(&self) -> crate::orientation::OrientationStrip {
+        self.imp()
+            .orientation
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     /// Shows the cheat sheet, or hides it if it is already up.
     ///
     /// Toggling rather than only opening: `?` is what the user pressed to get
@@ -2772,6 +2796,7 @@ impl Window {
         }
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap.clone());
+        self.orientation().set_keymap(&keymap);
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
         // #828: the composer's Send / Schedule / Save draft hints were

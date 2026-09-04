@@ -33,6 +33,7 @@ pub mod export;
 pub mod feed;
 pub mod notifications;
 pub mod onboarding;
+pub mod orientation;
 pub mod reading;
 pub mod search;
 pub mod settings_accounts;
