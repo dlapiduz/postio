@@ -631,8 +631,8 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     let reindexing: settings_accounts::Reindexing = Default::default();
 
     // The settings panel's account rows: enable/disable, remove-with-undo,
-    // rebuild-index.
-    settings_accounts::install(window, wiring, reindexing.clone());
+    // rebuild-index, and each account's mailbox role map.
+    settings_accounts::install(window, wiring, reindexing.clone(), &feeds);
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
     // The privacy pane's unsubscribe-activation log (#971).
