@@ -238,6 +238,11 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message as fn(),
     ),
     (
+        "gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs",
+        gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs
+            as fn(),
+    ),
+    (
         "gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader",
         gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader as fn(),
     ),

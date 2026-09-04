@@ -501,7 +501,10 @@ mod tests {
     fn a_run_that_reaches_the_end_still_counts() {
         // The loop has to close an open run when the slice ends, or a
         // conversation whose tail is collapsed folds nothing.
-        assert_eq!(collapsed_runs(&[false, true, true, true], RUN_MINIMUM), vec![1..4]);
+        assert_eq!(
+            collapsed_runs(&[false, true, true, true], RUN_MINIMUM),
+            vec![1..4]
+        );
     }
 
     #[test]
@@ -512,7 +515,10 @@ mod tests {
 
     #[test]
     fn nothing_collapsed_folds_nothing() {
-        assert_eq!(collapsed_runs(&[false, false, false], RUN_MINIMUM), Vec::new());
+        assert_eq!(
+            collapsed_runs(&[false, false, false], RUN_MINIMUM),
+            Vec::new()
+        );
         assert_eq!(collapsed_runs(&[], RUN_MINIMUM), Vec::new());
     }
 

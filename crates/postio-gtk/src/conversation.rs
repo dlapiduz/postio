@@ -743,8 +743,10 @@ impl ConversationView {
             .iter()
             .map(|entry| !entry.expanded.get() && !entry.shown.get())
             .collect();
-        let runs =
-            postio_ui::conversation::collapsed_runs(&collapsed, postio_ui::conversation::RUN_MINIMUM);
+        let runs = postio_ui::conversation::collapsed_runs(
+            &collapsed,
+            postio_ui::conversation::RUN_MINIMUM,
+        );
 
         for range in runs {
             let (senders, first) = {
@@ -756,10 +758,8 @@ impl ConversationView {
                 (senders, entries[range.start].container())
             };
             let divider = self.build_divider(range.clone(), &senders);
-            imp.stack.insert_child_after(
-                &divider.row,
-                first.prev_sibling().as_ref(),
-            );
+            imp.stack
+                .insert_child_after(&divider.row, first.prev_sibling().as_ref());
             for entry in imp.entries.borrow()[range.clone()].iter() {
                 entry.container().set_visible(false);
             }
@@ -844,6 +844,20 @@ impl ConversationView {
             entry.container().set_visible(true);
         }
         self.refold();
+    }
+
+    /// How many messages are showing their bodies.
+    ///
+    /// Asks the entries rather than counting readers: a message can be
+    /// expanded before its body arrives, and "how much is open" is the
+    /// question `Expand all` and the fold rules are about.
+    pub fn expanded_count(&self) -> usize {
+        self.imp()
+            .entries
+            .borrow()
+            .iter()
+            .filter(|entry| entry.expanded.get())
+            .count()
     }
 
     /// The pane's header, for a test that wants to read what it says.
