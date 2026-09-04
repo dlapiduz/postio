@@ -916,6 +916,34 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
+/* ── The first-run keyboard orientation (ADR 0012 Q4) ────────────────
+   Once, after the first sync, and never again. Deliberately the same strip
+   vocabulary as `.postio-liststate-banner` above — a hairline under it,
+   rows still visible below — because it is the same promise: something to
+   say about the list without taking the list away. No accent fill and no
+   card: it is a sentence and three keys, and anything louder would be the
+   modal welcome ADR 0012 Q4 rules out. */
+.postio-orientation {
+  background-color: var(--postio-ground);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.postio-orientation-icon {
+  color: var(--postio-accent);
+}
+
+.postio-orientation-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 0.8863rem;
+  color: var(--postio-ink);
+}
+
+.postio-orientation-hint-label {
+  font-size: 0.8182rem;
+  color: var(--postio-ink-secondary);
+}
+
 /* ── The box's results ───────────────────────────────────────────────
    `postio-cfd.1` folded the command palette and the query bar into one
    box in the header; this is the plate its results hang from, directly
