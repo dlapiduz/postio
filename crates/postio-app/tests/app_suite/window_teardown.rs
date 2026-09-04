@@ -2,13 +2,19 @@
 //! (#1072).
 //!
 //! `gtk_window_teardown.rs` asserts this for a bare `Window` and its reader,
-//! and could not see this leak: it lives in `postio-app`'s `search::install`,
-//! which a `postio-gtk` test cannot call. The cycle is the one #794
-//! catalogued three times over — a handler stored on a child widget holding a
-//! strong reference back to the window that owns it — and the rule against it
-//! is written in the same file the leak was in: *"Weak, because the window
-//! owns the finder that owns this handler; a strong clone here is a cycle
-//! that keeps the window alive for the life of the process."*
+//! and could not see this leak: it needed `feed_the_window`, which a
+//! `postio-gtk` test cannot call. The cycle is the one #794 catalogued three
+//! times over — a handler stored on a child widget holding a strong
+//! reference back to the window that owns it. #794 and an earlier pass on
+//! this issue made nine such captures in `postio-app`'s composition wiring
+//! weak without moving this test; what was left standing was the tenth, one
+//! layer down in `postio-gtk::window::Window::composer` itself —
+//! `connect_opened`/`connect_closed` on the composer it lazily builds,
+//! registered the moment anything (here, `postio-app::compose::install`)
+//! asks for a composer at all. The rule against it is written in the same
+//! file the leak was in: *"Weak, because the window owns the finder that
+//! owns this handler; a strong clone here is a cycle that keeps the window
+//! alive for the life of the process."*
 //!
 //! # Why it is worth a test rather than just a fix
 //!

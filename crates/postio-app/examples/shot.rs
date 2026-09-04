@@ -999,7 +999,7 @@ fn main() -> glib::ExitCode {
                     None,
                 );
                 reader.widget().set_size_request(-1, 120);
-                reader
+                Some(reader)
             }
         });
         if !members.is_empty() {

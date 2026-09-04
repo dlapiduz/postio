@@ -106,6 +106,7 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
     });
 
     panel.connect_test_connection({
+        let weak = weak.clone();
         let wiring = wiring.clone();
         move |id| {
             if let Some(window) = weak.upgrade() {
@@ -115,15 +116,23 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
     });
 
     panel.connect_signature_saved({
-        let window = window.clone();
+        let weak = weak.clone();
         let wiring = wiring.clone();
-        move |id, draft| save_signature(&window, &wiring, id, draft)
+        move |id, draft| {
+            if let Some(window) = weak.upgrade() {
+                save_signature(&window, &wiring, id, draft);
+            }
+        }
     });
 
     panel.connect_signature_deleted({
-        let window = window.clone();
+        let weak = weak.clone();
         let wiring = wiring.clone();
-        move |id, signature| delete_signature(&window, &wiring, id, signature)
+        move |id, signature| {
+            if let Some(window) = weak.upgrade() {
+                delete_signature(&window, &wiring, id, signature);
+            }
+        }
     });
 }
 

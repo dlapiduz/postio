@@ -75,7 +75,7 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
         counter.borrow_mut().push(message);
         // A bare reader: this test is about the stack, and `gtk_reader.rs`
         // covers what goes in each slot.
-        stub_reader()
+        Some(stub_reader())
     });
 
     window.set_child(Some(&pane.widget()));
@@ -243,7 +243,7 @@ pub fn reader_for_finds_only_an_expanded_entrys_own_reader() {
 
     let window = gtk::Window::new();
     let pane = ConversationView::new();
-    pane.set_reader_factory(move |_message| stub_reader());
+    pane.set_reader_factory(move |_message| Some(stub_reader()));
 
     window.set_child(Some(&pane.widget()));
     window.present();
@@ -335,7 +335,7 @@ pub fn an_expanded_entrys_reader_does_not_draw_its_own_action_bar() {
         let reader = stub_reader();
         // What `postio_app::reading`'s real factory must do too.
         reader.set_actions_visible(false);
-        reader
+        Some(reader)
     });
 
     window.set_child(Some(&pane.widget()));
@@ -404,7 +404,7 @@ pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
 
     let window = gtk::Window::new();
     let pane = ConversationView::new();
-    pane.set_reader_factory(|_message| stub_reader());
+    pane.set_reader_factory(|_message| Some(stub_reader()));
     window.set_child(Some(&pane.widget()));
     window.set_default_size(700, 600);
     window.present();
@@ -516,7 +516,7 @@ pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
 
     let window = gtk::Window::new();
     let pane = ConversationView::new();
-    pane.set_reader_factory(|_message| stub_reader());
+    pane.set_reader_factory(|_message| Some(stub_reader()));
     window.set_child(Some(&pane.widget()));
     window.set_default_size(700, 600);
     window.present();
