@@ -427,43 +427,24 @@ jobs:
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # The published binary, not `cargo install`, and the difference is
-      # minutes. `cargo install cargo-nextest` builds the tool's own
-      # dependency tree -- clap, serde, regex and ~200 others -- in its own
-      # target directory, so every crate it shares with this workspace is
-      # compiled twice per run and neither copy is usable by the other. The
-      # release tarball is one file and ~2 seconds.
+      # The version, the checksum and the reasoning all live in
+      # `scripts/install-nextest.sh`, which a workstation runs too. They used
+      # to live here, and only here, which is why the tool CI requires was
+      # absent from the machine every landing runs on -- `issue-land.sh` falls
+      # open to `cargo test` and says nothing (#1092).
       #
-      # Pinned by **checksum**, which is a stronger guarantee than the SHA
-      # pinning applied to actions here and than `--locked` gives: it fixes
-      # the exact bytes rather than a dependency graph that resolves at build
-      # time. The asset is immutable, so a changed digest means the artifact
-      # changed and the job should stop -- `sha256sum -c` makes that a failure
-      # rather than a surprise.
-      #
-      # To bump: change the version in all three places below, download the
-      # tarball, and put its `sha256sum` here.
+      # Keyed on the script rather than on a version repeated here: the key
+      # then changes exactly when the pin does, and cannot go stale against
+      # it. A wrong-version restore is harmless anyway -- the script checks
+      # `cargo nextest --version`, not the cache, and reinstalls.
       - name: Cache cargo-nextest
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-0.9.143
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
 
-      # The binary is asked, not the cache: `cache-hit` is false on a
-      # restore-keys prefix hit even when the files are there, so a
-      # cache-hit guard is wrong wherever restore-keys are in play.
       - name: Install cargo-nextest
-        run: |
-          if cargo nextest --version 2>/dev/null | grep -qw "0.9.143"; then
-            echo "cargo-nextest 0.9.143 restored from the cache"
-            exit 0
-          fi
-          curl -fsSL --retry 3 -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.143/linux
-          echo "66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e  /tmp/nextest.tar.gz" \
-            | sha256sum -c -
-          mkdir -p "$HOME/.cargo/bin"
-          tar -xzf /tmp/nextest.tar.gz -C "$HOME/.cargo/bin" cargo-nextest
-          cargo nextest --version
+        run: scripts/install-nextest.sh
 
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
