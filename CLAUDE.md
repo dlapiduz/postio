@@ -291,14 +291,23 @@ things stay shared:
   (`cargo build -j8`) only when you're alone.
 - **The compile cache**: sccache, wired in automatically, one cache
   machine-wide. Each worktree keeps its own `target/` (sharing one compiled
-  crates against a sibling's — #76). A *fresh* worktree therefore rebuilds
-  Postio's own ~20 crates before it can report a gate — twelve minutes on
-  #860's landing. `scripts/issue-claim.sh --reuse` takes the next issue in
-  the worktree you are already in instead, keeping that `target/`: one
-  workspace and one target, so #76 cannot occur. It refuses rather than
-  trample — a dirty tree, unlanded commits, or the shared checkout are each
-  an error naming the reason. Reuse when you have just landed and are taking
-  the next issue; claim fresh when you want the old tree kept.
+  crates against a sibling's — #76).
+
+  **So claim with `--reuse` by default.** A *fresh* worktree is a cold
+  `target/`: Postio's own ~20 crates rebuilt before the first gate result —
+  595s of sanity tier plus 289s of workspace check on #1012's own landing,
+  and that was a change with no Rust in it at all. `scripts/issue-claim.sh
+  --reuse` takes the next issue in the worktree you are already in and keeps
+  that build. It is **not** the sharing #76 forbids: that is two worktrees
+  writing one target, and this is one worktree with a different branch
+  checked out.
+
+  Claim fresh only when you need the old tree kept — an unlanded branch you
+  mean to come back to, or work you have not finished with. You do not have
+  to decide carefully: `--reuse` refuses on its own if the tree is dirty,
+  holds commits that are not on `main`, or is the shared checkout, and each
+  refusal names its reason and changes nothing. Trying it first costs
+  nothing when it does not apply.
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other
