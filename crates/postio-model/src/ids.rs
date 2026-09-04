@@ -139,6 +139,10 @@ local_id!(
     /// order the user performed the actions.
     OperationId
 );
+local_id!(
+    /// Identifies a row in the one-click-unsubscribe activation log (#971).
+    UnsubscribeActivationId
+);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {

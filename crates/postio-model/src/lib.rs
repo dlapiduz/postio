@@ -67,6 +67,7 @@ pub mod sync;
 pub mod test_corpus;
 pub mod thread;
 pub mod threading;
+pub mod unsubscribe;
 
 pub use account::{
     Account, AccountScope, AuthMethod, Backend, Identity, OAuthConfig, ServerConfig, Signature,
@@ -95,3 +96,4 @@ pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
+pub use unsubscribe::UnsubscribeActivation;
