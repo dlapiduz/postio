@@ -113,6 +113,10 @@ pub struct ParsedMessage {
     /// message carries one — the fact that lets the list be detected with
     /// no configuration, rather than by matching an address by hand.
     pub list_id: Option<String>,
+    /// Whether `Disposition-Notification-To` or `Return-Receipt-To` is
+    /// present (#970) — Postio never sends one automatically, so this only
+    /// counts how often it was asked.
+    pub read_receipt_requested: bool,
     /// `From`, with any address group flattened.
     pub from: Vec<EmailAddress>,
     /// `Sender`.
@@ -183,6 +187,7 @@ impl ParsedMessage {
         message.in_reply_to = self.in_reply_to;
         message.references = self.references;
         message.list_id = self.list_id;
+        message.read_receipt_requested = self.read_receipt_requested;
         message.from = self.from;
         message.sender = self.sender;
         message.reply_to = self.reply_to;
@@ -431,6 +436,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     };
 
     message.headers = collect_headers(&source);
+    message.read_receipt_requested = message.headers.contains("Disposition-Notification-To")
+        || message.headers.contains("Return-Receipt-To");
     message.rfc_message_id = source.message_id().and_then(message_id);
     message.in_reply_to = message_ids(source.in_reply_to()).pop();
     message.references = message_ids(source.references());
