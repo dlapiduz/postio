@@ -78,6 +78,28 @@ runs:
           dbus-daemon \
           mold
 
+    # Ask the runner how big it is rather than hardcoding a number.
+    #
+    # `ci.yml` used to say `CARGO_BUILD_JOBS: 4`, chosen when a public repo's
+    # standard runner had four vCPUs. That is a number that goes stale in
+    # silence: on a larger runner it leaves cores idle, and on a smaller one it
+    # oversubscribes. Neither shows up as a failure, only as a slower job.
+    #
+    # It matters more since the test job moved to nextest, which runs one
+    # process per test and scales its own concurrency with the core count --
+    # so the runner's width now sets how fast the *tests* go, not just the
+    # compile.
+    #
+    # Printed, not just set: this is the only place the number is visible, and
+    # "how many cores does CI have" turned out to be unanswerable from the
+    # logs when it was asked.
+    - name: Match cargo's parallelism to the runner
+      shell: bash
+      run: |
+        cores=$(nproc)
+        echo "runner has $cores cores, $(free -g | awk '/^Mem:/{print $2}') GB RAM"
+        echo "CARGO_BUILD_JOBS=$cores" >> "$GITHUB_ENV"
+
     # The pin decides; see the note in the `fmt` job.
     - name: Install Rust toolchain
       shell: bash
