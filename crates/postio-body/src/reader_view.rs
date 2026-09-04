@@ -391,20 +391,85 @@ const LINK_PREFIXES: &[&str] = &["http://", "https://", "mailto:", "www."];
 /// is a layout decision, and reader view's whole premise is that a sender's
 /// layout is not to be trusted.
 pub fn facts(plain: &str) -> Vec<Fact> {
+    lift(plain).rows
+}
+
+/// A plain part with its facts block taken out of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Lifted {
+    /// The rows, for drawing above the body copy.
+    pub rows: Vec<Fact>,
+    /// What is left to read, with the lifted lines gone and the blank line
+    /// they left behind collapsed.
+    pub body: String,
+}
+
+/// [`facts`], and the prose that remains once they are lifted out.
+///
+/// The rows have to *leave* the body copy, or the reader shows the same three
+/// lines twice — once as the block and once in the paragraph underneath,
+/// which looks like a bug rather than a summary.
+///
+/// Only the lines that actually became rows are removed. A run longer than
+/// [`FACTS_KEPT`] keeps its remainder in the body: the block is the first
+/// four facts, and the rest are still there to read. Nothing a sender wrote
+/// is dropped without being shown somewhere.
+pub fn lift(plain: &str) -> Lifted {
+    let lines: Vec<&str> = plain.lines().collect();
     let mut run: Vec<Fact> = Vec::new();
-    for line in plain.lines() {
+    let mut start = 0;
+    let mut found = None;
+    for (index, line) in lines.iter().enumerate() {
         match row(line) {
-            Some(fact) => run.push(fact),
+            Some(fact) => {
+                if run.is_empty() {
+                    start = index;
+                }
+                run.push(fact);
+            }
             // Any line that is not a row ends the run, blank or not: the
             // block the canvas draws is a block on the page too.
             None => {
                 if let Some(block) = block(&mut run) {
-                    return block;
+                    found = Some((start, block));
+                    break;
                 }
             }
         }
     }
-    block(&mut run).unwrap_or_default()
+    let found = found.or_else(|| block(&mut run).map(|block| (start, block)));
+    let Some((start, rows)) = found else {
+        return Lifted {
+            rows: Vec::new(),
+            body: plain.to_owned(),
+        };
+    };
+
+    let lifted = start..start + rows.len();
+    let mut body = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        if lifted.contains(&index) {
+            continue;
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    Lifted {
+        rows,
+        body: close_the_gap(&body),
+    }
+}
+
+/// Collapse the hole the lifted lines left.
+///
+/// A block with a blank line on each side leaves two of them behind, and a
+/// block at the top leaves the body starting on one.
+fn close_the_gap(body: &str) -> String {
+    let mut out = body.trim_start_matches('\n').to_owned();
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out
 }
 
 /// A finished run, if it was long enough and was not a header block.
@@ -773,6 +838,52 @@ mod facts_tests {
             facts("tracking:\nitem:\nship to:\n").is_empty(),
             "a label with no value is not a fact"
         );
+    }
+
+    #[test]
+    fn the_lifted_lines_leave_the_body_copy() {
+        let lifted = lift(
+            "Your order has shipped.\n\
+             \n\
+             tracking: EXTEST0042199317\n\
+             item: One Small Board\n\
+             \n\
+             Follow the parcel from your orders page.\n",
+        );
+        assert_eq!(lifted.rows.len(), 2);
+        assert_eq!(
+            lifted.body, "Your order has shipped.\n\nFollow the parcel from your orders page.\n",
+            "the rows are gone and the hole they left is closed"
+        );
+    }
+
+    #[test]
+    fn a_body_with_no_block_is_handed_back_unchanged() {
+        let plain = "Hi Ada,\n\nFriday works for me.\n";
+        assert_eq!(lift(plain).body, plain);
+    }
+
+    #[test]
+    fn a_run_past_the_cap_keeps_its_remainder_in_the_body() {
+        // Four rows are lifted; the other five are still there to read,
+        // because a summary may be partial but nothing may vanish.
+        let plain = (1..=9)
+            .map(|n| format!("field {n}: value {n}\n"))
+            .collect::<String>();
+        let lifted = lift(&plain);
+        assert_eq!(lifted.rows.len(), 4);
+        assert!(
+            !lifted.body.contains("field 4:"),
+            "a lifted line is still in the body: {}",
+            lifted.body
+        );
+        for n in 5..=9 {
+            assert!(
+                lifted.body.contains(&format!("field {n}: value {n}")),
+                "field {n} vanished: {}",
+                lifted.body
+            );
+        }
     }
 
     #[test]

@@ -584,6 +584,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "thread",
     "orientation",
     "open",
+    "shipping",
 ];
 
 /// Every argument (after the output path) that matches none of
@@ -1075,6 +1076,37 @@ fn main() -> glib::ExitCode {
         std::thread::sleep(Duration::from_millis(10));
     }
     settle(&window);
+
+    // #1030: the facts block a transactional message gets above its body
+    // copy. The corpus fixture is handed straight to the reader rather than
+    // clicked out of the list, because the demo seed re-dates the corpus and
+    // there is no way to name a row from here.
+    //
+    // That makes this a *design* shot and nothing more -- it is for looking
+    // at spacing, weight and the two columns. It deliberately does not prove
+    // the block reaches the pane from a real message, which is what #596 says
+    // a shot handed its own body cannot do; `gtk_reader.rs` proves that,
+    // through `render`, on the same fixture.
+    if flag("shipping") {
+        let fixture = postio_model::test_corpus::load("transactional-shipping-notice");
+        let parsed = postio_model::mime::parse(fixture.bytes());
+        // The reader that is *on screen*, which in a conversation is the
+        // focused message's and not the single-message one behind it --
+        // rendering into `window.reader()` paints a hidden widget, and the
+        // picture comes back showing whatever the demo had already drawn.
+        let reader = window
+            .conversation()
+            .focused()
+            .and_then(|message| window.conversation().reader_for(message))
+            .unwrap_or_else(|| window.reader());
+        reader.render(&parsed.body, Some("orders@shop.example.test"));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let context = glib::MainContext::default();
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     // The picture, and the wait for it, both belong to `postio_gtk::capture`
     // -- which turns the main loop until the window is actually drawable
