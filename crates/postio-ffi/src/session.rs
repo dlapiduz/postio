@@ -937,7 +937,8 @@ impl Session {
     ///   names in its `FACES` table and `None` for everything else.
     pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
         use postio_ui::reader::document::{
-            Rendering, absent_html, body_html, document_for, suits_reader_view, wrap_document,
+            Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
+            wrap_document,
         };
 
         let remote = postio_body::RemoteImages::from(remote);
@@ -948,12 +949,14 @@ impl Session {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
             );
         };
         let Ok(connection) = database.connection() else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
@@ -972,20 +975,28 @@ impl Session {
                 // notice surface to offer `View original` through yet — the
                 // same gap `encoding_problems` above names — so what it draws
                 // is what the rule chooses, and nothing can leave it.
-                let rendering = if suits_reader_view(&body) {
+                let bulk = suits_reader_view(&body);
+                let rendering = if bulk {
                     Rendering::Reader
                 } else {
                     Rendering::Original
                 };
                 let drawn = body_html(&body, remote, rendering);
-                document_for(&drawn.html, remote)
+                // The same rule the GTK reader applies, from the same
+                // function. Nothing here can reach `Sheet::Senders` while
+                // this frontend has no way to leave reader view -- which is
+                // the point of asking rather than assuming: the day it grows
+                // one, the sheet comes with it.
+                document_for(&drawn.html, remote, sheet_for(drawn.rendering, bulk))
             }
             // A state plate is Postio's own words, so it is served with remote
             // images blocked whatever the caller asked for: there is nothing
             // in it a sender wrote, and nothing for them to reach through.
-            postio_session::reading::Body::Absent(state) => {
-                wrap_document(&absent_html(state), postio_body::RemoteImages::Blocked)
-            }
+            postio_session::reading::Body::Absent(state) => wrap_document(
+                &absent_html(state),
+                postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
+            ),
         }
     }
 
