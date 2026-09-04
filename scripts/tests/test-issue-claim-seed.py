@@ -124,6 +124,11 @@ def sibling(repo: Path, worktrees: Path, number: int, artifact: str) -> Path:
     (tree / "target" / "debug" / "deps").mkdir(parents=True)
     (tree / "target" / "debug" / ".fingerprint").mkdir()
     (tree / "target" / "debug" / "deps" / artifact).write_text("compiled\n", encoding="utf-8")
+    # The sibling's own crates carry *its* path baked in (env!("CARGO_MANIFEST_DIR"));
+    # a copy must lose them so cargo rebuilds them for this tree.
+    (tree / "target" / "debug" / "deps" / "libpostio_core-4567.rlib").write_text("ours\n", encoding="utf-8")
+    (tree / "target" / "debug" / ".fingerprint" / "postio-core-4567").mkdir(parents=True)
+    (tree / "target" / "debug" / ".fingerprint" / f"{artifact}-fp").mkdir(parents=True)
     (tree / "target" / "tmp" / "live-test-scratch").mkdir(parents=True)
     (tree / "target" / "tmp" / "live-test-scratch" / "db").write_text("x", encoding="utf-8")
     return tree
@@ -156,6 +161,13 @@ def main() -> int:
             fail("seed", "did not say where the seed came from", result)
         elif not (newer / "target" / "debug" / "deps" / "libnewer.rlib").is_file():
             fail("seed", "the copy moved the sibling's artifacts instead of copying", result)
+        elif (tree / "target" / "debug" / "deps" / "libpostio_core-4567.rlib").exists() \
+                or (tree / "target" / "debug" / ".fingerprint" / "postio-core-4567").exists():
+            fail("seed", "the sibling's own crates came along with its path baked in", result)
+        elif not (tree / "target" / "debug" / ".fingerprint" / "libnewer.rlib-fp").is_dir():
+            fail("seed", "a dependency's fingerprint was dropped with ours", result)
+        elif not (newer / "target" / "debug" / "deps" / "libpostio_core-4567.rlib").is_file():
+            fail("seed", "the drop reached into the sibling's target", result)
 
         # ── --cold gets a genuinely empty target ─────────────────────────
         result = claim(repo, base, stub_dir, "--cold", "4243")

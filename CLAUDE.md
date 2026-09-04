@@ -132,8 +132,9 @@ integration suites and `issue-land.sh` are still for.
 
 Linking is not the cost — ~1.2 s of an `app_suite` cycle. What used to cost
 eleven minutes was a **cold worktree**, and a claim now reuses the tree you
-are in or seeds a new one (#1102): the sanity tier in a seeded tree is
-**12 s** against 19 minutes cold. The measurements, and the sccache finding
+are in or seeds a new one (#1102): the sanity tier in a reused or seeded
+tree is **about a minute** — Postio's own crates rebuild, the ~470
+dependencies do not — against 19 minutes cold. The measurements, and the sccache finding
 behind them, are in `docs/engineering-notes.md` ("Where the waiting went").
 
 **Integration suites run under nextest.** `cargo nextest run -p <crate>
@@ -317,9 +318,10 @@ things stay shared:
   build and all; if that would strand something — a dirty tree, unlanded
   commits — it says so and claims a fresh tree instead, leaving this one
   alone. A fresh tree's `target/debug` is copied from the newest sibling by
-  reflink (#1102): one second for 11 GB on btrfs, and the sanity tier then
-  builds in 12 s compiling 3 crates. It is a copy, not the sharing #76
-  forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
+  reflink (#1102): one second for 11 GB on btrfs. Either way Postio's own
+  crates are dropped and rebuilt — they carry the tree's absolute path, and
+  cargo does not notice a move — so the sanity tier is about a minute, not
+  the 19 of a cold tree. It is a copy, not the sharing #76 forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
   `--reuse` is the strict form that refuses instead of falling back.
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,

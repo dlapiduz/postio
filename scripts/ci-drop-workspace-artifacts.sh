@@ -14,11 +14,7 @@
 # chances to drift" before (#818).
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/drop-workspace-artifacts.sh"
 before=$(du -sm target 2>/dev/null | cut -f1 || echo 0)
-rm -rf target/*/incremental
-rm -f  target/*/deps/libpostio_*.rlib \
-       target/*/deps/libpostio_*.rmeta \
-       target/*/deps/postio_*.d \
-       target/*/deps/libpostio_*.d
-rm -rf target/*/.fingerprint/postio-*
+drop_workspace_artifacts target
 echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"

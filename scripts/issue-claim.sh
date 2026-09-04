@@ -29,6 +29,7 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/ready-labels.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/drop-workspace-artifacts.sh"
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
@@ -192,9 +193,11 @@ mkdir -p "$WORKTREES" "$CLAIMS"
 #
 # A cold target/ is 11 to 19 minutes before the first gate can say anything,
 # and 393 of 396 claims paid it. Measured on this box: `cp -a --reflink` of
-# an 11 GB target/debug took one second on btrfs, and the seeded tree then
-# built the whole sanity tier in 12 s compiling 3 crates, against 1149 s and
-# 389 crates cold. Copy-on-write, so it costs no disk until files diverge.
+# an 11 GB target/debug took one second on btrfs, and after dropping the
+# sibling's own crates (lib/drop-workspace-artifacts.sh says why) the seeded
+# tree built the whole sanity tier in 64 s rebuilding Postio's 20 crates,
+# against 1149 s and 389 crates cold. Copy-on-write, so it costs no disk
+# until files diverge.
 #
 # It is a *copy*, which is what makes it safe against #76: that was two
 # trees writing one target and handing each other stale libraries. Each
@@ -229,6 +232,9 @@ seed_target() { # <tree>
     mkdir -p "$1/target"
     started=$(date +%s)
     if cp -a --reflink=auto "$src" "$1/target/debug" 2>/dev/null; then
+        # The sibling's own crates have *its* path baked in; drop them so
+        # cargo rebuilds ours and keeps the dependencies (lib/ says why).
+        drop_workspace_artifacts "$1/target"
         SEEDED="$src ($(( $(date +%s) - started ))s)"
     else
         rm -rf "$1/target/debug"
@@ -467,6 +473,10 @@ while IFS=$'\t' read -r NUM TITLE; do
             git -C "$REPO_ROOT" worktree move "$REUSE_TREE" "$TREE"
         fi
         git -C "$TREE" checkout --quiet -b "$BRANCH" "origin/$BASE"
+        # Moved, so every artifact of ours carries the old path
+        # (env!("CARGO_MANIFEST_DIR")) and cargo will not notice. Drop
+        # them; the dependencies -- the expensive part -- stay warm.
+        drop_workspace_artifacts "$TREE/target"
     else
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
         seed_target "$TREE"
@@ -491,7 +501,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     echo "  tree:   $TREE"
     echo "  branch: $BRANCH"
     if [ "$REUSE" = 1 ]; then
-        echo "  target: reused, already warm (moved from $REUSE_TREE)"
+        echo "  target: reused, already warm (moved from $REUSE_TREE; Postio's own crates rebuild, the deps do not)"
     elif [ -n "$SEEDED" ]; then
         echo "  target: seeded by copy from $SEEDED; only what differs rebuilds"
     else
