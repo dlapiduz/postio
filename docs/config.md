@@ -19,8 +19,7 @@ wrote it.
 | `density` | string | `"airy"` | Message-list row height: `airy`, `comfortable` or `compact`. |
 | `theme` | string | `"system"` | Light/dark preference: `system` (follows the desktop), `light` or `dark`. |
 | `show_hover_actions` | boolean | `true` | Show per-row actions when the pointer rests over a row. |
-| `thread_drill` | boolean | `true` | Let `t` drill the list column into the focused thread. |
-| `show_key_hints` | boolean | `true` | Show the focused row's key hints (`e reply`, `a archive`, `t thread`). Off leaves every binding in force -- this only stops the row from naming them. |
+| `show_key_hints` | boolean | `true` | Show the focused row's key hints (`e reply`, `a archive`). Off leaves every binding in force -- this only stops the row from naming them. |
 | `sender_avatars` | boolean | `true` | Show each row's sender-initials chip. |
 
 ## `[sync]`

@@ -37,7 +37,6 @@ fn ui_defaults_match_the_design_canvas() {
     assert_eq!(ui.density, Density::Airy, "PLATE is the airy direction");
     assert_eq!(ui.theme, Theme::System);
     assert!(ui.show_hover_actions, "mouse parity is a requirement");
-    assert!(ui.thread_drill);
     assert!(
         ui.show_key_hints,
         "the app teaches its own keyboard by default (#422)"
@@ -63,7 +62,6 @@ fn parses_every_ui_value() {
         density = "compact"
         theme = "dark"
         show_hover_actions = false
-        thread_drill = false
         show_key_hints = false
         "#,
     )
@@ -71,7 +69,6 @@ fn parses_every_ui_value() {
     assert_eq!(cfg.ui.density, Density::Compact);
     assert_eq!(cfg.ui.theme, Theme::Dark);
     assert!(!cfg.ui.show_hover_actions);
-    assert!(!cfg.ui.thread_drill);
     assert!(!cfg.ui.show_key_hints);
 }
 
@@ -121,7 +118,6 @@ fn default_bindings_match_the_design_canvas() {
     assert_eq!(k.binding("archive"), Some("a"));
     assert_eq!(k.binding("archive_thread"), Some("A"));
     assert_eq!(k.binding("undo"), Some("u"));
-    assert_eq!(k.binding("thread"), Some("t"));
 }
 
 #[test]
@@ -143,7 +139,6 @@ fn resolved_bindings_merge_defaults_and_overrides() {
     let cfg = Config::from_toml_str("[keys]\nreply = \"r\"\n").unwrap();
     let resolved = cfg.keys.resolved();
     assert_eq!(resolved.get("reply").map(String::as_str), Some("r"));
-    assert_eq!(resolved.get("thread").map(String::as_str), Some("t"));
     assert_eq!(resolved.len(), keys::DEFAULT_BINDINGS.len());
 }
 

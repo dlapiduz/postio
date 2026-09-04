@@ -63,14 +63,14 @@ type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
 /// argument about what it is.
 pub const DEFAULT_SIZE: (i32, i32) = (1120, 700);
 
-/// How much of a thread a drill-in reads.
+/// How much of a conversation one read asks for.
 ///
 /// One request rather than a paged feed: a thread is a conversation, and the
-/// column already holds every message it is given in memory to sort and
-/// filter them. `postio-bench`'s `thread_drill.rs` measures the drill-in against a
-/// 200-message thread, which is the size this is chosen to clear comfortably;
-/// a conversation past it is pathological rather than long, and the header's
-/// `n of m` says so honestly.
+/// pane already holds every message it is given in memory to stack them.
+/// `postio-bench`'s `conversation_rows.rs` measures binding a read-ahead
+/// window's worth against a 200-message thread, which is the size this is
+/// chosen to clear comfortably; a conversation past it is pathological
+/// rather than long.
 const THREAD_PAGE: u32 = 500;
 
 /// What the reading pane is showing, as far as the read-clocks care.
