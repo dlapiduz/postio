@@ -79,16 +79,43 @@ pub fn ensure_schema(connection: &Connection) -> Result<()> {
     // schema is versioned per half, and a mismatched half is dropped and
     // rebuilt — the index is derived data, and the mail tables it derives
     // from are exactly one `SCHEMA` run away.
-    if half_version(connection, "metadata")? != METADATA_SCHEMA_VERSION {
+    let metadata = half_version(connection, "metadata")?;
+    let bodies = half_version(connection, "bodies")?;
+    let headers = half_version(connection, "headers")?;
+
+    // Nothing to do, and saying so is worth more than it looks. The batch
+    // below is every object `IF NOT EXISTS`, which reads as free and is not:
+    // on a 20,000-message store `CREATE TRIGGER IF NOT EXISTS
+    // trg_messages_fts_au` took 160-230ms with the trigger already there,
+    // more than the rest of opening the store put together, on every single
+    // start and growing with the mailbox (#1113). The trigger's body names
+    // `messages_fts`, and parsing it appears to make SQLite instantiate the
+    // fts5 module that the `CREATE VIRTUAL TABLE IF NOT EXISTS` above it
+    // skips by matching on name alone.
+    //
+    // The versions are what make this safe to skip: they already decide
+    // whether each half is current, and #490 is why they exist. The cost is
+    // that a store whose objects were removed out-of-band is no longer
+    // repaired by the next start -- the ordinary contract of a versioned
+    // migration, and the same one `postio_storage::migrate` keeps.
+    if metadata == METADATA_SCHEMA_VERSION
+        && bodies == BODIES_SCHEMA_VERSION
+        && headers == HEADERS_SCHEMA_VERSION
+    {
+        tracing::debug!("the search index schema is current");
+        return Ok(());
+    }
+
+    if metadata != METADATA_SCHEMA_VERSION {
         connection.execute_batch(DROP_METADATA)?;
     }
-    if half_version(connection, "bodies")? != BODIES_SCHEMA_VERSION {
+    if bodies != BODIES_SCHEMA_VERSION {
         connection.execute_batch(
             "DROP TABLE IF EXISTS message_bodies_fts;
              DROP TRIGGER IF EXISTS trg_message_bodies_fts_ad;",
         )?;
     }
-    if half_version(connection, "headers")? != HEADERS_SCHEMA_VERSION {
+    if headers != HEADERS_SCHEMA_VERSION {
         // The index goes with the table; SQLite drops it either way, and
         // naming it is what stops a future rename from leaving one behind.
         connection.execute_batch(

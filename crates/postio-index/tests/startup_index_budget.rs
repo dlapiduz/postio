@@ -83,3 +83,38 @@ fn an_ordinary_start_does_not_reindex_the_mailbox() {
         building.nested
     );
 }
+
+/// The schema batch itself, which the re-index counter above cannot see.
+///
+/// `nested` counts trigger firings, so it proves an ordinary start does not
+/// *rebuild* the index — and is blind to the start's other cost, which is
+/// re-executing the `SCHEMA` batch. Those statements are `IF NOT EXISTS` and
+/// were assumed free. One of them is not: measured against a 20,000-message
+/// store, `CREATE TRIGGER IF NOT EXISTS trg_messages_fts_au` took 160-230ms
+/// with the trigger already present, which is the largest single item in
+/// startup on a populated store (#1113).
+///
+/// So count statements, not trigger firings. A start that finds all three
+/// half versions current has nothing to do and should say so in SQL it did
+/// not run.
+#[test]
+fn an_ordinary_start_does_not_re_execute_the_schema() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+
+    ensure_schema(&connection).expect("the first start");
+
+    install(&connection);
+    let ordinary = counted(|| ensure_schema(&connection).expect("an ordinary start"));
+
+    // The three half-version reads and the `search_schema` table itself. The
+    // point of the ceiling is that the ~30 DDL statements below them are
+    // gone, so it is set just above what the version check costs rather than
+    // just below what the batch costs.
+    const CEILING: usize = 8;
+    assert!(
+        ordinary.statements <= CEILING,
+        "a start with every schema half already current ran {} statements,          over a ceiling of {CEILING}. The `SCHEMA` batch is being re-executed          when there is nothing to create; on a populated store one of its          no-op `CREATE TRIGGER IF NOT EXISTS` statements costs more than          everything else in opening the store put together (#1113).",
+        ordinary.statements
+    );
+}
