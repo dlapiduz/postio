@@ -394,11 +394,6 @@ fn settle_for(how_long: std::time::Duration) {
 /// handed. A pane that was told about eight messages and drew none would pass
 /// the second kind of test and fail this one.
 pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
-/// `J`/`K` walk the stack, `space` folds, and neither wraps (#1007).
-///
-/// Asserts on which message is focused and whether its body is showing —
-/// what a person sees — rather than on the pane having been told to move.
-pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -502,6 +497,31 @@ pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
     pane.open(Vec::new());
     crate::pump();
     assert!(!footer.is_visible());
+
+    window.close();
+}
+
+/// `J`/`K` walk the stack, `space` folds, and neither wraps (#1007).
+///
+/// Asserts on which message is focused and whether its body is showing —
+/// what a person sees — rather than on the pane having been told to move.
+pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| stub_reader());
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
     // Four read messages: focus opens on the newest, per the pane's own
     // policy, which puts it at the end with nowhere further to go.
     pane.open((1..=4).map(|id| message(id, true)).collect());
