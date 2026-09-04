@@ -326,10 +326,10 @@ if [ "$GATES_GREEN" != 1 ]; then
     # per-crate integration suites, which is what this used to always do.
     #
     # The reason for the change is the machine, not the tests. Several
-    # sessions share this workstation with `jobs = 2`, and a single
-    # postio-app integration binary is an ~11-minute compile and link -- so
-    # landing became something you queued for. Measured: the whole suite
-    # spends 108s *executing* and the rest is building (#841).
+    # sessions share this workstation, and the per-crate integration suites
+    # are minutes each -- so landing became something you queued for.
+    # (This once blamed an "~11-minute compile and link" of one binary;
+    # that was a cold worktree, fixed at the claim -- #1101, #1102.)
     #
     # This is safe only because something else still proves the combination:
     # CI runs the full workspace on every pull request, and the nightly run
@@ -879,5 +879,6 @@ else
     echo "warning: could not delete the remote branch $BRANCH -- it may" >&2
     echo "already be gone. Not fatal: the merge above already succeeded." >&2
 fi
-echo "Now: scripts/issue-release.sh $ISSUE   (removes the worktree)"
-echo "Then claim the next one -- finishing an issue is not finishing a session."
+echo "Next: scripts/issue-claim.sh   (from here: reuses this worktree, build and all)"
+echo "      scripts/issue-release.sh $ISSUE   only if you are stopping."
+echo "Finishing an issue is not finishing a session."
