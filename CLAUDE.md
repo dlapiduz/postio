@@ -291,7 +291,14 @@ things stay shared:
   (`cargo build -j8`) only when you're alone.
 - **The compile cache**: sccache, wired in automatically, one cache
   machine-wide. Each worktree keeps its own `target/` (sharing one compiled
-  crates against a sibling's — #76).
+  crates against a sibling's — #76). A *fresh* worktree therefore rebuilds
+  Postio's own ~20 crates before it can report a gate — twelve minutes on
+  #860's landing. `scripts/issue-claim.sh --reuse` takes the next issue in
+  the worktree you are already in instead, keeping that `target/`: one
+  workspace and one target, so #76 cannot occur. It refuses rather than
+  trample — a dirty tree, unlanded commits, or the shared checkout are each
+  an error naming the reason. Reuse when you have just landed and are taking
+  the next issue; claim fresh when you want the old tree kept.
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other
