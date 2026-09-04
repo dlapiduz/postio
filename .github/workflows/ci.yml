@@ -405,6 +405,22 @@ jobs:
           save-cache: "true"
           cache-name: "build"
 
+      # #1126: cargo's freshness check compares a source file's mtime
+      # against the fingerprint it was last built against, and a fresh
+      # checkout gives every file the same "now" mtime regardless of which
+      # commit last touched it -- so a cached `target/` looked entirely
+      # stale and this job rebuilt from nothing every run, even when a PR
+      # changed one crate. Restoring each file's mtime to the date of the
+      # commit that actually touched it makes the comparison mean something
+      # again: an unchanged file gets back exactly the mtime the cached
+      # build was fingerprinted against, and a changed one gets a date newer
+      # than that build, so cargo rebuilds precisely what the PR touched
+      # plus its dependants. Must run before the first cargo invocation
+      # below, and after the checkout and cache restore above -- both of
+      # which is what sets the mtimes this is undoing.
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
+
       # Sixty test files in this workspace open with "no display? skip and
       # return", which is right on a contributor's headless shell and wrong
       # here: a runner with no display returned early from every one of them
@@ -521,22 +537,14 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc
 
-      # Keep the ~400 third-party crates; drop our own, which every commit
-      # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
-      # is housekeeping rather than a speed-up -- the win is that a restored
-      # cache never carries a stale artifact of ours for cargo to reason
-      # about. Deliberately conservative: it names only files this workspace
-      # produces, because deleting a third-party rlib by accident would make
-      # every later build slower, not faster.
-      #
-      # Runs as a normal step, which is what makes it take effect: post steps
-      # run after all normal ones, so actions/cache saves what is left here.
-      #
-      # It belongs in whichever job SAVES the cache, which is this one -- see
-      # the `save-cache: "true"` above. #818 split the old `build` job into
-      # three and left this step behind with it, so `main` spent a day caching
-      # stale workspace artifacts under a comment describing a step that was
-      # no longer there.
-      - name: Drop workspace artifacts before caching
-        if: always()
-        run: scripts/ci-drop-workspace-artifacts.sh
+      # #1126: this job used to drop its own ~20 crates' artifacts here and
+      # keep only the ~400 third-party ones, because a fresh checkout's
+      # mtimes invalidated ours anyway and caching them bought nothing but
+      # upload/download bytes. "Restore mtimes from commit history" above is
+      # what removed that reason -- an unchanged crate's artifacts are
+      # genuinely reusable now, so the cache keeps them, and the reused
+      # `.fingerprint`/`deps` entries are what turns an 11-12 minute rebuild
+      # into a one-crate one. See `scripts/restore-mtimes.py`'s own doc for
+      # the property this depends on (`actions/cache` preserving mtimes
+      # through extraction) and what silently breaks if that ever stops
+      # being true.
