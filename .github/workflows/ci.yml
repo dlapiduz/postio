@@ -15,35 +15,19 @@ name: CI
 # equivalent fallback is a `container: fedora:44` running the exact dnf line
 # from CLAUDE.md, rather than downgrading the feature floor.
 
-# Prose does not need a compiler. A docs-only change used to spend ~4 minutes
-# of runner time proving that Rust it did not touch still builds.
-#
-# Listed explicitly rather than ignoring `docs/**`, and that is deliberate:
-# `docs/keybindings.md` is GENERATED from the command registry and
-# `postio-core/tests/keybindings_doc.rs` fails when the two drift. Ignoring the
-# whole directory would let a hand-edit of it through unverified, which is
-# exactly the drift that test exists to catch.
-#
-# Naming each prose file beats a `docs/**` glob with a `!` exception, because
-# it fails in the safe direction: a doc nobody has listed here runs CI, which
-# costs four minutes. A generated file nobody remembered to exclude would skip
-# it, which costs a silent regression.
+# Every push and every pull request runs this workflow; what the diff
+# obliges it to *build* is decided inside it, by the `changes` job, and the
+# compile jobs are gated on that. It used to be a workflow-level
+# `paths-ignore` for prose, and that cannot stay one: a workflow that does
+# not run reports no check, and a required status check that never reports
+# is a pull request that never merges (#1107). A gated job that is skipped
+# still reports, as skipped, which the ruleset counts as passed -- so
+# docs-only and tooling-only changes (39% of a fortnight's commits, #1127)
+# pay for the classification and the cheap jobs, not for a workspace build.
 on:
   push:
     branches: [main]
-    paths-ignore: &prose
-      - '*.md'
-      - '.claude/**'
-      - 'Design/**'
-      - 'docs/decisions/**'
-      - 'docs/images/**'
-      - 'docs/PRODUCT.md'
-      - 'docs/ARCHITECTURE.md'
-      - 'docs/engineering-notes.md'
-      - 'docs/session-prompts.md'
-      - 'docs/architecture-review-2026-08.md'
   pull_request:
-    paths-ignore: *prose
   workflow_dispatch:
 
 # Least-privilege default: no job here pushes a commit, opens a PR, or
@@ -80,6 +64,39 @@ env:
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      docs: ${{ steps.classify.outputs.docs }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The diff comes from the API rather than from a deep clone: a pull
+      # request's base..head and a push's before..after are both one
+      # compare call. A range GitHub cannot answer (a first push, a force
+      # push whose `before` is gone) leaves the list empty, and an empty
+      # list builds everything -- scripts/ci-changes.sh fails in that
+      # direction on purpose, and its self-test holds it there.
+      - name: Classify the diff
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" ;;
+            push)         range="${{ github.event.before }}...${{ github.sha }}" ;;
+            *)            range="" ;;
+          esac
+          files=""
+          if [ -n "$range" ]; then
+            files=$(gh api --paginate "repos/${{ github.repository }}/compare/$range" \
+                      --jq '.files[].filename' 2>/dev/null || true)
+          fi
+          printf '%s\n' "$files" | scripts/ci-changes.sh "${{ github.event_name }}" | tee -a "$GITHUB_OUTPUT"
+          printf '%s\n' "$files" | sed 's/^/  changed: /'
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -269,6 +286,8 @@ jobs:
   docs:
     name: Docs site build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -325,6 +344,8 @@ jobs:
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -372,6 +393,8 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -395,6 +418,8 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

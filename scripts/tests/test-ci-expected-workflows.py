@@ -324,10 +324,17 @@ on:
             text=True,
             stdin=subprocess.DEVNULL,
         )
-        if prose.returncode != 1 or prose.stdout.strip():
+        # Since #1127 the real ci.yml runs on every pull request and decides
+        # what to *build* inside, in its `changes` job -- a workflow that does
+        # not run reports no check, and a required check that never reports
+        # is a PR that never merges (#1107). So a prose-only change now
+        # schedules CI, and wait-for-checks.sh waits for it: the cheap jobs
+        # run, the compile jobs report as skipped.
+        if prose.returncode != 0 or prose.stdout.strip() != "CI":
             FAILURES.append(
-                "a prose-only change against the real workflows must expect "
-                f"nothing (exit {prose.returncode}, stdout {prose.stdout!r})"
+                "a prose-only change against the real workflows must schedule "
+                f"CI, whose compile jobs then skip themselves (exit "
+                f"{prose.returncode}, stdout {prose.stdout!r})"
             )
 
     for failure in FAILURES:
