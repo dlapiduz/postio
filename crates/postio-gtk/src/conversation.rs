@@ -284,7 +284,7 @@ mod tests {
 /// #739) instead of tearing the whole entry down to rebuild one.
 ///
 /// [`reader_for`]: ConversationView::reader_for
-pub type ReaderFactory = Box<dyn Fn(MessageId) -> crate::reader::Reader>;
+pub type ReaderFactory = Box<dyn Fn(MessageId) -> Option<crate::reader::Reader>>;
 
 /// The three verbs a single message in a stack offers.
 ///
@@ -670,9 +670,14 @@ impl ConversationView {
     /// Set once, by whoever owns the reader's blob source. Until it is set the
     /// pane draws headers and no bodies, which is what a pane with nothing
     /// wired to it should look like rather than a crash.
+    ///
+    /// `None` is the answer for a factory whose own owner is gone -- the
+    /// composition root's factory closes over a weak window (#1072) rather
+    /// than a strong one, and an upgrade that fails means there is nothing
+    /// left to build a reader for.
     pub fn set_reader_factory(
         &self,
-        factory: impl Fn(MessageId) -> crate::reader::Reader + 'static,
+        factory: impl Fn(MessageId) -> Option<crate::reader::Reader> + 'static,
     ) {
         *self.imp().factory.borrow_mut() = Some(Box::new(factory));
     }
@@ -1066,8 +1071,9 @@ impl ConversationView {
         }
         entry.expanded.set(true);
         entry.actions.set_visible(true);
-        if let Some(factory) = imp.factory.borrow().as_ref() {
-            let reader = factory(message);
+        if let Some(factory) = imp.factory.borrow().as_ref()
+            && let Some(reader) = factory(message)
+        {
             let widget = reader.widget();
             widget.set_hexpand(true);
             entry.body.append(&widget);

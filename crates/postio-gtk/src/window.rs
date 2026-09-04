@@ -629,13 +629,26 @@ impl Window {
         // once, here, because this is the moment the second of the pair comes
         // into existence — and because neither widget should have to know the
         // other one does.
+        // Weak, for the same reason `postio-app`'s composition wiring is
+        // (#1072, #794): `composer` is a child this window owns via
+        // `imp().composer`, so a strong clone here is a cycle that keeps the
+        // window alive for the life of the process. A window that has gone
+        // has no reading pane left to sync.
         composer.connect_opened({
-            let window = self.clone();
-            move || window.sync_reading_pane()
+            let window = glib::object::ObjectExt::downgrade(self);
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.sync_reading_pane();
+                }
+            }
         });
         composer.connect_closed({
-            let window = self.clone();
-            move |_| window.sync_reading_pane()
+            let window = glib::object::ObjectExt::downgrade(self);
+            move |_| {
+                if let Some(window) = window.upgrade() {
+                    window.sync_reading_pane();
+                }
+            }
         });
         // Built after the keymap was applied, so it starts on the user's
         // bindings rather than the registry defaults `build_actions` drew
