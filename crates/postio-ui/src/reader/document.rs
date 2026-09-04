@@ -625,6 +625,51 @@ pub fn suits_reader_view(body: &MessageBody) -> bool {
         .is_some_and(reader_view::reads_as_bulk)
 }
 
+/// The class the facts block is drawn with.
+///
+/// Public because it is the seam a frontend test asserts on: the block is
+/// markup inside the sender's document, so "did it reach the reading pane"
+/// is a question about this string.
+pub const FACTS_CLASS: &str = "postio-facts";
+
+/// The facts block as markup, or nothing when there were none.
+///
+/// A description list, because that is what it is: labels and the values
+/// they name. The two columns the canvas draws are a CSS grid over it, so
+/// the markup stays meaningful to a screen reader reading it in order.
+fn facts_html(rows: &[reader_view::Fact]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("<dl class=\"{FACTS_CLASS}\">");
+    for fact in rows {
+        out.push_str("<dt>");
+        escape_into(&mut out, &fact.label);
+        out.push_str("</dt><dd>");
+        escape_into(&mut out, &fact.value);
+        out.push_str("</dd>");
+    }
+    out.push_str("</dl>");
+    out
+}
+
+/// Text into markup, with the four characters that would otherwise be it.
+///
+/// Written out rather than reached for from a crate, the same reason
+/// `reader_view` writes its own: this is the output side of markup Postio
+/// composes itself, and the escaping is four characters.
+fn escape_into(out: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            other => out.push(other),
+        }
+    }
+}
+
 /// The body markup: sanitized and quote-folded, but not yet wrapped in the
 /// document template [`wrap_document`] adds, plus what was held back to
 /// produce it — see [`sanitize::Sanitized`].
@@ -647,8 +692,14 @@ pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering)
 
     if rendering == Rendering::Reader {
         if let Some(text) = text {
+            // The facts first, then what is left of the prose. `lift` takes
+            // the rows out of the copy, so the block is a summary rather than
+            // the same three lines printed twice.
+            let lifted = reader_view::lift(text);
+            let mut html = facts_html(&lifted.rows);
+            html.push_str(&quote::text_to_html(&lifted.body));
             return Rendered {
-                html: quote::text_to_html(text),
+                html,
                 held_back: HeldBack::default(),
                 rendering: Rendering::Reader,
                 ..Rendered::default()
@@ -971,6 +1022,123 @@ mod tests {
             html: None,
         };
         assert!(!suits_reader_view(&plain));
+    }
+
+    /// The plain part of a shipping notice: the facts, then the prose.
+    fn shipping_notice() -> String {
+        "Your order has shipped.\n\
+         \n\
+         tracking: EXTEST0042199317\n\
+         item: Type-C Upgrade Small Board Replacement x 1\n\
+         ship to: 1 Example Way, Springfield\n\
+         \n\
+         Follow the parcel from your orders page.\n"
+            .to_owned()
+    }
+
+    #[test]
+    fn reader_view_lifts_the_facts_above_the_body_copy() {
+        let body = MessageBody {
+            text: Some(shipping_notice()),
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+
+        let block = rendered
+            .html
+            .find(FACTS_CLASS)
+            .expect("the facts block is in the markup");
+        let copy = rendered
+            .html
+            .find("Follow the parcel")
+            .expect("and so is the body copy");
+        assert!(
+            block < copy,
+            "the canvas draws the facts above the body, not below it: {}",
+            rendered.html
+        );
+        for expected in [
+            "tracking",
+            "EXTEST0042199317",
+            "ship to",
+            "1 Example Way, Springfield",
+        ] {
+            assert!(
+                rendered.html.contains(expected),
+                "`{expected}` is missing from {}",
+                rendered.html
+            );
+        }
+
+        // Once each. A block that summarises lines still printed underneath
+        // it reads as a rendering bug, not a summary.
+        assert_eq!(
+            rendered.html.matches("EXTEST0042199317").count(),
+            1,
+            "the tracking number is drawn twice: {}",
+            rendered.html
+        );
+        assert!(
+            !rendered.html.contains("tracking:"),
+            "the lifted line is still in the body copy: {}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("Your order has shipped."),
+            "the prose around the block survived: {}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn a_plain_part_with_no_block_grows_nothing() {
+        let body = MessageBody {
+            text: Some("Hi Ada,\n\nFriday works for me.\n".to_owned()),
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert!(
+            !rendered.html.contains(FACTS_CLASS),
+            "ordinary prose grew a table: {}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn nothing_is_lifted_out_of_html() {
+        // The same three facts, laid out as a table by the sender rather than
+        // written as lines. Reader view reduces that markup like any other —
+        // a sender's layout is exactly what it declines to trust — so no
+        // facts block appears.
+        let body = MessageBody {
+            text: None,
+            html: Some(
+                "<table><tr><td><table>\
+                 <tr><td>tracking</td><td>EXTEST0042199317</td></tr>\
+                 <tr><td>item</td><td>One Small Board</td></tr>\
+                 <tr><td>ship to</td><td>1 Example Way, Springfield</td></tr>\
+                 </table></td></tr></table>"
+                    .to_owned(),
+            ),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert!(
+            !rendered.html.contains(FACTS_CLASS),
+            "a block was lifted out of markup: {}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn the_original_rendering_has_no_facts_block() {
+        // `View original` is the escape hatch: it shows what arrived. Postio
+        // adding a table of its own to that would defeat the point.
+        let body = MessageBody {
+            text: Some(shipping_notice()),
+            html: None,
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Original);
+        assert!(!rendered.html.contains(FACTS_CLASS));
     }
 
     #[test]

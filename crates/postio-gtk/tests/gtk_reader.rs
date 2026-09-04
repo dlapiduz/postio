@@ -294,6 +294,40 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "an ordinary reply must keep following the theme"
     );
 
+    // ── #1030: transactional mail gets its facts lifted above the copy ────
+    // The end of the chain: `reader_view::lift` finds the rows, `body_html`
+    // draws them, and this is the document the web view was actually handed.
+    // Asserting on the extractor alone could not fail if nothing rendered it.
+    let shipping = test_corpus::load("transactional-shipping-notice");
+    let shipping = postio_model::mime::parse(shipping.bytes());
+    let finished = track_load_finished(&reader);
+    reader.render(&shipping.body, Some("orders@shop.example.test"));
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(
+        reader.is_reader_view(),
+        "a shipping notice is bulk mail and opens reduced"
+    );
+    let document = reader.test_document();
+    let block = document
+        .find(document::FACTS_CLASS)
+        .expect("the facts block reached the reading pane");
+    let copy = document
+        .find("Follow the parcel")
+        .expect("and so did the body copy");
+    assert!(
+        block < copy,
+        "the canvas draws the facts above the body copy"
+    );
+    assert!(
+        document.contains("EXTEST0042199317") && document.contains("1 Example Way"),
+        "the tracking number and destination are on screen"
+    );
+    assert_eq!(
+        document.matches("EXTEST0042199317").count(),
+        1,
+        "and drawn once, not once in the block and again in the paragraph"
+    );
+
     // ── #319: the header puts sender, subject and date on screen ──────────
     let header = reader.header();
     let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
